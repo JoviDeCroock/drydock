@@ -32,6 +32,7 @@ import {
   type Verdict,
 } from "./publication-verdict";
 import { isPublishedTarballUrlAllowed } from "./published-tarball";
+import { pickBaselineVersion } from "./registry";
 
 const METADATA_LIMIT = 4 * 1024 * 1024;
 const TARBALL_LIMIT = 16 * 1024 * 1024;
@@ -240,6 +241,19 @@ type ObservedRelease = Pick<
   "id" | "version" | "status" | "reason" | "firstSeenAt" | "checkedAt" | "sha1" | "sha256"
 >;
 
+/**
+ * The published version this release follows, by the same semver-predecessor
+ * rule a staged review uses for its baseline. A first release has none: the
+ * "highest published" fallback would diff backwards.
+ */
+function previousPublishedVersion(
+  versions: Record<string, unknown>,
+  version: string,
+): string | null {
+  const baseline = pickBaselineVersion({ versions }, version, null);
+  return baseline.source === "semver-predecessor" ? baseline.version : null;
+}
+
 /** Bytes a previous check already established for this immutable version. */
 function storedArtifact(
   previous: ObservedRelease | undefined,
@@ -404,6 +418,7 @@ async function examineReleases(
         ...verdict,
         sha1: digests?.sha1 ?? null,
         sha256: digests?.sha256 ?? null,
+        previousVersion: previousPublishedVersion(versions, item.version),
       },
       watch.packageName,
     );

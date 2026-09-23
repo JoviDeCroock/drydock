@@ -661,6 +661,9 @@ export const publicationObservations = sqliteTable(
     sha256: text("sha256"),
     sha1: text("sha1"),
     scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),
+    // The published semver predecessor when the release was observed, so the
+    // observation can open the release's public diff without refetching npm.
+    previousVersion: text("previous_version"),
   },
   (table) => [
     uniqueIndex("publication_observations_watch_version").on(table.watchId, table.version),

@@ -29,6 +29,8 @@ export interface PublicationObservation {
   /** Why an `unknown` observation is unknown; null for a settled verdict. */
   reason: string | null;
   scanId: string | null;
+  /** The published version this release follows, when it has one. */
+  previousVersion: string | null;
 }
 
 export interface AutoEnrollmentInfo {

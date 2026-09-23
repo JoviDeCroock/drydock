@@ -3,8 +3,10 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { EmptyLine } from "../../components/Typography";
 import { formatDateTime } from "../../lib/format";
-import type { PublicationObservation } from "../../models/publication-watches";
+import { packageDiffPath } from "../../lib/package-diff-path";
+import type { PublicationObservation, PublicationWatch } from "../../models/publication-watches";
 import {
+  emptyObservationsMessage,
   isPublicationAlert,
   observationStatusLabels,
   observationTone,
@@ -16,10 +18,12 @@ import {
  * dashboard card (expanded under its row) and the package page.
  */
 export function ObservationList({
+  watch,
   observations,
   busy,
   acknowledge,
 }: {
+  watch: Pick<PublicationWatch, "packageName" | "lastCheckedAt" | "lastError">;
   observations: PublicationObservation[];
   busy: ReadonlySignal<boolean>;
   acknowledge: (observationId: string) => void;
@@ -27,7 +31,7 @@ export function ObservationList({
   if (observations.length === 0) {
     return (
       <div class="border-t border-border px-5 py-3.5">
-        <EmptyLine>No releases since enrollment. Earlier releases are not checked.</EmptyLine>
+        <EmptyLine>{emptyObservationsMessage(watch)}</EmptyLine>
       </div>
     );
   }
@@ -62,6 +66,24 @@ export function ObservationList({
               >
                 Acknowledge
               </Button>
+            ) : null}
+            {observation.previousVersion ? (
+              // What was actually published, read the product's way: the
+              // release's public diff against the version it follows.
+              <a
+                href={packageDiffPath(
+                  "npm",
+                  watch.packageName,
+                  observation.previousVersion,
+                  observation.version,
+                )}
+                target="_blank"
+                rel="noopener"
+                class="text-[13px]"
+                aria-label={`Open the public diff of ${observation.version} against ${observation.previousVersion} in a new tab`}
+              >
+                Diff vs {observation.previousVersion}
+              </a>
             ) : null}
             {observation.scanId ? (
               <a

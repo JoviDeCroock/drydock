@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { recordScanEvent } from "../db/events";
-import { acknowledgePublicationAlert } from "../db/publication-alerts";
+import {
+  acknowledgePublicationAlert,
+  listPublicationAlertsForPackage,
+} from "../db/publication-alerts";
 import {
   createPublicationWatch,
   deletePublicationWatch,
@@ -55,16 +58,18 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
   const db = c.var.db;
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   const watch = await getPublicationWatchByPackage(db, organizationId, packageName);
-  const [enrollment, observations] = await Promise.all([
+  const [enrollment, observations, alerts] = await Promise.all([
     watch
       ? Promise.resolve({ state: "watched" as const })
       : getPublicationEnrollment(db, organizationId, packageName),
     watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
+    listPublicationAlertsForPackage(db, organizationId, packageName),
   ]);
   return c.json({
     packageName,
     watch,
     observations,
+    alerts,
     enrollment,
     viewer: { canStop: roleCanManageIntegrations(role) },
   });

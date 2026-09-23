@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -37,6 +37,7 @@ export async function savePublicationObservation(
         scanId: observation.scanId,
         sha1: observation.sha1,
         sha256: observation.sha256,
+        previousVersion: observation.previousVersion,
       },
       setWhere: eq(publicationObservations.status, "unknown"),
     });
@@ -101,6 +102,34 @@ export async function listUnnotifiedPublicationAlerts(
       ),
     )
     .limit(20);
+}
+
+/**
+ * The organization's alert ledger for one package, across every watch window.
+ * Stopping a watch removes its observations, but not what was alerted and
+ * acknowledged, so the package page can keep showing that history.
+ */
+export function listPublicationAlertsForPackage(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+) {
+  return db
+    .select({
+      version: publicationAlerts.version,
+      status: publicationAlerts.status,
+      createdAt: publicationAlerts.createdAt,
+      acknowledgedAt: publicationAlerts.acknowledgedAt,
+    })
+    .from(publicationAlerts)
+    .where(
+      and(
+        eq(publicationAlerts.organizationId, organizationId),
+        eq(publicationAlerts.packageName, packageName),
+      ),
+    )
+    .orderBy(desc(publicationAlerts.createdAt))
+    .limit(50);
 }
 
 /** Record that delivery succeeded, so the alert stops being re-driven. */

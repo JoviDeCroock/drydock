@@ -18,10 +18,19 @@ export type PublicationEnrollment =
   | { state: "deferred" }
   | { state: "not_enrolled" };
 
+/** One entry of the organization's alert ledger for the package, across watches. */
+export interface PublicationAlertRecord {
+  version: string;
+  status: Exclude<PublicationObservation["status"], "approved_match" | "unknown">;
+  createdAt: string;
+  acknowledgedAt: string | null;
+}
+
 export interface PackagePublication {
   packageName: string;
   watch: PublicationWatch | null;
   observations: PublicationObservation[];
+  alerts: PublicationAlertRecord[];
   enrollment: PublicationEnrollment;
   viewer: { canStop: boolean };
 }

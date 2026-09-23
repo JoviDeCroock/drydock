@@ -1,4 +1,10 @@
-import { useModel, useSignal, useSignalEffect, type ReadonlySignal } from "@preact/signals";
+import {
+  useComputed,
+  useModel,
+  useSignal,
+  useSignalEffect,
+  type ReadonlySignal,
+} from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -11,6 +17,7 @@ import { packageReleasesPath } from "../../lib/package-releases-path";
 import { PublicationWatchesModel } from "../../models/publication-watches";
 import { watchMetaLine, watchProblemMessage } from "./copy";
 import { ObservationList } from "./ObservationList";
+import { StopWatchingDialog } from "./StopWatchingDialog";
 
 // Same header/row anatomy as the dashboard's Recent reviews card, so the two
 // lists read as one surface rather than a second feature bolted underneath.
@@ -33,6 +40,14 @@ export function PublicationMonitor({
   // Only the row whose check is in flight relabels its button; the model's
   // single `busy` flag disables everything else.
   const checkingId = useSignal<string | null>(null);
+  const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
+  const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
+  const confirmStop = async () => {
+    const target = stopTarget.peek();
+    if (!target) return;
+    await model.remove(target.id);
+    stopTarget.value = null;
+  };
 
   async function check(id: string) {
     checkingId.value = id;
@@ -170,7 +185,7 @@ export function PublicationMonitor({
                       onClick={() => void check(watch.id)}
                       title="Fetch the latest releases from npm and compare them with recorded approvals"
                     >
-                      {checking ? "Checking npm…" : "Check npm"}
+                      {checking ? "Checking releases…" : "Check releases"}
                     </Button>
                     <Menu
                       align="end"
@@ -195,7 +210,9 @@ export function PublicationMonitor({
                         <MenuItem
                           tone="danger"
                           disabled={model.busy}
-                          onSelect={() => void model.remove(watch.id)}
+                          onSelect={() => {
+                            stopTarget.value = { id: watch.id, packageName: watch.packageName };
+                          }}
                         >
                           Stop watching
                         </MenuItem>
@@ -210,6 +227,7 @@ export function PublicationMonitor({
                 ) : null}
                 {expanded ? (
                   <ObservationList
+                    watch={watch}
                     observations={expanded.observations}
                     busy={model.busy}
                     acknowledge={(observationId) => void model.acknowledge(watch.id, observationId)}
@@ -220,6 +238,14 @@ export function PublicationMonitor({
           })}
         </ul>
       </div>
+      <StopWatchingDialog
+        packageName={stopPackageName}
+        busy={model.busy}
+        onClose={() => {
+          stopTarget.value = null;
+        }}
+        onConfirm={() => void confirmStop()}
+      />
     </Card>
   );
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `publication_observations` ADD `previous_version` text;

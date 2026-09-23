@@ -291,8 +291,13 @@ test("releases without a Drydock record drain in bounded batches with no downloa
   );
   await releaseLease(db, watch.id);
   await checkNpmPublicationWatch(db, env, watch);
-  expect(await listPublicationObservations(db, organizationId, watch.id)).toHaveLength(8);
+  const observations = await listPublicationObservations(db, organizationId, watch.id);
+  expect(observations).toHaveLength(8);
   expect(fetcher).toHaveBeenCalledTimes(2);
+  // Each release records the version it follows, so it can open its diff.
+  expect(
+    Object.fromEntries(observations.map((row) => [row.version, row.previousVersion])),
+  ).toMatchObject({ "1.0.0": null, "2.0.0": "1.0.0", "8.0.0": "7.0.0" });
 });
 
 test("an oversized tarball of a reviewed release stays unknown, says why, and is not refetched", async () => {

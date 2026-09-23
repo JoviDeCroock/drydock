@@ -32,15 +32,23 @@ time. Removing a watch deletes its observations and persists an organization-sco
 opt-out, so later discovery or history reconciliation cannot silently restore it.
 Because stopping hides unacknowledged alerts and opts the package out, only owners
 and admins (the integration-management role) can stop a watch; any member can enroll
-one. Explicitly enrolling it again clears the opt-out and starts a new observation
-window. Both are recorded in the audit log.
+one. Stopping asks for confirmation first, saying what it removes and that alerts
+already raised stay listed on the package's page. Explicitly enrolling it again
+clears the opt-out and starts a new observation window. Both are recorded in the
+audit log. A watch enrolled from a staged review (discovered, or submitted by hand)
+is labelled "from a staged review".
 
 The existing 15-minute cron checks watches independently of staged discovery.
-**Check npm** runs a bounded check on demand. The dashboard displays the latest
+**Check releases** runs a bounded check of one watch on demand (distinct from the
+Recent reviews **Check npm**, which runs stage discovery). The dashboard displays the latest
 100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
 last check and any coverage problem; each package links to its package page,
 which shows the same watch, observations and controls for that package and says
-why an unwatched package is not watched. Checks drain a backlog in batches, so one
+why an unwatched package is not watched. Each observed release links to its public
+diff against the published version it follows (recorded when observed), and to its
+Drydock review when one exists. An empty list claims "no releases since enrollment"
+only after a successful check; before one, or after a failed registry read, it says
+releases are unknown. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
 | Observation                                     | Evidence                                                                                                                            |
@@ -90,7 +98,9 @@ windows do not create inaccessible alert counts on a new watch. Expand its relea
 an alert; any organization member can acknowledge it. Acknowledgment is audited and
 leaves the publication evidence unchanged. The alert ledger survives stopping a watch,
 so explicitly re-enrolling cannot resend that release's notification or erase its
-acknowledgment. Observation history still follows the watch's enrollment window.
+acknowledgment. Observation history still follows the watch's enrollment window; the
+package page lists alerts from earlier windows, with their acknowledgment, from the
+ledger, so a stop or re-enrollment never erases what was alerted.
 
 Observation, alert and audit creation commit together, and delivery follows. An alert
 is marked notified only when a recipient or the Slack channel accepted it, or when the

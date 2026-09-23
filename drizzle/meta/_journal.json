@@ -239,6 +239,13 @@
       "when": 1789894066394,
       "tag": "0033_right_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1790141123994,
+      "tag": "0034_careful_nighthawk",
+      "breakpoints": true
     }
   ]
 }

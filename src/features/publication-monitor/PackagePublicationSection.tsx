@@ -1,4 +1,4 @@
-import { useComputed, useModel } from "@preact/signals";
+import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -9,10 +9,12 @@ import { formatDateTime, pluralize } from "../../lib/format";
 import {
   PackagePublicationModel,
   type PackagePublication,
+  type PublicationAlertRecord,
   type PublicationEnrollment,
 } from "../../models/package-publication";
-import { watchMetaLine, watchProblemMessage } from "./copy";
+import { observationStatusLabels, watchMetaLine, watchProblemMessage } from "./copy";
 import { ObservationList } from "./ObservationList";
+import { StopWatchingDialog } from "./StopWatchingDialog";
 
 type Model = ReturnType<typeof useModel<typeof PackagePublicationModel.prototype>>;
 
@@ -53,10 +55,46 @@ export function PackagePublicationSection({ packageName }: { packageName: string
             </div>
           }
         >
-          {(publication) => <PublicationBody model={model} publication={publication} />}
+          {(publication) => (
+            <>
+              <PublicationBody model={model} publication={publication} />
+              <EarlierAlerts publication={publication} />
+            </>
+          )}
         </Show>
       </Card>
     </section>
+  );
+}
+
+/**
+ * Alerts the organization raised for this package in earlier watch windows.
+ * Stopping a watch removes its observations but not its alert ledger, so what
+ * was alerted and acknowledged stays visible here after a stop or re-enroll.
+ */
+function EarlierAlerts({ publication }: { publication: PackagePublication }) {
+  const current = new Set(publication.observations.map((observation) => observation.version));
+  const earlier: PublicationAlertRecord[] = publication.alerts.filter(
+    (alert) => !current.has(alert.version),
+  );
+  if (earlier.length === 0) return null;
+  return (
+    <div class="border-t border-border px-5 py-3.5 flex flex-col gap-2">
+      <p class="m-0 text-[13px] text-ink-muted">Alerts from earlier watches of this package</p>
+      <ul class="list-none m-0 p-0 flex flex-col gap-2">
+        {earlier.map((alert) => (
+          <li key={alert.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
+            <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
+            <span class="font-mono text-[11px] text-ink-subtle">
+              {alert.acknowledgedAt
+                ? `acknowledged ${formatDateTime(alert.acknowledgedAt)}`
+                : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -91,6 +129,10 @@ function PublicationBody({
   // Stopping hides alert history and opts the package out, so the server
   // allows it only to integration managers; the button mirrors that.
   const stopDisabled = useComputed(() => model.busy.value || !model.canStop.value);
+  const confirmingStop = useSignal(false);
+  const stopPackageName = useComputed(() =>
+    confirmingStop.value ? publication.packageName : null,
+  );
   const { watch } = publication;
   if (!watch) {
     return (
@@ -127,13 +169,15 @@ function PublicationBody({
             onClick={() => void model.check()}
             title="Fetch the latest releases from npm and compare them with recorded approvals"
           >
-            Check npm
+            Check releases
           </Button>
           <Button
             variant="ghost"
             size="sm"
             disabled={stopDisabled}
-            onClick={() => void model.stop()}
+            onClick={() => {
+              confirmingStop.value = true;
+            }}
           >
             Stop watching
           </Button>
@@ -145,9 +189,22 @@ function PublicationBody({
         </div>
       ) : null}
       <ObservationList
+        watch={watch}
         observations={publication.observations}
         busy={model.busy}
         acknowledge={(observationId) => void model.acknowledge(observationId)}
+      />
+      <StopWatchingDialog
+        packageName={stopPackageName}
+        busy={model.busy}
+        onClose={() => {
+          confirmingStop.value = false;
+        }}
+        onConfirm={() => {
+          void model.stop().then(() => {
+            confirmingStop.value = false;
+          });
+        }}
       />
     </>
   );

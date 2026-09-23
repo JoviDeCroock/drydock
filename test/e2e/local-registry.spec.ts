@@ -358,7 +358,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     const publicationRow = monitor
       .locator("li")
       .filter({ has: page.getByText("@drydock/e2e-publication", { exact: true }) });
-    await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
+    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
     await expect(
       monitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
@@ -397,7 +397,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toHaveCount(
       0,
     );
-    await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
+    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
     await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
     await expect(
       monitor.getByText("Published with no approval in this organization", { exact: true }),
@@ -411,7 +411,21 @@ test("publication monitor observes an unreviewed public release", async ({ brows
       .getByRole("button", { name: "More actions for @drydock/e2e-publication" })
       .click();
     await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
+    // Stopping confirms first and says the alert history survives it.
+    const stopDialog = page.getByRole("dialog", {
+      name: "Stop watching @drydock/e2e-publication?",
+    });
+    await expect(stopDialog.getByText(/stay listed on the package's page/)).toBeVisible();
+    await stopDialog.getByRole("button", { name: "Stop watching", exact: true }).click();
     await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toHaveCount(0);
+    // The acknowledged alert is still on the package's page after the stop.
+    await page.goto("/dashboard/packages/@drydock/e2e-publication");
+    const stoppedMonitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(stoppedMonitor.getByText(/^Not watched\. Monitoring was stopped/)).toBeVisible();
+    await expect(
+      stoppedMonitor.getByText("Alerts from earlier watches of this package"),
+    ).toBeVisible();
+    await expect(stoppedMonitor.getByText(/^acknowledged /)).toBeVisible();
     expect(browserErrors).toEqual([]);
     const publicRequests = (await readJournal()).filter((entry) =>
       /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(decodeURIComponent(entry.path)),
@@ -488,6 +502,80 @@ test("a package link names its organization, whatever this browser had active", 
   }
 });
 
+test("an observed release opens what was published: its public diff and its review", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  try {
+    await page.goto("/dashboard");
+    const organization = await evaluateOnStablePage(
+      page,
+      async () =>
+        (
+          (await fetch("/api/v1/organizations").then((response) => response.json())) as {
+            organizations: { id: string }[];
+          }
+        ).organizations[0]!,
+      undefined,
+    );
+    await page.route("**/api/v1/publication-watches/packages/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          packageName: "@drydock/e2e-diffed",
+          watch: {
+            id: "watch-diffed",
+            organizationId: organization.id,
+            packageName: "@drydock/e2e-diffed",
+            source: "manual",
+            createdAt: "2026-09-01T00:00:00.000Z",
+            lastCheckedAt: "2026-09-02T00:00:00.000Z",
+            lastError: null,
+            unresolvedAlertCount: 0,
+          },
+          observations: [
+            {
+              id: "obs-reviewed",
+              version: "1.1.0",
+              previousVersion: "1.0.0",
+              status: "unknown",
+              reason: "review_pending",
+              scanId: "scan-in-flight",
+              publishedAt: "2026-09-02T00:00:00.000Z",
+              firstSeenAt: "2026-09-02T00:00:00.000Z",
+              checkedAt: "2026-09-02T00:00:00.000Z",
+              acknowledgedAt: null,
+            },
+          ],
+          alerts: [],
+          enrollment: { state: "watched" },
+          viewer: { canStop: true },
+        }),
+      });
+    });
+    await page.goto(
+      `/dashboard/packages/@drydock/e2e-diffed?org=${encodeURIComponent(organization.id)}`,
+    );
+    const monitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(
+      monitor.getByText("a Drydock review of this version is still running", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      monitor.getByRole("link", {
+        name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab",
+      }),
+    ).toHaveAttribute("href", "/diff/@drydock/e2e-diffed/1.0.0/1.1.0");
+    await expect(monitor.getByRole("link", { name: "Open review" })).toHaveAttribute(
+      "href",
+      "/dashboard/scans/scan-in-flight",
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("publication monitor automatically watches public staged discoveries and respects stop watching", async ({
   browser,
   baseURL,
@@ -510,9 +598,13 @@ test("publication monitor automatically watches public staged discoveries and re
     const nativeRow = monitor
       .locator("li")
       .filter({ has: page.getByText("@drydock/e2e-native", { exact: true }) });
-    await expect(nativeRow.getByText(/from staged discovery/)).toBeVisible({ timeout: 60_000 });
+    await expect(nativeRow.getByText(/from a staged review/)).toBeVisible({ timeout: 60_000 });
     await nativeRow.getByRole("button", { name: "More actions for @drydock/e2e-native" }).click();
     await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "Stop watching @drydock/e2e-native?" })
+      .getByRole("button", { name: "Stop watching", exact: true })
+      .click();
     await expect(nativeRow).toHaveCount(0);
     const nextDiscovery = page.waitForResponse(
       (response) =>
@@ -522,7 +614,7 @@ test("publication monitor automatically watches public staged discoveries and re
     await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
     expect((await nextDiscovery).ok()).toBe(true);
     await page.reload();
-    await expect(monitor.getByText(/from staged discovery/).first()).toBeVisible();
+    await expect(monitor.getByText(/from a staged review/).first()).toBeVisible();
     await expect(nativeRow).toHaveCount(0);
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();

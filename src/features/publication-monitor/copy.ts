@@ -75,11 +75,32 @@ export function watchProblemMessage(lastError: string): string {
   );
 }
 
+// `staged_discovery` covers both the discovery sweep and a stage someone
+// submitted by hand; "a staged review" is true of both.
 const sourceLabels: Record<PublicationWatch["source"], string> = {
   manual: "added by hand",
-  staged_discovery: "from staged discovery",
+  staged_discovery: "from a staged review",
   published_history: "from published review history",
 };
+
+// Check outcomes after which nothing is known about releases since
+// enrollment: an empty observation list would otherwise claim there are none.
+const COVERAGE_UNKNOWN = new Set([
+  "registry_evidence_unavailable",
+  "publication_history_limit",
+  "check_failed",
+  "monitoring_disabled",
+]);
+
+export function emptyObservationsMessage(
+  watch: Pick<PublicationWatch, "lastCheckedAt" | "lastError">,
+): string {
+  if (!watch.lastCheckedAt) return "Not checked yet, so releases since enrollment are unknown.";
+  if (watch.lastError && COVERAGE_UNKNOWN.has(watch.lastError)) {
+    return "Releases since enrollment are unknown until a check succeeds.";
+  }
+  return "No releases since enrollment. Earlier releases are not checked.";
+}
 
 export function watchMetaLine(watch: PublicationWatch): string {
   const checked = watch.lastCheckedAt

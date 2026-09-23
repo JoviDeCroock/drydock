@@ -282,10 +282,49 @@ describe("one package's monitoring for the package page", () => {
         packageName: "@scope/watched",
         watch: null,
         observations: [],
+        alerts: [],
         enrollment: { state: "not_enrolled" },
         viewer: { canStop: true },
       });
     }
+  });
+
+  test("keeps the alert ledger visible across a stop and a re-enrollment", async () => {
+    const owner = await seedOwner();
+    const db = createDb(env.DB);
+    const first = await createPublicationWatch(db, owner.organizationId, "ledger-package");
+    const now = new Date();
+    await savePublicationObservation(
+      db,
+      {
+        id: crypto.randomUUID(),
+        watchId: first.id,
+        organizationId: owner.organizationId,
+        version: "1.0.0",
+        publishedAt: now,
+        firstSeenAt: now,
+        checkedAt: now,
+        status: "published_without_approval",
+      },
+      first.packageName,
+    );
+    await deletePublicationWatch(db, owner.organizationId, first.id);
+    await createPublicationWatch(db, owner.organizationId, "ledger-package");
+    const body = await (
+      await request(owner, "GET", path("ledger-package"))
+    ).json<{
+      observations: unknown[];
+      alerts: unknown[];
+    }>();
+    expect(body.observations).toEqual([]);
+    expect(body.alerts).toEqual([
+      {
+        version: "1.0.0",
+        status: "published_without_approval",
+        createdAt: expect.any(String),
+        acknowledgedAt: null,
+      },
+    ]);
   });
 
   test("explains why a package is not watched", async () => {
