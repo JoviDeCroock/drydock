@@ -71,6 +71,13 @@ visible as a number), and how much of it comes from the no-opt-in `default`
 route versus a deliberate `listed` one. The `outcome` and `route` blobs are
 there for exactly those two questions.
 
+Positionally, `blob5` is the package name, `blob6` the dist-tag, `blob7` the
+outcome, and `blob8` the route. The name, tag, and route are recorded only when
+a review answered; a `not_reviewed` serve records all three empty. The endpoint
+answers any string it is asked about, so recording the request would let anyone
+write arbitrary values — through the tag as easily as the name — into the
+dataset.
+
 Raising the resolution is a cost trade, not a code problem: lowering the badge
 TTL makes proxies refresh more often and the signal finer, and multiplies
 request volume on an anonymous surface. Serving the image from our own origin

@@ -145,10 +145,11 @@ export type AnalyticsEvent =
        * would put unbounded attacker-chosen values into the dataset.
        */
       packageName: string;
+      /** The dist-tag, under the same rule as `packageName`: empty unless a review answered. */
       tag: string;
       /** What the badge said: approved / blocked / reviewed / superseded / not_reviewed. */
       outcome: string;
-      /** Which route answered: `default` (no opt-in) or `listed`. */
+      /** Which route answered: `default` (no opt-in) or `listed`; empty when none did. */
       route: string;
     }
   | {

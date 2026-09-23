@@ -211,13 +211,17 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   recordProductEvent(c.env, {
     name: "badge.served",
     ecosystem,
-    // Only a name a review actually answered for. The endpoint replies
+    // Only a name and tag a review actually answered for. The endpoint replies
     // `not reviewed` for any string, so recording the request would let
-    // anyone write arbitrary values into the dataset.
+    // anyone write arbitrary values into the dataset — a tag as much as a name.
     packageName: match ? packageName : "",
-    tag,
+    tag: match ? tag : "",
     outcome: badgeOutcome(match, supersededBy),
-    route: match && defaultOn.some((row) => row.scanId === match.scanId) ? "default" : "listed",
+    route: match
+      ? defaultOn.some((row) => row.scanId === match.scanId)
+        ? "default"
+        : "listed"
+      : "",
   });
   return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
     "cache-control": "public, max-age=300",

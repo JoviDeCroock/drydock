@@ -214,4 +214,25 @@ describe("badge serves", () => {
     expect(served[0].blobs).not.toContain(requested);
     expect(served[0].blobs[BLOB.dim1 + 2]).toBe("not_reviewed");
   });
+
+  test("an unanswered request's tag is not recorded either", async () => {
+    const written = withAnalytics();
+    const requestedTag = `t${crypto.randomUUID().slice(0, 8)}`;
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/public/badge/npm/left-pad?tag=${requestedTag}`),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+
+    const served = eventsNamed(written, "badge.served");
+    expect(served).toHaveLength(1);
+    // blob6 is `tag`, blob8 the route: both empty when nothing answered.
+    expect(served[0].blobs[BLOB.dim1 + 1]).toBe("");
+    expect(served[0].blobs[BLOB.dim1 + 3]).toBe("");
+    expect(served[0].blobs).not.toContain(requestedTag);
+  });
 });
