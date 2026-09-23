@@ -11,6 +11,14 @@ import {
   type SlackNotificationPayload,
 } from "./slack";
 
+/**
+ * What a fan-out achieved. `delivered`: some recipient or channel accepted it.
+ * `failed`: somewhere to send existed but nothing accepted it, so a retry may
+ * succeed. `no_destination`: no recipient resolved, no transport can reach one,
+ * and no Slack channel is connected, so retrying cannot change anything.
+ */
+export type NotificationDeliveryOutcome = "delivered" | "failed" | "no_destination";
+
 export interface OrganizationNotification {
   organizationId: string;
   /**
@@ -41,12 +49,15 @@ export interface OrganizationNotification {
  * owner rather than whoever triggered the work (a cron sweep, an on-demand
  * button, a GitHub webhook), so the audit trail names the account the
  * notification is addressed to.
+ *
+ * Returns the combined per-channel outcome for callers that must know whether
+ * anyone was actually reached; the per-delivery events are recorded either way.
  */
 export async function deliverOrganizationNotification(
   env: Cloudflare.Env,
   db: AppDb,
   notification: OrganizationNotification,
-): Promise<void> {
+): Promise<NotificationDeliveryOutcome> {
   const { organizationId, scanId, eventPrefix, eventMetadata } = notification;
   const actorUserId =
     (await getOrganizationOwnerUserId(db, organizationId)) ?? notification.ownerUserId;
@@ -54,8 +65,8 @@ export async function deliverOrganizationNotification(
   const sent = `${eventPrefix}.notification_sent`;
   const failed = `${eventPrefix}.notification_failed`;
 
-  const emailDelivery = (async () => {
-    if (!notification.email) return;
+  const emailDelivery = (async (): Promise<NotificationDeliveryOutcome> => {
+    if (!notification.email) return "no_destination";
     const recipients = await resolveNotificationEmails(db, organizationId, actorUserId);
     if (recipients.length === 0) {
       await recordScanEvent(db, {
@@ -63,11 +74,11 @@ export async function deliverOrganizationNotification(
         type: failed,
         metadata: { ...eventMetadata, channel: "email", reason: "no_recipients" },
       });
-      return;
+      return "no_destination";
     }
     const { subject, lines } = notification.email;
     const text = lines.filter((line): line is string => line !== null).join("\n");
-    await Promise.all(
+    const results = await Promise.all(
       recipients.map(async (recipient) => {
         const result = await sendNotificationEmail(env, { to: recipient, subject, text });
         await recordScanEvent(db, {
@@ -80,22 +91,28 @@ export async function deliverOrganizationNotification(
             ...(result.ok ? {} : { reason: result.reason }),
           },
         });
+        return result;
       }),
     );
+    if (results.some((result) => result.ok)) return "delivered";
+    return results.every((result) => result.undeliverable) ? "no_destination" : "failed";
   })();
 
-  const slackDelivery = (async () => {
-    if (!notification.slack) return;
+  const slackDelivery = (async (): Promise<NotificationDeliveryOutcome> => {
+    if (!notification.slack) return "no_destination";
     const delivery = await deliverToSlackConnection(env, db, organizationId, notification.slack);
-    if (!delivery) return;
+    if (!delivery) return "no_destination";
     await recordScanEvent(db, {
       ...eventBase,
       type: delivery.result.ok ? sent : failed,
       metadata: slackEventMetadata(eventMetadata, delivery.channelName, delivery.result),
     });
+    return delivery.result.ok ? "delivered" : "failed";
   })();
 
-  await Promise.all([emailDelivery, slackDelivery]);
+  const outcomes = await Promise.all([emailDelivery, slackDelivery]);
+  if (outcomes.includes("delivered")) return "delivered";
+  return outcomes.includes("failed") ? "failed" : "no_destination";
 }
 
 /**

@@ -16,11 +16,14 @@ import {
 } from "../../server/db/schema";
 import { seedUser } from "./helpers/seed";
 
-const notify = vi.hoisted(() => vi.fn(async () => {}));
+const notify = vi.hoisted(() =>
+  vi.fn(async (): Promise<"delivered" | "failed" | "no_destination"> => "delivered"),
+);
 vi.mock("../../server/lib/notify", () => ({ notifyPublicationDiscrepancy: notify }));
 afterEach(() => {
   vi.restoreAllMocks();
-  notify.mockClear();
+  notify.mockReset();
+  notify.mockImplementation(async () => "delivered");
 });
 
 async function setup() {
@@ -121,33 +124,67 @@ test("all confirmed discrepancy classes alarm but approved and unknown observati
   ).toHaveLength(3);
 });
 
-test("a monitor check notifies once and the killswitch prevents acquisition", async () => {
-  vi.resetModules();
-  const { checkNpmPublicationWatch } =
-    await import("../../server/lib/ecosystems/npm/publication-monitor");
-  const { db, organizationId, watch } = await setup();
-  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const url = String(input);
-    if (url.endsWith(".tgz")) return new Response("inert artifact");
-    return Response.json({
+function unreviewedRelease(watch: { packageName: string; createdAt: Date }, release = "1.0.0") {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({
       name: watch.packageName,
       versions: {
-        "1.0.0": {
+        [release]: {
           name: watch.packageName,
-          version: "1.0.0",
-          dist: { tarball: "https://registry.npmjs.org/alert-package/-/alert-package-1.0.0.tgz" },
+          version: release,
+          dist: {
+            tarball: `https://registry.npmjs.org/alert-package/-/alert-package-${release}.tgz`,
+          },
         },
       },
-      time: { "1.0.0": watch.createdAt.toISOString() },
-    });
-  });
+      time: { [release]: watch.createdAt.toISOString() },
+    }),
+  );
+}
+
+async function recheck(
+  db: Awaited<ReturnType<typeof setup>>["db"],
+  organizationId: string,
+  watchId: string,
+  checkEnv: Cloudflare.Env = env,
+) {
+  const { checkNpmPublicationWatch } =
+    await import("../../server/lib/ecosystems/npm/publication-monitor");
+  await db
+    .update(publicationWatches)
+    .set({ lastCheckedAt: null })
+    .where(eq(publicationWatches.id, watchId));
+  await checkNpmPublicationWatch(
+    db,
+    checkEnv,
+    (await getPublicationWatch(db, organizationId, watchId))!,
+  );
+}
+
+async function alertRow(db: Awaited<ReturnType<typeof setup>>["db"], organizationId: string) {
+  const [alert] = await db
+    .select()
+    .from(publicationAlerts)
+    .where(eq(publicationAlerts.organizationId, organizationId));
+  return alert;
+}
+
+test("a monitor check notifies once and the killswitch prevents acquisition", async () => {
+  vi.resetModules();
+  const { db, organizationId, watch } = await setup();
+  const fetcher = unreviewedRelease(watch);
   const disabled = {
     ...env,
     FLAGS: { getBooleanValue: vi.fn(async () => false) },
   } as unknown as Cloudflare.Env;
-  await checkNpmPublicationWatch(db, disabled, watch);
+  await recheck(db, organizationId, watch.id, disabled);
   expect(fetcher).not.toHaveBeenCalled();
-  await checkNpmPublicationWatch(db, env, watch);
+  // Switched off still leases the watch and says why, so it cannot hold a slot.
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    lastCheckedAt: expect.any(Date),
+    lastError: "monitoring_disabled",
+  });
+  await recheck(db, organizationId, watch.id);
   expect(notify).toHaveBeenCalledTimes(1);
   expect(notify).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -157,16 +194,73 @@ test("a monitor check notifies once and the killswitch prevents acquisition", as
       status: "published_without_approval",
     }),
   );
-  await db
-    .update(publicationWatches)
-    .set({ lastCheckedAt: null })
-    .where(eq(publicationWatches.id, watch.id));
-  await checkNpmPublicationWatch(
-    db,
-    env,
-    (await getPublicationWatch(db, organizationId, watch.id))!,
-  );
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+  await recheck(db, organizationId, watch.id);
   expect(notify).toHaveBeenCalledTimes(1);
+});
+
+test("a failed delivery stays pending and is re-sent on the next check until one lands", async () => {
+  vi.resetModules();
+  const { db, organizationId, watch } = await setup();
+  unreviewedRelease(watch);
+  notify.mockImplementation(async () => "failed");
+  await recheck(db, organizationId, watch.id);
+  // One attempt per check: the alert that just failed is not redriven at once.
+  expect(notify).toHaveBeenCalledTimes(1);
+  expect((await alertRow(db, organizationId))?.notifiedAt).toBeNull();
+
+  await recheck(db, organizationId, watch.id);
+  expect(notify).toHaveBeenCalledTimes(2);
+  expect((await alertRow(db, organizationId))?.notifiedAt).toBeNull();
+
+  notify.mockImplementation(async () => "delivered");
+  await recheck(db, organizationId, watch.id);
+  expect(notify).toHaveBeenCalledTimes(3);
+  expect(notify).toHaveBeenLastCalledWith(
+    expect.objectContaining({ version: "1.0.0", status: "published_without_approval" }),
+  );
+  expect((await alertRow(db, organizationId))?.notifiedAt).toBeInstanceOf(Date);
+
+  await recheck(db, organizationId, watch.id);
+  expect(notify).toHaveBeenCalledTimes(3);
+});
+
+test("an organization with nowhere to deliver is recorded once rather than retried forever", async () => {
+  vi.resetModules();
+  const { db, organizationId, watch } = await setup();
+  unreviewedRelease(watch);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  notify.mockImplementation(async () => "no_destination");
+  await recheck(db, organizationId, watch.id);
+  expect((await alertRow(db, organizationId))?.notifiedAt).toBeInstanceOf(Date);
+  expect(warn).toHaveBeenCalledWith(
+    "npm.publication_monitor.notification_undeliverable",
+    expect.objectContaining({ organizationId, watchId: watch.id }),
+  );
+  await recheck(db, organizationId, watch.id);
+  expect(notify).toHaveBeenCalledTimes(1);
+});
+
+test("a re-enrolled watch never re-sends an alert from the window that was stopped", async () => {
+  vi.resetModules();
+  const { db, organizationId, watch } = await setup();
+  unreviewedRelease(watch);
+  notify.mockImplementation(async () => "failed");
+  await recheck(db, organizationId, watch.id);
+  expect(notify).toHaveBeenCalledTimes(1);
+  expect((await alertRow(db, organizationId))?.notifiedAt).toBeNull();
+
+  await deletePublicationWatch(db, organizationId, watch.id);
+  const replacement = await createPublicationWatch(db, organizationId, watch.packageName);
+  notify.mockImplementation(async () => "delivered");
+  vi.restoreAllMocks();
+  unreviewedRelease(replacement, "2.0.0");
+  await recheck(db, organizationId, replacement.id);
+  // The replacement's own new release alerts; the stopped window's does not.
+  expect(notify).toHaveBeenCalledTimes(2);
+  expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ version: "2.0.0" }));
+  await recheck(db, organizationId, replacement.id);
+  expect(notify).toHaveBeenCalledTimes(2);
 });
 
 test("a stale conflicting verdict cannot alarm after an approval observation wins", async () => {

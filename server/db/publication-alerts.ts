@@ -71,15 +71,18 @@ export async function savePublicationObservation(
 }
 
 /**
- * Alerts this organization holds that nobody has been told about yet.
+ * Alerts in this watch's current observation window that nobody has been told
+ * about yet.
  *
  * The alert row is committed before delivery is attempted, so a transport that
  * was down at the moment of detection would otherwise lose the notification
  * permanently: the observation is settled, so the version is never re-examined.
+ * The ledger outlives a stopped watch, so an alert from an earlier window is
+ * excluded: the dashboard cannot show or acknowledge it, and it must not email.
  */
 export async function listUnnotifiedPublicationAlerts(
   db: AppDb,
-  input: { organizationId: string; packageName: string },
+  input: { organizationId: string; packageName: string; watchId: string },
 ) {
   return db
     .select({
@@ -94,6 +97,7 @@ export async function listUnnotifiedPublicationAlerts(
         eq(publicationAlerts.packageName, input.packageName),
         isNull(publicationAlerts.notifiedAt),
         isNull(publicationAlerts.acknowledgedAt),
+        sql`exists(select 1 from publication_observations o where o.watch_id = ${input.watchId} and o.organization_id = ${publicationAlerts.organizationId} and o.version = ${publicationAlerts.version})`,
       ),
     )
     .limit(20);

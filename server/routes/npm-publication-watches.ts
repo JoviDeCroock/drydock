@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { recordScanEvent } from "../db/events";
 import { acknowledgePublicationAlert } from "../db/publication-alerts";
 import {
   createPublicationWatch,
@@ -8,7 +9,11 @@ import {
   listPublicationWatches,
   PublicationWatchLimitError,
 } from "../db/publication-watches";
-import { requireActiveOrganization } from "../lib/auth/active-organization";
+import {
+  requireActiveOrganization,
+  requireOrganizationRole,
+} from "../lib/auth/active-organization";
+import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
 import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
@@ -45,6 +50,14 @@ npmPublicationWatchRoutes.post("/", async (c) => {
   }
   try {
     const watch = await createPublicationWatch(db, organizationId, packageName);
+    // Enrollment also clears a persisted opt-out, so it is audited alongside
+    // the stop it can undo.
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: c.get("authSession").userId,
+      type: "publication_watch.started",
+      metadata: { packageName: watch.packageName },
+    });
     return c.json({ watch }, 201);
   } catch (err) {
     if (err instanceof PublicationWatchLimitError) {
@@ -65,12 +78,23 @@ npmPublicationWatchRoutes.get("/:id", async (c) => {
   });
 });
 
+// Stopping deletes the observation window (unacknowledged alerts included) and
+// persists an opt-out that automatic enrollment honors, so it is gated like
+// the other integrations that decide what Drydock watches, and audited.
 npmPublicationWatchRoutes.delete("/:id", async (c) => {
   const db = c.var.db;
-  const organizationId = await requireActiveOrganization(c, db);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
   const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
   if (!watch) return c.json({ error: "not found" }, 404);
-  await deletePublicationWatch(db, organizationId, watch.id);
+  if (!(await deletePublicationWatch(db, organizationId, watch.id))) {
+    return c.json({ error: "not found" }, 404);
+  }
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: c.get("authSession").userId,
+    type: "publication_watch.stopped",
+    metadata: { packageName: watch.packageName },
+  });
   return c.json({ deleted: true });
 });
 

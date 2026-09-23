@@ -181,5 +181,6 @@ the route tests.
 Publication monitoring sends `publication_discrepancy` notifications for newly observed
 releases without qualifying prior approval, rejected releases, or differing bytes.
 Email uses configured organization recipients with owner fallback; Slack is independent
-and links to the organization's dashboard. Acknowledgment and retry limits are documented
-in [publication monitoring](./publication-monitor.md#alerts-and-acknowledgment).
+and links to the organization's dashboard. An alert that no channel accepted is re-sent
+on later checks of its watch; acknowledgment and retry rules are documented in
+[publication monitoring](./publication-monitor.md#alerts-and-acknowledgment).

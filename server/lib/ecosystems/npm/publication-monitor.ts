@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { AppDb } from "../../../db/client";
 import {
   isPublicationAlert,
   listUnnotifiedPublicationAlerts,
@@ -5,179 +8,57 @@ import {
   savePublicationObservation,
   type PublicationAlertStatus,
 } from "../../../db/publication-alerts";
-import { notifyPublicationDiscrepancy } from "../../notify";
-import { recordProductEvent } from "../../analytics";
-import { createHash } from "node:crypto";
-import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
-import type { AppDb } from "../../../db/client";
 import {
   getPublicationWatch,
   type PublicationObservation,
   type PublicationWatch,
 } from "../../../db/publication-watches";
 import { publicationObservations, publicationWatches, scans } from "../../../db/schema";
+import { recordProductEvent } from "../../analytics";
+import { notifyPublicationDiscrepancy } from "../../notify";
+import { mapWithConcurrency } from "../../platform/concurrency";
 import { isRecord } from "../../platform/guards";
-import { parseStagedArtifactIntegrity } from "../artifact-integrity";
-import { parseNpmReleaseManifest } from "./manifest";
-import { isPublishedTarballUrlAllowed } from "./published-tarball";
+import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
+import type { PublicationMonitorAdapter } from "../types";
 import { backfillNpmPublicationWatches, enrollStagedReleases } from "./publication-auto-enrollment";
 import { npmPublicationRegistry } from "./publication-registry";
-import type { PublicationMonitorAdapter } from "../types";
-import { emitOperationalEvent } from "../../platform/observability";
+import {
+  classifyPublication,
+  isSettledUnknownReason,
+  PUBLIC_NPM_REGISTRY,
+  releaseRecords,
+  type ArtifactUnavailableReason,
+  type PublishedDigests,
+  type Verdict,
+} from "./publication-verdict";
+import { isPublishedTarballUrlAllowed } from "./published-tarball";
 
-const REGISTRY = "https://registry.npmjs.org";
-const RELEASES_PER_CHECK = 3;
 const METADATA_LIMIT = 4 * 1024 * 1024;
 const TARBALL_LIMIT = 16 * 1024 * 1024;
+const RESPONSE_DEADLINE_MS = 5_000;
+// One check examines a bounded batch of releases, and only some of them may
+// download a tarball. Re-evaluating a release from stored digests, or deciding
+// one that has no Drydock record, costs queries rather than egress.
+const RELEASES_PER_CHECK = 6;
+const TARBALLS_PER_CHECK = 3;
+const SETTLED_RECHECK_MS = 24 * 60 * 60 * 1000;
+const CLAIM_LEASE_MS = 60_000;
+const WATCH_DUE_AFTER_MS = 5 * 60_000;
+// A scheduled invocation shares its D1 query and subrequest allowance with
+// stage discovery and retention. A check costs about a dozen queries and at
+// most one metadata plus three tarball fetches, so 24 checks fit inside both
+// with room to spare while still covering a full 20-watch organization in one
+// tick when it is the only one due.
+const SWEEP_WATCH_BUDGET = 24;
+const SWEEP_CONCURRENCY = 4;
+// No new check starts after this; a running one finishes under its own
+// per-response deadlines, well inside the cron wall-clock limit.
+const SWEEP_DEADLINE_MS = 60_000;
 
-export type ReviewEvidence = Pick<
-  typeof scans.$inferSelect,
-  | "id"
-  | "source"
-  | "registryUrl"
-  | "registryPackageName"
-  | "registryVersion"
-  | "packageName"
-  | "stagedVersion"
-  | "decision"
-  | "decidedAt"
-  | "summaryJson"
-  | "status"
->;
-type Verdict = Pick<PublicationObservation, "status" | "reason" | "scanId">;
-
-function reviewDigest(
-  scan: ReviewEvidence,
-  name: string,
-  version: string,
-  registry: string,
-): { algorithm: "sha1" | "sha256"; digest: string } | null {
-  if (!isRecord(scan.summaryJson) || !isRecord(scan.summaryJson.stagedPublish)) return null;
-  const details = scan.summaryJson.stagedPublish;
-  if (scan.source === "workflow_gate") {
-    try {
-      const manifest = parseNpmReleaseManifest(details.manifest);
-      if (
-        details.mode !== "workflow_gate" ||
-        manifest.package !== name ||
-        manifest.version !== version ||
-        manifest.artifacts.length !== 1
-      )
-        return null;
-      const artifact = manifest.artifacts[0]!;
-      if (typeof details.digest !== "string" || details.digest.toLowerCase() !== artifact.sha256)
-        return null;
-      return { algorithm: "sha256", digest: artifact.sha256 };
-    } catch {
-      return null;
-    }
+class PublicEvidenceError extends Error {
+  constructor(readonly code: "unavailable" | "too_large" | "timeout") {
+    super(`public_evidence_${code}`);
   }
-  if (
-    scan.registryUrl?.replace(/\/$/, "") !== registry ||
-    scan.registryPackageName !== name ||
-    scan.registryVersion !== version
-  )
-    return null;
-  const integrity = parseStagedArtifactIntegrity(details.artifactIntegrity);
-  return integrity?.status === "verified" && integrity.computed
-    ? { algorithm: "sha1", digest: integrity.computed }
-    : null;
-}
-
-function matchesReviewedBytes(
-  scan: ReviewEvidence,
-  name: string,
-  version: string,
-  registry: string,
-  digests: { sha1: string; sha256: string },
-): boolean {
-  const evidence = reviewDigest(scan, name, version, registry);
-  return evidence !== null && digests[evidence.algorithm] === evidence.digest;
-}
-
-export function classifyPublication(
-  name: string,
-  version: string,
-  publishedAt: Date | null,
-  digests: { sha1: string; sha256: string } | null,
-  reviews: readonly ReviewEvidence[],
-  registry = REGISTRY,
-): Verdict {
-  if (!publishedAt)
-    return { status: "unknown", reason: "publication_time_unavailable", scanId: null };
-  if (!digests) return { status: "unknown", reason: "artifact_unavailable", scanId: null };
-  const prior = reviews
-    .filter(
-      (scan) =>
-        scan.packageName === name &&
-        scan.stagedVersion === version &&
-        scan.decidedAt &&
-        scan.decidedAt < publishedAt &&
-        (scan.source === "workflow_gate" ||
-          (scan.registryUrl?.replace(/\/$/, "") === registry &&
-            scan.registryPackageName === name &&
-            scan.registryVersion === version)),
-    )
-    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime());
-  let missingEvidence = false;
-  let mismatched: string | null = null;
-  for (const scan of prior) {
-    if (scan.decision !== "publish" && scan.decision !== "no_publish") continue;
-    const evidence = reviewDigest(scan, name, version, registry);
-    if (!evidence || scan.status !== "complete") {
-      missingEvidence = true;
-      continue;
-    }
-    if (digests[evidence.algorithm] === evidence.digest)
-      return {
-        status: scan.decision === "publish" ? "approved_match" : "published_despite_rejection",
-        reason: null,
-        scanId: scan.id,
-      };
-    if (scan.decision === "publish") mismatched ??= scan.id;
-  }
-  if (
-    reviews.some(
-      (scan) =>
-        scan.packageName === name &&
-        scan.stagedVersion === version &&
-        scan.decidedAt &&
-        scan.decidedAt >= publishedAt &&
-        (scan.source === "workflow_gate" ||
-          (scan.registryUrl?.replace(/\/$/, "") === registry &&
-            scan.registryPackageName === name &&
-            scan.registryVersion === version)),
-    )
-  ) {
-    return { status: "unknown", reason: "decision_history_unavailable", scanId: null };
-  }
-  if (missingEvidence)
-    return { status: "unknown", reason: "review_digest_unavailable", scanId: null };
-  if (mismatched) return { status: "artifact_mismatch", reason: null, scanId: mismatched };
-  // Reviewing a release in Drydock and publishing it without clicking a
-  // decision is an ordinary flow — the dashboard has a filter for it. An
-  // accusing alert ("investigate who published it") for a release the
-  // organization reviewed, of exactly these bytes, is a false positive.
-  const reviewedUndecided = reviews.find(
-    (scan) =>
-      scan.packageName === name &&
-      scan.stagedVersion === version &&
-      scan.status === "complete" &&
-      !scan.decision &&
-      (scan.source === "workflow_gate" ||
-        (scan.registryUrl?.replace(/\/$/, "") === registry &&
-          scan.registryPackageName === name &&
-          scan.registryVersion === version)) &&
-      matchesReviewedBytes(scan, name, version, registry, digests),
-  );
-  if (reviewedUndecided) {
-    return {
-      status: "unknown",
-      reason: "reviewed_without_decision",
-      scanId: reviewedUndecided.id,
-    };
-  }
-  return { status: "published_without_approval", reason: null, scanId: null };
 }
 
 async function consumePublicResponse(
@@ -186,7 +67,11 @@ async function consumePublicResponse(
   consume: (chunk: Uint8Array) => void,
 ) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, RESPONSE_DEADLINE_MS);
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
     const response = await fetch(url, {
@@ -194,17 +79,21 @@ async function consumePublicResponse(
       signal: controller.signal,
       headers: { Accept: "application/json, application/octet-stream" },
     });
-    if (!response.ok || !response.body || Number(response.headers.get("content-length")) > maxBytes)
-      throw new Error("public_evidence_unavailable");
+    if (!response.ok || !response.body) throw new PublicEvidenceError("unavailable");
+    if (Number(response.headers.get("content-length")) > maxBytes)
+      throw new PublicEvidenceError("too_large");
     reader = response.body.getReader();
     let size = 0;
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > maxBytes) throw new Error("public_evidence_too_large");
+      if (size > maxBytes) throw new PublicEvidenceError("too_large");
       consume(chunk.value);
     }
+  } catch (err) {
+    if (err instanceof PublicEvidenceError) throw err;
+    throw new PublicEvidenceError(timedOut ? "timeout" : "unavailable");
   } finally {
     clearTimeout(timeout);
     await reader?.cancel().catch(() => {});
@@ -241,7 +130,7 @@ async function hashPublishedArtifact(
   name: string,
   version: string,
   registry: string,
-) {
+): Promise<PublishedDigests | ArtifactUnavailableReason> {
   if (
     !isRecord(value) ||
     value.name !== name ||
@@ -249,69 +138,145 @@ async function hashPublishedArtifact(
     !isRecord(value.dist) ||
     typeof value.dist.tarball !== "string"
   )
-    return null;
-  const url = new URL(value.dist.tarball);
+    return "artifact_identity_invalid";
+  let url: URL;
+  try {
+    url = new URL(value.dist.tarball);
+  } catch {
+    return "artifact_identity_invalid";
+  }
   if (
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
-    !isPublishedTarballUrlAllowed(url.href, registry, registry !== REGISTRY)
+    !isPublishedTarballUrlAllowed(url.href, registry, registry !== PUBLIC_NPM_REGISTRY)
   )
-    return null;
+    return "artifact_identity_invalid";
   const sha1 = createHash("sha1");
   const sha256 = createHash("sha256");
-  await consumePublicResponse(url.href, TARBALL_LIMIT, (chunk) => {
-    sha1.update(chunk);
-    sha256.update(chunk);
-  });
+  try {
+    await consumePublicResponse(url.href, TARBALL_LIMIT, (chunk) => {
+      sha1.update(chunk);
+      sha256.update(chunk);
+    });
+  } catch (err) {
+    const code = err instanceof PublicEvidenceError ? err.code : "unavailable";
+    return code === "too_large"
+      ? "artifact_too_large"
+      : code === "timeout"
+        ? "artifact_timeout"
+        : "artifact_unavailable";
+  }
   return { sha1: sha1.digest("hex"), sha256: sha256.digest("hex") };
+}
+
+/** The organization `out-of-band-watch` killswitch; on without a FLAGS binding. */
+function publicationMonitoringEnabled(env: Cloudflare.Env, organizationId: string) {
+  if (!env.FLAGS) return Promise.resolve(true);
+  return env.FLAGS.getBooleanValue("out-of-band-watch", true, {
+    targetingKey: organizationId,
+    organizationId,
+  });
+}
+
+function watchKey(watch: { id: string; organizationId: string }) {
+  return and(
+    eq(publicationWatches.id, watch.id),
+    eq(publicationWatches.organizationId, watch.organizationId),
+  );
+}
+
+async function setLastError(
+  db: AppDb,
+  watch: { id: string; organizationId: string },
+  lastError: string | null,
+) {
+  await db.update(publicationWatches).set({ lastError }).where(watchKey(watch));
 }
 
 export async function checkNpmPublicationWatch(
   db: AppDb,
   env: Cloudflare.Env,
   watch: PublicationWatch,
+  options: { monitoringEnabled?: boolean } = {},
 ) {
-  if (
-    env.FLAGS &&
-    !(await env.FLAGS.getBooleanValue("out-of-band-watch", true, {
-      targetingKey: watch.organizationId,
-      organizationId: watch.organizationId,
-    }))
-  )
-    return watch;
-  const registry = npmPublicationRegistry(env);
   const now = new Date();
-  // A lease also makes manual checks and overlapping cron invocations share the bound.
+  // Claim first, before anything that can return early or throw. The lease
+  // makes manual checks and overlapping cron invocations share the bound, and
+  // it moves a switched-off or failing watch to the back of the sweep order
+  // instead of leaving it the oldest forever.
   const claimed = await db
     .update(publicationWatches)
     .set({ lastCheckedAt: now })
     .where(
       and(
-        eq(publicationWatches.id, watch.id),
-        eq(publicationWatches.organizationId, watch.organizationId),
+        watchKey(watch),
         or(
           isNull(publicationWatches.lastCheckedAt),
-          lt(publicationWatches.lastCheckedAt, new Date(now.getTime() - 60_000)),
+          lt(publicationWatches.lastCheckedAt, new Date(now.getTime() - CLAIM_LEASE_MS)),
         ),
       ),
     )
     .returning({ id: publicationWatches.id });
   if (!claimed.length) return getPublicationWatch(db, watch.organizationId, watch.id);
+  const enabled =
+    options.monitoringEnabled ?? (await publicationMonitoringEnabled(env, watch.organizationId));
+  if (!enabled) {
+    await setLastError(db, watch, "monitoring_disabled");
+    return getPublicationWatch(db, watch.organizationId, watch.id);
+  }
+  const { lastError, attempted } = await examineReleases(db, env, watch, now);
+  // Alert rows are committed before delivery is attempted, and a settled
+  // observation is never re-examined, so anything left unsent gets another
+  // chance here rather than being lost with the isolate that failed to send it.
+  await redeliverPendingAlerts(env, db, watch, attempted);
+  await setLastError(db, watch, lastError);
+  return getPublicationWatch(db, watch.organizationId, watch.id);
+}
+
+type ObservedRelease = Pick<
+  PublicationObservation,
+  "id" | "version" | "status" | "reason" | "firstSeenAt" | "checkedAt" | "sha1" | "sha256"
+>;
+
+/** Bytes a previous check already established for this immutable version. */
+function storedArtifact(
+  previous: ObservedRelease | undefined,
+): PublishedDigests | ArtifactUnavailableReason | null {
+  if (previous?.sha1 && previous.sha256) return { sha1: previous.sha1, sha256: previous.sha256 };
+  return previous?.reason === "artifact_too_large" ? "artifact_too_large" : null;
+}
+
+async function examineReleases(
+  db: AppDb,
+  env: Cloudflare.Env,
+  watch: PublicationWatch,
+  now: Date,
+): Promise<{ lastError: string | null; attempted: Set<string> }> {
+  const registry = npmPublicationRegistry(env);
+  const attempted = new Set<string>();
   let lastError: string | null = null;
-  let historyLimit = false;
+  const note = (problem: string) => {
+    lastError ??= problem;
+  };
+  let versions: Record<string, unknown>;
+  let times: Record<string, unknown>;
+  let observed: ObservedRelease[];
   try {
     const metadata = await fetchMetadata(watch.packageName, registry);
-    const versions = isRecord(metadata.versions) ? metadata.versions : {};
-    const times = isRecord(metadata.time) ? metadata.time : {};
-    const observed = await db
+    versions = isRecord(metadata.versions) ? metadata.versions : {};
+    times = isRecord(metadata.time) ? metadata.time : {};
+    observed = await db
       .select({
         id: publicationObservations.id,
         version: publicationObservations.version,
         status: publicationObservations.status,
+        reason: publicationObservations.reason,
         firstSeenAt: publicationObservations.firstSeenAt,
         checkedAt: publicationObservations.checkedAt,
+        sha1: publicationObservations.sha1,
+        sha256: publicationObservations.sha256,
       })
       .from(publicationObservations)
       .where(
@@ -321,74 +286,114 @@ export async function checkNpmPublicationWatch(
         ),
       )
       .limit(10_001);
-    if (observed.length > 10_000 || Object.keys(versions).length > 10_000) {
-      historyLimit = true;
-      throw new Error("publication_history_limit");
+  } catch {
+    emitOperationalEvent("warn", "npm.publication_monitor.check_failed", {
+      organizationId: watch.organizationId,
+      watchId: watch.id,
+    });
+    return { lastError: "registry_evidence_unavailable", attempted };
+  }
+  if (observed.length > 10_000 || Object.keys(versions).length > 10_000) {
+    emitOperationalEvent("warn", "npm.publication_monitor.check_failed", {
+      organizationId: watch.organizationId,
+      watchId: watch.id,
+      reason: "publication_history_limit",
+    });
+    return { lastError: "publication_history_limit", attempted };
+  }
+  const existing = new Map(observed.map((item) => [item.version, item]));
+  const pending: { version: string; publishedAt: Date | null; previous?: ObservedRelease }[] = [];
+  for (const version of Object.keys(versions)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(version)) {
+      note("invalid_version_metadata");
+      continue;
     }
-    const existing = new Map(observed.map((item) => [item.version, item]));
-    const pending: {
-      version: string;
-      publishedAt: Date | null;
-      previous?: Pick<
-        PublicationObservation,
-        "id" | "version" | "status" | "firstSeenAt" | "checkedAt"
-      >;
-    }[] = [];
-    for (const version of Object.keys(versions)) {
-      if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(version)) {
-        lastError = "invalid_version_metadata";
-        continue;
-      }
-      const rawTime = times[version];
-      const millis = typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
-      const publishedAt = Number.isFinite(millis) && millis <= Date.now() ? new Date(millis) : null;
-      if (publishedAt && publishedAt < watch.createdAt) continue;
-      const previous = existing.get(version);
-      if (previous && previous.status !== "unknown") continue;
-      pending.push({ version, publishedAt, previous });
+    const rawTime = times[version];
+    const millis = typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
+    const publishedAt = Number.isFinite(millis) && millis <= Date.now() ? new Date(millis) : null;
+    if (publishedAt && publishedAt < watch.createdAt) continue;
+    const previous = existing.get(version);
+    if (previous && previous.status !== "unknown") continue;
+    if (
+      previous &&
+      isSettledUnknownReason(previous.reason) &&
+      now.getTime() - previous.checkedAt.getTime() < SETTLED_RECHECK_MS
+    )
+      continue;
+    pending.push({ version, publishedAt, previous });
+  }
+  pending.sort(
+    (a, b) =>
+      (a.previous?.checkedAt.getTime() ?? 0) - (b.previous?.checkedAt.getTime() ?? 0) ||
+      (a.publishedAt?.getTime() ?? 0) - (b.publishedAt?.getTime() ?? 0) ||
+      a.version.localeCompare(b.version),
+  );
+
+  let examined = 0;
+  let downloads = 0;
+  for (const item of pending) {
+    if (examined >= RELEASES_PER_CHECK) {
+      note("pending_release_backlog");
+      break;
     }
-    pending.sort(
-      (a, b) =>
-        (a.previous?.checkedAt.getTime() ?? 0) - (b.previous?.checkedAt.getTime() ?? 0) ||
-        (a.publishedAt?.getTime() ?? 0) - (b.publishedAt?.getTime() ?? 0) ||
-        a.version.localeCompare(b.version),
-    );
-    if (pending.length > RELEASES_PER_CHECK) lastError = "pending_release_backlog";
-    for (const item of pending.slice(0, RELEASES_PER_CHECK)) {
-      let digests: { sha1: string; sha256: string } | null = null;
-      if (item.publishedAt) {
-        try {
-          digests = await hashPublishedArtifact(
-            versions[item.version],
-            watch.packageName,
-            item.version,
-            registry,
-          );
-        } catch {}
+    const reviews = await db
+      .select()
+      .from(scans)
+      .where(
+        and(
+          eq(scans.organizationId, watch.organizationId),
+          eq(scans.packageName, watch.packageName),
+          eq(scans.stagedVersion, item.version),
+        ),
+      )
+      .limit(101);
+    let verdict: Verdict;
+    let digests: PublishedDigests | null = null;
+    if (reviews.length > 100) {
+      verdict = { status: "unknown", reason: "review_history_limit", scanId: null };
+    } else {
+      // Bytes matter only against a Drydock record of this release; a release
+      // with none is decided without downloading it.
+      let artifact = storedArtifact(item.previous);
+      if (
+        artifact === null &&
+        item.publishedAt &&
+        releaseRecords(watch.packageName, item.version, reviews, registry).length > 0
+      ) {
+        if (downloads >= TARBALLS_PER_CHECK) {
+          note("pending_release_backlog");
+          continue;
+        }
+        downloads++;
+        artifact = await hashPublishedArtifact(
+          versions[item.version],
+          watch.packageName,
+          item.version,
+          registry,
+        );
+        if (typeof artifact === "string") {
+          note(artifact);
+          emitOperationalEvent("warn", "npm.publication_monitor.artifact_unavailable", {
+            organizationId: watch.organizationId,
+            watchId: watch.id,
+            reason: artifact,
+          });
+        }
       }
-      const reviews = await db
-        .select()
-        .from(scans)
-        .where(
-          and(
-            eq(scans.organizationId, watch.organizationId),
-            eq(scans.packageName, watch.packageName),
-            eq(scans.stagedVersion, item.version),
-          ),
-        )
-        .limit(101);
-      const verdict: Verdict =
-        reviews.length > 100
-          ? { status: "unknown", reason: "review_history_limit", scanId: null }
-          : classifyPublication(
-              watch.packageName,
-              item.version,
-              item.publishedAt,
-              digests,
-              reviews,
-              registry,
-            );
-      const values = {
+      if (artifact !== null && typeof artifact === "object") digests = artifact;
+      verdict = classifyPublication(
+        watch.packageName,
+        item.version,
+        item.publishedAt,
+        artifact,
+        reviews,
+        registry,
+      );
+    }
+    examined++;
+    const createdAlert = await savePublicationObservation(
+      db,
+      {
         id: item.previous?.id ?? crypto.randomUUID(),
         watchId: watch.id,
         organizationId: watch.organizationId,
@@ -399,53 +404,33 @@ export async function checkNpmPublicationWatch(
         ...verdict,
         sha1: digests?.sha1 ?? null,
         sha256: digests?.sha256 ?? null,
-      };
-      const createdAlert = await savePublicationObservation(db, values, watch.packageName);
-      if (isPublicationAlert(verdict.status)) {
-        const alert = {
-          organizationId: watch.organizationId,
-          packageName: watch.packageName,
-          version: item.version,
-          status: verdict.status,
-        };
-        if (createdAlert) {
-          recordProductEvent(env, {
-            name: "publication.discrepancy",
-            organizationId: watch.organizationId,
-            ecosystem: "npm",
-            status: verdict.status,
-          });
-          await deliverPublicationAlert(env, db, watch, alert);
-        }
-      }
-    }
-  } catch {
-    lastError = historyLimit ? "publication_history_limit" : "registry_evidence_unavailable";
-    emitOperationalEvent("warn", "npm.publication_monitor.check_failed", {
-      organizationId: watch.organizationId,
-      watchId: watch.id,
-    });
-  }
-  // Alert rows are committed before delivery is attempted, and a settled
-  // observation is never re-examined, so anything left unsent gets another
-  // chance here rather than being lost with the isolate that failed to send it.
-  await redeliverPendingAlerts(env, db, watch);
-
-  await db
-    .update(publicationWatches)
-    .set({ lastError })
-    .where(
-      and(
-        eq(publicationWatches.id, watch.id),
-        eq(publicationWatches.organizationId, watch.organizationId),
-      ),
+      },
+      watch.packageName,
     );
-  return getPublicationWatch(db, watch.organizationId, watch.id);
+    if (createdAlert && isPublicationAlert(verdict.status)) {
+      recordProductEvent(env, {
+        name: "publication.discrepancy",
+        organizationId: watch.organizationId,
+        ecosystem: "npm",
+        status: verdict.status,
+      });
+      attempted.add(item.version);
+      await deliverPublicationAlert(env, db, watch, {
+        organizationId: watch.organizationId,
+        packageName: watch.packageName,
+        version: item.version,
+        status: verdict.status,
+      });
+    }
+  }
+  return { lastError, attempted };
 }
 
 /**
- * Send one alert and record that it was sent. A failure is logged and leaves
- * `notified_at` null, which is what the re-drive below looks for.
+ * Send one alert. It is marked notified when a channel accepted it, or when
+ * the organization has nowhere to send it (no recipient and no Slack channel),
+ * since retrying cannot change that. A delivery that failed stays pending, and
+ * the redrive below tries it again on the watch's next check.
  */
 async function deliverPublicationAlert(
   env: Cloudflare.Env,
@@ -458,15 +443,19 @@ async function deliverPublicationAlert(
     status: PublicationAlertStatus;
   },
 ) {
+  const context = { organizationId: watch.organizationId, watchId: watch.id };
   try {
-    const delivered = await notifyPublicationDiscrepancy({ env, db, ...alert });
-    if (delivered === false) return;
+    const outcome = await notifyPublicationDiscrepancy({ env, db, ...alert });
+    if (outcome === "failed") {
+      emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", context);
+      return;
+    }
+    if (outcome === "no_destination") {
+      emitOperationalEvent("warn", "npm.publication_monitor.notification_undeliverable", context);
+    }
     await markPublicationAlertNotified(db, alert);
   } catch {
-    emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", {
-      organizationId: watch.organizationId,
-      watchId: watch.id,
-    });
+    emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", context);
   }
 }
 
@@ -474,17 +463,22 @@ async function redeliverPendingAlerts(
   env: Cloudflare.Env,
   db: AppDb,
   watch: { id: string; organizationId: string; packageName: string },
+  attempted: ReadonlySet<string>,
 ) {
   let pending: Awaited<ReturnType<typeof listUnnotifiedPublicationAlerts>>;
   try {
     pending = await listUnnotifiedPublicationAlerts(db, {
       organizationId: watch.organizationId,
       packageName: watch.packageName,
+      watchId: watch.id,
     });
   } catch {
     return;
   }
   for (const alert of pending) {
+    // One attempt per alert per check; a delivery that just failed waits for
+    // the next check rather than hammering a transport that is down.
+    if (attempted.has(alert.version)) continue;
     await deliverPublicationAlert(env, db, watch, {
       organizationId: watch.organizationId,
       packageName: watch.packageName,
@@ -494,23 +488,123 @@ async function redeliverPendingAlerts(
   }
 }
 
-async function sweepNpmPublicationWatches(db: AppDb, env: Cloudflare.Env) {
-  const watches = await db
+/**
+ * Due watches in round-robin order across organizations: every organization's
+ * oldest due watch before any organization's second. A limit taken from this
+ * order gives each organization at most its share of the tick, however many
+ * watches it holds.
+ */
+async function dueWatchesByOrganization(db: AppDb, now: Date, limit: number) {
+  const dueBefore = now.getTime() - WATCH_DUE_AFTER_MS;
+  const ranked = await db.all<{ id: string }>(sql`
+    select id from (
+      select id, last_checked_at, row_number() over (
+        partition by organization_id order by coalesce(last_checked_at, 0), id
+      ) as organization_rank
+      from publication_watches
+      where last_checked_at is null or last_checked_at < ${dueBefore}
+    ) order by organization_rank, coalesce(last_checked_at, 0), id limit ${limit}`);
+  if (ranked.length === 0) return [];
+  const rows = await db
     .select()
     .from(publicationWatches)
     .where(
-      or(
-        isNull(publicationWatches.lastCheckedAt),
-        lt(publicationWatches.lastCheckedAt, new Date(Date.now() - 5 * 60_000)),
+      inArray(
+        publicationWatches.id,
+        ranked.map((row) => row.id),
       ),
-    )
-    .orderBy(asc(publicationWatches.lastCheckedAt), asc(publicationWatches.id))
-    .limit(8);
-  for (const watch of watches) await checkNpmPublicationWatch(db, env, watch);
+    );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ranked.flatMap((row) => byId.get(row.id) ?? []);
+}
+
+/**
+ * Move every due watch of an organization whose monitoring is switched off to
+ * the back of the order, so it holds no sweep slot, and say why on the watch.
+ */
+async function deferSwitchedOffOrganization(db: AppDb, organizationId: string, now: Date) {
+  await db
+    .update(publicationWatches)
+    .set({ lastCheckedAt: now, lastError: "monitoring_disabled" })
+    .where(
+      and(
+        eq(publicationWatches.organizationId, organizationId),
+        or(
+          isNull(publicationWatches.lastCheckedAt),
+          lt(publicationWatches.lastCheckedAt, new Date(now.getTime() - WATCH_DUE_AFTER_MS)),
+        ),
+      ),
+    );
+}
+
+/** A check that threw still advances its watch, so one failure cannot pin a slot. */
+async function recordWatchFailure(db: AppDb, watch: PublicationWatch, err: unknown) {
+  emitOperationalEvent("error", "npm.publication_monitor.watch_failed", {
+    organizationId: watch.organizationId,
+    watchId: watch.id,
+    error: describeOperationalError(err),
+  });
+  try {
+    await db
+      .update(publicationWatches)
+      .set({ lastCheckedAt: new Date(), lastError: "check_failed" })
+      .where(watchKey(watch));
+  } catch {
+    // The database itself is failing; the next tick retries the whole sweep.
+  }
+}
+
+export async function sweepNpmPublicationWatches(
+  db: AppDb,
+  env: Cloudflare.Env,
+  options: { budget?: number; deadlineMs?: number } = {},
+) {
+  const startedAt = Date.now();
+  const now = new Date(startedAt);
+  const budget = options.budget ?? SWEEP_WATCH_BUDGET;
+  const deadline = startedAt + (options.deadlineMs ?? SWEEP_DEADLINE_MS);
+  // Over-fetch so watches of switched-off organizations, which are deferred
+  // rather than checked, do not leave the check budget unspent.
+  const candidates = await dueWatchesByOrganization(db, now, budget * 2);
+  const enabled = new Map<string, Promise<boolean>>();
+  const deferred = new Set<string>();
+  const counts = { checked: 0, failed: 0, skipped: 0, switchedOff: 0 };
+  let started = 0;
+  await mapWithConcurrency(candidates, SWEEP_CONCURRENCY, async (watch) => {
+    try {
+      let organizationEnabled = enabled.get(watch.organizationId);
+      if (!organizationEnabled) {
+        organizationEnabled = publicationMonitoringEnabled(env, watch.organizationId);
+        enabled.set(watch.organizationId, organizationEnabled);
+      }
+      if (!(await organizationEnabled)) {
+        if (deferred.has(watch.organizationId)) return;
+        deferred.add(watch.organizationId);
+        counts.switchedOff++;
+        await deferSwitchedOffOrganization(db, watch.organizationId, now);
+        return;
+      }
+      if (started >= budget || Date.now() > deadline) {
+        counts.skipped++;
+        return;
+      }
+      started++;
+      await checkNpmPublicationWatch(db, env, watch, { monitoringEnabled: true });
+      counts.checked++;
+    } catch (err) {
+      counts.failed++;
+      await recordWatchFailure(db, watch, err);
+    }
+  });
+  emitOperationalEvent("info", "npm.publication_monitor.swept", {
+    candidates: candidates.length,
+    ...counts,
+    durationMs: Date.now() - startedAt,
+  });
 }
 
 export const npmPublicationMonitor: PublicationMonitorAdapter = {
   backfillWatches: (db, env) => backfillNpmPublicationWatches(db, npmPublicationRegistry(env)),
-  sweepWatches: sweepNpmPublicationWatches,
+  sweepWatches: (db, env) => sweepNpmPublicationWatches(db, env),
   registerStagedReleases: enrollStagedReleases,
 };

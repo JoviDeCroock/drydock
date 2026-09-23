@@ -17,6 +17,7 @@ import {
 } from "../../models/getting-started";
 import { NpmConnectionModel, npmConnectionScope } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
+import { normalizeRole, roleCanManageIntegrations } from "../../../server/lib/auth/roles";
 import {
   ScanListModel,
   type ScanDecision,
@@ -159,7 +160,10 @@ export default function DashboardPage() {
             error={overview.error}
           />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
-          <PublicationMonitor reviews={scans.scans} />
+          <PublicationMonitor
+            reviews={scans.scans}
+            canStop={roleCanManageIntegrations(normalizeRole(organizations.active.value?.role))}
+          />
         </>
       ) : (
         <LoadingState

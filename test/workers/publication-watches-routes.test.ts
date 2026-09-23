@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { and, eq } from "drizzle-orm";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { savePublicationObservation } from "../../server/db/publication-alerts";
 import { createPublicationWatch } from "../../server/db/publication-watches";
 import { scanEvents, scans } from "../../server/db/schema";
@@ -183,4 +184,55 @@ test("acknowledgment is scoped, idempotent, audited and preserves discrepancy ev
     );
   expect(events).toHaveLength(1);
   expect(events[0]?.actorUserId).toBe(owner.userId);
+});
+
+test("only integration managers can stop a watch; enrolling and stopping are audited", async () => {
+  const owner = await seedOwner();
+  const member = await seedUser({ name: "Member" });
+  const admin = await seedUser({ name: "Admin" });
+  const db = createDb(env.DB);
+  await addOrganizationMember(db, {
+    organizationId: owner.organizationId,
+    userId: member.userId,
+    role: "member",
+  });
+  await addOrganizationMember(db, {
+    organizationId: owner.organizationId,
+    userId: admin.userId,
+    role: "admin",
+  });
+  // Any member may add monitoring.
+  const created = await request(
+    member,
+    "POST",
+    "",
+    { packageName: "audited-package" },
+    owner.organizationId,
+  );
+  expect(created.status).toBe(201);
+  const { watch } = await created.json<{ watch: { id: string } }>();
+
+  // Stopping deletes alert history and persists an opt-out: members are refused.
+  const refused = await request(member, "DELETE", `/${watch.id}`, undefined, owner.organizationId);
+  expect(refused.status).toBe(403);
+  expect(
+    (await request(member, "GET", `/${watch.id}`, undefined, owner.organizationId)).status,
+  ).toBe(200);
+  expect(
+    (await request(admin, "DELETE", `/${watch.id}`, undefined, owner.organizationId)).status,
+  ).toBe(200);
+
+  const events = await db
+    .select()
+    .from(scanEvents)
+    .where(eq(scanEvents.organizationId, owner.organizationId));
+  expect(
+    events
+      .filter((event) => event.type.startsWith("publication_watch."))
+      .map((event) => [event.type, event.actorUserId, event.metadataJson])
+      .sort(),
+  ).toEqual([
+    ["publication_watch.started", member.userId, { packageName: "audited-package" }],
+    ["publication_watch.stopped", admin.userId, { packageName: "audited-package" }],
+  ]);
 });

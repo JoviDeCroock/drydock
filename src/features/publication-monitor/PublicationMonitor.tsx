@@ -29,6 +29,16 @@ const checkErrors: Record<string, string> = {
     "More releases are waiting to be checked. Existing observations are retained; coverage is incomplete.",
   invalid_version_metadata:
     "Some registry versions have invalid metadata and could not be checked. Coverage is incomplete.",
+  artifact_too_large:
+    "A published tarball exceeds the 16 MiB hashing limit, so that release cannot be compared with its reviews.",
+  artifact_timeout:
+    "A published tarball did not download in time. It is retried on the next check; coverage is incomplete.",
+  artifact_unavailable:
+    "A published tarball could not be downloaded. It is retried on the next check; coverage is incomplete.",
+  artifact_identity_invalid:
+    "A release's registry metadata does not name a valid tarball on npm, so its bytes cannot be compared.",
+  monitoring_disabled: "Publication monitoring is switched off for this organization.",
+  check_failed: "The latest check failed. It is retried on the next scheduled check.",
 };
 
 const sourceLabels: Record<PublicationWatch["source"], string> = {
@@ -46,7 +56,14 @@ function watchMetaLine(watch: PublicationWatch): string {
 
 // Same header/row anatomy as the dashboard's Recent reviews card, so the two
 // lists read as one surface rather than a second feature bolted underneath.
-export function PublicationMonitor({ reviews }: { reviews: ReadonlySignal<unknown> }) {
+export function PublicationMonitor({
+  reviews,
+  canStop,
+}: {
+  reviews: ReadonlySignal<unknown>;
+  /** Stopping deletes alert history, so only integration managers may. */
+  canStop: boolean;
+}) {
   const model = useModel(PublicationWatchesModel);
   const lastReviews = useSignal(reviews.peek());
   useSignalEffect(() => {
@@ -213,13 +230,15 @@ export function PublicationMonitor({ reviews }: { reviews: ReadonlySignal<unknow
                       >
                         {expanded ? "Hide releases" : "Show releases"}
                       </MenuItem>
-                      <MenuItem
-                        tone="danger"
-                        disabled={model.busy}
-                        onSelect={() => void model.remove(watch.id)}
-                      >
-                        Stop watching
-                      </MenuItem>
+                      {canStop ? (
+                        <MenuItem
+                          tone="danger"
+                          disabled={model.busy}
+                          onSelect={() => void model.remove(watch.id)}
+                        >
+                          Stop watching
+                        </MenuItem>
+                      ) : null}
                     </Menu>
                   </div>
                 </div>

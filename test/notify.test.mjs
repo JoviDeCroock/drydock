@@ -760,10 +760,51 @@ describe("notifyPublicationDiscrepancy", () => {
     );
   });
 
-  test("does not deliver for a deleted organization", async () => {
+  test("does not deliver for an organization with no owner and keeps the alert pending", async () => {
     dbMock.getOrganizationOwnerUserId.mockResolvedValue(null);
-    await notifyPublicationDiscrepancy(input);
+    expect(await notifyPublicationDiscrepancy(input)).toBe("failed");
     expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
     expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
+  });
+
+  // The monitor marks an alert notified only on `delivered` or
+  // `no_destination`; `failed` is what makes it re-send on the next check.
+  test.each([
+    [
+      "one email lands while Slack fails",
+      { ok: true },
+      { ok: false, reason: "http_500" },
+      "delivered",
+    ],
+    ["only Slack lands", { ok: false, reason: "smtp down" }, { ok: true }, "delivered"],
+    [
+      "every configured channel fails",
+      { ok: false, reason: "smtp down" },
+      { ok: false, statusClass: "5xx", reason: "http_500" },
+      "failed",
+    ],
+    [
+      "email has no transport and Slack fails",
+      { ok: false, reason: "SEND_EMAIL binding is not configured", undeliverable: true },
+      { ok: false, statusClass: "5xx", reason: "http_500" },
+      "failed",
+    ],
+  ])("reports the real outcome when %s", async (_case, email, slack, outcome) => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    emailMock.sendNotificationEmail.mockResolvedValue(email);
+    slackMock.postSlackMessage.mockResolvedValue(slack);
+    expect(await notifyPublicationDiscrepancy(input)).toBe(outcome);
+  });
+
+  test("reports no destination when nothing could ever receive it", async () => {
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+    expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
+    dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
+    emailMock.sendNotificationEmail.mockResolvedValue({
+      ok: false,
+      reason: "SEND_EMAIL binding is not configured",
+      undeliverable: true,
+    });
+    expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
   });
 });

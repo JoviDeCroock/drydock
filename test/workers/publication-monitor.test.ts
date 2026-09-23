@@ -7,12 +7,9 @@ import {
   getPublicationWatch,
   listPublicationObservations,
 } from "../../server/db/publication-watches";
-import { publicationWatches, scans } from "../../server/db/schema";
-import {
-  checkNpmPublicationWatch,
-  classifyPublication,
-  type ReviewEvidence,
-} from "../../server/lib/ecosystems/npm/publication-monitor";
+import { publicationObservations, publicationWatches, scans } from "../../server/db/schema";
+import { checkNpmPublicationWatch } from "../../server/lib/ecosystems/npm/publication-monitor";
+import type { ReviewEvidence } from "../../server/lib/ecosystems/npm/publication-verdict";
 import { createHash } from "node:crypto";
 import { seedUser } from "./helpers/seed";
 
@@ -29,6 +26,7 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
     registryUrl: "https://registry.npmjs.org",
     registryPackageName: name,
     registryVersion: version,
+    registryStatusSupersededAt: null,
     packageName: name,
     stagedVersion: version,
     decision: "publish",
@@ -54,78 +52,8 @@ async function seed() {
 }
 afterEach(() => vi.restoreAllMocks());
 
-describe("publication evidence", () => {
-  test("binds staged evidence to digest, registry coordinates and prior decision", () => {
-    const classify = (reviews: ReturnType<typeof review>[]) =>
-      classifyPublication(name, version, published, { sha1, sha256 }, reviews).status;
-    expect(classify([review()])).toBe("approved_match");
-    expect(classify([review({ decision: "no_publish" })])).toBe("published_despite_rejection");
-    expect(classify([review({ decidedAt: published })])).toBe("unknown");
-    expect(classify([review({ decidedAt: new Date(published.getTime() + 1000) })])).toBe("unknown");
-    expect(classify([review({ registryUrl: "https://private.example" })])).toBe(
-      "published_without_approval",
-    );
-    expect(classify([review({ registryPackageName: "different" })])).toBe(
-      "published_without_approval",
-    );
-    // Reviewed in Drydock of exactly these bytes but never formally decided is
-    // an ordinary flow (the dashboard filters for it), not a bypass. Accusing
-    // the owner of publishing behind their own back is the false positive that
-    // burns trust fastest.
-    const undecided = classifyPublication(name, version, published, { sha1, sha256 }, [
-      review({ decision: null, decidedAt: null }),
-    ]);
-    expect(undecided.status).toBe("unknown");
-    expect(undecided.reason).toBe("reviewed_without_decision");
-    expect(undecided.scanId).toBe("scan1");
-    // A review of *different* bytes with no decision is still unapproved.
-    expect(
-      classifyPublication(
-        name,
-        version,
-        published,
-        { sha1: "c".repeat(40), sha256: "d".repeat(64) },
-        [review({ decision: null, decidedAt: null })],
-      ).status,
-    ).toBe("published_without_approval");
-    expect(
-      classifyPublication(name, version, published, { sha1: "b".repeat(40), sha256 }, [review()])
-        .status,
-    ).toBe("artifact_mismatch");
-    expect(classify([review({ summaryJson: {} })])).toBe("unknown");
-    expect(classifyPublication(name, version, null, { sha1, sha256 }, [review()]).status).toBe(
-      "unknown",
-    );
-  });
-  test("verifies workflow manifest identity and actual single artifact digest", () => {
-    const gate = review({
-      source: "workflow_gate",
-      registryUrl: null,
-      summaryJson: {
-        stagedPublish: {
-          mode: "workflow_gate",
-          digest: sha256,
-          manifest: {
-            schema: "drydock.release-artifacts.v1",
-            ecosystem: "npm",
-            package: name,
-            version,
-            artifacts: [{ path: "package.tgz", sha256 }],
-          },
-        },
-      },
-    });
-    expect(classifyPublication(name, version, published, { sha1, sha256 }, [gate]).status).toBe(
-      "approved_match",
-    );
-    expect(classifyPublication("other", version, published, { sha1, sha256 }, [gate]).status).toBe(
-      "published_without_approval",
-    );
-  });
-});
-
 describe("public package monitoring", () => {
-  test("discovers direct releases without a scan, hashes fetched bytes and preserves observation on network failures", async () => {
+  test("decides direct releases without a scan without downloading them and preserves observation on network failures", async () => {
     const { db, organizationId, watch } = await seed();
     const timestamp = new Date(watch.createdAt.getTime() + 1).toISOString();
     const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -153,11 +81,12 @@ describe("public package monitoring", () => {
     const [observation] = await listPublicationObservations(db, organizationId, watch.id);
     expect(observation).toMatchObject({
       status: "published_without_approval",
-      sha1,
-      sha256,
+      sha1: null,
+      sha256: null,
       scanId: null,
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    // A release with no Drydock record needs no bytes: only metadata is read.
+    expect(fetcher).toHaveBeenCalledTimes(1);
     await db
       .update(publicationWatches)
       .set({ lastCheckedAt: new Date(0) })
@@ -190,8 +119,12 @@ describe("public package monitoring", () => {
     );
     await checkNpmPublicationWatch(db, env, watch);
     const observations = await listPublicationObservations(db, organizationId, watch.id);
-    expect(observations).toHaveLength(2);
-    expect(observations.every((row) => row.status === "unknown")).toBe(true);
+    expect(
+      Object.fromEntries(observations.map((row) => [row.version, [row.status, row.reason]])),
+    ).toEqual({
+      "1.0.0": ["unknown", "publication_time_unavailable"],
+      "2.0.0": ["published_without_approval", null],
+    });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   test("organization ownership, duplicate enrollment, and cascade deletion", async () => {
@@ -272,37 +205,192 @@ test.each(["publish", "no_publish"] as const)(
   },
 );
 
-test("bounded batches drain new versions and do not refetch resolved releases", async () => {
+function registryMetadata(watch: { createdAt: Date }, releases: readonly string[]) {
+  return {
+    name,
+    versions: Object.fromEntries(
+      releases.map((release) => [
+        release,
+        {
+          name,
+          version: release,
+          dist: { tarball: `https://registry.npmjs.org/pkg/-/pkg-${release}.tgz` },
+        },
+      ]),
+    ),
+    time: Object.fromEntries(releases.map((release) => [release, watch.createdAt.toISOString()])),
+  };
+}
+
+function isTarball(input: RequestInfo | URL) {
+  return String(input).endsWith(".tgz");
+}
+
+async function insertReview(
+  db: Awaited<ReturnType<typeof seed>>["db"],
+  organizationId: string,
+  overrides: Partial<typeof scans.$inferInsert> = {},
+) {
+  await db.insert(scans).values({
+    ...review(),
+    id: crypto.randomUUID(),
+    stageId: `stage-${crypto.randomUUID()}`,
+    organizationId,
+    decidedAt: new Date(0),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+}
+
+async function releaseLease(db: Awaited<ReturnType<typeof seed>>["db"], watchId: string) {
+  await db
+    .update(publicationWatches)
+    .set({ lastCheckedAt: new Date(0) })
+    .where(eq(publicationWatches.id, watchId));
+}
+
+test("bounded batches drain reviewed versions three downloads at a time", async () => {
   const { db, organizationId, watch } = await seed();
-  const versions = Object.fromEntries(
-    ["1.0.0", "2.0.0", "3.0.0", "4.0.0"].map((version) => [
-      version,
-      { name, version, dist: { tarball: `https://registry.npmjs.org/pkg/-/pkg-${version}.tgz` } },
-    ]),
-  );
-  const time = Object.fromEntries(
-    Object.keys(versions).map((version) => [version, watch.createdAt.toISOString()]),
-  );
+  const releases = ["1.0.0", "2.0.0", "3.0.0", "4.0.0"];
+  for (const release of releases) {
+    await insertReview(db, organizationId, {
+      stagedVersion: release,
+      registryVersion: release,
+    });
+  }
   const fetcher = vi
     .spyOn(globalThis, "fetch")
     .mockImplementation(async (input) =>
-      String(input).endsWith(".tgz")
-        ? new Response(bytes)
-        : Response.json({ name, versions, time }),
+      isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, releases)),
     );
   await checkNpmPublicationWatch(db, env, watch);
   expect(await listPublicationObservations(db, organizationId, watch.id)).toHaveLength(3);
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
     "pending_release_backlog",
   );
-  await db
-    .update(publicationWatches)
-    .set({ lastCheckedAt: new Date(0) })
-    .where(eq(publicationWatches.id, watch.id));
+  await releaseLease(db, watch.id);
   await checkNpmPublicationWatch(db, env, watch);
-  expect(await listPublicationObservations(db, organizationId, watch.id)).toHaveLength(4);
+  const observations = await listPublicationObservations(db, organizationId, watch.id);
+  expect(observations.map((row) => row.status)).toEqual(Array(4).fill("approved_match"));
+  expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(4);
   expect(fetcher).toHaveBeenCalledTimes(6);
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+});
+
+test("releases without a Drydock record drain in bounded batches with no downloads", async () => {
+  const { db, organizationId, watch } = await seed();
+  const releases = Array.from({ length: 8 }, (_, index) => `${index + 1}.0.0`);
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => Response.json(registryMetadata(watch, releases)));
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toHaveLength(6);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
+    "pending_release_backlog",
+  );
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toHaveLength(8);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+test("an oversized tarball of a reviewed release stays unknown, says why, and is not refetched", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input)
+      ? new Response(new Uint8Array(8), {
+          headers: { "content-length": String(17 * 1024 * 1024) },
+        })
+      : Response.json(registryMetadata(watch, [version])),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "unknown", reason: "artifact_too_large", sha1: null },
+  ]);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
+    "artifact_too_large",
+  );
+  expect(warn).toHaveBeenCalledWith(
+    "npm.publication_monitor.artifact_unavailable",
+    expect.objectContaining({ organizationId, reason: "artifact_too_large" }),
+  );
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(1);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+});
+
+test("a padded tarball cannot hide a release no one reviewed", async () => {
+  const { db, organizationId, watch } = await seed();
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input)
+      ? new Response(new Uint8Array(8), {
+          headers: { "content-length": String(64 * 1024 * 1024) },
+        })
+      : Response.json(registryMetadata(watch, [version])),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "published_without_approval" },
+  ]);
+  expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(0);
+});
+
+test("settled unknown releases are re-evaluated from stored digests, not a new download", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId, { decision: null, decidedAt: null });
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) =>
+      isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
+    );
+  await checkNpmPublicationWatch(db, env, watch);
+  const [first] = await listPublicationObservations(db, organizationId, watch.id);
+  expect(first).toMatchObject({
+    status: "unknown",
+    reason: "reviewed_without_decision",
+    sha1,
+    sha256,
+  });
+  // Within the settled cadence the release is not re-examined at all.
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  expect((await listPublicationObservations(db, organizationId, watch.id))[0]?.checkedAt).toEqual(
+    first?.checkedAt,
+  );
+  // Once due, it is re-evaluated from the digests already stored.
+  await db
+    .update(publicationObservations)
+    .set({ checkedAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
+    .where(eq(publicationObservations.watchId, watch.id));
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  const [again] = await listPublicationObservations(db, organizationId, watch.id);
+  expect(again).toMatchObject({ reason: "reviewed_without_decision", sha1, sha256 });
+  expect(again?.checkedAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+  expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(1);
+});
+
+test("a reviewed release whose tarball leaves the registry origin is never fetched", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId);
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      name,
+      versions: {
+        [version]: { name, version, dist: { tarball: "https://evil.example/package/-/p.tgz" } },
+      },
+      time: { [version]: watch.createdAt.toISOString() },
+    }),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "unknown", reason: "artifact_identity_invalid" },
+  ]);
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 test("oversized anonymous metadata cannot create a successful coverage claim", async () => {
@@ -315,16 +403,6 @@ test("oversized anonymous metadata cannot create a successful coverage claim", a
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
     "registry_evidence_unavailable",
   );
-});
-
-test("a decision overwritten after publication leaves its earlier history unknown", () => {
-  const overwritten = review({ decidedAt: new Date(published.getTime() + 1000) });
-  expect(
-    classifyPublication(name, version, published, { sha1, sha256 }, [overwritten]),
-  ).toMatchObject({ status: "unknown", reason: "decision_history_unavailable" });
-  expect(
-    classifyPublication(name, version, published, { sha1, sha256 }, [overwritten, review()]).status,
-  ).toBe("approved_match");
 });
 
 test("organization enrollment is capped at twenty and duplicate enrollment remains idempotent", async () => {

@@ -1,7 +1,7 @@
 import { type AppDb } from "../../db/client";
 import { getOrganizationName, getOrganizationOwnerUserId } from "../../db/organizations";
 import { emitOperationalEvent } from "../platform/observability";
-import { deliverOrganizationNotification } from "./deliver";
+import { deliverOrganizationNotification, type NotificationDeliveryOutcome } from "./deliver";
 import { dashboardUrl } from "./links";
 
 export interface NotifyPublicationDiscrepancyInput {
@@ -34,24 +34,25 @@ const DESCRIPTIONS = {
  * monitor claims each alert before delivery; the message describes the recorded
  * evidence without inferring credential compromise or registry bypass.
  *
- * Returns whether the organization was actually reached. An organization with
- * no owner row has nobody to tell, and the caller keeps the alert pending
- * rather than recording a delivery that never happened.
+ * Returns the delivery outcome so the caller records a notification only once
+ * someone was reached, or once there is nobody to reach. An organization with
+ * no owner row is an anomaly rather than a settled lack of recipients, so it
+ * reports `failed` and the caller keeps the alert pending.
  */
 export async function notifyPublicationDiscrepancy(
   input: NotifyPublicationDiscrepancyInput,
-): Promise<boolean> {
+): Promise<NotificationDeliveryOutcome> {
   const { env, db, organizationId, packageName, version, status } = input;
   const ownerUserId = await getOrganizationOwnerUserId(db, organizationId);
   if (!ownerUserId) {
     emitOperationalEvent("warn", "publication_alert.no_owner", { organizationId, packageName });
-    return false;
+    return "failed";
   }
   const organizationName = await getOrganizationName(db, organizationId);
   const { title, detail } = DESCRIPTIONS[status];
   const release = `${packageName}@${version}`;
   const link = dashboardUrl(env, organizationId);
-  await deliverOrganizationNotification(env, db, {
+  return deliverOrganizationNotification(env, db, {
     organizationId,
     ownerUserId,
     eventPrefix: "scan",
@@ -79,5 +80,4 @@ export async function notifyPublicationDiscrepancy(
       dashboardUrl: link,
     },
   });
-  return true;
 }
