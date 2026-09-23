@@ -44,10 +44,17 @@ function frontmatterDescription(file) {
     .trim();
 }
 
+/** CLAUDE.md is optional — it held a single `@AGENTS.md` pointer and was deleted
+ * in 45793ba0. The budget covers whichever of the two exist, because both load
+ * on every session when they do. */
+function sizeIfPresent(file) {
+  return existsSync(path.join(repoRoot, file)) ? size(file) : 0;
+}
+
 describe("agent context budget", () => {
   // Loaded on every session, before the task is known.
   test("AGENTS.md and CLAUDE.md together stay under 6,000 characters", () => {
-    expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(6_000);
+    expect(sizeIfPresent("AGENTS.md") + sizeIfPresent("CLAUDE.md")).toBeLessThanOrEqual(6_000);
   });
 
   test("every skill directory has a SKILL.md", () => {
