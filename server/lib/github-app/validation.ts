@@ -21,8 +21,8 @@ const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
  * `publisher.name` all fit.
  *
  * They live here, in the dependency-free validation module, because the wizard
- * UI checks the same shapes before it lets a maintainer trigger a GitHub
- * mutation — a listed GitHub environment can be outside this allowlist.
+ * UI checks the same shapes before it asks for a generated workflow — a GitHub
+ * environment can be outside this allowlist and still be verified and mapped.
  */
 export const GATE_SETUP_PACKAGE_NAME_RE = /^[@A-Za-z0-9][A-Za-z0-9@._/-]{0,213}$/;
 export const GATE_SETUP_ENVIRONMENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/;

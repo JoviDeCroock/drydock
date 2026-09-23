@@ -57,9 +57,16 @@ On GitHub, in the repository:
    CLI ≥ 11.5.1 and no `NODE_AUTH_TOKEN` anywhere in the workflow:
 
 ```yaml
+permissions: {} # each job asks for exactly what it needs
+
 jobs:
   pack:
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # npm ci runs install scripts next
       - run: npm ci
       - run: npm pack --json > pack.json
       - run: sha256sum *.tgz > SHA256SUMS

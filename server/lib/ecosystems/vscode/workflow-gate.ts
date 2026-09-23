@@ -8,6 +8,10 @@ import {
 } from "./";
 import { erasePackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
+import {
+  GATE_SETUP_ACTIONS,
+  GATE_SETUP_PINNING_NOTE,
+} from "../../workflow-gates/gate-setup-actions";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import type {
   GateSetupTemplate,
@@ -80,14 +84,24 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
 };
 
 /**
- * The VS Code extension publish workflow the setup wizard offers as a pull
- * request.
+ * The `@vscode/vsce` release both jobs run. The publish job holds the
+ * Marketplace PAT, which — unlike an OIDC token — is not bound to this
+ * workflow and outlives the run, so a compromised release of an unpinned tool
+ * could walk off with a durable credential. Exact version, bumped
+ * deliberately. 4.x needs Node >= 22, which both jobs set up.
+ */
+const VSCE_VERSION = "4.0.0";
+
+/**
+ * The VS Code extension publish workflow the setup wizard generates for a
+ * maintainer to commit.
  *
  * Same contract as the canonical example in `docs/workflow-gates.md`: package
  * once, record `SHA256SUMS` beside the VSIX, upload both, pause at the gated
  * environment, re-check the digest on download, and publish the reviewed VSIX
  * bytes without repacking. The Marketplace has no OIDC path, so the PAT lives
- * in the gated environment's secrets — reachable only from the approved job.
+ * in the gated environment's secrets — reachable only from the approved job,
+ * which needs no GitHub token scope at all.
  */
 function vscodeGateSetupTemplate({
   environmentName,
@@ -106,20 +120,30 @@ on:
     tags:
       - "v*"
 
+# No token scope by default; each job asks for exactly what it needs.
+permissions: {}
+
 jobs:
   package:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ${GATE_SETUP_ACTIONS.checkout}
+        with:
+          # npm ci runs dependency install scripts next; keep the token off disk.
+          persist-credentials: false
+      - uses: ${GATE_SETUP_ACTIONS.setupNode}
         with:
           node-version: 22
+          # A release build restores no cache another workflow could have written.
+          package-manager-cache: false
       - run: npm ci
       - run: mkdir -p dist
-      - run: npx @vscode/vsce package --out dist/extension.vsix
+      - run: npx --yes @vscode/vsce@${VSCE_VERSION} package --out dist/extension.vsix
       # Record the digest Drydock reviews and the publish job re-checks.
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: ${GATE_SETUP_ACTIONS.uploadArtifact}
         with:
           name: ${VSCODE_GATE_ARTIFACT_NAME}
           path: dist/
@@ -131,13 +155,18 @@ jobs:
     # queued until the release is approved in Drydock.
     environment: "${environmentName}"
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: ${GATE_SETUP_ACTIONS.setupNode}
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: ${GATE_SETUP_ACTIONS.downloadArtifact}
         with:
           name: ${VSCODE_GATE_ARTIFACT_NAME}
           path: dist
       # Fail closed if the downloaded bytes drifted from what was reviewed.
       - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: npx @vscode/vsce publish --packagePath dist/extension.vsix
+      # Exact vsce version: this is the one job that can read the PAT.
+      - run: npx --yes @vscode/vsce@${VSCE_VERSION} publish --packagePath dist/extension.vsix
         env:
           VSCE_PAT: \${{ secrets.VSCE_PAT }}
 `,
@@ -145,6 +174,8 @@ jobs:
       `Store the Marketplace PAT as a secret on the \`${environmentName}\` environment, not as a repository secret — an environment secret is only readable from the job the gate has released.`,
       `Publish the reviewed VSIX bytes for \`${packageName}\`: repacking after approval breaks the review boundary.`,
       "Scope the PAT to the publisher and rotate it on the same schedule as any other release credential.",
+      `\`@vscode/vsce\` is pinned to ${VSCE_VERSION} because the publish job holds that PAT, which outlives the run: an unpinned tool would hand it to whatever release is newest. Bump the pin deliberately.`,
+      GATE_SETUP_PINNING_NOTE,
     ],
   };
 }

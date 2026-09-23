@@ -15,7 +15,7 @@
  *
  * Nothing here logs a GitHub response body, header, or the installation token.
  */
-import { getInstallationAccessToken } from "./api";
+import { InstallationTokenError, getInstallationAccessToken } from "./api";
 import { githubHeaders } from "./client";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import {
@@ -33,9 +33,18 @@ import { reliableFetch } from "../platform/reliable-fetch";
  */
 type GateSetupCheck = "present" | "absent" | "unknown";
 
+/**
+ * Whether a repository admin can push a held deployment past every protection
+ * rule, Drydock's included. GitHub allows it by default. It does not make the
+ * gate unarmed — the rule still holds every run nobody overrides — but it is a
+ * standing way around the review, so the wizard surfaces it.
+ */
+type GateSetupAdminBypass = "allowed" | "blocked" | "unknown";
+
 export interface GateSetupState {
   environment: GateSetupCheck;
   protectionRule: GateSetupCheck;
+  adminBypass: GateSetupAdminBypass;
   /** Populated from the repository read; the new-file deep link needs it. */
   defaultBranch: string | null;
   /** Set when a read could not be completed. Never carries a GitHub body. */
@@ -85,6 +94,7 @@ function unavailable(state: Partial<GateSetupState>, reason: string): GateSetupS
   return {
     environment: "unknown",
     protectionRule: "unknown",
+    adminBypass: "unknown",
     defaultBranch: null,
     ...state,
     unavailableReason: reason,
@@ -139,7 +149,23 @@ export async function readGateSetupState(
   try {
     headers = githubHeaders(await getInstallationAccessToken(config, installationId));
   } catch (err) {
-    if (err instanceof GithubAppValidationError) throw err;
+    // GitHub refuses a token for an installation it has suspended (403) or that
+    // no longer exists (404): a definite state the maintainer has to act on,
+    // and the same `installation_inactive` answer Drydock gives when its own
+    // row says so. Everything else — a 5xx, a rate limit, a 2xx without a
+    // token, a JWT Drydock could not sign — is a mint that did not complete,
+    // which this function's contract makes `unknown`. Neither path forwards
+    // GitHub's response body.
+    if (
+      err instanceof InstallationTokenError &&
+      !err.rateLimited &&
+      (err.status === 403 || err.status === 404)
+    ) {
+      throw new GithubAppValidationError(
+        "installation_inactive",
+        "GitHub no longer accepts this installation. Unsuspend or reinstall the Drydock GitHub App, then check again.",
+      );
+    }
     return unavailable({}, "Drydock could not authenticate to GitHub for this installation.");
   }
 
@@ -166,11 +192,17 @@ export async function readGateSetupState(
     }
     // A missing environment is a definite answer, and its protection rule
     // cannot exist either — reading the rules would 404 for the same reason.
-    return { environment: "absent", protectionRule: "absent", defaultBranch };
+    return {
+      environment: "absent",
+      protectionRule: "absent",
+      adminBypass: "unknown",
+      defaultBranch,
+    };
   }
   if (!environmentResponse.ok) {
     return unavailable({ defaultBranch }, reasonForStatus(environmentResponse.status));
   }
+  const adminBypass = readAdminBypass(await environmentResponse.json().catch(() => null));
 
   let rulesResponse: Response;
   try {
@@ -180,13 +212,13 @@ export async function readGateSetupState(
     );
   } catch {
     return unavailable(
-      { environment: "present", defaultBranch },
+      { environment: "present", adminBypass, defaultBranch },
       "Drydock could not reach GitHub to read this environment's protection rules.",
     );
   }
   if (!rulesResponse.ok) {
     return unavailable(
-      { environment: "present", defaultBranch },
+      { environment: "present", adminBypass, defaultBranch },
       reasonForStatus(rulesResponse.status),
     );
   }
@@ -200,14 +232,14 @@ export async function readGateSetupState(
     // A 200 whose body will not parse is a read that did not complete. Folding
     // it into an empty rule list would report a live gate as absent.
     return unavailable(
-      { environment: "present", defaultBranch },
+      { environment: "present", adminBypass, defaultBranch },
       "Drydock could not read this environment's protection rules.",
     );
   }
   const rules = data.custom_deployment_protection_rules;
   if (!Array.isArray(rules)) {
     return unavailable(
-      { environment: "present", defaultBranch },
+      { environment: "present", adminBypass, defaultBranch },
       "Drydock could not read this environment's protection rules.",
     );
   }
@@ -221,8 +253,26 @@ export async function readGateSetupState(
   return {
     environment: "present",
     protectionRule: armed ? "present" : "absent",
+    adminBypass,
     defaultBranch,
   };
+}
+
+/**
+ * GitHub reports the environment's "Allow administrators to bypass configured
+ * protection rules" checkbox as `can_admins_bypass`. It is missing from GitHub's
+ * published OpenAPI description, so anything but an explicit boolean — an
+ * unparsable body included — is `unknown` rather than a guess in either
+ * direction.
+ */
+function readAdminBypass(body: unknown): GateSetupAdminBypass {
+  const value =
+    body && typeof body === "object"
+      ? (body as { can_admins_bypass?: unknown }).can_admins_bypass
+      : undefined;
+  if (value === true) return "allowed";
+  if (value === false) return "blocked";
+  return "unknown";
 }
 
 type RepositoryRead =
