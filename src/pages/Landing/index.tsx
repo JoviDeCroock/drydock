@@ -98,6 +98,25 @@ export default function LandingPage() {
         <IncidentLog />
       </section>
 
+      <section aria-label="Provenance and review" class="flex flex-col gap-4">
+        <SectionLabel as="p">Provenance and review</SectionLabel>
+        <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+          Provenance attests the pipeline. It does not read the bytes.
+        </h2>
+        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
+          npm provenance, trusted publishing, and Sigstore bundles establish which workflow in which
+          repository produced an artifact. Drydock checks that evidence where a release carries it
+          and shows the result on the diff, signature and resolution kept apart rather than
+          collapsed into one verdict. What an attestation cannot say is whether the artifact that
+          workflow produced should be published: a compromised build dependency, an install hook
+          added upstream, and a stolen account driving the genuine workflow all yield a correctly
+          attested release. Attestation answers where it came from. The diff answers what is in it.
+        </p>
+        <LinkButton href="/npm-trusted-publishing" variant="ghost" size="sm" class="self-start">
+          Pin publishing to a reviewed workflow →
+        </LinkButton>
+      </section>
+
       <section aria-label="How it works" class="flex flex-col gap-5">
         <SectionLabel as="h2">How it works</SectionLabel>
         <HowSteps

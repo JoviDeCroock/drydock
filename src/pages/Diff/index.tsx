@@ -6,7 +6,7 @@ import type { DiffEntry } from "../../../server/lib/review";
 import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
 import { compareSeverity, countSeverities } from "../../lib/findings";
-import { packageDiffSeo, PageSeo } from "../../lib/seo";
+import { packageDiffIndexSeo, packageDiffSeo, PageSeo } from "../../lib/seo";
 import {
   getPublicDiffVersions,
   PackageDiffModel,
@@ -154,7 +154,10 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
-      <PageSeo metadata={packageDiffSeo()} />
+      {/* Its own canonical, not `/diff`. This page redirects to the latest
+          pair, but it is the stable URL a sitemap or an inbound link can name,
+          so it has to describe this package rather than the diff tool. */}
+      <PageSeo metadata={packageDiffIndexSeo("npm", packageName)} />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {packageName}
@@ -175,6 +178,42 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
     </PageShell>
   );
 }
+
+/**
+ * The closing ask under a diff of two published versions, per ecosystem.
+ *
+ * The reader has just finished reading and is being told where this review runs
+ * before publication — so it has to name the path that actually exists for
+ * their registry. npm is the only ecosystem with a staged tarball, PyPI's only
+ * pre-publish surface is the workflow gate, and atpm is review-only: Drydock
+ * never approves, gates, or watches an atpm release.
+ */
+const NEXT_RELEASE_ASK: Record<
+  DiffEcosystem,
+  { body: string; guide: { href: string; label: string } }
+> = {
+  npm: {
+    body:
+      "Both of these versions are already public. Drydock runs this same review on the release " +
+      "candidate — an npm staged publish, or a GitHub-gated release that holds the publish job — " +
+      "while there is still time to say no. The maintainer keeps the final decision.",
+    guide: { href: "/npm-staged-publishing", label: "Set up npm staging" },
+  },
+  pypi: {
+    body:
+      "Both of these versions are already public. PyPI holds no staged artifact to inspect, so a " +
+      "GitHub Environment gate is the only place a wheel or sdist can be reviewed before upload. " +
+      "Drydock reviews the artifact the workflow built and holds that job until you decide.",
+    guide: { href: "/pypi-release-security", label: "Protect a PyPI workflow" },
+  },
+  atpm: {
+    body:
+      "Both of these versions are already public. An atpm release candidate can be read the same " +
+      "way before it is approved, from the publisher's own record — Drydock reviews that " +
+      "candidate and nothing else: it does not approve, withdraw, or watch an atpm release.",
+    guide: { href: "/package-tarball-diff", label: "Read how the diff works" },
+  },
+};
 
 // What the one name field asks for, per ecosystem. Kept as data rather than a
 // chain of ternaries so a fourth ecosystem is a row, not another branch.
@@ -570,14 +609,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                     "published yet. Drydock runs this same review automatically on staged npm " +
                     "publishes and GitHub-gated releases — while there is still time to say no. " +
                     "The maintainer keeps the final decision."
-                  : "Both of these versions are already public. Drydock runs this same review on " +
-                    "the release candidate — an npm staged publish or a GitHub-gated release — " +
-                    "while there is still time to say no. The maintainer keeps the final decision."}
+                  : NEXT_RELEASE_ASK[ecosystem].body}
             </Muted>
             <div class="flex gap-3 mt-1">
               <LinkButton href="/register">Review my next release</LinkButton>
-              <LinkButton href="/docs" variant="secondary">
-                Read the docs
+              <LinkButton href={NEXT_RELEASE_ASK[ecosystem].guide.href} variant="secondary">
+                {NEXT_RELEASE_ASK[ecosystem].guide.label}
               </LinkButton>
             </div>
           </section>
