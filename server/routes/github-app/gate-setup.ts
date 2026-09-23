@@ -45,8 +45,9 @@ import {
 export const gateSetupRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // The preview is pure computation, so it is limited only to keep a logged-in
-// caller from using it as a scratch CPU. Verification fans out to GitHub reads,
-// so it shares the budget the other GitHub proxy reads use.
+// caller from using it as a scratch CPU. Verification mints a token and makes
+// three GitHub reads, so it has its own per-organization key, at the rate the
+// other GitHub proxy reads allow.
 const PREVIEW_LIMIT = 120;
 const PREVIEW_WINDOW_MS = 60 * 1000;
 const VERIFY_LIMIT = 60;

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import type { Bindings } from "../../server/types";
@@ -65,9 +66,11 @@ async function call(
   path: string,
   body: unknown,
   envOverrides: Partial<Bindings> = {},
+  activeOrganizationId?: string,
 ) {
   return callRoute(app, "POST", path, {
     body,
+    activeOrganizationId,
     envOverride: {
       GITHUB_APP_ID: APP_ID,
       GITHUB_APP_SLUG: "drydock-test",
@@ -85,14 +88,27 @@ async function call(
 /** Every gate-setup call starts by minting an installation token. */
 function githubDouble(
   handler: (request: Request) => Promise<Response> | Response,
+  mint: () => Response = () =>
+    Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" }),
 ): typeof globalThis.fetch {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url.includes("/access_tokens")) {
-      return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
-    }
+    if (request.url.includes("/access_tokens")) return mint();
     return handler(request);
   }) as unknown as typeof globalThis.fetch;
+}
+
+/** An environment Drydock gates, with GitHub's admin-bypass checkbox as given. */
+function armedGithub(environmentBody: Record<string, unknown>) {
+  return githubDouble((request) => {
+    if (request.url.includes("/deployment_protection_rules")) {
+      return Response.json({
+        custom_deployment_protection_rules: [{ app: { id: 12345 }, enabled: true }],
+      });
+    }
+    if (request.url.includes("/environments/")) return Response.json(environmentBody);
+    return Response.json({ default_branch: "main" });
+  });
 }
 
 function draft(installationRowId: string, overrides: Record<string, unknown> = {}) {
@@ -291,6 +307,34 @@ describe("gate-setup validation and ownership", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  test.each(["verify", "preview"])(
+    "403s an organization member on %s without calling GitHub",
+    async (endpoint) => {
+      const owner = await seedUser();
+      const member = await seedUser();
+      await addOrganizationMember(createDb(env.DB), {
+        organizationId: owner.organizationId,
+        userId: member.userId,
+        role: "member",
+      });
+      const installation = await seedInstallation(owner.organizationId);
+      globalThis.fetch = vi.fn();
+
+      const res = await call(
+        appFor(member.userId),
+        `/api/v1/github-app/gate-setup/${endpoint}`,
+        draft(installation.id),
+        {},
+        owner.organizationId,
+      );
+
+      // Guided setup is an integrations surface: members see an explanation in
+      // the UI, and the API refuses them before touching the installation.
+      expect(res.status).toBe(403);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
+
   test("503s when the GitHub App is not configured on the Worker", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
@@ -408,7 +452,13 @@ describe("gate-setup verify", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      state: { environment: "present", protectionRule: "present", defaultBranch: "trunk" },
+      state: {
+        environment: "present",
+        protectionRule: "present",
+        // The environment body carried no `can_admins_bypass`.
+        adminBypass: "unknown",
+        defaultBranch: "trunk",
+      },
     });
     // Every request is a read; a write would mean the App needs a permission
     // guided setup deliberately does not ask for.
@@ -538,4 +588,123 @@ describe("gate-setup verify", () => {
 
     expect(res.status).toBe(200);
   });
+
+  test.each([
+    [true, "allowed"],
+    [false, "blocked"],
+    ["yes", "unknown"],
+  ])("reports admin bypass from can_admins_bypass=%s as %s", async (value, expected) => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = armedGithub({ name: "Production", can_admins_bypass: value });
+
+    const res = await call(
+      appFor(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    // Admin bypass is reported beside the gate, not folded into it: the rule
+    // still holds every run nobody overrides.
+    expect(await res.json()).toMatchObject({
+      state: { environment: "present", protectionRule: "present", adminBypass: expected },
+    });
+  });
+
+  test("keeps the admin-bypass answer when the rules read fails", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble((request) => {
+      if (request.url.includes("/deployment_protection_rules")) {
+        return new Response("", { status: 502 });
+      }
+      if (request.url.includes("/environments/")) {
+        return Response.json({ name: "Production", can_admins_bypass: true });
+      }
+      return Response.json({ default_branch: "main" });
+    });
+
+    const res = await call(
+      appFor(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(await res.json()).toMatchObject({
+      state: { environment: "present", protectionRule: "unknown", adminBypass: "allowed" },
+    });
+  });
+
+  test("a transient token-mint failure is unknown, not an inactive installation", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble(
+      () => Response.json({}),
+      () => new Response("upstream exploded: request id 1f2e", { status: 503 }),
+    );
+
+    const res = await call(
+      appFor(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({
+      state: { environment: "unknown", protectionRule: "unknown", adminBypass: "unknown" },
+    });
+    expect(text).not.toContain("upstream exploded");
+  });
+
+  test("a rate-limited token mint is unknown even when GitHub answers 403", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    // GitHub reports a secondary rate limit as a 403 with retry-after; that is
+    // a mint that did not complete, not a suspended installation.
+    globalThis.fetch = githubDouble(
+      () => Response.json({}),
+      () =>
+        new Response('{"message":"You have exceeded a secondary rate limit"}', {
+          status: 403,
+          headers: { "retry-after": "0" },
+        }),
+    );
+
+    const res = await call(
+      appFor(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ state: { protectionRule: "unknown" } });
+  });
+
+  test.each([403, 404])(
+    "a token mint refused with %s is an inactive installation, without GitHub's body",
+    async (status) => {
+      const { userId, organizationId } = await seedUser();
+      const installation = await seedInstallation(organizationId);
+      globalThis.fetch = githubDouble(
+        () => Response.json({}),
+        () =>
+          new Response('{"message":"This installation has been suspended","secret":"s3cr3t"}', {
+            status,
+          }),
+      );
+
+      const res = await call(
+        appFor(userId),
+        "/api/v1/github-app/gate-setup/verify",
+        draft(installation.id),
+      );
+
+      expect(res.status).toBe(409);
+      const text = await res.text();
+      expect(JSON.parse(text)).toMatchObject({ code: "installation_inactive" });
+      expect(text).not.toContain("has been suspended");
+      expect(text).not.toContain("s3cr3t");
+    },
+  );
 });

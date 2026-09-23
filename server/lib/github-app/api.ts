@@ -55,6 +55,39 @@ export async function fetchInstallationMetadata(
   };
 }
 
+/**
+ * A refused or unusable installation-token mint. It keeps the long-standing
+ * `installation_inactive` code for existing callers, and carries GitHub's
+ * status so a caller that has to tell "GitHub stopped honoring this
+ * installation" (403 suspended / 404 removed) apart from a mint that simply did
+ * not complete (5xx, a rate limit, a body without a token) can do so without
+ * parsing the message. `status` is null when GitHub answered 2xx without a
+ * token.
+ */
+export class InstallationTokenError extends GithubAppValidationError {
+  constructor(
+    readonly status: number | null,
+    readonly rateLimited: boolean,
+    message: string,
+  ) {
+    super("installation_inactive", message);
+    this.name = "InstallationTokenError";
+  }
+}
+
+/**
+ * GitHub signals a primary or secondary rate limit with 429, or with a 403
+ * that carries `retry-after` or an exhausted `x-ratelimit-remaining`. A 403
+ * without either is a real refusal.
+ */
+function isGithubRateLimited(response: Response): boolean {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  return (
+    response.headers.has("retry-after") || response.headers.get("x-ratelimit-remaining") === "0"
+  );
+}
+
 export async function getInstallationAccessToken(
   config: GithubAppConfig,
   installationId: string,
@@ -70,15 +103,17 @@ export async function getInstallationAccessToken(
   );
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new GithubAppValidationError(
-      "installation_inactive",
+    throw new InstallationTokenError(
+      response.status,
+      isGithubRateLimited(response),
       `installation access token request failed (${response.status}): ${text.slice(0, 200)}`,
     );
   }
   const data = (await response.json()) as { token?: string };
   if (!data.token) {
-    throw new GithubAppValidationError(
-      "installation_inactive",
+    throw new InstallationTokenError(
+      null,
+      false,
       "installation access token response missing token",
     );
   }
