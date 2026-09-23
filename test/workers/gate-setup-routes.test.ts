@@ -657,29 +657,32 @@ describe("gate-setup verify", () => {
     expect(text).not.toContain("upstream exploded");
   });
 
-  test("a rate-limited token mint is unknown even when GitHub answers 403", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    // GitHub reports a secondary rate limit as a 403 with retry-after; that is
-    // a mint that did not complete, not a suspended installation.
-    globalThis.fetch = githubDouble(
-      () => Response.json({}),
-      () =>
-        new Response('{"message":"You have exceeded a secondary rate limit"}', {
-          status: 403,
-          headers: { "retry-after": "0" },
-        }),
-    );
+  test.each([
+    ["retry-after", { "retry-after": "0" }, '{"message":"slow down"}'],
+    // Some secondary limits set neither header; only the message says so.
+    ["only its message", {}, '{"message":"You have exceeded a secondary rate limit."}'],
+  ])(
+    "a rate-limited token mint is unknown even when GitHub answers 403 (%s)",
+    async (_label, headers, body) => {
+      const { userId, organizationId } = await seedUser();
+      const installation = await seedInstallation(organizationId);
+      globalThis.fetch = githubDouble(
+        () => Response.json({}),
+        () => new Response(body, { status: 403, headers }),
+      );
 
-    const res = await call(
-      appFor(userId),
-      "/api/v1/github-app/gate-setup/verify",
-      draft(installation.id),
-    );
+      const res = await call(
+        appFor(userId),
+        "/api/v1/github-app/gate-setup/verify",
+        draft(installation.id),
+      );
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ state: { protectionRule: "unknown" } });
-  });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(JSON.parse(text)).toMatchObject({ state: { protectionRule: "unknown" } });
+      expect(text).not.toContain("rate limit");
+    },
+  );
 
   test.each([403, 404])(
     "a token mint refused with %s is an inactive installation, without GitHub's body",
