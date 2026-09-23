@@ -3,12 +3,11 @@ import type { OrganizationRole } from "../../../../server/lib/auth/roles";
 import { sessionModel } from "../../../models/auth";
 import { OrganizationModel } from "../../../models/organization";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
-import { Card } from "../../../components/Card";
+import { SettingsCard } from "../../../components/Card";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { Muted, SectionLabel } from "../../../components/Typography";
+import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
 
 /**
  * Owner-only control for the org-wide policy that forces a fresh two-factor
@@ -52,11 +51,13 @@ export function ReleaseSecuritySection({
   };
 
   return (
-    <Card class="flex flex-col gap-5">
-      <div class="flex items-center justify-between gap-2 flex-wrap">
-        <SectionLabel as="h2">Release security</SectionLabel>
-        <Badge tone={enabled ? "ok" : "neutral"}>{enabled ? "required" : "not required"}</Badge>
-      </div>
+    <SettingsCard class="flex flex-col gap-5">
+      <SectionLabel
+        as="h2"
+        aside={active ? <MonoLabel>{enabled ? "required" : "not required"}</MonoLabel> : null}
+      >
+        Release security
+      </SectionLabel>
 
       <Muted class="text-[13px] m-0 max-w-[760px]">
         Require two-factor authentication to approve or block a release gate. Approving a gate
@@ -80,47 +81,41 @@ export function ReleaseSecuritySection({
             // Relaxing the policy weakens a security control, so confirm with a
             // fresh authenticator code before submitting — same step-up the gate
             // decision asks for.
-            <div class="flex flex-col gap-3">
-              <Field label="Authentication code" for="releaseTotp">
-                <Input
-                  id="releaseTotp"
-                  type="text"
-                  value={codeDraft.value}
-                  placeholder="6-digit code"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  maxLength={8}
-                  spellcheck={false}
-                  disabled={saving}
-                  onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
-                />
-                <Muted class="m-0 mt-1 text-[12px]">
-                  Enter the code from your authenticator app to stop requiring two-factor for
-                  releases.
-                </Muted>
-              </Field>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={disable}
-                disabled={saving || blockedOnCode}
-                class="self-end"
-              >
-                {saving ? "Saving…" : "Stop requiring two-factor"}
-              </Button>
+            <div class="flex flex-col gap-1.5">
+              <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,240px)_auto] gap-3 items-end">
+                <Field label="Authentication code" for="releaseTotp">
+                  <Input
+                    id="releaseTotp"
+                    type="text"
+                    value={codeDraft.value}
+                    placeholder="6-digit code"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxLength={8}
+                    spellcheck={false}
+                    disabled={saving}
+                    onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
+                  />
+                </Field>
+                {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
+                <Button
+                  variant="secondary"
+                  onClick={disable}
+                  disabled={saving || blockedOnCode}
+                  class="justify-self-start h-[38px]"
+                >
+                  {saving ? "Saving…" : "Stop requiring two-factor"}
+                </Button>
+              </div>
+              <Muted class="m-0 text-[12px]">
+                Enter the code from your authenticator app to stop requiring two-factor for
+                releases.
+              </Muted>
             </div>
           ) : (
-            <div class="flex flex-col gap-2">
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={enable}
-                disabled={saving}
-                class="self-end"
-              >
-                {saving ? "Saving…" : "Require two-factor for releases"}
-              </Button>
-            </div>
+            <Button onClick={enable} disabled={saving} class="self-start">
+              {saving ? "Saving…" : "Require two-factor for releases"}
+            </Button>
           )
         ) : (
           <Muted class="text-[13px] m-0">
@@ -132,6 +127,6 @@ export function ReleaseSecuritySection({
       )}
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
-    </Card>
+    </SettingsCard>
   );
 }

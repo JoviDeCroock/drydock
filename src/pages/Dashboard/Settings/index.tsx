@@ -26,7 +26,7 @@ import { PageShell } from "../../../components/PageShell";
 import { EmailVerificationBanner } from "../../../features/account/EmailVerificationBanner";
 import { Muted } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
-import { GeneralSection } from "./GeneralSection";
+import { GeneralSection, OrganizationDangerZone } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
@@ -177,11 +177,15 @@ export default function SettingsPage() {
                 <GeneralSection
                   organizations={organizations}
                   currentUserRole={activeRole(organizations)}
-                  onDeleted={reloadActiveOrgScopedData}
                 />
                 <ReleaseSecuritySection
                   organizations={organizations}
                   currentUserRole={activeRole(organizations)}
+                />
+                <OrganizationDangerZone
+                  organizations={organizations}
+                  currentUserRole={activeRole(organizations)}
+                  onDeleted={reloadActiveOrgScopedData}
                 />
               </>
             ) : null}

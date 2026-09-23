@@ -7,7 +7,7 @@ import { Button } from "../../../components/Button";
 import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { Muted } from "../../../components/Typography";
+import { MonoLabel, Muted } from "../../../components/Typography";
 
 export function NpmConnectionSection({
   npm,
@@ -19,7 +19,6 @@ export function NpmConnectionSection({
   const connection = npm.connection.value;
   const status = npm.status.value;
   const busy = npm.busy.value;
-  const validated = npm.validated.value;
   const token = npm.token.value;
   const label = npm.label.value;
   const registry = npm.registry.value;
@@ -35,16 +34,12 @@ export function NpmConnectionSection({
       title="npm access"
       defaultOpen={defaultOpen}
       aside={
-        connection ? (
-          <Badge
-            tone={
-              validated ? "ok" : connection.validationStatus === "invalid" ? "critical" : "info"
-            }
-          >
-            {connection.validationStatus}
-          </Badge>
+        // Only a broken token earns colour; a valid or pending connection is the
+        // expected state and reads as plain text.
+        connection?.validationStatus === "invalid" ? (
+          <Badge tone="critical">invalid</Badge>
         ) : (
-          <Badge tone="info">not connected</Badge>
+          <MonoLabel>{connection ? connection.validationStatus : "not connected"}</MonoLabel>
         )
       }
     >

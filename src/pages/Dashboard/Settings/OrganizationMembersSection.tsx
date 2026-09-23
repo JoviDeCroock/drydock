@@ -7,7 +7,7 @@ import {
   type OrganizationMember,
 } from "../../../models/organization-members";
 import { Alert } from "../../../components/Alert";
-import { Badge, type BadgeTone } from "../../../components/Badge";
+import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import {
   CollapsibleCard,
@@ -18,7 +18,7 @@ import {
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
-import { MonoDetail, Muted } from "../../../components/Typography";
+import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 
 export function OrganizationMembersSection({
   members,
@@ -54,9 +54,9 @@ export function OrganizationMembersSection({
       title="Members"
       defaultOpen
       aside={
-        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+        <MonoLabel>
           {memberList.length} {memberList.length === 1 ? "member" : "members"}
-        </span>
+        </MonoLabel>
       }
     >
       <SettingsCardBody>
@@ -121,11 +121,7 @@ export function OrganizationMembersSection({
         <div>
           <SettingsCardHeader
             title="Pending invites"
-            aside={
-              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-                {invitations.length} pending
-              </span>
-            }
+            aside={invitations.length ? <MonoLabel>{invitations.length} pending</MonoLabel> : null}
           />
           {invitations.length ? (
             <InvitationList
@@ -168,7 +164,7 @@ function MemberList({
                 <span class="text-[14px] font-medium text-ink truncate">
                   {member.name || member.email || member.userId}
                 </span>
-                <Badge tone={roleTone(member.role)}>{member.role}</Badge>
+                <Badge tone="neutral">{member.role}</Badge>
               </div>
               <MonoDetail
                 parts={[
@@ -211,8 +207,7 @@ function InvitationList({
           <div class="flex flex-col gap-1.5 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-[14px] font-medium text-ink truncate">{invitation.email}</span>
-              <Badge tone={roleTone(invitation.role)}>{invitation.role}</Badge>
-              {invitation.expired ? <Badge tone="critical">expired</Badge> : null}
+              <Badge tone="neutral">{invitation.role}</Badge>
             </div>
             <MonoDetail
               parts={[
@@ -237,8 +232,4 @@ function InvitationList({
       ))}
     </ul>
   );
-}
-
-function roleTone(role: OrganizationRole): BadgeTone {
-  return role === "owner" ? "info" : "neutral";
 }

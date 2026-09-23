@@ -70,7 +70,9 @@ export default function InvitePage() {
           <Muted class="text-[13px] m-0">
             Ask the person who invited you to send a fresh invitation, then open the new link.
           </Muted>
-          <LinkButton href="/dashboard">Go to dashboard</LinkButton>
+          <LinkButton href="/dashboard" class="self-start">
+            Go to dashboard
+          </LinkButton>
         </Card>
       </PageShell>
     );

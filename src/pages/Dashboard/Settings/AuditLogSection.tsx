@@ -5,13 +5,11 @@ import {
   type AuditActor,
   type AuditCategory,
   type AuditEvent,
-  type AuditSeverity,
 } from "../../../models/audit-log";
 import { Alert } from "../../../components/Alert";
-import { Badge, type BadgeTone } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { CollapsibleCard, SettingsCardBody, SettingsCardListItem } from "../../../components/Card";
-import { Muted } from "../../../components/Typography";
+import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
   release_decision: "Release",
@@ -20,12 +18,6 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
   integration: "Integration",
   organization: "Org",
 };
-
-function auditSeverityTone(severity: AuditSeverity): BadgeTone {
-  if (severity === "security") return "high";
-  if (severity === "notice") return "medium";
-  return "info";
-}
 
 function actorLabel(actor: AuditActor): string {
   if (actor.type === "system") return "System";
@@ -48,10 +40,12 @@ export function AuditLogSection({
       title="Audit log"
       defaultOpen
       aside={
-        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-          {events.length}
-          {hasMore ? "+" : ""} {events.length === 1 ? "event" : "events"}
-        </span>
+        events.length ? (
+          <MonoLabel>
+            {events.length}
+            {hasMore ? "+" : ""} {events.length === 1 ? "event" : "events"}
+          </MonoLabel>
+        ) : null
       }
     >
       <SettingsCardBody>
@@ -78,34 +72,38 @@ export function AuditLogSection({
         <ul class="list-none m-0 p-0">
           {events.map((event: AuditEvent) => (
             <SettingsCardListItem key={event.id}>
-              <div class="flex flex-col gap-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <Badge tone={auditSeverityTone(event.severity)} dot>
-                    {CATEGORY_LABELS[event.category]}
-                  </Badge>
-                  <span class="text-[13px] font-medium text-ink">{event.label}</span>
+              <div class="flex flex-col gap-1 min-w-0 flex-1">
+                {/* The timestamp shares the title's baseline so a long detail line
+                    never pulls it off the row it dates. */}
+                <div class="flex items-baseline justify-between gap-3">
+                  <div class="flex items-baseline gap-2 flex-wrap min-w-0">
+                    <MonoLabel>{CATEGORY_LABELS[event.category]}</MonoLabel>
+                    <span class="text-[13px] font-medium text-ink">{event.label}</span>
+                  </div>
+                  <span class="font-mono text-[11px] text-ink-subtle shrink-0">
+                    {formatTimestamp(event.createdAt)}
+                  </span>
                 </div>
-                {event.detail ? (
-                  <span class="text-[12px] text-ink-muted break-words">{event.detail}</span>
-                ) : null}
-                <span class="text-[11px] text-ink-subtle">
-                  {actorLabel(event.actor)}
-                  {event.scanId ? (
-                    <>
-                      {" · "}
+                <MonoDetail
+                  parts={[
+                    event.detail ? (
+                      <span key="detail" class="break-words">
+                        {event.detail}
+                      </span>
+                    ) : null,
+                    <span key="actor">{actorLabel(event.actor)}</span>,
+                    event.scanId ? (
                       <a
+                        key="scan"
                         class="text-accent hover:underline"
                         href={`/dashboard/scans/${event.scanId}`}
                       >
                         view scan
                       </a>
-                    </>
-                  ) : null}
-                </span>
+                    ) : null,
+                  ]}
+                />
               </div>
-              <span class="font-mono text-[11px] text-ink-subtle shrink-0">
-                {formatTimestamp(event.createdAt)}
-              </span>
             </SettingsCardListItem>
           ))}
         </ul>

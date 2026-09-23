@@ -14,7 +14,7 @@ import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
 import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { pushToast } from "../../../components/Toast";
-import { LoadingLine, Muted } from "../../../components/Typography";
+import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
 
 export function SlackConnectionSection({
   slack,
@@ -28,8 +28,8 @@ export function SlackConnectionSection({
   const canManageSignal = useLiveSignal(canManage);
   const loadingConnection = useComputed(() => !slack.loaded.value);
   const aside = (
-    <Show when={slack.connection} fallback={<Badge tone="neutral">not connected</Badge>}>
-      <Badge tone="ok">connected</Badge>
+    <Show when={slack.connection} fallback={<MonoLabel>not connected</MonoLabel>}>
+      <MonoLabel>connected</MonoLabel>
     </Show>
   );
 
@@ -115,7 +115,7 @@ export function SlackConnectionSection({
 
 type SlackModel = ReturnType<typeof useModel<typeof SlackConnectionModel.prototype>>;
 const slackFieldGridClass =
-  "grid grid-cols-[76px_minmax(0,360px)_auto] items-center gap-x-3 gap-y-2";
+  "grid grid-cols-[76px_minmax(0,1fr)] sm:grid-cols-[76px_minmax(0,360px)_auto] items-center gap-x-3 gap-y-2";
 const slackFieldLabelClass = "font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle";
 const slackFieldControlClass = "min-w-0";
 
@@ -182,6 +182,10 @@ function ConnectedSlackState({
     const requestedMode = channelSelectionMode.value;
     return canUsePicker && requestedMode === "picker" ? "picker" : "manual";
   });
+  const savedChannelHidden = useComputed(() => {
+    const manual = effectiveSelectionMode.value === "manual";
+    return canManage.value && manual && Boolean(slack.connection.value?.channelName);
+  });
   const pickerModeSelected = useComputed(() => channelSelectionMode.value === "picker");
   const manualModeSelected = useComputed(() => channelSelectionMode.value === "manual");
   const saveChannelDisabled = useComputed(() => {
@@ -209,6 +213,9 @@ function ConnectedSlackState({
   return (
     <div class="flex flex-col gap-4">
       <div class="flex items-center justify-between gap-3">
+        {/* The picker (or the read-only "Posting to" line) already shows the saved
+            channel, so this row marks only its absence, or names it while the
+            manual-ID field is showing a draft instead. */}
         <div class="flex items-center gap-2 min-w-0">
           <span class="text-[13px] text-ink break-all">
             {connection.teamName ?? "Slack workspace"}
@@ -217,7 +224,11 @@ function ConnectedSlackState({
             when={selectedChannelLabel}
             fallback={<Badge tone="medium">no channel</Badge>}
           >
-            {(channelLabel) => <Badge tone="info">{channelLabel}</Badge>}
+            {(channelLabel) => (
+              <Show when={savedChannelHidden}>
+                <span class="text-[13px] text-ink-muted break-all">posting to {channelLabel}</span>
+              </Show>
+            )}
           </Show>
         </div>
         <Show when={canManage}>
@@ -331,12 +342,12 @@ function ConnectedSlackState({
               type="submit"
               variant="secondary"
               disabled={saveChannelDisabled}
-              class="self-stretch whitespace-nowrap"
+              class="col-start-2 sm:col-start-auto self-stretch justify-self-start whitespace-nowrap"
             >
               {saveChannelLabel}
             </Button>
             <Show when={() => effectiveSelectionMode.value === "manual"}>
-              <Muted class="col-start-2 col-span-2 text-[12px] m-0">
+              <Muted class="col-start-2 sm:col-span-2 text-[12px] m-0">
                 Use this when the channel is not listed or list permission is unavailable.
               </Muted>
             </Show>
