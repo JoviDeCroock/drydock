@@ -1,7 +1,12 @@
 // Publication-monitor wording shared by the dashboard card and the package
 // page, so the same watch or observation never reads two different ways.
 import { formatDateTime, pluralize } from "../../lib/format";
-import type { PublicationObservation, PublicationWatch } from "../../models/publication-watches";
+import type {
+  PostReleaseBadgeEffect,
+  PostReleaseResolution,
+  PublicationObservation,
+  PublicationWatch,
+} from "../../models/publication-watches";
 
 export const observationStatusLabels: Record<PublicationObservation["status"], string> = {
   approved_match: "Approved bytes published",
@@ -68,6 +73,71 @@ export function isPublicationAlert(status: PublicationObservation["status"]): bo
     status === "published_despite_rejection" ||
     status === "artifact_mismatch"
   );
+}
+
+export const resolutionLabels: Record<PostReleaseResolution, string> = {
+  approved_after_release: "Approved after release",
+  declined_after_release: "Declined after release",
+};
+
+export function resolutionTone(resolution: PostReleaseResolution) {
+  return resolution === "approved_after_release" ? "ok" : "critical";
+}
+
+/**
+ * An alert approved after release is resolved: nothing is left to acknowledge.
+ * A decline keeps it open, because the release is still on npm.
+ */
+export function isAlertResolved(observation: Pick<PublicationObservation, "resolution">): boolean {
+  return observation.resolution === "approved_after_release";
+}
+
+/**
+ * The state of an alert's post-release review before anyone decided it, or
+ * null once it is decided (the resolution says the rest) or when none exists.
+ */
+export function postReleaseReviewState(
+  observation: Pick<
+    PublicationObservation,
+    "reviewScanId" | "reviewStatus" | "reviewDecision" | "resolution"
+  >,
+): { label: string; tone: "neutral" | "medium" } | null {
+  if (!observation.reviewScanId || observation.resolution || observation.reviewDecision) {
+    return null;
+  }
+  if (observation.reviewStatus === "failed") return { label: "review failed", tone: "medium" };
+  if (observation.reviewStatus === "complete") return { label: "ready to decide", tone: "medium" };
+  return { label: "reviewing", tone: "neutral" };
+}
+
+/** What to do about a release this organization declined after npm published it. */
+export function declinedRemediation(packageName: string, version: string): string {
+  return `Next steps: deprecate or unpublish ${packageName}@${version} on npm, rotate the npm tokens that can publish it, and check its trusted publishers and who has publish rights.`;
+}
+
+const badgeUnchangedReasons: Record<Exclude<PostReleaseBadgeEffect, "applied">, string> = {
+  not_a_verified_publisher:
+    "this organization has no registry-verified staged review of the package",
+  digests_unavailable: "the published bytes could not be hashed to compare with the reviewed ones",
+  digests_differ: "the reviewed bytes differ from the published ones",
+  not_public_npm: "the release was not read from the public npm registry",
+};
+
+/**
+ * Whether a post-release decision moves the public README badge. Only a
+ * registry-verified publisher whose review read the exact published bytes
+ * does; anything else resolves the alert for this organization alone.
+ */
+export function resolutionBadgeMessage(
+  observation: Pick<PublicationObservation, "resolution" | "resolutionBadge" | "version">,
+): string | null {
+  if (!observation.resolution || !observation.resolutionBadge) return null;
+  if (observation.resolutionBadge === "applied") {
+    const verdict = observation.resolution === "approved_after_release" ? "approved" : "blocked";
+    return `The public badge counts this decision as ${observation.version} ${verdict}.`;
+  }
+  const reason = badgeUnchangedReasons[observation.resolutionBadge];
+  return reason ? `The public badge is unchanged: ${reason}.` : null;
 }
 
 const watchProblems: Record<string, string> = {

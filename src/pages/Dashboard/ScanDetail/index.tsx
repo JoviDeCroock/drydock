@@ -30,6 +30,7 @@ import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateD
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
+import { PostReleaseNotice } from "./PostReleaseNotice";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import {
@@ -232,6 +233,9 @@ function ScanNotices({ model, view }: SectionProps) {
           that could not read the tarball is exactly when npm's own state is
           the only useful thing on the page. */}
       {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
+      {detail?.postRelease ? (
+        <PostReleaseNotice link={detail.postRelease} organizationId={detail.scan.organizationId} />
+      ) : null}
 
       {!detail && !error ? (
         <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
@@ -490,6 +494,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           error={model.decisionError}
           npmStagedPackagesUrl={view.npmStagedPackagesUrl}
           scan={detail.scan}
+          postRelease={detail.postRelease ?? null}
           onSubmit={view.handleDecisionSubmit}
         />
       ) : null}
