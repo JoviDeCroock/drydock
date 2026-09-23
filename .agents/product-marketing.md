@@ -93,7 +93,11 @@ These are not style preferences. Breaking one is a product-accuracy bug.
    We surface evidence; a human decides.
 3. **No invented metrics, customers, testimonials, or logos.** No "trusted by N
    teams" until there is a number we can show.
-4. **No pricing or free-tier claims** on these surfaces — none exist today.
+4. **No pricing or free-tier claims** on these surfaces — no paid plan exists
+   today. The single exception is `/maintainer-pledge`, which states the
+   commitment not to charge open-source maintainers for reviewing their own
+   public releases. It may only be made there, and only alongside what the
+   pledge does not promise.
 5. **Never embellish an incident.** Incident copy states only what the inspected
    artifacts prove (`docs/design.md`).
 6. **No exclamation points, no buzzwords** ("streamline", "seamless",

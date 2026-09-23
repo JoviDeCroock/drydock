@@ -23,6 +23,17 @@ export function encodePackageName(packageName: string): string {
 
 const NAME_SEGMENTS: Partial<Record<DiffEcosystem, number>> = { pypi: 1, atpm: 2 };
 
+/**
+ * The version-less path for one package, which resolves to its latest pair.
+ *
+ * Stable across releases, unlike a version-pair path, so it is the form that
+ * can be listed in the sitemap without going stale on the next publish.
+ */
+export function packageDiffIndexPath(ecosystem: DiffEcosystem, packageName: string) {
+  const prefix = ecosystem === "npm" ? "/diff" : `/diff/${ecosystem}`;
+  return `${prefix}/${encodePackageName(packageName)}`;
+}
+
 export function packageDiffPath(
   ecosystem: DiffEcosystem,
   packageName: string,
