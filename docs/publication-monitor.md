@@ -266,9 +266,9 @@ npm's full package document is read because only it carries per-version publish
 times (the abbreviated install document omits them); it streams into just the fields
 the verdict reads (`packument-stream.ts`), so memory stays flat, under a 64 MiB cap and
 a 15-second deadline. Tarballs are capped at 256 MiB, and a check's downloads share
-one 30-second deadline, so a check ends well inside its one-minute claim. A sweep (or
-a manual check) reads at most 1 GiB in total; once that is spent no new check or
-download starts, and the rest drain on later ticks. An oversized document is `registry_metadata_too_large`, distinct from a transient
+one 30-second deadline, so its reads end well inside its one-minute claim (alert
+deliveries are claimed separately). Once a sweep (or a manual check) has read 1 GiB,
+no new check or download starts, and the rest drain on later ticks. An oversized document is `registry_metadata_too_large`, distinct from a transient
 `registry_evidence_unavailable`; an oversized or timed-out tarball is recorded on the
 watch and logged. A package exceeding 10,000 versions or stored observations reports
 `publication_history_limit` rather than silently treating a partial history as

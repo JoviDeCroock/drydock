@@ -617,8 +617,8 @@ async function examineReleases(
         continue;
       }
       downloads++;
-      // A download cut short by the shared deadline is a timeout, retried on a
-      // later check, never a settled verdict.
+      // A download cut short by the shared deadline is a timeout: a release it
+      // leaves unknown is retried on a later check, never settled as unknown.
       artifact = await hashPublishedArtifact(entry, watch.packageName, item.version, registry, {
         deadlineMs: remainingMs,
         meter,

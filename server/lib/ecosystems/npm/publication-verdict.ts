@@ -229,6 +229,10 @@ function matchedVerdict(
           scanId: newestDecision(late)!.id,
         };
   }
+  // Some approval of these bytes exists. Resting on npm's declared shasum, it
+  // stays unknown for the reason the bytes were not hashed, so the release is
+  // retried or reported as a coverage gap rather than settled.
+  if (unhashed) return unknown(unhashed, newestDecision(decided)!.id);
   // Reconfirming a decision after publication overwrites its timestamp, so a
   // late decision beside an approval of these bytes may hide a newer
   // pre-publication decision than any still visible, in either direction.
@@ -239,7 +243,6 @@ function matchedVerdict(
   if (decision.decision === "no_publish") {
     return { status: "published_despite_rejection", reason: null, scanId: decision.id };
   }
-  if (unhashed) return unknown(unhashed, decision.id);
   // An approval counts only for bytes Drydock itself hashed while reviewing.
   return matching.some(({ scan, reviewed }) => scan === decision && reviewed)
     ? { status: "approved_match", reason: null, scanId: decision.id }

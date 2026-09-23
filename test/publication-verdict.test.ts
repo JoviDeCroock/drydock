@@ -339,6 +339,19 @@ describe("bytes that cannot be hashed", () => {
     ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: "scan1" });
   });
 
+  test("an npm shasum matching an approval beside a late decision stays unhashed, not settled", () => {
+    expect(
+      classifyPublication(
+        name,
+        version,
+        published,
+        "artifact_timeout",
+        [review(), review({ id: "late", decidedAt: new Date(published.getTime() + 1000) })],
+        { declaredSha1: sha1 },
+      ),
+    ).toEqual({ status: "unknown", reason: "artifact_timeout", scanId: "late" });
+  });
+
   test("an npm shasum matching an undecided or rejected record still alerts", () => {
     const unhashed = (reviews: ReviewEvidence[]) =>
       classifyPublication(name, version, published, "artifact_timeout", reviews, {
