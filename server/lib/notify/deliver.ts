@@ -107,7 +107,8 @@ export async function deliverOrganizationNotification(
       type: delivery.result.ok ? sent : failed,
       metadata: slackEventMetadata(eventMetadata, delivery.channelName, delivery.result),
     });
-    return delivery.result.ok ? "delivered" : "failed";
+    if (delivery.result.ok) return "delivered";
+    return slackFailureIsPermanent(delivery.result) ? "no_destination" : "failed";
   })();
 
   const outcomes = await Promise.all([emailDelivery, slackDelivery]);
@@ -141,6 +142,28 @@ async function deliverToSlackConnection(
     result = { ok: false, statusClass: "other", reason: "delivery_error" };
   }
   return { channelName: connection.channelName, result };
+}
+
+// Slack errors a resend cannot fix: the connection or channel itself is gone
+// or unusable until someone reconnects it. Treating them as retryable would
+// re-post every pending alert on every check forever.
+const PERMANENT_SLACK_ERRORS = new Set([
+  "missing_credentials",
+  "delivery_error",
+  "invalid_auth",
+  "not_authed",
+  "account_inactive",
+  "token_revoked",
+  "token_expired",
+  "no_permission",
+  "missing_scope",
+  "channel_not_found",
+  "is_archived",
+  "not_in_channel",
+]);
+
+function slackFailureIsPermanent(result: SlackDeliveryResult): boolean {
+  return !result.rateLimited && PERMANENT_SLACK_ERRORS.has(result.reason ?? "");
 }
 
 function slackEventMetadata(

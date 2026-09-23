@@ -300,6 +300,41 @@ test("releases without a Drydock record drain in bounded batches with no downloa
   ).toMatchObject({ "1.0.0": null, "2.0.0": "1.0.0", "8.0.0": "7.0.0" });
 });
 
+test("records which dist-tags point at each release and keeps settled ones current", async () => {
+  const { db, organizationId, watch } = await seed();
+  const releases = ["1.0.0", "2.0.0-rc.0"];
+  let distTags: Record<string, unknown> = {
+    latest: "1.0.0",
+    next: "2.0.0-rc.0",
+    "bad tag": "1.0.0",
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({ ...registryMetadata(watch, releases), "dist-tags": distTags }),
+  );
+  const tags = async () =>
+    Object.fromEntries(
+      (await listPublicationObservations(db, organizationId, watch.id)).map((row) => [
+        row.version,
+        row.distTags,
+      ]),
+    );
+  await checkNpmPublicationWatch(db, env, watch);
+  // Malformed tag names from the packument are dropped, not stored.
+  expect(await tags()).toEqual({ "1.0.0": ["latest"], "2.0.0-rc.0": ["next"] });
+
+  // The prerelease takes `latest`; both observations are settled verdicts,
+  // and their tags still follow the registry.
+  distTags = { latest: "2.0.0-rc.0", next: "2.0.0-rc.0", legacy: "1.0.0" };
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await tags()).toEqual({ "1.0.0": ["legacy"], "2.0.0-rc.0": ["latest", "next"] });
+
+  distTags = { latest: "2.0.0-rc.0" };
+  await releaseLease(db, watch.id);
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await tags()).toEqual({ "1.0.0": [], "2.0.0-rc.0": ["latest"] });
+});
+
 test("an oversized tarball of a reviewed release stays unknown, says why, and is not refetched", async () => {
   const { db, organizationId, watch } = await seed();
   await insertReview(db, organizationId);

@@ -664,6 +664,10 @@ export const publicationObservations = sqliteTable(
     // The published semver predecessor when the release was observed, so the
     // observation can open the release's public diff without refetching npm.
     previousVersion: text("previous_version"),
+    // The dist-tags that pointed at this version at the latest check, sorted.
+    // Refreshed on every check, settled observations included, so a consumer
+    // can tell which release line a version is on. Null before it was recorded.
+    distTags: text("dist_tags", { mode: "json" }).$type<string[]>(),
   },
   (table) => [
     uniqueIndex("publication_observations_watch_version").on(table.watchId, table.version),

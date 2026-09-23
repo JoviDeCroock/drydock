@@ -26,6 +26,7 @@ const alert = {
   reason: null,
   scanId: null,
   previousVersion: "0.9.0",
+  distTags: ["latest"],
   publishedAt: "2026-09-02T00:00:00.000Z",
   firstSeenAt: "2026-09-02T00:00:00.000Z",
   checkedAt: "2026-09-02T00:00:00.000Z",

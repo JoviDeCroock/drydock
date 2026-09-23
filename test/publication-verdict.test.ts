@@ -113,7 +113,15 @@ describe("publication verdicts", () => {
       status: "unknown",
       reason: "decision_history_unavailable",
     });
-    expect(classify([overwritten, review({ id: "scan2" })]).status).toBe("approved_match");
+    // An earlier visible decision on the same bytes does not settle it: the
+    // overwritten one may have been newer, in either direction.
+    expect(classify([overwritten, review({ id: "scan2" })])).toMatchObject({
+      status: "unknown",
+      reason: "decision_history_unavailable",
+    });
+    expect(classify([overwritten, review({ id: "scan2", decision: "no_publish" })]).status).toBe(
+      "unknown",
+    );
   });
 
   test("published-pair reviews are never release-path records", () => {
@@ -235,6 +243,32 @@ describe("a restaged version is decided by the review that examined the publishe
         review({ id: "stage-b", summaryJson: stagedIntegrity("e".repeat(40)) }),
       ]),
     ).toMatchObject({ status: "artifact_mismatch", scanId: "stage-b" });
+  });
+});
+
+describe("decision timing matters only when the bytes match", () => {
+  const after = new Date(published.getTime() + 1000);
+
+  test("approving a pending stage after someone else published the version is a mismatch", () => {
+    // Stage A was pending; different bytes were published directly as the
+    // same version; the maintainer then approved A before the first check.
+    expect(classify([review({ id: "stage-a", decidedAt: after })], otherBytes)).toMatchObject({
+      status: "artifact_mismatch",
+      scanId: "stage-a",
+    });
+  });
+
+  test("a rejection of other bytes after publication still leaves the release unapproved", () => {
+    expect(
+      classify([review({ decision: "no_publish", decidedAt: after })], otherBytes).status,
+    ).toBe("published_without_approval");
+  });
+
+  test("a late decision on the published bytes themselves stays unknown", () => {
+    expect(classify([review({ decidedAt: after })])).toMatchObject({
+      status: "unknown",
+      reason: "decision_history_unavailable",
+    });
   });
 });
 

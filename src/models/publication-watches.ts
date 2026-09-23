@@ -31,6 +31,8 @@ export interface PublicationObservation {
   scanId: string | null;
   /** The published version this release follows, when it has one. */
   previousVersion: string | null;
+  /** Dist-tags pointing at this version at the latest check; null before recorded. */
+  distTags: string[] | null;
 }
 
 export interface AutoEnrollmentInfo {

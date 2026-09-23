@@ -145,6 +145,8 @@ const unknown = (reason: string, scanId: string | null = null): Verdict => ({
  * evidence of a bypass, so it yields `unknown` rather than an accusation. A
  * review superseded by a newer stage of the same version never produces a
  * mismatch on its own; whichever review examined the published bytes decides.
+ * Decision timing only matters when a review's bytes match: bytes that match
+ * no review differ from every approval, whenever that approval was recorded.
  */
 export function classifyPublication(
   name: string,
@@ -166,6 +168,11 @@ export function classifyPublication(
     return evidence !== null && artifact[evidence.algorithm] === evidence.digest;
   });
   if (matching.length > 0) {
+    // Reconfirming a decision after publication overwrites its timestamp, so a
+    // late decision on these bytes may hide a newer pre-publication decision
+    // than any still visible: neither an approval nor a rejection is certain.
+    const late = matching.find((scan) => decidedSince(scan, publishedAt));
+    if (late) return unknown("decision_history_unavailable", late.id);
     // Identical bytes carry the same approval whichever stage delivered them,
     // so the newest decision on these bytes before publication is the answer.
     const decision = newestDecision(matching.filter((scan) => decidedBefore(scan, publishedAt)));
@@ -176,16 +183,14 @@ export function classifyPublication(
         scanId: decision.id,
       };
     }
-    const late = matching.find((scan) => decidedSince(scan, publishedAt));
-    if (late) return unknown("decision_history_unavailable", late.id);
     const current = matching.find((scan) => !scan.registryStatusSupersededAt) ?? matching[0]!;
     return unknown("reviewed_without_decision", current.id);
   }
 
-  // No review examined these bytes. Reconfirming a decision after publication
-  // overwrites its timestamp, so a late decision hides what was decided before.
-  const late = records.find((scan) => decidedSince(scan, publishedAt));
-  if (late) return unknown("decision_history_unavailable", late.id);
+  // No review examined these bytes, so when a decision was recorded does not
+  // matter: an approval of other bytes is a mismatch whether it came before
+  // publication or after it (approving a pending stage after someone else
+  // published the version must not hide the difference).
   const current = records.filter((scan) => !scan.registryStatusSupersededAt);
   const inFlight = current.find((scan) => scan.status === "pending" || scan.status === "running");
   if (inFlight) return unknown("review_pending", inFlight.id);
@@ -195,11 +200,9 @@ export function classifyPublication(
   if (unbound) return unknown("review_digest_unavailable", unbound.id);
   const undecided = current.find((scan) => scan.decision === null);
   if (undecided) return unknown("reviewed_other_artifact", undecided.id);
-  const approval = newestDecision(
-    current.filter((scan) => scan.decision === "publish" && decidedBefore(scan, publishedAt)),
-  );
+  const approval = newestDecision(current.filter((scan) => scan.decision === "publish"));
   if (approval) return { status: "artifact_mismatch", reason: null, scanId: approval.id };
   if (current.length === 0) return unknown("review_superseded");
-  // Every current review rejected other bytes before this publication.
+  // Every current review rejected other bytes.
   return { status: "published_without_approval", reason: null, scanId: null };
 }

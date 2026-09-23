@@ -71,11 +71,17 @@ function PackageReleasesView({
   const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
   const organizations = useModel(OrganizationModel);
-  const membership = useSignal<"resolving" | "member" | "not_member">("resolving");
+  const membership = useSignal<"resolving" | "member" | "not_member" | "unavailable">("resolving");
   const sessionChecked = useAuthedDashboardSession({
     onReady: async (_session, isCancelled) => {
       await organizations.load();
       if (isCancelled()) return;
+      // Without the membership list an outage would read as "not a member";
+      // report the failed load instead of guessing.
+      if (organizations.error.peek()) {
+        membership.value = "unavailable";
+        return;
+      }
       if (!organizationId) {
         // An address without an organization would show whichever one this
         // browser had active; name it in the URL before reading anything.
@@ -155,12 +161,15 @@ function PackageReleasesView({
           </Alert>
         )}
       </Show>
+      <Show when={() => (membership.value === "unavailable" ? organizations.error.value : null)}>
+        {(message) => <Alert tone="critical">{message}</Alert>}
+      </Show>
       <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
       <Show
         when={ready}
         fallback={
-          <Show when={() => membership.value !== "not_member"}>
+          <Show when={() => membership.value === "resolving" || membership.value === "member"}>
             <LoadingState title="Loading releases" detail="confirming session · reading reviews" />
           </Show>
         }

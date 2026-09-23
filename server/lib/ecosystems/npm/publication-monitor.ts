@@ -238,8 +238,72 @@ export async function checkNpmPublicationWatch(
 
 type ObservedRelease = Pick<
   PublicationObservation,
-  "id" | "version" | "status" | "reason" | "firstSeenAt" | "checkedAt" | "sha1" | "sha256"
+  | "id"
+  | "version"
+  | "status"
+  | "reason"
+  | "firstSeenAt"
+  | "checkedAt"
+  | "sha1"
+  | "sha256"
+  | "distTags"
 >;
+
+const MAX_DIST_TAGS = 100;
+
+/**
+ * Which dist-tags point at each version right now, tags sorted. The packument
+ * is untrusted: malformed or excess entries are dropped rather than trusted,
+ * and the count is capped so a hostile packument cannot turn one check into
+ * thousands of writes.
+ */
+function distTagsByVersion(metadata: Record<string, unknown>): Map<string, string[]> {
+  const byVersion = new Map<string, string[]>();
+  const raw = metadata["dist-tags"];
+  if (!isRecord(raw)) return byVersion;
+  for (const [tag, version] of Object.entries(raw).slice(0, MAX_DIST_TAGS)) {
+    if (typeof version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(tag)) continue;
+    byVersion.set(version, [...(byVersion.get(version) ?? []), tag].sort());
+  }
+  return byVersion;
+}
+
+function sameTags(a: readonly string[] | null, b: readonly string[]): boolean {
+  const left = a ?? [];
+  return left.length === b.length && left.every((tag, index) => tag === b[index]);
+}
+
+/**
+ * Keep every observation's dist-tags current, settled ones included, so a
+ * reader can tell which release line a version is on today. Only rows whose
+ * tags changed are written.
+ */
+async function refreshObservedDistTags(
+  db: AppDb,
+  watch: PublicationWatch,
+  observed: readonly ObservedRelease[],
+  tagsByVersion: ReadonlyMap<string, string[]>,
+) {
+  const updates = observed.flatMap((row) => {
+    const tags = tagsByVersion.get(row.version) ?? [];
+    if (sameTags(row.distTags, tags)) return [];
+    return [
+      db
+        .update(publicationObservations)
+        .set({ distTags: tags })
+        .where(
+          and(
+            eq(publicationObservations.id, row.id),
+            eq(publicationObservations.organizationId, watch.organizationId),
+          ),
+        ),
+    ];
+  });
+  for (let offset = 0; offset < updates.length; offset += 50) {
+    const [first, ...rest] = updates.slice(offset, offset + 50);
+    if (first) await db.batch([first, ...rest]);
+  }
+}
 
 /**
  * The published version this release follows, by the same semver-predecessor
@@ -274,11 +338,12 @@ async function examineReleases(
   const note = (problem: string) => {
     lastError ??= problem;
   };
+  let metadata: Record<string, unknown>;
   let versions: Record<string, unknown>;
   let times: Record<string, unknown>;
   let observed: ObservedRelease[];
   try {
-    const metadata = await fetchMetadata(watch.packageName, registry);
+    metadata = await fetchMetadata(watch.packageName, registry);
     versions = isRecord(metadata.versions) ? metadata.versions : {};
     times = isRecord(metadata.time) ? metadata.time : {};
     observed = await db
@@ -291,6 +356,7 @@ async function examineReleases(
         checkedAt: publicationObservations.checkedAt,
         sha1: publicationObservations.sha1,
         sha256: publicationObservations.sha256,
+        distTags: publicationObservations.distTags,
       })
       .from(publicationObservations)
       .where(
@@ -315,6 +381,8 @@ async function examineReleases(
     });
     return { lastError: "publication_history_limit", attempted };
   }
+  const tagsByVersion = distTagsByVersion(metadata);
+  await refreshObservedDistTags(db, watch, observed, tagsByVersion);
   const existing = new Map(observed.map((item) => [item.version, item]));
   const pending: { version: string; publishedAt: Date | null; previous?: ObservedRelease }[] = [];
   for (const version of Object.keys(versions)) {
@@ -419,6 +487,7 @@ async function examineReleases(
         sha1: digests?.sha1 ?? null,
         sha256: digests?.sha256 ?? null,
         previousVersion: previousPublishedVersion(versions, item.version),
+        distTags: tagsByVersion.get(item.version) ?? [],
       },
       watch.packageName,
     );

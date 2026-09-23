@@ -38,6 +38,7 @@ export async function savePublicationObservation(
         sha1: observation.sha1,
         sha256: observation.sha256,
         previousVersion: observation.previousVersion,
+        distTags: observation.distTags,
       },
       setWhere: eq(publicationObservations.status, "unknown"),
     });

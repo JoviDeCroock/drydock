@@ -76,7 +76,17 @@ Only a version with no Drydock record at all is published without approval, and 
 verdict needs no bytes, so a tarball too large or too slow to hash cannot suppress it.
 When the same version was staged again, whichever review examined the published bytes
 decides; a review superseded by a newer stage never produces a mismatch on its own
-(`review_superseded` when nothing else remains).
+(`review_superseded` when nothing else remains). Decision timing matters only when a
+review's bytes match the published ones: an approval of other bytes is a mismatch
+whether it was recorded before or after publication (approving a pending stage after
+someone else published the version must not hide the difference), while any late
+decision on the matching bytes leaves the verdict unknown even beside an earlier
+visible decision, since the overwritten one may have been newer.
+
+Each observation also records which dist-tags pointed at the version at the latest
+check (`dist_tags`, sorted; malformed tag names are dropped and at most 100 tags are
+read). Every check refreshes them, settled observations included, so a consumer can
+tell which release line a version is on today.
 
 ## Alerts and acknowledgment
 
@@ -105,7 +115,9 @@ ledger, so a stop or re-enrollment never erases what was alerted.
 Observation, alert and audit creation commit together, and delivery follows. An alert
 is marked notified only when a recipient or the Slack channel accepted it, or when the
 organization has nowhere to deliver it (no resolvable recipient or email transport and
-no connected Slack channel), which is logged because retrying cannot help. A delivery
+no connected Slack channel, or a Slack connection that fails permanently until it is
+reconnected: revoked token, archived or missing channel), which is logged because
+retrying cannot help. A delivery
 that failed stays pending and is attempted again, once per check, on each later check
 of the same watch until one lands. Only alerts in the watch's current observation
 window are re-sent: after a stop and re-enrollment, an older window's alert is never
