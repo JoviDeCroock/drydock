@@ -230,9 +230,10 @@ findings, risk, decisions, signed public reports, public badge identity, or Rele
 Receipt v1.
 
 The public README badge reads these observations, and the alert ledger, for the
-answering organization: a discrepancy for the version it quotes, or for a newer
-release on the same line, turns it grey as `<version> not reviewed` instead of
-green. `unknown` never does. See
+answering organization: a discrepancy for the version it quotes, or any
+observation other than an approved match for a newer release on the same line,
+turns it grey as `<version> not reviewed` instead of green. `unknown` about the
+quoted version itself does not. See
 [`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
 
 ## API and operation

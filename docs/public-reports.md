@@ -424,28 +424,38 @@ published straight to npm, bypassing staging, has no scan at all. So the badge
 also reads the answering organization's own `publication_observations` for the
 package (joined to its watch) and its `publication_alerts` ledger, which
 outlives a stopped watch so stopping one cannot turn a recorded discrepancy
-back into a green badge. Only the discrepancy statuses count —
-`published_without_approval`, `published_despite_rejection`,
-`artifact_mismatch`; `unknown` means the evidence could not be established and
-never greys a badge.
+back into a green badge.
 
-- **The quoted version itself** with a discrepancy → `<version> not reviewed`,
-  lightgrey. A green `3.0.0 approved` beside published bytes that differ from
-  the approved ones, or a publication the approval did not precede, vouches for
-  something the review did not establish. A `blocked` pick stays red: it
-  already warns.
-- **A newer version on the line** with a discrepancy → that version,
-  `not reviewed`, exactly like the scan-based path. Observations carry no
-  dist-tag, so a version joins the pick's line by shape: a stable pick is
-  superseded only by newer stable versions, a prerelease pick only by newer
-  prereleases. A maintenance line tagged something other than `latest` can
-  therefore be greyed by a newer stable release on another major — the error
-  runs toward grey, never toward green.
+- **A newer version on the quoted line**, observed with anything but
+  `approved_match` → that version, `not reviewed`, exactly like the scan-based
+  path. That includes `unknown`: an observation alone proves npm published the
+  version, and nothing proves this organization approved it, so the badge must
+  not keep vouching for the older one beside an install command that fetches
+  the newer. An approved match is left to the scan-based path, which knows
+  whether that release answers the badge itself.
+- **The quoted version itself** with a discrepancy — `published_without_approval`,
+  `published_despite_rejection`, `artifact_mismatch` → `<version> not
+reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
+  differ from the approved ones, or a publication the approval did not precede,
+  vouches for something the review did not establish. `unknown` here means the
+  evidence could not be established and leaves an approved quote alone. A
+  `blocked` pick stays red: it already warns.
+
+Observations carry no dist-tag, so the quoted line is inferred from the badge's
+tag and the version's shape: `latest` is superseded by newer stable versions
+(and newer prereleases too when the pick is itself a prerelease); another tag
+with a stable pick is a maintenance line that stays within its major; another
+tag with a prerelease pick is that channel, matched on the leading prerelease
+identifier (`canary`, `next`). A release outside those rules on a line that
+breaks them is not seen by this path.
 
 Same organization-scoping as the scan probe, and the rendered version is npm's
 (the monitor reads it from npm's packument), so nothing new leaks: "not
 reviewed" is the claim the badge already makes. No watch and no alert means no
-evidence, and the badge answers from the scans alone. npm only.
+evidence, and the badge answers from the scans alone. npm only. Like the
+registry-status sweep, the monitor runs in cron with no request colo to purge,
+so a badge it turns grey does so within the 300s cache TTL rather than at
+once.
 
 The probe runs on a badge cache miss against `scans.badge_package_key`, the
 release line written for **every** badge-eligible scan, shared or not. For a

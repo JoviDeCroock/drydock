@@ -327,7 +327,9 @@ export function badgeLookupKey(row: {
  * the manifest disagrees with it: that release is still one npm published
  * under the name, and a badge must go grey beside it rather than keep vouching
  * for the older version. The manifest's name never places a staged scan on a
- * line. A gate review's line is the name it claims, as its identity is.
+ * line, and neither does a stage from any registry but public npm — a private
+ * registry's package of the same name is a different package. A gate review's
+ * line is the name it claims, as its identity is.
  */
 export function badgeReleaseLineKey(row: {
   source: string;
@@ -337,7 +339,7 @@ export function badgeReleaseLineKey(row: {
   summaryJson: unknown;
 }): string | null {
   if (scanPackageIdentity(row.source) !== "registry-verified") return badgeLookupKey(row);
-  if (!row.registryPackageName) return null;
+  if (!row.registryPackageName || !isPublicNpmRegistryUrl(row.registryUrl)) return null;
   const ecosystem = badgeEcosystem(row.source, row.summaryJson);
   return ecosystem ? publicPackageLookupKey(ecosystem, row.registryPackageName) : null;
 }
@@ -353,11 +355,6 @@ function stagedPublishAccess(summaryJson: unknown): string | null {
   }
   return null;
 }
-
-// npm serves the public registry from exactly this host. A scan pointed at
-// anything else — a mirror, a proxy, an enterprise registry — proves nothing
-// about whether the package is public, so it never qualifies.
-const PUBLIC_NPM_REGISTRY_HOSTS: ReadonlySet<string> = new Set(["registry.npmjs.org"]);
 
 /**
  * Whether this review may answer the badge with **no opt-in at all**.
@@ -395,14 +392,10 @@ export function isDefaultBadgePublic(row: {
 }): boolean {
   if (!REGISTRY_VERIFIED_SOURCES.has(row.source)) return false;
   if (scanEcosystem(row.source, row.summaryJson) !== "npm") return false;
+  // Also requires the public npm registry: any other host — a mirror, a
+  // proxy, an enterprise registry — says nothing about publicness.
   if (!scanPublicPackageName(row)?.trim()) return false;
-  if (stagedPublishAccess(row.summaryJson) !== "public") return false;
-  if (!row.registryUrl) return false;
-  try {
-    return PUBLIC_NPM_REGISTRY_HOSTS.has(new URL(row.registryUrl).host);
-  } catch {
-    return false;
-  }
+  return stagedPublishAccess(row.summaryJson) === "public";
 }
 
 // A manifest claim must not displace a registry-verified npm review, and an

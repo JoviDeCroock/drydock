@@ -2447,15 +2447,90 @@ describe("the badge reads the organization's publication monitor", () => {
     });
   });
 
-  test("unknown evidence and a matching approval leave the badge alone", async () => {
+  test("unknown evidence about the quoted version leaves it approved", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "unknown");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("a newer published version with only unknown evidence still greys the badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // Observed at all means npm published it; nothing says anyone approved it.
+    await recordObservation(owner.organizationId, packageName, "3.0.1", "unknown");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+
+  test("an approved match leaves the newer version to the scans", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match");
-    await recordObservation(owner.organizationId, packageName, "3.0.1", "unknown");
+    await recordObservation(owner.organizationId, packageName, "3.0.1", "approved_match");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    // The scan-based path decides: an approved, published 3.0.1 answers itself.
+    const newer = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, newer, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a maintenance line is superseded only within its major", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "1.9.0", { tag: "v1" });
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName, { tag: "v1" })).body.message).toBe(
+      "1.9.0 approved",
+    );
+
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "2.0.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName, { tag: "v1" })).body.message).toBe(
+      "1.9.0 approved",
+    );
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "1.9.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName, { tag: "v1" })).body.message).toBe(
+      "1.9.1 not reviewed",
+    );
+  });
+
+  test("a prerelease channel is superseded only by its own channel", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "4.0.0-canary.3", {
+      tag: "canary",
+    });
+    await decide(app, scanId, "publish");
+
+    await recordObservation(owner.organizationId, packageName, "4.0.0-next.1", "unknown");
+    expect((await fetchBadge(app, "npm", packageName, { tag: "canary" })).body.message).toBe(
+      "4.0.0-canary.3 approved",
+    );
+    await recordObservation(owner.organizationId, packageName, "4.0.0-canary.4", "unknown");
+    expect((await fetchBadge(app, "npm", packageName, { tag: "canary" })).body.message).toBe(
+      "4.0.0-canary.4 not reviewed",
+    );
   });
 
   test("a prerelease served without approval leaves the stable line alone", async () => {

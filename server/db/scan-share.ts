@@ -678,10 +678,12 @@ export async function findNewerPublishedRelease(
         // release with no public name (its manifest disagrees with npm's) is
         // neither, however it was shared, so it still takes the badge off an
         // older version.
+        // Coalesced so a NULL key reads as "not listed under this key" rather
+        // than a NULL that `not` would turn into an exclusion.
         not(
           and(
             isNotNull(scans.publicFeedListedAt),
-            eq(scans.publicPackageKey, packageKey),
+            sql`coalesce(${scans.publicPackageKey} = ${packageKey}, 0)`,
             publicNameIsRegistryName,
           )!,
         ),

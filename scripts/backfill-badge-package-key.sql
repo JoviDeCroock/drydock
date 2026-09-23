@@ -80,23 +80,21 @@ WHERE public_package_key IS NOT NULL
   );
 
 -- 2. The release line (npm's name, whatever the manifest says) and default-on
---    eligibility (npm's name agrees, npm says public, public npm registry).
+--    eligibility (npm's name agrees, npm says public), for stages on the
+--    public npm registry only. The exact strings `PUBLIC_NPM_REGISTRY_URLS`
+--    holds, never a prefix: a LIKE would also admit
+--    `https://registry.npmjs.org.internal.corp`, a private registry.
 UPDATE scans
 SET badge_package_key = 'npm:' || registry_package_name,
     badge_public = CASE
       WHEN package_name = registry_package_name
        AND json_extract(summary_json, '$.stagedPublish.access') = 'public'
-       -- Exact host, never a prefix: `isDefaultBadgePublic` compares
-       -- `new URL(u).host`, and a LIKE prefix would also admit
-       -- `https://registry.npmjs.org.internal.corp` — a private registry whose
-       -- packages are not public at all. `normalizeRegistryUrl` strips the
-       -- trailing slash, so the first form is what is stored.
-       AND registry_url IN ('https://registry.npmjs.org', 'https://registry.npmjs.org/')
       THEN 1 ELSE 0
     END
 WHERE badge_package_key IS NULL
   AND registry_package_name IS NOT NULL
   AND registry_package_name != ''
+  AND registry_url IN ('https://registry.npmjs.org', 'https://registry.npmjs.org/')
   AND source IN ('manual', 'auto_discovery')
   AND (
     json_extract(summary_json, '$.stagedPublish.provenance.ecosystem') IS NULL
