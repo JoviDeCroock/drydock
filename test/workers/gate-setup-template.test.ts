@@ -8,6 +8,7 @@ import {
   assertGateSetupEnvironment,
   assertGateSetupPackageName,
 } from "../../server/lib/github-app/gate-setup";
+import { GATE_SETUP_NPM_CLI_VERSION } from "../../server/lib/workflow-gates/gate-setup-actions";
 import type { GateSetupTemplate } from "../../server/lib/workflow-gates/types";
 
 /**
@@ -254,9 +255,16 @@ describe("gate setup templates", () => {
     expect(generated.yaml).not.toContain("npx");
     expect(generated.yaml.split("./node_modules/.bin/vsce ").length - 1).toBe(2);
     const publish = jobBlocks(generated.yaml).get("publish") ?? "";
-    const install = publish.indexOf("npm ci --ignore-scripts");
+    // npm still runs a git dependency's prepare scripts under
+    // --ignore-scripts, so the install refuses git dependencies too, with a
+    // pinned npm 11 (npm 10 has no --allow-git).
+    const install = publish.indexOf("npm ci --ignore-scripts --allow-git=none");
     expect(install).toBeGreaterThan(-1);
     expect(install).toBeLessThan(publish.indexOf("vsce publish"));
+    const npmPin = publish.indexOf(`npm install -g npm@${GATE_SETUP_NPM_CLI_VERSION}`);
+    expect(npmPin).toBeGreaterThan(-1);
+    expect(npmPin).toBeLessThan(install);
+    expect(GATE_SETUP_NPM_CLI_VERSION).toMatch(/^11\.\d+\.\d+$/);
     // The locked vsce needs a known Node (4.x wants >= 22), not the runner's.
     expect(publish.indexOf("actions/setup-node@")).toBeGreaterThan(-1);
     expect(publish.indexOf("actions/setup-node@")).toBeLessThan(install);
