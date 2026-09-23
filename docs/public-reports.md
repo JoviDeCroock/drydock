@@ -277,11 +277,12 @@ unaffected; unlisting is still how that is withdrawn.
 Five limits are known and deliberate:
 
 - **A badge can outlive the organization's use of Drydock.** Staleness is
-  detected from releases _this organization scanned_, so an organization that
-  stops scanning keeps its last green badge for a release nobody installs. The
-  off switch above is the remedy today; reading `publication_observations` —
-  which the monitor fills anonymously, without the organization's token —
-  would close it properly.
+  detected from releases _this organization scanned_ and from what _its_
+  publication monitor observed (see "Releasing again"), so an organization
+  that stops scanning and has no watch on the package keeps its last green
+  badge for a release nobody installs. Auto-enrollment watches most public
+  packages with a published staged review, which narrows this; the off switch
+  above is the remedy otherwise.
 - **The sweep that creates a badge does not purge its cache.** A default-on
   badge appears when the registry-status sweep flips a version to `published`,
   and that sweep runs in cron with no request colo to purge — so a new badge,
@@ -413,6 +414,35 @@ the comparison runs over.
 The newer release's decision is never consulted and never disclosed — an
 automatic red badge for a release the organization chose not to ship would
 publish an internal verdict about software that was never released.
+
+**The publication monitor's evidence counts too** (`findPublicationDiscrepancy`).
+A scan-based probe only sees releases that were staged and reviewed; a release
+published straight to npm, bypassing staging, has no scan at all. So the badge
+also reads the answering organization's own `publication_observations` for the
+package (joined to its watch) and its `publication_alerts` ledger, which
+outlives a stopped watch so stopping one cannot turn a recorded discrepancy
+back into a green badge. Only the discrepancy statuses count —
+`published_without_approval`, `published_despite_rejection`,
+`artifact_mismatch`; `unknown` means the evidence could not be established and
+never greys a badge.
+
+- **The quoted version itself** with a discrepancy → `<version> not reviewed`,
+  lightgrey. A green `3.0.0 approved` beside published bytes that differ from
+  the approved ones, or a publication the approval did not precede, vouches for
+  something the review did not establish. A `blocked` pick stays red: it
+  already warns.
+- **A newer version on the line** with a discrepancy → that version,
+  `not reviewed`, exactly like the scan-based path. Observations carry no
+  dist-tag, so a version joins the pick's line by shape: a stable pick is
+  superseded only by newer stable versions, a prerelease pick only by newer
+  prereleases. A maintenance line tagged something other than `latest` can
+  therefore be greyed by a newer stable release on another major — the error
+  runs toward grey, never toward green.
+
+Same organization-scoping as the scan probe, and the rendered version is npm's
+(the monitor reads it from npm's packument), so nothing new leaks: "not
+reviewed" is the claim the badge already makes. No watch and no alert means no
+evidence, and the badge answers from the scans alone. npm only.
 
 The probe runs on a badge cache miss against `scans.badge_package_key`, the
 release line written for **every** badge-eligible scan, shared or not. For a

@@ -6,7 +6,6 @@ import {
   getScanFile,
   encodeThreatFeedCursor,
   compareBadgeCandidates,
-  findNewerPublishedRelease,
   listBadgeCandidateScans,
   listDefaultBadgeCandidateScans,
   type SharedScanRow,
@@ -201,9 +200,11 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
         badgeTagMatches(scanDistTag(row.summaryJson), tag),
     ),
   );
-  // One indexed probe, only on a cache miss with a review to quote: has this
-  // organization published a newer release on this line that it never listed?
-  const supersededBy = match ? await findNewerPublishedRelease(db, match) : null;
+  // Indexed probes, only on a cache miss with a review to quote: has this
+  // organization published a newer release on this line that the badge cannot
+  // speak for, or has its publication monitor recorded npm serving something
+  // its reviews do not vouch for?
+  const supersededBy = match ? await findBadgeSupersession(db, match) : null;
   // A serve, not an impression: shields (and Camo, on GitHub) sit in front of
   // this handler, and the colo cache means repeats inside the TTL never reach
   // it at all. What this counts is proxies refreshing their copy.

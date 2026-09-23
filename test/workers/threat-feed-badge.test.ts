@@ -2286,3 +2286,204 @@ describe("the switch addresses the key the badge answers under", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
   });
 });
+
+/**
+ * The publication monitor's evidence. The badge reads the answering
+ * organization's own observations (and the alert ledger that outlives a
+ * watch): a discrepancy for the quoted version, or a newer release npm served
+ * without approval, must not leave a green badge vouching for it.
+ */
+type ObservationStatus =
+  | "approved_match"
+  | "published_without_approval"
+  | "published_despite_rejection"
+  | "artifact_mismatch"
+  | "unknown";
+
+async function recordObservation(
+  organizationId: string,
+  packageName: string,
+  version: string,
+  status: ObservationStatus,
+): Promise<void> {
+  const db = createDb(env.DB);
+  const now = new Date();
+  const [existing] = await db
+    .select({ id: schema.publicationWatches.id })
+    .from(schema.publicationWatches)
+    .where(eq(schema.publicationWatches.organizationId, organizationId));
+  const watchId = existing?.id ?? crypto.randomUUID();
+  if (!existing) {
+    await db.insert(schema.publicationWatches).values({
+      id: watchId,
+      organizationId,
+      packageName,
+      source: "manual",
+      createdAt: now,
+    });
+  }
+  await db.insert(schema.publicationObservations).values({
+    id: crypto.randomUUID(),
+    watchId,
+    organizationId,
+    version,
+    publishedAt: now,
+    firstSeenAt: now,
+    checkedAt: now,
+    status,
+  });
+}
+
+async function recordAlertOnly(
+  organizationId: string,
+  packageName: string,
+  version: string,
+  status: "published_without_approval" | "published_despite_rejection" | "artifact_mismatch",
+): Promise<void> {
+  const db = createDb(env.DB);
+  await db.insert(schema.publicationAlerts).values({
+    id: crypto.randomUUID(),
+    organizationId,
+    packageName,
+    version,
+    status,
+    createdAt: new Date(),
+  });
+}
+
+async function seedApprovedDefaultRelease(
+  owner: SeededUser,
+  app: ReturnType<typeof buildTestApp>,
+  packageName: string,
+  version: string,
+): Promise<string> {
+  const scanId = await seedPublicRelease(owner, packageName, version);
+  await decide(app, scanId, "publish");
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(`${version} approved`);
+  return scanId;
+}
+
+describe("the badge reads the organization's publication monitor", () => {
+  test.each([
+    "artifact_mismatch",
+    "published_despite_rejection",
+    "published_without_approval",
+  ] as const)("%s for the quoted version takes the green off it", async (status) => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.0 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
+  test("a newer version npm served without approval greys the badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // Never staged, so no scan exists for the scan-based probe to find.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.1 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
+  test("unknown evidence and a matching approval leave the badge alone", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match");
+    await recordObservation(owner.organizationId, packageName, "3.0.1", "unknown");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("a prerelease served without approval leaves the stable line alone", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "4.0.0-rc.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("another organization's monitor cannot grey a maintainer's badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    const stranger = await seedUser();
+    await recordObservation(stranger.organizationId, packageName, "3.0.0", "artifact_mismatch");
+    await recordObservation(
+      stranger.organizationId,
+      packageName,
+      "3.0.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("a recorded discrepancy outlives the watch", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // Stopping a watch deletes its observations; the alert ledger stays.
+    await recordAlertOnly(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+  });
+
+  test("a deliberately listed review is held to the same evidence", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const approved = await seedCompletedScan(owner, { packageName, version: "3.0.0" });
+    await decide(app, approved, "publish");
+    await share(app, approved, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+  });
+
+  test("a blocked review stays red: a discrepancy does not make it less true", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const blocked = await seedCompletedScan(owner, { packageName, version: "3.0.0" });
+    await decide(app, blocked, "no_publish");
+    await share(app, blocked, { threatFeed: true });
+
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.0",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.0 blocked",
+      color: "red",
+    });
+  });
+});
