@@ -2,7 +2,6 @@ import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
-import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { PageShell } from "../../components/PageShell";
