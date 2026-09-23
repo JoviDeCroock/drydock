@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   approvalSql,
@@ -362,7 +363,7 @@ afterEach(async () => {
 });
 describe("private artifacts", () => {
   it("uses restrictive modes and refuses repository paths, symlinks, and overwrites", async () => {
-    const base = await mkdtemp("/private/tmp/package-claims-test-");
+    const base = await mkdtemp(path.join(await realpath(tmpdir()), "package-claims-test-"));
     directories.push(base);
     const output = path.join(base, "private");
     await writePrivateArtifacts(output, { "audit.md": "private" });
