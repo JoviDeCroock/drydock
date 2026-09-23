@@ -36,6 +36,7 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
     registryPackageName: name,
     registryVersion: version,
     registryStatusSupersededAt: null,
+    stagedDeclaredSha1: null,
     packageName: name,
     stagedVersion: version,
     decision: "publish",
@@ -71,9 +72,9 @@ describe("publication verdicts", () => {
       status: "artifact_mismatch",
       scanId: "scan1",
     });
+    // An approval whose record carries no digest cannot vouch for any bytes.
     expect(classify([review({ summaryJson: {} })])).toMatchObject({
-      status: "unknown",
-      reason: "review_digest_unavailable",
+      status: "artifact_mismatch",
     });
     expect(classifyPublication(name, version, null, { sha1, sha256 }, [review()])).toMatchObject({
       status: "unknown",
@@ -140,60 +141,94 @@ describe("a release with no Drydock record needs no bytes", () => {
       });
     },
   );
-
-  test("an unhashable artifact of a reviewed release stays unknown and says why", () => {
-    expect(classify([review()], "artifact_too_large")).toEqual({
-      status: "unknown",
-      reason: "artifact_too_large",
-      scanId: null,
-    });
-    expect(classify([review()], "artifact_timeout").reason).toBe("artifact_timeout");
-  });
 });
 
-describe("the owner's own release in flight is never an accusation", () => {
+const stageSha1 = "5".repeat(40);
+const inFlight = (
+  status: "pending" | "running" | "failed",
+  overrides: Partial<ReviewEvidence> = {},
+) =>
+  review({
+    status,
+    decision: null,
+    decidedAt: null,
+    summaryJson: null,
+    stagedDeclaredSha1: sha1,
+    ...overrides,
+  });
+
+describe("unknown is earned only by a record of the same bytes", () => {
   test.each([
     ["pending", "review_pending"],
     ["running", "review_pending"],
     ["failed", "review_failed"],
-  ] as const)("a %s review of the version is unknown (%s)", (status, reason) => {
-    const inFlight = review({ status, decision: null, decidedAt: null, summaryJson: null });
-    expect(classify([inFlight])).toEqual({ status: "unknown", reason, scanId: "scan1" });
-    expect(classify([inFlight], "artifact_too_large").status).toBe("unknown");
-  });
+  ] as const)(
+    "the owner's %s review of these bytes, known by npm's stage shasum, is unknown (%s)",
+    (status, reason) => {
+      expect(classify([inFlight(status)])).toEqual({ status: "unknown", reason, scanId: "scan1" });
+    },
+  );
 
-  test("a completed undecided review is unknown whether or not its bytes match", () => {
-    const undecided = review({ decision: null, decidedAt: null });
-    expect(classify([undecided])).toEqual({
+  test("the owner's undecided review of these bytes is unknown", () => {
+    expect(classify([review({ decision: null, decidedAt: null })])).toEqual({
       status: "unknown",
       reason: "reviewed_without_decision",
       scanId: "scan1",
     });
-    expect(classify([undecided], otherBytes)).toEqual({
-      status: "unknown",
-      reason: "reviewed_other_artifact",
-      scanId: "scan1",
-    });
   });
 
-  test("a rejection of other bytes leaves the published release unapproved", () => {
-    expect(classify([review({ decision: "no_publish" })], otherBytes).status).toBe(
+  test("a record with no digest at all cannot vouch", () => {
+    expect(classify([inFlight("pending", { stagedDeclaredSha1: null })]).status).toBe(
       "published_without_approval",
     );
   });
+
+  test("npm's stage shasum identifies the owner's bytes but never stands in for an approval", () => {
+    const unverified = review({
+      summaryJson: { stagedPublish: { shasum: sha1 } },
+    });
+    expect(classify([unverified])).toMatchObject({
+      status: "unknown",
+      reason: "review_digest_unavailable",
+    });
+    expect(classify([{ ...unverified, decision: "no_publish" }]).status).toBe(
+      "published_despite_rejection",
+    );
+  });
+
+  test("a benign seed stage cannot soften a different published artifact", () => {
+    // Attacker stages benign bytes, lets Drydock review them, then publishes
+    // different bytes as the same version.
+    expect(classify([review({ decision: null, decidedAt: null })], otherBytes)).toEqual({
+      status: "published_without_approval",
+      reason: null,
+      scanId: null,
+    });
+    expect(
+      classify([inFlight("pending", { stagedDeclaredSha1: stageSha1 })], otherBytes).status,
+    ).toBe("published_without_approval");
+    expect(
+      classify([inFlight("failed", { stagedDeclaredSha1: stageSha1 })], otherBytes).status,
+    ).toBe("published_without_approval");
+  });
+
+  test("a rejection of other bytes is a mismatch, whenever it was decided", () => {
+    expect(classify([review({ decision: "no_publish" })], otherBytes)).toMatchObject({
+      status: "artifact_mismatch",
+      scanId: "scan1",
+    });
+  });
 });
 
-describe("a restaged version is decided by the review that examined the published bytes", () => {
+describe("a restaged version", () => {
   const superseded = { registryStatusSupersededAt: new Date(published.getTime() - 500) };
-  // Stage A was approved, then the same version was restaged as B and the
-  // owner published B.
   const approvedA = review({
     id: "stage-a",
     summaryJson: stagedIntegrity("a".repeat(40)),
     ...superseded,
   });
 
-  test("the current review of the published bytes decides, not the superseded approval", () => {
+  test("the owner's restage of the published bytes decides", () => {
     expect(
       classify([approvedA, review({ id: "stage-b", decision: null, decidedAt: null })]),
     ).toEqual({ status: "unknown", reason: "reviewed_without_decision", scanId: "stage-b" });
@@ -205,28 +240,33 @@ describe("a restaged version is decided by the review that examined the publishe
       status: "published_despite_rejection",
       scanId: "stage-b",
     });
-  });
-
-  test("a restage still under review is pending, not a mismatch", () => {
-    const pendingB = review({
-      id: "stage-b",
-      status: "pending",
-      decision: null,
-      decidedAt: null,
-      summaryJson: null,
-    });
+    const pendingB = inFlight("pending", { id: "stage-b" });
     expect(classify([approvedA, pendingB])).toMatchObject({
       status: "unknown",
       reason: "review_pending",
     });
   });
 
-  test("a superseded approval alone never produces a mismatch", () => {
-    expect(classify([approvedA])).toEqual({
-      status: "unknown",
-      reason: "review_superseded",
-      scanId: null,
-    });
+  test("an attacker's restage that supersedes the approved stage cannot hide other bytes", () => {
+    // The owner approved A; an attacker restages the version as B (which
+    // supersedes A) and publishes bytes matching neither.
+    const attackerB = (status: "pending" | "failed" | "complete") =>
+      status === "complete"
+        ? review({
+            id: "stage-b",
+            decision: null,
+            decidedAt: null,
+            summaryJson: stagedIntegrity(stageSha1),
+          })
+        : inFlight(status, { id: "stage-b", stagedDeclaredSha1: stageSha1 });
+    for (const status of ["pending", "failed", "complete"] as const) {
+      expect(classify([approvedA, attackerB(status)]), status).toMatchObject({
+        status: "artifact_mismatch",
+        scanId: "stage-a",
+      });
+    }
+    // Discovery superseded A but never recorded B.
+    expect(classify([approvedA])).toMatchObject({ status: "artifact_mismatch", scanId: "stage-a" });
   });
 
   test("a superseded approval of the exact published bytes still counts", () => {
@@ -235,14 +275,65 @@ describe("a restaged version is decided by the review that examined the publishe
       scanId: "stage-a",
     });
   });
+});
 
-  test("an approved current stage whose bytes differ is a mismatch", () => {
+describe("bytes that cannot be hashed", () => {
+  test("a padded tarball whose npm shasum matches no review raises the alert", () => {
     expect(
-      classify([
-        approvedA,
-        review({ id: "stage-b", summaryJson: stagedIntegrity("e".repeat(40)) }),
-      ]),
-    ).toMatchObject({ status: "artifact_mismatch", scanId: "stage-b" });
+      classifyPublication(name, version, published, "artifact_too_large", [review()], {
+        declaredSha1: "e".repeat(40),
+      }),
+    ).toMatchObject({ status: "artifact_mismatch", scanId: "scan1" });
+    expect(
+      classifyPublication(
+        name,
+        version,
+        published,
+        "artifact_timeout",
+        [review({ decision: null, decidedAt: null })],
+        { declaredSha1: "e".repeat(40) },
+      ).status,
+    ).toBe("published_without_approval");
+  });
+
+  test("an npm shasum matching a review stays unknown: the bytes were not hashed here", () => {
+    expect(
+      classifyPublication(name, version, published, "artifact_too_large", [review()], {
+        declaredSha1: sha1,
+      }),
+    ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: null });
+  });
+
+  test("without an npm shasum, or with a gate review's SHA-256 only, it stays unknown", () => {
+    expect(classify([review()], "artifact_too_large")).toEqual({
+      status: "unknown",
+      reason: "artifact_too_large",
+      scanId: null,
+    });
+    const gate = review({
+      source: "workflow_gate",
+      registryUrl: null,
+      registryPackageName: null,
+      registryVersion: null,
+      summaryJson: {
+        stagedPublish: {
+          mode: "workflow_gate",
+          digest: sha256,
+          manifest: {
+            schema: "drydock.release-artifacts.v1",
+            ecosystem: "npm",
+            package: name,
+            version,
+            artifacts: [{ path: "package.tgz", sha256 }],
+          },
+        },
+      },
+    });
+    expect(
+      classifyPublication(name, version, published, "artifact_too_large", [gate], {
+        declaredSha1: "e".repeat(40),
+      }),
+    ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: null });
   });
 });
 
@@ -250,18 +341,10 @@ describe("decision timing matters only when the bytes match", () => {
   const after = new Date(published.getTime() + 1000);
 
   test("approving a pending stage after someone else published the version is a mismatch", () => {
-    // Stage A was pending; different bytes were published directly as the
-    // same version; the maintainer then approved A before the first check.
     expect(classify([review({ id: "stage-a", decidedAt: after })], otherBytes)).toMatchObject({
       status: "artifact_mismatch",
       scanId: "stage-a",
     });
-  });
-
-  test("a rejection of other bytes after publication still leaves the release unapproved", () => {
-    expect(
-      classify([review({ decision: "no_publish", decidedAt: after })], otherBytes).status,
-    ).toBe("published_without_approval");
   });
 
   test("a late decision on the published bytes themselves stays unknown", () => {
@@ -275,7 +358,6 @@ describe("decision timing matters only when the bytes match", () => {
 test("settled unknown causes are the ones another check cannot resolve", () => {
   for (const reason of [
     "reviewed_without_decision",
-    "reviewed_other_artifact",
     "decision_history_unavailable",
     "review_digest_unavailable",
     "artifact_too_large",

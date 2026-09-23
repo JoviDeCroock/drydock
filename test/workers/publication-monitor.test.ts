@@ -27,6 +27,7 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
     registryPackageName: name,
     registryVersion: version,
     registryStatusSupersededAt: null,
+    stagedDeclaredSha1: null,
     packageName: name,
     stagedVersion: version,
     decision: "publish",
@@ -361,6 +362,54 @@ test("an oversized tarball of a reviewed release stays unknown, says why, and is
   await checkNpmPublicationWatch(db, env, watch);
   expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(1);
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+});
+
+test("the owner's pending review of the published bytes, known by npm's stage shasum, is not an alert", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId, {
+    status: "pending",
+    decision: null,
+    decidedAt: null,
+    summaryJson: null,
+    stagedDeclaredSha1: sha1,
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "unknown", reason: "review_pending" },
+  ]);
+});
+
+test("a padded tarball whose npm shasum matches no review raises the alert without hashing", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const metadata = registryMetadata(watch, [version]);
+  const padded = {
+    ...metadata,
+    versions: {
+      [version]: {
+        ...(metadata.versions[version] as Record<string, unknown>),
+        dist: {
+          tarball: `https://registry.npmjs.org/pkg/-/pkg-${version}.tgz`,
+          shasum: "e".repeat(40),
+        },
+      },
+    },
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input)
+      ? new Response(new Uint8Array(8), {
+          headers: { "content-length": String(64 * 1024 * 1024) },
+        })
+      : Response.json(padded),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "artifact_mismatch", sha1: null },
+  ]);
 });
 
 test("a padded tarball cannot hide a release no one reviewed", async () => {

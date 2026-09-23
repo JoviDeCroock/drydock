@@ -14,6 +14,7 @@ export type ReviewEvidence = Pick<
   | "registryPackageName"
   | "registryVersion"
   | "registryStatusSupersededAt"
+  | "stagedDeclaredSha1"
   | "packageName"
   | "stagedVersion"
   | "decision"
@@ -42,10 +43,8 @@ export type ArtifactUnavailableReason =
  */
 const SETTLED_UNKNOWN_REASONS: ReadonlySet<string> = new Set([
   "reviewed_without_decision",
-  "reviewed_other_artifact",
   "decision_history_unavailable",
   "review_digest_unavailable",
-  "review_superseded",
   "review_history_limit",
   "artifact_too_large",
 ]);
@@ -82,15 +81,33 @@ export function releaseRecords(
   );
 }
 
-function reviewDigest(
-  scan: ReviewEvidence,
-  name: string,
-  version: string,
-): { algorithm: "sha1" | "sha256"; digest: string } | null {
-  if (scan.status !== "complete") return null;
-  if (!isRecord(scan.summaryJson) || !isRecord(scan.summaryJson.stagedPublish)) return null;
-  const details = scan.summaryJson.stagedPublish;
+function sha1OrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const digest = value.trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(digest) ? digest : null;
+}
+
+/**
+ * The digests a record can vouch for. `reviewed` means Drydock hashed those
+ * bytes itself while reviewing them (a gate's manifest digest, or the staged
+ * tarball the sandbox parsed, unless npm's record of the stage contradicted
+ * it); the rest are npm's own record of the stage (its shasum), which
+ * identifies the owner's staged bytes while the review is in flight, failed,
+ * or unverified, but never stands in for an approval.
+ */
+interface RecordDigest {
+  algorithm: "sha1" | "sha256";
+  digest: string;
+  reviewed: boolean;
+}
+
+function recordDigests(scan: ReviewEvidence, name: string, version: string): RecordDigest[] {
+  const details =
+    isRecord(scan.summaryJson) && isRecord(scan.summaryJson.stagedPublish)
+      ? scan.summaryJson.stagedPublish
+      : null;
   if (scan.source === "workflow_gate") {
+    if (scan.status !== "complete" || !details) return [];
     try {
       const manifest = parseNpmReleaseManifest(details.manifest);
       if (
@@ -99,19 +116,32 @@ function reviewDigest(
         manifest.version !== version ||
         manifest.artifacts.length !== 1
       )
-        return null;
+        return [];
       const artifact = manifest.artifacts[0]!;
       if (typeof details.digest !== "string" || details.digest.toLowerCase() !== artifact.sha256)
-        return null;
-      return { algorithm: "sha256", digest: artifact.sha256 };
+        return [];
+      return [{ algorithm: "sha256", digest: artifact.sha256, reviewed: true }];
     } catch {
-      return null;
+      return [];
     }
   }
-  const integrity = parseStagedArtifactIntegrity(details.artifactIntegrity);
-  return integrity?.status === "verified" && integrity.computed
-    ? { algorithm: "sha1", digest: integrity.computed }
-    : null;
+  const digests: RecordDigest[] = [];
+  const integrity = details ? parseStagedArtifactIntegrity(details.artifactIntegrity) : null;
+  const computed = scan.status === "complete" ? sha1OrNull(integrity?.computed) : null;
+  if (computed) {
+    digests.push({
+      algorithm: "sha1",
+      digest: computed,
+      reviewed: integrity?.status !== "mismatch",
+    });
+  }
+  for (const declared of [scan.stagedDeclaredSha1, details?.shasum, integrity?.declared]) {
+    const digest = sha1OrNull(declared);
+    if (digest && !digests.some((entry) => entry.digest === digest)) {
+      digests.push({ algorithm: "sha1", digest, reviewed: false });
+    }
+  }
+  return digests;
 }
 
 function decidedBefore(scan: ReviewEvidence, publishedAt: Date): boolean {
@@ -133,20 +163,37 @@ const unknown = (reason: string, scanId: string | null = null): Verdict => ({
 });
 
 /**
+ * The published bytes match no record of this version. That is never
+ * `unknown`: an attacker who can stage can create records, so only a record of
+ * the same bytes may soften a verdict. Any decision on the version, or a
+ * restage that superseded one of its stages, makes it a mismatch (a
+ * superseded approval with no approved replacement included); otherwise the
+ * organization never approved anything and it was published without approval.
+ */
+function unmatchedVerdict(records: readonly ReviewEvidence[]): Verdict {
+  const decided = records.filter((scan) => scan.decision !== null && scan.decidedAt !== null);
+  if (decided.length === 0 && !records.some((scan) => scan.registryStatusSupersededAt)) {
+    return { status: "published_without_approval", reason: null, scanId: null };
+  }
+  const evidence =
+    newestDecision(decided.filter((scan) => scan.decision === "publish")) ??
+    newestDecision(decided) ??
+    records.find((scan) => !scan.registryStatusSupersededAt) ??
+    records[0]!;
+  return { status: "artifact_mismatch", reason: null, scanId: evidence.id };
+}
+
+/**
  * Compare one published release with the organization's Drydock records.
  *
- * Only a release with no Drydock record at all is `published_without_approval`,
- * and that verdict needs no bytes: a tarball too large or slow to hash cannot
- * hide it. Every other outcome compares the published digests with a review,
- * so an unhashable artifact leaves it `unknown` with the reason why.
- *
- * A record that has not examined the published bytes — a pending, running,
- * failed or undecided review — is the owner's own release path in flight, not
- * evidence of a bypass, so it yields `unknown` rather than an accusation. A
- * review superseded by a newer stage of the same version never produces a
- * mismatch on its own; whichever review examined the published bytes decides.
- * Decision timing only matters when a review's bytes match: bytes that match
- * no review differ from every approval, whenever that approval was recorded.
+ * `unknown` is earned only by a record of the same bytes npm now serves (by
+ * digest): that is the owner's own staged release, still in review, failed,
+ * or published before anyone decided. Only a release with no record at all is
+ * `published_without_approval` without looking at bytes, so a tarball too
+ * large or slow to hash cannot hide it. When the bytes cannot be hashed and
+ * every record carries a SHA-1, npm's own `dist.shasum` is compared one-sidedly:
+ * a difference raises the alert, a match stays `unknown` because the bytes
+ * were not independently hashed.
  */
 export function classifyPublication(
   name: string,
@@ -154,55 +201,56 @@ export function classifyPublication(
   publishedAt: Date | null,
   artifact: PublishedDigests | ArtifactUnavailableReason | null,
   reviews: readonly ReviewEvidence[],
-  registry = PUBLIC_NPM_REGISTRY,
+  options: { registry?: string; declaredSha1?: unknown } = {},
 ): Verdict {
   if (!publishedAt) return unknown("publication_time_unavailable");
-  const records = releaseRecords(name, version, reviews, registry);
+  const records = releaseRecords(name, version, reviews, options.registry);
   if (records.length === 0)
     return { status: "published_without_approval", reason: null, scanId: null };
-  if (artifact === null) return unknown("artifact_unavailable");
-  if (typeof artifact === "string") return unknown(artifact);
+  const vouched = records.map((scan) => ({ scan, digests: recordDigests(scan, name, version) }));
 
-  const matching = records.filter((scan) => {
-    const evidence = reviewDigest(scan, name, version);
-    return evidence !== null && artifact[evidence.algorithm] === evidence.digest;
-  });
-  if (matching.length > 0) {
-    // Reconfirming a decision after publication overwrites its timestamp, so a
-    // late decision on these bytes may hide a newer pre-publication decision
-    // than any still visible: neither an approval nor a rejection is certain.
-    const late = matching.find((scan) => decidedSince(scan, publishedAt));
-    if (late) return unknown("decision_history_unavailable", late.id);
-    // Identical bytes carry the same approval whichever stage delivered them,
-    // so the newest decision on these bytes before publication is the answer.
-    const decision = newestDecision(matching.filter((scan) => decidedBefore(scan, publishedAt)));
-    if (decision) {
-      return {
-        status: decision.decision === "publish" ? "approved_match" : "published_despite_rejection",
-        reason: null,
-        scanId: decision.id,
-      };
-    }
-    const current = matching.find((scan) => !scan.registryStatusSupersededAt) ?? matching[0]!;
-    return unknown("reviewed_without_decision", current.id);
+  if (artifact === null || typeof artifact === "string") {
+    const reason = artifact ?? "artifact_unavailable";
+    const declared = sha1OrNull(options.declaredSha1);
+    const comparable = vouched.every(({ digests }) =>
+      digests.some((entry) => entry.algorithm === "sha1"),
+    );
+    if (!declared || !comparable) return unknown(reason);
+    return vouched.some(({ digests }) => digests.some((entry) => entry.digest === declared))
+      ? unknown(reason)
+      : unmatchedVerdict(records);
   }
 
-  // No review examined these bytes, so when a decision was recorded does not
-  // matter: an approval of other bytes is a mismatch whether it came before
-  // publication or after it (approving a pending stage after someone else
-  // published the version must not hide the difference).
-  const current = records.filter((scan) => !scan.registryStatusSupersededAt);
-  const inFlight = current.find((scan) => scan.status === "pending" || scan.status === "running");
-  if (inFlight) return unknown("review_pending", inFlight.id);
-  const failed = current.find((scan) => scan.status === "failed");
-  if (failed) return unknown("review_failed", failed.id);
-  const unbound = current.find((scan) => !reviewDigest(scan, name, version));
-  if (unbound) return unknown("review_digest_unavailable", unbound.id);
-  const undecided = current.find((scan) => scan.decision === null);
-  if (undecided) return unknown("reviewed_other_artifact", undecided.id);
-  const approval = newestDecision(current.filter((scan) => scan.decision === "publish"));
-  if (approval) return { status: "artifact_mismatch", reason: null, scanId: approval.id };
-  if (current.length === 0) return unknown("review_superseded");
-  // Every current review rejected other bytes.
-  return { status: "published_without_approval", reason: null, scanId: null };
+  const matching = vouched.flatMap(({ scan, digests }) => {
+    const hits = digests.filter((entry) => artifact[entry.algorithm] === entry.digest);
+    return hits.length ? [{ scan, reviewed: hits.some((entry) => entry.reviewed) }] : [];
+  });
+  if (matching.length === 0) return unmatchedVerdict(records);
+
+  const scansOfTheseBytes = matching.map(({ scan }) => scan);
+  // Reconfirming a decision after publication overwrites its timestamp, so a
+  // late decision on these bytes may hide a newer pre-publication decision
+  // than any still visible: neither an approval nor a rejection is certain.
+  const late = scansOfTheseBytes.find((scan) => decidedSince(scan, publishedAt));
+  if (late) return unknown("decision_history_unavailable", late.id);
+  // Identical bytes carry the same decision whichever stage delivered them,
+  // so the newest decision on these bytes before publication is the answer.
+  const decision = newestDecision(
+    scansOfTheseBytes.filter((scan) => decidedBefore(scan, publishedAt)),
+  );
+  if (decision?.decision === "no_publish") {
+    return { status: "published_despite_rejection", reason: null, scanId: decision.id };
+  }
+  if (decision) {
+    // An approval counts only for bytes Drydock itself hashed while reviewing.
+    return matching.some(({ scan, reviewed }) => scan === decision && reviewed)
+      ? { status: "approved_match", reason: null, scanId: decision.id }
+      : unknown("review_digest_unavailable", decision.id);
+  }
+  const owner =
+    scansOfTheseBytes.find((scan) => !scan.registryStatusSupersededAt) ?? scansOfTheseBytes[0]!;
+  if (owner.status === "pending" || owner.status === "running")
+    return unknown("review_pending", owner.id);
+  if (owner.status === "failed") return unknown("review_failed", owner.id);
+  return unknown("reviewed_without_decision", owner.id);
 }

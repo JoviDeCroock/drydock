@@ -37,6 +37,11 @@ export interface CreateScanJobInput {
    * before it can write a report still knows when the release was staged.
    */
   stagedCreatedAt?: string | null;
+  /**
+   * The registry's SHA-1 for the staged artifact from that same stage record.
+   * Anything but 40 hex characters is dropped rather than stored.
+   */
+  stagedDeclaredSha1?: string | null;
   /** Registry base URL whose namespace the package coordinates belong to. */
   registryUrl?: string | null;
 }
@@ -56,6 +61,11 @@ function registryTimestampOrNull(value: string | null | undefined): Date | null 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function sha1OrNull(value: string | null | undefined): string | null {
+  const digest = value?.trim().toLowerCase();
+  return digest && /^[0-9a-f]{40}$/.test(digest) ? digest : null;
+}
+
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const now = new Date();
   const source = input.source ?? "manual";
@@ -68,6 +78,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     packageName: input.packageName ?? null,
     stagedVersion: input.stagedVersion ?? null,
     stagedCreatedAt: registryTimestampOrNull(input.stagedCreatedAt),
+    stagedDeclaredSha1: sha1OrNull(input.stagedDeclaredSha1),
     registryUrl: input.registryUrl ?? null,
     registryPackageName:
       source !== "workflow_gate" && input.registryUrl ? (input.packageName ?? null) : null,

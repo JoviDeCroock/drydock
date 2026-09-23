@@ -156,6 +156,10 @@ export const scans = sqliteTable(
     // never writes one, and the release timeline still has to show when the
     // release reached the registry.
     stagedCreatedAt: integer("staged_created_at", { mode: "timestamp_ms" }),
+    // The registry's own SHA-1 for the staged artifact, from the stage record
+    // the scan was queued from. Persisted up front so a review still in flight
+    // (no computed digest yet) can be matched against the published bytes.
+    stagedDeclaredSha1: text("staged_declared_sha1"),
     // Registry base URL captured when this staged release was discovered. npm
     // package coordinates are registry-local, so later connection edits must
     // never make an old scan query a different registry for the same name and

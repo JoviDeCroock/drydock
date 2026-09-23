@@ -2077,6 +2077,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "staged_declared_sha1": {
+          "name": "staged_declared_sha1",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "registry_url": {
           "name": "registry_url",
           "type": "text",

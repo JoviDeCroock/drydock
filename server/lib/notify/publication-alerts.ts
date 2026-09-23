@@ -31,8 +31,8 @@ function describe(status: NotifyPublicationDiscrepancyInput["status"], organizat
       };
     case "artifact_mismatch":
       return {
-        title: `Published bytes differ from the approval in ${organization}`,
-        detail: `The published package bytes do not match the artifact approved in ${organization} before publication.`,
+        title: `Published bytes differ from what ${organization} reviewed`,
+        detail: `The published package bytes match no artifact reviewed in ${organization} for this version.`,
       };
   }
 }

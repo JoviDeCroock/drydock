@@ -7,7 +7,7 @@ export const observationStatusLabels: Record<PublicationObservation["status"], s
   approved_match: "Approved bytes published",
   published_without_approval: "Published with no approval in this organization",
   published_despite_rejection: "Published despite a rejection in this organization",
-  artifact_mismatch: "Published bytes differ from this organization's approval",
+  artifact_mismatch: "Published bytes differ from what this organization reviewed",
   unknown: "Evidence unknown",
 };
 
@@ -19,10 +19,8 @@ const unknownReasonLabels: Record<string, string> = {
   review_pending: "a Drydock review of this version is still running",
   review_failed: "the Drydock review of this version failed",
   reviewed_without_decision: "reviewed these bytes, no decision recorded before publication",
-  reviewed_other_artifact: "reviewed other bytes, no decision recorded",
   decision_history_unavailable: "decided only after publication",
-  review_digest_unavailable: "the review recorded no byte digest to compare",
-  review_superseded: "only a superseded stage of this version was reviewed",
+  review_digest_unavailable: "npm's record matches, but the review could not confirm these bytes",
   review_history_limit: "too many reviews of this version to compare",
   artifact_too_large: "the tarball exceeds the 16 MiB hashing limit",
   artifact_timeout: "the tarball did not download in time",

@@ -686,8 +686,8 @@ describe("notifyPublicationDiscrepancy", () => {
     ],
     [
       "artifact_mismatch",
-      "Published bytes differ from the approval in Acme Corp",
-      "do not match the artifact approved in Acme Corp",
+      "Published bytes differ from what Acme Corp reviewed",
+      "match no artifact reviewed in Acme Corp",
     ],
   ])(
     "delivers %s evidence to configured email recipients and Slack",

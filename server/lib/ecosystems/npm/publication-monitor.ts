@@ -318,6 +318,11 @@ function previousPublishedVersion(
   return baseline.source === "semver-predecessor" ? baseline.version : null;
 }
 
+/** npm's own `dist.shasum` for a version, used only one-sidedly (never as a match). */
+function declaredShasum(value: unknown): unknown {
+  return isRecord(value) && isRecord(value.dist) ? value.dist.shasum : null;
+}
+
 /** Bytes a previous check already established for this immutable version. */
 function storedArtifact(
   previous: ObservedRelease | undefined,
@@ -469,7 +474,7 @@ async function examineReleases(
         item.publishedAt,
         artifact,
         reviews,
-        registry,
+        { registry, declaredSha1: declaredShasum(versions[item.version]) },
       );
     }
     examined++;

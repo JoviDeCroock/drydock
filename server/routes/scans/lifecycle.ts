@@ -83,6 +83,7 @@ scanLifecycleRoutes.post("/", async (c) => {
     packageName: prepared.packageName,
     stagedVersion: prepared.version,
     stagedCreatedAt: prepared.stagedCreatedAt,
+    stagedDeclaredSha1: prepared.stagedDeclaredSha1,
     registryUrl: prepared.registryUrl,
   });
   if (!detail) return c.json({ error: "failed to create scan" }, 500);
@@ -130,6 +131,8 @@ interface PreparedScan {
    * published-pair review was never staged.
    */
   stagedCreatedAt: string | null;
+  /** The registry's SHA-1 from the same stage record; only a staged npm scan has one. */
+  stagedDeclaredSha1: string | null;
   /**
    * Only a staged npm scan captures one. A published-pair review must leave it
    * null: `createScanJob` uses it to claim the registry coordinates a staged
@@ -198,6 +201,7 @@ async function prepareStagedScan(
     packageName: staged?.packageName ?? null,
     version: staged?.version ?? null,
     stagedCreatedAt: staged?.createdAt ?? null,
+    stagedDeclaredSha1: staged?.shasum ?? null,
     registryUrl: npmConnection.registryUrl,
   };
 }
@@ -243,6 +247,7 @@ async function preparePublishedScan(
     packageName: pair.packageName,
     version: pair.version,
     stagedCreatedAt: null,
+    stagedDeclaredSha1: null,
     registryUrl: null,
   };
 }

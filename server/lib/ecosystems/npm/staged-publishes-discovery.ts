@@ -269,6 +269,7 @@ export async function discoverAndQueueStagedPublishes(
           packageName: item.packageName,
           stagedVersion: item.version,
           stagedCreatedAt: item.createdAt,
+          stagedDeclaredSha1: item.shasum,
           registryUrl: connection.registryUrl,
         });
         if (!detail) return null;

@@ -51,37 +51,39 @@ only after a successful check; before one, or after a failed registry read, it s
 releases are unknown. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
-| Observation                                     | Evidence                                                                                                                            |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Approved bytes published                        | Actual tarball bytes match a completed review with a recorded approval strictly before npm's publication timestamp.                 |
-| Published with no approval in this organization | The organization has no Drydock record of this release at all (no staged review or gate for that version), or only rejected others. |
-| Published despite rejection                     | Actual bytes match a review rejected before publication.                                                                            |
-| Published different bytes                       | The current approved review examined different bytes, and no review examined the published ones.                                    |
-| Evidence unknown                                | Publication time, bytes, or review evidence could not establish an outcome; the observation records which.                          |
+A record of the version is a staged review or workflow gate of exactly that package
+and version in this organization. A record vouches for bytes by digest: the bytes
+Drydock hashed while reviewing (the verified staged tarball, or the gate's manifest
+digest), or npm's own SHA-1 for the stage (its shasum, stored when the review is queued),
+which identifies the owner's staged bytes while the review is in flight, failed or
+unverified but never stands in for an approval.
 
-Unknown does not mean approved. Missing or future registry timestamps, unavailable
-or oversized responses, invalid identities and incomplete legacy digests cannot
-produce a matching approval. Reconfirming a staged decision after publication can
-overwrite its prior decision timestamp; when current records cannot establish
-that history, the monitor reports uncertainty instead of assuming no approval
-ever existed. Observations describe the evidence available when checked, not a
-complete immutable history of every decision, deleted review or registry event.
+| Observation                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Approved bytes published                           | The published bytes match a review whose bytes Drydock hashed, approved strictly before npm's publication timestamp.                                                                                                                                                                                                                                                                                                                                          |
+| Published despite a rejection in this organization | The published bytes match a record rejected before publication.                                                                                                                                                                                                                                                                                                                                                                                               |
+| Published bytes differ from what this org reviewed | The published bytes match no record of the version, and some record of it was approved or rejected (at any time), or a stage of it was superseded by a restage.                                                                                                                                                                                                                                                                                               |
+| Published with no approval in this organization    | No record of the version exists at all (decided without bytes), or the published bytes match no record and none of them was decided or superseded; an undecided review of other bytes does not soften it.                                                                                                                                                                                                                                                     |
+| Evidence unknown                                   | Only when a record vouches for the same bytes npm serves: still in review (`review_pending`), failed (`review_failed`), reviewed without a decision (`reviewed_without_decision`), decided only after publication (`decision_history_unavailable`), or matched only by npm's shasum and approved (`review_digest_unavailable`). Also a missing publication time, and bytes that could not be hashed when npm's shasum matches a record or cannot be compared. |
 
-A Drydock record of the version that has not examined the published bytes is the
-owner's own release path in flight, not a bypass, so it is `unknown` with a specific
-reason rather than an alert: a review still pending or running (`review_pending`),
-one that failed (`review_failed`), one completed without a decision whether it saw
-these bytes (`reviewed_without_decision`) or others (`reviewed_other_artifact`).
-Only a version with no Drydock record at all is published without approval, and that
-verdict needs no bytes, so a tarball too large or too slow to hash cannot suppress it.
-When the same version was staged again, whichever review examined the published bytes
-decides; a review superseded by a newer stage never produces a mismatch on its own
-(`review_superseded` when nothing else remains). Decision timing matters only when a
-review's bytes match the published ones: an approval of other bytes is a mismatch
-whether it was recorded before or after publication (approving a pending stage after
-someone else published the version must not hide the difference), while any late
-decision on the matching bytes leaves the verdict unknown even beside an earlier
-visible decision, since the overwritten one may have been newer.
+`unknown` is earned only by a record of the same bytes: an attacker who can stage can
+create records, so a record of other bytes — a benign seed stage, or a restage that
+superseded the owner's approved stage — never turns an alert into `unknown`. A
+superseded approval with no approved replacement stays a mismatch. Decision timing
+matters only when the bytes match: an approval of other bytes is a mismatch whether it
+was recorded before or after publication, while a late decision on the matching bytes
+leaves the verdict unknown even beside an earlier visible decision, since the
+overwritten one may have been newer.
+
+When the tarball cannot be hashed (over 16 MiB, timed out, unavailable) and every
+record carries a SHA-1, npm's own `dist.shasum` from the packument is compared one-sidedly:
+a difference raises the alert with the statuses above, a match stays `unknown` with the
+reason recorded because the bytes were not independently hashed. Gate records carry
+only SHA-256 and cannot be compared this way, so those stay `unknown`. A version with no
+record is published without approval without any bytes, so padding cannot suppress it.
+Unknown does not mean approved; observations describe the evidence available when
+checked, not a complete immutable history of every decision, deleted review or registry
+event.
 
 Each observation also records which dist-tags pointed at the version at the latest
 check (`dist_tags`, sorted; malformed tag names are dropped and at most 100 tags are
@@ -91,7 +93,7 @@ tell which release line a version is on today.
 ## Alerts and acknowledgment
 
 New confirmed discrepancies (no approval in this organization, publication despite a
-rejection here, or bytes that differ from this organization's approval) create one
+rejection here, or bytes that differ from what this organization reviewed) create one
 durable alert per organization/package/version. Every verdict and message is about
 the alerting organization's own records only: another organization may have reviewed
 or approved the same release, and Drydock neither says so (that would disclose one
@@ -144,9 +146,10 @@ Both response size and request duration are bounded. It streams tarball bytes
 into SHA-256 and SHA-1 hashes without extracting, installing or executing them.
 
 Review lookup is organization-scoped and requires the exact package and version.
-For staged reviews, registry coordinates must also match public npm and the
-persisted artifact-integrity evidence must be verified. These older reviews
-carry SHA-1, so their comparison establishes continuity at that digest strength.
+For staged reviews, registry coordinates must also match public npm, and an approval
+counts only for bytes the review hashed itself (npm's stage shasum alone identifies the
+bytes but cannot approve them). Staged reviews carry SHA-1, so their comparison
+establishes continuity at that digest strength.
 For npm workflow gates, the server-derived manifest and artifact digest supply
 SHA-256 evidence. An approval of identical gate bytes does not prove which
 registry the workflow intended to publish to, successful callback delivery, or

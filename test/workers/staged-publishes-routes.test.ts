@@ -68,6 +68,7 @@ describe("staged publishes route", () => {
               tag: "latest",
               actor: "maintainer",
               createdAt: "2026-05-22T12:00:00.000Z",
+              shasum: "b".repeat(40),
             },
           ],
           total: 2,
@@ -116,12 +117,16 @@ describe("staged publishes route", () => {
       stagedVersion: "1.1.0",
     });
     const [created] = await db
-      .select({ stagedCreatedAt: schema.scans.stagedCreatedAt })
+      .select({
+        stagedCreatedAt: schema.scans.stagedCreatedAt,
+        stagedDeclaredSha1: schema.scans.stagedDeclaredSha1,
+      })
       .from(schema.scans)
       .where(eq(schema.scans.stageId, "stage-new-123"));
     // The listing's stage timestamp is persisted on the row, so the release
     // timeline has it even for a review that never completes.
     expect(created?.stagedCreatedAt?.toISOString()).toBe("2026-05-22T12:00:00.000Z");
+    expect(created?.stagedDeclaredSha1).toBe("b".repeat(40));
   });
 });
 
@@ -150,6 +155,7 @@ test("a manually submitted public stage enrolls before its queued review runs", 
       packageName: "@org/manual-watch",
       version: "1.0.0",
       access: "public",
+      shasum: "A".repeat(40),
     });
   });
   try {
@@ -168,6 +174,13 @@ test("a manually submitted public stage enrolls before its queued review runs", 
     expect(await listPublicationWatches(db, owner.organizationId)).toMatchObject([
       { packageName: "@org/manual-watch", source: "staged_discovery" },
     ]);
+    // npm's shasum for the stage is kept with the queued review, so the
+    // publication monitor can recognise these bytes before the review runs.
+    const [queued] = await db
+      .select({ stagedDeclaredSha1: schema.scans.stagedDeclaredSha1 })
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, stageId));
+    expect(queued?.stagedDeclaredSha1).toBe("a".repeat(40));
   } finally {
     fetcher.mockRestore();
   }
