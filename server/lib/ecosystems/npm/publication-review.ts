@@ -32,10 +32,29 @@ import {
   type ArchiveDigests,
 } from "../artifact-integrity";
 import { DEFAULT_BADGE_TAG } from "../../public-feed";
+import { publishedPairStageId } from "../published-pair";
 import type { PostReleaseResolution } from "../types";
 import { recordPublishedReleaseDigests } from "./publication-monitor";
 import { npmPublicationRegistry } from "./publication-registry";
 import { PUBLIC_NPM_REGISTRY } from "./publication-verdict";
+
+/** Whether the review's summary names exactly the alerted release. */
+function reviewedCoordinatesMatch(
+  summaryJson: unknown,
+  alert: { packageName: string; version: string },
+): boolean {
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return false;
+  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
+    return false;
+  }
+  const details = stagedPublish as { mode?: unknown; packageName?: unknown; version?: unknown };
+  return (
+    details.mode === "published_pair" &&
+    details.packageName === alert.packageName &&
+    details.version === alert.version
+  );
+}
 
 /** The registry a published-pair review says it read the release from. */
 function reviewedRegistryUrl(summaryJson: unknown): string | null {
@@ -147,8 +166,7 @@ export async function resolvePostReleaseReview(
       source: scans.source,
       status: scans.status,
       decision: scans.decision,
-      packageName: scans.packageName,
-      stagedVersion: scans.stagedVersion,
+      stageId: scans.stageId,
       summaryJson: scans.summaryJson,
     })
     .from(scans)
@@ -160,9 +178,18 @@ export async function resolvePostReleaseReview(
     scan.status !== "complete" ||
     !scan.decision ||
     // The linked review was started for these coordinates; it may only ever
-    // resolve the release it reviewed.
-    scan.packageName !== alert.packageName ||
-    scan.stagedVersion !== alert.version
+    // resolve the release it reviewed. Its stage id and summary carry the
+    // registry-resolved pair; `package_name`/`staged_version` are rewritten
+    // from the reviewed tarball's own manifest, which a hostile release can
+    // make say anything, so they must not decide whether a decline lands.
+    scan.stageId !==
+      publishedPairStageId({
+        ecosystem: "npm",
+        packageName: alert.packageName,
+        version: alert.version,
+        baselineVersion: "",
+      }) ||
+    !reviewedCoordinatesMatch(scan.summaryJson, alert)
   ) {
     return null;
   }

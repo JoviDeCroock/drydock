@@ -112,7 +112,7 @@ export function DecisionDialog({
       title={postRelease ? "Decision after release" : "Publish decision"}
       description={
         postRelease
-          ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert, declining keeps the alert open with next steps. Nothing changes on npm.`
+          ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert, declining keeps the alert open with next steps. If this organization is a registry-verified publisher of the package and the reviewed bytes match the published ones, the public badge shows it as approved or blocked. Nothing changes on npm.`
           : `Record whether this staged publish is safe to approve.${
               // Published-pair reviews are not release records the monitor reads.
               scan.source === "manual" || scan.source === "auto_discovery"
