@@ -1,7 +1,10 @@
 import { Hono, type Context } from "hono";
 import { attachDb } from "../middleware/db";
 import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
-import { findBadgeSupersession } from "../db/badge-publication-evidence";
+import {
+  findBadgeSupersession,
+  listPostReleaseBadgeCandidates,
+} from "../db/badge-publication-evidence";
 import { badgePackage, isPackageBadgeSwitchedOff } from "../db/package-badge";
 import {
   getScan,
@@ -20,6 +23,7 @@ import {
 import {
   buildBadgePayload,
   buildThreatFeedEntry,
+  badgeRowTag,
   badgeTagMatches,
   buildUnavailableBadgePayload,
   isValidBadgeTag,
@@ -28,9 +32,9 @@ import {
   publicFeedCacheKey,
   publicPackageNameMax,
   resolveBadgeTag,
-  scanDistTag,
   scanEcosystem,
   THREAT_FEED_SCHEMA,
+  type BadgeSupersession,
   type PublicEcosystem,
 } from "../lib/public-feed";
 import { coloCacheMatch, coloCachePut } from "../lib/platform/colo-cache";
@@ -162,9 +166,9 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 
 /** The claim the badge ended up making, for the serve counter. */
-function badgeOutcome(match: SharedScanRow | null, supersededBy: string | null): string {
+function badgeOutcome(match: SharedScanRow | null, superseded: BadgeSupersession | null): string {
   if (!match) return "not_reviewed";
-  if (supersededBy) return "superseded";
+  if (superseded) return superseded.blocked ? "superseded_blocked" : "superseded";
   if (match.decision === "publish") return "approved";
   if (match.decision === "no_publish") return "blocked";
   return "reviewed";
@@ -204,14 +208,24 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   // instead would make "off" mean nothing. It answers exactly like a package
   // nobody reviewed, so it adds no enumeration signal.
   const target = badgePackage(ecosystem, packageName);
-  const [listed, defaultOn, switchedOff] = await Promise.all([
+  //
+  // A third way in: a registry-verified publisher's decision on a release after
+  // npm published it (`listPostReleaseBadgeCandidates`), guarded by the same
+  // publisher rule and by the reviewed bytes matching the published ones. It
+  // is silenced by the switch like the other two.
+  const [listed, defaultOn, postRelease, switchedOff] = await Promise.all([
     listBadgeCandidateScans(db, packageName, ecosystem, tag),
     listDefaultBadgeCandidateScans(db, target.packageKey, tag),
+    listPostReleaseBadgeCandidates(db, target, tag),
     isPackageBadgeSwitchedOff(db, target),
   ]);
   const byScanId = new Map(
     ([] as SharedScanRow[])
-      .concat(switchedOff ? [] : defaultOn, switchedOff ? [] : listed)
+      .concat(
+        switchedOff ? [] : postRelease,
+        switchedOff ? [] : defaultOn,
+        switchedOff ? [] : listed,
+      )
       .map((r) => [r.scanId, r]),
   );
   // By release, not by scan completion — see `compareBadgeCandidates`.
@@ -220,7 +234,7 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
     rows.filter(
       (row) =>
         scanEcosystem(row.source, row.summaryJson) === ecosystem &&
-        badgeTagMatches(scanDistTag(row.summaryJson), tag),
+        badgeTagMatches(badgeRowTag(row), tag),
     ),
   );
   // Indexed probes, only on a cache miss with a review to quote: has this
@@ -241,9 +255,11 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
     tag: match ? tag : "",
     outcome: badgeOutcome(match, supersededBy),
     route: match
-      ? defaultOn.some((row) => row.scanId === match.scanId)
-        ? "default"
-        : "listed"
+      ? match.postRelease
+        ? "post_release"
+        : defaultOn.some((row) => row.scanId === match.scanId)
+          ? "default"
+          : "listed"
       : "",
   });
   return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
