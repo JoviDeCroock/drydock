@@ -4,7 +4,6 @@
  * registry-verified publisher's owners and admins — the "public badge: off"
  * switch, which silences the badge for every organization's reviews.
  */
-import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { badgeMarkdown } from "../../../lib/badge-markdown";
@@ -26,7 +25,10 @@ function switchedOff(state: PackageBadgeState): boolean {
   return state.switchedOffByYou || state.switchedOffElsewhere;
 }
 
-function describeBadge(state: PackageBadgeState): string {
+function describeBadge(state: PackageBadgeState, ecosystem: PublicEcosystem): string {
+  if (!state.eligible && ecosystem !== "npm") {
+    return "This badge has no off switch: only npm has registry-verified reviews. To withdraw one of your own reviews from it, unlist the review.";
+  }
   if (!state.eligible) {
     return "Only an organization with a registry-verified review of this package — a staged release on public npm whose manifest matches npm's name — can switch its badge off. To withdraw one of your own reviews from it, unlist the review.";
   }
@@ -101,10 +103,6 @@ export function PublicBadgeSection({
 }) {
   const model = useModel(() => new PackageBadgeModel(packageName, ecosystem));
 
-  useEffect(() => {
-    void model.load();
-  }, []);
-
   // npm links its evergreen package diff; the other ecosystems link a share
   // URL, which only a scan's share dialog has.
   const markdown =
@@ -138,7 +136,7 @@ export function PublicBadgeSection({
                     {(preview) => <EndpointPreview preview={preview} />}
                   </Show>
                 </span>
-                <EmptyLine>{describeBadge(state)}</EmptyLine>
+                <EmptyLine>{describeBadge(state, ecosystem)}</EmptyLine>
               </div>
               {state.eligible ? (
                 state.canManage ? (

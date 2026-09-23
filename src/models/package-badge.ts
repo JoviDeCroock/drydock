@@ -3,7 +3,7 @@
  * own "public badge: off" switch, whether another registry-verified publisher
  * switched the badge off, and what the public endpoint answers right now.
  */
-import { createModel, signal } from "@preact/signals";
+import { createModel, effect, signal } from "@preact/signals";
 import { encodePackageName } from "../lib/package-diff-path";
 import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
@@ -96,6 +96,21 @@ export const PackageBadgeModel = createModel((packageName: string, ecosystem: st
     if (busy.peek()) return Promise.resolve();
     return run(() => apiJson<PackageBadgeResponse>(apiPath, { enabled }, { method: "PUT" }));
   }
+
+  // Loads for the active organization, and again whenever it changes: a
+  // response for the previous organization is dropped by `run`, so without
+  // this a switch mid-flight would leave the section blank.
+  effect(() => {
+    void activeOrganizationId.value;
+    state.value = null;
+    preview.value = null;
+    error.value = null;
+    void load();
+    // Invalidate responses arriving after a switch or after disposal.
+    return () => {
+      requestId++;
+    };
+  });
 
   return { state, preview, busy, error, load, setEnabled };
 });
