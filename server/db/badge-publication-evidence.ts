@@ -95,7 +95,7 @@ function supersedesQuote(
 
 // Newest decisions first; bounded because it runs on every badge cache miss.
 // Post-release decisions are made by people, one per alerted release.
-const POST_RELEASE_WINDOW = 50;
+const POST_RELEASE_WINDOW = OBSERVATION_WINDOW;
 
 /**
  * Post-release decisions that may speak on the public badge: a published-pair
@@ -142,12 +142,11 @@ function listPostReleaseDecisions(db: AppDb, target: BadgePackage, organizationI
         eq(publicationAlerts.resolutionBadge, "applied"),
         eq(scans.source, "published"),
         eq(scans.status, "complete"),
-        // The registry-resolved pair the review was started for, never the
-        // reviewed manifest's name and version (see `resolvePostReleaseReview`).
+        // The registry-resolved pair the review was started for, by its
+        // unredacted stage id — never the reviewed manifest's name and version,
+        // nor the summary's redacted copy (see `resolvePostReleaseReview`).
         sql`${scans.stageId} = 'published:npm:' || ${publicationAlerts.packageName} || '@' || ${publicationAlerts.version}`,
         sql`json_extract(${scans.summaryJson}, '$.stagedPublish.mode') = 'published_pair'`,
-        sql`json_extract(${scans.summaryJson}, '$.stagedPublish.packageName') = ${publicationAlerts.packageName}`,
-        sql`json_extract(${scans.summaryJson}, '$.stagedPublish.version') = ${publicationAlerts.version}`,
         inArray(reviewedRegistry, [...PUBLIC_NPM_REGISTRY_URLS]),
         sql`${scans.decision} = case ${publicationAlerts.resolution} when 'approved_after_release' then 'publish' when 'declined_after_release' then 'no_publish' end`,
         registryVerifiedPublisherSql(sql`${publicationAlerts.organizationId}`, target),

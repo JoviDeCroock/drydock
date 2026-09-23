@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
@@ -705,6 +705,12 @@ export async function recordPublishedReleaseDigests(
           eq(publicationObservations.version, target.version),
           isNull(publicationObservations.sha1),
           isNull(publicationObservations.sha256),
+          // A tarball already found too large to hash stays so; every
+          // re-decision must not download it again.
+          or(
+            isNull(publicationObservations.reason),
+            ne(publicationObservations.reason, "artifact_too_large"),
+          ),
         ),
       )
       .limit(1);

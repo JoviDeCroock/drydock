@@ -393,9 +393,10 @@ the organization is still a registry-verified publisher, the review is still a
 completed published-pair review of exactly the alerted release read from public
 npm, and its current decision is the one the resolution recorded. "Exactly the
 alerted release" is the registry-resolved pair the review was started for (its
-stage id and summary), never the name and version in the reviewed tarball's own
-`package.json`, which a hostile release controls and could otherwise use to keep
-a decline from landing. A row written
+stage id, which is never redacted — the summary's copy of the name and version is
+stored through the secret redactor, so a token-shaped version would not match),
+never the name and version in the reviewed tarball's own `package.json`, which a
+hostile release controls and could otherwise use to keep a decline from landing. A row written
 some other way, or one that outlived its evidence, answers nothing. The
 candidate carries the alert's own coordinates (npm's version, from npm's
 packument), never the reviewed manifest. It answers the badge lines the
@@ -409,7 +410,12 @@ deciding again. Publisher status is the off switch's rule and does not expire:
 an organization that once staged the name can still approve a later release
 another publisher has only been alerted about, not declined. The remedy is the
 same as for any co-publisher — decline it after release, or switch the badge
-off. The off switch silences it like the other routes. The decision
+off. The same rule cuts the other way: "a decline wins" compares only
+post-release decisions with each other, so any registry-verified publisher —
+including one that no longer publishes — can turn a version red, and the
+current maintainer can only answer that by switching the badge off; and a
+post-release approval outranks a listed review of the staged bytes of the same
+version. The off switch silences it like the other routes. The decision
 is re-evaluated only when the review is decided again: a resolution computed
 from a decision that has since changed never lands, and one whose review
 decision no longer matches is ignored on read.

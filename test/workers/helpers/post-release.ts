@@ -12,6 +12,7 @@ import { savePublicationObservation } from "../../../server/db/publication-alert
 import { createPublicationWatch } from "../../../server/db/publication-watches";
 import * as schema from "../../../server/db/schema";
 import { publicFeedCacheKey } from "../../../server/lib/public-feed";
+import { redactJson } from "../../../server/lib/review/redaction";
 import { npmPublicationWatchRoutes } from "../../../server/routes/npm-publication-watches";
 import { packagesRoutes } from "../../../server/routes/packages";
 import { publicReportsRoutes } from "../../../server/routes/public-reports";
@@ -145,7 +146,8 @@ export async function seedPublishedReview(
     packageJson: options.manifest ?? { name: packageName, version },
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
-      stagedPublish: {
+      // Stored through the redactor, as the pipeline stores it.
+      stagedPublish: redactJson({
         mode: "published_pair",
         ecosystem: "npm",
         packageName,
@@ -154,7 +156,7 @@ export async function seedPublishedReview(
         registryUrl: options.registryUrl ?? PUBLIC_NPM,
         notices: [],
         artifactDigest: options.digests ?? PUBLISHED,
-      },
+      }),
     },
     files: [],
     diff: [],
