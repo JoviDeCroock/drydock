@@ -7,7 +7,7 @@ import {
   type PackageJsonDiff,
 } from "../../review";
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
-import { JS_PATTERN_SET } from "../../review/rules/patterns";
+import { JS_PATTERN_SET, omitGlobalObjectShims } from "../../review/rules/patterns";
 import { normalizeCodeForScanning } from "../../review/rules/normalize";
 import { firstMatchingLine } from "../../platform/text-utils";
 import type { AcquiredArtifact } from "../package-adapter";
@@ -197,7 +197,12 @@ function startupRemoteCommandFinding(
       matches(JS_PATTERN_SET.processExecution, sample, normalized) ||
       matches(JS_PATTERN_SET.remoteShell, sample, normalized);
     const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
-    const dynamicEvaluation = matches(JS_PATTERN_SET.dynamicEvaluation, sample, normalized);
+    // The bundler global-object shim is not a decode or eval of a payload.
+    const dynamicEvaluation = matches(
+      JS_PATTERN_SET.dynamicEvaluation,
+      omitGlobalObjectShims(sample),
+      omitGlobalObjectShims(normalized),
+    );
     if (!processExecution || !networkAccess || !dynamicEvaluation) continue;
     return vscodeTag("startupRemoteCommand", {
       severity: "critical",

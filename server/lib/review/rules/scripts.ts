@@ -7,6 +7,7 @@ import {
 import type { Finding } from "../types";
 import {
   CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
+  omitGlobalObjectShims,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
   SHELL_NETWORK_TOOL_PATTERN_SET,
 } from "./patterns";
@@ -15,10 +16,19 @@ import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./contex
 import {
   isBuildInfrastructurePath,
   isDocumentationPath,
+  isJsonDataPath,
+  isLoadableDataPath,
+  isMarkupPath,
   isPythonMetadataPath,
   isTypeDeclarationPath,
+  markupHidesScript,
+  markupScriptText,
 } from "./file-types";
-import { scriptCommandTokens, scriptPathCandidates } from "./reachability";
+import {
+  normalizeReachabilityPath,
+  scriptCommandTokens,
+  scriptPathCandidates,
+} from "./reachability";
 import { normalizeCodeForScanning } from "./normalize";
 
 const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
@@ -29,15 +39,21 @@ const COMMON_JS_ENV_NAMES = [
   "BASE_URL",
   "BABEL_ENV",
   "CI",
+  "COLORTERM",
   "DEBUG",
   "DEV",
+  "FORCE_COLOR",
   "LANG",
   "LC_ALL",
   "MODE",
+  "NO_COLOR",
   "NODE_DEBUG",
+  "NODE_DISABLE_COLORS",
   "NODE_ENV",
   "PROD",
   "SSR",
+  "TERM",
+  "TERM_PROGRAM",
   "TZ",
 ];
 // npm exports these onto every lifecycle-script process; they only describe the
@@ -57,8 +73,33 @@ const NPM_LIFECYCLE_ENV_NAMES = [
 const COMMON_JS_ENV_NAME_PATTERN = [...COMMON_JS_ENV_NAMES, ...NPM_LIFECYCLE_ENV_NAMES]
   .map(escapeRegex)
   .join("|");
+// `\??\.` also covers optional chaining (`process.env?.NODE_ENV`).
 const COMMON_PROCESS_ENV_DOT_ACCESS = new RegExp(
-  `\\bprocess\\.env\\s*\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
+  `\\bprocess\\.env\\s*\\??\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
+  "g",
+);
+// TypeScript's lowering of `process?.env?.NODE_ENV` without a temporary:
+// `(null == process ? void 0 : process.env)?.NODE_ENV`. The ternary prefix is
+// required so an assignment alias (`(e = process.env).NODE_ENV`) still counts.
+const COMMON_PROCESS_ENV_TERNARY_ACCESS = new RegExp(
+  String.raw`\?\s*void 0\s*:\s*process\.env\s*\)\s*\??\.\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\b`,
+  "g",
+);
+// Uses of `process.env` that read no value: a presence test (`'CI' in
+// process.env`, any name, since the value still needs a separate read) and an
+// existence guard (`process.env && process.env.NODE_DEBUG`). Whatever the guard
+// protects is judged on its own.
+const PROCESS_ENV_MEMBERSHIP_TEST = /(['"`])[A-Za-z_][A-Za-z0-9_]*\1\s+in\s+process\.env\b/g;
+const PROCESS_ENV_EXISTENCE_GUARD = /\bprocess\.env\s*&&/g;
+// Babel/TypeScript lower `process?.env?.NODE_ENV` through a temporary:
+// `null==(t=null==process?void 0:process.env)?void 0:t.NODE_ENV`, or TS's
+// `(_a = process === null || process === void 0 ? void 0 : process.env) === null
+// || _a === void 0 ? void 0 : _a.NODE_ENV`. Only that exact lowering, with the
+// temporary read for a well-known name, is erased. A later reuse of the same
+// temporary is not tracked; `process?.env.X` has never matched this rule at all,
+// so this lowers no bar an author faces.
+const COMMON_PROCESS_ENV_DOWNLEVEL_ACCESS = new RegExp(
+  String.raw`\(\s*([A-Za-z_$][\w$]*)\s*=\s*(?:null\s*==\s*process|process\s*===\s*null\s*\|\|\s*process\s*===\s*void 0)\s*\?\s*void 0\s*:\s*process\.env\s*\)\s*(?:===\s*null\s*\|\|\s*\1\s*===\s*void 0\s*)?\?\s*void 0\s*:\s*\1\s*\.\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\b`,
   "g",
 );
 const COMMON_PROCESS_ENV_BRACKET_ACCESS = new RegExp(
@@ -141,11 +182,29 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     );
   }
 
+  const loadCallNames = codeLoadCallNames(ctx);
   for (const file of ctx.files) {
-    if (isDocumentationPath(file.path) || isTypeDeclarationPath(file.path)) continue;
+    if (
+      isDocumentationPath(file.path) ||
+      isTypeDeclarationPath(file.path) ||
+      isJsonDataPath(file.path)
+    ) {
+      continue;
+    }
     if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
+    // Data and markup formats are text until something can load them as code.
+    const loadedAsCode =
+      (isLoadableDataPath(file.path) || isMarkupPath(file.path)) &&
+      isLoadedAsCode(ctx, file.path, loadCallNames);
+    if (isLoadableDataPath(file.path) && !loadedAsCode) continue;
 
-    const sample = file.textSample || "";
+    // Character references that spell code in a script-capable attribute are
+    // themselves staging: the whole file is scanned and a decode in it counts.
+    const markupHidingScript = isMarkupPath(file.path) && markupHidesScript(file.textSample || "");
+    const sample =
+      isMarkupPath(file.path) && !loadedAsCode && !markupHidingScript
+        ? markupScriptText(file.textSample || "")
+        : file.textSample || "";
     // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
     // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
     // both raw and normalized text means folding can only add detections, never
@@ -200,13 +259,35 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       normalized,
       packedObfuscation,
     );
-    const dynamicEvaluation = matchCategory(
-      ctx.patterns.dynamicEvaluation,
-      sample,
-      normalized,
-      packedObfuscation,
-      true,
-    );
+    const dynamicSample = ctx.codePatternSet === "python" ? sample : omitGlobalObjectShims(sample);
+    const dynamicNormalized =
+      ctx.codePatternSet === "python" ? normalized : omitGlobalObjectShims(normalized);
+    // Decoding (`atob`, base64 `Buffer.from`) only counts in a file that can act
+    // on what it decodes: run it, send it (node-ipc hid its geolocation host
+    // that way), or stage it through a compiler, loader or file write (see
+    // `decodedPayloadSink`). On its own it is a byte codec or a data table.
+    const dynamicEvaluation =
+      matchCategory(
+        ctx.patterns.dynamicExecution,
+        dynamicSample,
+        dynamicNormalized,
+        packedObfuscation,
+        true,
+      ).matched ||
+      processExecution.matched ||
+      networkAccess.matched ||
+      shellNetworkTool.matched ||
+      markupHidingScript ||
+      matchCategory(ctx.patterns.decodedPayloadSink, dynamicSample, dynamicNormalized, false, true)
+        .matched
+        ? matchCategory(
+            ctx.patterns.dynamicEvaluation,
+            dynamicSample,
+            dynamicNormalized,
+            packedObfuscation,
+            true,
+          )
+        : NO_MATCH;
     const credentialSample =
       ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
     const credentialNormalized =
@@ -390,8 +471,51 @@ function hasRotatingStringTableObfuscation(source: string): boolean {
   return matches >= ROTATING_STRING_TABLE_SIGNAL_THRESHOLD;
 }
 
+const NO_MATCH = { matched: false, line: undefined, obfuscated: false } as const;
+
+// Path tokens in the arguments of calls that can load a file as code, so a
+// data-looking file named there (`require(__dirname + '/payload.txt')`,
+// `fork('run.css')`) is scanned whole. Basenames and bare extensions
+// (`+ '.txt'`) are collected once so the per-file check is a set lookup.
+const LOAD_CALL_ARGUMENTS =
+  /\b(?:require|import|fork|Worker|spawn(?:Sync)?|execFile(?:Sync)?|exec(?:Sync)?)\s*\(([^\n;]{0,300})/g;
+const LOAD_CALL_PATH_TOKEN = /[^\s'"`\\/()+,;${}[\]]+/g;
+
+function codeLoadCallNames(ctx: RuleContext): Set<string> {
+  const names = new Set<string>();
+  for (const file of ctx.files) {
+    const path = file.path;
+    if (!file.textSample || path === ctx.packageJsonFile?.path) continue;
+    if (isJsonDataPath(path) || isLoadableDataPath(path) || isMarkupPath(path)) continue;
+    if (isDocumentationPath(path) || isTypeDeclarationPath(path)) continue;
+    LOAD_CALL_ARGUMENTS.lastIndex = 0;
+    for (const call of file.textSample.matchAll(LOAD_CALL_ARGUMENTS)) {
+      for (const token of call[1].match(LOAD_CALL_PATH_TOKEN) ?? []) names.add(token.toLowerCase());
+    }
+  }
+  return names;
+}
+
+// Reachable from main/bin/exports or a lifecycle hook through static imports,
+// named by a lifecycle command, or named (or its extension named) in a load
+// call. A path assembled outside the call is not followed.
+function isLoadedAsCode(ctx: RuleContext, path: string, loadCallNames: Set<string>): boolean {
+  if (ctx.consumerReachable.has(normalizeReachabilityPath(path))) return true;
+  if (isLifecycleScriptFile(ctx, path)) return true;
+  // Lowercased: `require('./PAYLOAD.TXT')` loads payload.txt on a case-insensitive
+  // filesystem.
+  const basename = (path.replaceAll("\\", "/").split("/").at(-1) ?? "").toLowerCase();
+  return (
+    loadCallNames.has(basename) || loadCallNames.has(basename.slice(basename.lastIndexOf(".")))
+  );
+}
+
 function omitCommonEnvironmentAccesses(source: string): string {
   return source
+    .replace(PROCESS_ENV_MEMBERSHIP_TEST, eraseKeepingNewlines)
+    .replace(PROCESS_ENV_EXISTENCE_GUARD, eraseKeepingNewlines)
+    .replace(COMMON_PROCESS_ENV_DOWNLEVEL_ACCESS, eraseKeepingNewlines)
+    .replace(COMMON_PROCESS_ENV_TERNARY_ACCESS, eraseKeepingNewlines)
     .replace(COMMON_PROCESS_ENV_DOT_ACCESS, eraseKeepingNewlines)
     .replace(COMMON_PROCESS_ENV_BRACKET_ACCESS, eraseKeepingNewlines)
     .replace(COMMON_IMPORT_META_ENV_DOT_ACCESS, eraseKeepingNewlines)

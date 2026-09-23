@@ -1,0 +1,70 @@
+{
+  "id": "legit-terminal-color-env-detection",
+  "title": "Colour and CI detection reads only presence tests and well-known terminal flags",
+  "category": "control",
+  "intent": "Synthetic regression for a CLI that swaps a colour dependency for a local module. Presence tests ('CI' in process.env), NO_COLOR/FORCE_COLOR/TERM flags, a semver-style `process.env && process.env.NODE_DEBUG` guard and the Babel/TypeScript lowerings of `process?.env?.NODE_ENV` (including the temporary-variable form) read no credential, so an added file using them must not raise code.credential-access. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "terminal-color-env-detection",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "terminal-color-env-detection",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "c075ac4441c37cba1615a94e7b032029e0fa8587aefa7e527452cf2e59765cbb",
+      "flags": [],
+      "textSample": "{\"name\": \"terminal-color-env-detection\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "5295626097dd17fc57856015f596bc83d665009fa4a1345ffa3f4e2d6f76e145",
+      "flags": [],
+      "textSample": "export const version = '1.0.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "3a937dd108741335c393fa6233cb5c7460bf19c4e3cd66d1144d5d29c9aab133",
+      "flags": [],
+      "textSample": "{\"name\": \"terminal-color-env-detection\", \"version\": \"1.0.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 73,
+      "sha256": "5368cb2228840944a0558b79bac1a6c13532bcd4ef5747f22f791d5a02f9b6c3",
+      "flags": [],
+      "textSample": "export { paint } from './colors.js';\nexport { debug } from './debug.js';\n"
+    },
+    {
+      "path": "colors.js",
+      "size": 296,
+      "sha256": "5bbb83889d08c796400e65c50b2dd6f47e2bec65ff1ecc4befdbf006abc839b3",
+      "flags": [],
+      "textSample": "import { styleText } from 'node:util';\nconst enabled =\n  'CI' in process.env && !('NO_COLOR' in process.env) && !('FORCE_COLOR' in process.env)\n    ? false\n    : process.stdout.isTTY && process.env.TERM !== 'dumb';\nexport const paint = (color, text) => (enabled ? styleText(color, text) : text);\n"
+    },
+    {
+      "path": "debug.js",
+      "size": 530,
+      "sha256": "5cf3ab448acd13c61c79a0829312137d71e8cc67ca19db397be8018fc980c924",
+      "flags": [],
+      "textSample": "const verbose = typeof process === 'object' && process.env && process.env.NODE_DEBUG && /\\bpkg\\b/i.test(process.env.NODE_DEBUG);\nconst mode = (null == process ? void 0 : process.env)?.NODE_ENV;\nvar Ub; const minified = null==(Ub=null==process?void 0:process.env)?void 0:Ub.NODE_ENV;\nvar _a; const lowered = (_a = process === null || process === void 0 ? void 0 : process.env) === null || _a === void 0 ? void 0 : _a.NODE_ENV;\nexport const debug = verbose && mode !== 'production' ? (...args) => console.error(...args) : () => {};\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-env-detection",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}
