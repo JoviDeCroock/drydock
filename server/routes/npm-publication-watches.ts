@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { recordScanEvent } from "../db/events";
 import {
   acknowledgePublicationAlert,
+  findObservationAlert,
+  linkPublicationAlertReview,
   listPublicationAlertsForPackage,
 } from "../db/publication-alerts";
 import {
@@ -20,12 +22,21 @@ import {
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
-import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
+import {
+  checkNpmPublicationWatch,
+  recordPublishedReleaseDigests,
+} from "../lib/ecosystems/npm/publication-monitor";
 import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
 import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
 import { readJsonObject } from "../lib/platform/http";
-import { guardRateLimit } from "../lib/rate-limit";
+import {
+  ORGANIZATION_SCAN_LIMIT,
+  ORGANIZATION_SCAN_WINDOW_MS,
+  guardRateLimit,
+} from "../lib/rate-limit";
+import { createPreparedScan, enqueuePreparedScan, preparePublishedScan } from "../lib/scan/start";
+import { deletePendingScanJob } from "../db/scans";
 import type { Bindings, Variables } from "../types";
 
 export const npmPublicationWatchRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -176,4 +187,89 @@ npmPublicationWatchRoutes.post("/:id/observations/:observationId/acknowledge", a
     watch,
     observations: await listPublicationObservations(db, organizationId, watch.id),
   });
+});
+
+// Review the published bytes of an alerted release after the fact: the same
+// published-pair review `POST /api/v1/scans` starts, of the observed version
+// against the version the monitor recorded it following, linked to the alert
+// so the decision on it resolves the alert. One review per alert: a second
+// request opens the first. Same role and scan budget as starting any review.
+npmPublicationWatchRoutes.post("/:id/observations/:observationId/review", async (c) => {
+  const db = c.var.db;
+  const organizationId = await requireActiveOrganization(c, db);
+  const session = c.get("authSession");
+  const target = {
+    organizationId,
+    watchId: c.req.param("id"),
+    observationId: c.req.param("observationId"),
+  };
+  const alert = await findObservationAlert(db, target);
+  if (!alert) return c.json({ error: "not found" }, 404);
+  if (alert.reviewScanId) return c.json({ scanId: alert.reviewScanId, started: false }, 200);
+
+  const limited = await guardRateLimit(
+    c,
+    {
+      key: `scan:${organizationId}`,
+      limit: ORGANIZATION_SCAN_LIMIT,
+      windowMs: ORGANIZATION_SCAN_WINDOW_MS,
+    },
+    "scan rate limit exceeded",
+  );
+  if (limited) return limited;
+
+  const prepared = await preparePublishedScan(c, {
+    ecosystem: "npm",
+    packageName: alert.packageName,
+    version: alert.version,
+    baselineVersion: alert.previousVersion,
+  });
+  if ("error" in prepared) return prepared.error;
+  // The registry resolves exactly the coordinates it was asked about; a
+  // review of anything else must never be linked to this alert.
+  if (prepared.packageName !== alert.packageName || prepared.version !== alert.version) {
+    return c.json({ error: "the registry resolved a different release" }, 409);
+  }
+
+  const scanId = crypto.randomUUID();
+  const created = await createPreparedScan(db, {
+    scanId,
+    organizationId,
+    ownerUserId: session.userId,
+    prepared,
+  });
+  if (!created) return c.json({ error: "failed to create scan" }, 500);
+  const linked = await linkPublicationAlertReview(db, {
+    alertId: alert.id,
+    organizationId,
+    scanId,
+    actorUserId: session.userId,
+    packageName: alert.packageName,
+    version: alert.version,
+  });
+  if (!linked) {
+    // A concurrent request linked its review first. This one was never
+    // queued, so remove it and open the one that won.
+    await deletePendingScanJob(db, scanId, organizationId);
+    const current = await findObservationAlert(db, target);
+    if (!current?.reviewScanId) return c.json({ error: "not found" }, 404);
+    return c.json({ scanId: current.reviewScanId, started: false }, 200);
+  }
+  await enqueuePreparedScan(c, db, {
+    scanId,
+    organizationId,
+    actorUserId: session.userId,
+    prepared,
+  });
+  // The decision is bound to the bytes the monitor saw npm publish. A release
+  // with no Drydock record was never downloaded, so hash it now, off the
+  // request path; the decision tries again if this has not landed by then.
+  c.executionCtx.waitUntil(
+    recordPublishedReleaseDigests(db, c.env, {
+      organizationId,
+      packageName: alert.packageName,
+      version: alert.version,
+    }),
+  );
+  return c.json({ scanId, started: true }, 202);
 });

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -8,6 +8,19 @@ import {
 } from "./schema";
 
 export type PublicationAlertStatus = typeof publicationAlerts.$inferSelect.status;
+export type PublicationAlertResolution = NonNullable<
+  typeof publicationAlerts.$inferSelect.resolution
+>;
+export type PublicationAlertResolutionBadge = NonNullable<
+  typeof publicationAlerts.$inferSelect.resolutionBadge
+>;
+
+// An alert the organization approved after release needs no further notice:
+// it is resolved. A decline leaves it open.
+const notApprovedAfterRelease = or(
+  isNull(publicationAlerts.resolution),
+  ne(publicationAlerts.resolution, "approved_after_release"),
+);
 
 export function isPublicationAlert(status: string): status is PublicationAlertStatus {
   return (
@@ -54,7 +67,9 @@ export async function savePublicationObservation(
       .insert(publicationAlerts)
       .select(
         // The creating check holds the delivery claim: it delivers right after.
-        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()} where exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
+        // Positional over every column, so the trailing nulls are the review
+        // and resolution columns (migration 0035), in declaration order.
+        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()}, null, null, null, null, null, null, null where exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
       )
       .onConflictDoNothing({
         target: [
@@ -105,6 +120,7 @@ export async function listUnnotifiedPublicationAlerts(
         eq(publicationAlerts.packageName, input.packageName),
         isNull(publicationAlerts.notifiedAt),
         isNull(publicationAlerts.acknowledgedAt),
+        notApprovedAfterRelease,
         sql`exists(select 1 from publication_observations o where o.watch_id = ${input.watchId} and o.organization_id = ${publicationAlerts.organizationId} and o.version = ${publicationAlerts.version})`,
       ),
     )
@@ -143,6 +159,7 @@ export async function claimPublicationAlertDelivery(
         alertKey(input),
         isNull(publicationAlerts.notifiedAt),
         isNull(publicationAlerts.acknowledgedAt),
+        notApprovedAfterRelease,
         or(
           isNull(publicationAlerts.deliveryClaimedAt),
           lt(publicationAlerts.deliveryClaimedAt, new Date(now.getTime() - leaseMs)),
@@ -181,6 +198,9 @@ export async function listPublicationAlertsForPackage(
       status: publicationAlerts.status,
       createdAt: publicationAlerts.createdAt,
       acknowledgedAt: publicationAlerts.acknowledgedAt,
+      reviewScanId: publicationAlerts.reviewScanId,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
       inCurrentWatch: currentWatchId
         ? // Qualified by hand: see listUnnotifiedPublicationAlerts.
           sql<boolean>`exists(select 1 from publication_observations o where o.watch_id = ${currentWatchId} and o.organization_id = publication_alerts.organization_id and o.version = publication_alerts.version)`.mapWith(
@@ -267,4 +287,182 @@ export async function acknowledgePublicationAlert(
       .onConflictDoNothing(),
   ]);
   return true;
+}
+
+/**
+ * The alert behind one observed release of a watch, with what a post-release
+ * review of it needs: the release's coordinates, the published version it
+ * follows, and the review already linked to it. Organization-scoped through
+ * every join; null unless the observation carries an alert.
+ */
+export async function findObservationAlert(
+  db: AppDb,
+  input: { organizationId: string; watchId: string; observationId: string },
+) {
+  const [alert] = await db
+    .select({
+      id: publicationAlerts.id,
+      packageName: publicationAlerts.packageName,
+      version: publicationAlerts.version,
+      reviewScanId: publicationAlerts.reviewScanId,
+      previousVersion: publicationObservations.previousVersion,
+    })
+    .from(publicationAlerts)
+    .innerJoin(
+      publicationWatches,
+      and(
+        eq(publicationWatches.organizationId, publicationAlerts.organizationId),
+        eq(publicationWatches.packageName, publicationAlerts.packageName),
+      ),
+    )
+    .innerJoin(
+      publicationObservations,
+      and(
+        eq(publicationObservations.watchId, publicationWatches.id),
+        eq(publicationObservations.version, publicationAlerts.version),
+        eq(publicationObservations.organizationId, publicationAlerts.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(publicationAlerts.organizationId, input.organizationId),
+        eq(publicationWatches.id, input.watchId),
+        eq(publicationObservations.id, input.observationId),
+      ),
+    )
+    .limit(1);
+  return alert ?? null;
+}
+
+/**
+ * Link a freshly created review to the alert, unless another request linked
+ * one first: at most one post-release review per alert. The link and its
+ * audit event commit together. Returns whether this call linked it.
+ */
+export async function linkPublicationAlertReview(
+  db: AppDb,
+  input: {
+    alertId: string;
+    organizationId: string;
+    scanId: string;
+    actorUserId: string;
+    packageName: string;
+    version: string;
+  },
+) {
+  const now = new Date();
+  const [linked] = await db.batch([
+    db
+      .update(publicationAlerts)
+      .set({
+        reviewScanId: input.scanId,
+        reviewRequestedAt: now,
+        reviewRequestedBy: input.actorUserId,
+      })
+      .where(
+        and(
+          eq(publicationAlerts.id, input.alertId),
+          eq(publicationAlerts.organizationId, input.organizationId),
+          isNull(publicationAlerts.reviewScanId),
+        ),
+      )
+      .returning({ id: publicationAlerts.id }),
+    // No scan_id: the event must outlive the review if it fails and is
+    // deleted (scan events cascade with their scan); metadata names it.
+    db
+      .insert(scanEvents)
+      .select(
+        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, null, 'publication.review_started', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, scanId: input.scanId })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId})`,
+      ),
+  ]);
+  return linked.length > 0;
+}
+
+/** The alert a post-release review answers, or null when the scan is linked to none. */
+export async function getPublicationAlertReview(db: AppDb, organizationId: string, scanId: string) {
+  const [alert] = await db
+    .select({
+      id: publicationAlerts.id,
+      packageName: publicationAlerts.packageName,
+      version: publicationAlerts.version,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
+      resolutionBadge: publicationAlerts.resolutionBadge,
+    })
+    .from(publicationAlerts)
+    .where(
+      and(
+        eq(publicationAlerts.organizationId, organizationId),
+        eq(publicationAlerts.reviewScanId, scanId),
+      ),
+    )
+    .limit(1);
+  return alert ?? null;
+}
+
+/**
+ * Record the organization's decision on the release after it was published,
+ * beside the observation's verdict, never over it. Re-deciding the review
+ * updates it; the audit event records each resolution.
+ */
+export async function resolvePublicationAlertReview(
+  db: AppDb,
+  input: {
+    alertId: string;
+    organizationId: string;
+    scanId: string;
+    actorUserId: string;
+    packageName: string;
+    version: string;
+    resolution: PublicationAlertResolution;
+    resolutionBadge: PublicationAlertResolutionBadge;
+  },
+) {
+  const now = new Date();
+  const [resolved] = await db.batch([
+    db
+      .update(publicationAlerts)
+      .set({
+        resolution: input.resolution,
+        resolvedAt: now,
+        resolvedBy: input.actorUserId,
+        resolutionBadge: input.resolutionBadge,
+      })
+      .where(
+        and(
+          eq(publicationAlerts.id, input.alertId),
+          eq(publicationAlerts.organizationId, input.organizationId),
+          eq(publicationAlerts.reviewScanId, input.scanId),
+        ),
+      )
+      .returning({ id: publicationAlerts.id }),
+    db
+      .insert(scanEvents)
+      .select(
+        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, ${input.scanId}, 'publication.review_resolved', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, resolution: input.resolution, badge: input.resolutionBadge })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId})`,
+      ),
+  ]);
+  return resolved.length > 0;
+}
+
+/**
+ * The publication alert a post-release review answers, as the review page
+ * shows it, or null. Only a published-pair review can be linked to one.
+ */
+export async function postReleaseLink(
+  db: AppDb,
+  organizationId: string,
+  scanId: string,
+  source: string | null | undefined,
+) {
+  if (source !== "published") return null;
+  const alert = await getPublicationAlertReview(db, organizationId, scanId);
+  if (!alert) return null;
+  return {
+    packageName: alert.packageName,
+    version: alert.version,
+    resolution: alert.resolution,
+    resolvedAt: alert.resolvedAt,
+    resolutionBadge: alert.resolutionBadge,
+  };
 }

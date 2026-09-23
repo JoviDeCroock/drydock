@@ -326,6 +326,9 @@ describe("one package's monitoring for the package page", () => {
         status: "published_without_approval",
         createdAt: expect.any(String),
         acknowledgedAt: null,
+        reviewScanId: null,
+        resolution: null,
+        resolvedAt: null,
         inCurrentWatch: false,
       },
     ]);
