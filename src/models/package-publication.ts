@@ -24,13 +24,17 @@ export interface PublicationAlertRecord {
   status: Exclude<PublicationObservation["status"], "approved_match" | "unknown">;
   createdAt: string;
   acknowledgedAt: string | null;
+  /** Raised in the current watch's observation window rather than an earlier one. */
+  inCurrentWatch: boolean;
 }
 
 export interface PackagePublication {
   packageName: string;
   watch: PublicationWatch | null;
   observations: PublicationObservation[];
+  /** The latest alerts, newest first; `moreAlerts` says older ones exist. */
   alerts: PublicationAlertRecord[];
+  moreAlerts: boolean;
   enrollment: PublicationEnrollment;
   viewer: { canStop: boolean };
 }

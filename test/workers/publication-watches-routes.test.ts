@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { and, eq } from "drizzle-orm";
 import { addOrganizationMember } from "../../server/db/invitations";
@@ -10,6 +10,7 @@ import {
 } from "../../server/db/publication-watches";
 import { publicationWatchCandidates, scanEvents, scans } from "../../server/db/schema";
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
+import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 
@@ -283,6 +284,7 @@ describe("one package's monitoring for the package page", () => {
         watch: null,
         observations: [],
         alerts: [],
+        moreAlerts: false,
         enrollment: { state: "not_enrolled" },
         viewer: { canStop: true },
       });
@@ -309,13 +311,14 @@ describe("one package's monitoring for the package page", () => {
       first.packageName,
     );
     await deletePublicationWatch(db, owner.organizationId, first.id);
-    await createPublicationWatch(db, owner.organizationId, "ledger-package");
-    const body = await (
-      await request(owner, "GET", path("ledger-package"))
-    ).json<{
-      observations: unknown[];
-      alerts: unknown[];
-    }>();
+    const second = await createPublicationWatch(db, owner.organizationId, "ledger-package");
+    const load = async () =>
+      (await request(owner, "GET", path("ledger-package"))).json<{
+        observations: unknown[];
+        alerts: unknown[];
+        moreAlerts: boolean;
+      }>();
+    const body = await load();
     expect(body.observations).toEqual([]);
     expect(body.alerts).toEqual([
       {
@@ -323,8 +326,61 @@ describe("one package's monitoring for the package page", () => {
         status: "published_without_approval",
         createdAt: expect.any(String),
         acknowledgedAt: null,
+        inCurrentWatch: false,
       },
     ]);
+    // An alert of the current window says so, whether or not its observation
+    // is among those the page lists.
+    await savePublicationObservation(
+      db,
+      {
+        id: crypto.randomUUID(),
+        watchId: second.id,
+        organizationId: owner.organizationId,
+        version: "2.0.0",
+        publishedAt: now,
+        firstSeenAt: now,
+        checkedAt: now,
+        status: "artifact_mismatch",
+      },
+      second.packageName,
+    );
+    const alerts = (await load()).alerts;
+    expect(alerts).toHaveLength(2);
+    expect(alerts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ version: "2.0.0", inCurrentWatch: true }),
+        expect.objectContaining({ version: "1.0.0", inCurrentWatch: false }),
+      ]),
+    );
+  });
+
+  test("lists the latest fifty alerts and says when the ledger holds more", async () => {
+    const owner = await seedOwner();
+    const db = createDb(env.DB);
+    const watch = await createPublicationWatch(db, owner.organizationId, "busy-package");
+    for (let index = 0; index < 51; index++) {
+      const at = new Date(Date.now() - (51 - index) * 1000);
+      await savePublicationObservation(
+        db,
+        {
+          id: crypto.randomUUID(),
+          watchId: watch.id,
+          organizationId: owner.organizationId,
+          version: `1.0.${index}`,
+          publishedAt: at,
+          firstSeenAt: at,
+          checkedAt: at,
+          status: "published_without_approval",
+        },
+        watch.packageName,
+      );
+    }
+    const body = await (
+      await request(owner, "GET", path("busy-package"))
+    ).json<{ alerts: { version: string }[]; moreAlerts: boolean }>();
+    expect(body.alerts).toHaveLength(50);
+    expect(body.moreAlerts).toBe(true);
   });
 
   test("explains why a package is not watched", async () => {
@@ -384,4 +440,35 @@ describe("one package's monitoring for the package page", () => {
     });
     expect((await request(owner, "GET", path("Not A Package"))).status).toBe(400);
   });
+});
+
+test("a manual check that fails after claiming the watch reports the failure, not coverage", async () => {
+  const owner = await seedOwner();
+  const db = createDb(env.DB);
+  const watch = await createPublicationWatch(db, owner.organizationId, "failing-package");
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const response = await call(
+    buildTestApp(mountPublicationWatches, owner),
+    "POST",
+    `/api/v1/publication-watches/${watch.id}/check`,
+    {
+      envOverride: {
+        FLAGS: {
+          getBooleanValue: async () => {
+            throw new Error("flag store unavailable");
+          },
+        } as unknown as Bindings["FLAGS"],
+      },
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    watch: { id: watch.id, lastCheckedAt: expect.any(String), lastError: "check_failed" },
+    observations: [],
+  });
+  expect(error).toHaveBeenCalledWith(
+    "npm.publication_monitor.watch_failed",
+    expect.objectContaining({ organizationId: owner.organizationId, watchId: watch.id }),
+  );
+  error.mockRestore();
 });

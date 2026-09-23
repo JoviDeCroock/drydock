@@ -1,4 +1,16 @@
-import { and, asc, desc, eq, getTableColumns, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -15,9 +27,48 @@ export class PublicationWatchLimitError extends Error {}
 
 const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
 
+/**
+ * How long a problem must last before it counts as a coverage gap: shorter
+ * outages resolve on their own and are shown only as the watch's last problem.
+ */
+const COVERAGE_GAP_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Why a published release can stay unverified with nothing vouching for it:
+ * its bytes could not be hashed or located, and no record's digest could be
+ * compared with npm's instead (a verdict that rests on a record carries its
+ * scan id). Those outlast a transient failure once they persist past
+ * `COVERAGE_GAP_AFTER_MS`, and the organization is told once.
+ */
+const RELEASE_COVERAGE_GAP_REASONS = [
+  "artifact_too_large",
+  "artifact_timeout",
+  "artifact_unavailable",
+  "artifact_identity_invalid",
+] as const;
+
+function releaseCoverageGap(now: Date) {
+  return and(
+    eq(publicationObservations.status, "unknown"),
+    inArray(publicationObservations.reason, [...RELEASE_COVERAGE_GAP_REASONS]),
+    isNull(publicationObservations.scanId),
+    lte(publicationObservations.firstSeenAt, new Date(now.getTime() - COVERAGE_GAP_AFTER_MS)),
+  );
+}
+
+// Correlated form of `releaseCoverageGap` for the watch listings.
+const unverifiedReleaseCount = () =>
+  sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id and o.status = 'unknown' and o.scan_id is null and o.reason in ${sql.raw(`(${RELEASE_COVERAGE_GAP_REASONS.map((reason) => `'${reason}'`).join(", ")})`)} and o.first_seen_at <= ${Date.now() - COVERAGE_GAP_AFTER_MS})`;
+
+const watchColumns = () => ({
+  ...getTableColumns(publicationWatches),
+  unresolvedAlertCount,
+  unverifiedReleaseCount: unverifiedReleaseCount(),
+});
+
 export function listPublicationWatches(db: AppDb, organizationId: string) {
   return db
-    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
+    .select(watchColumns())
     .from(publicationWatches)
     .where(eq(publicationWatches.organizationId, organizationId))
     .orderBy(asc(publicationWatches.createdAt));
@@ -28,7 +79,7 @@ export async function getPublicationWatchByPackage(
   packageName: string,
 ) {
   const [watch] = await db
-    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
+    .select(watchColumns())
     .from(publicationWatches)
     .where(
       and(
@@ -85,7 +136,7 @@ export async function getPublicationEnrollment(
 
 export async function getPublicationWatch(db: AppDb, organizationId: string, id: string) {
   const [watch] = await db
-    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
+    .select(watchColumns())
     .from(publicationWatches)
     .where(
       and(eq(publicationWatches.organizationId, organizationId), eq(publicationWatches.id, id)),
@@ -106,7 +157,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatches)
       .select(
-        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20`,
+        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20`,
       )
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
@@ -122,7 +173,7 @@ export async function createPublicationWatch(
       }),
   ]);
   const [watch] = await db
-    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
+    .select(watchColumns())
     .from(publicationWatches)
     .where(
       and(
@@ -163,6 +214,7 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
     .select({
       ...getTableColumns(publicationObservations),
       acknowledgedAt: publicationAlerts.acknowledgedAt,
+      coverageGap: sql<boolean>`coalesce(${releaseCoverageGap(new Date())}, 0)`.mapWith(Boolean),
     })
     .from(publicationObservations)
     .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
@@ -186,4 +238,127 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       desc(publicationObservations.id),
     )
     .limit(100);
+}
+
+type WatchKey = { id: string; organizationId: string };
+
+function watchKey(watch: WatchKey) {
+  return and(
+    eq(publicationWatches.id, watch.id),
+    eq(publicationWatches.organizationId, watch.organizationId),
+  );
+}
+
+/**
+ * Record the package-wide reason no release can be verified right now, keeping
+ * when it began while it persists, or clear it after a check got past it.
+ */
+export async function recordWatchCoverageGap(
+  db: AppDb,
+  watch: WatchKey,
+  reason: string | null,
+  now: Date,
+) {
+  if (reason === null) {
+    await db
+      .update(publicationWatches)
+      .set({ coverageGap: null, coverageGapSince: null, coverageGapNotifiedAt: null })
+      .where(and(watchKey(watch), sql`${publicationWatches.coverageGap} is not null`));
+    return;
+  }
+  await db
+    .update(publicationWatches)
+    .set({ coverageGap: reason, coverageGapSince: now, coverageGapNotifiedAt: null })
+    .where(
+      and(
+        watchKey(watch),
+        or(isNull(publicationWatches.coverageGap), ne(publicationWatches.coverageGap, reason)),
+      ),
+    );
+}
+
+/**
+ * Take the one notice for the watch's package-wide gap once it has lasted past
+ * `COVERAGE_GAP_AFTER_MS`. Returns the gap's reason when this caller must send it.
+ */
+export async function claimWatchCoverageNotice(db: AppDb, watch: WatchKey, now: Date) {
+  const [claimed] = await db
+    .update(publicationWatches)
+    .set({ coverageGapNotifiedAt: now })
+    .where(
+      and(
+        watchKey(watch),
+        isNull(publicationWatches.coverageGapNotifiedAt),
+        lte(publicationWatches.coverageGapSince, new Date(now.getTime() - COVERAGE_GAP_AFTER_MS)),
+      ),
+    )
+    .returning({ reason: publicationWatches.coverageGap });
+  return claimed?.reason ?? null;
+}
+
+/** Give back a notice claim whose delivery failed, so a later check sends it. */
+export async function releaseWatchCoverageNotice(db: AppDb, watch: WatchKey, claimedAt: Date) {
+  await db
+    .update(publicationWatches)
+    .set({ coverageGapNotifiedAt: null })
+    .where(and(watchKey(watch), eq(publicationWatches.coverageGapNotifiedAt, claimedAt)));
+}
+
+/** Releases of this watch that are coverage gaps nobody has been told about, oldest first. */
+export function listUnnotifiedReleaseCoverageGaps(db: AppDb, watch: WatchKey, now: Date) {
+  return db
+    .select({
+      id: publicationObservations.id,
+      version: publicationObservations.version,
+      reason: publicationObservations.reason,
+    })
+    .from(publicationObservations)
+    .where(
+      and(
+        eq(publicationObservations.watchId, watch.id),
+        eq(publicationObservations.organizationId, watch.organizationId),
+        isNull(publicationObservations.coverageNotifiedAt),
+        releaseCoverageGap(now),
+      ),
+    )
+    .orderBy(asc(publicationObservations.firstSeenAt), asc(publicationObservations.id))
+    .limit(5);
+}
+
+/** Take the one notice for a release coverage gap; false when another check holds it. */
+export async function claimReleaseCoverageNotice(
+  db: AppDb,
+  input: { organizationId: string; observationId: string },
+  now: Date,
+) {
+  const claimed = await db
+    .update(publicationObservations)
+    .set({ coverageNotifiedAt: now })
+    .where(
+      and(
+        eq(publicationObservations.id, input.observationId),
+        eq(publicationObservations.organizationId, input.organizationId),
+        isNull(publicationObservations.coverageNotifiedAt),
+        releaseCoverageGap(now),
+      ),
+    )
+    .returning({ id: publicationObservations.id });
+  return claimed.length > 0;
+}
+
+export async function releaseReleaseCoverageNotice(
+  db: AppDb,
+  input: { organizationId: string; observationId: string },
+  claimedAt: Date,
+) {
+  await db
+    .update(publicationObservations)
+    .set({ coverageNotifiedAt: null })
+    .where(
+      and(
+        eq(publicationObservations.id, input.observationId),
+        eq(publicationObservations.organizationId, input.organizationId),
+        eq(publicationObservations.coverageNotifiedAt, claimedAt),
+      ),
+    );
 }

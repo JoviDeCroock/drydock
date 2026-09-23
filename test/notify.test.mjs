@@ -52,6 +52,7 @@ function slackEvents() {
 
 const {
   notifyNpmConnectionExpired,
+  notifyPublicationCoverageGap,
   notifyPublicationDiscrepancy,
   notifyScanCompletion,
   notifyStagedReleaseApprovable,
@@ -800,6 +801,60 @@ describe("notifyPublicationDiscrepancy", () => {
     expect(await notifyPublicationDiscrepancy(input)).toBe(outcome);
   });
 
+  test.each([
+    [
+      "published_without_approval",
+      "review_pending",
+      "Published with no approval in Acme Corp",
+      "Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it.",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_without_decision",
+      "Published with no approval in Acme Corp",
+      "undecided review of these exact bytes",
+    ],
+    [
+      "published_despite_rejection",
+      "rejected_after_publication",
+      "Rejected in Acme Corp after it was published",
+      "rejected in Acme Corp after they were published",
+    ],
+    [
+      "artifact_mismatch",
+      "review_history_limit",
+      "Published bytes differ from what Acme Corp reviewed",
+      "Only the latest 100 Drydock records of this version were compared.",
+    ],
+  ])("words %s with reason %s for what the records show", async (status, reason, title, detail) => {
+    await notifyPublicationDiscrepancy({ ...input, status, reason });
+    const [[, message]] = emailMock.sendNotificationEmail.mock.calls;
+    expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
+    expect(message.text).toContain(detail);
+    expect(message.text).not.toMatch(/investigate who|unreviewed|compromis|attack/i);
+    expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+      input.db,
+      expect.objectContaining({ metadata: expect.objectContaining({ status, reason }) }),
+    );
+  });
+
+  test("a delivered alert stays delivered when recording the delivery fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dbMock.recordScanEvent.mockRejectedValue(new Error("D1 unavailable"));
+    try {
+      expect(await notifyPublicationDiscrepancy(input)).toBe("delivered");
+      expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        "notification.audit_failed",
+        expect.objectContaining({ organizationId: "org_1", type: "scan.notification_sent" }),
+      );
+    } finally {
+      dbMock.recordScanEvent.mockReset();
+      dbMock.recordScanEvent.mockResolvedValue(undefined);
+      warn.mockRestore();
+    }
+  });
+
   test("reports no destination when nothing could ever receive it", async () => {
     dbMock.resolveNotificationEmails.mockResolvedValue([]);
     expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
@@ -811,4 +866,44 @@ describe("notifyPublicationDiscrepancy", () => {
     });
     expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
   });
+});
+
+describe("notifyPublicationCoverageGap", () => {
+  const input = {
+    env: { BETTER_AUTH_URL: "https://drydock.test" },
+    db: {},
+    organizationId: "org_1",
+    packageName: "@acme/package",
+  };
+
+  test.each([
+    ["2.0.0", "artifact_too_large", "@acme/package@2.0.0", "larger than Drydock hashes"],
+    [null, "registry_metadata_too_large", "releases of @acme/package", "larger than Drydock reads"],
+  ])(
+    "says %s could not be verified (%s) without calling it a discrepancy",
+    async (version, reason, subject, detail) => {
+      dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+      expect(await notifyPublicationCoverageGap({ ...input, version, reason })).toBe("delivered");
+      const [[, message]] = emailMock.sendNotificationEmail.mock.calls;
+      expect(message.subject).toBe(
+        `Drydock could not verify ${subject} against Acme Corp's reviews`,
+      );
+      expect(message.text).toContain(detail);
+      expect(message.text).toContain("This is not a discrepancy");
+      expect(message.text).not.toMatch(/published with no approval|despite|differ/i);
+      expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ statusLine: expect.stringContaining(detail) }),
+      );
+      expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+        input.db,
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            trigger: "publication_coverage_gap",
+            version,
+            reason,
+          }),
+        }),
+      );
+    },
+  );
 });

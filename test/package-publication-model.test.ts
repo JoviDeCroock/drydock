@@ -18,6 +18,10 @@ const watch: PublicationWatch = {
   lastCheckedAt: null,
   lastError: null,
   unresolvedAlertCount: 1,
+  coverageGap: null,
+  coverageGapSince: null,
+  distTagsCheckedAt: null,
+  unverifiedReleaseCount: 0,
 };
 const alert = {
   id: "obs-1",
@@ -31,12 +35,14 @@ const alert = {
   firstSeenAt: "2026-09-02T00:00:00.000Z",
   checkedAt: "2026-09-02T00:00:00.000Z",
   acknowledgedAt: null,
+  coverageGap: false,
 };
 const watched: PackagePublication = {
   packageName: "@scope/package",
   watch,
   observations: [alert],
   alerts: [],
+  moreAlerts: false,
   enrollment: { state: "watched" },
   viewer: { canStop: false },
 };

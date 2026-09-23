@@ -16,6 +16,7 @@ import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typograph
 import { packageReleasesPath } from "../../lib/package-releases-path";
 import { PublicationWatchesModel } from "../../models/publication-watches";
 import { watchMetaLine, watchProblemMessage } from "./copy";
+import { CoverageGap } from "./CoverageGap";
 import { ObservationList } from "./ObservationList";
 import { StopWatchingDialog } from "./StopWatchingDialog";
 
@@ -168,12 +169,17 @@ export function PublicationMonitor({
                       {watch.packageName}
                     </a>
                     <p class="m-0 font-mono text-[11px] text-ink-subtle">{watchMetaLine(watch)}</p>
-                    {watch.unresolvedAlertCount > 0 ? (
-                      <div>
-                        <Badge tone="critical">
-                          {watch.unresolvedAlertCount} unacknowledged{" "}
-                          {watch.unresolvedAlertCount === 1 ? "alert" : "alerts"}
-                        </Badge>
+                    {watch.unresolvedAlertCount > 0 || watch.unverifiedReleaseCount > 0 ? (
+                      <div class="flex flex-wrap gap-1.5">
+                        {watch.unresolvedAlertCount > 0 ? (
+                          <Badge tone="critical">
+                            {watch.unresolvedAlertCount} unacknowledged{" "}
+                            {watch.unresolvedAlertCount === 1 ? "alert" : "alerts"}
+                          </Badge>
+                        ) : null}
+                        {watch.unverifiedReleaseCount > 0 ? (
+                          <Badge tone="medium">{watch.unverifiedReleaseCount} not verified</Badge>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -225,6 +231,7 @@ export function PublicationMonitor({
                     <Alert tone="warn">{watchProblemMessage(watch.lastError)}</Alert>
                   </div>
                 ) : null}
+                <CoverageGap watch={watch} />
                 {expanded ? (
                   <ObservationList
                     watch={watch}

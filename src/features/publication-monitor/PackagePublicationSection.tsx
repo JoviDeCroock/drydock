@@ -13,6 +13,7 @@ import {
   type PublicationEnrollment,
 } from "../../models/package-publication";
 import { observationStatusLabels, watchMetaLine, watchProblemMessage } from "./copy";
+import { CoverageGap } from "./CoverageGap";
 import { ObservationList } from "./ObservationList";
 import { StopWatchingDialog } from "./StopWatchingDialog";
 
@@ -68,32 +69,50 @@ export function PackagePublicationSection({ packageName }: { packageName: string
 }
 
 /**
- * Alerts the organization raised for this package in earlier watch windows.
- * Stopping a watch removes its observations but not its alert ledger, so what
- * was alerted and acknowledged stays visible here after a stop or re-enroll.
+ * Alerts from the organization's ledger that the release list above does not
+ * show: those raised in earlier watch windows (stopping a watch removes its
+ * observations but not its alert ledger), and older ones from this watch that
+ * fall beyond the list's cap. The ledger page is the latest 50 alerts.
  */
 function EarlierAlerts({ publication }: { publication: PackagePublication }) {
-  const current = new Set(publication.observations.map((observation) => observation.version));
-  const earlier: PublicationAlertRecord[] = publication.alerts.filter(
-    (alert) => !current.has(alert.version),
-  );
-  if (earlier.length === 0) return null;
+  const listed = new Set(publication.observations.map((observation) => observation.version));
+  const unlisted = publication.alerts.filter((alert) => !listed.has(alert.version));
+  const groups: [string, PublicationAlertRecord[]][] = [
+    [
+      "Alerts from earlier watches of this package",
+      unlisted.filter((alert) => !alert.inCurrentWatch),
+    ],
+    ["Older alerts from this watch", unlisted.filter((alert) => alert.inCurrentWatch)],
+  ];
+  if (unlisted.length === 0 && !publication.moreAlerts) return null;
   return (
-    <div class="border-t border-border px-5 py-3.5 flex flex-col gap-2">
-      <p class="m-0 text-[13px] text-ink-muted">Alerts from earlier watches of this package</p>
-      <ul class="list-none m-0 p-0 flex flex-col gap-2">
-        {earlier.map((alert) => (
-          <li key={alert.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
-            <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
-            <span class="font-mono text-[11px] text-ink-subtle">
-              {alert.acknowledgedAt
-                ? `acknowledged ${formatDateTime(alert.acknowledgedAt)}`
-                : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div class="border-t border-border px-5 py-3.5 flex flex-col gap-3">
+      {groups.map(([heading, alerts]) =>
+        alerts.length ? (
+          <div key={heading} class="flex flex-col gap-2">
+            <p class="m-0 text-[13px] text-ink-muted">{heading}</p>
+            <ul class="list-none m-0 p-0 flex flex-col gap-2">
+              {alerts.map((alert) => (
+                <li key={alert.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
+                  <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
+                  <span class="font-mono text-[11px] text-ink-subtle">
+                    {alert.acknowledgedAt
+                      ? `acknowledged ${formatDateTime(alert.acknowledgedAt)}`
+                      : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null,
+      )}
+      {publication.moreAlerts ? (
+        <p class="m-0 text-[13px] text-ink-muted">
+          Showing the latest {publication.alerts.length} alerts for this package; older ones are
+          kept but not listed here.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -188,6 +207,7 @@ function PublicationBody({
           <Alert tone="warn">{watchProblemMessage(watch.lastError)}</Alert>
         </div>
       ) : null}
+      <CoverageGap watch={watch} />
       <ObservationList
         watch={watch}
         observations={publication.observations}

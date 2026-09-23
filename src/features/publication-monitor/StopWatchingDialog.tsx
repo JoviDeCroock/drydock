@@ -31,7 +31,7 @@ export function StopWatchingDialog({
       onConfirm={onConfirm}
     >
       <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
-        Alerts already raised for it stay listed on the package's page.
+        Alerts already raised for it stay listed on the package's page, which shows the latest 50.
       </p>
     </ConfirmDialog>
   );

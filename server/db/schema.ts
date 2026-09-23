@@ -631,6 +631,15 @@ export const publicationWatches = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
+    // A package-wide reason no release can currently be verified (npm's
+    // document too large to read, too many versions), when it began, and when
+    // the organization was told. Cleared once a check gets past it.
+    coverageGap: text("coverage_gap"),
+    coverageGapSince: integer("coverage_gap_since", { mode: "timestamp_ms" }),
+    coverageGapNotifiedAt: integer("coverage_gap_notified_at", { mode: "timestamp_ms" }),
+    // When the observations' dist-tags were last read from npm, so a reader
+    // can tell current tags from stale ones.
+    distTagsCheckedAt: integer("dist_tags_checked_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_watches_org_package").on(table.organizationId, table.packageName),
@@ -670,8 +679,11 @@ export const publicationObservations = sqliteTable(
     previousVersion: text("previous_version"),
     // The dist-tags that pointed at this version at the latest check, sorted.
     // Refreshed on every check, settled observations included, so a consumer
-    // can tell which release line a version is on. Null before it was recorded.
+    // can tell which release line a version is on. Null before it was recorded,
+    // or when npm listed more tags than the monitor reads (unknown, not none).
     distTags: text("dist_tags", { mode: "json" }).$type<string[]>(),
+    // When the organization was told this release could not be verified.
+    coverageNotifiedAt: integer("coverage_notified_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_observations_watch_version").on(table.watchId, table.version),
@@ -733,6 +745,9 @@ export const publicationAlerts = sqliteTable(
      * `ALTER TABLE ... ADD`, which the alert insert relies on positionally.
      */
     notifiedAt: integer("notified_at", { mode: "timestamp_ms" }),
+    // Claimed by the check delivering it, so overlapping checks cannot send it
+    // twice; a claim older than the delivery lease may be taken over.
+    deliveryClaimedAt: integer("delivery_claimed_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_alerts_org_release").on(

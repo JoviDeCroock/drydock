@@ -8,9 +8,9 @@ import type { PublicationObservation, PublicationWatch } from "../../models/publ
 import {
   emptyObservationsMessage,
   isPublicationAlert,
+  observationReasonLabel,
   observationStatusLabels,
   observationTone,
-  unknownReasonLabel,
 } from "./copy";
 
 /**
@@ -38,14 +38,17 @@ export function ObservationList({
   return (
     <ul class="list-none m-0 border-t border-border px-5 py-3.5 flex flex-col gap-2">
       {observations.map((observation) => {
-        const reason =
-          observation.status === "unknown" ? unknownReasonLabel(observation.reason) : null;
+        const reason = observationReasonLabel(observation);
         return (
           <li key={observation.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span class="font-mono text-[13px] font-medium break-all">{observation.version}</span>
             <Badge tone={observationTone(observation.status)}>
               {observationStatusLabels[observation.status]}
             </Badge>
+            {observation.coverageGap ? (
+              // A coverage gap, not a discrepancy: the comparison could not be made.
+              <Badge tone="medium">not verified</Badge>
+            ) : null}
             {reason ? <span class="text-[13px] text-ink-muted">{reason}</span> : null}
             <span class="font-mono text-[11px] text-ink-subtle">
               {observation.publishedAt

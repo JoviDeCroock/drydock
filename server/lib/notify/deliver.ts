@@ -2,6 +2,7 @@ import { type AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { getOrganizationOwnerUserId, resolveNotificationEmails } from "../../db/organizations";
 import { getSlackConnectionSecret } from "../../db/slack-connection";
+import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { decryptSlackBotToken } from "../platform/secret-box";
 import { sendNotificationEmail } from "./email";
 import {
@@ -69,7 +70,7 @@ export async function deliverOrganizationNotification(
     if (!notification.email) return "no_destination";
     const recipients = await resolveNotificationEmails(db, organizationId, actorUserId);
     if (recipients.length === 0) {
-      await recordScanEvent(db, {
+      await recordDeliveryEvent(db, {
         ...eventBase,
         type: failed,
         metadata: { ...eventMetadata, channel: "email", reason: "no_recipients" },
@@ -81,7 +82,7 @@ export async function deliverOrganizationNotification(
     const results = await Promise.all(
       recipients.map(async (recipient) => {
         const result = await sendNotificationEmail(env, { to: recipient, subject, text });
-        await recordScanEvent(db, {
+        await recordDeliveryEvent(db, {
           ...eventBase,
           type: result.ok ? sent : failed,
           metadata: {
@@ -102,7 +103,7 @@ export async function deliverOrganizationNotification(
     if (!notification.slack) return "no_destination";
     const delivery = await deliverToSlackConnection(env, db, organizationId, notification.slack);
     if (!delivery) return "no_destination";
-    await recordScanEvent(db, {
+    await recordDeliveryEvent(db, {
       ...eventBase,
       type: delivery.result.ok ? sent : failed,
       metadata: slackEventMetadata(eventMetadata, delivery.channelName, delivery.result),
@@ -114,6 +115,23 @@ export async function deliverOrganizationNotification(
   const outcomes = await Promise.all([emailDelivery, slackDelivery]);
   if (outcomes.includes("delivered")) return "delivered";
   return outcomes.includes("failed") ? "failed" : "no_destination";
+}
+
+/**
+ * Audit a delivery without letting the audit decide it: a message a recipient
+ * already accepted stays delivered even when recording that fails, or a caller
+ * that retries on failure would send it again.
+ */
+async function recordDeliveryEvent(db: AppDb, event: Parameters<typeof recordScanEvent>[1]) {
+  try {
+    await recordScanEvent(db, event);
+  } catch (err) {
+    emitOperationalEvent("warn", "notification.audit_failed", {
+      organizationId: event.organizationId,
+      type: event.type,
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 /**

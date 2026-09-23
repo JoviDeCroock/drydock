@@ -58,18 +58,19 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
   const db = c.var.db;
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   const watch = await getPublicationWatchByPackage(db, organizationId, packageName);
-  const [enrollment, observations, alerts] = await Promise.all([
+  const [enrollment, observations, ledger] = await Promise.all([
     watch
       ? Promise.resolve({ state: "watched" as const })
       : getPublicationEnrollment(db, organizationId, packageName),
     watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
-    listPublicationAlertsForPackage(db, organizationId, packageName),
+    listPublicationAlertsForPackage(db, organizationId, packageName, watch?.id ?? null),
   ]);
   return c.json({
     packageName,
     watch,
     observations,
-    alerts,
+    alerts: ledger.alerts,
+    moreAlerts: ledger.more,
     enrollment,
     viewer: { canStop: roleCanManageIntegrations(role) },
   });
@@ -144,7 +145,12 @@ npmPublicationWatchRoutes.post("/:id/check", async (c) => {
     "publication check rate limit exceeded",
   );
   if (limited) return limited;
-  await checkNpmPublicationWatch(db, c.env, watch);
+  try {
+    await checkNpmPublicationWatch(db, c.env, watch);
+  } catch {
+    // The check recorded its failure on the watch (`check_failed`), which the
+    // response below carries, so the page never reads a failed check as coverage.
+  }
   const current = await getPublicationWatch(db, organizationId, watch.id);
   if (!current) return c.json({ error: "not found" }, 404);
   return c.json({

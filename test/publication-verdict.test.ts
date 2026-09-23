@@ -157,24 +157,54 @@ const inFlight = (
     ...overrides,
   });
 
-describe("unknown is earned only by a record of the same bytes", () => {
+describe("a record of the same bytes softens nothing without a decision", () => {
+  // An attacker who can stage creates the record (npm's stage shasum) for the
+  // very bytes they then publish directly, and npm reports a promoted stage and
+  // a direct publish the same way, so the review points at what to decide.
   test.each([
     ["pending", "review_pending"],
     ["running", "review_pending"],
     ["failed", "review_failed"],
   ] as const)(
-    "the owner's %s review of these bytes, known by npm's stage shasum, is unknown (%s)",
+    "a %s review of the published bytes, known by npm's stage shasum, is published without approval (%s)",
     (status, reason) => {
-      expect(classify([inFlight(status)])).toEqual({ status: "unknown", reason, scanId: "scan1" });
+      expect(classify([inFlight(status)])).toEqual({
+        status: "published_without_approval",
+        reason,
+        scanId: "scan1",
+      });
     },
   );
 
-  test("the owner's undecided review of these bytes is unknown", () => {
+  test("a completed review of the published bytes with no decision is published without approval", () => {
     expect(classify([review({ decision: null, decidedAt: null })])).toEqual({
-      status: "unknown",
+      status: "published_without_approval",
       reason: "reviewed_without_decision",
       scanId: "scan1",
     });
+  });
+
+  test("rejecting the published bytes after publication raises the rejection alert", () => {
+    const after = new Date(published.getTime() + 60_000);
+    expect(classify([review({ decision: "no_publish", decidedAt: after })])).toEqual({
+      status: "published_despite_rejection",
+      reason: "rejected_after_publication",
+      scanId: "scan1",
+    });
+    // The stage the attacker created, rejected once someone noticed.
+    expect(
+      classify([inFlight("failed", { decision: "no_publish", decidedAt: after })]),
+    ).toMatchObject({
+      status: "published_despite_rejection",
+      reason: "rejected_after_publication",
+    });
+    // A rejection before publication still reads as one, whatever came later.
+    expect(
+      classify([
+        review({ id: "early", decision: "no_publish" }),
+        review({ id: "late", decision: "no_publish", decidedAt: after }),
+      ]),
+    ).toEqual({ status: "published_despite_rejection", reason: null, scanId: "early" });
   });
 
   test("a record with no digest at all cannot vouch", () => {
@@ -231,7 +261,11 @@ describe("a restaged version", () => {
   test("the owner's restage of the published bytes decides", () => {
     expect(
       classify([approvedA, review({ id: "stage-b", decision: null, decidedAt: null })]),
-    ).toEqual({ status: "unknown", reason: "reviewed_without_decision", scanId: "stage-b" });
+    ).toEqual({
+      status: "published_without_approval",
+      reason: "reviewed_without_decision",
+      scanId: "stage-b",
+    });
     expect(classify([approvedA, review({ id: "stage-b" })])).toMatchObject({
       status: "approved_match",
       scanId: "stage-b",
@@ -242,8 +276,9 @@ describe("a restaged version", () => {
     });
     const pendingB = inFlight("pending", { id: "stage-b" });
     expect(classify([approvedA, pendingB])).toMatchObject({
-      status: "unknown",
+      status: "published_without_approval",
       reason: "review_pending",
+      scanId: "stage-b",
     });
   });
 
@@ -296,12 +331,43 @@ describe("bytes that cannot be hashed", () => {
     ).toBe("published_without_approval");
   });
 
-  test("an npm shasum matching a review stays unknown: the bytes were not hashed here", () => {
+  test("an npm shasum matching an approval stays unknown: the bytes were not hashed here", () => {
     expect(
       classifyPublication(name, version, published, "artifact_too_large", [review()], {
         declaredSha1: sha1,
       }),
-    ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: null });
+    ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: "scan1" });
+  });
+
+  test("an npm shasum matching an undecided or rejected record still alerts", () => {
+    const unhashed = (reviews: ReviewEvidence[]) =>
+      classifyPublication(name, version, published, "artifact_timeout", reviews, {
+        declaredSha1: sha1,
+      });
+    expect(unhashed([inFlight("pending")])).toEqual({
+      status: "published_without_approval",
+      reason: "review_pending",
+      scanId: "scan1",
+    });
+    expect(
+      unhashed([review({ decision: "no_publish", decidedAt: new Date(published.getTime() + 1) })]),
+    ).toMatchObject({
+      status: "published_despite_rejection",
+      reason: "rejected_after_publication",
+    });
+  });
+
+  test("a record with no digest does not make the others incomparable", () => {
+    expect(
+      classifyPublication(
+        name,
+        version,
+        published,
+        "artifact_too_large",
+        [review(), inFlight("pending", { id: "empty", stagedDeclaredSha1: null })],
+        { declaredSha1: "e".repeat(40) },
+      ),
+    ).toMatchObject({ status: "artifact_mismatch", scanId: "scan1" });
   });
 
   test("without an npm shasum, or with a gate review's SHA-256 only, it stays unknown", () => {
@@ -335,6 +401,68 @@ describe("bytes that cannot be hashed", () => {
       }),
     ).toEqual({ status: "unknown", reason: "artifact_too_large", scanId: null });
   });
+
+  test("a gate review that recorded SHA-1 is compared with npm's shasum when padding defeats hashing", () => {
+    const gate = review({
+      id: "gate",
+      source: "workflow_gate",
+      registryUrl: null,
+      registryPackageName: null,
+      registryVersion: null,
+      summaryJson: {
+        stagedPublish: {
+          mode: "workflow_gate",
+          digest: sha256,
+          sha1,
+          manifest: {
+            schema: "drydock.release-artifacts.v1",
+            ecosystem: "npm",
+            package: name,
+            version,
+            artifacts: [{ path: "package.tgz", sha256 }],
+          },
+        },
+      },
+    });
+    const padded = (declaredSha1: string) =>
+      classifyPublication(name, version, published, "artifact_too_large", [gate], {
+        declaredSha1,
+      });
+    expect(padded("e".repeat(40))).toEqual({
+      status: "artifact_mismatch",
+      reason: null,
+      scanId: "gate",
+    });
+    expect(padded(sha1)).toEqual({
+      status: "unknown",
+      reason: "artifact_too_large",
+      scanId: "gate",
+    });
+    // Hashed bytes match it by either digest.
+    expect(classify([gate])).toMatchObject({ status: "approved_match", scanId: "gate" });
+  });
+});
+
+describe("a version with more records than were read", () => {
+  const limited = (reviews: ReviewEvidence[], artifact = { sha1, sha256 }) =>
+    classifyPublication(name, version, published, artifact, reviews, { historyLimited: true });
+
+  test("a byte match among the newest records still decides", () => {
+    expect(limited([review()])).toMatchObject({ status: "approved_match", scanId: "scan1" });
+  });
+
+  test("no byte match among them alerts and says the history was cut short", () => {
+    expect(limited([review({ decision: null, decidedAt: null })], otherBytes)).toEqual({
+      status: "published_without_approval",
+      reason: "review_history_limit",
+      scanId: null,
+    });
+    expect(limited([review()], otherBytes)).toEqual({
+      status: "artifact_mismatch",
+      reason: "review_history_limit",
+      scanId: "scan1",
+    });
+  });
 });
 
 describe("decision timing matters only when the bytes match", () => {
@@ -357,14 +485,20 @@ describe("decision timing matters only when the bytes match", () => {
 
 test("settled unknown causes are the ones another check cannot resolve", () => {
   for (const reason of [
-    "reviewed_without_decision",
     "decision_history_unavailable",
     "review_digest_unavailable",
     "artifact_too_large",
   ]) {
     expect(isSettledUnknownReason(reason), reason).toBe(true);
   }
-  for (const reason of ["review_pending", "review_failed", "artifact_timeout", null]) {
+  for (const reason of [
+    "review_pending",
+    "review_failed",
+    "reviewed_without_decision",
+    "review_history_limit",
+    "artifact_timeout",
+    null,
+  ]) {
     expect(isSettledUnknownReason(reason), String(reason)).toBe(false);
   }
 });

@@ -112,7 +112,7 @@ async function enrollCandidates(db: AppDb, organizationId: string) {
     // stop or enrollment can occur after the pending-candidate read.
     await db
       .insert(publicationWatches)
-      .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null
+      .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null, null, null, null, null
       where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20
       and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history'))`)
       .onConflictDoNothing({

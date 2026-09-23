@@ -11,6 +11,13 @@ export interface PublicationWatch {
   lastCheckedAt: string | null;
   lastError: string | null;
   unresolvedAlertCount: number;
+  /** A package-wide reason no release can be verified, and since when. */
+  coverageGap: string | null;
+  coverageGapSince: string | null;
+  /** When the observations' dist-tags were last read from npm. */
+  distTagsCheckedAt: string | null;
+  /** Releases that have stayed unverifiable, with nothing vouching, past the gap threshold. */
+  unverifiedReleaseCount: number;
 }
 
 export interface PublicationObservation {
@@ -26,13 +33,18 @@ export interface PublicationObservation {
     | "published_despite_rejection"
     | "artifact_mismatch"
     | "unknown";
-  /** Why an `unknown` observation is unknown; null for a settled verdict. */
+  /** Why an `unknown` observation is unknown, or what refines an alert. */
   reason: string | null;
   scanId: string | null;
   /** The published version this release follows, when it has one. */
   previousVersion: string | null;
-  /** Dist-tags pointing at this version at the latest check; null before recorded. */
+  /**
+   * Dist-tags pointing at this version as of the watch's `distTagsCheckedAt`;
+   * null when unknown (not yet read, or npm listed more tags than are read).
+   */
   distTags: string[] | null;
+  /** Unverifiable with nothing vouching for longer than the gap threshold. */
+  coverageGap: boolean;
 }
 
 export interface AutoEnrollmentInfo {

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "09a67038-430f-4a99-9ea8-ba7aa748e148",
+  "id": "65c79649-14d5-4ebb-8921-bdd2746d6a03",
   "prevId": "f4200289-7267-4b87-b48f-50ca2fdda9bc",
   "tables": {
     "account": {
@@ -1457,6 +1457,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "delivery_claimed_at": {
+          "name": "delivery_claimed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1599,6 +1606,13 @@
         "dist_tags": {
           "name": "dist_tags",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_notified_at": {
+          "name": "coverage_notified_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -1801,6 +1815,34 @@
         "last_error": {
           "name": "last_error",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap": {
+          "name": "coverage_gap",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap_since": {
+          "name": "coverage_gap_since",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap_notified_at": {
+          "name": "coverage_gap_notified_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dist_tags_checked_at": {
+          "name": "dist_tags_checked_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
