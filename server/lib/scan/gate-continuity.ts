@@ -51,14 +51,27 @@ export async function resolveGateContinuity(args: {
   if (!ecosystem || !STAGED_SOURCES.has(args.source ?? "manual")) return null;
   const { organizationId, scanId } = args.identity;
   const packageName = args.registryIdentity?.packageName ?? null;
+  // The check could not run. Visible to operators either way, whether or not
+  // the scan ends up recording `unknown`.
+  const lookupFailed = (
+    reason: "history-unavailable" | "registry-record-unavailable",
+    err?: unknown,
+  ) =>
+    emitOperationalEvent("warn", "scan.gate_continuity.lookup_failed", {
+      scanId,
+      organizationId,
+      packageName,
+      reason,
+      error: err === undefined ? null : describeOperationalError(err),
+    });
   try {
     if (!args.registryIdentity) {
       // Nothing trustworthy to key the lookup on. That only matters if the
       // organization could be gating this stage's package at all; with no
       // live release target for the ecosystem, "not applicable" is still true.
-      return (await hasLiveReleaseTarget(args.db, organizationId, ecosystem))
-        ? unknownGateContinuity("registry-record-unavailable", args.stagedDigest)
-        : null;
+      if (!(await hasLiveReleaseTarget(args.db, organizationId, ecosystem))) return null;
+      lookupFailed("registry-record-unavailable");
+      return unknownGateContinuity("registry-record-unavailable", args.stagedDigest);
     }
     const { version } = args.registryIdentity;
     const history = await loadGateReviewHistory(args.db, {
@@ -88,12 +101,14 @@ export async function resolveGateContinuity(args: {
     }
     return continuity;
   } catch (err) {
-    emitOperationalEvent("warn", "scan.gate_continuity.lookup_failed", {
-      scanId,
-      organizationId,
-      packageName,
-      error: describeOperationalError(err),
-    });
-    return unknownGateContinuity("history-unavailable", args.stagedDigest);
+    lookupFailed("history-unavailable", err);
+    // An organization with no live release target gates nothing, so a failed
+    // read must not give every one of its stages an "unknown" gate section.
+    // Only an organization that could be gating — or a second failure — is
+    // left not knowing.
+    const couldBeGated = await hasLiveReleaseTarget(args.db, organizationId, ecosystem).catch(
+      () => true,
+    );
+    return couldBeGated ? unknownGateContinuity("history-unavailable", args.stagedDigest) : null;
   }
 }

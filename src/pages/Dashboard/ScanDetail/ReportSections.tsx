@@ -7,7 +7,7 @@ import {
   type GateContinuity,
   type GateContinuityReason,
 } from "../../../../server/lib/scan/gate-continuity-record";
-import { Badge } from "../../../components/Badge";
+import { Badge, type BadgeTone } from "../../../components/Badge";
 import { manifestVersionRange, PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
@@ -85,7 +85,7 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
 // the digests is unavailable".
 const UNBOUND_DESCRIPTIONS: Record<GateContinuityReason, string> = {
   "gate-review-incomplete":
-    "A workflow-gate review of this version exists but has not completed — it is still running, or it failed — so there is no gated digest to compare yet.",
+    "A workflow-gate review of this version exists but has not completed — it is still running, or it failed — so the gate has approved no bytes for this version yet. Do not approve this stage on npm until the gate review completes and matches.",
   "staged-digest-unavailable":
     "The workflow gate reviewed this version, but Drydock computed no SHA-256 for the staged tarball, so the stage is not bound to the gated review.",
   "gate-digest-unavailable":
@@ -120,15 +120,15 @@ function describeGateContinuity(continuity: GateContinuity, npmHolds: boolean): 
   }
 }
 
-function GateContinuityView({
-  continuity,
-  boundToRegistry,
-}: {
-  continuity: GateContinuity;
+/**
+ * What the Gate continuity section says and how loudly. Pure so the tone and
+ * wording rules can be tested without rendering.
+ */
+export function gateContinuityPresentation(
+  continuity: GateContinuity,
   /** Whether the staged bytes were confirmed against npm's own record for the stage. */
-  boundToRegistry: boolean;
-}) {
-  const review = continuity.review;
+  boundToRegistry: boolean,
+): { tone: BadgeTone; description: string; stagedLabel: string } {
   // "npm holds" is a claim about the registry, which only a download
   // confirmed against npm's stage record can make. `matched` is only ever
   // evaluated for a confirmed download.
@@ -136,15 +136,36 @@ function GateContinuityView({
   // Only a matched stage is good news. A mismatch is an accusation backed by
   // two digests, so it reads as critical; an ungated stage of a gated package
   // is the out-of-band signal and reads as a warning, never as neutral. A
-  // stage that could not be bound or checked is never quieter than amber.
+  // stage whose only gate review has not completed has no approval behind it
+  // either, so it is never quieter than `ungated`. A stage that could not be
+  // bound or checked is never quieter than amber.
   const tone =
     continuity.status === "matched"
       ? "ok"
       : continuity.status === "digest-mismatch" || continuity.status === "gate-not-approved"
         ? "critical"
-        : continuity.status === "ungated"
+        : continuity.status === "ungated" || continuity.reason === "gate-review-incomplete"
           ? "high"
           : "medium";
+  return {
+    tone,
+    description: describeGateContinuity(continuity, npmHolds),
+    stagedLabel: npmHolds ? "npm holds" : "staged download",
+  };
+}
+
+function GateContinuityView({
+  continuity,
+  boundToRegistry,
+}: {
+  continuity: GateContinuity;
+  boundToRegistry: boolean;
+}) {
+  const review = continuity.review;
+  const { tone, description, stagedLabel } = gateContinuityPresentation(
+    continuity,
+    boundToRegistry,
+  );
   const gateLabel = review
     ? [review.repository, review.environment, review.runId ? `run ${review.runId}` : null]
         .filter(Boolean)
@@ -159,9 +180,7 @@ function GateContinuityView({
         <Badge tone={tone}>{continuity.status}</Badge>
         <Badge tone="neutral">{continuity.algorithm}</Badge>
       </div>
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
-        {describeGateContinuity(continuity, npmHolds)}
-      </p>
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{description}</p>
       <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
         {review ? (
           <div class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">
@@ -180,10 +199,7 @@ function GateContinuityView({
           </div>
         ) : null}
         {review ? <DigestRow label="gate reviewed" value={review.sha256} /> : null}
-        <DigestRow
-          label={npmHolds ? "npm holds" : "staged download"}
-          value={continuity.stagedDigest}
-        />
+        <DigestRow label={stagedLabel} value={continuity.stagedDigest} />
       </div>
     </div>
   );

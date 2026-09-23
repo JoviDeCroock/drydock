@@ -333,38 +333,56 @@ describe("resolveGateContinuity", () => {
   });
 
   test("records a failed lookup as unknown, not as a package that is not gated", async () => {
-    // A transient D1 failure must not let the receipt read `not_applicable`:
-    // nothing established that the organization does not gate this package.
+    // A transient D1 failure must not let the receipt read `not_applicable`
+    // for an organization that could be gating the package.
+    const args = {
+      db: {},
+      identity,
+      source: "manual",
+      ecosystem: "npm",
+      registryIdentity: { packageName: "pkg", version: "2.0.0" },
+      stagedDigest: GATED,
+      stagedDigestBoundToRegistry: true,
+    };
     dbMock.loadGateReviewHistory.mockRejectedValueOnce(new Error("D1 unavailable"));
-    await expect(
-      resolveGateContinuity({
-        db: {},
-        identity,
-        source: "manual",
-        ecosystem: "npm",
-        registryIdentity: { packageName: "pkg", version: "2.0.0" },
-        stagedDigest: GATED,
-        stagedDigestBoundToRegistry: true,
-      }),
-    ).resolves.toEqual({
+    dbMock.hasLiveReleaseTarget.mockResolvedValueOnce(true);
+    await expect(resolveGateContinuity(args)).resolves.toEqual({
       status: "unknown",
       reason: "history-unavailable",
       algorithm: "sha256",
       stagedDigest: GATED,
       review: null,
     });
+    // Nor when the fallback question fails too: nothing established "not gated".
+    dbMock.loadGateReviewHistory.mockRejectedValueOnce(new Error("D1 unavailable"));
     dbMock.hasLiveReleaseTarget.mockRejectedValueOnce(new Error("D1 unavailable"));
+    await expect(resolveGateContinuity(args)).resolves.toMatchObject({
+      status: "unknown",
+      reason: "history-unavailable",
+    });
+    dbMock.hasLiveReleaseTarget.mockRejectedValueOnce(new Error("D1 unavailable"));
+    dbMock.hasLiveReleaseTarget.mockRejectedValueOnce(new Error("D1 unavailable"));
+    await expect(
+      resolveGateContinuity({ ...args, registryIdentity: null, stagedDigest: null }),
+    ).resolves.toMatchObject({ status: "unknown", reason: "history-unavailable" });
+  });
+
+  test("keeps a watchtower-only organization silent through a failed lookup", async () => {
+    // An organization with no live release target gates nothing: a transient
+    // failure must not hand every one of its stages an "unknown" gate section.
+    dbMock.loadGateReviewHistory.mockRejectedValueOnce(new Error("D1 unavailable"));
+    dbMock.hasLiveReleaseTarget.mockResolvedValueOnce(false);
     await expect(
       resolveGateContinuity({
         db: {},
         identity,
-        source: "manual",
+        source: "auto_discovery",
         ecosystem: "npm",
-        registryIdentity: null,
-        stagedDigest: null,
-        stagedDigestBoundToRegistry: false,
+        registryIdentity: { packageName: "pkg", version: "2.0.0" },
+        stagedDigest: GATED,
+        stagedDigestBoundToRegistry: true,
       }),
-    ).resolves.toMatchObject({ status: "unknown", reason: "history-unavailable" });
+    ).resolves.toBeNull();
   });
 });
 
