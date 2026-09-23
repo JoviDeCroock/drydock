@@ -181,12 +181,14 @@ its own.
 `scans.badge_public` records that decision when the scan is persisted, and it
 is false unless all three of these are provable:
 
-- **A registry-verified source.** npm accepted the organization's own token for
-  that exact name, so the review is the maintainer's own. A `workflow_gate`
-  review only _claims_ the name in a tarball manifest — anyone can build one —
-  so without this, approving a review of a tarball calling itself `react` would
-  mint an authoritative-looking approval for a package the reviewer has no
-  claim on. Manifest-claimed reviews keep the explicit opt-in.
+- **A registry-verified source, under npm's name.** npm let the
+  organization's own token read that exact stage, and the reviewed manifest's
+  name agrees with npm's name for the stage (see "npm's name, not the
+  manifest's" below). A `workflow_gate` review only _claims_ the name in a
+  tarball manifest — anyone can build one — so without this, approving a review
+  of a tarball calling itself `react` would mint an authoritative-looking
+  approval for a package the reviewer has no claim on. Manifest-claimed reviews
+  keep the explicit opt-in.
 - **The public npm registry.** A mirror, proxy, or enterprise registry proves
   nothing about whether the package is public.
 - **npm's own `access`.** The staged-publish record npm returns says whether
@@ -197,12 +199,28 @@ is false unless all three of these are provable:
   narrow, and silently excludes every scoped package that is published
   publicly. `publication-auto-enrollment.ts` gates on the same field.
 
-It is a stored column rather than a predicate readers re-derive, because
-`registry_url` is null on rows that predate it — the registry cannot be
-recovered later, and a disclosure gate should not be an inference three columns
-deep. Reviews predating the column are backfilled by
-`pnpm run db:backfill:badge-package-key:remote`, whose header states the one
-assertion that backfill makes.
+It is a stored column rather than a predicate readers re-derive, because a
+disclosure gate should not be an inference three columns deep. Reviews
+predating the column are backfilled by
+`pnpm run db:backfill:badge-package-key:remote`, whose header states the
+assumptions that backfill makes and the read-only queries that check them.
+
+**npm's name, not the manifest's.** `package_name` is the reviewed tarball's
+manifest — package bytes — and a stage the organization's token can read may
+carry a manifest naming any package. What the token establishes is npm's name
+for the stage, `registry_package_name`, which Drydock records from npm's stage
+list or stage record and reconciles against the stage record during
+acquisition (a disagreement there fails the scan). So a staged review's public
+identity — its listed `public_package_key`, and `badge_public` — is npm's name,
+and only while the manifest agrees with it; npm resolves names exactly, so
+agreement is exact equality. A staged review whose manifest disagrees, or that
+has no name from npm (rows predating migration 0027), has no public identity at
+all: it can still be shared and feed-listed, but it answers no badge under
+either name. `scanPublicPackageName` is the rule; `listBadgeCandidateScans` and
+`listDefaultBadgeCandidateScans` enforce it again in SQL, so a key written
+before the rule existed cannot answer either. Only a manifest-claimed gate
+review answers under its own manifest name, which is exactly the claim it makes
+and why it renders `unverified`.
 
 Two further conditions apply to the _release_ rather than the package, and
 `listDefaultBadgeCandidateScans` enforces both:
@@ -384,12 +402,16 @@ The newer release's decision is never consulted and never disclosed — an
 automatic red badge for a release the organization chose not to ship would
 publish an internal verdict about software that was never released.
 
-The probe runs on a badge cache miss against `scans.badge_package_key`, which
-is the canonical identity written for **every** badge-eligible scan, shared or
-not. It is not an authorization signal and never admits a row to the badge
-index: `public_package_key` plus `public_feed_listed_at` remain the only two
-locks on that. Reviews that predate the column need
-`pnpm run db:backfill:badge-package-key:remote` (see `docs/tooling.md`).
+The probe runs on a badge cache miss against `scans.badge_package_key`, the
+release line written for **every** badge-eligible scan, shared or not. For a
+staged review that is npm's name for the stage even when the manifest disagrees
+— the release is still one npm published under the name, and must still take
+the badge off an older version — and never the manifest's. It is not an
+authorization signal and never admits a row to the badge index: a row answers
+only through `public_package_key` plus `public_feed_listed_at`, or
+`badge_public`, and all of them require a public name. Reviews that predate the
+column need `pnpm run db:backfill:badge-package-key:remote` (see
+`docs/tooling.md`).
 
 Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
@@ -459,10 +481,12 @@ proves about the reviewer's relationship to the package name — never about the
 quality of the review:
 
 - `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`).
-  The artifact was fetched from the registry with the org's npm token, and the
-  registry accepted that token for that exact name, so it proved the org can
-  publish under it. This is the only identity backed by a credential, and the
-  only one the badge treats as authoritative.
+  The artifact was fetched from the registry with the org's npm token, and npm
+  let that token read that exact stage. That proves the organization can see
+  the package's stages, not that it can publish: a read-only token passes. It
+  is the only identity backed by a credential, and the only one the badge
+  treats as authoritative — under npm's name for the stage, never the
+  manifest's (see "npm's name, not the manifest's" above).
 - `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
   repo-built and its manifest claims the name; nothing verifies ownership yet.
   Consumers should weigh these accordingly. The authenticated

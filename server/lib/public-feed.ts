@@ -268,6 +268,31 @@ export function badgeLookupKey(row: {
   return ecosystem ? publicPackageLookupKey(ecosystem, name) : null;
 }
 
+/**
+ * The release line a scan belongs to, persisted as `badge_package_key` for
+ * every badge-eligible scan whether or not it may answer the badge. It is what
+ * lets a badge notice that the package released again, and it is never an
+ * admission signal: a row answers only through `public_package_key` (listed)
+ * or `badge_public` (default-on), and both require a public name.
+ *
+ * For a credential-backed scan the line is npm's name for the stage, even when
+ * the manifest disagrees with it: that release is still one npm published
+ * under the name, and a badge must go grey beside it rather than keep vouching
+ * for the older version. The manifest's name never places a staged scan on a
+ * line. A gate review's line is the name it claims, as its identity is.
+ */
+export function badgeReleaseLineKey(row: {
+  source: string;
+  packageName: string | null;
+  registryPackageName: string | null;
+  summaryJson: unknown;
+}): string | null {
+  if (scanPackageIdentity(row.source) !== "registry-verified") return badgeLookupKey(row);
+  if (!row.registryPackageName) return null;
+  const ecosystem = badgeEcosystem(row.source, row.summaryJson);
+  return ecosystem ? publicPackageLookupKey(ecosystem, row.registryPackageName) : null;
+}
+
 /** npm's own access level for the stage, from its staged-publish record. */
 function stagedPublishAccess(summaryJson: unknown): string | null {
   if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
@@ -292,10 +317,11 @@ const PUBLIC_NPM_REGISTRY_HOSTS: ReadonlySet<string> = new Set(["registry.npmjs.
  * being public is provable rather than assumed. Three things must hold, and
  * every one of them fails closed:
  *
- * - **Registry-verified source.** npm accepted the organization's own token
- *   for this exact name, so the review is the maintainer's. A manifest claim
- *   is not: anyone can build a tarball calling itself `react`, and without
- *   this they could mint an approval for a name they have no claim on.
+ * - **Registry-verified source, under npm's name.** npm let the
+ *   organization's own token read this exact stage, and the reviewed manifest
+ *   agrees with npm's name for it (`scanPublicPackageName`). A manifest claim
+ *   is not enough: anyone can build a tarball calling itself `react`, and
+ *   without this they could mint an approval for a name they have no claim on.
  * - **The public npm registry.** Any other host says nothing about publicness.
  * - **npm's own `access`.** The staged-publish record npm returns says whether
  *   the stage is `public` or `restricted`. This is the registry's answer, from
@@ -314,12 +340,13 @@ const PUBLIC_NPM_REGISTRY_HOSTS: ReadonlySet<string> = new Set(["registry.npmjs.
 export function isDefaultBadgePublic(row: {
   source: string;
   packageName: string | null;
+  registryPackageName: string | null;
   registryUrl: string | null;
   summaryJson: unknown;
 }): boolean {
   if (!REGISTRY_VERIFIED_SOURCES.has(row.source)) return false;
   if (scanEcosystem(row.source, row.summaryJson) !== "npm") return false;
-  if (!row.packageName?.trim()) return false;
+  if (!scanPublicPackageName(row)?.trim()) return false;
   if (stagedPublishAccess(row.summaryJson) !== "public") return false;
   if (!row.registryUrl) return false;
   try {

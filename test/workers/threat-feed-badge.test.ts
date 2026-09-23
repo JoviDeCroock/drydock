@@ -1667,7 +1667,11 @@ async function seedPublicRelease(
   owner: SeededUser,
   packageName: string,
   version: string,
-  options: { tag?: string; source?: "manual" | "workflow_gate" } = {},
+  options: {
+    tag?: string;
+    source?: "manual" | "workflow_gate";
+    registryPackageName?: string | null;
+  } = {},
 ): Promise<string> {
   const scanId = await seedCompletedScan(owner, {
     packageName,
@@ -1824,6 +1828,141 @@ describe("an OSS package needs no opt-in", () => {
     // must not leave the older green one vouching for what people install.
     await seedPublicRelease(owner, packageName, "3.0.1");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+});
+
+describe("default-on answers only under npm's name for the stage", () => {
+  test("a published, approved tarball claiming another name answers under neither", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const stagedAs = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const claimed = `victim-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, claimed, "3.0.1", {
+      registryPackageName: stagedAs,
+    });
+    await decide(app, scanId, "publish");
+
+    expect((await fetchBadge(app, "npm", claimed)).body.message).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", stagedAs)).body.message).toBe("not reviewed");
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select({ badgePublic: schema.scans.badgePublic, key: schema.scans.badgePackageKey })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    // On npm's release line, so it can still grey an older badge — never an
+    // identity it may answer under.
+    expect(row).toEqual({ badgePublic: false, key: `npm:${stagedAs}` });
+  });
+
+  test("a newer release whose tarball claims another name still takes the badge off the older one", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const first = await seedPublicRelease(owner, packageName, "3.0.0");
+    await backdateScan(first, 60_000);
+    await decide(app, first, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    // npm published 3.0.1 under this name; its bytes name something else, so
+    // it answers no badge — and must not leave 3.0.0 vouching for it.
+    const newer = await seedPublicRelease(owner, `other-${packageName}`, "3.0.1", {
+      registryPackageName: packageName,
+    });
+    await decide(app, newer, "publish");
+    await share(app, newer, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+});
+
+/**
+ * The backfill mirrors the persist-time rule in SQL. These seed rows through
+ * the real write path, keep what TypeScript decided, rewind them to how a
+ * pre-0034 row looks, and require the script to land on the same values.
+ */
+async function runBackfillScript(): Promise<void> {
+  const statements = backfillBadgeKeysSql
+    .split("\n")
+    .filter((line: string) => !line.trimStart().startsWith("--"))
+    .join("\n")
+    .split(/;\s*(?:\n|$)/)
+    .map((statement: string) => statement.trim())
+    .filter(Boolean);
+  expect(statements.length).toBeGreaterThan(0);
+  for (const statement of statements) await env.DB.prepare(statement).run();
+}
+
+async function badgeColumns(scanId: string) {
+  const db = createDb(env.DB);
+  const [row] = await db
+    .select({
+      badgePackageKey: schema.scans.badgePackageKey,
+      badgePublic: schema.scans.badgePublic,
+      publicPackageKey: schema.scans.publicPackageKey,
+    })
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  return row;
+}
+
+describe("the badge backfill script", () => {
+  test("lands on what persist decides, and withdraws listed keys the rule refuses", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const agreeing = await seedPublicRelease(owner, `pkg-a-${suffix}`, "1.0.0");
+    const disagreeing = await seedPublicRelease(owner, `victim-${suffix}`, "1.0.0", {
+      registryPackageName: `pkg-b-${suffix}`,
+    });
+    const restricted = await seedCompletedScan(owner, {
+      packageName: `@acme/pkg-c-${suffix}`,
+      registryUrl: "https://registry.npmjs.org",
+      access: "restricted",
+    });
+    const mirror = await seedCompletedScan(owner, {
+      packageName: `pkg-d-${suffix}`,
+      registryUrl: "https://registry.npmjs.org.mirror.example",
+    });
+    const noNpmName = await seedCompletedScan(owner, {
+      packageName: `pkg-e-${suffix}`,
+      registryPackageName: null,
+    });
+    const seeded = [agreeing, disagreeing, restricted, mirror, noNpmName];
+    for (const scanId of seeded) {
+      await decide(app, scanId, "publish");
+      await share(app, scanId, { threatFeed: true });
+    }
+    const decided = new Map<string, Awaited<ReturnType<typeof badgeColumns>>>();
+    for (const scanId of seeded) decided.set(scanId, await badgeColumns(scanId));
+
+    // Rewind to a pre-0034 row, whose listing wrote the manifest's name.
+    const db = createDb(env.DB);
+    for (const scanId of seeded) {
+      const [row] = await db
+        .select({ packageName: schema.scans.packageName })
+        .from(schema.scans)
+        .where(eq(schema.scans.id, scanId));
+      await db
+        .update(schema.scans)
+        .set({
+          badgePackageKey: null,
+          badgePublic: false,
+          publicPackageKey: `npm:${row.packageName}`,
+        })
+        .where(eq(schema.scans.id, scanId));
+    }
+
+    await runBackfillScript();
+    for (const scanId of seeded) expect(await badgeColumns(scanId)).toEqual(decided.get(scanId));
+    expect(decided.get(agreeing)).toMatchObject({ badgePublic: true });
+    expect(decided.get(disagreeing)).toEqual({
+      badgePackageKey: `npm:pkg-b-${suffix}`,
+      badgePublic: false,
+      publicPackageKey: null,
+    });
+
+    // Idempotent: a second run changes nothing.
+    await runBackfillScript();
+    for (const scanId of seeded) expect(await badgeColumns(scanId)).toEqual(decided.get(scanId));
   });
 });
 

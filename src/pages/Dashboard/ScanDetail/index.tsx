@@ -367,7 +367,13 @@ function ScanDialogs({ model, view }: SectionProps) {
           error={model.shareError}
           attestationAvailable={model.attestationAvailable}
           badgeEcosystem={badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
-          packageName={detail.scan.packageName}
+          // The name the badge index knows this review by, or null when its
+          // manifest disagrees with npm's name — then no snippet is offered.
+          packageName={scanPublicPackageName({
+            source: detail.scan.source ?? "",
+            packageName: detail.scan.packageName ?? null,
+            registryPackageName: detail.scan.registryPackageName ?? null,
+          })}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}
           onEnable={() => void model.enableShare()}

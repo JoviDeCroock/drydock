@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, not, notInArray, or, sql } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
 import { compareSemver } from "../lib/ecosystems/npm/registry";
 import {
@@ -480,11 +480,9 @@ const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCE
 // that name is npm's name for the stage. A key written before the write-side
 // rule existed — or by a future write that forgets it — must still never let a
 // tarball's claimed name speak for a package the credential did not reach.
-// SQLite compares text exactly, which is how npm resolves names.
-const publicNameIsRegistryName = or(
-  eq(scans.source, "workflow_gate"),
-  eq(scans.packageName, scans.registryPackageName),
-);
+// SQLite compares text exactly, which is how npm resolves names. Coalesced so
+// a missing name reads as "no", never as NULL, and the predicate can be negated.
+const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' or ${scans.packageName} = ${scans.registryPackageName}, 0)`;
 
 /**
  * Recent badge candidates for one package name that an organization
@@ -566,9 +564,9 @@ export function compareBadgeCandidates(a: SharedScanRow, b: SharedScanRow): numb
 }
 
 /**
- * Reviews that answer the badge for a package that needs no opt-in — an
- * unscoped npm package the organization proved it can publish (see
- * `isDefaultBadgePublic`).
+ * Reviews that answer the badge for a package that needs no opt-in — one npm
+ * reports as public, reviewed through a stage npm let the organization's token
+ * read, under npm's own name for it (see `isDefaultBadgePublic`).
  *
  * Two extra conditions beyond that flag, both about the *release* rather than
  * the package:
@@ -601,6 +599,9 @@ export async function listDefaultBadgeCandidateScans(
         isNull(scans.registryStatusSupersededAt),
         eq(scans.registryVersionStatus, "published"),
         badgeEligibleSource,
+        // `badge_public` already requires it; the key is a release line, not
+        // an identity, so the name rule is enforced here as well.
+        publicNameIsRegistryName,
         badgeTagMatchesSql(tag),
         badgeNotDisabled,
       ),
@@ -664,10 +665,24 @@ export async function findNewerPublishedRelease(
         eq(scans.organizationId, pick.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
-        // Not a badge candidate by either route: neither deliberately listed,
-        // nor answering by default as an approved public release.
-        isNull(scans.publicFeedListedAt),
-        or(eq(scans.badgePublic, false), isNull(scans.decision), ne(scans.decision, "publish")),
+        // Not a badge candidate by either route: neither listed under this
+        // key, nor answering by default as an approved public release. A
+        // release with no public name (its manifest disagrees with npm's) is
+        // neither, however it was shared, so it still takes the badge off an
+        // older version.
+        not(
+          and(
+            isNotNull(scans.publicFeedListedAt),
+            eq(scans.publicPackageKey, packageKey),
+            publicNameIsRegistryName,
+          )!,
+        ),
+        or(
+          eq(scans.badgePublic, false),
+          isNull(scans.decision),
+          ne(scans.decision, "publish"),
+          not(publicNameIsRegistryName),
+        ),
         eq(scans.registryVersionStatus, "published"),
         isNotNull(scans.registryVersion),
         badgeEligibleSource,

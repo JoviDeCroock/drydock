@@ -9,7 +9,7 @@ import {
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
-import { badgeLookupKey, isDefaultBadgePublic } from "../lib/public-feed";
+import { badgeReleaseLineKey, isDefaultBadgePublic } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import type { ScanStatus } from "./enums";
 import { NON_TERMINAL_STATUSES } from "./scan-status";
@@ -140,7 +140,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     registryPackageName: existing[0]?.registryPackageName ?? null,
     summaryJson: scanValues.summaryJson,
   };
-  const badgePackageKey = badgeLookupKey(badgeRow);
+  const badgePackageKey = badgeReleaseLineKey(badgeRow);
   // Decided here, not by readers: the INSERT branch has no job row to take a
   // registry from, so it resolves to false and the review keeps the explicit
   // opt-in — the safe direction for a surface that needs no credential to read.
