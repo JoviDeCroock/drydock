@@ -26,7 +26,7 @@ import {
  * claim is allowed to rest on.
  */
 
-type GateSetupAction = "verify" | "preview" | "release_target" | "release_target_delete";
+export type GateSetupAction = "verify" | "preview" | "release_target" | "release_target_delete";
 
 /**
  * `unknown` is the answer when Drydock could not read GitHub, and it is why
@@ -38,9 +38,18 @@ type GateSetupCheck = "present" | "absent" | "unknown";
 export interface GateSetupVerification {
   environment: GateSetupCheck;
   protectionRule: GateSetupCheck;
+  /**
+   * GitHub's "Allow administrators to bypass configured protection rules" on
+   * the environment. Optional because the field is newer than the endpoint's
+   * first callers; a missing value reads as `unknown`.
+   */
+  adminBypass?: "allowed" | "blocked" | "unknown";
   defaultBranch: string | null;
   unavailableReason?: string;
 }
+
+/** Which step's button asked for the running (or failed) verification. */
+export type VerifyOrigin = "environment" | "protection_rule";
 
 export interface GateSetupPreview {
   workflowPath: string;
@@ -65,14 +74,19 @@ export const GateSetupModel = createModel(() => {
   const environmentsLoading = signal(false);
 
   const verification = signal<GateSetupVerification | null>(null);
-  const releaseTarget = signal<PublicReleaseTarget | null>(null);
-  // Release targets already stored for this organization. The wizard's own
-  // `releaseTarget` only holds one it created this session, so without these a
-  // returning maintainer's existing mapping would read as missing.
+  const verifyOrigin = signal<VerifyOrigin>("environment");
+  // The organization's stored release targets — the one list the wizard's
+  // mapping claims rest on. The parent keeps it in step with the server, and
+  // the wizard's own create/remove update it in place until the parent's
+  // refetch lands. There is deliberately no separate "created this session"
+  // target: one that outlived its row (removed from the GitHub App card, say)
+  // kept the gate reading as armed over a mapping that no longer existed.
   const knownReleaseTargets = signal<readonly PublicReleaseTarget[]>([]);
   const preview = signal<GateSetupPreview | null>(null);
 
-  const busyStep = signal<GateSetupAction | null>(null);
+  // Every action in flight. More than one can be: choosing an environment
+  // verifies it while the ecosystem a stored mapping pins resets the workflow.
+  const pendingSteps = signal<readonly GateSetupAction[]>([]);
   const error = signal<string | null>(null);
   // Which action raised `error`, so the wizard can render it against the step
   // the maintainer just acted on rather than in a banner at the top of a card
@@ -80,7 +94,15 @@ export const GateSetupModel = createModel(() => {
   const errorStep = signal<GateSetupAction | null>(null);
   let repositoriesRequestId = 0;
   let environmentsRequestId = 0;
-  let actionRequestId = 0;
+  // Per action, so invalidating one — a new package name drops the pending
+  // workflow preview — cannot silently discard another, like the verification
+  // a returning maintainer's environment choice just started.
+  const actionRequestIds: Record<GateSetupAction, number> = {
+    verify: 0,
+    preview: 0,
+    release_target: 0,
+    release_target_delete: 0,
+  };
 
   // Kept in GitHub's own casing. Verification looks the environment up by path,
   // so folding case would 404 an environment named `Production` and report a
@@ -119,7 +141,36 @@ export const GateSetupModel = createModel(() => {
       packageName.value.trim() !== "" &&
       packageNameIssue.value === null,
   );
-  const busy = computed(() => busyStep.value !== null);
+  const busy = computed(() => pendingSteps.value.length > 0);
+
+  /**
+   * The stored mapping in force for the current draft, matched the way the
+   * webhook resolves one: installation, repository *id*, and environment.
+   *
+   * Storage keys on GitHub's repository id, which survives a rename; the full
+   * name does not, so matching on it showed a renamed repository as unmapped
+   * and "Create release target" then failed as a duplicate. Stored environments
+   * are normalized and the draft carries GitHub's casing, so the environment is
+   * compared case-insensitively.
+   */
+  const resolvedReleaseTarget = computed<PublicReleaseTarget | null>(() => {
+    const fullName = repositoryFullName.value;
+    const installation = installationRowId.value;
+    const environmentName = environment.value.toLowerCase();
+    const stored = knownReleaseTargets.value;
+    const repositoryId = repositories.value.find(
+      (repository) => repository.fullName === fullName,
+    )?.id;
+    if (repositoryId === undefined) return null;
+    return (
+      stored.find(
+        (target) =>
+          target.installationRowId === installation &&
+          target.repositoryId === repositoryId &&
+          target.environment.toLowerCase() === environmentName,
+      ) ?? null
+    );
+  });
 
   /**
    * The only claim the wizard is allowed to make about the gate.
@@ -128,30 +179,46 @@ export const GateSetupModel = createModel(() => {
    * deployment; it says nothing about whether GitHub will ever hold one. Only a
    * verified protection rule does, so a green summary requires both.
    */
-  /**
-   * The mapping in force for the current draft: one made this session, else one
-   * already stored. Stored targets are normalized and the draft carries
-   * GitHub's casing, so the environment is matched case-insensitively —
-   * comparing directly would miss an existing mapping for `Production`.
-   */
-  const resolvedReleaseTarget = computed<PublicReleaseTarget | null>(() => {
-    if (releaseTarget.value) return releaseTarget.value;
-    const installation = installationRowId.value;
-    const repository = repositoryFullName.value;
-    const environmentName = environment.value.toLowerCase();
-    return (
-      knownReleaseTargets.value.find(
-        (target) =>
-          target.installationRowId === installation &&
-          target.repositoryFullName === repository &&
-          target.environment.toLowerCase() === environmentName,
-      ) ?? null
-    );
-  });
-
   const gateArmed = computed(
     () => verification.value?.protectionRule === "present" && resolvedReleaseTarget.value !== null,
   );
+
+  /**
+   * An armed gate a repository admin can still push a release past. It does
+   * not unarm the gate — the rule holds every run nobody overrides, and an
+   * override is a deliberate act in GitHub's audit log — but it is a standing
+   * way around the review, so the wizard says so beside the rule.
+   */
+  const adminBypassAllowed = computed(
+    () =>
+      verification.value?.protectionRule === "present" &&
+      verification.value.adminBypass === "allowed",
+  );
+
+  /**
+   * The first unfinished step; exactly one step owns the primary button.
+   *
+   * An environment the workflow template cannot quote skips steps 4 and 5 —
+   * the maintainer writes that workflow by hand — so the flow moves on to the
+   * release target instead of parking on a step it has already said is
+   * unavailable. 7 is past the end: everything is done.
+   */
+  const currentStep = computed(() => {
+    const picked = repositoryPicked.value;
+    const checked = verification.value;
+    const workflowAvailable = environmentIssue.value === null;
+    const ready = templateReady.value;
+    const generated = preview.value !== null;
+    const mapped = resolvedReleaseTarget.value !== null;
+    if (!picked) return 1;
+    if (checked?.environment !== "present") return 2;
+    if (checked.protectionRule !== "present") return 3;
+    if (workflowAvailable && !ready) return 4;
+    if (workflowAvailable && !generated) return 5;
+    if (!mapped) return 6;
+    return 7;
+  });
+  const flowComplete = computed(() => currentStep.value === 7);
 
   function draft() {
     return {
@@ -163,33 +230,40 @@ export const GateSetupModel = createModel(() => {
     };
   }
 
+  function setPending(step: GateSetupAction, pending: boolean) {
+    const rest = pendingSteps.peek().filter((entry) => entry !== step);
+    pendingSteps.value = pending ? [...rest, step] : rest;
+  }
+
   async function request<T>(
     step: GateSetupAction,
     perform: () => Promise<T>,
     apply: (data: T) => void,
+    onFailure?: () => void,
   ): Promise<T | null> {
-    const requestId = ++actionRequestId;
+    const requestId = ++actionRequestIds[step];
     const organizationId = activeOrganizationId.peek();
-    busyStep.value = step;
+    const current = () =>
+      requestId === actionRequestIds[step] && activeOrganizationId.peek() === organizationId;
+    setPending(step, true);
     if (errorStep.peek() === step) {
       error.value = null;
       errorStep.value = null;
     }
     try {
       const data = await perform();
-      if (requestId !== actionRequestId || activeOrganizationId.peek() !== organizationId) {
-        return null;
-      }
+      if (!current()) return null;
       apply(data);
       return data;
     } catch (err) {
-      if (requestId === actionRequestId && activeOrganizationId.peek() === organizationId) {
+      if (current()) {
+        onFailure?.();
         error.value = errorMessage(err);
         errorStep.value = step;
       }
       return null;
     } finally {
-      if (requestId === actionRequestId) busyStep.value = null;
+      if (requestId === actionRequestIds[step]) setPending(step, false);
     }
   }
 
@@ -202,9 +276,9 @@ export const GateSetupModel = createModel(() => {
     return request(step, () => apiJson<T>(path, body), apply);
   }
 
-  function invalidatePendingActions() {
-    ++actionRequestId;
-    busyStep.value = null;
+  function invalidate(steps: readonly GateSetupAction[]) {
+    for (const step of steps) ++actionRequestIds[step];
+    pendingSteps.value = pendingSteps.peek().filter((entry) => !steps.includes(entry));
   }
 
   function clearError() {
@@ -213,25 +287,27 @@ export const GateSetupModel = createModel(() => {
   }
 
   function resetDownstream() {
-    invalidatePendingActions();
+    invalidate(["verify", "preview", "release_target", "release_target_delete"]);
     verification.value = null;
-    releaseTarget.value = null;
     preview.value = null;
     clearError();
   }
 
+  // The ecosystem and package name reach only the generated YAML, so changing
+  // them invalidates the workflow preview and nothing GitHub was checked for.
   function resetAfterTemplateChange() {
-    invalidatePendingActions();
+    invalidate(["preview"]);
     preview.value = null;
-    clearError();
+    if (errorStep.peek() === "preview") clearError();
   }
 
-  async function runVerify(): Promise<void> {
+  async function runVerify(origin: VerifyOrigin = "environment"): Promise<void> {
     if (!environmentPicked.peek()) return;
-    await post<{ state: GateSetupVerification }>(
+    verifyOrigin.value = origin;
+    await request<{ state: GateSetupVerification }>(
       "verify",
-      "/api/v1/github-app/gate-setup/verify",
-      draft(),
+      () =>
+        apiJson<{ state: GateSetupVerification }>("/api/v1/github-app/gate-setup/verify", draft()),
       (data) => {
         verification.value = data.state;
         // A verified environment may not be in the picker's list yet — the
@@ -244,6 +320,12 @@ export const GateSetupModel = createModel(() => {
             environments.value = [...known, { name }];
           }
         }
+      },
+      // A check that failed says nothing about GitHub now, so the previous
+      // answer goes with it: an earlier "armed" must not outlive a re-check
+      // that could not complete. The error renders on the step that asked.
+      () => {
+        verification.value = null;
       },
     );
   }
@@ -260,11 +342,11 @@ export const GateSetupModel = createModel(() => {
     environments,
     environmentsLoading,
     verification,
-    releaseTarget,
+    verifyOrigin,
     knownReleaseTargets,
     resolvedReleaseTarget,
     preview,
-    busyStep,
+    pendingSteps,
     busy,
     error,
     errorStep,
@@ -275,6 +357,9 @@ export const GateSetupModel = createModel(() => {
     packageNameIssue,
     templateReady,
     gateArmed,
+    adminBypassAllowed,
+    currentStep,
+    flowComplete,
 
     async selectInstallation(nextId: string): Promise<void> {
       const requestId = ++repositoriesRequestId;
@@ -374,7 +459,11 @@ export const GateSetupModel = createModel(() => {
     verify: runVerify,
 
     selectEcosystem(id: string) {
-      if (releaseTarget.peek()?.ecosystem != null) return;
+      // A mapping that pins an ecosystem keeps it until the mapping is removed;
+      // selecting that same ecosystem is how the wizard adopts the pin.
+      const pinned = resolvedReleaseTarget.peek()?.ecosystem;
+      if (pinned != null && pinned !== id) return;
+      if (ecosystem.peek() === id) return;
       ecosystem.value = id;
       resetAfterTemplateChange();
     },
@@ -418,7 +507,11 @@ export const GateSetupModel = createModel(() => {
           ...(pinned ? { ecosystem: pinned } : {}),
         },
         (response) => {
-          releaseTarget.value = response.releaseTarget;
+          const created = response.releaseTarget;
+          knownReleaseTargets.value = [
+            ...knownReleaseTargets.peek().filter((target) => target.id !== created.id),
+            created,
+          ];
         },
       );
       return data?.releaseTarget ?? null;
@@ -432,7 +525,6 @@ export const GateSetupModel = createModel(() => {
             method: "DELETE",
           }),
         () => {
-          if (releaseTarget.peek()?.id === id) releaseTarget.value = null;
           // The parent's stored list is refetched asynchronously; drop the row
           // here too, or the resolved mapping (and the armed badge that rests
           // on it) keeps reading from a target that no longer exists.

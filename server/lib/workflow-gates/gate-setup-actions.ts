@@ -8,9 +8,11 @@
  * Dependabot's `github-actions` updates recognize, so a maintainer who enables
  * them gets reviewable bumps instead of silent drift.
  *
- * Bumping a pin here changes every workflow the wizard generates from then on.
- * Resolve the tag to its commit (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`,
- * then dereference an annotated tag) rather than copying a SHA from a README.
+ * Bumping a pin here changes every workflow the wizard generates from then on,
+ * and the Docs page's copies in `src/pages/Docs/gate-workflow-examples.ts`
+ * (a test fails until they match). Resolve the tag to its commit
+ * (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, then dereference an
+ * annotated tag) rather than copying a SHA from a README.
  */
 export const GATE_SETUP_ACTIONS = {
   checkout: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
