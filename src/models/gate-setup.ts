@@ -81,7 +81,11 @@ export const GateSetupModel = createModel(() => {
   // refetch lands. There is deliberately no separate "created this session"
   // target: one that outlived its row (removed from the GitHub App card, say)
   // kept the gate reading as armed over a mapping that no longer existed.
-  const knownReleaseTargets = signal<readonly PublicReleaseTarget[]>([]);
+  // `null` until the parent has loaded the stored mappings once: before that,
+  // "no mapping" is unknown rather than true, and offering a create then fails
+  // as a duplicate of a mapping the wizard had not seen yet.
+  const knownReleaseTargets = signal<readonly PublicReleaseTarget[] | null>(null);
+  const releaseTargetsKnown = computed(() => knownReleaseTargets.value !== null);
   const preview = signal<GateSetupPreview | null>(null);
 
   // Every action in flight, tracked per action so that invalidating one (a
@@ -161,7 +165,7 @@ export const GateSetupModel = createModel(() => {
     const repositoryId = repositories.value.find(
       (repository) => repository.fullName === fullName,
     )?.id;
-    if (repositoryId === undefined) return null;
+    if (!stored || repositoryId === undefined) return null;
     return (
       stored.find(
         (target) =>
@@ -344,6 +348,7 @@ export const GateSetupModel = createModel(() => {
     verification,
     verifyOrigin,
     knownReleaseTargets,
+    releaseTargetsKnown,
     resolvedReleaseTarget,
     preview,
     pendingSteps,
@@ -509,7 +514,7 @@ export const GateSetupModel = createModel(() => {
         (response) => {
           const created = response.releaseTarget;
           knownReleaseTargets.value = [
-            ...knownReleaseTargets.peek().filter((target) => target.id !== created.id),
+            ...(knownReleaseTargets.peek() ?? []).filter((target) => target.id !== created.id),
             created,
           ];
         },
@@ -528,9 +533,9 @@ export const GateSetupModel = createModel(() => {
           // The parent's stored list is refetched asynchronously; drop the row
           // here too, or the resolved mapping (and the armed badge that rests
           // on it) keeps reading from a target that no longer exists.
-          knownReleaseTargets.value = knownReleaseTargets
-            .peek()
-            .filter((target) => target.id !== id);
+          knownReleaseTargets.value = (knownReleaseTargets.peek() ?? []).filter(
+            (target) => target.id !== id,
+          );
         },
       );
       return data !== null;

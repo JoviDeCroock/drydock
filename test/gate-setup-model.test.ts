@@ -170,6 +170,22 @@ describe("GateSetupModel", () => {
     expect(model.environment.value).toBe("Production");
   });
 
+  test("reads mappings as unknown, not absent, until the parent has loaded them", () => {
+    const model = readyModel();
+    model.verification.value = verified();
+
+    // Before the first load (or after it failed) "no mapping" is unknown:
+    // offering a create then fails as a duplicate of a mapping not seen yet.
+    expect(model.releaseTargetsKnown.value).toBe(false);
+    expect(model.resolvedReleaseTarget.value).toBe(null);
+    expect(model.gateArmed.value).toBe(false);
+
+    model.knownReleaseTargets.value = [];
+    expect(model.releaseTargetsKnown.value).toBe(true);
+    model.knownReleaseTargets.value = [releaseTarget()];
+    expect(model.gateArmed.value).toBe(true);
+  });
+
   test("resolves a stored mapping for the draft, matching GitHub's casing", () => {
     const model = readyModel();
     model.environmentChoice.value = "Production";
