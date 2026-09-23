@@ -30,6 +30,7 @@ export interface PublicationAlertRecord {
 
 export interface PackagePublication {
   packageName: string;
+  ownershipConflict?: boolean;
   watch: PublicationWatch | null;
   observations: PublicationObservation[];
   /** The latest alerts, newest first; `moreAlerts` says older ones exist. */
@@ -84,7 +85,12 @@ export const PackagePublicationModel = createModel((packageName: string) => {
   ) {
     const existing = publication.peek();
     if (current !== generation || !existing) return;
-    publication.value = { ...existing, watch: detail.watch, observations: detail.observations };
+    publication.value = {
+      ...existing,
+      ownershipConflict: detail.watch.ownershipConflict ?? existing.ownershipConflict,
+      watch: detail.watch,
+      observations: detail.observations,
+    };
   }
 
   function watchId(): string | null {

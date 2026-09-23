@@ -177,5 +177,7 @@ function releaseSummary(watch: PublicationWatch): string {
 }
 
 export function watchMetaLine(watch: PublicationWatch): string {
+  if (watch.ownershipConflict)
+    return "Monitoring inactive · package assigned to another organization · previous observations retained";
   return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
 }

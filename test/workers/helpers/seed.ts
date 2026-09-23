@@ -1,7 +1,8 @@
+import { seedLegacyScanJob } from "./seed-scan-job";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { type AppDb, createDb } from "../../../server/db/client";
-import { createScanJob, type PersistedScanInput } from "../../../server/db/scans";
+import { type PersistedScanInput } from "../../../server/db/scans";
 import * as schema from "../../../server/db/schema";
 import { ensurePersonalOrganization } from "../../../server/db/organizations";
 import { persistScanWithArtifacts } from "./persist-scan";
@@ -63,11 +64,11 @@ export interface SeedCompletedScanOptions {
   findings?: PersistInput["findings"];
   aiFindingRecords?: PersistInput["aiFindingRecords"];
   reportDigest?: string;
-  // Extra `createScanJob` columns (source, registryUrl, ...) for suites that
+  // Extra `seedLegacyScanJob` columns (source, registryUrl, ...) for suites that
   // exercise how the job row was opened.
-  job?: Partial<Parameters<typeof createScanJob>[1]>;
+  job?: Partial<Parameters<typeof seedLegacyScanJob>[1]>;
   // Columns written straight onto the job row before the scan is persisted,
-  // for values `createScanJob` derives itself or would act on (passing a
+  // for values `seedLegacyScanJob` derives itself or would act on (passing a
   // registry name there also supersedes earlier scans of the version), and
   // that `persistScan` reads back when it completes the row.
   jobColumns?: Partial<typeof schema.scans.$inferInsert>;
@@ -94,7 +95,7 @@ export async function seedCompletedScan(
   const db = createDb(env.DB);
   const scanId = options.scanId ?? `scan_${crypto.randomUUID()}`;
   const stageId = options.stageId ?? `stage-${scanId.slice(-12)}`;
-  await createScanJob(db, {
+  await seedLegacyScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,

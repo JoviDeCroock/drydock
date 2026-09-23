@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { publicationWatchOwnershipConflict } from "./publication-watches";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -23,10 +24,20 @@ export async function savePublicationObservation(
   db: AppDb,
   observation: typeof publicationObservations.$inferInsert,
   packageName: string,
+  registryUrl = "https://registry.npmjs.org",
 ) {
+  // Ownership may change while registry acquisition is in flight. Guard the
+  // observation and alert together, including the conflict-update path.
+  const stillAuthorized = sql`not ${publicationWatchOwnershipConflict(registryUrl, packageName, observation.organizationId)}`;
   const writeObservation = db
     .insert(publicationObservations)
-    .values(observation)
+    .select(sql`select ${observation.id}, ${observation.watchId}, ${observation.organizationId},
+      ${observation.version}, ${observation.publishedAt?.getTime() ?? null},
+      ${observation.firstSeenAt.getTime()}, ${observation.checkedAt.getTime()},
+      ${observation.status}, ${observation.reason ?? null}, ${observation.sha256 ?? null},
+      ${observation.sha1 ?? null}, ${observation.scanId ?? null}, ${observation.previousVersion ?? null},
+      ${observation.distTags == null ? null : JSON.stringify(observation.distTags)}, ${observation.coverageNotifiedAt?.getTime() ?? null}
+      where ${stillAuthorized}`)
     .onConflictDoUpdate({
       target: [publicationObservations.watchId, publicationObservations.version],
       set: {
@@ -54,7 +65,7 @@ export async function savePublicationObservation(
       .insert(publicationAlerts)
       .select(
         // The creating check holds the delivery claim: it delivers right after.
-        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()} where exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
+        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()} where ${stillAuthorized} and exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
       )
       .onConflictDoNothing({
         target: [

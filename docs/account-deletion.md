@@ -40,6 +40,9 @@ of it cascades on its own (the same reason `deleteOrganization` deletes children
    the personal workspace (always sole-owned), plus any non-personal org where they are the only
    member. That clears the org's scans, findings, npm connection, GitHub install/targets/gates,
    Slack connection, invitations, notification recipients, and membership rows.
+   npm package claims retain their registry/package identity with a null organization
+   as a reservation; deleting an account never makes its packages available for automatic
+   reassignment. An operator must explicitly resolve any subsequent ownership transfer.
 2. **References in surviving orgs** — in organizations owned by _other_ people, the departing user
    may have created, decided on, or publicly shared rows (`scans.owner_user_id` /
    `decided_by_user_id` / `public_shared_by_user_id`,

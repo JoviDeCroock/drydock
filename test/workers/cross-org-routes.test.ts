@@ -1,8 +1,8 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -51,7 +51,7 @@ describe("scans routes enforce organization boundaries", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -106,7 +106,7 @@ describe("scans routes enforce organization boundaries", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -200,7 +200,7 @@ describe("scans routes enforce organization boundaries", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -284,7 +284,7 @@ describe("scans routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,
@@ -409,7 +409,7 @@ describe("scans routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,
@@ -535,7 +535,7 @@ describe("scans routes enforce organization boundaries", () => {
     const db = createDb(env.DB);
 
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,

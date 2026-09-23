@@ -2,11 +2,13 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
+import { reserveDeletedNpmPackages } from "./package-claims";
 import {
   githubAppInstallations,
   githubReleaseTargets,
   githubWorkflowGates,
   npmConnections,
+  npmPackageClaims,
   organizationInvitations,
   organizationMembers,
   organizationNotificationRecipients,
@@ -258,6 +260,11 @@ export async function deleteOrganization(
   artifactBucket?: R2Bucket,
 ): Promise<void> {
   await db.batch([
+    reserveDeletedNpmPackages(db, eq(scans.organizationId, organizationId)),
+    db
+      .update(npmPackageClaims)
+      .set({ organizationId: null })
+      .where(eq(npmPackageClaims.organizationId, organizationId)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
     db.delete(scans).where(eq(scans.organizationId, organizationId)),
     db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),

@@ -189,7 +189,7 @@ export function PublicationMonitor({
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={model.busy}
+                      disabled={watch.ownershipConflict || model.busy}
                       onClick={() => void check(watch.id)}
                       title="Ask npm for new releases now instead of waiting for the automatic check"
                     >

@@ -5,7 +5,7 @@ import {
   createPublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
-import { publicationWatches, scans } from "../../server/db/schema";
+import { npmPackageClaims, publicationWatches, scans } from "../../server/db/schema";
 import { sweepNpmPublicationWatches } from "../../server/lib/ecosystems/npm/publication-monitor";
 import worker from "../../server";
 import { seedUser } from "./helpers/seed";

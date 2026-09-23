@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { badgeMarkdown } from "../src/lib/badge-markdown";
+import { badgeMarkdown, shareBadgeMarkdown } from "../src/lib/badge-markdown";
 
 const ORIGIN = "https://drydock.org";
 const REPORT = "https://drydock.org/reports/tok_abc123";
@@ -131,5 +131,42 @@ describe("badgeMarkdown", () => {
     });
     expect(md.startsWith("[![Drydock review](")).toBe(true);
     expect(md.endsWith(")")).toBe(true);
+  });
+});
+
+describe("share-dialog badge ownership", () => {
+  const scanBadge = {
+    origin: ORIGIN,
+    ecosystem: "npm" as const,
+    packageName: "registry-name",
+    reportUrl: REPORT,
+    badgePublic: true,
+    feedListed: true,
+  };
+  test("legacy listed and default-public scans cannot offer a badge without canonical ownership", () => {
+    expect(shareBadgeMarkdown(scanBadge)).toBeNull();
+    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: false })).toBeNull();
+    expect(
+      shareBadgeMarkdown({ ...scanBadge, badgePublic: false, npmPackageClaimOwned: false }),
+    ).toBeNull();
+    expect(
+      shareBadgeMarkdown({ ...scanBadge, feedListed: false, npmPackageClaimOwned: false }),
+    ).toBeNull();
+    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: true })).toContain(
+      "registry-name",
+    );
+  });
+  test("non-npm listed badges keep their existing sharing contract", () => {
+    expect(shareBadgeMarkdown({ ...scanBadge, ecosystem: "pypi", badgePublic: false })).toContain(
+      "pypi",
+    );
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        ecosystem: "vscode",
+        badgePublic: false,
+        feedListed: false,
+      }),
+    ).toBeNull();
   });
 });

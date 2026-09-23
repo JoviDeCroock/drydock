@@ -3,6 +3,7 @@
   // runs both projects; vitest itself only strips types.
   "extends": "../tsconfig.json",
   "compilerOptions": {
+    "allowJs": true,
     "types": ["@cloudflare/workers-types", "vite/client"],
     "rootDir": ".."
   },

@@ -1,0 +1,9 @@
+{
+  "name": "@drydock/e2e-access-failure",
+  "version": "1.0.0",
+  "license": "MIT",
+  "files": [
+    "index.js"
+  ],
+  "type": "module"
+}

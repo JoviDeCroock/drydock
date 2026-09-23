@@ -13,6 +13,7 @@ export interface PublicationWatch {
   unresolvedAlertCount: number;
   /** Releases observed since enrollment, alerts or not. */
   releaseCount: number;
+  ownershipConflict?: boolean;
   /** A package-wide reason no release can be verified, and since when. */
   coverageGap: string | null;
   coverageGapSince: string | null;

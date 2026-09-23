@@ -373,7 +373,7 @@ describe("staged publishes discovery cron", () => {
       const url = String(input instanceof Request ? input.url : input);
       expect(url).toContain("/-/stage");
       return Response.json({
-        items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
+        items: [{ id: STAGE_ID, name: "email-demo-package", version: "1.0.0" }],
         total: 1,
         perPage: 50,
         page: 0,

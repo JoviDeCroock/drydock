@@ -8,11 +8,13 @@ import {
   createPublicationWatch,
   deletePublicationWatch,
   getPublicationEnrollment,
+  getPublicationOwnershipConflict,
   getPublicationWatch,
   getPublicationWatchByPackage,
   listPublicationObservations,
   listPublicationWatches,
   PublicationWatchLimitError,
+  PublicationWatchOwnershipError,
 } from "../db/publication-watches";
 import {
   requireActiveOrganization,
@@ -43,7 +45,10 @@ npmPublicationWatchRoutes.get("/", async (c) => {
     organizationId,
     npmPublicationRegistry(c.env),
   );
-  return c.json({ watches: await listPublicationWatches(db, organizationId), autoEnrollment });
+  return c.json({
+    watches: await listPublicationWatches(db, organizationId, npmPublicationRegistry(c.env)),
+    autoEnrollment,
+  });
 });
 
 // One package's monitoring state for the package page. Read-only: unlike the
@@ -57,16 +62,23 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
   }
   const db = c.var.db;
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  const watch = await getPublicationWatchByPackage(db, organizationId, packageName);
-  const [enrollment, observations, ledger] = await Promise.all([
+  const watch = await getPublicationWatchByPackage(
+    db,
+    organizationId,
+    packageName,
+    npmPublicationRegistry(c.env),
+  );
+  const [enrollment, observations, ledger, ownershipConflict] = await Promise.all([
     watch
       ? Promise.resolve({ state: "watched" as const })
       : getPublicationEnrollment(db, organizationId, packageName),
     watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
     listPublicationAlertsForPackage(db, organizationId, packageName, watch?.id ?? null),
+    getPublicationOwnershipConflict(db, organizationId, packageName, npmPublicationRegistry(c.env)),
   ]);
   return c.json({
     packageName,
+    ownershipConflict,
     watch,
     observations,
     alerts: ledger.alerts,
@@ -85,7 +97,12 @@ npmPublicationWatchRoutes.post("/", async (c) => {
     return c.json({ error: "Enter a valid public npm package name." }, 400);
   }
   try {
-    const watch = await createPublicationWatch(db, organizationId, packageName);
+    const watch = await createPublicationWatch(
+      db,
+      organizationId,
+      packageName,
+      npmPublicationRegistry(c.env),
+    );
     // Enrollment also clears a persisted opt-out, so it is audited alongside
     // the stop it can undo.
     await recordScanEvent(db, {
@@ -96,6 +113,8 @@ npmPublicationWatchRoutes.post("/", async (c) => {
     });
     return c.json({ watch }, 201);
   } catch (err) {
+    if (err instanceof PublicationWatchOwnershipError)
+      return c.json({ error: "This package is already assigned to another organization." }, 409);
     if (err instanceof PublicationWatchLimitError) {
       return c.json({ error: "This organization has reached its package monitoring limit." }, 409);
     }
@@ -106,7 +125,12 @@ npmPublicationWatchRoutes.post("/", async (c) => {
 npmPublicationWatchRoutes.get("/:id", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
+  const watch = await getPublicationWatch(
+    db,
+    organizationId,
+    c.req.param("id"),
+    npmPublicationRegistry(c.env),
+  );
   if (!watch) return c.json({ error: "not found" }, 404);
   return c.json({
     watch,
@@ -120,7 +144,12 @@ npmPublicationWatchRoutes.get("/:id", async (c) => {
 npmPublicationWatchRoutes.delete("/:id", async (c) => {
   const db = c.var.db;
   const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
-  const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
+  const watch = await getPublicationWatch(
+    db,
+    organizationId,
+    c.req.param("id"),
+    npmPublicationRegistry(c.env),
+  );
   if (!watch) return c.json({ error: "not found" }, 404);
   if (!(await deletePublicationWatch(db, organizationId, watch.id))) {
     return c.json({ error: "not found" }, 404);
@@ -137,8 +166,18 @@ npmPublicationWatchRoutes.delete("/:id", async (c) => {
 npmPublicationWatchRoutes.post("/:id/check", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
+  const watch = await getPublicationWatch(
+    db,
+    organizationId,
+    c.req.param("id"),
+    npmPublicationRegistry(c.env),
+  );
   if (!watch) return c.json({ error: "not found" }, 404);
+  if (watch.ownershipConflict)
+    return c.json(
+      { error: "Monitoring is inactive because this package is assigned to another organization." },
+      409,
+    );
   const limited = await guardRateLimit(
     c,
     { key: `publication-watches:check:${organizationId}`, limit: 10, windowMs: 60 * 1000 },
@@ -151,7 +190,12 @@ npmPublicationWatchRoutes.post("/:id/check", async (c) => {
     // The check recorded its failure on the watch (`check_failed`), which the
     // response below carries, so the page never reads a failed check as coverage.
   }
-  const current = await getPublicationWatch(db, organizationId, watch.id);
+  const current = await getPublicationWatch(
+    db,
+    organizationId,
+    watch.id,
+    npmPublicationRegistry(c.env),
+  );
   if (!current) return c.json({ error: "not found" }, 404);
   return c.json({
     watch: current,
@@ -170,7 +214,12 @@ npmPublicationWatchRoutes.post("/:id/observations/:observationId/acknowledge", a
     actorUserId: session.userId,
   });
   if (!acknowledged) return c.json({ error: "not found" }, 404);
-  const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
+  const watch = await getPublicationWatch(
+    db,
+    organizationId,
+    c.req.param("id"),
+    npmPublicationRegistry(c.env),
+  );
   if (!watch) return c.json({ error: "not found" }, 404);
   return c.json({
     watch,
