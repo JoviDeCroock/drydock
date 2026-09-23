@@ -24,6 +24,7 @@ export function ReviewWorkbench({
   findingCounts,
   onSelect,
   children,
+  diffAside,
   id,
 }: {
   id?: string;
@@ -37,6 +38,10 @@ export function ReviewWorkbench({
   // "previous side" is differs: the scan detail refetches it through the org's
   // npm credentials, and a public report has none to spend.
   children: ComponentChildren;
+  // A standing caveat about every diff this surface can show, said once on the
+  // panel label instead of above each file. Omitted, the label keeps its plain
+  // trailing rule.
+  diffAside?: ComponentChildren;
 }) {
   const visibleEntries = useComputed(() =>
     filterDiffEntries(entries.value, fileFilter.value, changedFilesOnly.value),
@@ -91,7 +96,9 @@ export function ReviewWorkbench({
       </Card>
 
       <Card padding="compact" class="flex flex-col gap-3 min-w-0">
-        <SectionLabel as="h2">File diff</SectionLabel>
+        <SectionLabel as="h2" aside={diffAside}>
+          File diff
+        </SectionLabel>
         {children}
       </Card>
     </section>

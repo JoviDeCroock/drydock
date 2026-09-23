@@ -121,8 +121,8 @@ test("a shared public report opens on the diff", async ({ page }) => {
   });
   await expect(page.getByText("Release risk: high")).toBeVisible();
 
-  // The page selects the first changed file itself: landing a shared link on
-  // "select a file" makes the reader hunt for the change.
+  // The page selects the changed file with the most severe finding itself:
+  // landing a shared link on "select a file" makes the reader hunt for it.
   await expect(page.getByRole("heading", { name: "Release tree" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "File diff" })).toBeVisible();
   await expect(page.getByText("urllib.request.urlopen", { exact: false }).first()).toBeVisible();

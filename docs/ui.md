@@ -43,7 +43,13 @@ What they use lives in `src/features/review/`:
   arrives as signals and is read inside the component, so a keystroke in the
   filter box re-renders the tree and not the page body (which on the scan
   detail also renders the per-finding risk index). The diff panel itself is the
-  caller's `children`, because what a "previous side" is differs per surface.
+  caller's `children`, because what a "previous side" is differs per surface;
+  a surface-wide caveat about that side goes in the optional `diffAside`
+  (the File diff label's trailing slot) rather than above every file.
+- `initial-path.ts` — `findingFirstPath`: every review surface opens the
+  workbench on the changed file carrying the most severe finding, falling back
+  to its own rule (scan detail and report: first change; `/diff`: the
+  ecosystem manifest, then status order).
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,
@@ -72,8 +78,9 @@ Both review pages lead with the diff:
   (published, removed) get no separate notice row. The decision and its button
   live in the strip on a completed review and in the page header otherwise,
   since a failed gate review renders no strip.
-- **Public report** — verdict card, then the same workbench, then the risk
-  index. Its diff is single-sided: a share token buys the staged artifact's
+- **Public report** — an identity-only header (package, the compared pair,
+  review time, changed-file count, and the decision as plain `DecisionState`
+  text), the verdict card, then the same workbench, then the risk index. Its diff is single-sided: a share token buys the staged artifact's
   redacted samples (`GET /public/reports/:token/file`) and never a baseline,
   which would cost the organization's npm credentials. `singleSidedTone` in
   `DiffView` keeps a `modified` file rendered from one side neutral instead of

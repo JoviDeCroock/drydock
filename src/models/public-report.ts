@@ -13,6 +13,7 @@ import { normalizeFindingDiffStatus, type DiffEntry } from "../../server/lib/rev
 import { sortFindingsBySeverity } from "../lib/findings";
 import type { DiffFinding } from "../components/diff-annotations";
 import { findingCountsByPath } from "../features/review/diff-entries";
+import { findingFirstPath } from "../features/review/initial-path";
 import type { FindingWithDiffStatus } from "../features/review/types";
 
 // The canonical report export served at /public/reports/:token — the same
@@ -132,6 +133,42 @@ export function publicReportFindingItems(findings: PublicReportFinding[]): Findi
     diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
     releaseDelta: Boolean(finding.releaseDelta),
   }));
+}
+
+/**
+ * The file a shared report opens on: the changed file carrying the most severe
+ * finding, else the first file with a staged body. A `removed` entry is a
+ * legitimate change, but its contents belong to the previous version, so
+ * landing there opens the report on an explanation instead of on the diff.
+ */
+export function initialReportPath(
+  entries: readonly DiffEntry[],
+  findings: readonly PublicReportFinding[],
+): string | null {
+  const withStagedBody = entries.filter((entry) => entry.status !== "removed");
+  return (
+    findingFirstPath(withStagedBody, findings) ??
+    entries.find((entry) => entry.status === "modified" || entry.status === "added")?.path ??
+    entries.find((entry) => entry.status !== "unchanged")?.path ??
+    entries[0]?.path ??
+    null
+  );
+}
+
+/**
+ * The sentence under the report's verdict. The header already names the version
+ * pair, so this says only what was found; a zero pre-existing count is left
+ * out rather than stated as "0 pre-existing".
+ */
+export function verdictSummary(riskSummary: PublicReport["riskSummary"]): string {
+  const lead = "Deterministic review of the staged release";
+  if (!riskSummary) return `${lead}.`;
+  const { releaseFindingCount, contextFindingCount } = riskSummary;
+  const release = releaseFindingCount
+    ? `${releaseFindingCount} release finding${releaseFindingCount === 1 ? "" : "s"}`
+    : "no release findings";
+  const context = contextFindingCount ? `, ${contextFindingCount} pre-existing` : "";
+  return `${lead} — ${release}${context}.`;
 }
 
 /**

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { singleSidedTone } from "../src/components/DiffView";
+import type { DiffEntry } from "../server/lib/review";
 import {
+  initialReportPath,
   publicReportDiffEntries,
   publicReportFindingItems,
+  verdictSummary,
   type PublicReportDiffEntry,
   type PublicReportFinding,
 } from "../src/models/public-report";
@@ -121,5 +124,82 @@ describe("singleSidedTone", () => {
   test("the surviving side of an added or removed file is never mislabeled", () => {
     expect(singleSidedTone("added", "before")).toBe("unchanged");
     expect(singleSidedTone("removed", "after")).toBe("unchanged");
+  });
+});
+
+describe("initialReportPath", () => {
+  const entry = (path: string, status: DiffEntry["status"]): DiffEntry => ({
+    path,
+    status,
+    flags: [],
+  });
+  const finding = (file: string, severity: string): PublicReportFinding => ({
+    severity,
+    file,
+    line: 1,
+    ruleId: "rule",
+    diffStatus: "modified",
+    releaseDelta: true,
+    evidence: "",
+    reason: "",
+  });
+  const entries = [
+    entry("README.md", "modified"),
+    entry("index.js", "modified"),
+    entry("old.js", "removed"),
+    entry("secrets.txt", "added"),
+    entry("LICENSE", "unchanged"),
+  ];
+
+  test("opens on the changed file carrying the most severe finding", () => {
+    expect(
+      initialReportPath(entries, [
+        finding("index.js", "medium"),
+        finding("secrets.txt", "critical"),
+      ]),
+    ).toBe("secrets.txt");
+  });
+
+  test("never opens on a removed file, whose body the report does not carry", () => {
+    expect(
+      initialReportPath(entries, [finding("old.js", "critical"), finding("index.js", "low")]),
+    ).toBe("index.js");
+  });
+
+  test("falls back to the first file with a staged body when no changed file has a finding", () => {
+    expect(initialReportPath(entries, [finding("LICENSE", "high")])).toBe("README.md");
+    expect(initialReportPath([entry("gone.js", "removed")], [])).toBe("gone.js");
+    expect(initialReportPath([], [])).toBe(null);
+  });
+});
+
+// The header names the version pair and the verdict card names the risk, so
+// this sentence says only what was found — never "against its previous
+// version", and never "0 pre-existing".
+describe("verdictSummary", () => {
+  const summary = (releaseFindingCount: number, contextFindingCount: number) => ({
+    releaseRisk: "high",
+    contextRisk: "low",
+    releaseFindingCount,
+    contextFindingCount,
+  });
+
+  test("counts release findings and leaves a zero pre-existing count out", () => {
+    expect(verdictSummary(summary(1, 0))).toBe(
+      "Deterministic review of the staged release — 1 release finding.",
+    );
+    expect(verdictSummary(summary(2, 3))).toBe(
+      "Deterministic review of the staged release — 2 release findings, 3 pre-existing.",
+    );
+  });
+
+  test("a clean release says so in words", () => {
+    expect(verdictSummary(summary(0, 0))).toBe(
+      "Deterministic review of the staged release — no release findings.",
+    );
+  });
+
+  test("a report without a risk summary still reads as a sentence", () => {
+    expect(verdictSummary(null)).toBe("Deterministic review of the staged release.");
   });
 });

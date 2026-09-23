@@ -79,8 +79,8 @@ re-shares them.
 - **Staged side only.** There is no baseline: reaching a published previous
   version means fetching a tarball with the organization's npm credentials, and
   a public route never holds one. A `modified` file therefore renders
-  single-sided on the public page, labelled as such, with findings still pinned
-  to their staged lines. A `removed` file has no staged body at all.
+  single-sided on the public page — the File diff label says `staged side only`
+  once for the whole panel — with findings still pinned to their staged lines. A `removed` file has no staged body at all.
 - **Uniform 404.** An unknown token, a revoked token, a superseded scan, and a
   path the shared review does not contain are one indistinguishable
   `{"error":"not found"}`. Anything else would make the route an oracle for

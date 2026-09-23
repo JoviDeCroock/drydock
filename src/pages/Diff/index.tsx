@@ -16,7 +16,6 @@ import {
 import { errorMessage } from "../../models/api";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
 import { Alert } from "../../components/Alert";
-import { Badge, severityTone } from "../../components/Badge";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { type DiffFinding, DiffView } from "../../components/DiffView";
@@ -431,56 +430,55 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
       <PageSeo
         metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
       />
+      {/* The header says each fact once, as on the scan detail: the metadata
+          line is plain text, the SeverityBar counts the findings, and the
+          version pair appears in the line only while there is no picker to
+          carry it. Whether a staged candidate is published is the expected
+          state of that URL, not an alert, so it is plain text too. */}
       <section class="flex flex-col gap-3 border-t border-border pt-6">
-        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
-          {shownName}
-        </h1>
-        <MonoDetail
-          parts={[
-            <span key="review-kind">
-              {isStagedReview ? "staged release review" : "public package diff"}
-            </span>,
-            <span key="ecosystem">{ecosystemLabel(ecosystem)}</span>,
-            <span key="versions">
-              {fromLabel} → {toLabel}
-            </span>,
-            ...(diff
-              ? [
-                  <span key="files">{diff.diff.length} files</span>,
-                  <span key="changed">{changedCount} changed</span>,
-                ]
-              : []),
-          ]}
-        />
-        {diff ? (
-          <div class="flex flex-wrap items-center gap-2">
-            {/* Leads the badges: whether this is already published changes what
-                the reader is being asked to do with the rest of the page. */}
-            {isStagedReview ? <Badge tone="medium">not yet published</Badge> : null}
-            <Badge tone={severityTone(diff.risk.releaseRisk)}>
-              release risk {diff.risk.releaseRisk}
-            </Badge>
-            <Badge tone={diff.findings.length ? "medium" : "ok"}>
-              {diff.findings.length
-                ? `${diff.findings.length} finding${diff.findings.length === 1 ? "" : "s"}`
-                : "no findings"}
-            </Badge>
+        <div class="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <div class="flex flex-col gap-3 min-w-0">
+            <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+              {shownName}
+            </h1>
+            <MonoDetail
+              parts={[
+                <span key="review-kind">
+                  {isStagedReview ? "staged release review" : "public package diff"}
+                </span>,
+                isStagedReview ? <span key="unpublished">not yet published</span> : null,
+                <span key="ecosystem">{ecosystemLabel(ecosystem)}</span>,
+                pickerVersions ? null : (
+                  <span key="versions">
+                    {fromLabel} → {toLabel}
+                  </span>
+                ),
+                ...(diff
+                  ? [
+                      <span key="files">{diff.diff.length} files</span>,
+                      <span key="changed">{changedCount} changed</span>,
+                      <span key="risk">release risk {diff.risk.releaseRisk}</span>,
+                      hasFindings ? null : <span key="findings">no findings</span>,
+                    ]
+                  : []),
+              ]}
+            />
           </div>
-        ) : null}
+          {/* A preview ref is mutable, so there is nothing stable to save it as.
+              The ecosystem check gates the mount, not the render: the action
+              loads the reader's organizations, which an ecosystem that cannot
+              be saved must not spend a request on. */}
+          {hasPreview || !supportsPublishedReview(ecosystem) ? null : (
+            <Show when={authed}>
+              <SaveReviewAction spec={spec} />
+            </Show>
+          )}
+        </div>
         {hasFindings ? <SeverityBar counts={severityCounts.value} class="max-w-[420px]" /> : null}
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
-        {/* A preview ref is mutable, so there is nothing stable to save it as.
-            The ecosystem check gates the mount, not the render: the action
-            loads the reader's organizations, which an ecosystem that cannot be
-            saved must not spend a request on. */}
-        {hasPreview || !supportsPublishedReview(ecosystem) ? null : (
-          <Show when={authed}>
-            <SaveReviewAction spec={spec} />
-          </Show>
-        )}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}
@@ -589,7 +587,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               description={
                 `Deterministic rules scan the full ${toLabel} artifact. Changed-file signals ` +
                 "are pinned to their line in the diff above; unchanged signals stay here as " +
-                "package context. No AI is involved on this surface."
+                "package context."
               }
             />
           ) : null}

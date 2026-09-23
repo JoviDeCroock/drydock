@@ -9,6 +9,7 @@ import type {
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
 import { packageDiffPath, type DiffEcosystem } from "../lib/package-diff-path";
+import { findingFirstPath } from "../features/review/initial-path";
 import { apiFetch, errorMessage } from "./api";
 
 export interface PublicDiffVersionsResponse {
@@ -225,7 +226,7 @@ export const PackageDiffModel = createModel(
             versions.value = versionsData;
             loading.value = false;
           });
-          const initial = pickInitialPath(diffData.diff, ecosystem);
+          const initial = pickInitialPath(diffData.diff, diffData.findings, ecosystem);
           if (initial) void this.selectPath(initial);
         } else {
           batch(() => {
@@ -285,10 +286,8 @@ const INITIAL_STATUS_RANK: Record<string, number> = {
   removed: 2,
 };
 
-// Open the workbench on the most review-worthy file: the ecosystem's manifest
-// when it changed, otherwise the first changed file in tree-sort order. The
-// match is per-ecosystem — an npm package vendoring a PKG-INFO must not
-// auto-open the vendored Python metadata instead of package.json.
+// The manifest match is per-ecosystem — an npm package vendoring a PKG-INFO
+// must not auto-open the vendored Python metadata instead of package.json.
 function isManifestPath(path: string, ecosystem: DiffEcosystem): boolean {
   if (ecosystem === "pypi") {
     return /(^|\/)PKG-INFO$/.test(path) || path.endsWith(".dist-info/METADATA");
@@ -296,9 +295,18 @@ function isManifestPath(path: string, ecosystem: DiffEcosystem): boolean {
   return path === "package.json";
 }
 
-function pickInitialPath(entries: DiffEntry[], ecosystem: DiffEcosystem): string | null {
+// Open the workbench on the most review-worthy file: the changed file carrying
+// the most severe finding, else the ecosystem's manifest when it changed, else
+// the first changed file by status rank and path.
+export function pickInitialPath(
+  entries: DiffEntry[],
+  findings: ReadonlyArray<{ file?: string | null; severity?: string }>,
+  ecosystem: DiffEcosystem,
+): string | null {
   const changed = entries.filter((entry) => entry.status !== "unchanged");
   if (!changed.length) return null;
+  const flagged = findingFirstPath(changed, findings);
+  if (flagged) return flagged;
   const manifest = changed.find((entry) => isManifestPath(entry.path, ecosystem));
   if (manifest) return manifest.path;
   return changed.slice().sort((a, b) => {
