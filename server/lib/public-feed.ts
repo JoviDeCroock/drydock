@@ -155,9 +155,12 @@ function publishedPairEcosystem(summaryJson: unknown): PublicEcosystem | null {
 
 /**
  * Scan sources whose artifact was reached with the organization's own npm
- * token, which the registry accepted for that exact name. That acceptance is
- * the only proof in the system that the reviewing organization can publish
- * under the name, so every trust decision keyed on identity starts here.
+ * token: npm let that token read this exact stage, under npm's own name for
+ * it. That is the only credential-backed tie in the system between the
+ * reviewing organization and a package name, so every trust decision keyed on
+ * identity starts here. It is read access, not publish rights — a read-only
+ * token passes — and it covers npm's name, never the manifest's (see
+ * `scanPublicPackageName`).
  */
 const REGISTRY_VERIFIED_SOURCES: ReadonlySet<string> = new Set(["manual", "auto_discovery"]);
 

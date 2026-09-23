@@ -222,28 +222,30 @@ export const scans = sqliteTable(
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
     publicPackageKey: text("public_package_key"),
-    // The same canonical identity, but written for every badge-eligible scan
-    // whether or not it is shared. This is the *release line* a scan belongs
-    // to, not an authorization signal: it never admits a row to the badge
-    // index (`public_package_key` + `public_feed_listed_at` remain the only
-    // two locks on that). It answers one question the badge cannot answer from
-    // listed rows alone — has this package released again since the review the
-    // badge is quoting — so a green badge cannot keep vouching for a
-    // superseded version. Null for sources that may never occupy a badge.
+    // The *release line* a scan belongs to (`badgeReleaseLineKey`), written for
+    // every badge-eligible scan whether or not it is shared: npm's name for a
+    // staged scan, even when the manifest disagrees with it, and the claimed
+    // name for a gate scan. Not an authorization signal: a row answers only
+    // through `public_package_key` + `public_feed_listed_at` or `badge_public`,
+    // all of which require a public name. It answers one question the badge
+    // cannot answer from its candidates alone — has this package released
+    // again since the review the badge is quoting — so a green badge cannot
+    // keep vouching for a superseded version. Null for sources that may never
+    // occupy a badge.
     badgePackageKey: text("badge_package_key"),
     // Whether this review may answer the badge with no opt-in at all.
     //
     // A badge is a name-keyed anonymous surface, so "no opt-in" is only safe
     // where three things are provable at write time, and it fails closed if
-    // any is not: the source is registry-verified (npm accepted the
-    // organization's token for this exact name, so this is the maintainer's
-    // own review, not a manifest claim); the registry is the public npm
-    // registry; and the name is unscoped, which on npm means public, because
-    // npm only allows a private package under a scope.
+    // any is not (`isDefaultBadgePublic`): the source is registry-verified and
+    // the manifest agrees with npm's name for the stage (npm let the
+    // organization's token read this exact stage, so this is its own review of
+    // that package, not a manifest claim); the registry is the public npm
+    // registry; and npm's own `access` for the stage is `public`, from the
+    // stage record rather than the name shape or the tarball's `publishConfig`.
     //
-    // Encoded once here rather than re-derived by readers: `registry_url` is
-    // null on rows that predate it, so the registry cannot be recovered later,
-    // and a disclosure gate should not be an inference three columns deep.
+    // Encoded once here rather than re-derived by readers: a disclosure gate
+    // should not be an inference three columns deep.
     badgePublic: integer("badge_public", { mode: "boolean" }).notNull().default(false),
     // npm's own lifecycle status for this exact package version, as reported by
     // `GET /-/package/{name}/version/{version}/status`. This is the registry's

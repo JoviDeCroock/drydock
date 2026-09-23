@@ -291,12 +291,12 @@ Five limits are known and deliberate:
   old design had a user action behind every badge change; default-on removed
   that, and nothing replaced it.
 - **A default-on badge is not organization-scoped.** Two organizations can both
-  prove npm accepts their token for the same name, and both answer; the higher
+  have tokens npm lets read stages under the same name, and both answer; the higher
   release wins. That is the right outcome for co-maintainers and an invisible
   handover for anyone else, with no dashboard signal that a badge changed
   hands.
-- **`isDefaultBadgePublic` cites an advisory check.** "npm accepted the
-  organization's token for this name" rests on `checkStagedPublishAccess`,
+- **`isDefaultBadgePublic` cites an advisory check.** "npm let the
+  organization's token read this stage" rests on `checkStagedPublishAccess`,
   which fails _open_ on a network error or any non-401/403/404 response. The
   authorization that actually holds is the later credentialed tarball fetch.
   Tightening that check is worth doing before this surface grows.
