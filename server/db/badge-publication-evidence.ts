@@ -142,9 +142,12 @@ function listPostReleaseDecisions(db: AppDb, target: BadgePackage, organizationI
         eq(publicationAlerts.resolutionBadge, "applied"),
         eq(scans.source, "published"),
         eq(scans.status, "complete"),
-        eq(scans.packageName, publicationAlerts.packageName),
-        eq(scans.stagedVersion, publicationAlerts.version),
+        // The registry-resolved pair the review was started for, never the
+        // reviewed manifest's name and version (see `resolvePostReleaseReview`).
+        sql`${scans.stageId} = 'published:npm:' || ${publicationAlerts.packageName} || '@' || ${publicationAlerts.version}`,
         sql`json_extract(${scans.summaryJson}, '$.stagedPublish.mode') = 'published_pair'`,
+        sql`json_extract(${scans.summaryJson}, '$.stagedPublish.packageName') = ${publicationAlerts.packageName}`,
+        sql`json_extract(${scans.summaryJson}, '$.stagedPublish.version') = ${publicationAlerts.version}`,
         inArray(reviewedRegistry, [...PUBLIC_NPM_REGISTRY_URLS]),
         sql`${scans.decision} = case ${publicationAlerts.resolution} when 'approved_after_release' then 'publish' when 'declined_after_release' then 'no_publish' end`,
         registryVerifiedPublisherSql(sql`${publicationAlerts.organizationId}`, target),

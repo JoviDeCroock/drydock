@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { resolvePublicationAlertReview } from "../../server/db/publication-alerts";
 import {
   createPublicationWatch,
   listPublicationObservations,
@@ -197,6 +198,31 @@ describe("Scan on a publication alert", () => {
     expect((await alertRow(owner.organizationId, packageName, "1.1.0"))?.reviewScanId).toBeNull();
   });
 
+  test("a review that never reached the queue is unlinked, so Scan is offered again", async () => {
+    const owner = await seedUser();
+    const packageName = newPackage();
+    const target = await seedAlert(owner, packageName, "1.1.0");
+    stubRegistry(packageName, ["1.0.0", "1.1.0"]);
+    const queue = {
+      send: vi.fn(async (_message: ScanQueueMessage) => {
+        throw new Error("queue unavailable");
+      }),
+    };
+    const res = await startReview(appFor(owner), target, { queue });
+    expect(res.status).toBe(500);
+    expect((await alertRow(owner.organizationId, packageName, "1.1.0"))?.reviewScanId).toBeNull();
+    const reviews = await createDb(env.DB)
+      .select({ id: schema.scans.id })
+      .from(schema.scans)
+      .where(
+        and(
+          eq(schema.scans.organizationId, owner.organizationId),
+          eq(schema.scans.source, "published"),
+        ),
+      );
+    expect(reviews).toEqual([]);
+  });
+
   test("a first release with nothing to compare against is refused and links nothing", async () => {
     const owner = await seedUser();
     const packageName = newPackage();
@@ -275,6 +301,45 @@ describe("deciding a post-release review resolves its alert", () => {
       ]),
     );
     expect(events.every((event) => event.scanId === scanId)).toBe(true);
+  });
+
+  test("a resolution computed from a decision that has since changed does not land", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    await seedAlert(owner, packageName, "1.1.0");
+    const scanId = await seedPublishedReview(owner, packageName, "1.1.0");
+    await linkReview(owner, packageName, "1.1.0", scanId);
+    await decide(app, scanId, "no_publish");
+    const alert = await alertRow(owner.organizationId, packageName, "1.1.0");
+    // A slower request that read `publish` before the decline was recorded.
+    const landed = await resolvePublicationAlertReview(createDb(env.DB), {
+      alertId: alert!.id,
+      organizationId: owner.organizationId,
+      scanId,
+      actorUserId: owner.userId,
+      packageName,
+      version: "1.1.0",
+      resolution: "approved_after_release",
+      resolutionBadge: "applied",
+    });
+    expect(landed).toBe(false);
+    expect(await alertRow(owner.organizationId, packageName, "1.1.0")).toMatchObject({
+      resolution: "declined_after_release",
+      resolutionBadge: "not_a_verified_publisher",
+    });
+    const events = await createDb(env.DB)
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.organizationId, owner.organizationId),
+          eq(schema.scanEvents.type, "publication.review_resolved"),
+        ),
+      );
+    expect(events).toEqual([
+      { metadata: expect.objectContaining({ resolution: "declined_after_release" }) },
+    ]);
   });
 
   test("a published-pair review nobody started from the alert resolves nothing", async () => {

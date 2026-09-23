@@ -178,16 +178,26 @@ export async function readPackageBadgeVisibility(
         ),
       )
       .limit(1),
-    // A decision after release that passed the badge guard answers too.
+    // A decision after release that passed the badge guard answers too, while
+    // its review still carries it (`eligible` below re-checks the publisher).
     target.ecosystem === "npm"
       ? db
           .select({ id: publicationAlerts.id })
           .from(publicationAlerts)
+          .innerJoin(
+            scans,
+            and(
+              eq(scans.id, publicationAlerts.reviewScanId),
+              eq(scans.organizationId, publicationAlerts.organizationId),
+            ),
+          )
           .where(
             and(
               eq(publicationAlerts.organizationId, organizationId),
               eq(publicationAlerts.packageName, target.packageName),
               eq(publicationAlerts.resolutionBadge, "applied"),
+              eq(scans.status, "complete"),
+              sql`${scans.decision} = case ${publicationAlerts.resolution} when 'approved_after_release' then 'publish' when 'declined_after_release' then 'no_publish' end`,
             ),
           )
           .limit(1)

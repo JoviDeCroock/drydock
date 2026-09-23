@@ -358,14 +358,29 @@ guard, checked when the review is decided and recorded on the alert
 `listPostReleaseBadgeCandidates` enforces what can change again on every read:
 the organization is still a registry-verified publisher, the review is still a
 completed published-pair review of exactly the alerted release read from public
-npm, and its current decision is the one the resolution recorded. A row written
+npm, and its current decision is the one the resolution recorded. "Exactly the
+alerted release" is the registry-resolved pair the review was started for (its
+stage id, which is never redacted — the summary's copy of the name and version is
+stored through the secret redactor, so a token-shaped version would not match),
+never the name and version in the reviewed tarball's own `package.json`, which a
+hostile release controls and could otherwise use to keep a decline from landing. A row written
 some other way, or one that outlived its evidence, answers nothing. The
 candidate carries the alert's own coordinates (npm's version, from npm's
 packument), never the reviewed manifest. It answers the badge lines the
 monitor last recorded pointing at the version, and `latest` whenever the version
 is stable — a moved tag must not take a decline off the badge. For the same
 version, it outranks a review of the staged bytes, which may not be the ones
-consumers install. The off switch silences it like the other routes.
+consumers install, so a post-release approval also outranks a listed review of
+the staged bytes of the same version. Like the other npm routes it speaks only
+for the package's one canonical organization: publisher status requires the
+package claim, so an organization that staged the name without the claim, or
+moved its management elsewhere, keeps its own alert resolution but never
+reaches the badge. Should two post-release decisions on the same version ever
+both qualify, a decline wins, whichever was made last
+(`compareBadgeCandidates`). The off switch silences it like the other routes. The decision
+is re-evaluated only when the review is decided again: a resolution computed
+from a decision that has since changed never lands, and one whose review
+decision no longer matches is ignored on read.
 
 The monitor evidence reads the same decisions, for the pick's own organization
 (`findPublicationDiscrepancy`): a guarded approval of the quoted version clears
