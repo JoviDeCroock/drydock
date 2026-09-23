@@ -685,6 +685,146 @@ test("publication monitor explains deferred enrollment and offers gate packages 
   }
 });
 
+// An alert is reviewed after the fact: Scan runs the published bytes against
+// the version they follow, the decision is made on the review page (diff
+// first), and the alert shows the outcome beside its unchanged verdict.
+//
+// It runs in an organization of its own. The suite already spends the first
+// organization's hourly scan budget exactly (smoke test plus one scan per
+// scenario), and a new organization costs no sign-up.
+test("a publication alert is scanned, decided after release, and shows the outcome", async ({
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const packageName = "@drydock/e2e-post-release";
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) =>
+    browserErrors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
+  );
+  try {
+    await page.goto("/dashboard");
+    const organization = await evaluateOnStablePage(
+      page,
+      async () =>
+        (
+          (await fetch("/api/v1/organizations", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: "Post-release workspace" }),
+          }).then((response) => response.json())) as { organization: { id: string } }
+        ).organization,
+      undefined,
+    );
+    await page.evaluate(
+      (id) => localStorage.setItem("drydock:active-organization-id", id),
+      organization.id,
+    );
+    await page.reload();
+
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Publication monitor/ }) });
+    await expect(monitor.getByLabel("Public npm package")).toBeEnabled();
+    await monitor.getByLabel("Public npm package").fill(packageName);
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    const row = monitor.locator("li").filter({ has: page.getByText(packageName, { exact: true }) });
+    await expect(row.getByText(/added by hand/)).toBeVisible();
+    // 1.0.0 predates the watch; 1.1.0 is published now, after enrollment.
+    const published = await fetch(`${registryUrl}/@drydock%2Fe2e-post-release`);
+    expect(published.ok).toBe(true);
+    await published.json();
+    await row.getByRole("button", { name: "Check releases", exact: true }).click();
+    await expect(
+      row.getByText("Published with no approval in this organization", { exact: true }),
+    ).toBeVisible();
+    await expect(row.getByText("1.1.0", { exact: true })).toBeVisible();
+    await expect(row.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await expect(
+      row.getByRole("link", { name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab" }),
+    ).toBeVisible();
+
+    await row.getByRole("button", { name: "Scan", exact: true }).click();
+    await page.waitForURL(/\/dashboard\/scans\/[^/?#]+/);
+    const reviewPath = new URL(page.url()).pathname;
+    await expect(
+      page.getByText(/^Post-release review: @drydock\/e2e-post-release@1\.1\.0/),
+    ).toBeVisible({ timeout: 30_000 });
+    // The review runs in the background; the page refreshes when it is ready.
+    const decide = page.getByRole("button", { name: "Decide", exact: true });
+    await expect(decide).toBeVisible({ timeout: 150_000 });
+    await page.screenshot({
+      path: path.join(artifactsDir, "post-release-review.png"),
+      fullPage: true,
+    });
+    await decide.click();
+    const dialog = page.getByRole("dialog", { name: "Decision after release" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("checkbox")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Approve after release", exact: true }).click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    // Nothing to finish on npm: the release is already public.
+    await expect(
+      page.getByRole("dialog").filter({ hasText: "Finish the publish on npm" }),
+    ).toHaveCount(0);
+
+    await page.getByRole("link", { name: "Open the package’s alerts" }).click();
+    await expect(page).toHaveURL(/\/dashboard\/packages\/@drydock\/e2e-post-release/);
+    const packageMonitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(packageMonitor.getByText("Approved after release", { exact: true })).toBeVisible();
+    // The verdict it was observed with stays what it was.
+    await expect(
+      packageMonitor.getByText("Published with no approval in this organization", { exact: true }),
+    ).toBeVisible();
+    await expect(packageMonitor.getByText("watching", { exact: true })).toBeVisible();
+    await expect(packageMonitor.getByText(/unacknowledged alert/)).toHaveCount(0);
+    await expect(
+      packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }),
+    ).toHaveCount(0);
+    await expect(packageMonitor.getByRole("button", { name: "Scan", exact: true })).toHaveCount(0);
+    // The fake registry is not public npm, so the badge does not count it.
+    await expect(packageMonitor.getByText(/^The public badge is unchanged: /)).toBeVisible();
+    const openReview = packageMonitor.getByRole("link", { name: "Open post-release review" });
+    await expect(openReview).toHaveAttribute("href", reviewPath);
+    await packageMonitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "post-release-approved.png"),
+      fullPage: true,
+    });
+
+    // Declining after release keeps the alert open, with what to do next.
+    await openReview.click();
+    await page.getByRole("button", { name: "Update decision", exact: true }).click();
+    const updateDialog = page.getByRole("dialog", { name: "Decision after release" });
+    await updateDialog.getByRole("button", { name: "Decline after release", exact: true }).click();
+    await expect(updateDialog).toBeHidden({ timeout: 30_000 });
+    await page.getByRole("link", { name: "Open the package’s alerts" }).click();
+    await expect(packageMonitor.getByText("Declined after release", { exact: true })).toBeVisible();
+    await expect(
+      packageMonitor.getByText(
+        /^Next steps: deprecate or unpublish @drydock\/e2e-post-release@1\.1\.0 on npm, rotate the npm tokens/,
+      ),
+    ).toBeVisible();
+    await expect(packageMonitor.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await expect(
+      packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }),
+    ).toBeVisible();
+    await packageMonitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "post-release-declined.png"),
+      fullPage: true,
+    });
+    expect(browserErrors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("registry journal limits credential forwarding", async () => {
   const journal = await readJournal();
   expect(journal.some((entry) => entry.path === "/-/whoami")).toBe(true);
@@ -696,10 +836,11 @@ test("registry journal limits credential forwarding", async () => {
   );
 
   for (const entry of journal.filter((item) => item.path !== "/__health")) {
-    const publicPublication = /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(
+    // Public packages are read the way public npm serves them: with no token.
+    const publicPackage = /^\/@drydock\/e2e-(?:publication|post-release)(?:$|\/-\/)/.test(
       decodeURIComponent(entry.path),
     );
-    expect(entry.authorization, entry.path).toBe(publicPublication ? "absent" : "present");
+    expect(entry.authorization, entry.path).toBe(publicPackage ? "absent" : "present");
   }
 
   // Credentialed paths are allowlisted, not merely observed: this is what fails
