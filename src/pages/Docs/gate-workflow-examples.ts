@@ -174,7 +174,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci
       - run: mkdir -p dist
-      - run: npx --yes @vscode/vsce@4.0.0 package --out dist/extension.vsix
+      # vsce comes from package-lock.json (a devDependency), never fetched ad hoc.
+      - run: ./node_modules/.bin/vsce package --out dist/extension.vsix
       # Record the digest Drydock reviews and the publish job re-checks.
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -188,19 +189,27 @@ jobs:
     # Drydock is this environment's deployment-protection rule: the job stays
     # queued until the release is approved in Drydock.
     environment: "production"
+    permissions:
+      # Read access for the lockfile only; the Marketplace PAT is the credential.
+      contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           package-manager-cache: false
+      # The lockfile's vsce and nothing newer, with no install scripts: this is
+      # the one job that can read the PAT. Nothing here rebuilds the extension.
+      - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: vscode-release-candidate
           path: dist
       # Fail closed if the downloaded bytes drifted from what was reviewed.
       - run: cd dist && sha256sum --check --strict SHA256SUMS
-      # Exact vsce version: this is the one job that can read the PAT.
-      - run: npx --yes @vscode/vsce@4.0.0 publish --packagePath dist/extension.vsix
+      - run: ./node_modules/.bin/vsce publish --packagePath dist/extension.vsix
         env:
           VSCE_PAT: \${{ secrets.VSCE_PAT }}
 `,
