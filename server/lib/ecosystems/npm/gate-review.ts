@@ -25,6 +25,8 @@ import { isRecord } from "../../platform/guards";
 interface NpmGateArtifactInput {
   path: string;
   sha256: string;
+  /** Absent on queue messages enqueued before gates recorded SHA-1. */
+  sha1?: string;
   files: FileRecord[];
   packageJson: PackageJsonSummary | null;
   suspiciousEntries?: TarSuspiciousEntry[];
@@ -42,6 +44,12 @@ export interface NpmGateDetails {
   manifest: NpmReleaseManifest;
   /** SHA-256 of the reviewed `.tgz`, recomputed from the immutable artifact. */
   digest: string;
+  /**
+   * SHA-1 of the same reviewed bytes, npm's `dist.shasum` encoding, so the
+   * publication monitor can compare npm's own digest when the published
+   * tarball cannot be hashed. Absent on reviews from before it was recorded.
+   */
+  sha1?: string;
 }
 
 /**
@@ -95,6 +103,7 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
         mode: "workflow_gate",
         manifest: input.manifest,
         digest: input.artifact.sha256,
+        ...(input.artifact.sha1 ? { sha1: input.artifact.sha1 } : {}),
       } satisfies NpmGateDetails,
     });
   },
@@ -150,6 +159,7 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
       mode: d.mode,
       ecosystem: "npm",
       digest: d.digest,
+      ...(d.sha1 ? { sha1: d.sha1 } : {}),
       manifest: d.manifest,
       provenance: {
         ecosystem: "npm",
@@ -172,11 +182,15 @@ function parseGateArtifact(raw: unknown): NpmGateArtifactInput {
   if (!path) throw new Error("npm gate artifact path is required");
   const sha256 = typeof raw.sha256 === "string" ? raw.sha256 : "";
   if (!/^[a-f0-9]{64}$/i.test(sha256)) throw new Error("npm gate artifact sha256 is invalid");
+  const sha1 = raw.sha1;
+  if (sha1 !== undefined && (typeof sha1 !== "string" || !/^[a-f0-9]{40}$/i.test(sha1)))
+    throw new Error("npm gate artifact sha1 is invalid");
   if (!Array.isArray(raw.files)) throw new Error("npm gate artifact files must be an array");
   const packageJson = isRecord(raw.packageJson) ? (raw.packageJson as PackageJsonSummary) : null;
   return {
     path,
     sha256: sha256.toLowerCase(),
+    ...(typeof sha1 === "string" ? { sha1: sha1.toLowerCase() } : {}),
     files: raw.files as FileRecord[],
     packageJson,
     ...(Array.isArray(raw.suspiciousEntries)

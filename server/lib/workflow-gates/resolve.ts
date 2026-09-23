@@ -62,6 +62,7 @@ export async function resolveBundleArtifact(
   return {
     path: file.path,
     sha256: file.sha256,
+    sha1: file.sha1,
     ecosystem,
     kind,
     files: parsed.files,

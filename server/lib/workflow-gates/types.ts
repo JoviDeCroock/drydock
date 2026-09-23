@@ -7,6 +7,7 @@ export type WorkflowArtifactKind = string;
 export interface ParsedGateArtifact {
   path: string;
   sha256: string;
+  sha1: string;
   ecosystem: string;
   kind: WorkflowArtifactKind;
   files: FileRecord[];

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   type WorkflowArtifactSource,
@@ -177,6 +178,8 @@ describe("fetchReleaseBundleWithToken", () => {
     const sdist = bundle.artifacts.find((artifact) => artifact.path === sdistPath);
     expect(sdist?.kind).toBe("sdist");
     expect(sdist?.sha256).toBe(await sha256Hex(sdistBytes));
+    // SHA-1 of the same bytes, in npm's `dist.shasum` encoding.
+    expect(sdist?.sha1).toBe(createHash("sha1").update(sdistBytes).digest("hex"));
   });
 
   test("collects reviewable files across every non-expired workflow artifact", async () => {

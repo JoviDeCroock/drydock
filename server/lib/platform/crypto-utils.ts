@@ -71,6 +71,15 @@ export async function sha256Hex(value: string | ArrayBuffer | Uint8Array): Promi
 }
 
 /**
+ * Lowercase hex SHA-1 of a byte array, the encoding of npm's `dist.shasum`.
+ * Only for comparing artifact bytes with a registry's own SHA-1 record; never
+ * a security digest on its own.
+ */
+export async function sha1Hex(bytes: Uint8Array): Promise<string> {
+  return hexEncode(new Uint8Array(await crypto.subtle.digest("SHA-1", bytes as BufferSource)));
+}
+
+/**
  * SHA-256 as unpadded base64url. Distinct from `sha256Hex` by output encoding
  * only — the name carries the encoding because these digests get stored and
  * compared, and hex vs base64url of the same bytes is a silent mismatch.

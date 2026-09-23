@@ -77,6 +77,7 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
           artifact: {
             path: artifact.path,
             sha256: artifact.sha256,
+            sha1: artifact.sha1,
             files: artifact.files,
             packageJson: artifact.packageJson,
             ...(artifact.suspiciousEntries

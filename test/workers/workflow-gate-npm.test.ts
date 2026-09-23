@@ -1,5 +1,5 @@
 import { createExecutionContext, env } from "cloudflare:test";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
@@ -18,6 +18,7 @@ import {
 import { type ParsedGateArtifact } from "../../server/lib/workflow-gates/types";
 import { npmGateAdapter } from "../../server/lib/ecosystems/npm/gate-review";
 import type { NpmGateDetails } from "../../server/lib/ecosystems/npm/gate-review";
+import { redactJson } from "../../server/lib/review/redaction";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock, stubGithubFetch } from "./helpers/gate";
 import { seedPersonalOrganization } from "./helpers/seed";
@@ -46,10 +47,12 @@ function npmArtifact(
   name: string,
   version: string,
   sha = "ab".repeat(32),
+  sha1 = "ef".repeat(20),
 ): ParsedGateArtifact {
   return {
     path,
     sha256: sha,
+    sha1,
     ecosystem: "npm",
     kind: "tarball",
     files: [
@@ -156,11 +159,14 @@ describe("npmWorkflowGateAdapter", () => {
     const byName = Object.fromEntries(candidates.map((c) => [c.package.name, c]));
     expect(byName["@scope/alpha"].package.version).toBe("1.0.0");
     const input = byName["@scope/alpha"].pipelineInput as {
-      manifest: { artifacts: { sha256: string }[] };
-      artifact: { sha256: string };
+      manifest: { artifacts: Record<string, string>[] };
+      artifact: { sha256: string; sha1: string };
     };
     expect(input.manifest.artifacts[0].sha256).toBe("11".repeat(32));
     expect(input.artifact.sha256).toBe("11".repeat(32));
+    expect(input.artifact.sha1).toBe("ef".repeat(20));
+    // The release manifest keeps its SHA-256-only schema.
+    expect(Object.keys(input.manifest.artifacts[0])).toEqual(["path", "sha256"]);
   });
 
   test("rejects a tarball with no package.json identity", () => {
@@ -189,18 +195,43 @@ describe("npmWorkflowGateAdapter", () => {
 // ── npm gate package adapter (pure) ──────────────────────────────────────────
 
 describe("npmGateAdapter", () => {
-  function gateInput() {
+  function gateInput(): Record<string, unknown> & { artifact: Record<string, unknown> } {
     const [candidate] = npmWorkflowGateAdapter.prepareReleaseCandidates([
-      npmArtifact("dist/pkg-1.2.3.tgz", "pkg", "1.2.3", "cd".repeat(32)),
+      npmArtifact("dist/pkg-1.2.3.tgz", "pkg", "1.2.3", "cd".repeat(32), "EF".repeat(20)),
     ]);
-    return { scanId: "s", stageId: "g", organizationId: "o", ...candidate.pipelineInput };
+    return {
+      scanId: "s",
+      stageId: "g",
+      organizationId: "o",
+      ...(candidate.pipelineInput as { artifact: Record<string, unknown> }),
+    };
+  }
+
+  // A queue message enqueued before gates recorded SHA-1.
+  function legacyGateInput() {
+    const input = gateInput();
+    const { sha1: _sha1, ...artifact } = input.artifact;
+    return { ...input, artifact };
   }
 
   test("parseInput validates the synthesized manifest + artifact", () => {
     const input = npmGateAdapter.parseInput(gateInput());
     expect(input.manifest.package).toBe("pkg");
     expect(input.artifact.sha256).toBe("cd".repeat(32));
+    expect(input.artifact.sha1).toBe("ef".repeat(20));
     expect(() => npmGateAdapter.parseInput({})).toThrow();
+  });
+
+  test("parseInput accepts a pre-SHA-1 message and rejects a malformed SHA-1", () => {
+    const legacy = npmGateAdapter.parseInput(legacyGateInput());
+    expect(legacy.artifact.sha256).toBe("cd".repeat(32));
+    expect(legacy.artifact).not.toHaveProperty("sha1");
+    for (const sha1 of ["ef".repeat(19), "zz".repeat(20), 42, null]) {
+      const input = gateInput();
+      expect(() =>
+        npmGateAdapter.parseInput({ ...input, artifact: { ...input.artifact, sha1 } }),
+      ).toThrow(/sha1 is invalid/);
+    }
   });
 
   test("acquireStaged reassembles parsed files without a broker, carrying the digest", async () => {
@@ -214,7 +245,11 @@ describe("npmGateAdapter", () => {
     const staged = await npmGateAdapter.acquireStaged(ctx, input, {} as never);
     expect(staged.artifact.manifest).toEqual({ name: "pkg", version: "1.2.3" });
     expect((staged.details as NpmGateDetails).digest).toBe("cd".repeat(32));
+    expect((staged.details as NpmGateDetails).sha1).toBe("ef".repeat(20));
     expect((staged.details as NpmGateDetails).mode).toBe("workflow_gate");
+    const legacy = npmGateAdapter.parseInput(legacyGateInput());
+    const legacyStaged = await npmGateAdapter.acquireStaged(ctx, legacy, {} as never);
+    expect(legacyStaged.details).not.toHaveProperty("sha1");
   });
 
   test("describe + summarizeDetails surface identity and the reviewed digest", () => {
@@ -237,16 +272,31 @@ describe("npmGateAdapter", () => {
       stagedTag: null,
       previousVersion: null,
     });
+    const provenance = {
+      ecosystem: "npm",
+      mode: "workflow_gate",
+      artifacts: [{ path: "dist/pkg-1.2.3.tgz", kind: "tarball", sha256: "cd".repeat(32) }],
+    };
+    // A review from before gates recorded SHA-1 keeps its old summary shape.
     expect(npmGateAdapter.summarizeDetails(details)).toEqual({
       mode: "workflow_gate",
       ecosystem: "npm",
       digest: "cd".repeat(32),
       manifest: input.manifest,
-      provenance: {
-        ecosystem: "npm",
-        mode: "workflow_gate",
-        artifacts: [{ path: "dist/pkg-1.2.3.tgz", kind: "tarball", sha256: "cd".repeat(32) }],
-      },
+      provenance,
+    });
+    // The pipeline persists `redactJson(summarizeDetails(details))` as
+    // `summary_json.stagedPublish`, where the publication monitor reads `sha1`.
+    const persisted = redactJson(
+      npmGateAdapter.summarizeDetails({ ...details, sha1: input.artifact.sha1 }),
+    );
+    expect(persisted).toEqual({
+      mode: "workflow_gate",
+      ecosystem: "npm",
+      digest: "cd".repeat(32),
+      sha1: "ef".repeat(20),
+      manifest: input.manifest,
+      provenance,
     });
   });
 
@@ -405,6 +455,12 @@ describe("prepareReleaseCandidatesForGate · npm auto-detect", () => {
     expect(result.packages[0].candidate.ecosystem).toBe("npm");
     expect(result.packages[0].packageAdapter.id).toBe("npm");
     expect(result.packages[0].candidate.package).toEqual({ name: "left-pad", version: "1.3.0" });
+    // Both digests are of the tarball bytes the gate downloaded and reviewed.
+    const reviewed = new TextEncoder().encode("bytes for dist/left-pad-1.3.0.tgz");
+    expect(result.packages[0].candidate.pipelineInput.artifact).toMatchObject({
+      sha256: createHash("sha256").update(reviewed).digest("hex"),
+      sha1: createHash("sha1").update(reviewed).digest("hex"),
+    });
     expect(loader.calls.map((call) => call.format)).toEqual(["tgz"]);
     vi.unstubAllGlobals();
   });
