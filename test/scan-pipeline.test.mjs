@@ -8,7 +8,8 @@ vi.mock("cloudflare:workers", () => ({
 const dbMock = vi.hoisted(() => ({
   backfillScanRegistryReleaseIdentity: vi.fn(async () => undefined),
   persistScan: vi.fn(async () => ({ persisted: true })),
-  loadGateReviewHistory: vi.fn(async () => ({ forVersion: [], packageHasGateHistory: false })),
+  loadGateReviewHistory: vi.fn(async () => ({ forVersion: [], packageHasLiveGate: false })),
+  hasLiveReleaseTarget: vi.fn(async () => false),
   recordScanEvent: vi.fn(async () => undefined),
   getNpmConnection: vi.fn(),
   createDb: vi.fn(() => ({})),
@@ -143,6 +144,7 @@ describe("scan pipeline baseline selection", () => {
     dbMock.backfillScanRegistryReleaseIdentity.mockClear();
     dbMock.persistScan.mockClear();
     dbMock.loadGateReviewHistory.mockClear();
+    dbMock.hasLiveReleaseTarget.mockClear();
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
@@ -699,7 +701,8 @@ describe("scan pipeline baseline selection", () => {
           },
         },
       ],
-      packageHasGateHistory: true,
+      ecosystem: "npm",
+      packageHasLiveGate: true,
     });
 
     const result = await runScanPipeline(baseContext, npmAdapter, {
@@ -718,6 +721,7 @@ describe("scan pipeline baseline selection", () => {
     });
     expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(expect.anything(), {
       organizationId: "org_1",
+      ecosystem: "npm",
       packageName: "@scope/pkg",
       version: "2.0.0-beta.3",
     });
@@ -799,6 +803,7 @@ describe("scan pipeline baseline selection", () => {
     // of its package's gate history.
     expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(expect.anything(), {
       organizationId: "org_1",
+      ecosystem: "npm",
       packageName: "@other/pkg",
       version: "2.0.0-beta.3",
     });

@@ -8,8 +8,8 @@
  * checkpoint and the stage is npm holding exactly the reviewed artifact. npm
  * exposes no hook for a third party to block a stage, so the stage itself is
  * the receipt: this record says whether the tarball npm holds is the tarball
- * the gate reviewed and approved, and — for a package the organization gates —
- * whether a stage appeared that never went through the gate at all.
+ * the gate reviewed and approved, and — for a package the organization still
+ * gates — whether a stage appeared that never went through the gate at all.
  *
  * Pure record shape, evaluation, and re-validation. This module is imported by
  * the UI and the report export, so it must stay free of database and Worker
@@ -26,10 +26,32 @@ type GateContinuityStatus =
   | "gate-not-approved"
   /** The gate reviewed this version, but different bytes were staged. */
   | "digest-mismatch"
-  /** The gate reviewed this version; one of the two digests is unavailable, so nothing is bound. */
+  /** A gate review of this version exists, but the stage cannot be bound to it; `reason` says why. */
   | "unverified"
-  /** The organization gates this package, and this version never passed the gate. */
-  | "ungated";
+  /** A still-configured release target has gated this package, and this version never passed the gate. */
+  | "ungated"
+  /** The check could not run, so whether the stage went through the gate is not known; `reason` says why. */
+  | "unknown";
+
+export type GateContinuityReason =
+  // `unverified`
+  /** Only a gate scan of this version that has not completed (running or failed) exists. */
+  | "gate-review-incomplete"
+  /** The sandbox computed no SHA-256 for the staged tarball. */
+  | "staged-digest-unavailable"
+  /** No gate review of this version recorded a single-tarball npm digest. */
+  | "gate-digest-unavailable"
+  /** The gate reviewed these bytes, but its gate row is gone, so its decision is unknown. */
+  | "gate-decision-unavailable"
+  /** The digests agree with an approved review, but the download was not confirmed against npm's record. */
+  | "stage-not-bound-to-registry"
+  /** No review in the compared window matches, and older reviews of this version exist. */
+  | "review-window-truncated"
+  // `unknown`
+  /** The organization's gate history could not be read. */
+  | "history-unavailable"
+  /** npm's own record for the stage was unavailable, so there was nothing safe to look up. */
+  | "registry-record-unavailable";
 
 interface GateContinuityReview {
   scanId: string;
@@ -46,22 +68,65 @@ interface GateContinuityReview {
 
 export interface GateContinuity {
   status: GateContinuityStatus;
+  /** Why an `unverified` or `unknown` record binds nothing; null for every other status. */
+  reason: GateContinuityReason | null;
   algorithm: "sha256";
   /** SHA-256 the sandbox computed from the staged bytes; null when unavailable. */
   stagedDigest: string | null;
-  /** The gate review this stage was compared against; null when `ungated`. */
+  /** The gate review this stage was compared against; null when there was none to compare. */
   review: GateContinuityReview | null;
 }
 
+/**
+ * The form `report.json` carries. That document is also what a public share
+ * token serves, so it keeps the verdict and both digests — enough for anyone to
+ * check the binding — and leaves the gate's identity (repository, environment,
+ * run, internal ids, decision) to the authenticated receipt and scan page.
+ */
+interface GateContinuityExport {
+  status: GateContinuityStatus;
+  reason: GateContinuityReason | null;
+  algorithm: "sha256";
+  stagedDigest: string | null;
+  gateDigest: string | null;
+}
+
+const REASONS: Readonly<Partial<Record<GateContinuityStatus, ReadonlySet<string>>>> = {
+  unverified: new Set<GateContinuityReason>([
+    "gate-review-incomplete",
+    "staged-digest-unavailable",
+    "gate-digest-unavailable",
+    "gate-decision-unavailable",
+    "stage-not-bound-to-registry",
+    "review-window-truncated",
+  ]),
+  unknown: new Set<GateContinuityReason>(["history-unavailable", "registry-record-unavailable"]),
+};
 const GATE_CONTINUITY_STATUSES = new Set<GateContinuityStatus>([
   "matched",
   "gate-not-approved",
   "digest-mismatch",
   "unverified",
   "ungated",
+  "unknown",
+]);
+/** Statuses that assert something about a specific gate review, and so need one. */
+const COMPARED_STATUSES = new Set<GateContinuityStatus>([
+  "matched",
+  "gate-not-approved",
+  "digest-mismatch",
 ]);
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const MAX_TEXT = 512;
+
+function record(
+  status: GateContinuityStatus,
+  stagedDigest: string | null,
+  review: GateContinuityReview | null,
+  reason: GateContinuityReason | null = null,
+): GateContinuity {
+  return { status, reason, algorithm: "sha256", stagedDigest, review };
+}
 
 export function evaluateGateContinuity(
   history: GateReviewHistory,
@@ -75,27 +140,22 @@ export function evaluateGateContinuity(
 ): GateContinuity | null {
   const staged = normalizeSha256(stagedDigest);
   if (history.forVersion.length === 0) {
-    if (!history.packageHasGateHistory) return null;
     // A gate scan of this version that has not completed is still a review a
     // maintainer can decide, so the stage did not skip the gate — the gate's
     // verdict is simply not in yet.
     if (history.versionHasIncompleteGateScan) {
-      return { status: "unverified", algorithm: "sha256", stagedDigest: staged, review: null };
+      return record("unverified", staged, null, "gate-review-incomplete");
     }
-    return { status: "ungated", algorithm: "sha256", stagedDigest: staged, review: null };
+    return history.packageHasLiveGate ? record("ungated", staged, null) : null;
   }
-  const reviews = history.forVersion.map(toReview);
+  const reviews = history.forVersion.map((row) => toReview(row, history.ecosystem));
   // A comparison needs two digests. A gate review that recorded none (a
   // multi-artifact provenance, a malformed blob, a scan that predates the
   // provenance block) cannot vouch for or accuse the stage.
   const comparable = reviews.filter((review) => review.sha256 !== null);
-  if (!staged || comparable.length === 0) {
-    return {
-      status: "unverified",
-      algorithm: "sha256",
-      stagedDigest: staged,
-      review: reviews[0] ?? null,
-    };
+  if (!staged) return record("unverified", null, reviews[0] ?? null, "staged-digest-unavailable");
+  if (comparable.length === 0) {
+    return record("unverified", staged, reviews[0] ?? null, "gate-digest-unavailable");
   }
   // Reviews arrive newest first, and the gate's most recent decision on these
   // exact bytes wins: a maintainer who re-ran the gate and rejected what they
@@ -107,31 +167,36 @@ export function evaluateGateContinuity(
       // The digests agree, but `matched` also asserts npm holds these bytes.
       // Without the registry binding the scan only knows what it downloaded,
       // which the stage-digest finding may already be disputing.
-      if (!stagedDigestBoundToRegistry) {
-        return { status: "unverified", algorithm: "sha256", stagedDigest: staged, review: latest };
-      }
-      return { status: "matched", algorithm: "sha256", stagedDigest: staged, review: latest };
+      return stagedDigestBoundToRegistry
+        ? record("matched", staged, latest)
+        : record("unverified", staged, latest, "stage-not-bound-to-registry");
     }
     // The gate saw exactly these bytes and did not let them through; they were
     // staged anyway. Stronger evidence of a bypass than a mismatch — unless the
     // gate row itself is gone, in which case the decision is unknown rather
     // than negative.
-    return {
-      status: latest.gateId !== null ? "gate-not-approved" : "unverified",
-      algorithm: "sha256",
-      stagedDigest: staged,
-      review: latest,
-    };
+    return latest.gateId !== null
+      ? record("gate-not-approved", staged, latest)
+      : record("unverified", staged, latest, "gate-decision-unavailable");
   }
   // Nothing in the window matched. If the window was truncated the approved
   // review may simply be outside it, and absence of evidence must not be
   // rendered as "something staged bytes the gate never saw".
-  return {
-    status: history.truncated ? "unverified" : "digest-mismatch",
-    algorithm: "sha256",
-    stagedDigest: staged,
-    review: comparable[0] ?? null,
-  };
+  return history.truncated
+    ? record("unverified", staged, comparable[0] ?? null, "review-window-truncated")
+    : record("digest-mismatch", staged, comparable[0] ?? null);
+}
+
+/**
+ * The record for a stage the resolver could not check at all. Distinct from
+ * "no record": a missing record means the organization does not gate the
+ * package, and a failed check must not be allowed to read as that.
+ */
+export function unknownGateContinuity(
+  reason: "history-unavailable" | "registry-record-unavailable",
+  stagedDigest: string | null | undefined,
+): GateContinuity {
+  return record("unknown", normalizeSha256(stagedDigest), null, reason);
 }
 
 /**
@@ -145,24 +210,45 @@ export function normalizeGateContinuity(value: unknown): GateContinuity | null {
   if (typeof status !== "string" || !GATE_CONTINUITY_STATUSES.has(status as GateContinuityStatus)) {
     return null;
   }
-  const review = normalizeReview(value.review);
-  if (status !== "ungated" && !review) return null;
+  const parsedStatus = status as GateContinuityStatus;
+  const review =
+    parsedStatus === "ungated" || parsedStatus === "unknown" ? null : normalizeReview(value.review);
+  // A status that names a comparison needs the review it compared against.
+  // `unverified` may carry none — a gate scan of this version that has not
+  // completed — and dropping it would render nothing, which is more
+  // reassuring than the evidence it stands for.
+  if (COMPARED_STATUSES.has(parsedStatus) && !review) return null;
   const stagedDigest = normalizeSha256(value.stagedDigest);
   // `matched` is the one status that asserts an equality, so re-derive it here
   // rather than trust it: a truncated or hand-edited blob must not be able to
   // render the green badge with its digest rows blank.
-  if (status === "matched" && (!stagedDigest || review?.sha256 !== stagedDigest)) {
+  if (parsedStatus === "matched" && (!stagedDigest || review?.sha256 !== stagedDigest)) {
     return null;
   }
+  const reason =
+    typeof value.reason === "string" && REASONS[parsedStatus]?.has(value.reason)
+      ? (value.reason as GateContinuityReason)
+      : null;
+  return record(parsedStatus, stagedDigest, review, reason);
+}
+
+export function exportGateContinuity(
+  continuity: GateContinuity | null,
+): GateContinuityExport | null {
+  if (!continuity) return null;
   return {
-    status: status as GateContinuityStatus,
-    algorithm: "sha256",
-    stagedDigest,
-    review: status === "ungated" ? null : review,
+    status: continuity.status,
+    reason: continuity.reason,
+    algorithm: continuity.algorithm,
+    stagedDigest: continuity.stagedDigest,
+    gateDigest: continuity.review?.sha256 ?? null,
   };
 }
 
-function toReview(row: GateReviewHistory["forVersion"][number]): GateContinuityReview {
+function toReview(
+  row: GateReviewHistory["forVersion"][number],
+  ecosystem: string,
+): GateContinuityReview {
   return {
     scanId: row.scanId,
     gateId: row.gate?.id ?? null,
@@ -172,18 +258,20 @@ function toReview(row: GateReviewHistory["forVersion"][number]): GateContinuityR
     status: row.gate?.status ?? null,
     decision: row.gate?.decision ?? null,
     decidedAt: row.gate?.decidedAt ? row.gate.decidedAt.toISOString() : null,
-    sha256: gateTarballSha256(row.summaryJson),
+    sha256: gateTarballSha256(row.summaryJson, ecosystem),
   };
 }
 
 // The gate's provenance block lists the reviewed artifacts with the digests
-// recomputed from their bytes. Only a single-artifact release can be bound to a
-// single staged tarball; a multi-artifact provenance is not a match candidate.
-function gateTarballSha256(summaryJson: unknown): string | null {
+// recomputed from their bytes. Only a single-artifact release of the staged
+// review's own ecosystem can be bound to the staged artifact: another
+// ecosystem's artifact with the same name and version is a different package,
+// and a multi-artifact provenance is not a match candidate.
+function gateTarballSha256(summaryJson: unknown, ecosystem: string): string | null {
   if (!isRecord(summaryJson) || !isRecord(summaryJson.stagedPublish)) return null;
   const provenance = summaryJson.stagedPublish.provenance;
-  if (!isRecord(provenance) || !Array.isArray(provenance.artifacts)) return null;
-  if (provenance.artifacts.length !== 1) return null;
+  if (!isRecord(provenance) || provenance.ecosystem !== ecosystem) return null;
+  if (!Array.isArray(provenance.artifacts) || provenance.artifacts.length !== 1) return null;
   const artifact = provenance.artifacts[0];
   return isRecord(artifact) ? normalizeSha256(artifact.sha256) : null;
 }
