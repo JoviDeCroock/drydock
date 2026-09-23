@@ -70,9 +70,13 @@ const NPM_LIFECYCLE_ENV_NAMES = [
   "npm_package_name",
   "npm_package_version",
 ];
-const COMMON_JS_ENV_NAME_PATTERN = [...COMMON_JS_ENV_NAMES, ...NPM_LIFECYCLE_ENV_NAMES]
-  .map(escapeRegex)
-  .join("|");
+// `JAVA_HOME`, `HADOOP_HOME`, `ANDROID_HOME`: tool install locations, not
+// credentials. Bare `HOME` stays counted; it is how a stealer finds dotfiles.
+const LOCATION_ENV_NAME_PATTERN = "[A-Z][A-Z0-9_]*_HOME";
+const COMMON_JS_ENV_NAME_PATTERN = [
+  ...[...COMMON_JS_ENV_NAMES, ...NPM_LIFECYCLE_ENV_NAMES].map(escapeRegex),
+  LOCATION_ENV_NAME_PATTERN,
+].join("|");
 // `\??\.` also covers optional chaining (`process.env?.NODE_ENV`).
 const COMMON_PROCESS_ENV_DOT_ACCESS = new RegExp(
   `\\bprocess\\.env\\s*\\??\\.\\s*(?:${COMMON_JS_ENV_NAME_PATTERN})\\b`,
