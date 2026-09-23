@@ -7,6 +7,7 @@ import {
 } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useId, useRef } from "preact/hooks";
+import { useLocation } from "preact-iso";
 import { isValidNpmPackageName } from "../../../server/lib/ecosystems/npm/registry";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -36,6 +37,7 @@ export function PublicationMonitor({
   personalWorkspace: ReadonlySignal<boolean>;
 }) {
   const model = useModel(PublicationWatchesModel);
+  const location = useLocation();
   const lastReviews = useSignal(reviews.peek());
   useSignalEffect(() => {
     const next = reviews.value;
@@ -85,6 +87,12 @@ export function PublicationMonitor({
       ].find((link) => link.dataset.watchPackage === packageName);
       (row ?? formRef.current?.querySelector("input"))?.focus();
     }, 0);
+  }
+
+  // The alert is decided on its review page, diff first.
+  async function review(watchId: string, observationId: string) {
+    const scanId = await model.review(watchId, observationId);
+    if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
   }
 
   async function check(id: string) {
@@ -298,6 +306,7 @@ export function PublicationMonitor({
                     observations={expanded.observations}
                     busy={model.busy}
                     acknowledge={(observationId) => void model.acknowledge(watch.id, observationId)}
+                    review={(observationId) => void review(watch.id, observationId)}
                   />
                 ) : null}
               </li>
