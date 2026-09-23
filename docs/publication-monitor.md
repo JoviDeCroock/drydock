@@ -231,9 +231,12 @@ Receipt v1.
 
 The public README badge reads these observations, and the alert ledger, for the
 answering organization: a discrepancy for the version it quotes, or any
-observation other than an approved match for a newer release on the same line,
-turns it grey as `<version> not reviewed` instead of green. `unknown` about the
-quoted version itself does not. See
+observation other than an approved match for another release the badge's
+dist-tag now points at (by the recorded `dist_tags`; inferred from version
+shape while no observed version holds the tag), turns it grey as `<version>
+not reviewed` instead of green. `unknown` about the quoted
+version itself does not, unless its published bytes differ from the reviewed
+ones. See
 [`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
 
 ## API and operation

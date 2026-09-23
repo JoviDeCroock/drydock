@@ -468,13 +468,14 @@ package (joined to its watch) and its `publication_alerts` ledger, which
 outlives a stopped watch so stopping one cannot turn a recorded discrepancy
 back into a green badge.
 
-- **A newer version on the quoted line**, observed with anything but
-  `approved_match` → that version, `not reviewed`, exactly like the scan-based
-  path. That includes `unknown`: an observation alone proves npm published the
-  version, and nothing proves this organization approved it, so the badge must
-  not keep vouching for the older one beside an install command that fetches
-  the newer. An approved match is left to the scan-based path, which knows
-  whether that release answers the badge itself.
+- **Another version where the quote stood** — npm now points the badge's tag
+  at it (see below) — observed with anything but `approved_match` → that
+  version, `not reviewed`, exactly like the scan-based path. That includes
+  `unknown`: an observation alone proves npm published the version, and
+  nothing proves this organization approved it, so the badge must not keep
+  vouching for the quoted one beside an install command that fetches another.
+  An approved match is left to the scan-based path, which knows whether that
+  release answers the badge itself.
 - **The quoted version itself** with a discrepancy — `published_without_approval`,
   `published_despite_rejection`, `artifact_mismatch` → `<version> not
 reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
@@ -494,13 +495,29 @@ reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
   own discrepancy statuses can grey it — the listing is the maintainer's
   deliberate claim, and its report shows the integrity verdict.
 
-Observations carry no dist-tag, so the quoted line is inferred from the badge's
-tag and the version's shape: `latest` is superseded by newer stable versions
+Which release stands where the quote did is read from the dist-tags the
+monitor recorded for each observation at its latest check. A version other
+than the quoted one that npm points the badge's tag at supersedes the quote,
+whatever its version shape or order, because installing that tag fetches it:
+a prerelease published without `--tag` takes `latest` on npm, so it greys the
+`latest` badge. Once the monitor has seen which version holds the tag — the
+quote itself, an approved match, anything — every other observed version is
+off that line, so a stable release published under `next` leaves the
+`latest` badge alone.
+
+A tag that is merely absent from a version's recorded tags is never read as
+placing it off the line, because it proves nothing on its own: the evidence
+may be an alert whose observation is gone with its watch, or an observation
+recorded before the monitor kept tags; a check may not record every tag of a
+packument; and the tag may point at a version published before the watch
+existed, which the monitor never observed. With no observed holder of the
+tag, the line is inferred from the badge's tag and the version's shape, and
+only a newer version counts: `latest` is superseded by newer stable versions
 (and newer prereleases too when the pick is itself a prerelease); another tag
 with a stable pick is a maintenance line that stays within its major; another
 tag with a prerelease pick is that channel, matched on the leading prerelease
 identifier (`canary`, `next`). A release outside those rules on a line that
-breaks them is not seen by this path.
+breaks them is not seen by the inference.
 
 Same organization-scoping as the scan probe, and the rendered version is npm's
 (the monitor reads it from npm's packument), so nothing new leaks: "not

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { compareSemver } from "../lib/ecosystems/semver";
 import {
   DEFAULT_BADGE_TAG,
@@ -31,9 +31,9 @@ const OBSERVATION_WINDOW = 50;
 const SEMVER_RE = /^(\d+)\.\d+\.\d+(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/;
 
 /**
- * Whether an observed version belongs to the release line the badge quotes.
- * Observations carry no dist-tag, so the line is inferred from the pick's tag
- * and version shape:
+ * Whether an observed version belongs to the release line the badge quotes,
+ * inferred from the pick's tag and version shape. Only while no observed
+ * version holds the badge's tag (see `supersedesQuote`):
  *
  * - `latest` moves to stable releases, so every newer stable version is on it,
  *   and newer prereleases too when the pick itself is a prerelease.
@@ -55,6 +55,39 @@ function onQuotedLine(version: string, pickVersion: string, tag: string): boolea
   return channel(observedPre) === channel(pickPre);
 }
 
+// Versions npm pointed any dist-tag at, per the monitor's latest check. A
+// packument's tags are capped (see the monitor), so this bounds the read.
+const TAGGED_WINDOW = 101;
+
+/**
+ * Whether an observed release, other than the quoted one, now stands where the
+ * quote does.
+ *
+ * Read from where npm points the badge's tag (`tagHolders`: the observed
+ * versions whose recorded dist-tags include it, whatever their status),
+ * because installing that tag fetches whatever it points at, whatever its
+ * version's shape or order. So a prerelease that took `latest` (npm moves
+ * `latest` on a plain publish) supersedes a stable quote, and once the monitor
+ * has seen where `latest` stands, a stable release published under `next` does
+ * not touch the `latest` badge.
+ *
+ * Only a tag that *is* recorded places anything off the line. A version whose
+ * recorded tags merely lack it proves nothing on its own: the evidence may
+ * predate the monitor keeping tags, belong to an alert whose watch is gone, or
+ * come from a check that could not record every tag, and the tag may point at
+ * a version the monitor never observed. So with no observed holder the line
+ * is inferred from version shape as before, and only a newer version counts.
+ */
+function supersedesQuote(
+  version: string,
+  tagHolders: ReadonlySet<string>,
+  pickVersion: string,
+  tag: string,
+): boolean {
+  if (tagHolders.size > 0) return tagHolders.has(version);
+  return onQuotedLine(version, pickVersion, tag) && compareSemver(version, pickVersion) > 0;
+}
+
 /**
  * The version the badge must report as `not reviewed` because the answering
  * organization's own publication monitor saw npm serve something its reviews
@@ -62,11 +95,13 @@ function onQuotedLine(version: string, pickVersion: string, tag: string): boolea
  *
  * Two cases, mirroring the two ways the pick can be wrong:
  *
- * - **A newer version on the quoted line**, observed with anything but an
+ * - **Another version where the quote stood** (`supersedesQuote`: npm now
+ *   points the badge's tag at it, or, with no observed holder of the tag, a
+ *   newer version on the inferred line), observed with anything but an
  *   approved match — a discrepancy, or `unknown` evidence. The observation
  *   alone proves npm published it, and nothing proves this organization
- *   approved it, so the badge must not keep vouching for the older version
- *   beside an install command that fetches the newer one. This is how a
+ *   approved it, so the badge must not keep vouching for the quoted version
+ *   beside an install command that fetches another one. This is how a
  *   release published straight to npm, which has no scan for
  *   `findNewerPublishedRelease` to find, still takes the badge off. An
  *   approved match is left to the scan-based path, which knows whether that
@@ -98,7 +133,7 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
   const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
 
   const reviewedDigest = verifiedStagedDigest(pick.summaryJson);
-  const [observed, alerted, quoted] = await Promise.all([
+  const [observed, alerted, quoted, tagged] = await Promise.all([
     db
       .select({ version: publicationObservations.version, status: publicationObservations.status })
       .from(publicationObservations)
@@ -139,20 +174,45 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
         ),
       )
       .limit(1),
+    // Every observed version npm pointed a dist-tag at, whatever its status:
+    // an approved match, or the quote itself, holding the tag is what places
+    // the other evidence off the line.
+    db
+      .select({
+        version: publicationObservations.version,
+        status: publicationObservations.status,
+        distTags: publicationObservations.distTags,
+      })
+      .from(publicationObservations)
+      .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
+      .where(
+        and(
+          eq(publicationWatches.organizationId, pick.organizationId),
+          eq(publicationWatches.packageName, packageName),
+          eq(publicationObservations.organizationId, pick.organizationId),
+          isNotNull(publicationObservations.distTags),
+          sql`${publicationObservations.distTags} <> '[]'`,
+        ),
+      )
+      .limit(TAGGED_WINDOW),
   ]);
 
   const discrepancies: ReadonlySet<string> = new Set(DISCREPANCY_STATUSES);
+  const holding = tagged.filter((row) => Array.isArray(row.distTags) && row.distTags.includes(tag));
+  const tagHolders: ReadonlySet<string> = new Set(holding.map((row) => row.version));
   let newest: string | null = null;
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =
     reviewedDigest !== null && publishedSha1 !== null && publishedSha1 !== reviewedDigest;
-  for (const { version, status } of [...observed, ...alerted]) {
+  // A holder is evidence however long ago it was first seen, so it is read
+  // whether or not it falls inside the observation window.
+  const unapprovedHolders = holding.filter((row) => row.status !== "approved_match");
+  for (const { version, status } of [...observed, ...alerted, ...unapprovedHolders]) {
     if (version === pickVersion) {
       if (discrepancies.has(status)) pickDisqualified = true;
       continue;
     }
-    if (!onQuotedLine(version, pickVersion, tag)) continue;
-    if (compareSemver(version, pickVersion) <= 0) continue;
+    if (!supersedesQuote(version, tagHolders, pickVersion, tag)) continue;
     if (!newest || compareSemver(version, newest) > 0) newest = version;
   }
   if (newest) return newest;

@@ -2512,7 +2512,10 @@ async function recordObservation(
   packageName: string,
   version: string,
   status: ObservationStatus,
-  options: { sha1?: string; reason?: string } = {},
+  // The dist-tags npm pointed at the version at the monitor's latest check.
+  // Omitted means an observation with no tag data, which the badge places by
+  // inference.
+  options: { sha1?: string; reason?: string; distTags?: string[] } = {},
 ): Promise<void> {
   const db = createDb(env.DB);
   const now = new Date();
@@ -2541,6 +2544,7 @@ async function recordObservation(
     status,
     reason: options.reason ?? null,
     sha1: options.sha1 ?? null,
+    distTags: options.distTags ?? null,
   });
 }
 
@@ -2803,5 +2807,150 @@ describe("the badge reads the organization's publication monitor", () => {
       message: "3.0.0 blocked",
       color: "red",
     });
+  });
+});
+
+describe("the badge follows the dist-tags the monitor recorded", () => {
+  test("a prerelease that took `latest` greys the latest badge", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // npm points `latest` at whatever a plain publish uploads, prerelease or not.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1-0",
+      "published_without_approval",
+      { distTags: ["latest"] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.1-0 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
+  test("a stable release published under another tag leaves the latest badge alone", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
+      distTags: ["latest"],
+    });
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "4.0.0",
+      "published_without_approval",
+      { distTags: ["next"] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("the tag's own badge is superseded by the release npm points it at", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "4.0.0-rc.1", { tag: "next" });
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName, { tag: "next" })).body.message).toBe(
+      "4.0.0-rc.1 approved",
+    );
+
+    // A stable release is not on a prerelease channel by shape; the tag says it is.
+    await recordObservation(owner.organizationId, packageName, "4.0.0", "unknown", {
+      distTags: ["next"],
+    });
+    expect((await fetchBadge(app, "npm", packageName, { tag: "next" })).body.message).toBe(
+      "4.0.0 not reviewed",
+    );
+  });
+
+  test("`latest` moved to an older release nobody approved greys the badge", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "2.9.9",
+      "published_without_approval",
+      { distTags: ["latest"] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("2.9.9 not reviewed");
+  });
+
+  test("a release npm moved the tag off does not supersede the quote holding it", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
+      distTags: ["latest"],
+    });
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_without_approval",
+      { distTags: [] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("an alert is placed by where the tag stands", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // Its watch is gone, so the alert has no tags of its own.
+    await recordAlertOnly(owner.organizationId, packageName, "4.0.0", "published_without_approval");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
+      distTags: ["latest"],
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("with no observed holder of the tag, a missing tag is not read as off the line", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // Recorded before tags were kept: a prerelease is inferred off a stable line.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.2-0",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    // Its tags lack `latest`, but nothing observed holds `latest` either — the
+    // quote was published before the watch, or the check could not record
+    // every tag — so the newer stable release is inferred onto the line.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "4.0.0",
+      "published_without_approval",
+      { distTags: ["next"] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+
+    // Once the monitor has seen where `latest` stands, the tags decide.
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
+      distTags: ["latest"],
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
   });
 });
