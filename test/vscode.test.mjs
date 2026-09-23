@@ -691,6 +691,56 @@ describe("VS Code extension review adapter", () => {
     });
   });
 
+  test("derives the VSIX URL from assetUri when the query carries no file manifests", () => {
+    const assetUri =
+      "https://example.gallerycdn.vsassets.io/extensions/example/remote-text-fetcher/0.9.0/123";
+    expect(
+      pickVscodeBaselineVersion(
+        [
+          { version: "1.0.0", lastUpdated: "2026-06-01T00:00:00Z", assetUri },
+          { version: "0.9.0", lastUpdated: "2026-05-01T00:00:00Z", assetUri },
+          {
+            version: "0.95.0",
+            lastUpdated: "2026-05-15T00:00:00Z",
+            assetUri: "https://example.invalid/extensions/example/remote-text-fetcher/0.95.0",
+          },
+        ],
+        "1.0.0",
+      ),
+    ).toEqual({
+      version: "0.9.0",
+      url: `${assetUri}/Microsoft.VisualStudio.Services.VSIXPackage`,
+      reason: "newest-marketplace-version",
+    });
+  });
+
+  test("reads unavailable Marketplace metadata as unavailable, not as a first publish", async () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const adapterInput = vscodeAdapter.parseInput({
+      manifest,
+      artifact: artifact([file("extension/package.json", extensionPackageJson())]),
+    });
+    const staged = await vscodeAdapter.acquireStaged({}, adapterInput, fakeVscodeBroker({}));
+
+    const unavailable = fakeVscodeBroker({ versions: null });
+    const outage = await vscodeAdapter.acquireBaseline({}, adapterInput, unavailable, staged);
+    expect(outage.baseline).toMatchObject({ version: null, reason: "metadata-unavailable" });
+    expect(unavailable.downloads).toEqual([]);
+
+    const neverPublished = await vscodeAdapter.acquireBaseline(
+      {},
+      adapterInput,
+      fakeVscodeBroker({ versions: [] }),
+      staged,
+    );
+    expect(neverPublished.baseline).toMatchObject({
+      version: null,
+      reason: "no-published-baseline",
+    });
+  });
+
   test("detects undeclared configuration reads through unscoped getConfiguration", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },

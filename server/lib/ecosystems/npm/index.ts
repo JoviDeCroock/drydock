@@ -10,6 +10,10 @@ const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   id: "npm",
+  // Detection scans every file of an npm package with the JavaScript set, so
+  // diff annotation must re-match findings with it too. Left undefined,
+  // annotation falls back to Python patterns for a `.py` file (a node-gyp
+  // script), which is not the set that produced the finding.
   codePatternSet: "javascript",
 
   parseInput(raw: unknown): NpmAdapterInput {

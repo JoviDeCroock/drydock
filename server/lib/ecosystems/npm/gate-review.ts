@@ -58,6 +58,7 @@ export interface NpmGateDetails {
  */
 export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
   id: "npm",
+  // Same reason as `npmAdapter`: annotation must use the set detection used.
   codePatternSet: "javascript",
 
   parseInput(raw: unknown): NpmGateAdapterInput {

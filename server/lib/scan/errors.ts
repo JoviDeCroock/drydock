@@ -35,10 +35,11 @@ export type ScanPreconditionCode =
   | "npm_connection_changed"
   | "npm_registry_identity_missing"
   | "staged_release_identity_changed"
-  // Both reach the job as plain errors flattened across the Workers RPC
-  // boundary. Neither is retryable: a candidate that disappeared or changed
-  // will not come back by trying again, and classifying them as generic
-  // failures retried each one three times behind an unhelpful message.
+  // Neither is retryable: a candidate that disappeared or changed will not
+  // come back by trying again. The sandbox-download classifier assigns
+  // `staged_tarball_unavailable` directly; no scan path throws either
+  // message, so the exact-message match below only keeps classifying an
+  // error that still carries one.
   | "staged_tarball_unavailable"
   | "staged_candidate_changed";
 
