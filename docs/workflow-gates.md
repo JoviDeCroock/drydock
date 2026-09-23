@@ -49,7 +49,7 @@ Both are owner/admin-only (`roleCanManageIntegrations`), scoped through `ensureI
 
 ### Verification, not bookkeeping
 
-`verify` returns `{ environment, protectionRule, adminBypass, defaultBranch }`. `environment` and `protectionRule` are `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and that includes an installation token GitHub would not mint for a transient reason (5xx, rate limit). A token GitHub refuses outright (403 suspended, 404 removed) is the explicit `installation_inactive` 409 instead. Neither answer ever carries GitHub's response body, and nothing logs a body, header, or the installation token.
+`verify` returns `{ environment, protectionRule, adminBypass, defaultBranch }`. `environment` and `protectionRule` are `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and that includes an installation token GitHub would not mint for a transient reason (5xx, rate limit). A token GitHub refuses outright (403 suspended, 404 removed) is the explicit `installation_inactive` 409 instead; a 403 that is really a rate limit (a `retry-after` header, an exhausted `x-ratelimit-remaining`, or a message saying so) is not. The wizard's other GitHub calls — the repository and environment lists, release-target create — classify a mint the same way, answering `github_unavailable` (503) for one that did not complete. No route forwards GitHub's response body (the messages carry its status only), and nothing logs a body, header, or the installation token.
 
 The wizard renders a gate as armed only when GitHub reports `protectionRule: "present"` **and** the organization has a release target mapped to that repository and environment — without the mapping, the webhook has nowhere to route and the gate holds nothing. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup.
 
@@ -66,7 +66,7 @@ The generated workflows are also least-privilege, and each property is pinned by
 - Top-level `permissions: {}`. The build job gets `contents: read` and nothing else; the npm and PyPI publish jobs get `id-token: write` and nothing else; the VS Code publish job gets no scope, because its only credential is the Marketplace PAT in the environment's secrets.
 - `actions/checkout` runs with `persist-credentials: false`, since the build job goes on to run dependency install scripts and build backends.
 - Every action is pinned to a full commit SHA with its release in a trailing comment (`server/lib/workflow-gates/gate-setup-actions.ts`), which Dependabot's `github-actions` updates can move. `setup-node` restores no package-manager cache in a release build.
-- Tools that run beside a credential are exact versions: the npm CLI the publish job installs for OIDC (`NPM_CLI_VERSION` in `npm/workflow-gate.ts`) and `@vscode/vsce` (`VSCE_VERSION` in `vscode/workflow-gate.ts`). A Marketplace PAT is not bound to the workflow and outlives the run, so an unpinned `vsce` would hand it to whatever release is newest.
+- Tools that run beside a credential are pinned as a whole tree, not just by name. The npm publish job installs an exact npm CLI for OIDC (`NPM_CLI_VERSION` in `npm/workflow-gate.ts`); npm bundles its own dependencies, so that version pins everything it loads. `vsce` does not bundle its dependencies, so `npx @vscode/vsce@x.y.z` would still resolve their ranges fresh on every run — beside a Marketplace PAT that is not bound to the workflow and outlives it. The VS Code template therefore runs `vsce` from the repository's own lockfile (a `devDependency`) in both jobs, and the publish job installs that tree with `npm ci --ignore-scripts`.
 - The npm publish carries no `--provenance`: trusted publishing attaches provenance by itself from a public repository, and the flag fails the publish from a private one.
 - The PyPI template is the single-build shape. A platform wheel matrix needs the sharded example in [`pypi-workflow-gate.md`](./pypi-workflow-gate.md#large-compiled-releases).
 
@@ -209,8 +209,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false # npm ci runs install scripts next
-      - run: npm ci
-      - run: npx --yes @vscode/vsce@4.0.0 package --out dist/extension.vsix
+      - run: npm ci # @vscode/vsce is a devDependency in the lockfile
+      - run: ./node_modules/.bin/vsce package --out dist/extension.vsix
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
@@ -219,18 +219,24 @@ jobs:
   publish:
     needs: package
     environment: production # VSCE_PAT is a secret on this environment
+    permissions:
+      contents: read # the lockfile only
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts # the locked vsce, no install scripts
       - uses: actions/download-artifact@v4
         with:
           name: vscode-release-candidate
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: npx --yes @vscode/vsce@4.0.0 publish --packagePath dist/extension.vsix
+      - run: ./node_modules/.bin/vsce publish --packagePath dist/extension.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 ```
 
-The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary. Pin `@vscode/vsce` to an exact version: the job holds a Marketplace PAT that outlives the run, so an unpinned tool hands it to whatever release is newest.
+The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary. Run `vsce` from the lockfile rather than `npx @vscode/vsce@x.y.z`: the job holds a Marketplace PAT that outlives the run, and a version pin on `vsce` alone still resolves its dependencies fresh on every run.
 
 These shapes use action tags for brevity. The workflows guided setup generates pin every action to a commit SHA instead — see [Generated workflows](#generated-workflows).
 

@@ -48,7 +48,9 @@ export type GithubAppValidationCode =
   | "environment_unmapped"
   | "environment_already_mapped"
   | "unsupported_ecosystem"
-  | "invalid_input";
+  | "invalid_input"
+  // GitHub did not complete a request Drydock needed (5xx, rate limit); retry.
+  | "github_unavailable";
 
 // ── Config readers ───────────────────────────────────────────────────────────
 

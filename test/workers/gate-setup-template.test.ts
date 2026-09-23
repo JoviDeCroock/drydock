@@ -48,8 +48,9 @@ const CASES = [
     packageName: "acme.toolkit",
     artifactName: "vscode-release-candidate",
     buildJob: "package",
-    // The Marketplace PAT is the job's only credential; it needs no GitHub scope.
-    publishPermissions: {},
+    // Read for the lockfile the job installs vsce from; the Marketplace PAT is
+    // its credential, and it gets no GitHub write or OIDC scope.
+    publishPermissions: { contents: "read" },
   },
 ] as const;
 
@@ -155,11 +156,11 @@ describe("gate setup templates", () => {
       });
 
       test("keeps the checkout token off disk", () => {
-        const checkouts = generated.yaml.split("actions/checkout@").length - 1;
-        expect(checkouts).toBe(1);
-        const checkout = generated.yaml.slice(generated.yaml.indexOf("actions/checkout@"));
-        const nextStep = checkout.indexOf("\n      - ");
-        expect(checkout.slice(0, nextStep)).toContain("persist-credentials: false");
+        const checkouts = generated.yaml.split("actions/checkout@").slice(1);
+        expect(checkouts.length).toBeGreaterThan(0);
+        for (const step of checkouts) {
+          expect(step.slice(0, step.indexOf("\n      - "))).toContain("persist-credentials: false");
+        }
       });
 
       test("pins every action to a full commit SHA", () => {
@@ -245,19 +246,21 @@ describe("gate setup templates", () => {
     expect(generated.yaml).not.toContain("id-token");
   });
 
-  test("vscode runs one exact vsce release in both jobs", () => {
+  test("vscode runs vsce from the lockfile, with scripts off beside the PAT", () => {
     const generated = template("vscode", "acme.toolkit");
-    // The publish job holds a PAT that outlives the run; an unpinned tool
-    // there hands it to whatever release is newest.
-    const invocations = [...generated.yaml.matchAll(/npx (?:--yes )?@vscode\/vsce(@\S+)? /g)];
-    expect(invocations).toHaveLength(2);
-    const versions = new Set(invocations.map((m) => m[1]));
-    expect(versions.size).toBe(1);
-    expect([...versions][0]).toMatch(/^@\d+\.\d+\.\d+$/);
-    // vsce 4.x needs Node >= 22, so the publish job cannot rely on the runner's.
+    // The publish job holds a PAT that outlives the run. `npx @vscode/vsce@x`
+    // pins vsce but resolves its dependency ranges fresh every run, so vsce
+    // is never fetched ad hoc — both jobs run the repository's locked copy.
+    expect(generated.yaml).not.toContain("npx");
+    expect(generated.yaml.split("./node_modules/.bin/vsce ").length - 1).toBe(2);
     const publish = jobBlocks(generated.yaml).get("publish") ?? "";
+    const install = publish.indexOf("npm ci --ignore-scripts");
+    expect(install).toBeGreaterThan(-1);
+    expect(install).toBeLessThan(publish.indexOf("vsce publish"));
+    // The locked vsce needs a known Node (4.x wants >= 22), not the runner's.
     expect(publish.indexOf("actions/setup-node@")).toBeGreaterThan(-1);
-    expect(publish.indexOf("actions/setup-node@")).toBeLessThan(publish.indexOf("vsce@"));
+    expect(publish.indexOf("actions/setup-node@")).toBeLessThan(install);
+    expect(generated.notes.join("\n")).toContain("devDependencies");
   });
 });
 

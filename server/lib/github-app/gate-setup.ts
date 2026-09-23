@@ -89,8 +89,15 @@ function repositoryPath(fullName: string): string {
   return `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
 }
 
-function unavailable(state: Partial<GateSetupState>, reason: string): GateSetupState {
-  emitOperationalEvent("warn", "github_app.gate_setup_check_unavailable", { reason });
+function unavailable(
+  state: Partial<GateSetupState>,
+  reason: string,
+  githubStatus: number | null = null,
+): GateSetupState {
+  emitOperationalEvent("warn", "github_app.gate_setup_check_unavailable", {
+    reason,
+    ...(githubStatus !== null ? { githubStatus } : {}),
+  });
   return {
     environment: "unknown",
     protectionRule: "unknown",
@@ -156,17 +163,19 @@ export async function readGateSetupState(
     // token, a JWT Drydock could not sign — is a mint that did not complete,
     // which this function's contract makes `unknown`. Neither path forwards
     // GitHub's response body.
-    if (
-      err instanceof InstallationTokenError &&
-      !err.rateLimited &&
-      (err.status === 403 || err.status === 404)
-    ) {
+    if (err instanceof InstallationTokenError && err.code === "installation_inactive") {
       throw new GithubAppValidationError(
         "installation_inactive",
         "GitHub no longer accepts this installation. Unsuspend or reinstall the Drydock GitHub App, then check again.",
       );
     }
-    return unavailable({}, "Drydock could not authenticate to GitHub for this installation.");
+    // The status (never the body) tells an operator a misconfigured App (401)
+    // from a GitHub outage (5xx) in the unavailable event.
+    return unavailable(
+      {},
+      "Drydock could not authenticate to GitHub for this installation.",
+      err instanceof InstallationTokenError ? err.status : null,
+    );
   }
 
   const repository = await readRepository(path, headers);
