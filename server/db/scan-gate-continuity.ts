@@ -35,7 +35,7 @@ export interface GateReviewHistory {
   /**
    * Whether the organization gates this package today: a completed gate
    * review of it ran through a release target that is still configured — or
-   * through the same repository as one — on a GitHub App installation that is
+   * through a repository some live target still gates — on a GitHub App installation that is
    * still active, and that target is not pinned to another ecosystem. Gate
    * history alone is not enough — an organization that ran one test gate and
    * deleted the target, or uninstalled the app, is no longer gating the
@@ -160,9 +160,13 @@ export async function loadGateReviewHistory(
             eq(githubReleaseTargets.id, githubWorkflowGates.releaseTargetId),
             // A target cannot be edited, only deleted and recreated, and the
             // delete cascades to its gate rows and unlinks their scans. The
-            // repository the gate attested survives on the scan, so a
-            // recreated target for the same repository still counts; without
-            // this, `ungated` would go quiet until its next gate review.
+            // scan's intent-envelope repository survives, so any live target
+            // for that repository counts; without this, `ungated` would go
+            // quiet until the next gate review. The envelope is normally the
+            // gate-attested repository (it falls back to the manifest's only
+            // when that fails to normalize), and a repository renamed before
+            // the target was recreated no longer matches. Either way the
+            // looser match can only add `ungated`, never hide it.
             sql`lower(json_extract(${scans.summaryJson}, '$.intentEnvelope.repository')) = lower('https://github.com/' || ${githubReleaseTargets.repositoryFullName})`,
           ),
         ),
