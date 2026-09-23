@@ -236,13 +236,15 @@ export const scans = sqliteTable(
     // Whether this review may answer the badge with no opt-in at all.
     //
     // A badge is a name-keyed anonymous surface, so "no opt-in" is only safe
-    // where three things are provable at write time, and it fails closed if
+    // where four things are provable at write time, and it fails closed if
     // any is not (`isDefaultBadgePublic`): the source is registry-verified and
     // the manifest agrees with npm's name for the stage (npm let the
     // organization's token read this exact stage, so this is its own review of
     // that package, not a manifest claim); the registry is the public npm
     // registry; and npm's own `access` for the stage is `public`, from the
-    // stage record rather than the name shape or the tarball's `publishConfig`.
+    // stage record rather than the name shape or the tarball's `publishConfig`;
+    // and the scan verified the bytes it read against npm's digest, so the
+    // published tarball can later be compared with them.
     //
     // Encoded once here rather than re-derived by readers: a disclosure gate
     // should not be an inference three columns deep.

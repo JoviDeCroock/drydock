@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
   PUBLIC_NPM_REGISTRY_URLS,
+  REGISTRY_VERIFIED_SCAN_SOURCES,
   publicPackageLookupKey,
   type PublicEcosystem,
 } from "../lib/public-feed";
@@ -39,7 +40,10 @@ function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage)
   return sql`exists (
     select 1 from scans v
     where v.organization_id = ${organizationId}
-      and v.source in ('manual', 'auto_discovery')
+      and v.source in (${sql.join(
+        REGISTRY_VERIFIED_SCAN_SOURCES.map((source) => sql`${source}`),
+        sql`, `,
+      )})
       and v.status = 'complete'
       and v.registry_package_name = ${target.packageName}
       and v.package_name = v.registry_package_name
@@ -85,7 +89,7 @@ export async function isRegistryVerifiedPublisher(
     .where(
       and(
         eq(scans.organizationId, organizationId),
-        inArray(scans.source, ["manual", "auto_discovery"]),
+        inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
         eq(scans.status, "complete"),
         eq(scans.registryPackageName, target.packageName),
         sql`${scans.packageName} = ${scans.registryPackageName}`,

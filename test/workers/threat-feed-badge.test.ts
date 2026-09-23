@@ -37,6 +37,9 @@ function seedBadgeScan(
     // manifest's name for staged sources, which is what npm reports for an
     // honest release; a different value is a tarball claiming another name.
     registryPackageName?: string | null;
+    // The SHA-1 the scan verified the staged bytes against, or null for a
+    // scan that could not verify them.
+    artifactSha1?: string | null;
   } = {},
 ): Promise<string> {
   const packageName = options.packageName ?? "@org/pkg";
@@ -94,6 +97,16 @@ function seedBadgeScan(
             stagedPublish: {
               access: options.access ?? "public",
               ...(options.tag ? { tag: options.tag } : {}),
+              ...(options.artifactSha1 === null
+                ? {}
+                : {
+                    artifactIntegrity: {
+                      algorithm: "sha1",
+                      status: "verified",
+                      declared: options.artifactSha1 ?? REVIEWED_SHA1,
+                      computed: options.artifactSha1 ?? REVIEWED_SHA1,
+                    },
+                  }),
             },
           }
         : {}),
@@ -1713,6 +1726,7 @@ async function seedPublicRelease(
     tag?: string;
     source?: "manual" | "workflow_gate";
     registryPackageName?: string | null;
+    artifactSha1?: string | null;
   } = {},
 ): Promise<string> {
   const scanId = await seedCompletedScan(owner, {
@@ -1843,6 +1857,37 @@ describe("an OSS package needs no opt-in", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
   });
 
+  test("a review whose bytes were never verified against npm's digest keeps the opt-in", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    // Nothing could later notice npm serving other bytes under this version,
+    // so it may not answer unattended.
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1", { artifactSha1: null });
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a gate row that somehow holds the default-on flag still never answers without a listing", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1", {
+      source: "workflow_gate",
+    });
+    await decide(app, scanId, "publish");
+    // What a write bug would leave behind.
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ badgePublic: true, badgePackageKey: `npm:${packageName}` })
+      .where(eq(schema.scans.id, scanId));
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
   test("a mirror or private registry never qualifies", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -1968,7 +2013,10 @@ describe("the badge backfill script", () => {
       packageName: `pkg-e-${suffix}`,
       registryPackageName: null,
     });
-    const seeded = [agreeing, disagreeing, restricted, mirror, noNpmName];
+    const unverifiedBytes = await seedPublicRelease(owner, `pkg-f-${suffix}`, "1.0.0", {
+      artifactSha1: null,
+    });
+    const seeded = [agreeing, disagreeing, restricted, mirror, noNpmName, unverifiedBytes];
     for (const scanId of seeded) {
       await decide(app, scanId, "publish");
       await share(app, scanId, { threatFeed: true });
@@ -1996,6 +2044,7 @@ describe("the badge backfill script", () => {
     await runBackfillScript();
     for (const scanId of seeded) expect(await badgeColumns(scanId)).toEqual(decided.get(scanId));
     expect(decided.get(agreeing)).toMatchObject({ badgePublic: true });
+    expect(decided.get(unverifiedBytes)).toMatchObject({ badgePublic: false });
     expect(decided.get(disagreeing)).toEqual({
       badgePackageKey: `npm:pkg-b-${suffix}`,
       badgePublic: false,
@@ -2461,6 +2510,7 @@ async function recordObservation(
   packageName: string,
   version: string,
   status: ObservationStatus,
+  options: { sha1?: string; reason?: string } = {},
 ): Promise<void> {
   const db = createDb(env.DB);
   const now = new Date();
@@ -2487,6 +2537,8 @@ async function recordObservation(
     firstSeenAt: now,
     checkedAt: now,
     status,
+    reason: options.reason ?? null,
+    sha1: options.sha1 ?? null,
   });
 }
 
@@ -2563,6 +2615,39 @@ describe("the badge reads the organization's publication monitor", () => {
     await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "unknown");
+    await recordObservation(owner.organizationId, packageName, "2.0.0", "unknown", {
+      sha1: "c".repeat(40),
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("published bytes that differ from the reviewed ones take the green off, whatever the status", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    // The stage was reviewed and approved after npm had already published
+    // other bytes as 3.0.0, so the monitor settled on `unknown` without
+    // comparing them. The badge compares them itself.
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "unknown", {
+      reason: "decision_history_unavailable",
+      sha1: "b".repeat(40),
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.0 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
+  test("the reviewed bytes, published, keep the badge approved", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "unknown", {
+      reason: "decision_history_unavailable",
+      sha1: REVIEWED_SHA1,
+    });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
   });
 

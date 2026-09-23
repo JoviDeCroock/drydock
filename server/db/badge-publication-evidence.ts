@@ -5,6 +5,7 @@ import {
   scanDistTag,
   scanEcosystem,
   scanPublicPackageName,
+  verifiedStagedDigest,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { findNewerPublishedRelease, type SharedScanRow } from "./scan-share";
@@ -71,9 +72,14 @@ function onQuotedLine(version: string, pickVersion: string, tag: string): boolea
  *   approved match is left to the scan-based path, which knows whether that
  *   release answers the badge itself.
  * - **The quoted version itself**, with a discrepancy (bytes other than the
- *   approved ones, publication without or despite a decision). A green "3.0.0
- *   approved" beside that vouches for bytes the review did not see. `unknown`
- *   leaves it alone, and a `blocked` pick stays red: it already warns.
+ *   approved ones, publication without or despite a decision), or with
+ *   published bytes whose digest differs from the digest the pick verified —
+ *   whatever status the monitor gave the observation. The monitor can settle
+ *   on `unknown` before it compares bytes (a decision recorded after npm's
+ *   publication time, for one), and a green "3.0.0 approved" must not survive
+ *   over bytes nobody compared. `unknown` with matching or absent digests
+ *   leaves an approved quote alone, and a `blocked` pick stays red: it already
+ *   warns.
  *
  * Only the pick's own organization's evidence counts, for the same reason the
  * staleness probe is organization-scoped: another account's watch must not be
@@ -91,7 +97,8 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
   if (!packageName || !pickVersion) return null;
   const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
 
-  const [observed, alerted] = await Promise.all([
+  const reviewedDigest = verifiedStagedDigest(pick.summaryJson);
+  const [observed, alerted, quoted] = await Promise.all([
     db
       .select({ version: publicationObservations.version, status: publicationObservations.status })
       .from(publicationObservations)
@@ -118,11 +125,27 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
       )
       .orderBy(desc(publicationAlerts.createdAt))
       .limit(OBSERVATION_WINDOW),
+    // The quoted version's own observation, whatever its status, for its bytes.
+    db
+      .select({ sha1: publicationObservations.sha1 })
+      .from(publicationObservations)
+      .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
+      .where(
+        and(
+          eq(publicationWatches.organizationId, pick.organizationId),
+          eq(publicationWatches.packageName, packageName),
+          eq(publicationObservations.organizationId, pick.organizationId),
+          eq(publicationObservations.version, pickVersion),
+        ),
+      )
+      .limit(1),
   ]);
 
   const discrepancies: ReadonlySet<string> = new Set(DISCREPANCY_STATUSES);
   let newest: string | null = null;
-  let pickDisqualified = false;
+  const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
+  let pickDisqualified =
+    reviewedDigest !== null && publishedSha1 !== null && publishedSha1 !== reviewedDigest;
   for (const { version, status } of [...observed, ...alerted]) {
     if (version === pickVersion) {
       if (discrepancies.has(status)) pickDisqualified = true;

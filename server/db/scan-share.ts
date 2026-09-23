@@ -1,10 +1,23 @@
-import { and, desc, eq, isNotNull, isNull, ne, not, notInArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  not,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
 import { compareSemver } from "../lib/ecosystems/npm/registry";
 import {
   BADGE_INELIGIBLE_SOURCES,
   DEFAULT_BADGE_TAG,
   PUBLIC_NPM_REGISTRY_URLS,
+  REGISTRY_VERIFIED_SCAN_SOURCES,
   badgeLookupKey,
   publicPackageLookupKey,
   scanDistTag,
@@ -584,9 +597,11 @@ export async function listDefaultBadgeCandidateScans(
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
         eq(scans.registryVersionStatus, "published"),
+        // `badge_public` already requires all three; they are enforced again
+        // here so a write that ever gets the flag wrong still cannot let a
+        // manifest claim, or a name npm did not give, answer with no opt-in.
+        inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
         badgeEligibleSource,
-        // `badge_public` already requires it; the key is a release line, not
-        // an identity, so the name rule is enforced here as well.
         publicNameIsRegistryName,
         badgeTagMatchesSql(tag),
       ),

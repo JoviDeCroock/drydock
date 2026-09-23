@@ -80,8 +80,11 @@ WHERE public_package_key IS NOT NULL
   );
 
 -- 2. The release line (npm's name, whatever the manifest says) and default-on
---    eligibility (npm's name agrees, npm says public), for stages on the
---    public npm registry only. The exact strings `PUBLIC_NPM_REGISTRY_URLS`
+--    eligibility (npm's name agrees, npm says public, and the scan verified
+--    the bytes it read against npm's digest for the stage), for stages on the
+--    public npm registry only. The digest check is stricter than
+--    `parseStagedArtifactIntegrity` (which also accepts upper-case hex), never
+--    looser; persisted digests are written lower-case. The exact strings `PUBLIC_NPM_REGISTRY_URLS`
 --    holds, never a prefix: a LIKE would also admit
 --    `https://registry.npmjs.org.internal.corp`, a private registry.
 UPDATE scans
@@ -89,6 +92,13 @@ SET badge_package_key = 'npm:' || registry_package_name,
     badge_public = CASE
       WHEN package_name = registry_package_name
        AND json_extract(summary_json, '$.stagedPublish.access') = 'public'
+       AND json_extract(summary_json, '$.stagedPublish.artifactIntegrity.algorithm') = 'sha1'
+       AND json_extract(summary_json, '$.stagedPublish.artifactIntegrity.status') = 'verified'
+       AND length(json_extract(summary_json, '$.stagedPublish.artifactIntegrity.computed')) = 40
+       AND json_extract(summary_json, '$.stagedPublish.artifactIntegrity.computed')
+         NOT GLOB '*[^0-9a-f]*'
+       AND json_extract(summary_json, '$.stagedPublish.artifactIntegrity.declared')
+         = json_extract(summary_json, '$.stagedPublish.artifactIntegrity.computed')
       THEN 1 ELSE 0
     END
 WHERE badge_package_key IS NULL

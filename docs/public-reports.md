@@ -179,7 +179,7 @@ protect that the registry has not already published, so the badge answers on
 its own.
 
 `scans.badge_public` records that decision when the scan is persisted, and it
-is false unless all three of these are provable:
+is false unless all four of these are provable:
 
 - **A registry-verified source, under npm's name.** npm let the
   organization's own token read that exact stage, and the reviewed manifest's
@@ -198,6 +198,13 @@ is false unless all three of these are provable:
   rather than the name shape matters: "unscoped therefore public" is true but
   narrow, and silently excludes every scoped package that is published
   publicly. `publication-auto-enrollment.ts` gates on the same field.
+- **A verified digest of the reviewed bytes.** The scan's `artifactIntegrity`
+  must be `verified`: npm's declared digest for the stage and the digest of
+  the bytes the scan read agree (`verifiedStagedDigest`). A badge that answers
+  unattended must be able to notice npm serving other bytes under the version
+  it approves, and that takes a digest of the approved bytes to compare the
+  published tarball with (see "Releasing again"). A review that could not
+  verify its bytes keeps the explicit opt-in.
 
 It is a stored column rather than a predicate readers re-derive, because a
 disclosure gate should not be an inference three columns deep. Reviews
@@ -243,8 +250,9 @@ Two further conditions apply to the _release_ rather than the package, and
 
 `scans.badge_public` is _evidence_, written once when the scan is persisted and
 never edited: npm let this organization's token read the stage, the manifest
-agrees with npm's name for it, npm says the package is public, npm published
-this version, the organization approved it. That is the part an attacker must
+agrees with npm's name for it, the scan verified the bytes against npm's digest,
+npm says the package is public, npm published this version, the organization
+approved it. That is the part an attacker must
 not be able to mint, so it is derived and immutable.
 
 _Consent_ is a different thing, and it belongs to the package's publishers. A
@@ -471,9 +479,20 @@ back into a green badge.
   `published_despite_rejection`, `artifact_mismatch` → `<version> not
 reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
   differ from the approved ones, or a publication the approval did not precede,
-  vouches for something the review did not establish. `unknown` here means the
-  evidence could not be established and leaves an approved quote alone. A
-  `blocked` pick stays red: it already warns.
+  vouches for something the review did not establish. A `blocked` pick stays
+  red: it already warns.
+- **The quoted version's published bytes**, compared by the badge itself: when
+  the monitor recorded the published tarball's SHA-1 for the quoted version
+  and it differs from the digest the pick verified, the quote goes grey
+  whatever status the observation carries. The monitor can settle on
+  `unknown` before it compares bytes — an approval recorded after npm's
+  publication time, for one — and a green badge must not survive over bytes
+  nobody compared. Otherwise `unknown` about the quoted version means the
+  evidence could not be established and leaves an approved quote alone.
+  Default-on picks always carry a verified digest; a _listed_ review whose
+  bytes were never verified has nothing to compare, so only the monitor's
+  own discrepancy statuses can grey it — the listing is the maintainer's
+  deliberate claim, and its report shows the integrity verdict.
 
 Observations carry no dist-tag, so the quoted line is inferred from the badge's
 tag and the version's shape: `latest` is superseded by newer stable versions

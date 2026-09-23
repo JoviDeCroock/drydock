@@ -162,7 +162,8 @@ function publishedPairEcosystem(summaryJson: unknown): PublicEcosystem | null {
  * token passes — and it covers npm's name, never the manifest's (see
  * `scanPublicPackageName`).
  */
-const REGISTRY_VERIFIED_SOURCES: ReadonlySet<string> = new Set(["manual", "auto_discovery"]);
+export const REGISTRY_VERIFIED_SCAN_SOURCES = ["manual", "auto_discovery"] as const;
+const REGISTRY_VERIFIED_SOURCES: ReadonlySet<string> = new Set(REGISTRY_VERIFIED_SCAN_SOURCES);
 
 /**
  * Never guess an ecosystem for a gate scan with missing provenance, and never
@@ -344,6 +345,26 @@ export function badgeReleaseLineKey(row: {
   return ecosystem ? publicPackageLookupKey(ecosystem, row.registryPackageName) : null;
 }
 
+/**
+ * The SHA-1 of the bytes this staged review read, when the scan proved they
+ * are the bytes npm recorded for the stage (`artifactIntegrity` verified:
+ * npm's declared digest and the digest computed from the download agree).
+ * Null for anything less — a legacy scan, an unverified or mismatched stage.
+ * It is what a published tarball's bytes can be compared with.
+ */
+export function verifiedStagedDigest(summaryJson: unknown): string | null {
+  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
+    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
+      const integrity = parseStagedArtifactIntegrity(
+        (stagedPublish as { artifactIntegrity?: unknown }).artifactIntegrity,
+      );
+      if (integrity?.status === "verified") return integrity.computed;
+    }
+  }
+  return null;
+}
+
 /** npm's own access level for the stage, from its staged-publish record. */
 function stagedPublishAccess(summaryJson: unknown): string | null {
   if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
@@ -360,7 +381,7 @@ function stagedPublishAccess(summaryJson: unknown): string | null {
  * Whether this review may answer the badge with **no opt-in at all**.
  *
  * The badge is name-keyed and anonymous, so default-on is only safe where
- * being public is provable rather than assumed. Three things must hold, and
+ * being public is provable rather than assumed. Four things must hold, and
  * every one of them fails closed:
  *
  * - **Registry-verified source, under npm's name.** npm let the
@@ -373,6 +394,9 @@ function stagedPublishAccess(summaryJson: unknown): string | null {
  *   the stage is `public` or `restricted`. This is the registry's answer, from
  *   the same response as the stage id and shasum — not `publishConfig` out of
  *   the tarball, which is package bytes and may not be trusted here.
+ * - **A verified digest of the reviewed bytes** (`verifiedStagedDigest`).
+ *   Without one, nothing can notice npm serving other bytes under the approved
+ *   version, and an unattended green badge must be able to.
  *
  * Reading npm rather than the name shape matters: "unscoped therefore public"
  * is a true inference but a narrow one, and it silently excludes every scoped
@@ -395,7 +419,11 @@ export function isDefaultBadgePublic(row: {
   // Also requires the public npm registry: any other host — a mirror, a
   // proxy, an enterprise registry — says nothing about publicness.
   if (!scanPublicPackageName(row)?.trim()) return false;
-  return stagedPublishAccess(row.summaryJson) === "public";
+  if (stagedPublishAccess(row.summaryJson) !== "public") return false;
+  // A badge that answers with no opt-in must be able to notice when npm
+  // serves other bytes under the version it approves, which takes a digest
+  // of the reviewed bytes to compare against (`findPublicationDiscrepancy`).
+  return verifiedStagedDigest(row.summaryJson) !== null;
 }
 
 // A manifest claim must not displace a registry-verified npm review, and an
