@@ -753,8 +753,11 @@ export const publicationWatchCandidates = sqliteTable(
 );
 
 /**
- * An organization's public badge turned off for one package: both badge routes
- * skip this organization's reviews under the key while a row exists.
+ * A publisher's "public badge: off" for one package. While any row for the key
+ * belongs to an organization that still has a registry-verified review of the
+ * name (`registryVerifiedPublisherSql`), the badge is off for everyone — both
+ * routes, every organization's reviews. A row whose organization has lost that
+ * evidence is ignored, so rows may outlive it harmlessly.
  *
  * Consent is per (organization, package) because the badge is per package and
  * outlives any one release — `scans.badge_public` is the *evidence* a release
@@ -765,7 +768,8 @@ export const publicationWatchCandidates = sqliteTable(
  *
  * Keyed by the badge's own key (`publicPackageLookupKey`), so the switch and
  * the badge route normalize a name identically — a legacy mixed-case npm name
- * such as `JSONStream` is the same key in both.
+ * such as `JSONStream` is the same key in both. The key leads the unique index
+ * because the badge route asks by key alone.
  */
 export const packageBadgeOptOuts = sqliteTable(
   "package_badge_opt_outs",
@@ -781,7 +785,7 @@ export const packageBadgeOptOuts = sqliteTable(
     }),
   },
   (table) => [
-    uniqueIndex("package_badge_opt_outs_org_package").on(table.organizationId, table.packageKey),
+    uniqueIndex("package_badge_opt_outs_package_org").on(table.packageKey, table.organizationId),
   ],
 );
 export const publicationAlerts = sqliteTable(

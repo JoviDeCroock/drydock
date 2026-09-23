@@ -452,27 +452,6 @@ function badgeTagMatchesSql(tag: string) {
     : sql`${distTag} = ${tag}`;
 }
 
-/**
- * The package-level off switch (`package_badge_opt_outs`): an organization can
- * stop its own reviews from answering the badge for a package at all.
- *
- * Matched on the badge key being asked for, which is the key every candidate
- * on either route was selected by, so the switch and the route cannot
- * normalize a name differently.
- *
- * It suppresses *both* badge routes, including a review that was deliberately
- * feed-listed: "public badge: off" has to mean the badge is off, or the
- * control does not mean what it says. The threat-feed entry is a different
- * surface and is unaffected; unlisting is still how that is withdrawn.
- */
-function badgeNotOptedOut(packageKey: string) {
-  return sql`not exists (
-    select 1 from package_badge_opt_outs o
-    where o.organization_id = ${scans.organizationId}
-      and o.package_key = ${packageKey}
-  )`;
-}
-
 // Badge-ineligible sources never get a badge key, so this excludes nothing the
 // key filters admit today. It stays as the second lock: a row that acquired a
 // key before its source was reclassified, or through a future write that
@@ -536,7 +515,6 @@ export async function listBadgeCandidateScans(
         badgeTagMatchesSql(tag),
         badgeEligibleSource,
         publicNameIsRegistryName,
-        badgeNotOptedOut(packageKey),
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
@@ -611,7 +589,6 @@ export async function listDefaultBadgeCandidateScans(
         // an identity, so the name rule is enforced here as well.
         publicNameIsRegistryName,
         badgeTagMatchesSql(tag),
-        badgeNotOptedOut(packageKey),
       ),
     )
     .orderBy(desc(scans.completedAt), desc(scans.id))

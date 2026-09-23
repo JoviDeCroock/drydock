@@ -247,17 +247,46 @@ agrees with npm's name for it, npm says the package is public, npm published
 this version, the organization approved it. That is the part an attacker must
 not be able to mint, so it is derived and immutable.
 
-_Consent_ is a different thing, and it belongs to the organization. The
-package release page (`/dashboard/packages/:name`) carries a **Public badge**
-section over `GET /api/v1/packages/:name/badge[?ecosystem=]`, which any member
-may read: whether the badge is on, whether an approved public release answers
-it with no opt-in, and whether a listed review does. `PUT` on the same path
-with `{ "enabled": false | true }` turns it off or back on — owner/admin like
-sharing, audited as `organization.package_badge_disabled` / `_enabled`, and it
-purges the cached badge for `latest` and every dist-tag the organization's
-reviews of the package carry. Turning it off inserts a row into
-`package_badge_opt_outs` for (organization, badge key); turning it on deletes
-it. Both badge routes skip that organization's reviews while the row exists.
+_Consent_ is a different thing, and it belongs to the package's publishers. A
+**registry-verified publisher** of a package is an organization with a
+completed staged review of a stage on the public npm registry that its token
+could read, whose manifest agrees with npm's name for it — the evidence
+`scanPublicPackageName` accepts as a public identity. Any such publisher may
+switch the badge off, and **one publisher's switch silences it for everyone**:
+both routes, every organization's reviews, listed ones included, and the
+staleness probe never runs. Letting another organization's review answer
+instead would make "off" mean nothing. A switched-off badge answers exactly as a
+package nobody reviewed, so it adds no enumeration signal to the anonymous
+route.
+
+Nobody else can switch it: an organization that only watches the package, ran
+a published-pair review of it, has a workflow gate whose manifest claims the
+name, or staged it from another registry has no credential-backed tie to the
+name. `PUT` refuses such an organization (`403`, `code:
+"not_a_verified_publisher"`), and a withdrawal of one of its own reviews is
+what unlisting is for. The rule holds at read time too: an opt-out row counts
+only while its organization is still a registry-verified publisher
+(`isPackageBadgeSwitchedOff`), so a row that outlived its evidence — or was
+written some other way — cannot hold a badge off. Only npm has
+registry-verified reviews, so no PyPI or VS Code badge can be switched off;
+unlisting withdraws those.
+
+The package release page (`/dashboard/packages/:name`) carries a **Public
+badge** section over `GET /api/v1/packages/:name/badge[?ecosystem=]`, which
+any member may read: whether the organization is a verified publisher, whether
+its own switch is off, whether another publisher's is, whether an approved
+public release or a listed review of its own would answer, and what the public
+endpoint returns right now, with the README snippet to copy. Another
+publisher's switch is disclosed only to an organization that is itself a
+verified publisher of the package, and never names the other organization:
+telling anyone else would reveal another organization's review and choice to
+an account with no tie to the package. `PUT` on the same path with
+`{ "enabled": false | true }` sets the organization's own switch — owner/admin
+like sharing, audited as `organization.package_badge_disabled` / `_enabled`,
+and it purges the cached badge for `latest` and every dist-tag any review of the
+package carries. Turning it off inserts a row into `package_badge_opt_outs` for
+(badge key, organization); turning it back on deletes only that row, needs no
+evidence, and never overrides another publisher's switch.
 
 The row is keyed by the badge's own key (`publicPackageLookupKey`) and the
 switch accepts any name the badge route does, so the two cannot normalize a
@@ -272,10 +301,12 @@ approved this" must never start, stop, or suppress a watch, and "stop alerting
 me about publications" must never grey out a README. The switch touches only
 the opt-out.
 
-The switch suppresses **both** routes, including a review that was deliberately
-feed-listed — "public badge: off" has to mean the badge is off, or the control
-does not mean what it says. The threat-feed entry is a separate surface and is
-unaffected; unlisting is still how that is withdrawn.
+The threat-feed entry is a separate surface and is unaffected by the switch;
+unlisting is still how that is withdrawn. One inference follows from "off for
+everyone": an organization that lists a review of a package and sees the badge
+keep saying `not reviewed` can infer that some publisher of the package
+switched it off. That is the cost of a switch that actually holds, and it names
+nobody.
 
 Five limits are known and deliberate:
 
@@ -293,11 +324,14 @@ Five limits are known and deliberate:
   that changes a badge (decision, share, list, unlist, revoke) does purge. The
   old design had a user action behind every badge change; default-on removed
   that, and nothing replaced it.
-- **A default-on badge is not organization-scoped.** Two organizations can both
-  have tokens npm lets read stages under the same name, and both answer; the higher
-  release wins. That is the right outcome for co-maintainers and an invisible
-  handover for anyone else, with no dashboard signal that a badge changed
-  hands.
+- **A badge is not organization-scoped.** Two organizations can both have
+  tokens npm lets read stages under the same name, and both answer. Which
+  verdict the badge shows is decided by release order (the registry's version,
+  `compareBadgeCandidates`), then by which review completed most recently —
+  not by which organization is "the" maintainer. That is the right outcome for
+  co-maintainers and an invisible handover for anyone else, with no dashboard
+  signal that a badge changed hands. Either publisher can switch it off for
+  both (see above).
 - **`isDefaultBadgePublic` cites an advisory check.** "npm let the
   organization's token read this stage" rests on `checkStagedPublishAccess`,
   which fails _open_ on a network error or any non-401/403/404 response. The

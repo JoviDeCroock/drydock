@@ -24,7 +24,6 @@ import {
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
   publicFeedCacheKey,
-  publicPackageLookupKey,
   publicPackageNameMax,
   resolveBadgeTag,
   scanDistTag,

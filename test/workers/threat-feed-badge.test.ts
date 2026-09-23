@@ -2068,8 +2068,10 @@ async function setBadgeVisibility(
 interface BadgeVisibilityBody {
   package: { name: string; ecosystem: string };
   badge: {
-    enabled: boolean;
-    disabledAt: string | null;
+    eligible: boolean;
+    switchedOffByYou: boolean;
+    switchedOffAt: string | null;
+    switchedOffElsewhere: boolean;
     answersByDefault: boolean;
     listed: boolean;
     canManage: boolean;
@@ -2123,16 +2125,17 @@ describe("turning a package's badge off", () => {
     expect(feed.entries.some((entry) => entry.package === packageName)).toBe(true);
   });
 
-  test("is scoped to the organization that set it", async () => {
+  test("a stranger with no review of the package cannot switch it off", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
     await decide(app, scanId, "publish");
 
-    // A stranger must not be able to silence someone else's badge.
     const stranger = await seedUser();
-    await setBadgeVisibility(buildTestApp(stranger), packageName, true);
+    const refused = await setBadgeVisibility(buildTestApp(stranger), packageName, true);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ code: "not_a_verified_publisher" });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
   });
 
@@ -2140,6 +2143,7 @@ describe("turning a package's badge off", () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedPublicRelease(owner, packageName, "3.0.1");
     const member = await addMember(owner.organizationId, "member");
     const refused = await setBadgeVisibility(
       buildTestApp(member),
@@ -2176,8 +2180,10 @@ describe("reading a package's badge state", () => {
     expect(initial.body).toEqual({
       package: { name: packageName, ecosystem: "npm" },
       badge: {
-        enabled: true,
-        disabledAt: null,
+        eligible: true,
+        switchedOffByYou: false,
+        switchedOffAt: null,
+        switchedOffElsewhere: false,
         answersByDefault: true,
         listed: false,
         canManage: true,
@@ -2188,7 +2194,7 @@ describe("reading a package's badge state", () => {
     const memberApp = buildTestApp(member);
     const asMember = await readBadgeVisibility(memberApp, packageName, owner.organizationId);
     expect(asMember.status).toBe(200);
-    expect(asMember.body.badge).toMatchObject({ enabled: true, canManage: false });
+    expect(asMember.body.badge).toMatchObject({ switchedOffByYou: false, canManage: false });
     expect(
       (await setBadgeVisibility(memberApp, packageName, true, owner.organizationId)).status,
     ).toBe(403);
@@ -2202,8 +2208,8 @@ describe("reading a package's badge state", () => {
     );
     expect(off.status).toBe(200);
     const read = await readBadgeVisibility(memberApp, packageName, owner.organizationId);
-    expect(read.body.badge.enabled).toBe(false);
-    expect(read.body.badge.disabledAt).not.toBeNull();
+    expect(read.body.badge.switchedOffByYou).toBe(true);
+    expect(read.body.badge.switchedOffAt).not.toBeNull();
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
   });
 
@@ -2216,7 +2222,8 @@ describe("reading a package's badge state", () => {
     await setBadgeVisibility(app, packageName, true);
 
     // Naming someone else's organization is only a selector; a non-member
-    // reads their own organization, which has neither the opt-out nor a review.
+    // reads their own organization. It is no publisher of the package, so it
+    // is not told that anyone else switched the badge off either.
     const stranger = await seedUser();
     const read = await readBadgeVisibility(
       buildTestApp(stranger),
@@ -2225,8 +2232,10 @@ describe("reading a package's badge state", () => {
     );
     expect(read.status).toBe(200);
     expect(read.body.badge).toMatchObject({
-      enabled: true,
-      disabledAt: null,
+      eligible: false,
+      switchedOffByYou: false,
+      switchedOffAt: null,
+      switchedOffElsewhere: false,
       answersByDefault: false,
       listed: false,
     });
@@ -2289,6 +2298,7 @@ describe("the badge switch and the publication monitor are independent", () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedPublicRelease(owner, packageName, "3.0.1");
     const created = await request(app, "/api/v1/publication-watches", {
       method: "POST",
       body: JSON.stringify({ packageName }),
@@ -2325,12 +2335,111 @@ describe("the switch addresses the key the badge answers under", () => {
     await decide(app, scanId, "publish");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
 
-    // A different npm package, so it must not silence this one.
-    expect((await setBadgeVisibility(app, packageName.toLowerCase(), true)).status).toBe(200);
+    // A different npm package, which this organization never reviewed — so it
+    // may not switch that off, let alone silence this one.
+    expect((await setBadgeVisibility(app, packageName.toLowerCase(), true)).status).toBe(403);
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
 
     expect((await setBadgeVisibility(app, packageName, true)).status).toBe(200);
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+});
+
+/**
+ * The switch is a publisher's, and it holds for everyone: one registry-verified
+ * publisher turning the badge off silences every organization's reviews, and
+ * no one else — a watcher, a gate claim, a published-pair reviewer — can.
+ */
+async function seedTwoPublishers(packageName: string) {
+  const first = await seedUser();
+  const firstApp = buildTestApp(first);
+  const second = await seedUser();
+  const secondApp = buildTestApp(second);
+  const older = await seedPublicRelease(first, packageName, "3.0.0");
+  await backdateScan(older, 60_000);
+  await decide(firstApp, older, "publish");
+  await decide(secondApp, await seedPublicRelease(second, packageName, "3.0.1"), "publish");
+  return { first, firstApp, second, secondApp };
+}
+
+describe("a publisher's switch holds for every organization", () => {
+  test("either registry-verified publisher turns it off for both", async () => {
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const { firstApp, secondApp } = await seedTwoPublishers(packageName);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    // The first publisher's review is not the one answering; switching off
+    // must still silence the badge rather than let the other one speak.
+    expect((await setBadgeVisibility(firstApp, packageName, true)).status).toBe(200);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
+    await setBadgeVisibility(firstApp, packageName, false);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    expect((await setBadgeVisibility(secondApp, packageName, true)).status).toBe(200);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("turning your own switch back on does not override another publisher's", async () => {
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const { firstApp, secondApp } = await seedTwoPublishers(packageName);
+    await setBadgeVisibility(firstApp, packageName, true);
+    await setBadgeVisibility(secondApp, packageName, true);
+    await setBadgeVisibility(firstApp, packageName, false);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
+
+    // A co-publisher learns why, without being told who.
+    const read = await readBadgeVisibility(firstApp, packageName);
+    expect(read.body.badge).toMatchObject({
+      eligible: true,
+      switchedOffByYou: false,
+      switchedOffElsewhere: true,
+    });
+    expect(JSON.stringify(read.body)).not.toContain("organization");
+  });
+
+  test.each([
+    ["a workflow gate claiming the name", { source: "workflow_gate" as const }],
+    ["a stage from another registry", { registryUrl: "https://registry.example.com" }],
+    ["a stage whose manifest names this package", { registryPackageName: "some-other-pkg" }],
+  ])("%s cannot switch the badge off", async (_label, options) => {
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const { firstApp } = await seedTwoPublishers(packageName);
+    const claimant = await seedUser();
+    const claimantApp = buildTestApp(claimant);
+    const scanId = await seedCompletedScan(claimant, { packageName, version: "9.0.0", ...options });
+    await decide(claimantApp, scanId, "publish");
+
+    const refused = await setBadgeVisibility(claimantApp, packageName, true);
+    expect(refused.status).toBe(403);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a published-pair reviewer cannot switch the badge off", async () => {
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const { firstApp } = await seedTwoPublishers(packageName);
+    const reviewer = await seedUser();
+    await seedCompletedScan(reviewer, { packageName, version: "3.0.1", source: "published" });
+    expect((await setBadgeVisibility(buildTestApp(reviewer), packageName, true)).status).toBe(403);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("an opt-out whose organization has no verified review is ignored", async () => {
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const { firstApp } = await seedTwoPublishers(packageName);
+    // A row that outlived its evidence, or was never entitled to it.
+    const bystander = await seedUser();
+    const db = createDb(env.DB);
+    await db.insert(schema.packageBadgeOptOuts).values({
+      id: crypto.randomUUID(),
+      organizationId: bystander.organizationId,
+      packageKey: `npm:${packageName}`,
+      createdAt: new Date(),
+    });
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    // Clearing it needs no evidence: it only ever removes the caller's own row.
+    const cleared = await setBadgeVisibility(buildTestApp(bystander), packageName, false);
+    expect(cleared.status).toBe(200);
   });
 });
 

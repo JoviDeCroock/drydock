@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "06d86933-5a05-4dd0-a414-16b3c3ecab4a",
+  "id": "d2be9bb5-bccb-420f-b2e2-5e08baa03c29",
   "prevId": "09a67038-430f-4a99-9ea8-ba7aa748e148",
   "tables": {
     "account": {
@@ -1432,11 +1432,11 @@
         }
       },
       "indexes": {
-        "package_badge_opt_outs_org_package": {
-          "name": "package_badge_opt_outs_org_package",
+        "package_badge_opt_outs_package_org": {
+          "name": "package_badge_opt_outs_package_org",
           "columns": [
-            "organization_id",
-            "package_key"
+            "package_key",
+            "organization_id"
           ],
           "isUnique": true
         }
