@@ -360,7 +360,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
       .filter({ has: page.getByText("@drydock/e2e-publication", { exact: true }) });
     await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
     await expect(
-      monitor.getByText("Published without prior approval", { exact: true }),
+      monitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
     await expect(monitor.getByText("1.0.0", { exact: true })).toBeVisible();
     await expect(monitor.getByRole("link", { name: "Open review" })).toHaveCount(0);
@@ -380,7 +380,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(packageMonitor.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
     await expect(packageMonitor.getByText(/added by hand · watching since/)).toBeVisible();
     await expect(
-      packageMonitor.getByText("Published without prior approval", { exact: true }),
+      packageMonitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
     await packageMonitor.scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -400,7 +400,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
     await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
     await expect(
-      monitor.getByText("Published without prior approval", { exact: true }),
+      monitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
     await monitor.scrollIntoViewIfNeeded();
     await page.screenshot({

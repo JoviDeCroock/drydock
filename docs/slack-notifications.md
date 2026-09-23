@@ -179,7 +179,9 @@ the route tests.
   redaction, and the test-send rate limit.
 
 Publication monitoring sends `publication_discrepancy` notifications for newly observed
-releases without qualifying prior approval, rejected releases, or differing bytes.
+releases with no approval in the alerting organization, releases published despite a
+rejection there, or bytes that differ from its approval; the copy names that
+organization and never implies nobody else reviewed the release.
 Email uses configured organization recipients with owner fallback; Slack is independent
 and links to the organization's dashboard. An alert that no channel accepted is re-sent
 on later checks of its watch; acknowledgment and retry rules are documented in

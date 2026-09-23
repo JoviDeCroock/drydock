@@ -13,21 +13,29 @@ export interface NotifyPublicationDiscrepancyInput {
   status: "published_without_approval" | "published_despite_rejection" | "artifact_mismatch";
 }
 
-const DESCRIPTIONS = {
-  published_without_approval: {
-    title: "Published without prior approval",
-    detail: "No approval in this organization predates the publication of this release.",
-  },
-  published_despite_rejection: {
-    title: "Published despite rejection",
-    detail: "This release was published after it was rejected in this organization.",
-  },
-  artifact_mismatch: {
-    title: "Published artifact differs from approval",
-    detail:
-      "The published package bytes do not match the artifact approved in this organization before publication.",
-  },
-} as const;
+// Every claim is about the alerting organization's own records. Another
+// organization may have reviewed or approved the same release; Drydock never
+// says so here (that would disclose one organization's activity to another),
+// so the copy must not read as "nobody reviewed this" or accuse a publisher.
+function describe(status: NotifyPublicationDiscrepancyInput["status"], organization: string) {
+  switch (status) {
+    case "published_without_approval":
+      return {
+        title: `Published with no approval in ${organization}`,
+        detail: `No approval in ${organization} predates the publication of this release.`,
+      };
+    case "published_despite_rejection":
+      return {
+        title: `Published despite a rejection in ${organization}`,
+        detail: `This release was published after it was rejected in ${organization}.`,
+      };
+    case "artifact_mismatch":
+      return {
+        title: `Published bytes differ from the approval in ${organization}`,
+        detail: `The published package bytes do not match the artifact approved in ${organization} before publication.`,
+      };
+  }
+}
 
 /**
  * Tell the organization about a release the publication monitor flagged. The
@@ -49,7 +57,7 @@ export async function notifyPublicationDiscrepancy(
     return "failed";
   }
   const organizationName = await getOrganizationName(db, organizationId);
-  const { title, detail } = DESCRIPTIONS[status];
+  const { title, detail } = describe(status, organizationName ?? "your organization");
   const release = `${packageName}@${version}`;
   const link = packageUrl(env, packageName, organizationId);
   return deliverOrganizationNotification(env, db, {
@@ -65,8 +73,8 @@ export async function notifyPublicationDiscrepancy(
         `${release}: ${detail}`,
         organizationName ? `Organization: ${organizationName}` : null,
         "",
+        "Drydock compares each release only with this organization's own reviews and decisions.",
         "Review the publication evidence and acknowledge the alert on the package's page.",
-        "If the release was unexpected, investigate who published it and review publishing access.",
         link ? `Package: ${link}` : null,
         "",
         "— Drydock",

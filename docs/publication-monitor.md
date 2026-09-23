@@ -43,13 +43,13 @@ which shows the same watch, observations and controls for that package and says
 why an unwatched package is not watched. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
-| Observation                      | Evidence                                                                                                                            |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Approved bytes published         | Actual tarball bytes match a completed review with a recorded approval strictly before npm's publication timestamp.                 |
-| Published without prior approval | The organization has no Drydock record of this release at all (no staged review or gate for that version), or only rejected others. |
-| Published despite rejection      | Actual bytes match a review rejected before publication.                                                                            |
-| Published different bytes        | The current approved review examined different bytes, and no review examined the published ones.                                    |
-| Evidence unknown                 | Publication time, bytes, or review evidence could not establish an outcome; the observation records which.                          |
+| Observation                                     | Evidence                                                                                                                            |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Approved bytes published                        | Actual tarball bytes match a completed review with a recorded approval strictly before npm's publication timestamp.                 |
+| Published with no approval in this organization | The organization has no Drydock record of this release at all (no staged review or gate for that version), or only rejected others. |
+| Published despite rejection                     | Actual bytes match a review rejected before publication.                                                                            |
+| Published different bytes                       | The current approved review examined different bytes, and no review examined the published ones.                                    |
+| Evidence unknown                                | Publication time, bytes, or review evidence could not establish an outcome; the observation records which.                          |
 
 Unknown does not mean approved. Missing or future registry timestamps, unavailable
 or oversized responses, invalid identities and incomplete legacy digests cannot
@@ -72,8 +72,13 @@ decides; a review superseded by a newer stage never produces a mismatch on its o
 
 ## Alerts and acknowledgment
 
-New confirmed discrepancies (missing prior approval, publication despite rejection,
-or different published bytes) create one durable alert per organization/package/version.
+New confirmed discrepancies (no approval in this organization, publication despite a
+rejection here, or bytes that differ from this organization's approval) create one
+durable alert per organization/package/version. Every verdict and message is about
+the alerting organization's own records only: another organization may have reviewed
+or approved the same release, and Drydock neither says so (that would disclose one
+organization's activity to another) nor words the alert as "unreviewed" or as an
+accusation against whoever published it.
 The monitor attempts email delivery to the organization's configured recipients (owner
 fallback) and Slack delivery to its connected channel. Unknown evidence and matching
 approvals do not generate discrepancy alerts. Existing observations from before alert

@@ -5,9 +5,9 @@ import type { PublicationObservation, PublicationWatch } from "../../models/publ
 
 export const observationStatusLabels: Record<PublicationObservation["status"], string> = {
   approved_match: "Approved bytes published",
-  published_without_approval: "Published without prior approval",
-  published_despite_rejection: "Published despite rejection",
-  artifact_mismatch: "Published different bytes",
+  published_without_approval: "Published with no approval in this organization",
+  published_despite_rejection: "Published despite a rejection in this organization",
+  artifact_mismatch: "Published bytes differ from this organization's approval",
   unknown: "Evidence unknown",
 };
 

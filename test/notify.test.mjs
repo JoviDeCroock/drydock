@@ -676,18 +676,18 @@ describe("notifyPublicationDiscrepancy", () => {
   test.each([
     [
       "published_without_approval",
-      "Published without prior approval",
-      "No approval in this organization predates",
+      "Published with no approval in Acme Corp",
+      "No approval in Acme Corp predates",
     ],
     [
       "published_despite_rejection",
-      "Published despite rejection",
-      "published after it was rejected",
+      "Published despite a rejection in Acme Corp",
+      "published after it was rejected in Acme Corp",
     ],
     [
       "artifact_mismatch",
-      "Published artifact differs from approval",
-      "do not match the artifact approved",
+      "Published bytes differ from the approval in Acme Corp",
+      "do not match the artifact approved in Acme Corp",
     ],
   ])(
     "delivers %s evidence to configured email recipients and Slack",
@@ -707,6 +707,8 @@ describe("notifyPublicationDiscrepancy", () => {
         expect(message.text).toContain(
           "https://drydock.test/dashboard/packages/@acme/package?org=org_1",
         );
+        // Scoped to this organization's records, never an accusation.
+        expect(message.text).not.toMatch(/investigate who|unreviewed/i);
       }
       expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
       expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(

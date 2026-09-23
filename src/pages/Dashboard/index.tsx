@@ -494,7 +494,7 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
     case "undecided":
       return "Nothing waiting on you. Switch to All to see earlier reviews.";
     case "published_without_decision":
-      return "No npm releases were published without a Drydock decision.";
+      return "No npm releases were published without a decision in this organization.";
     case "publish":
       return "No approved reviews yet.";
     case "no_publish":
