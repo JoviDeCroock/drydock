@@ -6,13 +6,17 @@
  * multiple trusted-publishing configurations make maintainers ask.
  */
 import type { ComponentChildren } from "preact";
-import { useComputed, useModel, useSignal } from "@preact/signals";
+import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { sessionModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
+import { packageReleasesPath } from "../../../lib/package-releases-path";
+import { OrganizationModel } from "../../../models/organization";
+import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import {
   PackageReleasesModel,
   type PackageRelease,
@@ -36,6 +40,7 @@ import {
 import { registryStatusBadge } from "../../../features/registry-status";
 import { DecisionState } from "../../../features/review/DecisionState";
 import { scanSourceLabel } from "../../../features/scan-source";
+import { PackagePublicationSection } from "../../../features/publication-monitor/PackagePublicationSection";
 
 export default function PackageReleasesPage() {
   const location = useLocation();
@@ -149,7 +154,11 @@ function PackageReleasesView({
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0 break-words">{packageName}</h1>
-        <PackageDetailLine model={model} ecosystem={ecosystem} />
+        <PackageDetailLine
+          model={model}
+          ecosystem={ecosystem}
+          organizationName={organizationName}
+        />
       </header>
 
       <Show when={() => membership.value === "not_member"}>
@@ -225,16 +234,22 @@ function PackageReleasesView({
 function PackageDetailLine({
   model,
   ecosystem,
+  organizationName,
 }: {
   model: InstanceType<typeof PackageReleasesModel>;
   ecosystem: string;
+  // The page is pinned to one organization by its address; naming it here is
+  // what keeps a history from reading as some other organization's.
+  organizationName: ReadonlySignal<string | null>;
 }) {
   const parts = useComputed(() => {
     const summary = model.summary.value;
-    if (!summary) return [ecosystemLabel(ecosystem)];
+    const organization = organizationName.value;
+    if (!summary) return [ecosystemLabel(ecosystem), organization];
     const { totalReviews, channels, lastRelease } = summary;
     return [
       ecosystemLabel(ecosystem),
+      organization,
       `${totalReviews} ${pluralize("review", totalReviews)}`,
       `${channels.length} ${pluralize("channel", channels.length)}`,
       lastRelease

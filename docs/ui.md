@@ -221,9 +221,23 @@ decided on (warn fill), and npm published a version Drydock blocked (danger
 fill). The header's mono line carries the ecosystem, review and channel counts,
 and the last release; the two disagreement counts appear only when above zero,
 as one Alert (`describeAttentionCounts`) — critical once anything was published
-over a block, warn otherwise. Package names in the dashboard list and the `all releases →` link in
-the scan header open it; the scan header's back link returns to whichever
+over a block, warn otherwise. Package names in the dashboard list, the
+publication monitor card and publication alert emails, and the `all releases →`
+link in the scan header open it; the scan header's back link returns to whichever
 list surface the review was opened from (`getDashboardReturnUrl`).
+
+For npm the page closes with a **publication monitor** section
+(`src/features/publication-monitor/PackagePublicationSection.tsx`, over
+`GET /api/v1/publication-watches/packages/:name`): whether this organization
+watches the package — or why not (never seen public, stopped, a gate
+suggestion, pending, or waiting at the 20-watch limit) — its observed releases
+with the reason behind any unknown verdict or alert, a "not verified" mark and a
+coverage-gap notice for releases it could not verify, acknowledgment, and check,
+start and stop controls. Below the releases it lists ledger alerts the list does not
+show (from earlier watches, and older ones from this watch; the latest 50). The
+observation list, coverage notice and all wording are shared with the dashboard card
+(`ObservationList.tsx`, `CoverageGap.tsx`, `copy.ts`). Stop is disabled with its
+reason for members, mirroring the server's role check.
 
 ## Release timeline
 

@@ -110,7 +110,7 @@ terminal scan failure proves the same outcome, because the stage is no longer
 actionable. It remains under **All** with its npm status when one was
 persisted. Completed reviews, unlike superseded history, can still accept a
 decision for the audit trail; failed reviews remain read-only history.
-**Published, no decision** isolates both `published` and
+**Published with no decision in this organization** isolates both `published` and
 subsequently `deleted` releases that still have no decision, including a manual
 scan that failed because npm published before the review could read the tarball.
 `blocked` releases are excluded because they did not go live. Failure
@@ -183,7 +183,7 @@ plain text.
 
 - The dashboard list: a chip on the row's lead line when the state has a tone,
   otherwise plain text at the end of the mono meta line; and the
-  **Published, no decision** filter.
+  **Published with no decision in this organization** filter.
 - The scan workbench header's plain-text metadata line, with its observation
   time. `RegistryStatusNotice`
   adds a separate row only for states with actionable context: validating,

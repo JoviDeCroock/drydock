@@ -428,7 +428,10 @@ function RecentReviewsSection({
 
 const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "undecided", label: "Undecided" },
-  { value: "published_without_decision", label: "Published, no decision" },
+  {
+    value: "published_without_decision",
+    label: "Published with no decision in this organization",
+  },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
