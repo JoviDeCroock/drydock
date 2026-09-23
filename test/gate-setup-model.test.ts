@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { setActiveOrganizationId } from "../src/models/active-organization";
 import { GateSetupModel, type GateSetupVerification } from "../src/models/gate-setup";
-import type { PublicReleaseTarget } from "../src/models/github-app";
+import type { PublicReleaseTarget } from "../src/models/release-targets";
 
 type GateSetup = InstanceType<typeof GateSetupModel>;
 

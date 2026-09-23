@@ -8,12 +8,14 @@ import {
   newWorkflowFileUrl,
 } from "../../../models/gate-setup";
 import type {
-  InstallationRepository,
   GateSetupEcosystemOption,
   PublicGithubAppInstallation,
+} from "../../../models/github-app";
+import type {
+  InstallationRepository,
   PublicReleaseTarget,
   RepositoryEnvironment,
-} from "../../../models/github-app";
+} from "../../../models/release-targets";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
