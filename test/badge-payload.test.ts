@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { SharedScanRow } from "../server/db/scan-share";
-import { buildBadgePayload, buildThreatFeedEntry } from "../server/lib/public-feed";
+import {
+  buildBadgePayload,
+  buildThreatFeedEntry,
+  pickBadgeScan,
+  postReleaseAnswersTag,
+} from "../server/lib/public-feed";
+import { compareArchiveDigests } from "../server/lib/ecosystems/artifact-integrity";
 
 function row(overrides: Partial<SharedScanRow> = {}): SharedScanRow {
   return {
@@ -56,6 +62,14 @@ describe("badge payload", () => {
     expect(buildBadgePayload(row(), "latest", null).message).toBe("3.0.0 approved");
   });
 
+  test("a release its publisher declined after npm published it reads blocked", () => {
+    expect(buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true })).toMatchObject({
+      label: "drydock",
+      message: "3.0.1 blocked",
+      color: "red",
+    });
+  });
+
   // `SharedScanRow` carries the owning organization so the badge's staleness
   // probe can scope itself; neither anonymous surface may ever serialize it.
   test("public surfaces never serialize the organization", () => {
@@ -65,5 +79,50 @@ describe("badge payload", () => {
     const entry = buildThreatFeedEntry(row(), "https://drydock.org");
     expect(Object.keys(entry)).not.toContain("organizationId");
     expect(JSON.stringify(entry)).not.toContain("org_1");
+  });
+});
+
+describe("post-release decisions on the badge", () => {
+  // Only `listPostReleaseBadgeCandidates` sets the marker, after the guard.
+  const postRelease = row({ source: "published", postRelease: { tag: "latest" } });
+
+  test("a guarded decision answers as registry-verified; a bare published-pair review never does", () => {
+    expect(pickBadgeScan([row({ source: "published" })])).toBeNull();
+    expect(pickBadgeScan([postRelease])?.scanId).toBe("scan_1");
+    expect(buildBadgePayload(postRelease, "latest")).toMatchObject({
+      label: "drydock",
+      message: "3.0.0 approved",
+      color: "brightgreen",
+    });
+    expect(buildBadgePayload({ ...postRelease, decision: "no_publish" }, "latest")).toMatchObject({
+      message: "3.0.0 blocked",
+      color: "red",
+    });
+  });
+
+  test("answers the tags npm recorded on the release, and `latest` for a stable version", () => {
+    expect(postReleaseAnswersTag("3.0.1", null, "latest")).toBe(true);
+    expect(postReleaseAnswersTag("3.0.1", [], "latest")).toBe(true);
+    expect(postReleaseAnswersTag("3.0.1", ["latest"], "beta")).toBe(false);
+    expect(postReleaseAnswersTag("4.0.0-rc.1", null, "latest")).toBe(false);
+    expect(postReleaseAnswersTag("4.0.0-rc.1", ["latest"], "latest")).toBe(true);
+    expect(postReleaseAnswersTag("4.0.0-rc.1", ["next"], "next")).toBe(true);
+  });
+});
+
+describe("comparing archive digests", () => {
+  const sha1 = "a".repeat(40);
+  const sha256 = "b".repeat(64);
+
+  test("every shared algorithm must agree, and at least one must be shared", () => {
+    expect(compareArchiveDigests({ sha1, sha256 }, { sha1, sha256 })).toBe("match");
+    expect(compareArchiveDigests({ sha1, sha256: null }, { sha1, sha256 })).toBe("match");
+    expect(compareArchiveDigests({ sha1, sha256 }, { sha1, sha256: "c".repeat(64) })).toBe(
+      "differ",
+    );
+    expect(compareArchiveDigests({ sha1, sha256: null }, { sha1: null, sha256 })).toBe(
+      "incomparable",
+    );
+    expect(compareArchiveDigests(null, { sha1, sha256 })).toBe("incomparable");
   });
 });
