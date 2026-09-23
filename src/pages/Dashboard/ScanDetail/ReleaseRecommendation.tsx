@@ -4,7 +4,6 @@ import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Button } from "../../../components/Button";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
 import { Badge, severityTone } from "../../../components/Badge";
 import { SeverityBar } from "../../../components/SeverityBar";
@@ -72,6 +71,7 @@ export function buildReleaseVerdict({
     diffCount,
     changedFindings,
     baselineComparisonSkipped,
+    recommendation.label === "likely safe",
   );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -175,14 +175,17 @@ export function ReleaseVerdictEvidence({
   return (
     <section class="flex flex-col gap-4">
       <SectionLabel as="h3">Why this verdict</SectionLabel>
-      <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+      {/* The inspect action is a text link like "View manifest changes": the
+          page's one filled button is Decide, and a second one here competed
+          with it for the same glance. */}
+      <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2">
         {recommendation.copy ? (
           <p class="m-0 max-w-[680px] text-[14px] leading-[1.55] text-ink">{recommendation.copy}</p>
         ) : null}
         {firstFinding && inspect ? (
-          <Button variant="secondary" size="sm" onClick={inspect}>
+          <button type="button" onClick={inspect} class={TEXT_ACTION}>
             Inspect {firstFinding.severity} findings
-          </Button>
+          </button>
         ) : null}
       </div>
       {evidence.length ? (
@@ -206,7 +209,9 @@ export function ReleaseVerdictEvidence({
           ))}
         </ul>
       ) : null}
-      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
+      {/* One finding is already named by its group row above; a one-segment
+          bar plus its legend and total would state it three more times. */}
+      {findingTotal > 1 ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
       {consistencyNote ? <div class="max-w-[680px]">{consistencyNote}</div> : null}
     </section>
   );
@@ -329,11 +334,7 @@ export function ReleaseChangesSummary({
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
         <p class="m-0 text-ink-muted">{verdict.releaseChanges.join(" · ")}</p>
         {onInspectChanges ? (
-          <button
-            type="button"
-            onClick={onInspectChanges}
-            class="p-0 border-0 bg-transparent text-accent hover:underline cursor-pointer"
-          >
+          <button type="button" onClick={onInspectChanges} class={TEXT_ACTION}>
             View manifest changes
           </button>
         ) : null}
@@ -341,6 +342,9 @@ export function ReleaseChangesSummary({
     </section>
   );
 }
+
+const TEXT_ACTION =
+  "p-0 border-0 bg-transparent text-[13px] text-accent hover:underline cursor-pointer text-left";
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -355,6 +359,7 @@ function buildRecommendationEvidence(
   diffCount: number,
   changedFindings: ReviewFinding[],
   baselineComparisonSkipped: boolean,
+  verdictSaysClean: boolean,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
   // Lead with the missing comparison: it explains why there are no release
@@ -373,9 +378,15 @@ function buildRecommendationEvidence(
       diffCount ||
       summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
       detail.files.filter((file) => file.status !== "unchanged").length;
+    const files = `${changed} changed ${pluralize("file", changed)}`;
+    const packageNote = detail.findings.length ? " Package findings remain below." : "";
     evidence.push({
       label: "evidence",
-      value: `${changed} changed ${pluralize("file", changed)}; no findings in this release delta.${detail.findings.length ? " Package findings remain below." : ""}`,
+      // "Likely safe" already says nothing fired on the release delta; the
+      // other verdicts (package context only) still need it said.
+      value: verdictSaysClean
+        ? `${files}.${packageNote}`
+        : `${files}; no findings in this release delta.${packageNote}`,
     });
   }
 

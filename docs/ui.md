@@ -68,8 +68,11 @@ Both review pages lead with the diff:
   workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
   verdict reads that way, release memory, release changes, the advisory AI
   assessment, source binding), then the risk index and the manifest sections. The notes open
-  themselves when any of those has something to say and stay shut when the
-  release is clean; the disclosure header does not repeat the nested section
+  themselves when any of those has something to say — findings or manifest
+  changes, release memory that diverged, an assistant reading that flags the
+  release — and stay shut when the release is clean (source binding, release
+  memory that matches, and a "nothing unusual" assistant reading are present
+  on nearly every scan and do not open them); the disclosure header does not repeat the nested section
   names. The page header is identity only: the package, then a plain-text
   metadata line (staged version, npm's state with its observation time, the
   package's other releases) with no Badges, and the Share / Export JSON
@@ -95,7 +98,7 @@ are not presented as file actions. Script, dependency, and entrypoint changes si
 The AI assessment opens with its structured assessment and risk, with an explicit
 reminder that deterministic findings retain their severity. Model-authored prose
 stays inert under **Read full AI assessment**, labeled advisory and potentially
-quoting package text. Release memory stays beside the severity totals. Declared
+quoting package text. Release memory stays beside the verdict evidence (the severity bar renders only for two or more findings). Declared
 source binding shows one unverified repository link; only an exact duplicate
 manifest declaration is omitted, preserving additional or conflicting evidence.
 

@@ -40,12 +40,11 @@ function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
   }
 }
 
-function packageDecisionTone(pkg: GatePackageScan) {
-  if (pkg.decision === "publish") return "ok" as const;
-  if (pkg.decision === "no_publish") return "critical" as const;
-  if (pkg.status === "failed") return "critical" as const;
-  if (pkg.status !== "complete") return "neutral" as const;
-  return "medium" as const;
+// Only a package that blocks the release gets a colored chip. Approved,
+// reviewing, and awaiting-decision are the expected states of a roster row and
+// read as plain text, so the one row holding the release up stands out.
+function packageDecisionNeedsAttention(pkg: GatePackageScan): boolean {
+  return pkg.decision === "no_publish" || pkg.status === "failed";
 }
 
 function packageDecisionLabel(pkg: GatePackageScan): string {
@@ -114,10 +113,18 @@ export function GatePackagesPanel({
                 {pkg.releaseRisk ? (
                   <Badge tone={severityTone(pkg.releaseRisk)}>{pkg.releaseRisk}</Badge>
                 ) : null}
-                {isCurrent ? <Badge tone="neutral">this package</Badge> : null}
+                {isCurrent ? (
+                  <span class="font-mono text-[11px] text-ink-subtle">this package</span>
+                ) : null}
               </div>
               <div class="flex items-center gap-3 shrink-0">
-                <Badge tone={packageDecisionTone(pkg)}>{packageDecisionLabel(pkg)}</Badge>
+                {packageDecisionNeedsAttention(pkg) ? (
+                  <Badge tone="critical">{packageDecisionLabel(pkg)}</Badge>
+                ) : (
+                  <span class="font-mono text-[11px] text-ink-muted">
+                    {packageDecisionLabel(pkg)}
+                  </span>
+                )}
                 {isCurrent ? (
                   onDecide && pending && !pkg.decision ? (
                     <button
@@ -127,9 +134,7 @@ export function GatePackagesPanel({
                     >
                       decide →
                     </button>
-                  ) : (
-                    <span class="font-mono text-[11px] text-ink-subtle">shown here</span>
-                  )
+                  ) : null
                 ) : (
                   <a
                     class="font-mono text-[11px] underline text-accent"

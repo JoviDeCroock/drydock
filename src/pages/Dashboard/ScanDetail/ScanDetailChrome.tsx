@@ -9,6 +9,7 @@ import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan"
 import { Alert } from "../../../components/Alert";
 import { Button, LinkButton } from "../../../components/Button";
 import { registryStatusBadge } from "../../../features/registry-status";
+import { DecisionState } from "../../../features/review/DecisionState";
 import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 /**
@@ -78,11 +79,9 @@ export function ScanDetailHeader({
               detail.scan.stagedVersion ? (
                 <span key="version">staged {detail.scan.stagedVersion}</span>
               ) : null,
-              registryPhrase ? (
-                <span key="registry">
-                  {registryPhrase}
-                  {registryObservedAt ? ` as of ${registryObservedAt}` : null}
-                </span>
+              registryPhrase ? <span key="registry">{registryPhrase}</span> : null,
+              registryObservedAt ? (
+                <span key="registry-seen">seen {registryObservedAt}</span>
               ) : null,
               packageHref && !sameLocation(packageHref, dashboardHref) ? (
                 <a key="package" href={packageHref} class="text-ink-muted hover:text-ink">
@@ -122,7 +121,9 @@ export function ScanDetailHeader({
           ) : null}
           {decision}
           {onDeleteClick ? (
-            <Button variant="danger" onClick={onDeleteClick}>
+            // Secondary here: this only opens the confirmation, whose own
+            // button carries the danger treatment for the destructive step.
+            <Button variant="secondary" onClick={onDeleteClick}>
               Delete review
             </Button>
           ) : null}
@@ -132,11 +133,7 @@ export function ScanDetailHeader({
   );
 }
 
-/**
- * The recorded decision beside the button that changes it. Plain text rather
- * than a Badge: a decision someone already made is settled state, not an alert,
- * and a filled chip here out-shouted the verdict it answers.
- */
+/** The recorded decision beside the button that changes it. */
 export function DecisionControl({
   decision,
   decidedAt,
@@ -149,15 +146,7 @@ export function DecisionControl({
   if (!decision && !onDecideClick) return null;
   return (
     <div class="flex flex-wrap items-center gap-3">
-      {decision ? (
-        <p class="m-0 font-mono text-[11px] text-ink-subtle">
-          <span class="sr-only">Decision: </span>
-          <span class={decision === "publish" ? "text-ok-text" : "text-danger-text"}>
-            {decision === "publish" ? "approved" : "blocked"}
-          </span>
-          {decidedAt ? ` ${formatDateTime(decidedAt)}` : null}
-        </p>
-      ) : null}
+      <DecisionState decision={decision} decidedAt={decidedAt} />
       {onDecideClick ? (
         <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
           {decision ? "Update decision" : "Decide"}

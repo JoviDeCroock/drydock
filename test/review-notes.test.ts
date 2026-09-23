@@ -212,6 +212,31 @@ describe("empty release delta", () => {
     expect(verdict.evidence[0].value).toBe("1 changed file; no findings in this release delta.");
   });
 
+  test("a likely-safe verdict does not restate itself as evidence", () => {
+    const verdict = buildReleaseVerdict({
+      ...input,
+      detail: { ...detail, scan: { ...detail.scan, risk: "low" }, findings: [] },
+      findingsWithDiffStatus: [],
+    });
+    expect(verdict.recommendation.label).toBe("likely safe");
+    expect(verdict.evidence).toEqual([{ label: "evidence", value: "1 changed file." }]);
+  });
+
+  test("a likely-safe verdict still points at package findings that remain", () => {
+    const lowContext = { ...contextFinding, severity: "low" };
+    const verdict = buildReleaseVerdict({
+      ...input,
+      detail: { ...detail, scan: { ...detail.scan, risk: "low" }, findings: [lowContext] },
+      findingsWithDiffStatus: [
+        { finding: lowContext, diffStatus: "unchanged", releaseDelta: false },
+      ],
+    });
+    expect(verdict.recommendation.label).toBe("likely safe");
+    expect(verdict.evidence).toEqual([
+      { label: "evidence", value: "1 changed file. Package findings remain below." },
+    ]);
+  });
+
   test("a skipped baseline never claims a clean release delta", () => {
     const verdict = buildReleaseVerdict({
       ...input,

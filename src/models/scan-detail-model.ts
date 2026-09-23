@@ -25,6 +25,7 @@ import {
  */
 import { batch, computed, createModel, effect, signal } from "@preact/signals";
 import type { FileRecord } from "../../server/lib/review";
+import { findingFirstPath } from "../features/review/initial-path";
 import { ApiError, errorMessage } from "./api";
 import {
   decideWorkflowGate,
@@ -464,8 +465,13 @@ function shareErrorMessage(err: unknown): string {
   return errorMessage(err);
 }
 
+// Only reached while no file is selected, so a `?path=` in the URL (bound to
+// `selectedPath` on mount, before the report loads) always wins.
 function pickInitialPath(data: PersistedScanDetail): string | null {
   return (
-    data.files.find((file) => file.status !== "unchanged")?.path ?? data.files[0]?.path ?? null
+    findingFirstPath(data.files, data.findings) ??
+    data.files.find((file) => file.status !== "unchanged")?.path ??
+    data.files[0]?.path ??
+    null
   );
 }

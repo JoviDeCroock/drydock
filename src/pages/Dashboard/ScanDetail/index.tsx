@@ -42,7 +42,7 @@ import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection"
 import type { ReviewFinding } from "../../../features/review/types";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
-import { hasReleaseConsistencyNote, ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
+import { ReleaseConsistencyNotice, releaseConsistencyDiverged } from "./ReleaseConsistencyNotice";
 import {
   buildReleaseVerdict,
   ReleaseChangesSummary,
@@ -247,11 +247,18 @@ export default function ScanDetailPage() {
 
   // Open the advisory group when it carries context worth reading. Its title
   // stays quiet; repeating every nested section name in the summary made the
-  // report header harder to scan than its contents.
+  // report header harder to scan than its contents. Source binding and release
+  // memory that agrees with the last approved release are present on nearly
+  // every scan, so they alone would hold the notes open on a clean release.
+  // The same goes for the assistant now that it runs by default: a clean
+  // "nothing unusual" reading stays folded; one that flags the release opens.
+  const aiReading = ai.value;
+  const aiFlagsRelease =
+    reviewerSummaryVisible(aiReading) &&
+    aiReading?.kind === "complete" &&
+    (aiReading.requiresManualReview || aiReading.releaseAssessment !== "nothing_unusual");
   const hasReviewNotes =
-    reviewerSummaryVisible(ai.value) ||
-    hasReleaseConsistencyNote(summary.value.releaseConsistency) ||
-    Boolean(envelope);
+    aiFlagsRelease || releaseConsistencyDiverged(summary.value.releaseConsistency);
 
   const inspectFindings = () => focusReportSection("risk-signals");
   const canInspectFinding = (finding: ReviewFinding) =>
