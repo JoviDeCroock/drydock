@@ -236,26 +236,38 @@ Two further conditions apply to the _release_ rather than the package, and
   approved release would appear on the badge before it shipped, leaking both
   the version number and the timing.
 
-### Turning a badge off (`badge_disabled_at`)
+### Turning a badge off (`package_badge_opt_outs`)
 
 `scans.badge_public` is _evidence_, written once when the scan is persisted and
-never edited: npm accepted this organization's token for this name, npm says
-the package is public, npm published this version, the organization approved
-it. That is the part an attacker must not be able to mint, so it is derived and
-immutable.
+never edited: npm let this organization's token read the stage, the manifest
+agrees with npm's name for it, npm says the package is public, npm published
+this version, the organization approved it. That is the part an attacker must
+not be able to mint, so it is derived and immutable.
 
-_Consent_ is a different thing, and it belongs to the organization: `POST
-/api/v1/publication-watches/badge-visibility` sets `badge_disabled_at` on the
-package's `publication_watch_candidates` row, and both badge routes filter on
-it. Owner/admin, audited, and it purges the cached badge.
+_Consent_ is a different thing, and it belongs to the organization. The
+package release page (`/dashboard/packages/:name`) carries a **Public badge**
+section over `GET /api/v1/packages/:name/badge[?ecosystem=]`, which any member
+may read: whether the badge is on, whether an approved public release answers
+it with no opt-in, and whether a listed review does. `PUT` on the same path
+with `{ "enabled": false | true }` turns it off or back on — owner/admin like
+sharing, audited as `organization.package_badge_disabled` / `_enabled`, and it
+purges the cached badge for `latest` and every dist-tag the organization's
+reviews of the package carry. Turning it off inserts a row into
+`package_badge_opt_outs` for (organization, badge key); turning it on deletes
+it. Both badge routes skip that organization's reviews while the row exists.
 
-It lives on the watch candidate because that row is already the per-
-(organization, package) record of intent and deliberately outlives the watch —
-and because per-_scan_ consent is exactly what produced the problem this
-section exists to solve. It is a sibling of `stopped_at`, never the same field:
-"stop alerting me about publications" and "stop telling the world I approved
-this" are different intents, and an organization managing watch noise must not
-silently grey out its own READMEs. Stopping a watch leaves the badge alone.
+The row is keyed by the badge's own key (`publicPackageLookupKey`) and the
+switch accepts any name the badge route does, so the two cannot normalize a
+name differently: a legacy mixed-case npm name such as `JSONStream` is switched
+off under exactly the key it answers under, and `jsonstream` — a different npm
+package — is a different key.
+
+It is its own table rather than a column on `publication_watch_candidates`,
+because a row there is an enrollment decision the publication monitor acts on:
+auto-enrollment skips a package that has one. "Stop telling the world I
+approved this" must never start, stop, or suppress a watch, and "stop alerting
+me about publications" must never grey out a README. The switch touches only
+the opt-out.
 
 The switch suppresses **both** routes, including a review that was deliberately
 feed-listed — "public badge: off" has to mean the badge is off, or the control

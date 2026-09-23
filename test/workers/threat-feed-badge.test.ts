@@ -2014,12 +2014,35 @@ async function setBadgeVisibility(
   disabled: boolean,
   organizationId?: string,
 ) {
-  const res = await request(app, "/api/v1/publication-watches/badge-visibility", {
-    method: "POST",
-    body: JSON.stringify({ packageName, disabled }),
+  // A scoped name keeps its `/`, exactly as the dashboard's path helper sends it.
+  const res = await request(app, `/api/v1/packages/${packageName}/badge`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled: !disabled }),
     headers: organizationId ? { "x-organization-id": organizationId } : undefined,
   });
   return res;
+}
+
+interface BadgeVisibilityBody {
+  package: { name: string; ecosystem: string };
+  badge: {
+    enabled: boolean;
+    disabledAt: string | null;
+    answersByDefault: boolean;
+    listed: boolean;
+    canManage: boolean;
+  };
+}
+
+async function readBadgeVisibility(
+  app: ReturnType<typeof buildTestApp>,
+  packageName: string,
+  organizationId?: string,
+): Promise<{ status: number; body: BadgeVisibilityBody }> {
+  const res = await request(app, `/api/v1/packages/${packageName}/badge`, {
+    headers: organizationId ? { "x-organization-id": organizationId } : undefined,
+  });
+  return { status: res.status, body: (await res.json()) as BadgeVisibilityBody };
 }
 
 describe("turning a package's badge off", () => {
@@ -2095,5 +2118,171 @@ describe("turning a package's badge off", () => {
       label: "Public badge turned off",
       detail: packageName,
     });
+  });
+});
+
+describe("reading a package's badge state", () => {
+  test("any member reads it; only owner and admin may change it", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `@acme/pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+
+    const initial = await readBadgeVisibility(app, packageName);
+    expect(initial.status).toBe(200);
+    expect(initial.body).toEqual({
+      package: { name: packageName, ecosystem: "npm" },
+      badge: {
+        enabled: true,
+        disabledAt: null,
+        answersByDefault: true,
+        listed: false,
+        canManage: true,
+      },
+    });
+
+    const member = await addMember(owner.organizationId, "member");
+    const memberApp = buildTestApp(member);
+    const asMember = await readBadgeVisibility(memberApp, packageName, owner.organizationId);
+    expect(asMember.status).toBe(200);
+    expect(asMember.body.badge).toMatchObject({ enabled: true, canManage: false });
+    expect(
+      (await setBadgeVisibility(memberApp, packageName, true, owner.organizationId)).status,
+    ).toBe(403);
+
+    const admin = await addMember(owner.organizationId, "admin");
+    const off = await setBadgeVisibility(
+      buildTestApp(admin),
+      packageName,
+      true,
+      owner.organizationId,
+    );
+    expect(off.status).toBe(200);
+    const read = await readBadgeVisibility(memberApp, packageName, owner.organizationId);
+    expect(read.body.badge.enabled).toBe(false);
+    expect(read.body.badge.disabledAt).not.toBeNull();
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("is scoped to the reader's own organization", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+    await setBadgeVisibility(app, packageName, true);
+
+    // Naming someone else's organization is only a selector; a non-member
+    // reads their own organization, which has neither the opt-out nor a review.
+    const stranger = await seedUser();
+    const read = await readBadgeVisibility(
+      buildTestApp(stranger),
+      packageName,
+      owner.organizationId,
+    );
+    expect(read.status).toBe(200);
+    expect(read.body.badge).toMatchObject({
+      enabled: true,
+      disabledAt: null,
+      answersByDefault: false,
+      listed: false,
+    });
+  });
+
+  test("reports a deliberate listing", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    await share(app, scanId, { threatFeed: true });
+    expect((await readBadgeVisibility(app, packageName)).body.badge).toMatchObject({
+      answersByDefault: false,
+      listed: true,
+    });
+  });
+
+  test("rejects malformed input", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    expect((await request(app, "/api/v1/packages/pkg/badge?ecosystem=atpm")).status).toBe(400);
+    const res = await request(app, "/api/v1/packages/pkg/badge", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: "no" }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("the badge switch and the publication monitor are independent", () => {
+  test("turning a badge off, or off and on again, never keeps a package from being watched", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const toggled = `pkg-t-${suffix}`;
+    const offOnly = `pkg-o-${suffix}`;
+    for (const name of [toggled, offOnly]) {
+      await decide(app, await seedPublicRelease(owner, name, "3.0.1"), "publish");
+    }
+    await setBadgeVisibility(app, toggled, true);
+    await setBadgeVisibility(app, toggled, false);
+    await setBadgeVisibility(app, offOnly, true);
+
+    // Listing watches reconciles history, which enrolls published public
+    // packages this organization reviewed.
+    const res = await request(app, "/api/v1/publication-watches");
+    expect(res.status).toBe(200);
+    const { watches } = (await res.json()) as { watches: Array<{ packageName: string }> };
+    const watched = watches.map((watch) => watch.packageName);
+    expect(watched).toContain(toggled);
+    expect(watched).toContain(offOnly);
+  });
+
+  test("an existing watch is untouched by the switch", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const created = await request(app, "/api/v1/publication-watches", {
+      method: "POST",
+      body: JSON.stringify({ packageName }),
+    });
+    expect(created.status).toBe(201);
+    const { watch } = (await created.json()) as { watch: { id: string; createdAt: string } };
+
+    await setBadgeVisibility(app, packageName, true);
+    await setBadgeVisibility(app, packageName, false);
+    await setBadgeVisibility(app, packageName, true);
+
+    const db = createDb(env.DB);
+    const watches = await db
+      .select()
+      .from(schema.publicationWatches)
+      .where(eq(schema.publicationWatches.organizationId, owner.organizationId));
+    expect(watches.map((row) => [row.id, row.packageName])).toEqual([[watch.id, packageName]]);
+    const candidates = await db
+      .select()
+      .from(schema.publicationWatchCandidates)
+      .where(eq(schema.publicationWatchCandidates.organizationId, owner.organizationId));
+    expect(candidates.every((row) => row.stoppedAt === null)).toBe(true);
+  });
+});
+
+describe("the switch addresses the key the badge answers under", () => {
+  test("a legacy mixed-case npm name can be switched off, and only under its exact name", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    // npm still serves pre-2017 names with capitals (`JSONStream`) and
+    // resolves them exactly, so the badge keys them verbatim.
+    const packageName = `JSONStream-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    // A different npm package, so it must not silence this one.
+    expect((await setBadgeVisibility(app, packageName.toLowerCase(), true)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    expect((await setBadgeVisibility(app, packageName, true)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
   });
 });

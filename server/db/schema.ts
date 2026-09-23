@@ -736,18 +736,6 @@ export const publicationWatchCandidates = sqliteTable(
     }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     stoppedAt: integer("stopped_at", { mode: "timestamp_ms" }),
-    // The public badge's off switch, and deliberately a sibling of
-    // `stopped_at` rather than the same field: "stop alerting me about
-    // publications" and "stop telling the world I approved this" are different
-    // intents, and an organization managing watch noise must not silently
-    // grey out its own READMEs.
-    //
-    // Consent lives here, per (organization, package), because the badge is
-    // per package and outlives any one release — `scans.badge_public` is the
-    // *evidence* a release may be badged, is written once and never edited,
-    // and per-scan consent is what left a badge quoting a stale version with
-    // no way to withdraw it.
-    badgeDisabledAt: integer("badge_disabled_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_watch_candidates_org_package").on(
@@ -762,6 +750,38 @@ export const publicationWatchCandidates = sqliteTable(
   ],
 );
 
+/**
+ * An organization's public badge turned off for one package: both badge routes
+ * skip this organization's reviews under the key while a row exists.
+ *
+ * Consent is per (organization, package) because the badge is per package and
+ * outlives any one release — `scans.badge_public` is the *evidence* a release
+ * may be badged, written once and never edited. It is its own table, not a
+ * column on the watch candidates, because a row there is an enrollment
+ * decision the publication monitor acts on: "stop telling the world I
+ * approved this" must never start, stop, or suppress a watch, and the reverse.
+ *
+ * Keyed by the badge's own key (`publicPackageLookupKey`), so the switch and
+ * the badge route normalize a name identically — a legacy mixed-case npm name
+ * such as `JSONStream` is the same key in both.
+ */
+export const packageBadgeOptOuts = sqliteTable(
+  "package_badge_opt_outs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageKey: text("package_key").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    uniqueIndex("package_badge_opt_outs_org_package").on(table.organizationId, table.packageKey),
+  ],
+);
 export const publicationAlerts = sqliteTable(
   "publication_alerts",
   {

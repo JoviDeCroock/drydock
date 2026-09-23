@@ -449,25 +449,25 @@ function badgeTagMatchesSql(tag: string) {
 }
 
 /**
- * The package-level off switch: an organization can stop its own package from
- * answering the badge at all.
+ * The package-level off switch (`package_badge_opt_outs`): an organization can
+ * stop its own reviews from answering the badge for a package at all.
  *
- * Matched against both names a scan carries. The badge is keyed on
- * `package_name` (the inspected manifest's), while watch enrollment records
- * `registry_package_name` (the registry's), and nothing guarantees the two
- * agree — so a switch that checked only one could be bypassed by the other.
+ * Matched on the badge key being asked for, which is the key every candidate
+ * on either route was selected by, so the switch and the route cannot
+ * normalize a name differently.
  *
  * It suppresses *both* badge routes, including a review that was deliberately
  * feed-listed: "public badge: off" has to mean the badge is off, or the
  * control does not mean what it says. The threat-feed entry is a different
  * surface and is unaffected; unlisting is still how that is withdrawn.
  */
-const badgeNotDisabled = sql`not exists (
-    select 1 from publication_watch_candidates c
-    where c.organization_id = ${scans.organizationId}
-      and c.badge_disabled_at is not null
-      and c.package_name in (${scans.packageName}, ${scans.registryPackageName})
+function badgeNotOptedOut(packageKey: string) {
+  return sql`not exists (
+    select 1 from package_badge_opt_outs o
+    where o.organization_id = ${scans.organizationId}
+      and o.package_key = ${packageKey}
   )`;
+}
 
 // Badge-ineligible sources never get a badge key, so this excludes nothing the
 // key filters admit today. It stays as the second lock: a row that acquired a
@@ -528,7 +528,7 @@ export async function listBadgeCandidateScans(
         badgeTagMatchesSql(tag),
         badgeEligibleSource,
         publicNameIsRegistryName,
-        badgeNotDisabled,
+        badgeNotOptedOut(packageKey),
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
@@ -603,7 +603,7 @@ export async function listDefaultBadgeCandidateScans(
         // an identity, so the name rule is enforced here as well.
         publicNameIsRegistryName,
         badgeTagMatchesSql(tag),
-        badgeNotDisabled,
+        badgeNotOptedOut(packageKey),
       ),
     )
     .orderBy(desc(scans.completedAt), desc(scans.id))

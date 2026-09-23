@@ -163,7 +163,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatchCandidates)
       .select(
-        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName})`,
+        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName})`,
       )
       .onConflictDoUpdate({
         target: [publicationWatchCandidates.organizationId, publicationWatchCandidates.packageName],
@@ -187,15 +187,12 @@ export async function createPublicationWatch(
 export async function deletePublicationWatch(db: AppDb, organizationId: string, id: string) {
   const now = new Date();
   // Suppression and deletion commit together; a stale discovery cannot recreate
-  // a removed watch, and explicit re-enrollment gets a fresh identity. The
-  // badge switch is untouched either way — a fresh candidate row has never had
-  // one set, and the conflict path updates only `stopped_at`, so stopping a
-  // watch never changes what the package's badge says.
+  // a removed watch, and explicit re-enrollment gets a fresh identity.
   const [, rows] = await db.batch([
     db
       .insert(publicationWatchCandidates)
       .select(
-        sql`select ${crypto.randomUUID()}, organization_id, package_name, 'manual', ${now.getTime()}, ${now.getTime()}, null from publication_watches where organization_id = ${organizationId} and id = ${id}`,
+        sql`select ${crypto.randomUUID()}, organization_id, package_name, 'manual', ${now.getTime()}, ${now.getTime()} from publication_watches where organization_id = ${organizationId} and id = ${id}`,
       )
       .onConflictDoUpdate({
         target: [publicationWatchCandidates.organizationId, publicationWatchCandidates.packageName],

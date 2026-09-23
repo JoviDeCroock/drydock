@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "972876d5-d805-4f10-8100-d851204ba9c3",
+  "id": "06d86933-5a05-4dd0-a414-16b3c3ecab4a",
   "prevId": "09a67038-430f-4a99-9ea8-ba7aa748e148",
   "tables": {
     "account": {
@@ -1392,6 +1392,87 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "package_badge_opt_outs": {
+      "name": "package_badge_opt_outs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "package_key": {
+          "name": "package_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "package_badge_opt_outs_org_package": {
+          "name": "package_badge_opt_outs_org_package",
+          "columns": [
+            "organization_id",
+            "package_key"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "package_badge_opt_outs_organization_id_organizations_id_fk": {
+          "name": "package_badge_opt_outs_organization_id_organizations_id_fk",
+          "tableFrom": "package_badge_opt_outs",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "package_badge_opt_outs_created_by_user_id_user_id_fk": {
+          "name": "package_badge_opt_outs_created_by_user_id_user_id_fk",
+          "tableFrom": "package_badge_opt_outs",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "publication_alerts": {
       "name": "publication_alerts",
       "columns": {
@@ -1694,13 +1775,6 @@
         },
         "stopped_at": {
           "name": "stopped_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "badge_disabled_at": {
-          "name": "badge_disabled_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

@@ -194,7 +194,11 @@ organization's only (failed) scan re-probes and can bring the panel back.
 
 `/dashboard/packages/:name` (`src/pages/Dashboard/PackageReleases/`) lists one
 package's reviews for the active organization, grouped by channel (dist-tag)
-and newest first, over `GET /api/v1/packages/:name/releases`. A scoped name
+and newest first, over `GET /api/v1/packages/:name/releases`. For npm, PyPI,
+and VS Code it also carries the **Public badge** section
+(`PublicBadgeSection.tsx`, over `GET|PUT /api/v1/packages/:name/badge`): on/off,
+what answers the badge, and the owner/admin switch — see `docs/public-reports.md`.
+A scoped name
 keeps its slash in both paths (`/dashboard/packages/@scope/name`, as `/diff`
 does — the asset layer redirects an encoded slash to a literal one, so a
 single encoded segment does not survive a hard load); both routes take the
