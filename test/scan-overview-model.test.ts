@@ -135,15 +135,27 @@ describe("ScanOverviewModel", () => {
 describe("overviewTiles", () => {
   test("turns the aggregate into four filter-linked calls to action", () => {
     const tiles = overviewTiles(overview(), NOW);
-    expect(tiles.map((tile) => [tile.id, tile.value, tile.detail, tile.filter])).toEqual([
-      ["waiting", "3", "oldest 5h · decide before approving", "undecided"],
-      ["validating", "2", "1 of 2 Drydock reviews ready first", "undecided"],
-      ["published", "1", "went live unreviewed · 30d", "published_without_decision"],
-      ["decided", "6", "5 approved · 1 rejected · median 42m", "all"],
+    expect(
+      tiles.map((tile) => [tile.id, tile.label, tile.value, tile.detail, tile.filter]),
+    ).toEqual([
+      ["waiting", "Waiting on you", "3", "oldest 5h", "undecided"],
+      ["validating", "npm still scanning", "2", "1 of 2 Drydock reviews ready first", "undecided"],
+      ["published", "Published, no decision · 30d", "1", null, "published_without_decision"],
+      ["decided", "Decided · 30d", "6", "5 approved · 1 rejected · median 42m", "all"],
     ]);
   });
 
-  test("describes empty tiles as states, not promises", () => {
+  test("names the window on every tile whose count depends on it", () => {
+    const tiles = overviewTiles(overview({ windowDays: 7 }), NOW);
+    expect(tiles.map((tile) => tile.label)).toEqual([
+      "Waiting on you",
+      "npm still scanning",
+      "Published, no decision · 7d",
+      "Decided · 7d",
+    ]);
+  });
+
+  test("drops a detail line that would only restate an empty count", () => {
     const tiles = overviewTiles(
       overview({
         waiting: { count: 0, oldestCompletedAt: null },
@@ -153,11 +165,28 @@ describe("overviewTiles", () => {
       }),
       NOW,
     );
-    expect(tiles.map((tile) => tile.detail)).toEqual([
-      "nothing to decide",
-      "nothing in npm validation",
-      "none in 30d",
-      "no decisions yet",
+    expect(tiles.map((tile) => [tile.id, tile.value, tile.detail])).toEqual([
+      ["waiting", "0", null],
+      ["validating", "0", null],
+      ["published", "0", null],
+      ["decided", "0", null],
+    ]);
+  });
+
+  test("tints only an unreviewed publish, and only while there is one", () => {
+    const tones = (partial: Partial<ScanOverview>) =>
+      overviewTiles(overview(partial), NOW).map((tile) => [tile.id, tile.tone]);
+    expect(tones({ publishedWithoutDecision: { count: 1 } })).toEqual([
+      ["waiting", null],
+      ["validating", null],
+      ["published", "warn"],
+      ["decided", null],
+    ]);
+    expect(tones({ publishedWithoutDecision: { count: 0 } })).toEqual([
+      ["waiting", null],
+      ["validating", null],
+      ["published", null],
+      ["decided", null],
     ]);
   });
 

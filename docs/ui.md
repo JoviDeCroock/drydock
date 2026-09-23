@@ -102,7 +102,7 @@ that window as four tiles, each a link into the matching `?filter=` on the
 list: **Waiting on you** (completed npm reviews with no decision whose npm
 status is unknown, `staged`, or `validating`, with the age of the oldest),
 **npm still scanning** (`validating`, with how many already have a finished
-Drydock review), **Published, no decision** (the list's
+Drydock review), **Published, no decision · 30d** (the list's
 `published_without_decision` semantics, limited to scans created in the last 30
 days), and **Decided · 30d** (approved vs rejected plus the median
 completion-to-decision time). The first three count only npm staged-publish
@@ -113,7 +113,19 @@ carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
 changes and joins an in-flight request rather than repeating it. The strip is
 absent for an organization with no scans, keeps its previous figures while a
 refresh is in flight, and renders a mono loading or error line otherwise. Tiles
-are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`.
+are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`. A
+tile carries a detail line only when it adds a figure (the oldest age, how many
+are ready, the approve/reject split and median); a line that restated the label
+is omitted. Only the Published value takes a tone — `warn` text when above 0.
+
+Review rows lead with one chip: the release risk, or the lifecycle status while
+there is none. A second chip appears only when npm's state asks something of
+the reader (`registryStatusBadge` returns a tone: blocked, awaiting approval
+after an approval here, published with no decision or over a block); quieter npm
+states end the mono meta line as plain text. There is no "undecided" chip — the
+row's Decide button says it — and a recorded decision renders as plain
+`DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
+the same action repeated down a list is not the region's primary action.
 
 ## Dashboard onboarding funnel
 
@@ -144,13 +156,18 @@ name as a rest parameter and `src/lib/package-releases-path.ts` builds the
 URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. Each row shows the version, what it was compared against
 (`describeBaseline` in `src/features/package-releases.ts` turns the persisted
 baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
-"(highest published)" / "no baseline"), release risk, the decision with who
-and when, npm's lifecycle badge with its observation time, the scan source,
-and the review link. `releaseAttention` marks the two disagreements the page
-exists to surface — npm published a version nobody here decided on (warn
-fill), and npm published a version Drydock blocked (danger fill) — and the
-summary strip counts both alongside total reviews, channels, and the last
-release. Package names in the dashboard list and the `all releases →` link in
+"(highest published)" / "no baseline"), release risk, the decision
+(`DecisionState`, captioned with who decided), npm's state with its observation
+time — a Badge only when `registryStatusBadge` gives it a tone, plain text
+otherwise — and the scan source (`scanSourceLabel`, shared with the dashboard).
+The version is the link to its review, captioned with the review's created
+date; there is no separate review column. `releaseAttention` marks the two
+disagreements the page exists to surface — npm published a version nobody here
+decided on (warn fill), and npm published a version Drydock blocked (danger
+fill). The header's mono line carries the ecosystem, review and channel counts,
+and the last release; the two disagreement counts appear only when above zero,
+as one Alert (`describeAttentionCounts`) — critical once anything was published
+over a block, warn otherwise. Package names in the dashboard list and the `all releases →` link in
 the scan header open it; the scan header's back link returns to whichever
 list surface the review was opened from (`getDashboardReturnUrl`).
 

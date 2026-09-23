@@ -14,23 +14,29 @@ import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
-import { PackageReleasesModel, type PackageRelease } from "../../../models/package-releases";
+import {
+  PackageReleasesModel,
+  type PackageRelease,
+  type PackageReleasesResponse,
+} from "../../../models/package-releases";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
-import { EmptyLine, MonoDetail, MonoLabel, SectionLabel } from "../../../components/Typography";
+import { EmptyLine, MonoDetail, SectionLabel } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import {
   channelLabel,
+  describeAttentionCounts,
   describeBaseline,
   groupReleasesByChannel,
   releaseAttention,
-  type ReleaseAttention,
 } from "../../../features/package-releases";
-import { registryStatusBadge } from "../../../features/registry-status";
+import { registryStatusBadge, registryStatusPhrase } from "../../../features/registry-status";
+import { DecisionState } from "../../../features/review/DecisionState";
+import { scanSourceLabel } from "../../../features/scan-source";
 
 export default function PackageReleasesPage() {
   const location = useLocation();
@@ -107,9 +113,7 @@ function PackageReleasesView({
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0 break-words">{packageName}</h1>
-        <MonoDetail
-          parts={[ecosystemLabel(ecosystem), <SummaryLine key="summary" model={model} />]}
-        />
+        <PackageDetailLine model={model} ecosystem={ecosystem} />
       </header>
 
       <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
@@ -122,7 +126,7 @@ function PackageReleasesView({
       >
         {() => (
           <>
-            <Show when={model.summary}>{(summary) => <SummaryStrip summary={summary} />}</Show>
+            <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
             <Show
               when={hasReleases}
               fallback={
@@ -170,80 +174,42 @@ function PackageReleasesView({
   );
 }
 
-function SummaryLine({ model }: { model: InstanceType<typeof PackageReleasesModel> }) {
-  const text = useComputed(() => {
-    const summary = model.summary.value;
-    if (!summary) return "reviews";
-    return `${summary.totalReviews} ${pluralize("review", summary.totalReviews)}`;
-  });
-  return <span>{text}</span>;
-}
-
-// Four facts, one Card each, in the status-strip shape the dashboard already
-// uses. The last two are the counts that matter per package: releases npm
-// shipped that nobody here reviewed, and releases npm shipped over a block.
-function SummaryStrip({
-  summary,
+// The package's facts as the page's mono detail line. Channel names and each
+// channel's rows are the sections below, so the line only counts them.
+function PackageDetailLine({
+  model,
+  ecosystem,
 }: {
-  summary: NonNullable<InstanceType<typeof PackageReleasesModel>["summary"]["value"]>;
+  model: InstanceType<typeof PackageReleasesModel>;
+  ecosystem: string;
 }) {
-  const channelNames = summary.channels.map((channel) => channelLabel(channel.tag));
-  const unreviewedTone = summary.publishedWithoutDecision > 0 ? "medium" : "ok";
-  return (
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <SummaryCard label="reviews">
-        <span class="text-[18px] font-medium tracking-[-0.01em]">{summary.totalReviews}</span>
-        <span class="text-[13px] text-ink-muted">
-          {summary.channels.length} {pluralize("channel", summary.channels.length)}
-        </span>
-      </SummaryCard>
-      <SummaryCard label="channels">
-        <span class="font-mono text-[13px] break-words">{channelNames.join(" · ") || "—"}</span>
-      </SummaryCard>
-      <SummaryCard label="last release">
-        {summary.lastRelease ? (
-          <>
-            <a
-              href={`/dashboard/scans/${encodeURIComponent(summary.lastRelease.id)}`}
-              class="font-mono text-[13px]"
-            >
-              {summary.lastRelease.version ?? "—"}
-              {summary.lastRelease.tag ? ` (${summary.lastRelease.tag})` : ""}
-            </a>
-            <span class="font-mono text-[11px] text-ink-subtle">
-              {formatDateTime(summary.lastRelease.createdAt)}
-            </span>
-          </>
-        ) : (
-          <span class="text-[13px] text-ink-muted">—</span>
-        )}
-      </SummaryCard>
-      <SummaryCard label="npm-published, unreviewed">
-        <span class="flex flex-wrap items-center gap-2">
-          <Badge tone={unreviewedTone}>{summary.publishedWithoutDecision}</Badge>
-          {summary.publishedDespiteBlock > 0 ? (
-            <Badge tone="critical">{summary.publishedDespiteBlock} over a block</Badge>
-          ) : null}
-        </span>
-        <span class="text-[13px] text-ink-muted">published by npm with no Drydock decision</span>
-      </SummaryCard>
-    </div>
-  );
+  const parts = useComputed(() => {
+    const summary = model.summary.value;
+    if (!summary) return [ecosystemLabel(ecosystem)];
+    const { totalReviews, channels, lastRelease } = summary;
+    return [
+      ecosystemLabel(ecosystem),
+      `${totalReviews} ${pluralize("review", totalReviews)}`,
+      `${channels.length} ${pluralize("channel", channels.length)}`,
+      lastRelease
+        ? `last ${lastRelease.version ?? "—"} ${formatDateTime(lastRelease.createdAt)}`
+        : null,
+    ];
+  });
+  return <MonoDetail parts={parts.value} />;
 }
 
-function SummaryCard({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <Card padding="compact" class="flex flex-col gap-1.5 min-h-[96px]">
-      <MonoLabel>{label}</MonoLabel>
-      {children}
-    </Card>
-  );
+// Only the disagreements with npm earn space above the table, and only when
+// there are some; the rows they count carry the matching fill and npm label.
+function AttentionAlert({ summary }: { summary: PackageReleasesResponse["summary"] }) {
+  const attention = describeAttentionCounts(summary);
+  return attention ? <Alert tone={attention.tone}>{attention.text}</Alert> : null;
 }
 
 function ChannelSection({ tag, releases }: { tag: string | null; releases: PackageRelease[] }) {
   return (
     <section class="flex flex-col gap-3">
-      <SectionLabel as="h2" aside={`${releases.length} ${pluralize("release", releases.length)}`}>
+      <SectionLabel as="h2">
         {tag ? (
           <>
             channel <span class="text-ink normal-case tracking-normal">{tag}</span>
@@ -262,7 +228,6 @@ function ChannelSection({ tag, releases }: { tag: string | null; releases: Packa
               <Th>Decision</Th>
               <Th>npm</Th>
               <Th>Source</Th>
-              <Th>Review</Th>
             </tr>
           </thead>
           <tbody>
@@ -276,18 +241,6 @@ function ChannelSection({ tag, releases }: { tag: string | null; releases: Packa
   );
 }
 
-const ATTENTION_COPY: Record<ReleaseAttention, { label: string; tone: "medium" | "critical" }> = {
-  published_without_review: { label: "approved in npm without a Drydock review", tone: "medium" },
-  published_despite_block: { label: "blocked here, published by npm", tone: "critical" },
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-  manual: "manual",
-  auto_discovery: "discovered",
-  workflow_gate: "workflow gate",
-  published: "published pair",
-};
-
 function ReleaseRow({ release }: { release: PackageRelease }) {
   const attention = releaseAttention(release);
   const rowClass = attention
@@ -297,22 +250,16 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
     : "hover:bg-surface-2";
   const releaseRisk =
     release.status === "complete" ? (release.riskSummary?.releaseRisk ?? release.risk) : null;
-  const registry = registryStatusBadge(release);
-  const scanHref = `/dashboard/scans/${encodeURIComponent(release.id)}`;
   return (
     <tr class={`border-b border-border last:border-b-0 ${rowClass}`}>
-      <Td class="font-mono text-xs whitespace-nowrap">
-        <div class="flex flex-col gap-1">
-          <a href={scanHref} class="text-ink">
-            {release.stagedVersion || "—"}
-          </a>
-          {attention ? (
-            <Badge tone={ATTENTION_COPY[attention].tone}>{ATTENTION_COPY[attention].label}</Badge>
-          ) : null}
-          {release.registryStatusSupersededAt != null ? (
-            <Badge tone="unchanged">superseded</Badge>
-          ) : null}
-        </div>
+      <Td class="whitespace-nowrap">
+        <a href={`/dashboard/scans/${encodeURIComponent(release.id)}`} class="font-mono text-xs">
+          {release.stagedVersion || "—"}
+        </a>
+        <Caption>
+          {formatDateTime(release.createdAt)}
+          {release.registryStatusSupersededAt != null ? " · superseded" : ""}
+        </Caption>
       </Td>
       <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
         {describeBaseline(release)}
@@ -320,59 +267,62 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
       <Td>
         {releaseRisk ? (
           <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>
+        ) : release.status === "failed" ? (
+          <Badge tone="critical">failed</Badge>
         ) : (
-          <Badge tone={release.status === "failed" ? "critical" : "neutral"}>
-            {release.status}
-          </Badge>
+          <PlainState>{release.status}</PlainState>
         )}
       </Td>
       <Td>
-        <DecisionCell release={release} />
+        {release.decision ? (
+          <>
+            <DecisionState decision={release.decision} decidedAt={release.decidedAt} />
+            {release.decidedByName ? <Caption>by {release.decidedByName}</Caption> : null}
+          </>
+        ) : (
+          <PlainState>undecided</PlainState>
+        )}
       </Td>
       <Td>
-        {registry ? (
-          <div class="flex flex-col gap-1">
-            <Badge tone={registry.tone}>{registry.label}</Badge>
-            {release.registryVersionStatusAt ? (
-              <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap">
-                seen {formatDateTime(release.registryVersionStatusAt)}
-              </span>
-            ) : null}
-          </div>
-        ) : release.registryReleaseOutcome ? (
-          <Badge tone="unchanged">npm {release.registryReleaseOutcome}</Badge>
-        ) : (
-          <span class="font-mono text-xs text-ink-subtle">—</span>
-        )}
+        <RegistryCell release={release} />
       </Td>
       <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
-        {SOURCE_LABELS[release.source] ?? release.source}
-      </Td>
-      <Td class="whitespace-nowrap">
-        <a href={scanHref} class="text-[13px]">
-          open →
-        </a>
-        <span class="block font-mono text-[11px] text-ink-subtle">
-          {formatDateTime(release.createdAt)}
-        </span>
+        {scanSourceLabel(release.source)}
       </Td>
     </tr>
   );
 }
 
-function DecisionCell({ release }: { release: PackageRelease }) {
-  if (!release.decision) {
-    return <Badge tone="neutral">undecided</Badge>;
+// npm's state for the row. A Badge only when it asks something of the reader
+// (published with no decision here, over a block, blocked, or still holding an
+// approved version); the expected endings read as plain text.
+function RegistryCell({ release }: { release: PackageRelease }) {
+  const registry = registryStatusBadge(release);
+  if (!registry) {
+    const outcome = registryStatusPhrase(release.registryReleaseOutcome);
+    return <PlainState>{outcome ? `npm ${outcome}` : "—"}</PlainState>;
   }
-  const approved = release.decision === "publish";
   return (
-    <div class="flex flex-col gap-1">
-      <Badge tone={approved ? "ok" : "critical"}>{approved ? "approved" : "blocked"}</Badge>
-      <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap">
-        {release.decidedByName ?? "unknown reviewer"}
-        {release.decidedAt ? ` · ${formatDateTime(release.decidedAt)}` : ""}
-      </span>
+    <div class="flex flex-col items-start gap-1">
+      {registry.tone ? (
+        <Badge tone={registry.tone}>{registry.label}</Badge>
+      ) : (
+        <PlainState>{registry.label}</PlainState>
+      )}
+      {release.registryVersionStatusAt ? (
+        <Caption>seen {formatDateTime(release.registryVersionStatusAt)}</Caption>
+      ) : null}
     </div>
+  );
+}
+
+function PlainState({ children }: { children: ComponentChildren }) {
+  return <span class="font-mono text-xs text-ink-muted whitespace-nowrap">{children}</span>;
+}
+
+function Caption({ children }: { children: ComponentChildren }) {
+  return (
+    <span class="block font-mono text-[11px] text-ink-subtle whitespace-nowrap">{children}</span>
   );
 }
 
@@ -385,5 +335,7 @@ function Th({ children }: { children: ComponentChildren }) {
 }
 
 function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
-  return <td class={`px-4 py-2.5 align-top ${className || ""}`}>{children}</td>;
+  // Baseline, not top: a link, a Badge, and plain mono text have different
+  // line boxes, and top alignment left their first lines visibly staggered.
+  return <td class={`px-4 py-2.5 align-baseline ${className || ""}`}>{children}</td>;
 }

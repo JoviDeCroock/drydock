@@ -77,17 +77,38 @@ export function registryStatusPhrase(status: string | null | undefined): string 
     : null;
 }
 
-const BADGE_LABELS: Record<RegistryStatusVariant, { label: string; tone: BadgeTone }> = {
-  blocked: { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" },
-  awaiting_approval: { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" },
-  validating: { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: "info" },
-  published: { label: `npm ${REGISTRY_STATUS_PHRASE.published}`, tone: "ok" },
-  deleted: { label: `npm ${REGISTRY_STATUS_PHRASE.deleted}`, tone: "unchanged" },
-};
-
+/**
+ * npm's state for a reviewed version, as the review surfaces print it. Every
+ * label names npm so it is never read as Drydock's verdict.
+ *
+ * `tone` is set only when the state asks something of the reader: npm blocked
+ * the version, still holds one approved here, or published one nobody here
+ * approved. Everything else — validating, removed, published after approval —
+ * is `null` and renders as plain text: a green chip on the expected ending, or
+ * on a release that went live undecided, read as "fine" on rows where nothing
+ * else was colored.
+ */
 export function registryStatusBadge(
   scan: RegistryStatusScan,
-): { label: string; tone: BadgeTone } | null {
-  const variant = registryStatusVariant(scan);
-  return variant ? BADGE_LABELS[variant] : null;
+): { label: string; tone: BadgeTone | null } | null {
+  switch (registryStatusVariant(scan)) {
+    case null:
+      return null;
+    case "blocked":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" };
+    case "awaiting_approval":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" };
+    case "validating":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: null };
+    case "deleted":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.deleted}`, tone: null };
+    case "published":
+      if (scan.decision === "no_publish") {
+        return { label: `npm ${REGISTRY_STATUS_PHRASE.published} over a block`, tone: "critical" };
+      }
+      if (!scan.decision) {
+        return { label: `npm ${REGISTRY_STATUS_PHRASE.published}, no decision`, tone: "medium" };
+      }
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.published}`, tone: null };
+  }
 }

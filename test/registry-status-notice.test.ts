@@ -65,10 +65,27 @@ describe("registry status badge", () => {
     ).toMatch(/^npm /);
   });
 
-  test("blocked is the only critical tone", () => {
+  test("colors only the states that ask something of the reader", () => {
     expect(registryStatusBadge({ registryVersionStatus: "blocked" })?.tone).toBe("critical");
-    expect(registryStatusBadge({ registryVersionStatus: "published" })?.tone).toBe("ok");
+    expect(
+      registryStatusBadge({ registryVersionStatus: "staged", decision: "publish" })?.tone,
+    ).toBe("medium");
+    expect(registryStatusBadge({ registryVersionStatus: "validating" })?.tone).toBe(null);
+    expect(registryStatusBadge({ registryVersionStatus: "deleted" })?.tone).toBe(null);
     expect(registryStatusBadge({})).toBe(null);
+  });
+
+  test("reads a published version against the decision recorded here", () => {
+    expect(
+      registryStatusBadge({ registryVersionStatus: "published", decision: "publish" }),
+    ).toEqual({ label: "npm published", tone: null });
+    expect(registryStatusBadge({ registryVersionStatus: "published" })).toEqual({
+      label: "npm published, no decision",
+      tone: "medium",
+    });
+    expect(
+      registryStatusBadge({ registryVersionStatus: "published", decision: "no_publish" }),
+    ).toEqual({ label: "npm published over a block", tone: "critical" });
   });
 
   test("describes deleted versions as removed rather than pre-publication withdrawals", () => {

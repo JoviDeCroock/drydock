@@ -66,9 +66,9 @@ export function OrgSwitcher({
         )}
         trigger={() => (
           <>
-            <span class="truncate max-w-[180px]">{triggerLabel}</span>
+            <span class="truncate max-w-[120px] sm:max-w-[180px]">{triggerLabel}</span>
             {active?.isPersonal ? (
-              <span class="text-ink-subtle text-[11px]">(personal)</span>
+              <span class="hidden sm:inline text-ink-subtle text-[11px]">(personal)</span>
             ) : null}
             <span class="text-ink-subtle text-[10px] leading-none ml-1">▾</span>
           </>

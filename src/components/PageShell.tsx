@@ -52,7 +52,9 @@ export function PageShell({
             <div class="flex items-center gap-2.5">
               <HeaderBrandMark />
             </div>
-            <div class="flex items-center gap-2">
+            {/* Wraps under the brand at phone width instead of pushing the
+                page into a sideways scroll. */}
+            <div class="flex min-w-0 flex-wrap items-center justify-end gap-2">
               {feedbackPosition === "start" ? <FeedbackButton /> : null}
               {headerActions}
               {feedbackPosition === "end" ? <FeedbackButton /> : null}
