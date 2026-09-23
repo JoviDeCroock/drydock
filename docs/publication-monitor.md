@@ -187,6 +187,54 @@ window are re-sent: after a stop and re-enrollment, an older window's alert is n
 emailed, because the dashboard can no longer show or acknowledge it. The durable
 dashboard alert remains available until the watch is stopped.
 
+## Reviewing an alert after release
+
+Each alert (dashboard card and package page) offers **Scan** beside **Acknowledge**.
+Scan starts the same published-pair review `POST /api/v1/scans` starts, of the
+observed version against the published version the monitor recorded it following
+(the predecessor its diff link uses), and links that review to the alert: the scan id
+is stored on the alert, and a second Scan opens the linked review instead of starting
+another. It takes the same role and the same per-organization scan budget as
+starting any review. The alert shows the review's state and links to it ("Open
+post-release review"); a review that failed can be deleted on its page, which unlinks
+it and offers Scan again. Starting it is audited (`publication.review_started`).
+
+A release with no Drydock record was decided from metadata alone, so its bytes were
+never hashed. Starting the review asks the monitor to hash them now, with the same
+credential-free, bounded collector a check uses (and the same killswitch), filling
+only digests the observation never recorded; the decision tries once more if that has
+not landed. The observation's status and reason are never touched.
+
+The decision happens on the review page's Decide dialog, diff first, which reads
+"Decision after release" for a linked review. Deciding it resolves the alert, audited
+as `publication.review_resolved`, and re-deciding updates it:
+
+- **Approve after release** resolves the alert as approved after release. It no longer
+  counts as unacknowledged, is not re-sent, and needs no acknowledgment.
+- **Decline after release** keeps the alert open, labelled declined after release,
+  with next steps: deprecate or unpublish the version on npm, rotate the tokens that
+  can publish it, and check its trusted publishers and who holds publish rights.
+
+The observation keeps its historical verdict (published without prior approval); the
+post-release outcome is recorded beside it on the alert, never over it. A published-
+pair review still never counts as a release record in the verdict (see "Byte and
+decision binding"), so a post-release review cannot settle or suppress any later
+observation. A published-pair review of the same version started any other way
+resolves nothing: only the linked one does.
+
+Whether the decision may also speak on the public badge is stricter, because anyone
+can run a published-pair review of any public package. It does only when the
+organization is a **registry-verified publisher** of that exact name (the rule the
+badge's off switch uses: a completed staged review of a public-npm stage its own token
+could read, under npm's name), the monitor and the review both read the release from
+the public npm registry, and the reviewed tarball's digests equal the ones the monitor
+recorded for the release (every algorithm both carry must agree, and at least one must
+be shared). The alert records the outcome of that check (`resolution_badge`:
+`applied`, or `not_a_verified_publisher`, `not_public_npm`, `digests_unavailable`,
+`digests_differ`), and the page says whether the badge counts the decision. Otherwise
+the decision resolves the alert for the organization and never changes the badge. See
+[`public-reports.md`](./public-reports.md#decided-after-release).
+
 The organization `out-of-band-watch` flag disables acquisition and new alerts when
 false, including manual checks. It defaults on without a FLAGS binding. Enrollment
 and existing evidence remain accessible while disabled; each affected watch shows that
@@ -219,13 +267,15 @@ registry the workflow intended to publish to, successful callback delivery, or
 ownership of the npm package.
 
 Published-pair reviews are not prior release authorization and are not records of
-the release path. Late decisions never turn a publication into an
-approval-before-publication match. Confirmed observations are retained. Unresolved
+the release path, including one started from an alert: its decision resolves the
+alert beside the observation and is never read back into a verdict. Late decisions
+never turn a publication into an approval-before-publication match. Confirmed observations are retained. Unresolved
 observations with a transient cause (a failed download) are retried on each check;
 those no further check can resolve by itself (late decision, missing review digest, a
 tarball over the hashing cap) are re-evaluated once a day. A published version's bytes are immutable, so a re-evaluation reuses the
 stored digests and never downloads the tarball again. Bytes are downloaded only for a
-release the organization has a Drydock record of. The monitor does not rewrite scan
+release the organization has a Drydock record of, or one it started a post-release
+review of. The monitor does not rewrite scan
 findings, risk, decisions, signed public reports, public badge identity, or Release
 Receipt v1.
 
@@ -236,7 +286,9 @@ dist-tag now points at (by the recorded `dist_tags`), or for a newer release
 on the quoted line (inferred from version shape), turns it grey as `<version>
 not reviewed` instead of green. `unknown` about the quoted
 version itself does not, unless its published bytes differ from the reviewed
-ones. See
+ones. A guarded decision after release (above) answers for its version: an
+approval clears that version's discrepancy or supersession, and a decline reads
+`<version> blocked`. See
 [`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
 
 ## API and operation
@@ -259,6 +311,13 @@ All endpoints require a Better Auth session and active-organization membership:
   response carries that state.
 - `POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge`
   acknowledges a discrepancy and returns current watch/observations; repeats are idempotent.
+- `POST /api/v1/publication-watches/:id/observations/:observationId/review` starts the
+  alert's post-release review and returns `{ scanId, started: true }` (202), or the
+  linked one as `{ scanId, started: false }` (200). Observations carry the linked
+  review (`reviewScanId`, `reviewStatus`, `reviewDecision`) and the outcome
+  (`resolution`, `resolvedAt`, `resolutionBadge`); ledger alerts carry `reviewScanId`,
+  `resolution` and `resolvedAt`; a linked scan's detail and decision responses carry
+  `postRelease`. Deciding goes through `POST /api/v1/scans/:id/decision`.
 - `DELETE /api/v1/publication-watches/:id` (owner/admin only) stops monitoring, removes history,
   and remembers the opt-out.
 
@@ -286,14 +345,18 @@ complete. Both package-wide limits become coverage gaps.
 
 Persistence lives in `publication_watches`, `publication_observations`, and
 `publication_watch_candidates` (enrollment evidence and persistent opt-outs), and
-`publication_alerts` (durable notification deduplication and acknowledgment).
+`publication_alerts` (durable notification deduplication, acknowledgment, and the
+post-release review and its resolution, which outlive a stopped watch with it).
 `server/lib/ecosystems/npm/publication-auto-enrollment.ts` owns enrollment;
 `server/lib/ecosystems/npm/publication-monitor.ts` owns acquisition and the sweep;
 `server/lib/ecosystems/npm/publication-notices.ts` owns alert and coverage-notice
 delivery; `server/lib/ecosystems/npm/publication-verdict.ts` owns comparison;
+`server/lib/ecosystems/npm/publication-review.ts` resolves an alert from its
+post-release review and decides whether the decision may reach the badge;
 `server/routes/npm-publication-watches.ts` owns the authenticated API. The scheduled
-handler (`server/scheduled.ts`) and the staged-review route reach the monitor only
-through the `publicationMonitor` capability on the ecosystem registry. Operational
+handler (`server/scheduled.ts`), the staged-review route, and the decision route reach
+the monitor only through the `publicationMonitor` capability on the ecosystem registry
+(`server/lib/ecosystems/npm/publication.ts`). Operational
 failures use safe codes through `emitOperationalEvent`, never raw registry errors.
 
 The local fake-registry harness may use the existing explicitly enabled loopback
