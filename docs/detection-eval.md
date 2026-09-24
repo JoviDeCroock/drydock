@@ -95,8 +95,9 @@ Recall is measured per class so blind spots are visible. Malicious:
 `network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`,
 `typosquat-metadata`, `protestware`, `dependency-confusion`,
 `wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
-`legit-build-infrastructure`, `legit-childprocess`, `legit-documentation`,
-`legit-dynamic-require`, `legit-entrypoint-declaration`, `legit-test-suite`.
+`legit-build-infrastructure`, `legit-childprocess`, `legit-dependency-patching`,
+`legit-documentation`, `legit-dynamic-require`, `legit-entrypoint-declaration`,
+`legit-env-read`, `legit-llm-tooling`, `legit-release-tooling`, `legit-test-suite`.
 atpm golden cases add release-provenance classes for invalid, missing, mismatched,
 or regressed attestations plus a matching-provenance control.
 

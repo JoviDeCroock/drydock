@@ -232,6 +232,50 @@ describe("scoreRun", () => {
     expect(scoreRun(maliciousCase, { review: inconsistent, usage: usage() }).passed).toBe(false);
   });
 
+  test("scores the release risk the gate reads through the production roll-up", () => {
+    const file = (path, textSample) => ({
+      path,
+      size: textSample.length,
+      sha256: path,
+      flags: [],
+      textSample,
+    });
+    const testCase = {
+      ...benignCase,
+      options: {
+        ruleFindings: [],
+        files: [file("lib/new.js", "fetch(u);\n"), file("lib/old.js", "legacy();\n")],
+        previousFiles: [file("lib/old.js", "legacy();\n")],
+        diff: [
+          { path: "lib/new.js", status: "added" },
+          { path: "lib/old.js", status: "unchanged" },
+        ],
+      },
+    };
+    const finding = (file) => ({
+      severity: "high",
+      file,
+      evidence: "e",
+      reason: "r",
+      recommendation: "x",
+    });
+    const suspicious = (findings) =>
+      review({
+        risk: "high",
+        releaseAssessment: "suspicious",
+        requiresManualReview: false,
+        findings,
+      });
+
+    expect(
+      scoreRun(testCase, { review: suspicious([finding("lib/new.js")]), usage: usage() }),
+    ).toMatchObject({ releaseRisk: "high" });
+    // Package context only: the gate is not rejected over code this release left alone.
+    expect(
+      scoreRun(testCase, { review: suspicious([finding("lib/old.js")]), usage: usage() }),
+    ).toMatchObject({ releaseRisk: "low" });
+  });
+
   test("fails a benign fixture the model escalated", () => {
     expect(scoreRun(benignCase, { review: review(), usage: usage() }).passed).toBe(false);
   });

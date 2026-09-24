@@ -16,10 +16,13 @@ import {
   traceIsolatedAiBinding,
 } from "../server/lib/ai-review";
 import {
+  aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
+  clampAiReviewSubmission,
   MAX_AGENT_STEPS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
+  parsePersistedAiReview,
 } from "../server/lib/ai-review/contract";
 import { computeScanRisk } from "../server/lib/review/risk";
 
@@ -103,6 +106,7 @@ function textOnlyModel(text) {
 function aiFinding(severity, file) {
   return {
     severity,
+    category: "network-access",
     file,
     evidence: `evidence in ${file}`,
     reason: `reason for ${file}`,
@@ -145,9 +149,29 @@ describe("AI review prompt selection", () => {
   test("separates immutable deterministic evidence from additive AI risk", () => {
     const prompt = buildReviewerSystemPrompt("npm");
 
-    expect(prompt).toContain("application scores them separately");
-    expect(prompt).toContain("do not copy a deterministic finding into the AI findings");
+    expect(prompt).toContain("the application scores separately");
+    expect(prompt).toContain("nothing you submit changes their severity or score");
+    expect(prompt).toContain(
+      "Never file an AI finding to restate, confirm, explain, or dispute a deterministic finding",
+    );
     expect(prompt).not.toContain("never downgrade them");
+  });
+
+  test("anchors the reviewer on npm registry facts it previously got wrong", () => {
+    const npm = buildReviewerSystemPrompt("npm");
+    expect(npm).toContain("npm stage publish is a real npm command");
+    expect(npm).toContain("Consumer install hooks are only preinstall, install, and postinstall");
+    expect(npm).toMatch(/prepare, prepack, postpack, prepublish, publish, dependencies/);
+    for (const ecosystem of ["pypi", "vscode", "generic"]) {
+      expect(buildReviewerSystemPrompt(ecosystem)).not.toContain("npm stage publish");
+    }
+  });
+
+  test("tells the reviewer its verdict bounds the risk it can add", () => {
+    const prompt = buildReviewerSystemPrompt("npm");
+    expect(prompt).toContain("nothing_unusual adds none");
+    expect(prompt).toContain("review_recommended at most medium");
+    expect(prompt).toContain("suspicious at most high");
   });
 
   test("routes the vscode ecosystem to the VS Code prompt without npm/PyPI leakage", () => {
@@ -1293,6 +1317,7 @@ describe("displayedAiResult", () => {
         },
       ],
       requiresManualReview: true,
+      deterministicAssessments: [],
     });
   });
 
@@ -1340,5 +1365,188 @@ describe("computeScanRisk fail-safe for incomplete AI reviews", () => {
     expect(
       computeScanRisk([{ severity: "critical" }], incomplete("invalid", "mock-reviewer")),
     ).toBe("critical");
+  });
+});
+
+describe("finding anchors and deterministic assessments (reviewer 1.8.0)", () => {
+  const submission = (overrides = {}) => ({
+    ...VALID_REVIEW,
+    risk: "high",
+    releaseAssessment: "suspicious",
+    requiresManualReview: true,
+    findings: [{ ...aiFinding("high", "lib/new.js"), line: 7 }],
+    ...overrides,
+  });
+
+  test("a missing or unknown category normalizes to other instead of failing", async () => {
+    const { category: _category, ...uncategorized } = aiFinding("high", "lib/new.js");
+    expect(aiReviewSubmissionSchema.safeParse(submission()).success).toBe(true);
+    expect(
+      aiReviewSubmissionSchema.safeParse(submission({ findings: [uncategorized] })).success,
+    ).toBe(true);
+    const unknown = submission({ findings: [{ ...uncategorized, category: "exfiltration" }] });
+    expect(aiReviewSubmissionSchema.safeParse(unknown).success).toBe(false);
+    expect(
+      aiReviewSubmissionSchema.parse(clampAiReviewSubmission(unknown)).findings[0].category,
+    ).toBe("other");
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel(submission({ findings: [uncategorized] })),
+    );
+    expect(ai.findings[0].category).toBe("other");
+  });
+
+  test("a malformed line is dropped by the repair clamp, keeping the finding", () => {
+    const raw = submission({ findings: [{ ...aiFinding("high", "lib/new.js"), line: 0 }] });
+    expect(aiReviewSubmissionSchema.safeParse(raw).success).toBe(false);
+    const repaired = aiReviewSubmissionSchema.parse(clampAiReviewSubmission(raw));
+    expect(repaired.findings[0]).not.toHaveProperty("line");
+    expect(repaired.findings[0].category).toBe("network-access");
+  });
+
+  test("deterministic assessments are bounded and clamped rather than discarded", () => {
+    const entry = {
+      ruleId: "code.process-execution",
+      file: "bin/cli.js",
+      verdict: "disputed",
+      note: "Fixed argv. ".repeat(60),
+    };
+    const raw = submission({ deterministicAssessments: Array.from({ length: 11 }, () => entry) });
+    expect(aiReviewSubmissionSchema.safeParse(raw).success).toBe(false);
+    const repaired = aiReviewSubmissionSchema.parse(clampAiReviewSubmission(raw));
+    expect(repaired.deterministicAssessments).toHaveLength(8);
+    expect(repaired.deterministicAssessments[0].note.endsWith(" …")).toBe(true);
+    expect(
+      aiReviewSubmissionSchema.safeParse(
+        submission({ deterministicAssessments: [{ ...entry, verdict: "cleared" }] }),
+      ).success,
+    ).toBe(false);
+  });
+
+  test("a malformed display-only assessment never costs the review its verdict", () => {
+    const good = { ruleId: "code.network-access", file: "a.js", verdict: "confirmed", note: "ok" };
+    const withBadEntries = clampAiReviewSubmission(
+      submission({
+        deterministicAssessments: [
+          null,
+          { ...good, verdict: "cleared" },
+          { ...good, note: "" },
+          good,
+        ],
+      }),
+    );
+    expect(aiReviewSubmissionSchema.parse(withBadEntries).deterministicAssessments).toEqual([good]);
+    const withBadList = clampAiReviewSubmission(submission({ deterministicAssessments: "none" }));
+    expect(aiReviewSubmissionSchema.parse(withBadList)).not.toHaveProperty(
+      "deterministicAssessments",
+    );
+  });
+
+  test("a completed review persists line, category, and deterministic assessments", async () => {
+    const assessment = {
+      ruleId: "code.process-execution",
+      file: "bin/cli.js",
+      verdict: "confirmed",
+      note: "Runs the package manager with fixed argv, as the CLI is meant to.",
+    };
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel(submission({ deterministicAssessments: [assessment] })),
+    );
+
+    expect(ai.status).toBe("complete");
+    expect(ai.reviewerVersion).toBe("1.8.0");
+    expect(ai.findings[0]).toMatchObject({ category: "network-access", line: 7 });
+    expect(ai.deterministicAssessments).toEqual([assessment]);
+    expect(displayedAiResult(ai)).toMatchObject({ deterministicAssessments: [assessment] });
+    expect(parsePersistedAiReview(JSON.parse(JSON.stringify(ai)))).toMatchObject({
+      findings: [{ category: "network-access", line: 7 }],
+      deterministicAssessments: [assessment],
+    });
+  });
+
+  test("a review without assessments persists without the field", async () => {
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      BASE_OPTIONS,
+      submittingModel(submission()),
+    );
+    expect(ai).not.toHaveProperty("deterministicAssessments");
+    expect(displayedAiResult(ai)).toMatchObject({ deterministicAssessments: [] });
+  });
+
+  test("historical reviews without anchors still parse and display", () => {
+    const legacy = {
+      status: "complete",
+      risk: "high",
+      releaseAssessment: "suspicious",
+      summary: "s",
+      findings: [
+        { severity: "high", file: "a.js", evidence: "e", reason: "r", recommendation: "x" },
+      ],
+      requiresManualReview: true,
+      model: "m",
+      reviewerVersion: "1.7.0",
+    };
+    const parsed = parsePersistedAiReview(legacy);
+    expect(parsed?.findings[0]).not.toHaveProperty("category");
+    expect(parsed?.findings[0]).not.toHaveProperty("line");
+    expect(displayedAiResult(parsed)).toMatchObject({ deterministicAssessments: [] });
+  });
+
+  test("malformed anchors or assessments degrade instead of dropping the review", () => {
+    const parsed = parsePersistedAiReview({
+      status: "complete",
+      risk: "high",
+      releaseAssessment: "suspicious",
+      summary: "s",
+      findings: [
+        {
+          severity: "high",
+          category: "not-a-category",
+          file: "a.js",
+          line: -3,
+          evidence: "e",
+          reason: "r",
+          recommendation: "x",
+        },
+      ],
+      requiresManualReview: true,
+      deterministicAssessments: "garbage",
+      model: "m",
+      reviewerVersion: "1.8.0",
+    });
+    expect(parsed).not.toBeNull();
+    expect(
+      parsePersistedAiReview({
+        ...parsed,
+        deterministicAssessments: [
+          { ruleId: "r" },
+          { ruleId: "r", file: "f", verdict: "disputed", note: "n" },
+        ],
+      })?.deterministicAssessments,
+    ).toEqual([{ ruleId: "r", file: "f", verdict: "disputed", note: "n" }]);
+    expect(parsed?.findings[0].category).toBeUndefined();
+    expect(parsed?.findings[0].line).toBeUndefined();
+    expect(displayedAiResult(parsed)).toMatchObject({ deterministicAssessments: [] });
+    // The UI reads ai_json unvalidated; the accessor still filters junk rows.
+    expect(
+      displayedAiResult({
+        ...parsed,
+        deterministicAssessments: [
+          { ruleId: 1 },
+          null,
+          { ruleId: "r", file: "f", verdict: "confirmed", note: "n" },
+        ],
+      }),
+    ).toMatchObject({
+      deterministicAssessments: [{ ruleId: "r", file: "f", verdict: "confirmed", note: "n" }],
+    });
   });
 });

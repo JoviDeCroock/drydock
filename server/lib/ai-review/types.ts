@@ -1,12 +1,23 @@
 import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "../review";
-import type { AiReviewEcosystem } from "./contract";
+import type { AiFindingCategory, AiReviewEcosystem } from "./contract";
 
 interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
+  /** Absent on reviews recorded before reviewer 1.8.0. */
+  category?: AiFindingCategory;
   file: string;
+  /** 1-based staged-file line the reviewer took from a search match (1.8.0+). */
+  line?: number;
   evidence: string;
   reason: string;
   recommendation: string;
+}
+
+export interface AiDeterministicAssessment {
+  ruleId: string;
+  file: string;
+  verdict: "confirmed" | "disputed";
+  note: string;
 }
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
@@ -20,6 +31,11 @@ export interface AiReview {
   summary: string;
   findings: AiFinding[];
   requiresManualReview: boolean;
+  /**
+   * The reviewer's reading of individual deterministic findings (1.8.0+).
+   * Display-only: it never edits a finding or moves any risk score.
+   */
+  deterministicAssessments?: AiDeterministicAssessment[];
   model: string | null;
   /** Version of the prompt, evidence tools, and routing contract used. */
   reviewerVersion: string | null;
@@ -50,6 +66,11 @@ export interface SelectiveAiReviewOptions {
   previousFiles?: FileRecord[];
   diff: DiffEntry[];
   packageJsonDiff: PackageJsonDiff;
+  /**
+   * Release-delta deterministic findings only (projectReleaseRuleFindings), so
+   * the reviewer's deterministicRisk anchor is this release's score, not the
+   * whole package's.
+   */
   ruleFindings: Finding[];
   previousVersionAvailable: boolean;
 }
@@ -63,6 +84,7 @@ export type DisplayedAiResult =
       releaseAssessment: AiReleaseAssessment;
       findings: AiFinding[];
       requiresManualReview: boolean;
+      deterministicAssessments: AiDeterministicAssessment[];
     }
   | {
       kind: "unavailable";
@@ -87,6 +109,9 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
       releaseAssessment: review.releaseAssessment,
       findings: review.findings,
       requiresManualReview: review.requiresManualReview,
+      deterministicAssessments: displayableDeterministicAssessments(
+        review.deterministicAssessments,
+      ),
     };
   }
   return {
@@ -95,4 +120,20 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
     summary: review.summary,
     status: review.status === "complete" ? "invalid" : review.status,
   };
+}
+
+// The scan page reads `ai_json` without schema validation, so this accessor is
+// the one place a legacy (absent) or malformed list is reduced to what can be
+// rendered as inert text.
+function displayableDeterministicAssessments(value: unknown): AiDeterministicAssessment[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is AiDeterministicAssessment =>
+      Boolean(entry) &&
+      typeof entry === "object" &&
+      typeof entry.ruleId === "string" &&
+      typeof entry.file === "string" &&
+      (entry.verdict === "confirmed" || entry.verdict === "disputed") &&
+      typeof entry.note === "string",
+  );
 }

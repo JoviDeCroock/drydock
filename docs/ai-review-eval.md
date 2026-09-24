@@ -31,6 +31,52 @@ trailing ellipsis on a path reads as part of the filename. The prompt states
 the summary budget so the model finishes its verdict inside it instead of
 relying on the clamp.
 
+The optional `deterministicAssessments` list (at most
+`AI_REVIEW_BOUNDS.assessmentsCount` entries of rule id, file, `confirmed` or
+`disputed`, and a short note) is where the reviewer agrees or disagrees with a
+deterministic finding. The prompt forbids filing an AI finding to restate,
+explain, or dispute one: before 1.8.0 the only way to discuss a rule finding was
+a high AI finding, which scored as an escalation even when its text called the
+rule a false positive. Assessments are persisted with the review and carried in
+the report export; the scan's AI assessment section renders only those naming a
+rule id and file this scan actually reported. Risk scoring never reads them.
+
+## Risk contribution
+
+`server/lib/review/risk.ts` owns how a completed review moves scores. The
+deterministic score is computed first and the AI's contribution is combined with
+it through a max, so every bound below limits the AI's upgrade and none can
+lower a deterministic grade.
+
+- **Verdict cap.** The review's overall risk and its findings' severities are
+  capped by its own `releaseAssessment`: `nothing_unusual` adds nothing,
+  `review_recommended` at most medium, `suspicious` at most high, `blocked` up
+  to critical. `requiresManualReview` keeps its medium floor, and an attempted
+  but unavailable review still floors at medium. The cap applies to
+  `artifactRisk`, `releaseRisk`, and the AI share of `contextRisk`.
+- **Release attribution.** `releaseRisk` gets the same verdict-bounded
+  contribution, from the review's overall risk and its release-delta findings.
+  A review whose findings all cite unchanged files stays out of `releaseRisk`
+  (manual-review floor aside); a review with no findings is scored wholesale,
+  because a reviewer told not to restate deterministic findings may escalate
+  with none of its own. Attribution is file-level even when a finding records
+  a line (`withoutFindingLine`): a rule finding's stale line is rescued by
+  re-matching its pattern, but an AI finding has none, so a decoy on an
+  unchanged line (the first search match) would otherwise pull a newly added
+  call out of the release. Requiring a located line was tried and dropped: a
+  reused call shape, a clipped baseline, or a modified binary cannot produce
+  one, so it turned real AI-only detections into gate approvals.
+
+Each finding carries an optional `category` (`AI_FINDING_CATEGORIES`, named
+after the rule families; a missing or unknown value normalizes to `other`) and
+an optional 1-based `line` the prompt tells the model to copy from a
+`search_files` match. Both are display, export, and eval metadata that scoring
+never reads; the repair clamp drops a malformed line rather than failing the
+submission. Reviews recorded before 1.8.0 have neither and parse unchanged.
+The reviewer's `deterministicRisk` input is the release-delta roll-up: the
+pipeline hands it `releaseRuleFindings`, so findings on unchanged code never
+reach the model.
+
 ## Evidence coverage
 
 The loop does not rely on the model volunteering reads. `buildEvidenceIndex`
@@ -221,6 +267,10 @@ It reports three things, in priority order:
    model-only detection where deterministic coverage is deliberately weak.
    Benign false-positive rate remains AI-only, so deterministic package context
    cannot make a clean model response look noisy.
+   Each run also carries `releaseRisk`, scored through the production merge and
+   roll-up, and the model summary reports a benign release escalation rate
+   (benign fixtures the AI alone pushed to high or above), because the workflow
+   gate reads release risk, not the artifact headline.
 3. **Cost.** Measured tokens priced per model, with cached input billed
    separately. The loop re-sends a prefix that grows to the evidence cap, up to
    `MAX_AGENT_STEPS` times, so cached-input share dominates the bill: a model

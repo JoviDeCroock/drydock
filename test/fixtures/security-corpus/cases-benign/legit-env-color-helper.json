@@ -1,0 +1,70 @@
+{
+  "id": "legit-env-color-helper",
+  "title": "Logger drops its color dependency for an inlined NO_COLOR/FORCE_COLOR check (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-env-read",
+  "source": "synthetic",
+  "intent": "Reading NO_COLOR, FORCE_COLOR, and TERM to decide whether to emit ANSI colors is the standard terminal convention, and nothing read leaves the process, yet code.credential-access fires at medium on the modified file. Guards the AI failure where the reviewer calls that deterministic finding a likely false positive in its own text but still files it as a high finding.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "@example/logline",
+    "version": "4.1.0",
+    "main": "index.js",
+    "dependencies": {
+      "@example/term-colors": "^2.1.0"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@example/logline",
+    "version": "4.2.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 139,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/logline\",\n  \"version\": \"4.1.0\",\n  \"main\": \"index.js\",\n  \"dependencies\": {\n    \"@example/term-colors\": \"^2.1.0\"\n  }\n}\n"
+    },
+    {
+      "path": "index.js",
+      "size": 59,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "'use strict';\nmodule.exports = require('./lib/format.js');\n"
+    },
+    {
+      "path": "lib/format.js",
+      "size": 343,
+      "sha256": "prev-lib-format-js",
+      "flags": [],
+      "textSample": "'use strict';\nconst colors = require('@example/term-colors');\n\nconst LEVEL_COLOR = { info: 'cyan', warn: 'yellow', error: 'red' };\n\nfunction formatLine(level, message) {\n  const tag = `[${level.toUpperCase()}]`;\n  const color = LEVEL_COLOR[level];\n  return `${color ? colors[color](tag) : tag} ${message}`;\n}\n\nmodule.exports = { formatLine };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 77,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/logline\",\n  \"version\": \"4.2.0\",\n  \"main\": \"index.js\"\n}\n"
+    },
+    {
+      "path": "index.js",
+      "size": 59,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "'use strict';\nmodule.exports = require('./lib/format.js');\n"
+    },
+    {
+      "path": "lib/format.js",
+      "size": 731,
+      "sha256": "staged-lib-format-js",
+      "flags": [],
+      "textSample": "'use strict';\n\nconst CODES = { cyan: 36, yellow: 33, red: 31 };\nconst LEVEL_COLOR = { info: 'cyan', warn: 'yellow', error: 'red' };\n\nfunction supportsColor(stream = process.stdout) {\n  const env = process.env;\n  if ('NO_COLOR' in env) return false;\n  if ('FORCE_COLOR' in env) return env.FORCE_COLOR !== '0';\n  if (env.TERM === 'dumb') return false;\n  return Boolean(stream && stream.isTTY);\n}\n\nfunction paint(color, text) {\n  return supportsColor() ? `\\u001b[${CODES[color]}m${text}\\u001b[39m` : text;\n}\n\nfunction formatLine(level, message) {\n  const tag = `[${level.toUpperCase()}]`;\n  const color = LEVEL_COLOR[level];\n  return `${color ? paint(color, tag) : tag} ${message}`;\n}\n\nmodule.exports = { formatLine, supportsColor };\n"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "id": "legit-root-dependencies-script",
+  "title": "Package adds a root-only dependencies script that runs the maintainer's own helper via npx (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-build-infrastructure",
+  "source": "synthetic",
+  "intent": "npm runs a `dependencies` script only in the project's own root after its dependency tree changes, never for a consumer installing the registry tarball, and this one just runs the maintainer's own devDependency helper through npx outside `npm ci`. Guards the AI failure where a new npx-invoking package.json script is treated as an install-time lifecycle hook and filed as a high finding.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "@example/workspace-kit",
+    "version": "3.2.0",
+    "main": "index.js",
+    "scripts": {
+      "build": "tsc -p tsconfig.json",
+      "refs": "tsrefs-sync --write",
+      "test": "node --test"
+    },
+    "devDependencies": {
+      "@example/tsrefs-sync": "^1.4.0"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@example/workspace-kit",
+    "version": "3.3.0",
+    "main": "index.js",
+    "scripts": {
+      "build": "tsc -p tsconfig.json",
+      "refs": "tsrefs-sync --write",
+      "test": "node --test",
+      "dependencies": "[ \"$npm_command\" = ci ] || npx --no @example/tsrefs-sync --write"
+    },
+    "devDependencies": {
+      "@example/tsrefs-sync": "^1.4.0"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 266,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/workspace-kit\",\n  \"version\": \"3.2.0\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"refs\": \"tsrefs-sync --write\",\n    \"test\": \"node --test\"\n  },\n  \"devDependencies\": {\n    \"@example/tsrefs-sync\": \"^1.4.0\"\n  }\n}\n"
+    },
+    {
+      "path": "index.js",
+      "size": 141,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "'use strict';\n\nfunction defineWorkspace(config) {\n  return { packages: ['packages/*'], ...config };\n}\n\nmodule.exports = { defineWorkspace };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 356,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/workspace-kit\",\n  \"version\": \"3.3.0\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.json\",\n    \"refs\": \"tsrefs-sync --write\",\n    \"test\": \"node --test\",\n    \"dependencies\": \"[ \\\"$npm_command\\\" = ci ] || npx --no @example/tsrefs-sync --write\"\n  },\n  \"devDependencies\": {\n    \"@example/tsrefs-sync\": \"^1.4.0\"\n  }\n}\n"
+    },
+    {
+      "path": "index.js",
+      "size": 141,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "'use strict';\n\nfunction defineWorkspace(config) {\n  return { packages: ['packages/*'], ...config };\n}\n\nmodule.exports = { defineWorkspace };\n"
+    }
+  ]
+}

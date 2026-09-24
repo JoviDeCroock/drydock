@@ -582,25 +582,165 @@ describe("mergeAiFindings", () => {
       ],
     });
     const lowMerge = mergeAiFindings(lowReview, findings, diff, "javascript");
-    const withLowAi = scoreRisk(
-      [...findings.annotatedFindings, ...lowMerge.annotatedRecords],
-      lowReview,
-    );
+    const withLowAi = scoreRisk(findings.annotatedFindings, lowReview, null, {
+      aiFindings: lowMerge.annotatedRecords,
+    });
     expect(withLowAi.artifactRisk).toBe(deterministicOnly.artifactRisk);
     expect(withLowAi.releaseRisk).toBe(deterministicOnly.releaseRisk);
     expect(withLowAi.contextRisk).toBe(deterministicOnly.contextRisk);
     // The AI finding is counted, in addition to the deterministic one.
     expect(withLowAi.releaseFindingCount).toBe(deterministicOnly.releaseFindingCount + 1);
 
-    // A critical AI finding escalates.
-    const criticalReview = makeCompleteAiReview();
+    // A blocking review with a critical release finding escalates.
+    const criticalReview = makeCompleteAiReview({ releaseAssessment: "blocked" });
     const criticalMerge = mergeAiFindings(criticalReview, findings, diff, "javascript");
-    const withCriticalAi = scoreRisk(
-      [...findings.annotatedFindings, ...criticalMerge.annotatedRecords],
-      criticalReview,
-    );
+    const withCriticalAi = scoreRisk(findings.annotatedFindings, criticalReview, null, {
+      aiFindings: criticalMerge.annotatedRecords,
+    });
     expect(withCriticalAi.artifactRisk).toBe("critical");
     expect(withCriticalAi.releaseRisk).toBe("critical");
+
+    // The same critical claim under a suspicious verdict stops at high.
+    const suspiciousMerge = mergeAiFindings(makeCompleteAiReview(), findings, diff, "javascript");
+    const withSuspiciousAi = scoreRisk(findings.annotatedFindings, makeCompleteAiReview(), null, {
+      aiFindings: suspiciousMerge.annotatedRecords,
+    });
+    expect(withSuspiciousAi.artifactRisk).toBe("high");
+  });
+
+  test("attributes AI findings to the release by file, whatever line they record", () => {
+    const util = (textSample, sha256) => ({
+      path: "lib/util.js",
+      size: textSample.length,
+      sha256,
+      flags: [],
+      textSample,
+    });
+    const withUtil = {
+      staged: {
+        ...resolved.staged,
+        artifact: {
+          ...stagedArtifact,
+          files: [...stagedArtifact.files, util("const a = 1;\nconst b = 2;\nfetch(u);\n", "u2")],
+        },
+      },
+      baseline: {
+        ...resolved.baseline,
+        artifact: {
+          ...baselineArtifact,
+          files: [...baselineArtifact.files, util("const a = 1;\nconst b = 2;\n", "u1")],
+        },
+      },
+    };
+    const adapter = makeAdapter({ runFindings: vi.fn(() => []) });
+    const diff = computeDiff(withUtil);
+    const findings = runDeterministicFindings(adapter, withUtil, diff);
+    const finding = (file, extra) => ({
+      severity: "high",
+      file,
+      evidence: "fetch(u)",
+      reason: "r",
+      recommendation: "x",
+      ...extra,
+    });
+    const review = makeCompleteAiReview({
+      findings: [
+        finding("lib/util.js", { line: 3 }),
+        finding("lib/util.js", { line: 1 }),
+        finding("lib/util.js", {}),
+        finding("added.js", {}),
+      ],
+    });
+
+    const merged = mergeAiFindings(review, findings, diff, "javascript");
+
+    expect(merged.records.map((record) => record.line)).toEqual([3, 1, undefined, undefined]);
+    // An unchanged line (say, a decoy the search hit first) never moves an AI
+    // finding out of the modified file's release delta.
+    expect(merged.annotatedRecords.map((record) => record.releaseDelta)).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    // Annotated records keep the line for display; only attribution ignores it.
+    expect(merged.annotatedRecords[1].line).toBe(1);
+  });
+
+  // Shapes where a located-line requirement would have let a real AI-only
+  // escalation through the gate: each must still reach high on the release.
+  function aiOnlyReleaseRisk(previousFile, stagedFile, aiFinding) {
+    const withFile = {
+      staged: {
+        ...resolved.staged,
+        artifact: { ...stagedArtifact, files: [...stagedArtifact.files, stagedFile] },
+      },
+      baseline: {
+        ...resolved.baseline,
+        artifact: { ...baselineArtifact, files: [...baselineArtifact.files, previousFile] },
+      },
+    };
+    const adapter = makeAdapter({ runFindings: vi.fn(() => []) });
+    const diff = computeDiff(withFile);
+    const findings = runDeterministicFindings(adapter, withFile, diff);
+    const review = makeCompleteAiReview({
+      releaseAssessment: "suspicious",
+      risk: "high",
+      requiresManualReview: false,
+      findings: [
+        {
+          severity: "high",
+          file: stagedFile.path,
+          evidence: "e",
+          reason: "r",
+          recommendation: "review",
+          ...aiFinding,
+        },
+      ],
+    });
+    const merged = mergeAiFindings(review, findings, diff, "javascript");
+    return scoreRisk(findings.annotatedFindings, review, null, {
+      aiFindings: merged.annotatedRecords,
+    });
+  }
+
+  const textFile = (path, textSample, sha256, flags = []) => ({
+    path,
+    size: textSample.length,
+    sha256,
+    flags,
+    textSample,
+  });
+
+  test("a decoy line on unchanged code keeps an AI-only finding on the release", () => {
+    const decoy = "const cp = require('child_process');\ncp.execSync(x);\n";
+    const risk = aiOnlyReleaseRisk(
+      textFile("lib/run.js", decoy, "r1"),
+      textFile("lib/run.js", `${decoy}cp.execSync(payload);\n`, "r2"),
+      // The first search match for the reused call shape is the unchanged decoy.
+      { category: "process-execution", line: 2, evidence: "cp.execSync(" },
+    );
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("an AI-only finding past a clipped baseline stays on the release", () => {
+    const risk = aiOnlyReleaseRisk(
+      textFile("dist/bundle.js", "const a = 1;\n", "b1", ["baseline-truncated"]),
+      textFile("dist/bundle.js", "const a = 1;\nconst b = 2;\nfetch(u);\n", "b2"),
+      { category: "network-access", line: 3 },
+    );
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("an AI-only finding on a modified binary stays on the release", () => {
+    const binary = (sha256) => ({
+      path: "prebuilds/addon.node",
+      size: 4096,
+      sha256,
+      flags: ["binary"],
+    });
+    const risk = aiOnlyReleaseRisk(binary("n1"), binary("n2"), { category: "native-artifact" });
+    expect(risk.releaseRisk).toBe("high");
   });
 
   test("AI findings that only cite unchanged files raise the artifact but not the release", () => {
@@ -640,14 +780,12 @@ describe("mergeAiFindings", () => {
     const merged = mergeAiFindings(contextReview, findings, diff, "javascript");
     expect(merged.annotatedRecords.map((record) => record.releaseDelta)).toEqual([false]);
 
-    const riskSummary = scoreRisk(
-      [...findings.annotatedFindings, ...merged.annotatedRecords],
-      contextReview,
-      null,
-      { aiFindings: merged.annotatedRecords },
-    );
-    expect(riskSummary.artifactRisk).toBe("critical");
-    expect(riskSummary.contextRisk).toBe("critical");
+    const riskSummary = scoreRisk(findings.annotatedFindings, contextReview, null, {
+      aiFindings: merged.annotatedRecords,
+    });
+    // A suspicious verdict bounds the AI's own contribution at high.
+    expect(riskSummary.artifactRisk).toBe("high");
+    expect(riskSummary.contextRisk).toBe("high");
     // requiresManualReview keeps its medium floor; the gate blocks on high+.
     expect(riskSummary.releaseRisk).toBe("medium");
     expect(riskSummary.contextFindingCount).toBe(1);

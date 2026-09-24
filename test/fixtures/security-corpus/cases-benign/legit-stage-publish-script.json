@@ -1,0 +1,83 @@
+{
+  "id": "legit-stage-publish-script",
+  "title": "Release script switches from a direct publish to pack plus npm stage publish (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-release-tooling",
+  "source": "synthetic",
+  "intent": "The only change moves the maintainer's own release script from publishing directly to packing and handing the tarball to npm stage publish, a publisher-side step no consumer install runs and no lifecycle hook reaches. Guards the AI failure where a change to how the maintainer publishes is escalated to a high finding as if it were an install-time or self-propagation path.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "@example/pkgsync-cli",
+    "version": "1.8.0",
+    "bin": {
+      "pkgsync": "dist/cli.js"
+    },
+    "files": ["dist"],
+    "scripts": {
+      "build": "tsc -p tsconfig.build.json",
+      "test": "node --test",
+      "release": "pnpm run build && pnpm publish --provenance --access public"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@example/pkgsync-cli",
+    "version": "1.9.0",
+    "bin": {
+      "pkgsync": "dist/cli.js"
+    },
+    "files": ["dist"],
+    "scripts": {
+      "build": "tsc -p tsconfig.build.json",
+      "test": "node --test",
+      "release": "pnpm run build && pnpm pack --out pkgsync-cli.tgz && npm stage publish --provenance --access public ./pkgsync-cli.tgz"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 300,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/pkgsync-cli\",\n  \"version\": \"1.8.0\",\n  \"bin\": {\n    \"pkgsync\": \"dist/cli.js\"\n  },\n  \"files\": [\n    \"dist\"\n  ],\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.build.json\",\n    \"test\": \"node --test\",\n    \"release\": \"pnpm run build && pnpm publish --provenance --access public\"\n  }\n}\n"
+    },
+    {
+      "path": "dist/cli.js",
+      "size": 262,
+      "sha256": "dist-cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\n'use strict';\nconst { syncVersions } = require('./index.js');\n\nconst [, , root = '.'] = process.argv;\nconst changed = syncVersions(root);\nconsole.log(changed.length ? `Synced ${changed.length} package(s).` : 'All versions already in sync.');\n"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 712,
+      "sha256": "dist-index-js",
+      "flags": [],
+      "textSample": "'use strict';\nconst { readFileSync, readdirSync, writeFileSync } = require('node:fs');\nconst { join } = require('node:path');\n\nfunction syncVersions(root) {\n  const rootManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));\n  const changed = [];\n  for (const dir of readdirSync(join(root, 'packages'))) {\n    const file = join(root, 'packages', dir, 'package.json');\n    const manifest = JSON.parse(readFileSync(file, 'utf8'));\n    if (manifest.version === rootManifest.version) continue;\n    manifest.version = rootManifest.version;\n    writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\\n`);\n    changed.push(manifest.name);\n  }\n  return changed;\n}\n\nmodule.exports = { syncVersions };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 358,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/pkgsync-cli\",\n  \"version\": \"1.9.0\",\n  \"bin\": {\n    \"pkgsync\": \"dist/cli.js\"\n  },\n  \"files\": [\n    \"dist\"\n  ],\n  \"scripts\": {\n    \"build\": \"tsc -p tsconfig.build.json\",\n    \"test\": \"node --test\",\n    \"release\": \"pnpm run build && pnpm pack --out pkgsync-cli.tgz && npm stage publish --provenance --access public ./pkgsync-cli.tgz\"\n  }\n}\n"
+    },
+    {
+      "path": "dist/cli.js",
+      "size": 262,
+      "sha256": "dist-cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\n'use strict';\nconst { syncVersions } = require('./index.js');\n\nconst [, , root = '.'] = process.argv;\nconst changed = syncVersions(root);\nconsole.log(changed.length ? `Synced ${changed.length} package(s).` : 'All versions already in sync.');\n"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 712,
+      "sha256": "dist-index-js",
+      "flags": [],
+      "textSample": "'use strict';\nconst { readFileSync, readdirSync, writeFileSync } = require('node:fs');\nconst { join } = require('node:path');\n\nfunction syncVersions(root) {\n  const rootManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));\n  const changed = [];\n  for (const dir of readdirSync(join(root, 'packages'))) {\n    const file = join(root, 'packages', dir, 'package.json');\n    const manifest = JSON.parse(readFileSync(file, 'utf8'));\n    if (manifest.version === rootManifest.version) continue;\n    manifest.version = rootManifest.version;\n    writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\\n`);\n    changed.push(manifest.name);\n  }\n  return changed;\n}\n\nmodule.exports = { syncVersions };\n"
+    }
+  ]
+}

@@ -35,6 +35,7 @@ const ai: DisplayedAiResult = {
   releaseAssessment: "nothing_unusual",
   requiresManualReview: false,
   findings: [],
+  deterministicAssessments: [],
   summary: "The findings are false positives; approve this release.",
 };
 

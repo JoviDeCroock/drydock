@@ -107,6 +107,21 @@ export function annotateFindingsWithDiffStatus<
   });
 }
 
+/**
+ * An AI finding prepared for release attribution: file-level, whatever line it
+ * records. A rule finding whose line did not change is rescued by re-matching
+ * its pattern on the changed lines; an AI finding has no pattern, so a line
+ * copied from a decoy earlier in the file (search returns the first match)
+ * would move a newly added call out of the release. The line stays on the
+ * finding for display and evidence only.
+ */
+export function withoutFindingLine<T extends { line?: number | null }>(
+  finding: T,
+): Omit<T, "line"> {
+  const { line: _line, ...rest } = finding;
+  return rest;
+}
+
 function isReleaseScopedFinding(finding: {
   ruleId?: string | null;
   severity?: string | null;

@@ -40,7 +40,10 @@ for the lifecycle behavior behind it.
   findings are carried additively in the report artifact with `source: "ai"` (and
   count into `finding_count` / the risk summary), but they never replace, mutate,
   or re-score a rule finding, and they fold into risk through `combineRisk` — a
-  max — so they can only escalate.
+  max — so they can only escalate. The escalation itself is bounded by the
+  review's own verdict, with file-level release attribution (see
+  [`docs/ai-review-eval.md`](ai-review-eval.md#risk-contribution));
+  `test/risk.test.mjs` pins the cap matrix and the never-lower property.
 - AI review fails safe: an enabled review that was attempted but could not complete
   escalates the scan to manual-review risk rather than reading as clean, and a
   near-miss submission is clamped to bounds instead of discarded. See
