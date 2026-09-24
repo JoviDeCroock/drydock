@@ -10,8 +10,15 @@ import {
   REVIEW_MANIPULATION_PATTERN_SET,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
-import { changedStagedLines, splitComparableLines } from "./rules/context";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
+import { normalizeCodeForScanning } from "./rules/normalize";
+import { deterministicRuleIds } from "./rules/rule-ids";
+import {
+  changedRegions,
+  changedRegionTexts,
+  patternsTouchChangedRegions,
+  type ChangedRegions,
+} from "./changed-regions";
 import type {
   CodePatternSet,
   FileRecord,
@@ -56,12 +63,14 @@ export function annotateFindingsWithDiffStatus<
   );
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map((options.stagedFiles ?? []).map((file) => [file.path, file]));
-  const changedLineCache = new Map<string, Set<number> | null>();
+  const changesCache = new Map<string, FileChanges | null>();
+  const changesFor = (path: string) =>
+    fileChangesForPath(path, previousByPath, stagedByPath, changesCache, options.codePatternSet);
   const baselineFingerprints = lazyBaselineFingerprints(
     options.previousFiles ?? [],
     options.codePatternSet,
   );
-  return findings.map((finding) => {
+  const annotated = findings.map((finding) => {
     const persisted = finding.id ? options.persistedAnnotations?.get(finding.id) : null;
     if (persisted) return { ...finding, ...persisted };
 
@@ -82,13 +91,19 @@ export function annotateFindingsWithDiffStatus<
         isFindingOnReleaseDelta(
           finding,
           diffStatus,
-          previousByPath,
-          stagedByPath,
-          changedLineCache,
+          changesFor,
           options.codePatternSet,
           baselineFingerprints,
         ),
     };
+  });
+  if (options.baselineComparisonSkipped) return annotated;
+  return markExpandedCapabilities(annotated, {
+    persisted: (finding) => Boolean(finding.id && options.persistedAnnotations?.has(finding.id)),
+    changesFor,
+    baselineFingerprints,
+    baselineHosts: lazyBaselineHosts(options.previousFiles ?? []),
+    codePatternSet: options.codePatternSet,
   });
 }
 
@@ -144,9 +159,7 @@ function parsePackageJsonFile(
 function isFindingOnReleaseDelta(
   finding: { file: string; line?: number | null; ruleId?: string | null },
   diffStatus: FindingDiffStatus,
-  previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
-  stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
-  changedLineCache: Map<string, Set<number> | null>,
+  changesFor: (path: string) => FileChanges | null,
   codePatternSet: CodePatternSet | undefined,
   baselineFingerprints: () => Set<string> | null,
 ): boolean {
@@ -159,59 +172,83 @@ function isFindingOnReleaseDelta(
   // counterpart the classification still fails open to release delta.
   if (!finding.line) return !baselineHasFinding(baselineFingerprints, finding);
 
-  const changedLines = changedStagedLinesForPath(
-    finding.file,
-    previousByPath,
-    stagedByPath,
-    changedLineCache,
-  );
-  if (!changedLines) return !baselineHasFinding(baselineFingerprints, finding);
-  if (changedLines.has(finding.line)) return true;
-  return findingPatternMatchesChangedLine(
-    finding,
-    stagedByPath.get(finding.file)?.textSample,
-    changedLines,
-    codePatternSet,
-  );
+  const changes = changesFor(finding.file);
+  if (!changes) return !baselineHasFinding(baselineFingerprints, finding);
+  if (changes.raw.lines.has(finding.line)) return true;
+  const patterns = patternsForFinding(finding, codePatternSet);
+  // A rule with no patterns on a narrowed (minified) line keeps line-level
+  // behaviour: the line changed, so the finding is on the delta.
+  if (!patterns.length) return changes.raw.refinedLines.has(finding.line);
+  return findingPatternMatchesChanges(finding, patterns, changes);
 }
 
-function changedStagedLinesForPath(
+// A modified file's changed regions, raw and (JavaScript) constant-folded.
+// Detection matches both texts, so release classification must too: a payload
+// assembled from string pieces (`'chi' + 'ld_process'`) only matches after
+// folding, and a raw-only check read it as package context whenever the file
+// already used the same capability on an unchanged line.
+interface FileChanges {
+  stagedText: string;
+  raw: ChangedRegions;
+  folded: () => { text: string; regions: ChangedRegions } | null;
+}
+
+function fileChangesForPath(
   path: string,
   previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
-  cache: Map<string, Set<number> | null>,
-): Set<number> | null {
+  cache: Map<string, FileChanges | null>,
+  codePatternSet: CodePatternSet | undefined,
+): FileChanges | null {
   if (cache.has(path)) return cache.get(path) ?? null;
   const previous = previousByPath.get(path);
   const staged = stagedByPath.get(path);
-  if (!previous?.textSample || !staged?.textSample) {
+  if (
+    !previous?.textSample ||
+    !staged?.textSample ||
+    previous.flags.includes("binary") ||
+    staged.flags.includes("binary")
+  ) {
     cache.set(path, null);
     return null;
   }
-  if (previous.flags.includes("binary") || staged.flags.includes("binary")) {
-    cache.set(path, null);
-    return null;
-  }
-  const lines = changedStagedLines(previous.textSample, staged.textSample);
-  cache.set(path, lines);
-  return lines;
+  const previousText = previous.textSample;
+  const stagedText = staged.textSample;
+  const foldable = codePatternSet !== "python" && !path.endsWith(".py");
+  let folded: { text: string; regions: ChangedRegions } | null | undefined;
+  const changes: FileChanges = {
+    stagedText,
+    raw: changedRegions(previousText, stagedText),
+    folded: () => {
+      if (folded !== undefined) return folded;
+      if (!foldable) return (folded = null);
+      const text = normalizeCodeForScanning(stagedText);
+      const previousFolded = normalizeCodeForScanning(previousText);
+      folded =
+        text === stagedText && previousFolded === previousText
+          ? null
+          : { text, regions: changedRegions(previousFolded, text) };
+      return folded;
+    },
+  };
+  cache.set(path, changes);
+  return changes;
 }
 
-function findingPatternMatchesChangedLine(
+function findingPatternMatchesChanges(
   finding: { file: string; ruleId?: string | null },
-  stagedText: string | undefined,
-  changedLines: Set<number>,
-  codePatternSet: CodePatternSet | undefined,
+  patterns: RegExp[],
+  changes: FileChanges,
 ): boolean {
-  if (!stagedText) return false;
-  const patterns = patternsForFinding(finding, codePatternSet);
-  if (!patterns.length) return false;
-  if (isPropagationFinding(finding)) {
-    return hasMatchingCodeLine(stagedText, patterns, changedLines);
-  }
-  if (isPromptInjectionFinding(finding)) {
+  // The propagation and prompt-injection matchers are line-oriented; they see
+  // every changed line, narrowed ones included, as before.
+  if (isPropagationFinding(finding) || isPromptInjectionFinding(finding)) {
+    const changedLines = new Set([...changes.raw.lines, ...changes.raw.refinedLines]);
+    if (isPropagationFinding(finding)) {
+      return hasMatchingCodeLine(changes.stagedText, patterns, changedLines);
+    }
     return promptInjectionPatternsMatchChangedLines(
-      stagedText,
+      changes.stagedText,
       changedLines,
       patterns,
       finding.ruleId === DETERMINISTIC_RULE_IDS.filePromptInjection
@@ -219,16 +256,33 @@ function findingPatternMatchesChangedLine(
         : [],
     );
   }
-  const lines = splitComparableLines(stagedText);
-  for (const lineNumber of changedLines) {
-    const line = lines[lineNumber - 1];
-    if (line === undefined) continue;
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) return true;
-    }
-  }
-  return false;
+  if (patternsTouchChangedRegions(changes.stagedText, changes.raw, patterns)) return true;
+  const folded = changes.folded();
+  return Boolean(folded && patternsTouchChangedRegions(folded.text, folded.regions, patterns));
+}
+
+// Whether the file's changes match some capability pattern only once string
+// pieces are joined (`'chi' + 'ld_process'`), even where a sibling pattern
+// (`execSync`) matches raw. Judged over the whole change, not per finding, so
+// where the payload sits in the file does not matter.
+function hasAssembledChange(
+  changes: FileChanges | null,
+  codePatternSet: CodePatternSet | undefined,
+): boolean {
+  const folded = changes?.folded();
+  if (!changes || !folded) return false;
+  const patterns = codePatternsFor(codePatternSet);
+  return [
+    ...patterns.processExecution,
+    ...patterns.networkAccess,
+    ...patterns.dynamicEvaluation,
+    ...patterns.credentialAccess,
+    ...patterns.remoteShell,
+  ].some(
+    (pattern) =>
+      patternsTouchChangedRegions(folded.text, folded.regions, [pattern]) &&
+      !patternsTouchChangedRegions(changes.stagedText, changes.raw, [pattern]),
+  );
 }
 
 function isPropagationFinding(finding: { ruleId?: string | null }): boolean {
@@ -288,6 +342,153 @@ function patternsForFinding(
     default:
       return [];
   }
+}
+
+const CAPABILITY_RULE_IDS = deterministicRuleIds(
+  (spec) => spec.risk === "capability" || spec.risk === "weak-lone-capability",
+);
+const STANDING_DANGER_RULE_IDS = deterministicRuleIds((spec) => spec.standingDanger === true);
+// Reading one more environment variable is reading a different credential,
+// not more of the same capability (`HOME` in the baseline says nothing about a
+// new `npm_config__authToken` read), and a new eval site runs new code whatever
+// the file compiled before.
+const NEVER_EXPANDED_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
+  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
+]);
+// A release that only adds more of what a modified file already did (more
+// package-manager spawns in a CLI, another request in an HTTP client) is still
+// in the release, but growing one capability is not the shape of a payload
+// arriving. Such capability findings are marked `expanded`, and release risk
+// scores each one step lower; they still count toward capability
+// co-occurrence (see computeRisk), so a combination across files keeps its
+// floor. A file keeps full scoring when anything in its delta is new to it: a
+// finding for a rule its baseline version did not have, an obfuscated match, a
+// change that matches a capability only once string pieces are joined, or a
+// host the baseline package never named. Credential access and
+// standing-danger evidence are never marked, and a file whose changes cannot
+// be read is not marked.
+function markExpandedCapabilities<
+  T extends {
+    id?: string;
+    file: string;
+    ruleId?: string | null;
+    obfuscated?: boolean;
+  } & FindingDiffAnnotation,
+>(
+  findings: T[],
+  ctx: {
+    persisted: (finding: T) => boolean;
+    changesFor: (path: string) => FileChanges | null;
+    baselineFingerprints: () => Set<string> | null;
+    baselineHosts: () => Set<string>;
+    codePatternSet: CodePatternSet | undefined;
+  },
+): T[] {
+  const deltasByFile = new Map<string, T[]>();
+  for (const finding of findings) {
+    if (!finding.releaseDelta || finding.diffStatus !== "modified" || ctx.persisted(finding)) {
+      continue;
+    }
+    const deltas = deltasByFile.get(finding.file) ?? [];
+    deltas.push(finding);
+    deltasByFile.set(finding.file, deltas);
+  }
+  const expanded = new Set<T>();
+  for (const [file, deltas] of deltasByFile) {
+    const newToFile = deltas.some(
+      (finding) => finding.obfuscated || !baselineHasFinding(ctx.baselineFingerprints, finding),
+    );
+    if (newToFile || hasAssembledChange(ctx.changesFor(file), ctx.codePatternSet)) continue;
+    if (introducesHost(ctx.changesFor(file), ctx.baselineHosts)) continue;
+    for (const finding of deltas) {
+      if (
+        finding.ruleId &&
+        CAPABILITY_RULE_IDS.has(finding.ruleId) &&
+        !STANDING_DANGER_RULE_IDS.has(finding.ruleId) &&
+        !NEVER_EXPANDED_RULE_IDS.has(finding.ruleId)
+      ) {
+        expanded.add(finding);
+      }
+    }
+  }
+  if (!expanded.size) return findings;
+  return findings.map((finding) =>
+    expanded.has(finding) ? { ...finding, releaseDeltaKind: "expanded" as const } : finding,
+  );
+}
+
+// URL hosts, quoted bare hostnames (`hostname: 'api.example.com'`) and IPv4
+// literals. A changed region that names one the baseline package never did is
+// a new destination, whatever else the file already did. Quoted names ending
+// in a file extension are paths, not hosts.
+const HOST_LITERAL =
+  /\b(?:https?|wss?|ftp):\/\/([^\s/'"`:?#\\)<>]+)|['"`]((?:[a-z0-9-]+\.)+[a-z][a-z0-9-]{1,23})['"`]|\b(\d{1,3}(?:\.\d{1,3}){3})\b/gi;
+const FILE_EXTENSION_LABELS = new Set([
+  "cjs",
+  "css",
+  "csv",
+  "cts",
+  "gif",
+  "htm",
+  "html",
+  "jpeg",
+  "jpg",
+  "js",
+  "json",
+  "jsx",
+  "less",
+  "lock",
+  "map",
+  "md",
+  "mjs",
+  "mts",
+  "node",
+  "png",
+  "py",
+  "scss",
+  "sh",
+  "svg",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "wasm",
+  "webp",
+  "xml",
+  "yaml",
+  "yml",
+]);
+
+function hostsIn(text: string): string[] {
+  const hosts: string[] = [];
+  HOST_LITERAL.lastIndex = 0;
+  for (const match of text.matchAll(HOST_LITERAL)) {
+    const host = (match[1] ?? match[2] ?? match[3]).toLowerCase();
+    if (match[2] && FILE_EXTENSION_LABELS.has(host.slice(host.lastIndexOf(".") + 1))) continue;
+    hosts.push(host);
+  }
+  return hosts;
+}
+
+function introducesHost(changes: FileChanges | null, baselineHosts: () => Set<string>): boolean {
+  // Unreadable changes cannot show that no new destination arrived.
+  if (!changes) return true;
+  const texts = changedRegionTexts(changes.stagedText, changes.raw);
+  const folded = changes.folded();
+  if (folded) texts.push(...changedRegionTexts(folded.text, folded.regions));
+  const known = baselineHosts();
+  return texts.some((text) => hostsIn(text).some((host) => !known.has(host)));
+}
+
+function lazyBaselineHosts(
+  previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
+): () => Set<string> {
+  let computed: Set<string> | undefined;
+  return () => {
+    computed ??= new Set(previousFiles.flatMap((file) => hostsIn(file.textSample ?? "")));
+    return computed;
+  };
 }
 
 // Deterministic findings recomputed over the baseline files, keyed by

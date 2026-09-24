@@ -17,6 +17,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  annotateFindingsWithDiffStatus,
   computeRisk,
   createPackageDiff,
   DETERMINISTIC_RULES_VERSION,
@@ -32,6 +33,7 @@ import {
   buildVscodeReleaseManifest,
   createVscodeExtensionReview,
 } from "../../server/lib/ecosystems/vscode";
+import { computeScanRiskBreakdown } from "../../server/lib/review/risk";
 import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -172,6 +174,117 @@ function detect(record, fxOverride) {
     ...packageJsonDiffFindings(packageJsonDiff),
   ];
   return { risk: computeRisk(findings), findings };
+}
+
+// --- Release injection. The regression corpus mostly models payloads in added
+// files, which release-delta classification trivially counts. A real
+// compromise often splices the payload into a module that already exists and
+// already uses the same primitives (a bundle that already fetches, spawns and
+// reads the environment). Each malicious npm case is replayed that way: every
+// code file becomes a modification of a carrier module holding benign uses of
+// the network, process, environment and dynamic-code primitives, once as
+// ordinary lines and once as a single minified line. The payload must still
+// raise *release* risk — the score the workflow gate reads.
+const RELEASE_INJECTION_CARRIER = [
+  "const https = require('https');",
+  "const { execFileSync } = require('child_process');",
+  "const token = process.env.GITHUB_TOKEN;",
+  "const compile = new Function('a', 'return a + 1');",
+  "function version() { return execFileSync('git', ['--version']).toString(); }",
+  "function ping() { return fetch('https://api.example.org/health'); }",
+  "module.exports = { https, token, compile, version, ping };",
+].join("\n");
+const RELEASE_INJECTION_CODE_FILE = /\.(?:c|m)?js$/;
+const AI_REVIEW_OFF = {
+  status: "unavailable",
+  risk: "low",
+  releaseAssessment: "not_assessed",
+  summary: "AI review is disabled.",
+  findings: [],
+  requiresManualReview: false,
+  model: null,
+  reviewerVersion: null,
+};
+
+function minifyLines(code) {
+  // Line comments would swallow everything after them once lines are joined.
+  return code.replace(/(^|[\s;{}])\/\/[^\n]*/gm, "$1").replace(/\n/g, " ");
+}
+
+function injectIntoCarrier(fx, mode) {
+  const carrier =
+    mode === "minified" ? minifyLines(RELEASE_INJECTION_CARRIER) : RELEASE_INJECTION_CARRIER;
+  const injected = new Set();
+  const stagedFiles = (fx.stagedFiles ?? []).map((file) => {
+    if (!RELEASE_INJECTION_CODE_FILE.test(file.path) || typeof file.textSample !== "string") {
+      return file;
+    }
+    injected.add(file.path);
+    const payload = mode === "minified" ? minifyLines(file.textSample) : file.textSample;
+    const textSample = mode === "minified" ? `${carrier} ${payload}\n` : `${carrier}\n${payload}`;
+    return { ...file, textSample, sha256: `${file.sha256}-injected` };
+  });
+  if (!injected.size) return null;
+  const previousFiles = [
+    ...(fx.previousFiles ?? []).filter((file) => !injected.has(file.path)),
+    ...[...injected].map((path) => ({
+      path,
+      size: carrier.length,
+      sha256: `carrier-${path}`,
+      flags: [],
+      textSample: `${carrier}\n`,
+    })),
+  ];
+  return { ...fx, stagedFiles, previousFiles };
+}
+
+function releaseRiskOf(fx) {
+  const previousFiles = fx.previousFiles ?? [];
+  const stagedFiles = fx.stagedFiles ?? [];
+  const diff = createPackageDiff(previousFiles, stagedFiles);
+  const findings = [
+    ...deterministicFindings(stagedFiles, diff, fx.stagedPackageJson, {
+      entrypointResolution: "npm",
+      previousFiles,
+    }),
+    ...packageJsonDiffFindings(
+      summarizePackageJsonDiff(fx.previousPackageJson, fx.stagedPackageJson),
+    ),
+  ];
+  const annotated = annotateFindingsWithDiffStatus(findings, diff, { previousFiles, stagedFiles });
+  return {
+    releaseRisk: computeScanRiskBreakdown(annotated, AI_REVIEW_OFF).releaseRisk,
+    codePayload: annotated.some((f) => f.releaseDelta && f.ruleId?.startsWith("code.")),
+  };
+}
+
+function releaseInjectionEval(records) {
+  const result = {};
+  for (const mode of ["lines", "minified"]) {
+    const bucket = { samples: 0, caught: 0, misses: [] };
+    for (const record of records) {
+      if (record.ecosystem !== "npm" || record.verdict !== "malicious") continue;
+      const injected = injectIntoCarrier(record.fx, mode);
+      if (!injected) continue;
+      // Only code payloads whose own release risk already clears the bar are
+      // measured; a case whose signal is a file's existence has nothing to splice.
+      const original = releaseRiskOf(record.fx);
+      if (!original.codePayload) continue;
+      if (riskRank(original.releaseRisk) < riskRank(record.expectMinRisk)) continue;
+      bucket.samples += 1;
+      const risk = releaseRiskOf(injected).releaseRisk;
+      if (riskRank(risk) >= riskRank(record.expectMinRisk)) bucket.caught += 1;
+      else
+        bucket.misses.push({
+          id: record.id,
+          releaseRisk: risk,
+          expectMinRisk: record.expectMinRisk,
+        });
+    }
+    bucket.recall = bucket.samples ? bucket.caught / bucket.samples : null;
+    result[mode] = bucket;
+  }
+  return result;
 }
 
 function caughtAsMalicious(record, result) {
@@ -349,6 +462,7 @@ export function runEval() {
       positives: hardNegativeHits.map((r) => ({ id: r.id, threatClass: r.threatClass })),
     },
     evasion,
+    releaseInjection: releaseInjectionEval([...regression, ...frontier]),
   };
 }
 
@@ -424,6 +538,15 @@ function renderMarkdown(result) {
     lines.push(
       `| ${name} | ${stats.samples} | ${pct(stats.blockedRate)} | ${pct(stats.codeRetention)} |`,
     );
+  }
+  lines.push("");
+  lines.push("## Release injection (gated — payload spliced into an existing module)");
+  lines.push("");
+  lines.push("| shape | samples | release risk still at bar | misses |");
+  lines.push("| --- | --- | --- | --- |");
+  for (const [shape, stats] of Object.entries(result.releaseInjection)) {
+    const misses = stats.misses.map((miss) => `\`${miss.id}\` (${miss.releaseRisk})`).join(", ");
+    lines.push(`| ${shape} | ${stats.samples} | ${pct(stats.recall)} | ${misses || "none"} |`);
   }
   lines.push("");
   return lines.join("\n");

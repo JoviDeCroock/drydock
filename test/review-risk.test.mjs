@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { computeRisk } from "../server/lib/review";
+import { computeScanRiskBreakdown } from "../server/lib/review/risk";
 
 describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
   const code = (ruleId, severity, extra = {}) => ({ ruleId, severity, file: "f.js", ...extra });
@@ -84,5 +85,58 @@ describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
 
   test("no findings is low", () => {
     expect(computeRisk([])).toBe("low");
+  });
+});
+
+describe("expanded capabilities in release scoring", () => {
+  const code = (ruleId, severity, extra = {}) => ({ ruleId, severity, file: "f.js", ...extra });
+  const expanded = { expandedCapability: true };
+
+  test("a lone expanded capability scores one step lower", () => {
+    expect(computeRisk([code("code.network-access", "high", expanded)])).toBe("medium");
+    expect(computeRisk([code("code.network-access", "high")])).toBe("high");
+  });
+
+  test("expanded capabilities still co-occur, across files too", () => {
+    expect(
+      computeRisk([
+        code("code.network-access", "medium", expanded),
+        { ...code("code.process-execution", "high", expanded), file: "cli.js" },
+      ]),
+    ).toBe("high");
+    expect(
+      computeRisk([
+        code("code.credential-access", "medium"),
+        code("code.process-execution", "high", expanded),
+      ]),
+    ).toBe("high");
+  });
+
+  test("only release risk treats an expanded finding as weaker", () => {
+    const breakdown = computeScanRiskBreakdown(
+      [
+        {
+          ...code("code.network-access", "high"),
+          evidence: "e",
+          reason: "r",
+          diffStatus: "modified",
+          releaseDelta: true,
+          releaseDeltaKind: "expanded",
+        },
+      ],
+      {
+        status: "unavailable",
+        risk: "low",
+        releaseAssessment: "not_assessed",
+        summary: "",
+        findings: [],
+        requiresManualReview: false,
+        model: null,
+        reviewerVersion: null,
+      },
+    );
+
+    expect(breakdown.releaseRisk).toBe("medium");
+    expect(breakdown.artifactRisk).toBe("high");
   });
 });

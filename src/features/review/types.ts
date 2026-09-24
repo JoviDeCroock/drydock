@@ -24,4 +24,6 @@ export interface FindingWithDiffStatus {
   finding: ReviewFinding;
   diffStatus: FindingDiffStatus;
   releaseDelta: boolean;
+  /** More of a capability the changed file already had; scored one step lower. */
+  releaseDeltaKind?: "expanded";
 }

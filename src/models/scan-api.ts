@@ -143,6 +143,7 @@ export interface PersistedScanDetail {
     ruleVersion?: string | null;
     diffStatus?: FindingDiffStatus;
     releaseDelta?: boolean;
+    releaseDeltaKind?: "expanded";
   }>;
   events: Array<{
     id: string;

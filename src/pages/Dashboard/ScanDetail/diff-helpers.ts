@@ -117,6 +117,9 @@ export function annotatePersistedFindings(
           {
             diffStatus: normalizeFindingDiffStatus(annotation.diffStatus),
             releaseDelta: Boolean(annotation.releaseDelta),
+            ...(annotation.releaseDeltaKind === "expanded"
+              ? { releaseDeltaKind: "expanded" as const }
+              : {}),
           },
         ]),
       )
@@ -130,6 +133,9 @@ export function annotatePersistedFindings(
                 {
                   diffStatus: normalizeFindingDiffStatus(finding.diffStatus),
                   releaseDelta: Boolean(finding.releaseDelta),
+                  ...(finding.releaseDeltaKind === "expanded"
+                    ? { releaseDeltaKind: "expanded" as const }
+                    : {}),
                 },
               ],
             ];
@@ -145,6 +151,7 @@ export function annotatePersistedFindings(
       finding,
       diffStatus: finding.diffStatus,
       releaseDelta: finding.releaseDelta,
+      releaseDeltaKind: finding.releaseDeltaKind,
     };
   });
 }

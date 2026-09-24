@@ -40,7 +40,6 @@ const CODE_CAPABILITY_RULE_IDS = deterministicRuleIds(
 const WEAK_LONE_CAPABILITY_RULE_IDS = deterministicRuleIds(
   (spec) => spec.risk === "weak-lone-capability",
 );
-
 function severityToRisk(severity: string | null | undefined): RiskLevel {
   if (severity === "critical") return "critical";
   if (severity === "high") return "high";
@@ -54,16 +53,24 @@ export function computeRisk(
     ruleId?: string | null;
     obfuscated?: boolean;
     testScoped?: boolean;
+    /** Release scoring only: more of a capability the file already had. */
+    expandedCapability?: boolean;
   }>,
 ): RiskLevel {
   let anchorRisk: RiskLevel = "low";
   const capabilities = new Map<string, { risk: RiskLevel; obfuscated: boolean }>();
   const testCapabilities = new Map<string, RiskLevel>();
+  const expandedCapabilities = new Map<string, RiskLevel>();
   for (const finding of findings) {
     const ruleId = finding.ruleId ?? undefined;
     const risk = severityToRisk(finding.severity);
     if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.testScoped) {
       testCapabilities.set(ruleId, combineRisk(testCapabilities.get(ruleId), risk));
+    } else if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.expandedCapability) {
+      expandedCapabilities.set(
+        ruleId,
+        combineRisk(expandedCapabilities.get(ruleId), demoteRisk(risk)),
+      );
     } else if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId)) {
       const prior = capabilities.get(ruleId);
       capabilities.set(ruleId, {
@@ -76,9 +83,19 @@ export function computeRisk(
   }
   return combineRisk(
     anchorRisk,
-    codeCapabilityRisk(capabilities),
+    codeCapabilityRisk(capabilities, expandedCapabilities),
     testCapabilityRisk(testCapabilities),
   );
+}
+
+// An expanded capability scores one step lower. It still counts toward
+// capability co-occurrence like any other: a download grown in one module and a
+// spawn grown in another are a combination whether or not each file already
+// had its half.
+function demoteRisk(risk: RiskLevel): RiskLevel {
+  if (risk === "critical") return "high";
+  if (risk === "high") return "medium";
+  return "low";
 }
 
 function testCapabilityRisk(capabilities: Map<string, RiskLevel>): RiskLevel {
@@ -90,6 +107,21 @@ function testCapabilityRisk(capabilities: Map<string, RiskLevel>): RiskLevel {
 }
 
 function codeCapabilityRisk(
+  introduced: Map<string, { risk: RiskLevel; obfuscated: boolean }>,
+  expanded: Map<string, RiskLevel>,
+): RiskLevel {
+  const capabilities = new Map(introduced);
+  for (const [ruleId, risk] of expanded) {
+    const prior = capabilities.get(ruleId);
+    capabilities.set(ruleId, {
+      risk: combineRisk(prior?.risk, risk),
+      obfuscated: Boolean(prior?.obfuscated),
+    });
+  }
+  return coOccurrenceRisk(capabilities);
+}
+
+function coOccurrenceRisk(
   capabilities: Map<string, { risk: RiskLevel; obfuscated: boolean }>,
 ): RiskLevel {
   if (capabilities.size === 0) return "low";

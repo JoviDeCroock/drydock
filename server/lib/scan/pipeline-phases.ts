@@ -80,6 +80,7 @@ interface FindingAnnotationRecord {
   findingIndex: number;
   diffStatus: FindingDiffAnnotation["diffStatus"];
   releaseDelta: boolean;
+  releaseDeltaKind?: FindingDiffAnnotation["releaseDeltaKind"];
 }
 
 /**
@@ -458,6 +459,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     findingIndex: index,
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,
+    ...(finding.releaseDeltaKind ? { releaseDeltaKind: finding.releaseDeltaKind } : {}),
   }));
 
   const reportPayload = {

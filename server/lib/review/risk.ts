@@ -18,6 +18,7 @@ export interface ScanRiskBreakdown {
 type RiskFinding = Finding & {
   diffStatus?: string | null;
   releaseDelta?: boolean | null;
+  releaseDeltaKind?: string | null;
 };
 
 export interface ScanRiskOptions {
@@ -55,6 +56,11 @@ export function computeScanRiskBreakdown(
   options: ScanRiskOptions = {},
 ): ScanRiskBreakdown {
   const releaseFindings = ruleFindings.filter((finding) => finding.releaseDelta === true);
+  // Only the release score treats an expanded capability as weaker; the
+  // artifact score still describes everything the package does.
+  const scoredReleaseFindings = releaseFindings.map((finding) =>
+    finding.releaseDeltaKind === "expanded" ? { ...finding, expandedCapability: true } : finding,
+  );
   const contextFindings = ruleFindings.filter((finding) => finding.releaseDelta !== true);
   const { kept: scoredContextFindings, approvedCount } = dropPriorApprovedFindings(
     contextFindings,
@@ -66,7 +72,7 @@ export function computeScanRiskBreakdown(
   return {
     artifactRisk: computeScanRisk(scoredFindings, aiFindings),
     releaseRisk: computeScanRisk(
-      releaseFindings,
+      scoredReleaseFindings,
       releaseScopedAiReview(aiFindings, options.aiFindings),
     ),
     contextRisk: computeRisk(scoredContextFindings),
