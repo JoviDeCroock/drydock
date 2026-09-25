@@ -142,6 +142,7 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     const findings = findingsWithDiffStatus.value;
     const usePersistedRiskSummary = model.isDefaultComparison.value || !model.compare.value;
     const isWorkflowGate = model.isWorkflowGate.value;
+    const aiResult = ai.value;
     if (!detail || detail.scan.status !== "complete") return null;
     return buildReleaseVerdict({
       detail,
@@ -150,6 +151,7 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
       findingsWithDiffStatus: findings,
       usePersistedRiskSummary,
       isWorkflowGate,
+      ai: aiResult,
     });
   });
 

@@ -56,6 +56,11 @@ const AI_VERDICT_RISK_CAP: Record<AiReleaseAssessment, RiskLevel> = {
   blocked: "critical",
 };
 
+/** The most a completed review can add to any score, given its own verdict. */
+export function aiVerdictRiskCap(releaseAssessment: AiReleaseAssessment): RiskLevel {
+  return AI_VERDICT_RISK_CAP[releaseAssessment];
+}
+
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
   return combineRisk(computeRisk(ruleFindings), aiArtifactRisk(aiReview));
 }

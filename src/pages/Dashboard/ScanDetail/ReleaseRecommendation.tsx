@@ -3,6 +3,7 @@ import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../
 import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
+import { aiVerdictRiskCap } from "../../../../server/lib/review/risk";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
 import { Badge, severityTone } from "../../../components/Badge";
@@ -33,6 +34,7 @@ export function buildReleaseVerdict({
   findingsWithDiffStatus,
   usePersistedRiskSummary,
   isWorkflowGate,
+  ai = null,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
@@ -40,6 +42,7 @@ export function buildReleaseVerdict({
   findingsWithDiffStatus: FindingWithDiffStatus[];
   usePersistedRiskSummary: boolean;
   isWorkflowGate: boolean;
+  ai?: DisplayedAiResult | null;
 }): ReleaseVerdict {
   const changedFindings = findingsWithDiffStatus
     .filter((item) => item.releaseDelta)
@@ -73,7 +76,12 @@ export function buildReleaseVerdict({
     baselineComparisonSkipped,
     recommendation.label === "likely safe",
   );
-  const severityCounts = countSeverities(detail.findings);
+  // An AI finding above what the reviewer's own verdict lets it add is shown,
+  // but it does not lead the list, drive "Inspect … findings" or fill the
+  // severity bar: a "likely safe" page must not open on a red AI row.
+  const severityCounts = countSeverities(
+    detail.findings.filter((finding) => !heldByVerdict(finding, ai)),
+  );
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
   const manifest = summary.packageJsonDiff;
 
@@ -82,7 +90,7 @@ export function buildReleaseVerdict({
     artifactRisk,
     releaseRisk,
     evidence,
-    findingGroups: groupReleaseFindings(changedFindings),
+    findingGroups: groupReleaseFindings(changedFindings, ai),
     releaseChanges: buildReleaseChanges(summary),
     severityCounts,
     findingTotal,
@@ -164,7 +172,7 @@ export function ReleaseVerdictEvidence({
   canInspectFinding?: (finding: ReviewFinding) => boolean;
 }) {
   const { recommendation, evidence, findingGroups, severityCounts, findingTotal } = verdict;
-  const firstFinding = findingGroups[0]?.findings[0];
+  const firstFinding = findingGroups.find((group) => !group.heldBy)?.findings[0];
   const inspect =
     firstFinding &&
     canSelectFinding(firstFinding) &&
@@ -221,19 +229,53 @@ export function ReleaseVerdictEvidence({
 interface ReleaseFindingGroup {
   key: string;
   findings: ReviewFinding[];
+  /** Set on AI findings the reviewer's own verdict keeps below their severity. */
+  heldBy?: { assessment: string; cap: string };
 }
 
-export function groupReleaseFindings(findings: ReviewFinding[]): ReleaseFindingGroup[] {
+type CompleteAiResult = Extract<DisplayedAiResult, { kind: "complete" }>;
+
+const SEVERITY_RANK: Record<string, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+
+function heldByVerdict(
+  finding: Pick<ReviewFinding, "source" | "severity">,
+  ai: DisplayedAiResult | null,
+): CompleteAiResult | null {
+  if (finding.source !== "ai" || ai?.kind !== "complete") return null;
+  const cap = aiVerdictRiskCap(ai.releaseAssessment);
+  return (SEVERITY_RANK[finding.severity] ?? 0) > (SEVERITY_RANK[cap] ?? 0) ? ai : null;
+}
+
+export function groupReleaseFindings(
+  findings: ReviewFinding[],
+  ai: DisplayedAiResult | null = null,
+): ReleaseFindingGroup[] {
   const groups = new Map<string, ReleaseFindingGroup>();
-  for (const finding of sortFindingsBySeverity(findings)) {
+  const held = findings.filter((finding) => heldByVerdict(finding, ai));
+  const counted = findings.filter((finding) => !heldByVerdict(finding, ai));
+  for (const finding of [...sortFindingsBySeverity(counted), ...sortFindingsBySeverity(held)]) {
     // A shared rule identity does not make AI evidence deterministic, or make
     // occurrences with different severity equivalent. Unknown rules stay separate.
     const key = JSON.stringify(
       finding.ruleId ? [finding.ruleId, finding.severity, finding.source] : [null, finding.id],
     );
     const group = groups.get(key);
+    const heldAi = heldByVerdict(finding, ai);
     if (group) group.findings.push(finding);
-    else groups.set(key, { key, findings: [finding] });
+    else {
+      groups.set(key, {
+        key,
+        findings: [finding],
+        ...(heldAi
+          ? {
+              heldBy: {
+                assessment: heldAi.releaseAssessment.replaceAll("_", " "),
+                cap: aiVerdictRiskCap(heldAi.releaseAssessment),
+              },
+            }
+          : {}),
+      });
+    }
   }
   return [...groups.values()];
 }
@@ -266,7 +308,9 @@ function ReleaseFindingGroupRow({
       <details class="group">
         <summary class="cursor-pointer text-[13px] text-ink marker:text-ink-subtle">
           <span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1 align-middle">
-            <Badge tone={severityTone(first.severity)}>{first.severity}</Badge>
+            <Badge tone={group.heldBy ? "neutral" : severityTone(first.severity)}>
+              {first.severity}
+            </Badge>
             <span class="font-medium">{title}</span>
             <span class="text-ink-muted">
               · {group.findings.length} {pluralize("location", group.findings.length)}
@@ -315,6 +359,13 @@ function ReleaseFindingGroupRow({
       {sharedReason ? (
         <p class="m-0 mt-2 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
           {first.reason}
+        </p>
+      ) : null}
+      {group.heldBy ? (
+        <p class="m-0 mt-1 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
+          {group.heldBy.cap === "low"
+            ? `Adds nothing to the risk: the reviewer's own verdict was ${group.heldBy.assessment}.`
+            : `Counts as ${group.heldBy.cap} at most: the reviewer's own verdict was ${group.heldBy.assessment}.`}
         </p>
       ) : null}
     </li>

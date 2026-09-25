@@ -108,6 +108,70 @@ describe("AI assessment authority", () => {
   });
 });
 
+describe("AI findings the reviewer's own verdict holds back", () => {
+  const rule = finding("rule", { severity: "medium", ruleId: "code.network-access" });
+  const aiCritical = finding("ai-critical", { source: "ai", ruleId: null, severity: "critical" });
+  const withVerdict = (
+    releaseAssessment: "nothing_unusual" | "review_recommended" | "suspicious",
+  ) => ({ ...ai, releaseAssessment }) as DisplayedAiResult;
+
+  test("a nothing-unusual review's critical row follows the counted findings and says why", () => {
+    const groups = groupReleaseFindings([aiCritical, rule], withVerdict("nothing_unusual"));
+
+    expect(groups.map((group) => group.findings[0].id)).toEqual(["rule", "ai-critical"]);
+    expect(groups[0].heldBy).toBeUndefined();
+    expect(groups[1].heldBy).toEqual({ assessment: "nothing unusual", cap: "low" });
+  });
+
+  test("a review-recommended verdict holds a critical row at medium", () => {
+    const [group] = groupReleaseFindings([aiCritical], withVerdict("review_recommended"));
+    expect(group.heldBy).toEqual({ assessment: "review recommended", cap: "medium" });
+  });
+
+  test("findings within the verdict's reach, and rule findings, are never held", () => {
+    const aiHigh = { ...aiCritical, id: "ai-high", severity: "high" };
+    expect(groupReleaseFindings([aiHigh], withVerdict("suspicious"))[0].heldBy).toBeUndefined();
+    const ruleCritical = finding("rule-critical");
+    expect(
+      groupReleaseFindings([ruleCritical], withVerdict("nothing_unusual"))[0].heldBy,
+    ).toBeUndefined();
+  });
+
+  test("held rows stay out of the severity bar", () => {
+    const detail = {
+      scan: {
+        id: "scan",
+        stageId: "stage",
+        risk: "low",
+        status: "complete",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      files: [],
+      findings: [
+        { ...aiCritical, scanId: "scan" },
+        { ...rule, scanId: "scan" },
+      ],
+      events: [],
+    } as unknown as PersistedScanDetail;
+    const verdict = buildReleaseVerdict({
+      detail,
+      summary: {},
+      diffCount: 1,
+      findingsWithDiffStatus: [
+        { finding: aiCritical, diffStatus: "modified", releaseDelta: true },
+        { finding: rule, diffStatus: "modified", releaseDelta: true },
+      ],
+      usePersistedRiskSummary: false,
+      isWorkflowGate: false,
+      ai: withVerdict("nothing_unusual"),
+    });
+
+    expect(verdict.severityCounts).toEqual({ medium: 1 });
+    expect(verdict.findingGroups[0].findings[0].id).toBe("rule");
+  });
+});
+
 describe("source binding", () => {
   const repository = "https://github.com/example/project";
   const declaration = {

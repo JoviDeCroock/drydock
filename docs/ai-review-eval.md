@@ -53,7 +53,11 @@ lower a deterministic grade.
   `review_recommended` at most medium, `suspicious` at most high, `blocked` up
   to critical. `requiresManualReview` keeps its medium floor, and an attempted
   but unavailable review still floors at medium. The cap applies to
-  `artifactRisk`, `releaseRisk`, and the AI share of `contextRisk`.
+  `artifactRisk`, `releaseRisk`, and the AI share of `contextRisk`. The scan
+  page reads the same cap (`aiVerdictRiskCap`): an AI finding above what its
+  verdict allows is listed after the counted findings with a neutral badge and
+  a line saying what the verdict holds it to, and it neither drives the
+  "Inspect … findings" link nor fills the severity bar.
 - **Release attribution.** `releaseRisk` gets the same verdict-bounded
   contribution, from the review's overall risk and its release-delta findings.
   A review whose findings all cite unchanged files stays out of `releaseRisk`
