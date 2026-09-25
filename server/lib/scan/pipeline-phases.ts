@@ -30,6 +30,7 @@ import {
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
+  withoutFindingLine,
   projectReleaseRuleFindings,
   redactFileRecords,
   redactFindings,
@@ -300,9 +301,10 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
 // Pure: fold deterministic + AI findings into the artifact/release/context
 // risk breakdown. `releaseConsistency` only ever removes previously-approved
 // package context from the artifact/context scores; release-delta findings are
-// scored in full regardless, so it cannot move `releaseRisk`. Pass the merged
-// AI records as `options.aiFindings` so a review whose findings all cite
-// unchanged files stays out of `releaseRisk` too.
+// scored in full regardless, so it cannot move `releaseRisk`. Pass only rule
+// findings as `annotatedFindings` and the merged AI records as
+// `options.aiFindings`: the AI's contribution is bounded by its verdict, which
+// scoring the records as rule findings would bypass.
 export function scoreRisk(
   annotatedFindings: Array<Finding & FindingDiffAnnotation>,
   aiFindings: AiReview,
@@ -315,7 +317,11 @@ export function scoreRisk(
 export interface MergedAiFindings {
   /** Redacted Finding-shaped records for the completed review's findings. */
   records: Finding[];
-  /** The same records annotated with diff status + release-delta scope. */
+  /**
+   * The same records annotated with diff status + release-delta scope. The
+   * scope is file-level: a record's `line` is kept for display but never
+   * moves it out of the release (see withoutFindingLine).
+   */
   annotatedRecords: Array<Finding & FindingDiffAnnotation>;
 }
 
@@ -336,12 +342,20 @@ export function mergeAiFindings(
   // hold byte-identical rows; it returns [] for a review that did not complete.
   const records = projectAiReviewFindings(aiReview);
   if (records.length === 0) return { records: [], annotatedRecords: [] };
-  const annotatedRecords = annotateFindingsWithDiffStatus(records, diff.fileDiff, {
-    previousFiles: findings.redactedPreviousFiles,
-    stagedFiles: findings.redactedStagedFiles,
-    codePatternSet,
-    baselineComparisonSkipped,
-  });
+  const annotatedRecords = annotateFindingsWithDiffStatus(
+    records.map(withoutFindingLine),
+    diff.fileDiff,
+    {
+      previousFiles: findings.redactedPreviousFiles,
+      stagedFiles: findings.redactedStagedFiles,
+      codePatternSet,
+      baselineComparisonSkipped,
+    },
+  ).map((annotation, index) => ({
+    ...records[index],
+    diffStatus: annotation.diffStatus,
+    releaseDelta: annotation.releaseDelta,
+  }));
   return { records, annotatedRecords };
 }
 

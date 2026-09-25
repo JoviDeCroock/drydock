@@ -1,0 +1,65 @@
+{
+  "id": "legit-cli-runs-package-managers",
+  "title": "Lockfile-refresh CLI adds a pnpm path that spawns the package manager (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-childprocess",
+  "source": "synthetic",
+  "intent": "Running npm, yarn, or pnpm with fixed argv is the whole job of a CLI that refreshes a data package in the caller's lockfile, and it is reachable only from bin, never from an install hook, so code.process-execution fires but stays a weak lone capability. Guards the AI failure where the reviewer restates that deterministic finding as its own high finding while its verdict says nothing is unusual.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "@example/regiondata-update",
+    "version": "2.3.0",
+    "description": "Refresh @example/region-data in the current project's lockfile",
+    "bin": {
+      "regiondata-update": "cli.js"
+    },
+    "dependencies": {
+      "@example/region-data": "^1.0.0"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@example/regiondata-update",
+    "version": "2.4.0",
+    "description": "Refresh @example/region-data in the current project's lockfile",
+    "bin": {
+      "regiondata-update": "cli.js"
+    },
+    "dependencies": {
+      "@example/region-data": "^1.0.0"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 260,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/regiondata-update\",\n  \"version\": \"2.3.0\",\n  \"description\": \"Refresh @example/region-data in the current project's lockfile\",\n  \"bin\": {\n    \"regiondata-update\": \"cli.js\"\n  },\n  \"dependencies\": {\n    \"@example/region-data\": \"^1.0.0\"\n  }\n}\n"
+    },
+    {
+      "path": "cli.js",
+      "size": 502,
+      "sha256": "prev-cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\n'use strict';\nconst { execSync } = require('node:child_process');\nconst { existsSync } = require('node:fs');\nconst { join } = require('node:path');\n\nconst DATA_PACKAGE = '@example/region-data';\nconst cwd = process.cwd();\n\nif (existsSync(join(cwd, 'yarn.lock'))) {\n  execSync('yarn upgrade @example/region-data', { cwd, stdio: 'inherit' });\n} else {\n  execSync('npm update @example/region-data', { cwd, stdio: 'inherit' });\n}\nconsole.log(`Updated ${DATA_PACKAGE} in the lockfile.`);\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 260,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/regiondata-update\",\n  \"version\": \"2.4.0\",\n  \"description\": \"Refresh @example/region-data in the current project's lockfile\",\n  \"bin\": {\n    \"regiondata-update\": \"cli.js\"\n  },\n  \"dependencies\": {\n    \"@example/region-data\": \"^1.0.0\"\n  }\n}\n"
+    },
+    {
+      "path": "cli.js",
+      "size": 624,
+      "sha256": "staged-cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\n'use strict';\nconst { execFileSync } = require('node:child_process');\nconst { existsSync } = require('node:fs');\nconst { join } = require('node:path');\n\nconst DATA_PACKAGE = '@example/region-data';\nconst cwd = process.cwd();\n\nfunction run(command, args) {\n  execFileSync(command, args, { cwd, stdio: 'inherit' });\n}\n\nif (existsSync(join(cwd, 'pnpm-lock.yaml'))) {\n  run('pnpm', ['update', DATA_PACKAGE]);\n} else if (existsSync(join(cwd, 'yarn.lock'))) {\n  run('yarn', ['upgrade', DATA_PACKAGE]);\n} else {\n  run('npm', ['update', DATA_PACKAGE]);\n}\nconsole.log(`Updated ${DATA_PACKAGE} in the lockfile.`);\n"
+    }
+  ]
+}

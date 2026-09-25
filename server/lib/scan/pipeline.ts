@@ -115,9 +115,10 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // AI findings persist alongside rule findings (as `source: "ai"` rows) and
     // count into the risk breakdown. Additive only: computeScanRisk folds them
     // in through combineRisk (a max), so they can escalate the deterministic
-    // grade but never lower it. Their diff annotations also decide whether the
-    // review's risk reaches `releaseRisk`: findings that only cite unchanged
-    // files are package context and must not reject the workflow gate.
+    // grade but never lower it, and only as far as the review's own verdict
+    // allows. Their diff annotations also decide whether the review's risk
+    // reaches `releaseRisk`: findings that only cite unchanged files are
+    // package context and must not reject the workflow gate.
     const mergedAiFindings = mergeAiFindings(
       aiFindings,
       findings,
@@ -140,15 +141,10 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       ruleFindings: findings.ruleFindings,
     });
 
-    const riskSummary = scoreRisk(
-      [...findings.annotatedFindings, ...mergedAiFindings.annotatedRecords],
-      aiFindings,
-      releaseConsistency,
-      {
-        baselineComparisonSkipped: facts.baselineComparisonSkipped,
-        aiFindings: mergedAiFindings.annotatedRecords,
-      },
-    );
+    const riskSummary = scoreRisk(findings.annotatedFindings, aiFindings, releaseConsistency, {
+      baselineComparisonSkipped: facts.baselineComparisonSkipped,
+      aiFindings: mergedAiFindings.annotatedRecords,
+    });
 
     // Advisory source-binding classification. Computed from the gate context
     // (when the workflow-gate job placed this scan) and the staged manifest's

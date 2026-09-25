@@ -233,7 +233,7 @@ function parseReportFindingsObject(
       file: finding.file,
       evidence: finding.evidence,
       reason: finding.reason,
-      line: null,
+      line: finding.line ?? null,
       source: "ai",
       ruleId: null,
       ruleVersion: null,
@@ -277,6 +277,7 @@ export function projectAiReviewFindings(review: AiReview | null | undefined): Fi
       file: finding.file,
       evidence: finding.evidence,
       reason: finding.reason,
+      ...(finding.line !== undefined ? { line: finding.line } : {}),
     })),
   );
 }

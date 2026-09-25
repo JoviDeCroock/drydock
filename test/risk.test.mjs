@@ -133,19 +133,20 @@ describe("computeScanRiskBreakdown", () => {
     expect(result.contextRisk).toBe("high");
   });
 
-  test("releaseRisk includes AI review influence", () => {
+  test("releaseRisk includes a verdict-bounded AI review", () => {
     const findings = [
       { severity: "low", file: "a.js", evidence: "e", reason: "r", releaseDelta: true },
     ];
     const aiReview = makeAiReview({
       status: "complete",
       releaseAssessment: "suspicious",
-      risk: "high",
+      risk: "critical",
       findings: [
         { severity: "high", file: "x.js", evidence: "e", reason: "r", recommendation: "fix" },
       ],
     });
     const result = computeScanRiskBreakdown(findings, aiReview);
+    expect(result.artifactRisk).toBe("high");
     expect(result.releaseRisk).toBe("high");
   });
 
@@ -166,14 +167,14 @@ describe("computeScanRiskBreakdown", () => {
     const aiFindings = [
       { severity: "high", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
     ];
-    const result = computeScanRiskBreakdown([...findings, ...aiFindings], aiReview, null, {
-      aiFindings,
-    });
+    const result = computeScanRiskBreakdown(findings, aiReview, null, { aiFindings });
     // The concern is about the package, so the headline still carries it...
     expect(result.artifactRisk).toBe("high");
     // ...but the release delta, which the workflow gate reads, does not.
     expect(result.releaseRisk).toBe("low");
     expect(result.contextRisk).toBe("high");
+    expect(result.releaseFindingCount).toBe(1);
+    expect(result.contextFindingCount).toBe(1);
   });
 
   test("releaseRisk keeps AI risk when any AI finding cites the release delta", () => {
@@ -188,17 +189,19 @@ describe("computeScanRiskBreakdown", () => {
       model: "llama-3",
     });
     const aiFindings = [
-      { severity: "high", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
-      { severity: "high", file: "new.js", evidence: "e", reason: "r", releaseDelta: true },
+      { severity: "high", file: "old.js", releaseDelta: false },
+      { severity: "high", file: "new.js", releaseDelta: true },
     ];
-    const result = computeScanRiskBreakdown(aiFindings, aiReview, null, { aiFindings });
+    const result = computeScanRiskBreakdown([], aiReview, null, { aiFindings });
     expect(result.releaseRisk).toBe("high");
+    expect(result.releaseFindingCount).toBe(1);
+    expect(result.contextFindingCount).toBe(1);
   });
 
   test("a context-only AI review keeps its manual-review floor on releaseRisk", () => {
     const aiReview = makeAiReview({
       status: "complete",
-      releaseAssessment: "review_recommended",
+      releaseAssessment: "blocked",
       risk: "critical",
       requiresManualReview: true,
       findings: [
@@ -209,7 +212,7 @@ describe("computeScanRiskBreakdown", () => {
     const aiFindings = [
       { severity: "critical", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
     ];
-    const result = computeScanRiskBreakdown(aiFindings, aiReview, null, { aiFindings });
+    const result = computeScanRiskBreakdown([], aiReview, null, { aiFindings });
     expect(result.artifactRisk).toBe("critical");
     expect(result.releaseRisk).toBe("medium");
   });
@@ -217,27 +220,14 @@ describe("computeScanRiskBreakdown", () => {
   test("an AI review with no findings is scored wholesale on releaseRisk", () => {
     const aiReview = makeAiReview({
       status: "complete",
-      releaseAssessment: "review_recommended",
+      releaseAssessment: "suspicious",
       risk: "high",
       requiresManualReview: true,
       findings: [],
       model: "llama-3",
     });
     const result = computeScanRiskBreakdown([], aiReview, null, { aiFindings: [] });
-    expect(result.releaseRisk).toBe("high");
-  });
-
-  test("without AI annotations the review is scored wholesale, as before", () => {
-    const aiReview = makeAiReview({
-      status: "complete",
-      releaseAssessment: "suspicious",
-      risk: "high",
-      findings: [
-        { severity: "high", file: "old.js", evidence: "e", reason: "r", recommendation: "fix" },
-      ],
-      model: "llama-3",
-    });
-    const result = computeScanRiskBreakdown([], aiReview);
+    expect(result.artifactRisk).toBe("high");
     expect(result.releaseRisk).toBe("high");
   });
 
@@ -558,5 +548,189 @@ describe("release memory and a skipped baseline", () => {
     const result = computeScanRiskBreakdown(findings, makeAiReview(), matched);
     expect(result.artifactRisk).toBe("low");
     expect(result.priorApprovedContextFindingCount).toBe(2);
+  });
+});
+
+const RISK_LEVELS = ["low", "medium", "high", "critical"];
+const RANK = { low: 0, medium: 1, high: 2, critical: 3 };
+const VERDICT_CAP = {
+  nothing_unusual: "low",
+  review_recommended: "medium",
+  suspicious: "high",
+  blocked: "critical",
+};
+const maxRisk = (...levels) => levels.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), "low");
+const minRisk = (a, b) => (RANK[a] < RANK[b] ? a : b);
+
+function deterministicAt(level, extra = {}) {
+  return level === "low"
+    ? []
+    : [{ severity: level, file: "lib/rule.js", evidence: "e", reason: "r", ...extra }];
+}
+
+// A completed review whose own risk and single finding both sit at `level`.
+function reviewAt(releaseAssessment, level, overrides = {}) {
+  return makeAiReview({
+    status: "complete",
+    releaseAssessment,
+    risk: level,
+    requiresManualReview: false,
+    findings: [
+      {
+        severity: level,
+        file: "lib/new.js",
+        evidence: "e",
+        reason: "r",
+        recommendation: "x",
+      },
+    ],
+    model: "reviewer",
+    ...overrides,
+  });
+}
+
+function annotated(level, overrides = {}) {
+  return [{ severity: level, releaseDelta: true, diffStatus: "modified", ...overrides }];
+}
+
+const MATRIX = Object.keys(VERDICT_CAP).flatMap((assessment) =>
+  RISK_LEVELS.flatMap((aiRisk) =>
+    RISK_LEVELS.map((deterministicRisk) => ({ assessment, aiRisk, deterministicRisk })),
+  ),
+);
+
+describe("AI contribution is capped by the reviewer's own verdict", () => {
+  test.each(MATRIX)(
+    "$assessment with AI $aiRisk over deterministic $deterministicRisk",
+    ({ assessment, aiRisk, deterministicRisk }) => {
+      const expected = maxRisk(deterministicRisk, minRisk(aiRisk, VERDICT_CAP[assessment]));
+      const review = reviewAt(assessment, aiRisk);
+
+      expect(computeScanRisk(deterministicAt(deterministicRisk), review)).toBe(expected);
+
+      // A release-delta finding gives the release score the same
+      // verdict-bounded contribution as the artifact score.
+      const breakdown = computeScanRiskBreakdown(
+        deterministicAt(deterministicRisk, { releaseDelta: true }),
+        review,
+        null,
+        { aiFindings: annotated(aiRisk) },
+      );
+      expect(breakdown.artifactRisk).toBe(expected);
+      expect(breakdown.releaseRisk).toBe(expected);
+    },
+  );
+
+  test("a nothing_unusual review with restating high findings adds nothing", () => {
+    const review = reviewAt("nothing_unusual", "high", { risk: "low" });
+    const result = computeScanRiskBreakdown([], review, null, { aiFindings: annotated("high") });
+    expect(result.artifactRisk).toBe("low");
+    expect(result.releaseRisk).toBe("low");
+    expect(result.contextRisk).toBe("low");
+  });
+
+  test("the manual-review floor still applies under a nothing_unusual verdict", () => {
+    const review = reviewAt("nothing_unusual", "high", { requiresManualReview: true });
+    expect(computeScanRisk([], review)).toBe("medium");
+  });
+
+  test("an attempted but unavailable review still floors at medium", () => {
+    expect(computeScanRisk([], makeAiReview({ status: "invalid", model: "reviewer" }))).toBe(
+      "medium",
+    );
+  });
+
+  test("AI finding severities on package context are verdict-bounded in contextRisk", () => {
+    const review = reviewAt("review_recommended", "critical");
+    const result = computeScanRiskBreakdown([], review, null, {
+      aiFindings: annotated("critical", { releaseDelta: false }),
+    });
+    expect(result.contextRisk).toBe("medium");
+  });
+});
+
+describe("AI-only escalations reach the release without a located line", () => {
+  test("a suspicious review with no findings escalates over a medium deterministic release", () => {
+    // The prompt tells the reviewer not to restate deterministic findings, so a
+    // real escalation can arrive with none of its own.
+    const review = reviewAt("suspicious", "high", { requiresManualReview: true, findings: [] });
+    const result = computeScanRiskBreakdown(
+      deterministicAt("medium", { releaseDelta: true }),
+      review,
+      null,
+      { aiFindings: [] },
+    );
+    expect(result.releaseRisk).toBe("high");
+  });
+
+  test("a legacy recorded review (no category, no line) still escalates the release", () => {
+    const legacy = reviewAt("suspicious", "high", { reviewerVersion: "1.7.0" });
+    const result = computeScanRiskBreakdown([], legacy, null, {
+      aiFindings: [{ severity: "high", releaseDelta: true, diffStatus: "modified" }],
+    });
+    expect(result.releaseRisk).toBe("high");
+  });
+
+  test("a blocked review with a critical release finding reaches critical", () => {
+    const result = computeScanRiskBreakdown([], reviewAt("blocked", "critical"), null, {
+      aiFindings: annotated("critical"),
+    });
+    expect(result.releaseRisk).toBe("critical");
+  });
+});
+
+describe("AI review never lowers deterministic risk", () => {
+  const assessments = Object.keys(VERDICT_CAP);
+  const attributions = [annotated("low"), annotated("critical"), [{ releaseDelta: false }], []];
+
+  test.each(RISK_LEVELS)("deterministic %s survives every AI review shape", (level) => {
+    for (const assessment of assessments) {
+      for (const aiRisk of RISK_LEVELS) {
+        for (const aiFindings of attributions) {
+          const review = reviewAt(assessment, aiRisk, {
+            deterministicAssessments: [
+              {
+                ruleId: "code.network-access",
+                file: "lib/rule.js",
+                verdict: "disputed",
+                note: "n",
+              },
+            ],
+          });
+          expect(RANK[computeScanRisk(deterministicAt(level), review)]).toBeGreaterThanOrEqual(
+            RANK[level],
+          );
+          const releaseSide = computeScanRiskBreakdown(
+            deterministicAt(level, { releaseDelta: true }),
+            review,
+            null,
+            { aiFindings },
+          );
+          expect(RANK[releaseSide.artifactRisk]).toBeGreaterThanOrEqual(RANK[level]);
+          expect(RANK[releaseSide.releaseRisk]).toBeGreaterThanOrEqual(RANK[level]);
+          const contextSide = computeScanRiskBreakdown(
+            deterministicAt(level, { releaseDelta: false }),
+            review,
+            null,
+            { aiFindings },
+          );
+          expect(RANK[contextSide.contextRisk]).toBeGreaterThanOrEqual(RANK[level]);
+        }
+      }
+    }
+  });
+
+  test("deterministic assessments never move a score", () => {
+    const findings = deterministicAt("high", { releaseDelta: true, ruleId: "code.network-access" });
+    const base = reviewAt("review_recommended", "medium");
+    const disputing = {
+      ...base,
+      deterministicAssessments: [
+        { ruleId: "code.network-access", file: "lib/rule.js", verdict: "disputed", note: "FP" },
+      ],
+    };
+    expect(computeScanRiskBreakdown(findings, disputing)).toEqual(
+      computeScanRiskBreakdown(findings, base),
+    );
   });
 });

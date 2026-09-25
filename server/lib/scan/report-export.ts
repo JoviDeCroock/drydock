@@ -212,12 +212,22 @@ function extractAiReview(aiJson: unknown) {
       risk: displayed.risk,
       releaseAssessment: displayed.releaseAssessment,
       requiresManualReview: displayed.requiresManualReview,
+      // `category` and `line` are null for reviews recorded before 1.8.0.
       findings: displayed.findings.map((finding) => ({
         severity: finding.severity,
+        category: finding.category ?? null,
         file: finding.file,
+        line: finding.line ?? null,
         evidence: finding.evidence,
         reason: finding.reason,
         recommendation: finding.recommendation,
+      })),
+      // Advisory notes on deterministic findings; they never changed a score.
+      deterministicAssessments: displayed.deterministicAssessments.map((assessment) => ({
+        ruleId: assessment.ruleId,
+        file: assessment.file,
+        verdict: assessment.verdict,
+        note: assessment.note,
       })),
     };
   }
@@ -229,6 +239,7 @@ function extractAiReview(aiJson: unknown) {
     releaseAssessment: null,
     requiresManualReview: false,
     findings: [],
+    deterministicAssessments: [],
   };
 }
 

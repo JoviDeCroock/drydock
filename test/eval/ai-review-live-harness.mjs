@@ -38,7 +38,8 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
-import { computeScanRisk } from "../../server/lib/review/risk.ts";
+import { computeScanRisk, computeScanRiskBreakdown } from "../../server/lib/review/risk.ts";
+import { mergeAiFindings } from "../../server/lib/scan/pipeline-phases.ts";
 import {
   acquireStagedPyPi,
   baselineFromPreviousArtifacts,
@@ -287,6 +288,7 @@ export function scoreRun(testCase, result) {
     passed,
     aiCaught,
     productRisk,
+    releaseRisk: releaseScore(testCase, review),
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     findingCount: review.findings.length,
@@ -299,6 +301,27 @@ export function scoreRun(testCase, result) {
     outputTokens: usage?.outputTokens ?? 0,
     durationMs: result.durationMs ?? 0,
   };
+}
+
+// The workflow gate reads `releaseRisk`, not the artifact headline. Score it
+// through the production merge and roll-up so the report shows what a gate
+// would have decided for each fixture.
+function releaseScore(testCase, review) {
+  const options = testCase.options ?? {};
+  const merged = mergeAiFindings(
+    review,
+    {
+      redactedPreviousFiles: options.previousFiles ?? [],
+      redactedStagedFiles: options.files ?? [],
+    },
+    { fileDiff: options.diff ?? [] },
+  );
+  return computeScanRiskBreakdown(
+    (options.ruleFindings ?? []).map((finding) => ({ ...finding, releaseDelta: true })),
+    review,
+    null,
+    { aiFindings: merged.annotatedRecords },
+  ).releaseRisk;
 }
 
 function scoreHarnessError(testCase, error, durationMs) {
@@ -315,6 +338,7 @@ function scoreHarnessError(testCase, error, durationMs) {
     passed: false,
     aiCaught: false,
     productRisk: "unknown",
+    releaseRisk: "unknown",
     risk: "unknown",
     releaseAssessment: "not_assessed",
     findingCount: 0,
@@ -366,6 +390,15 @@ export function summarizeModel(model, runs) {
     aiCatchRate: rate(malicious.filter((run) => run.aiCaught).length, malicious.length),
     frontierCatchRate: rate(frontier.filter((run) => run.aiCaught).length, frontier.length),
     falsePositiveRate: rate(benign.filter((run) => !run.passed).length, benign.length),
+    // Benign releases the AI alone pushed into the gate's blocking range.
+    benignReleaseEscalationRate: rate(
+      benign.filter(
+        (run) =>
+          RISK_RANK[run.releaseRisk] >= RISK_RANK.high &&
+          RISK_RANK[run.releaseRisk] > RISK_RANK[run.releaseDeterministicRisk],
+      ).length,
+      benign.length,
+    ),
     manualReviewRate: rate(runs.filter((run) => run.requiresManualReview).length, runs.length),
     avgSteps: mean(usageRuns.map((run) => run.steps)),
     avgDurationMs: mean(runs.map((run) => run.durationMs)),
@@ -553,12 +586,13 @@ export function renderMarkdown(result) {
       `- avg latency: ${(entry.avgDurationMs / 1000).toFixed(1)}s · avg tokens in/out: ${entry.avgInputTokens.toFixed(0)}/${entry.avgOutputTokens.toFixed(0)}`,
       "",
       `- AI-only catch: ${percent(entry.aiCatchRate)} · product-policy coverage: ${percent(entry.productCoverageRate)}`,
+      `- benign release escalation: ${percent(entry.benignReleaseEscalationRate)}`,
       misses.length ? "Expectation misses:" : "Expectation misses: none.",
       "",
     );
     for (const miss of misses) {
       lines.push(
-        `- \`${miss.id}\` (${miss.verdict}/${miss.threatClass}) → ${miss.status}/AI ${miss.risk}/product ${miss.productRisk}`,
+        `- \`${miss.id}\` (${miss.verdict}/${miss.threatClass}) → ${miss.status}/AI ${miss.risk}/product ${miss.productRisk}/release ${miss.releaseRisk}`,
       );
     }
     lines.push("");

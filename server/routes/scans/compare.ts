@@ -22,6 +22,7 @@ import { fetchPackageMetadataCached } from "../../lib/ecosystems/npm/registry-ca
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
+  withoutFindingLine,
   type FileRecord,
 } from "../../lib/review";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
@@ -233,7 +234,12 @@ function buildCompareFindingAnnotations(
 ) {
   const stagedFiles = scanFilesToFileRecords(scan.files);
   const diff = createPackageDiff(previousFiles, stagedFiles);
-  return annotateFindingsWithDiffStatus(scan.findings, diff, {
+  // AI rows are attributed file-level, as the pipeline scores them: their
+  // line locates the claim but cannot demote it.
+  const findings = scan.findings.map((finding) =>
+    finding.source === "ai" ? withoutFindingLine(finding) : finding,
+  );
+  return annotateFindingsWithDiffStatus(findings, diff, {
     previousFiles,
     stagedFiles,
   }).map((finding) => ({

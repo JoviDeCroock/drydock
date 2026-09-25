@@ -1,7 +1,7 @@
-import type { AiReview } from "../ai-review/types";
+import type { AiReview, DisplayedAiResult } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
 import type { FindingProfileEntry, ReleaseConsistency } from "../scan/release-memory";
-import { combineRisk, computeRisk, normalizeRisk } from "./";
+import { capRisk, combineRisk, computeRisk, normalizeRisk, severityToRisk } from "./";
 import type { Finding, RiskLevel } from "./types";
 import { deterministicRuleIds } from "./rules/rule-ids";
 
@@ -21,32 +21,43 @@ type RiskFinding = Finding & {
   releaseDeltaKind?: string | null;
 };
 
+/**
+ * One completed-review AI finding as the pipeline projects and diff-annotates
+ * it (see mergeAiFindings). Its release attribution is file-level.
+ */
+interface AiRiskFinding {
+  severity?: string | null;
+  diffStatus?: string | null;
+  releaseDelta?: boolean | null;
+}
+
 export interface ScanRiskOptions {
   baselineComparisonSkipped?: boolean;
   /**
-   * The completed AI review's findings with their diff annotations. When every
-   * one of them is package context, the review's risk is kept out of
-   * `releaseRisk`. Omit (or pass empty) to score the review wholesale.
+   * The completed AI review's findings with their diff annotations, kept apart
+   * from the deterministic `ruleFindings` so the review's contribution can be
+   * bounded. When every one is package context, the review's risk is kept out
+   * of `releaseRisk`. Omit (or pass empty) to score the review wholesale.
    */
-  aiFindings?: ReadonlyArray<Pick<RiskFinding, "releaseDelta">>;
+  aiFindings?: ReadonlyArray<AiRiskFinding>;
 }
 
+type AiReleaseAssessment = Extract<DisplayedAiResult, { kind: "complete" }>["releaseAssessment"];
+
+// The reviewer's own verdict bounds what its review can add to any score. A
+// review that reports nothing unusual cannot raise risk however it labels its
+// findings (it filed them to discuss evidence, not to flag it), and only a
+// blocking verdict can reach critical. This only limits the AI's upgrade:
+// every score is still combined with the deterministic one through a max.
+const AI_VERDICT_RISK_CAP: Record<AiReleaseAssessment, RiskLevel> = {
+  nothing_unusual: "low",
+  review_recommended: "medium",
+  suspicious: "high",
+  blocked: "critical",
+};
+
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
-  const ai = displayedAiResult(aiReview);
-  const deterministicRisk = computeRisk(ruleFindings);
-  if (ai?.kind !== "complete") {
-    // An attempted but unavailable review must not read as clean.
-    if (ai?.kind === "unavailable" && ai.model != null) {
-      return combineRisk(deterministicRisk, "medium");
-    }
-    return deterministicRisk;
-  }
-  const aiHasEvidence = ai.findings.length > 0 || ai.requiresManualReview;
-  return combineRisk(
-    deterministicRisk,
-    aiHasEvidence ? ai.risk : "low",
-    ai.requiresManualReview ? "medium" : "low",
-  );
+  return combineRisk(computeRisk(ruleFindings), aiArtifactRisk(aiReview));
 }
 
 export function computeScanRiskBreakdown(
@@ -69,19 +80,36 @@ export function computeScanRiskBreakdown(
   );
   const scoredFindings =
     approvedCount === 0 ? ruleFindings : [...releaseFindings, ...scoredContextFindings];
+  const aiRecords = options.aiFindings ?? [];
+  const aiContextRecords = aiRecords.filter((finding) => finding.releaseDelta !== true);
   return {
     artifactRisk: computeScanRisk(scoredFindings, aiFindings),
-    releaseRisk: computeScanRisk(
-      scoredReleaseFindings,
-      releaseScopedAiReview(aiFindings, options.aiFindings),
+    releaseRisk: combineRisk(
+      computeRisk(scoredReleaseFindings),
+      aiReleaseRisk(aiFindings, options.aiFindings),
     ),
-    contextRisk: computeRisk(scoredContextFindings),
-    releaseFindingCount: releaseFindings.length,
-    contextFindingCount: contextFindings.length,
-    unknownFindingCount: contextFindings.filter((finding) => finding.diffStatus === "unknown")
-      .length,
+    contextRisk: combineRisk(
+      computeRisk(scoredContextFindings),
+      aiFindingSeverityRisk(aiFindings, aiContextRecords),
+    ),
+    releaseFindingCount: releaseFindings.length + aiRecords.length - aiContextRecords.length,
+    contextFindingCount: contextFindings.length + aiContextRecords.length,
+    unknownFindingCount: [...contextFindings, ...aiContextRecords].filter(
+      (finding) => finding.diffStatus === "unknown",
+    ).length,
     priorApprovedContextFindingCount: approvedCount,
   };
+}
+
+// The whole review's contribution: its overall risk (when it cites evidence
+// or asks for manual review) and its findings' severities, bounded by its own
+// verdict. An attempted but unavailable review must not read as clean.
+function aiArtifactRisk(aiReview: AiReview): RiskLevel {
+  const ai = displayedAiResult(aiReview);
+  if (ai?.kind !== "complete") {
+    return ai?.kind === "unavailable" && ai.model != null ? "medium" : "low";
+  }
+  return withManualReviewFloor(ai, verdictBoundedRisk(ai, ai.findings));
 }
 
 // The deterministic side grades `releaseRisk` from release-delta findings only,
@@ -91,18 +119,62 @@ export function computeScanRiskBreakdown(
 // the concern is about the package, not the delta, and it must not reject a
 // gate that nothing in the release changed. `artifactRisk` still carries it.
 // The review's manual-review flag survives as its usual medium floor, which is
-// below the gate's blocking threshold. A review with no findings cannot be
-// attributed and is scored wholesale, as is any caller that passes no
-// annotations: the scoping only ever narrows on positive evidence.
-function releaseScopedAiReview(
+// below the gate's blocking threshold. Otherwise the review scores on the
+// release exactly as on the artifact: bounded by its own verdict. Attribution
+// is deliberately file-level and needs no finding at all — a reviewer told not
+// to restate deterministic findings may escalate with none, and a located-line
+// requirement would be defeated by a decoy call on an unchanged line, a clipped
+// baseline, or a modified binary.
+function aiReleaseRisk(
   aiReview: AiReview,
   annotatedAiFindings: ScanRiskOptions["aiFindings"],
-): AiReview {
-  if (!annotatedAiFindings?.length) return aiReview;
+): RiskLevel {
   const ai = displayedAiResult(aiReview);
-  if (ai?.kind !== "complete" || ai.findings.length === 0) return aiReview;
-  if (annotatedAiFindings.some((finding) => finding.releaseDelta === true)) return aiReview;
-  return { ...aiReview, risk: "low", findings: [] };
+  if (ai?.kind !== "complete") return aiArtifactRisk(aiReview);
+  const annotated = annotatedAiFindings?.length ? annotatedAiFindings : null;
+  if (
+    annotated &&
+    ai.findings.length > 0 &&
+    !annotated.some((finding) => finding.releaseDelta === true)
+  ) {
+    return withManualReviewFloor(ai, "low");
+  }
+  const releaseAiFindings = annotated
+    ? annotated.filter((finding) => finding.releaseDelta === true)
+    : ai.findings;
+  return withManualReviewFloor(ai, verdictBoundedRisk(ai, releaseAiFindings));
+}
+
+function verdictBoundedRisk(
+  ai: Extract<DisplayedAiResult, { kind: "complete" }>,
+  findings: ReadonlyArray<{ severity?: string | null }>,
+): RiskLevel {
+  const claimed = combineRisk(
+    ai.findings.length > 0 || ai.requiresManualReview ? ai.risk : "low",
+    ...findings.map((finding) => severityToRisk(finding.severity)),
+  );
+  return capRisk(claimed, AI_VERDICT_RISK_CAP[ai.releaseAssessment]);
+}
+
+// AI findings on package context still count toward `contextRisk`, under the
+// same verdict bound as everywhere else.
+function aiFindingSeverityRisk(
+  aiReview: AiReview,
+  findings: ReadonlyArray<AiRiskFinding>,
+): RiskLevel {
+  const ai = displayedAiResult(aiReview);
+  if (ai?.kind !== "complete" || findings.length === 0) return "low";
+  return capRisk(
+    combineRisk(...findings.map((finding) => severityToRisk(finding.severity))),
+    AI_VERDICT_RISK_CAP[ai.releaseAssessment],
+  );
+}
+
+function withManualReviewFloor(
+  ai: Extract<DisplayedAiResult, { kind: "complete" }>,
+  risk: RiskLevel,
+): RiskLevel {
+  return combineRisk(risk, ai.requiresManualReview ? "medium" : "low");
 }
 
 // Approval never discounts evidence of active compromise.

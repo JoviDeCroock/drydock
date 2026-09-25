@@ -26,6 +26,7 @@ export {
   annotateFindingsWithDiffStatus,
   normalizeFindingDiffStatus,
   projectReleaseRuleFindings,
+  withoutFindingLine,
 } from "./diff-annotation";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
 
@@ -40,7 +41,8 @@ const CODE_CAPABILITY_RULE_IDS = deterministicRuleIds(
 const WEAK_LONE_CAPABILITY_RULE_IDS = deterministicRuleIds(
   (spec) => spec.risk === "weak-lone-capability",
 );
-function severityToRisk(severity: string | null | undefined): RiskLevel {
+
+export function severityToRisk(severity: string | null | undefined): RiskLevel {
   if (severity === "critical") return "critical";
   if (severity === "high") return "high";
   if (severity === "medium") return "medium";
@@ -140,6 +142,11 @@ export function combineRisk(...risks: Array<RiskLevel | null | undefined>): Risk
     if (!risk) return highest;
     return RISK_RANK[risk] > RISK_RANK[highest] ? risk : highest;
   }, "low");
+}
+
+// The lower of two levels: bounds what one contributor may add to a score.
+export function capRisk(risk: RiskLevel, ceiling: RiskLevel): RiskLevel {
+  return RISK_RANK[risk] > RISK_RANK[ceiling] ? ceiling : risk;
 }
 
 export function normalizeRisk(value: unknown): RiskLevel {

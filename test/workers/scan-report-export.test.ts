@@ -228,15 +228,20 @@ describe("scan report JSON export", () => {
       risk: "high",
       releaseAssessment: "suspicious",
       requiresManualReview: true,
+      // A review recorded before reviewer 1.8.0 has no category, line, or
+      // deterministic assessments; the export states that explicitly.
       findings: [
         {
           severity: "critical",
+          category: null,
           file: "package.json",
+          line: null,
           evidence: "postinstall runs node install.js",
           reason: "consumer installs execute arbitrary code",
           recommendation: "remove the install hook or gate it behind a manual step",
         },
       ],
+      deterministicAssessments: [],
     });
 
     // Stable serialization: a re-export of the same evidence is byte-identical.
@@ -278,7 +283,61 @@ describe("scan report JSON export", () => {
       releaseAssessment: null,
       requiresManualReview: false,
       findings: [],
+      deterministicAssessments: [],
     });
+  });
+
+  test("exports a 1.8.0 review's finding anchors and deterministic assessments", async () => {
+    const owner = await seedUser();
+    const scanId = await seedExportScan(owner, {
+      status: "complete",
+      risk: "high",
+      releaseAssessment: "suspicious",
+      summary: "The install hook now downloads a script.",
+      findings: [
+        {
+          severity: "high",
+          category: "install-script",
+          file: "scripts/setup.js",
+          line: 12,
+          evidence: "https.get(url).pipe(sh)",
+          reason: "install-time download and execute",
+          recommendation: "remove the download",
+        },
+      ],
+      requiresManualReview: true,
+      deterministicAssessments: [
+        {
+          ruleId: "code.process-execution",
+          file: "bin/cli.js",
+          verdict: "disputed",
+          note: "Fixed argv to the package manager; the CLI's purpose.",
+        },
+      ],
+      model: "ai-review-1",
+      reviewerVersion: "1.8.0",
+    });
+
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text()) as {
+      aiReview: {
+        findings: Array<{ category: string | null; line: number | null }>;
+        deterministicAssessments: unknown[];
+      } | null;
+    };
+
+    expect(body.aiReview?.findings).toEqual([
+      expect.objectContaining({ category: "install-script", line: 12 }),
+    ]);
+    expect(body.aiReview?.deterministicAssessments).toEqual([
+      {
+        ruleId: "code.process-execution",
+        file: "bin/cli.js",
+        verdict: "disputed",
+        note: "Fixed argv to the package manager; the CLI's purpose.",
+      },
+    ]);
   });
 
   test("surfaces the reviewed VSIX digest for a VS Code gate review", async () => {

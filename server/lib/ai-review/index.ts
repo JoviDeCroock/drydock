@@ -552,8 +552,14 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     summary: review.summary,
-    findings: selectReportedFindings(review.findings),
+    findings: selectReportedFindings(review.findings).map((finding) => ({
+      ...finding,
+      category: finding.category ?? "other",
+    })),
     requiresManualReview: review.requiresManualReview,
+    ...(review.deterministicAssessments?.length
+      ? { deterministicAssessments: review.deterministicAssessments }
+      : {}),
     model,
     reviewerVersion: AI_REVIEWER_VERSION,
   };
