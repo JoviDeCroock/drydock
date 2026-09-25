@@ -33,6 +33,12 @@ export type FindingDiffStatus = DiffStatus | "unknown";
 export interface FindingDiffAnnotation {
   diffStatus: FindingDiffStatus;
   releaseDelta: boolean;
+  /**
+   * `expanded`: a release-delta capability finding in a modified file that
+   * already had the same capability, with nothing new to the file alongside
+   * it. Release risk scores it one step lower (diff-annotation.ts).
+   */
+  releaseDeltaKind?: "expanded";
 }
 
 export type CodePatternSet = "javascript" | "python";

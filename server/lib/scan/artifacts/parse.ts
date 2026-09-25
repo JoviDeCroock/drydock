@@ -248,9 +248,12 @@ function parseReportFindingsObject(
       const index = (entry as { findingIndex?: unknown }).findingIndex;
       if (typeof index !== "number" || !Number.isInteger(index)) continue;
       if (index < 0 || index >= findings.length) continue;
+      const releaseDelta = Boolean((entry as { releaseDelta?: unknown }).releaseDelta);
+      const expanded = (entry as { releaseDeltaKind?: unknown }).releaseDeltaKind === "expanded";
       annotations.set(artifactFindingId(scanId, index), {
         diffStatus: normalizeFindingDiffStatus((entry as { diffStatus?: unknown }).diffStatus),
-        releaseDelta: Boolean((entry as { releaseDelta?: unknown }).releaseDelta),
+        releaseDelta,
+        ...(releaseDelta && expanded ? { releaseDeltaKind: "expanded" as const } : {}),
       });
     }
   }

@@ -73,9 +73,15 @@ function FindingGrid({
 }) {
   // The section split already says whether a signal is on a changed file or is
   // package context, so a card names its file's diff status only where that
-  // split would mislead: a release-scoped signal whose file did not change.
+  // split would mislead: a release-scoped signal whose file did not change, or
+  // a changed signal that only grew a capability the file already had (release
+  // risk scores it one step lower).
   const statusNote = (item: FindingWithDiffStatus) =>
-    item.releaseDelta && item.diffStatus === "unchanged" ? "existing" : null;
+    item.releaseDelta && item.diffStatus === "unchanged"
+      ? "existing"
+      : item.releaseDeltaKind === "expanded"
+        ? "expanded"
+        : null;
   // release.* findings carry the synthetic "<release-process>" label — there is
   // no such file in the artifact, so the label must not become an
   // open-in-the-diff button.

@@ -240,6 +240,7 @@ function buildCompareFindingAnnotations(
     id: finding.id,
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,
+    ...(finding.releaseDeltaKind ? { releaseDeltaKind: finding.releaseDeltaKind } : {}),
   }));
 }
 

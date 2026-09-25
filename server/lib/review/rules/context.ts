@@ -110,7 +110,7 @@ export function changedStagedLines(previous: string, staged: string): Set<number
   return changed;
 }
 
-export function splitComparableLines(text: string): string[] {
+function splitComparableLines(text: string): string[] {
   const lines = text.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
   return lines;

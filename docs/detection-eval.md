@@ -128,6 +128,16 @@ or regressed attestations plus a matching-provenance control.
   - `codeRetention` — how many of the original `code.*` rules still fire? (the
     honest measure of how fragile the regex code-scanner is)
 
+- **Release injection (gated).** Every malicious npm case whose release-delta
+  findings include a `code.*` rule is replayed as a payload spliced into an
+  existing module: each code file becomes a modification of a carrier that
+  already uses the network, process, environment and dynamic-code primitives,
+  once as ordinary lines and once as a single minified line. The payload must
+  still raise `releaseRisk` (the score the workflow gate reads) to its
+  `expectMinRisk`, through the real annotation and risk-breakdown path. This
+  guards release-delta classification, which the other metrics never exercise:
+  they score `computeRisk` over every finding.
+
 ### Evasion transforms
 
 - `splitStringLiterals` — `'child_process'` → `'chi'+'ld_process'`; defeats
@@ -157,6 +167,10 @@ Gated metrics (`detection-eval.test.mjs`):
 - every `expectMinRisk: critical` case caught (100%)
 - benign regression positives exactly match the acknowledged fixture ids
 - benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
+- release injection: no misses beyond the pinned `npm-assembled-require-exfil`
+  (lines shape; the environment is read through a computed key no rule sees, a
+  detection gap rather than a classification one) and none in the minified
+  shape, over at least 20 cases each
 
 Frontier recall and evasion robustness are reported, not gated, so they can start
 red. The benign FP gate was the first ratchet step and landed with weighted

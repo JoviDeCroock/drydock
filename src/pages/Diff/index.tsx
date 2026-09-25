@@ -631,5 +631,6 @@ function adaptFindings(diff: PublicDiffResponse | null): FindingWithDiffStatus[]
     },
     diffStatus: finding.diffStatus,
     releaseDelta: finding.releaseDelta,
+    releaseDeltaKind: finding.releaseDeltaKind,
   }));
 }

