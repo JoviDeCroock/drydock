@@ -66,8 +66,14 @@ export function annotateFindingsWithDiffStatus<
   const changesCache = new Map<string, FileChanges | null>();
   const changesFor = (path: string) =>
     fileChangesForPath(path, previousByPath, stagedByPath, changesCache, options.codePatternSet);
+  // Both readers of the baseline finding set ask only about modified files, so
+  // the rules re-run over those and the manifests that give them context.
+  // Fewer baseline files can only mean fewer baseline fingerprints, which
+  // classifies more findings as new — never fewer.
   const baselineFingerprints = lazyBaselineFingerprints(
-    options.previousFiles ?? [],
+    (options.previousFiles ?? []).filter(
+      (file) => diffByPath.get(file.path) === "modified" || isManifestPath(file.path),
+    ),
     options.codePatternSet,
   );
   const annotated = findings.map((finding) => {
@@ -509,6 +515,10 @@ function lazyBaselineHosts(
 // Deterministic findings recomputed over the baseline files, keyed by
 // ruleId + file. Computed lazily because most scans resolve every finding
 // through line-level diff evidence and never need the baseline pass.
+function isManifestPath(path: string): boolean {
+  return path === "package.json" || path.endsWith("/package.json");
+}
+
 function lazyBaselineFingerprints(
   previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   codePatternSet: CodePatternSet | undefined,
