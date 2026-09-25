@@ -40,10 +40,11 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
     // scanning (perf/memory); the cheap path-based checks below still apply.
     const scanContent = !isTypeDeclarationPath(file.path);
 
-    if (
-      /\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path) ||
-      (scanContent && containsSecretLikeText(sample, secretOptions))
-    ) {
+    const secretContent = scanContent && containsSecretLikeText(sample, secretOptions);
+    if (secretContent || /\.npmrc|\.env|id_rsa|id_ed25519/i.test(file.path)) {
+      // A credential-shaped name with no recognized secret in it (`test.env`
+      // fixtures, an `.npmrc` that interpolates `${NPM_TOKEN}`) is one step
+      // below a file whose content matches: the name alone is weaker evidence.
       // Test-suite fixture material (self-signed certs under tests/certs/,
       // dummy tokens in test cases) is demoted one step like the code.*
       // capability rules, never dropped: a shipped private key is still worth
@@ -56,10 +57,18 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
           isUnreachableTestFile(ctx, file.path) && changed === "unchanged",
           false,
           tag("fileSecretContent", {
-            severity: changed === "added" ? "critical" : "high",
+            severity: secretContent
+              ? changed === "added"
+                ? "critical"
+                : "high"
+              : changed === "added"
+                ? "high"
+                : "medium",
             file: file.path,
             line: firstSecretLine(sample, secretOptions),
-            evidence: `${prefix}secret-looking file or content`,
+            evidence: secretContent
+              ? `${prefix}secret-looking file or content`
+              : `${prefix}credential-named file without recognized secret content`,
             reason: "published artifacts should not include credentials or private material",
           }),
         ),

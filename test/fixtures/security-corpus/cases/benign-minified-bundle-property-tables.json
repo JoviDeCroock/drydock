@@ -1,0 +1,64 @@
+{
+  "id": "benign-minified-bundle-property-tables",
+  "title": "A rebuilt minified bundle carries input-type, lexer and DOM property tables",
+  "category": "control",
+  "intent": "Synthetic regression for a devtools bundle rebuilt between patch releases. Whitespace-free code such as React's input-type map (`password:!0,range:!0,\u2026`), a GraphQL lexer (`this.token=t,this.line=1,\u2026`) and a DOM property table (`accessKey:pH,action:null`) must not read as secret-looking content. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "minified-bundle-property-tables",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "minified-bundle-property-tables",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 83,
+      "sha256": "cdeffd8d5692d6df6eac81bc119c1d0d16e3ee56cc2e211195febbd745fcbf6b",
+      "flags": [],
+      "textSample": "{\"name\": \"minified-bundle-property-tables\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "5295626097dd17fc57856015f596bc83d665009fa4a1345ffa3f4e2d6f76e145",
+      "flags": [],
+      "textSample": "export const version = '1.0.0';\n"
+    },
+    {
+      "path": "build/panel.js",
+      "size": 223,
+      "sha256": "b1ec2b7f9371d1a00bee56da84830322395cb2a21fa7d9d0f069cba4d42c847b",
+      "flags": [],
+      "textSample": "var V='1.0.0';var a={color:!0,date:!0,email:!0,password:!0,range:!0,search:!0,tel:!0,text:!0,time:!0,url:!0,week:!0};function L(t){this.token=t,this.line=1,this.column=0}var p={accessKey:pH,action:null,allowFullScreen:ae};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 83,
+      "sha256": "3f75f6aabb3164fc24f8ffd036869524cc417908d6d7a5a0f160add2e51ada33",
+      "flags": [],
+      "textSample": "{\"name\": \"minified-bundle-property-tables\", \"version\": \"1.0.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "8d44ee80705bfdc9d1bc31b0076d8a83b89d683a6749faa3d8154606c37af4ce",
+      "flags": [],
+      "textSample": "export const version = '1.0.1';\n"
+    },
+    {
+      "path": "build/panel.js",
+      "size": 223,
+      "sha256": "02e2b214e7ddc92c60e894fc7ee6e5cc0488f35d1ba7d1438b4a37a83d7b35d4",
+      "flags": [],
+      "textSample": "var V='1.0.1';var a={color:!0,date:!0,email:!0,password:!0,range:!0,search:!0,tel:!0,text:!0,time:!0,url:!0,week:!0};function L(t){this.token=t,this.line=1,this.column=0}var p={accessKey:pH,action:null,allowFullScreen:ae};\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.45.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.46.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -654,6 +654,54 @@ ordinary network commands with an executor retain the high capability tier.
 The shared JavaScript/Python patterns, corpus controls, and focused substitution
 matrix pin both sides of the distinction. Historical persisted reports retain
 their original findings; the new version applies to fresh analysis.
+
+`1.46.0` narrows four capability and secret signals that fired on ordinary published releases:
+
+- `code.credential-access` no longer counts uses of `process.env` that read no value: presence tests
+  (`'CI' in process.env`), existence guards (`process.env && …`), optional-chained reads and the
+  Babel/TypeScript lowerings of `process?.env?.NODE_ENV` for well-known names, and the terminal colour
+  flags (`NO_COLOR`, `FORCE_COLOR`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `NODE_DISABLE_COLORS`) and
+  tool install locations (`*_HOME` such as `JAVA_HOME`; bare `HOME` still counts).
+  Assignment aliases, enumeration and named reads of any other variable still count, and the
+  same-file credential-plus-egress pairing is unchanged.
+- `code.dynamic-evaluation` separates running code from decoding it. In JavaScript, `atob` and base64
+  `Buffer.from` count only in a file that also runs code, reaches the network, or stages the payload:
+  `Function(…)` without `new`, `eval`/`Function` aliases and `.call`/`.apply`, `Reflect`, any
+  `.constructor(…)`, `vm` compilation, `_compile`, `WebAssembly.Module`, `document.write`, string
+  timers, `Worker` `eval: true`, computed or `data:` module specifiers, or a file write. Those staging calls only open the gate; on their own they stay quiet,
+  because regenerator, core-js, lodash templates, jsdom and require hooks use them constantly. The
+  base64 pattern no longer joins an encode on one line to a decode on another. A method named `eval`
+  on another object (`client.eval(luaScript)`) is not eval; global receivers and `eval?.()` are. The
+  bundler global shim (`new Function("return this")()`) is ignored unless its result is dereferenced
+  on the spot, here and in the VS Code startup-loader rule. Python decoding stays ungated. The gate
+  is per file: a decode in one module executed from another is a known gap.
+- `code.*` capability rules skip `.json` other than `package.json` (Node parses it even as an entry
+  point). `txt`, `csv`, `tsv`, `map`, `css`/`scss`/`less`, `xml` and `lock` files are skipped, and HTML
+  and SVG are reduced to their script elements, inline event handlers and `javascript:` URLs, only
+  while nothing loads them as code and no script-capable attribute spells code with character
+  references (`&#101;val(`, `java&#x09;script:`), tab-split schemes or `srcdoc`; such markup is scanned
+  whole and a decode in it counts: a file reachable from `main`/`bin`/`exports` or a lifecycle hook,
+  named by a lifecycle command, or named (or its extension named) in a `require`/`import`/`fork`/
+  `Worker` call is scanned whole, because Node runs any other extension as CommonJS. A path assembled
+  outside the load call is not followed.
+- `file.secret-content` requires the generic `secret`/`token`/`password` pattern's value to be a
+  quoted literal or one value free of code punctuation and operators that runs to whitespace, so
+  minified property tables and comparisons (`password:!0,…`, `this.token=t,…`, `x=n.token!==void 0`)
+  stop matching while `P@ssw0rd!`-style values still do; redaction keeps the broad pattern.
+  `;`-delimited connection-string passwords (after a connection-string key, not a placeholder or a
+  property read) and `.npmrc` auth values shaped like real credentials
+  (a legacy UUID `_authToken`, mixed-case base64 `_auth`/`_password`) are secret content; placeholders
+  (`MYTOKEN1`, `<your-token>`, `${NPM_TOKEN}`) are not, and documentation uses neither key/value form.
+  A credential-named file with no recognized secret in it is one step below a content match.
+
+`benign-terminal-color-env-detection`, `benign-base64-codec-and-member-eval`,
+`benign-generated-docs-site-markup` and `benign-minified-bundle-property-tables` (with matching
+`cases-benign` hard-negatives) pin the benign shapes; focused tests in `test/review.test.mjs` pin the
+loaded-data, decode-sink, eval, alias, markup and secret-value forms that must keep firing, the
+popular-package calls that must stay quiet, and linear-time bounds for adversarial markup,
+environment text and many data files. The PyPI `.env` parity fixture now carries a fake token so both
+parity members stay content-backed. Malicious, critical and frontier recall and every evasion rate
+are unchanged from `1.45.0`.
 
 Rebasing onto the GLM/Kimi routing contract advances `AI_REVIEWER_VERSION` to `1.6.0`: the combined
 prompt and routing policy was never exercised by the `1.4.0` controlled outputs, and one of those

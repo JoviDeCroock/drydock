@@ -107,8 +107,12 @@ const PYTHON_NETWORK_ACCESS_PATTERNS = [
   /\bsmtplib\b/,
   /\burlopen\s*\(/,
 ];
-const JS_DYNAMIC_EVALUATION_PATTERNS = [
-  /\beval\s*\(/,
+// Primitives that run a string as code. A method named `eval` on some other
+// object is not one: Redis clients expose `client.eval(luaScript)`. Global
+// receivers and optional calls keep a member-shaped eval.
+const JS_DYNAMIC_EXECUTION_PATTERNS = [
+  /(?<![\w$.])eval\s*(?:\?\.\s*)?\(/,
+  /\b(?:globalThis|window|global|self|top|parent|frames)\s*\??\.\s*eval\s*(?:\?\.\s*)?\(/,
   /\bnew\s+Function\s*\(/,
   // `node -e` is an interpreter-backed eval even when launched through the
   // child-process API instead of JavaScript's in-process eval primitives.
@@ -117,12 +121,69 @@ const JS_DYNAMIC_EVALUATION_PATTERNS = [
   // compile — is the loader idiom packed wasm payloads actually use (typically
   // `WebAssembly.instantiateStreaming(fetch(...))`).
   /\bWebAssembly\.(?:compile|compileStreaming|instantiate|instantiateStreaming)\s*\(/,
-  // require.resolve( was evaluated as a candidate here and rejected: it only
-  // resolves a path (never executes code) and is the standard jest/babel/webpack
-  // preset idiom, so it flagged the legit-require-resolve benign hard-negative.
-  /\batob\s*\(/,
-  /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
 ];
+// Ways a decoded string reaches execution that are too common in benign code to
+// be findings on their own: regenerator's `Function("r", …)`, core-js task
+// queues, jsdom's and vite-node's `vm` contexts, require hooks' `_compile`,
+// `(0, eval)('this')`. They only decide whether a decode in the same file
+// counts. File writes (`installWrite`) join them in the pattern set below: a
+// decoded payload written to disk is staged for a later load.
+const JS_DECODED_PAYLOAD_SINK_PATTERNS = [
+  /[(,]\s*eval\s*\)\s*\(/,
+  /(?<![\w$.])Function\s*\(/,
+  // Aliases: `const run = eval;`, `= globalThis.eval`, `{ eval: run } = globalThis`.
+  /[=:,([]\s*(?:(?:globalThis|window|global|self)\s*\.\s*)?(?:eval|Function)\s*(?=[;,)\]\n}]|$)/,
+  /[{,]\s*eval\s*:\s*[A-Za-z_$]/,
+  /\b(?:eval|Function)\s*\.\s*(?:call|apply|bind)\s*\(/,
+  /\bthis\s*\.\s*eval\s*\(/,
+  /\bReflect\s*\.\s*(?:construct|apply)\s*\(\s*(?:Function|eval)\b/,
+  // Any function's constructor is Function: `(() => {}).constructor(code)`,
+  // `Object.constructor(code)`, and the AsyncFunction prototype trick.
+  /\.constructor\s*\(/,
+  /\bgetPrototypeOf\s*\(\s*async\b/,
+  /\brunIn(?:This|New)?Context\s*\(/,
+  /\b(?:compileFunction|_compile)\s*\(/,
+  /\bnew\s+(?:vm\s*\.\s*)?Script\s*\(/,
+  /\bWebAssembly\s*\.\s*(?:Module|Instance)\s*\(/,
+  /\bdocument\s*\.\s*write(?:ln)?\s*\(/,
+  /\bset(?:Timeout|Interval)\s*\(\s*(?:["'`]|atob\s*\(|Buffer\.from\s*\()/,
+  /\beval\s*:\s*(?:true|!0)\b/,
+  // A computed module specifier: `import(dataUrl)`, `require(writtenPath)`.
+  /\b(?:require|import)\s*\(\s*(?!["'`)\s])/,
+  /\bimport\s*\(\s*["'`]data:/,
+];
+// Bundlers resolve the global object with `new Function("return this")()`
+// (webpack's `__webpack_require__.g`, lodash's `Function('return this')()`).
+// That exact literal runs no caller data. A shim whose result is dereferenced
+// on the spot, even through closing parens or `?.` (`(…()).eval(x)`), is kept.
+const GLOBAL_OBJECT_SHIM =
+  /(?<![\w$.])(?:new\s+)?Function\s*\(\s*(["'`])return this;?\1\s*\)(?!\s*\(\s*\)(?:\s*\))*\s*(?:\?\.|\.|\[))/g;
+
+// Erases the shim but keeps its newlines, so later findings keep their lines.
+export function omitGlobalObjectShims(source: string): string {
+  return source.replace(GLOBAL_OBJECT_SHIM, (shim) => shim.replace(/[^\n]+/g, ""));
+}
+
+// Decoding hides a payload or an endpoint but does not run it, and byte codecs,
+// error-code tables and binary protocols decode base64 constantly. The scanner
+// counts these only in a file that can also run, send or stage what it decodes.
+// require.resolve( was evaluated as a candidate here and rejected: it only
+// resolves a path (never executes code) and is the standard jest/babel/webpack
+// preset idiom, so it flagged the legit-require-resolve benign hard-negative.
+const JS_PAYLOAD_DECODING_PATTERNS = [
+  /\batob\s*\(/,
+  // The first argument stays on its line: `[^,]+` used to run from an encode
+  // (`Buffer.from(v).toString('base64')`) to a later line's decode.
+  /\bBuffer\.from\s*\(\s*[^,\n]+,\s*["']base64["']\s*\)/,
+];
+const JS_DYNAMIC_EVALUATION_PATTERNS = [
+  ...JS_DYNAMIC_EXECUTION_PATTERNS,
+  ...JS_PAYLOAD_DECODING_PATTERNS,
+];
+// Python decoding stays ungated: there is no normalizer, and droppers reach
+// execution through pickle, marshal, `types.FunctionType` and
+// `getattr(builtins, …)` shapes this set cannot enumerate. The Python
+// `dynamicExecution` view is therefore the whole set.
 const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /(?<!\.)\bexec\s*\(/,
   /\b__import__\s*\(/,
@@ -200,6 +261,8 @@ export const JS_PATTERN_SET = {
   remoteShell: SHELL_REMOTE_PATTERNS,
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicExecution: JS_DYNAMIC_EXECUTION_PATTERNS,
+  decodedPayloadSink: [...JS_DECODED_PAYLOAD_SINK_PATTERNS, ...JS_INSTALL_WRITE_PATTERNS],
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
   registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: JS_INSTALL_ROOT_PATH_PATTERNS,
@@ -210,6 +273,8 @@ export const PYTHON_PATTERN_SET = {
   remoteShell: SHELL_REMOTE_PATTERNS,
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicExecution: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  decodedPayloadSink: [] as RegExp[],
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
   registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: PYTHON_INSTALL_ROOT_PATH_PATTERNS,
@@ -407,6 +472,35 @@ const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
   "gi",
 );
 
+// The redaction value class admits `,` `:` `!` `=` `.` so it masks anything
+// secret-shaped. In whitespace-free minified code that reads property tables as
+// secrets: React's `password:!0,range:!0,…` and a lexer's `this.token=t,…` both
+// run to the next space. A finding therefore needs a quoted literal, or one
+// unquoted value free of code punctuation and operators (`=` only as trailing
+// base64 padding) that runs to whitespace or end of text: `.env`/YAML
+// `KEY=value`, including `P@ssw0rd!` style values, but not `x=n.token!==void 0`.
+const GENERIC_SECRET_REDACTION_PATTERN =
+  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi;
+const GENERIC_SECRET_FINDING_PATTERN =
+  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)(?:(['"])[^'"\s]{12,}\2|[^'"\s,;:(){}[\]=]{12,}={0,2}(?=$|\s))/gi;
+
+// .npmrc auth (`//registry/:_authToken=…`, legacy `_auth=`/`_password=`).
+// Redaction masks any literal value; `${NPM_TOKEN}` is a reference. A finding
+// needs the shape of a real credential, a legacy UUID token or mixed-case
+// base64, because npm's own docs and READMEs show `_authToken=MYTOKEN1`,
+// `YOUR_NPM_TOKEN` and `<your-token>` placeholders.
+const NPM_AUTH_REDACTION_PATTERN = /((?:^|:)_(?:authToken|auth|password)=)(?!\$\{)[^\s'"]{8,}/gm;
+const NPM_AUTH_FINDING_PATTERN =
+  /((?:^|:)_(?:authToken=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|(?:auth|password)=(?=[A-Za-z0-9+/]*[a-z])(?=[A-Za-z0-9+/]*[A-Z0-9])[A-Za-z0-9+/]{8,}={0,2}(?=\s|$)))/gim;
+
+// `;`-delimited connection strings (`Server=db;User Id=sa;Password=…;`), which
+// the generic pattern's whitespace terminator cannot end. A connection-string
+// key earlier on the same line is required, segments are bounded so a long run
+// of keys stays linear, and a template placeholder (`${pwd}`, `<password>`) or a
+// property read (`host=e.host;password=e.password`) is not a value.
+const CONNECTION_STRING_PASSWORD_PATTERN =
+  /(\b(?:Server|Data Source|Host|Uid|User ID|Initial Catalog|Database)[ \t]*=[^;"'\n]{0,256};(?:[^;"'\n]{0,256};){0,8}?[ \t]*(?:Password|Pwd)[ \t]*=[ \t]*)(?![$<{%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])[^;"'\s]{6,}/gi;
+
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
@@ -426,29 +520,33 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
     "[REDACTED_PRIVATE_KEY]",
   ],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
-  ...genericSecretPatterns(),
+  [NPM_AUTH_REDACTION_PATTERN, "$1[REDACTED_NPM_AUTH]"],
+  [CONNECTION_STRING_PASSWORD_PATTERN, "$1[REDACTED_SECRET]"],
+  [GENERIC_SECRET_REDACTION_PATTERN, "$1[REDACTED_SECRET]"],
 ];
 
-// Detection-side view of SECRET_PATTERNS: identical except the URL-credentials
-// pattern requires a non-placeholder password. Redaction stays on the broad set.
+const FINDING_PATTERN_FOR_REDACTION = new Map<RegExp, RegExp>([
+  [URL_CREDENTIALS_REDACTION_PATTERN, URL_CREDENTIALS_FINDING_PATTERN],
+  [GENERIC_SECRET_REDACTION_PATTERN, GENERIC_SECRET_FINDING_PATTERN],
+  [NPM_AUTH_REDACTION_PATTERN, NPM_AUTH_FINDING_PATTERN],
+]);
+
+// Detection-side view of SECRET_PATTERNS: identical except where a finding needs
+// a stricter shape than redaction (see FINDING_PATTERN_FOR_REDACTION). Redaction
+// stays on the broad set.
 export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.map(
-  ([pattern, label]) =>
-    pattern === URL_CREDENTIALS_REDACTION_PATTERN
-      ? [URL_CREDENTIALS_FINDING_PATTERN, label]
-      : [pattern, label],
+  ([pattern, label]) => [FINDING_PATTERN_FOR_REDACTION.get(pattern) ?? pattern, label],
 );
 
+// Documentation shows key/value examples with placeholder values, so docs and
+// packaging metadata use only the self-identifying token formats.
+const KEY_VALUE_FINDING_PATTERNS = new Set([
+  GENERIC_SECRET_FINDING_PATTERN,
+  NPM_AUTH_FINDING_PATTERN,
+  CONNECTION_STRING_PASSWORD_PATTERN,
+]);
 export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =
-  FINDING_SECRET_PATTERNS.slice(0, -1);
-
-function genericSecretPatterns(): Array<[RegExp, string]> {
-  return [
-    [
-      /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi,
-      "$1[REDACTED_SECRET]",
-    ],
-  ];
-}
+  FINDING_SECRET_PATTERNS.filter(([pattern]) => !KEY_VALUE_FINDING_PATTERNS.has(pattern));
 
 export function codePatternsFor(codePatternSet: CodePatternSet | undefined): typeof JS_PATTERN_SET {
   return codePatternSet === "python" ? PYTHON_PATTERN_SET : JS_PATTERN_SET;

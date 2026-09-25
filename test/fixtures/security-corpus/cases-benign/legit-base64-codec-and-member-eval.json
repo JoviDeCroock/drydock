@@ -1,0 +1,70 @@
+{
+  "id": "legit-base64-codec-and-member-eval",
+  "title": "Base64 byte codecs, a Redis EVAL call and the bundler global shim run no decoded code",
+  "category": "control",
+  "intent": "Synthetic regression for a storage adapter and a bundled extension. Buffer/atob base64 decoding into typed arrays, a Redis client's `client.eval(luaScript)` and webpack's `new Function('return this')()` global resolution are not dynamic code execution, so added files using them must not raise code.dynamic-evaluation. The encode on one line and the decode several lines later must not be joined into one match. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "base64-codec-and-member-eval",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "base64-codec-and-member-eval",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "82b7b0417c43d181f0565f455981819714fc1462bf4d97e329ea08250b5ae552",
+      "flags": [],
+      "textSample": "{\"name\": \"base64-codec-and-member-eval\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "5295626097dd17fc57856015f596bc83d665009fa4a1345ffa3f4e2d6f76e145",
+      "flags": [],
+      "textSample": "export const version = '1.0.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "c6bb7b967f5c3f3680ebbfbc56a1d840a7e197e4d0ebd82171bc10ada47d59a0",
+      "flags": [],
+      "textSample": "{\"name\": \"base64-codec-and-member-eval\", \"version\": \"1.0.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 56,
+      "sha256": "d49f2652526a2dc8ad5dd1b7f21b0878c006ac75e7a1b47e94bd86d42b2d1099",
+      "flags": [],
+      "textSample": "export * from './store.js';\nexport * from './table.js';\n"
+    },
+    {
+      "path": "store.js",
+      "size": 332,
+      "sha256": "b7005d689a5c361aab4ac64cddd0fb5889207dd9cd7b72ef529ab9bc57fff48a",
+      "flags": [],
+      "textSample": "const RECOVER_SCRIPT = \"return redis.call('GET', KEYS[1])\";\nexport function encodeBytes(value) {\n  return Buffer.from(value).toString('base64');\n}\nexport function decodeBytes(text) {\n  return new Uint8Array(Buffer.from(text, 'base64'));\n}\nexport async function recover(client, key) {\n  return client.eval(RECOVER_SCRIPT, 1, key);\n}\n"
+    },
+    {
+      "path": "table.js",
+      "size": 155,
+      "sha256": "cdfecb54bd3ef12ccc6f87204c4d6537aa1ddd7baa60cf1ed3110c7273b0ba7b",
+      "flags": [],
+      "textSample": "var g;\ng = g || new Function('return this')();\nexport const codes = Uint16Array.from(atob('AQEBAgICAwMD'), (c) => c.charCodeAt(0));\nexport const root = g;\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-byte-codec",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

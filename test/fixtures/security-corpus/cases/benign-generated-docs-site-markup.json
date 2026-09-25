@@ -1,0 +1,71 @@
+{
+  "id": "benign-generated-docs-site-markup",
+  "title": "A shipped docs site shows fetch and curl examples in markup text, JSON and plain text",
+  "category": "control",
+  "intent": "Synthetic regression for a mock-server package that ships its generated documentation site. HTML-escaped `fetch(` examples in <pre> blocks, `curl -X GET` usage lines, an llms-full.txt corpus and a search-index.json carry capability text no runtime executes. Only markup script elements and inline handlers are code; the page's own script here is inert DOM code. The site's search.js fetching its same-origin index stays out of this fixture. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "generated-docs-site-markup",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "generated-docs-site-markup",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 78,
+      "sha256": "8cd32bee39b04c6539200679bc8b6e935579dd22cd492652e43f5ce0ef26bb5a",
+      "flags": [],
+      "textSample": "{\"name\": \"generated-docs-site-markup\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "5295626097dd17fc57856015f596bc83d665009fa4a1345ffa3f4e2d6f76e145",
+      "flags": [],
+      "textSample": "export const version = '1.0.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 78,
+      "sha256": "454e169e44cec3655a59dffb00caefc9e4d332f3ccc4a04e984ad4db37dd05ee",
+      "flags": [],
+      "textSample": "{\"name\": \"generated-docs-site-markup\", \"version\": \"1.0.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 32,
+      "sha256": "d128955c3acd7ddd85b10a212ab0d4897cb654559d3b86c7ad38d2e435a430ad",
+      "flags": [],
+      "textSample": "export const version = '2.0.0';\n"
+    },
+    {
+      "path": "site/dist/docs/index.html",
+      "size": 268,
+      "sha256": "ffaaeae63a2aa8d7f76e4688a6d1b49c287b34b693e9347b59ae6657787df192",
+      "flags": [],
+      "textSample": "<!doctype html>\n<html>\n<body>\n<pre><code>const res = await fetch(&#x27;http://localhost:3000/get&#x27;);</code></pre>\n<pre>curl -X GET http://localhost:3000/get -H 'accept: application/json'</pre>\n<script>document.querySelector('#q').focus();</script>\n</body>\n</html>\n"
+    },
+    {
+      "path": "site/dist/llms-full.txt",
+      "size": 139,
+      "sha256": "c571bcb82341f8d653c52eb59987ec5e2f300ba37a3db1deb13f22c3cd2bd6fc",
+      "flags": [],
+      "textSample": "## Usage\nconst res = await fetch('http://localhost:3000/get');\ncurl -X POST http://localhost:3000/bins -H 'content-type: application/json'\n"
+    },
+    {
+      "path": "site/dist/search-index.json",
+      "size": 112,
+      "sha256": "a46a86060511af8dcd73b7015c92c7063b3df53a7eeaf61b4ce1b1d7eed8b501",
+      "flags": [],
+      "textSample": "[{\"title\": \"Usage\", \"body\": \"await fetch('http://localhost:3000/get'); curl -X GET http://localhost:3000/get\"}]\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}
