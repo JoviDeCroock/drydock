@@ -23,15 +23,17 @@ export function ObservationList({
   busy,
   acknowledge,
 }: {
-  watch: Pick<PublicationWatch, "packageName" | "lastCheckedAt" | "lastError">;
+  watch: Pick<PublicationWatch, "packageName" | "createdAt" | "lastCheckedAt" | "lastError">;
   observations: PublicationObservation[];
   busy: ReadonlySignal<boolean>;
   acknowledge: (observationId: string) => void;
 }) {
   if (observations.length === 0) {
+    const message = emptyObservationsMessage(watch);
+    if (!message) return null;
     return (
       <div class="border-t border-border px-5 py-3.5">
-        <EmptyLine>{emptyObservationsMessage(watch)}</EmptyLine>
+        <EmptyLine>{message}</EmptyLine>
       </div>
     );
   }

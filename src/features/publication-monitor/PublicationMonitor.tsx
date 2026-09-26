@@ -66,8 +66,10 @@ export function PublicationMonitor({
           <SectionLabel as="h2" class="after:hidden">
             Publication monitor
           </SectionLabel>
-          <p class="m-0 font-mono text-[11px] text-ink-subtle">
-            advisory · public npm only · checks releases after they publish
+          <p class="m-0 text-[13px] text-ink-muted">
+            Alerts you when a watched public npm package gets a new release that this organization
+            did not approve, such as a publish that skipped review. Only releases after you start
+            watching count, and it never blocks a release.
           </p>
         </div>
         <form
@@ -120,8 +122,8 @@ export function PublicationMonitor({
         {(suggestions) => (
           <div class="border-t border-border px-5 py-3.5 flex flex-col gap-2">
             <p class="m-0 text-[13px] text-ink-muted">
-              These workflow-gate packages need an explicit choice to monitor their public npm
-              releases.
+              Your workflow gates review these packages, but Drydock cannot tell whether they are
+              public on npm. Watch the public ones:
             </p>
             <div class="flex flex-wrap gap-2">
               {suggestions.map((suggestion) => (
@@ -148,8 +150,8 @@ export function PublicationMonitor({
         <Show when={() => model.loaded.value && model.watches.value.length === 0}>
           <div class="p-5">
             <EmptyLine>
-              No packages watched yet. Add a public npm package to be told when a release lands
-              without a prior approval.
+              No packages watched yet. Enter a public npm package name to be alerted when a release
+              reaches npm without an approval here.
             </EmptyLine>
           </div>
         </Show>
@@ -189,9 +191,9 @@ export function PublicationMonitor({
                       size="sm"
                       disabled={model.busy}
                       onClick={() => void check(watch.id)}
-                      title="Fetch the latest releases from npm and compare them with recorded approvals"
+                      title="Ask npm for new releases now instead of waiting for the automatic check"
                     >
-                      {checking ? "Checking releases…" : "Check releases"}
+                      {checking ? "Checking…" : "Check now"}
                     </Button>
                     <Menu
                       align="end"

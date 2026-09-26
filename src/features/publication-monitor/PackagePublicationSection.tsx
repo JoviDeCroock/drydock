@@ -186,9 +186,9 @@ function PublicationBody({
             size="sm"
             disabled={model.busy}
             onClick={() => void model.check()}
-            title="Fetch the latest releases from npm and compare them with recorded approvals"
+            title="Ask npm for new releases now instead of waiting for the automatic check"
           >
-            Check releases
+            Check now
           </Button>
           <Button
             variant="ghost"

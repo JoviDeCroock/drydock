@@ -358,7 +358,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     const publicationRow = monitor
       .locator("li")
       .filter({ has: page.getByText("@drydock/e2e-publication", { exact: true }) });
-    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
+    await publicationRow.getByRole("button", { name: "Check now", exact: true }).click();
     await expect(
       monitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
@@ -378,7 +378,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(page).toHaveURL(/\/dashboard\/packages\/@drydock\/e2e-publication/);
     const packageMonitor = page.getByRole("region", { name: "Publication monitor" });
     await expect(packageMonitor.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
-    await expect(packageMonitor.getByText(/added by hand · watching since/)).toBeVisible();
+    await expect(packageMonitor.getByText(/^watching since .* · added by hand$/)).toBeVisible();
     await expect(
       packageMonitor.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
@@ -397,7 +397,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toHaveCount(
       0,
     );
-    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
+    await publicationRow.getByRole("button", { name: "Check now", exact: true }).click();
     await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
     await expect(
       monitor.getByText("Published with no approval in this organization", { exact: true }),
@@ -671,7 +671,7 @@ test("publication monitor explains deferred enrollment and offers gate packages 
     await expect(
       monitor.getByText(/Automatic enrollment is deferred for 2 packages/),
     ).toBeVisible();
-    await expect(monitor.getByText(/workflow-gate packages need an explicit choice/)).toBeVisible();
+    await expect(monitor.getByText(/cannot tell whether they are\s+public on npm/)).toBeVisible();
     await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
     await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
     await expect(monitor.getByText(/added by hand/)).toBeVisible();

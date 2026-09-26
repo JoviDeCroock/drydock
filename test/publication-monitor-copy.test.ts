@@ -18,6 +18,7 @@ const watch: PublicationWatch = {
   lastCheckedAt: "2026-09-02T00:00:00.000Z",
   lastError: null,
   unresolvedAlertCount: 0,
+  releaseCount: 0,
   coverageGap: null,
   coverageGapSince: null,
   distTagsCheckedAt: null,
@@ -26,8 +27,8 @@ const watch: PublicationWatch = {
 
 describe("publication monitor copy", () => {
   test("an empty release list claims no releases only after a successful check", () => {
-    expect(emptyObservationsMessage(watch)).toBe(
-      "No releases since enrollment. Earlier releases are not checked.",
+    expect(emptyObservationsMessage(watch)).toMatch(
+      /^No new releases since you started watching on .+\. Earlier releases are not checked\.$/,
     );
     for (const lastError of [
       "registry_evidence_unavailable",
@@ -35,21 +36,32 @@ describe("publication monitor copy", () => {
       "check_failed",
       "monitoring_disabled",
     ]) {
-      expect(emptyObservationsMessage({ ...watch, lastError })).toBe(
-        "Releases since enrollment are unknown until a check succeeds.",
-      );
+      // The watch's problem, shown above the list, already says so.
+      expect(emptyObservationsMessage({ ...watch, lastError })).toBeNull();
+      expect(watchProblemMessage(lastError)).toMatch(/unknown|cannot be checked|switched off/);
     }
     expect(emptyObservationsMessage({ ...watch, lastCheckedAt: null })).toBe(
-      "Not checked yet, so releases since enrollment are unknown.",
+      "Not checked yet. Drydock checks it automatically, or choose Check now.",
     );
     // A backlog is incomplete, not unknown: what was observed is still true.
     expect(emptyObservationsMessage({ ...watch, lastError: "pending_release_backlog" })).toMatch(
-      /^No releases since enrollment/,
+      /^No new releases since you started watching/,
     );
   });
 
   test("a watch enrolled from any staged review, discovered or submitted by hand, says so", () => {
-    expect(watchMetaLine(watch)).toMatch(/^from a staged review · watching since /);
+    expect(watchMetaLine(watch)).toMatch(/ · added from a staged review$/);
+  });
+
+  test("a watch's meta line answers what its latest check found", () => {
+    expect(watchMetaLine({ ...watch, lastCheckedAt: null })).toMatch(
+      /^watching since .+ · not checked yet · /,
+    );
+    expect(watchMetaLine(watch)).toMatch(/ · checked .+ · no new releases · /);
+    expect(watchMetaLine({ ...watch, releaseCount: 1 })).toMatch(/ · 1 new release · /);
+    expect(watchMetaLine({ ...watch, releaseCount: 3 })).toMatch(/ · 3 new releases · /);
+    // A failed registry read leaves releases unknown, so it claims none.
+    expect(watchMetaLine({ ...watch, lastError: "check_failed" })).not.toMatch(/no new releases/);
   });
 
   test("alert labels speak only for this organization", () => {
