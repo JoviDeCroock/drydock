@@ -11,6 +11,8 @@ export interface PublicationWatch {
   lastCheckedAt: string | null;
   lastError: string | null;
   unresolvedAlertCount: number;
+  /** Releases observed since enrollment, alerts or not. */
+  releaseCount: number;
   /** A package-wide reason no release can be verified, and since when. */
   coverageGap: string | null;
   coverageGapSince: string | null;

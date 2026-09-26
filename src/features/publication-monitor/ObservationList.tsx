@@ -23,7 +23,7 @@ export function ObservationList({
   busy,
   acknowledge,
 }: {
-  watch: Pick<PublicationWatch, "packageName" | "lastCheckedAt" | "lastError">;
+  watch: Pick<PublicationWatch, "packageName" | "createdAt" | "lastCheckedAt" | "lastError">;
   observations: PublicationObservation[];
   busy: ReadonlySignal<boolean>;
   acknowledge: (observationId: string) => void;

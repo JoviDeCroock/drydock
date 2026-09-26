@@ -522,6 +522,21 @@ test("oversized anonymous metadata cannot create a successful coverage claim", a
   });
 });
 
+test("a check reads as unfinished until its outcome is recorded", async () => {
+  const { db, organizationId, watch } = await seed();
+  let midCheck: { lastCheckedAt: Date | null; lastError: string | null } | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    midCheck = await getPublicationWatch(db, organizationId, watch.id);
+    return Response.json(registryMetadata(watch, []));
+  });
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(midCheck).toMatchObject({
+    lastCheckedAt: expect.any(Date),
+    lastError: "check_in_progress",
+  });
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+});
+
 test("a large packument streams into what the verdict reads", async () => {
   const { db, organizationId, watch } = await seed();
   // Well past the old 4 MiB buffered cap, mostly fields the monitor never keeps.

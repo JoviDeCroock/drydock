@@ -18,6 +18,7 @@ const watch: PublicationWatch = {
   lastCheckedAt: null,
   lastError: null,
   unresolvedAlertCount: 1,
+  releaseCount: 1,
   coverageGap: null,
   coverageGapSince: null,
   distTagsCheckedAt: null,
