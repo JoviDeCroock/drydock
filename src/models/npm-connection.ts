@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicNpmConnection {
@@ -10,6 +11,7 @@ export interface PublicNpmConnection {
   tokenLast4: string | null;
   validationStatus: string;
   capabilitiesJson: unknown;
+  personalOrganizationConfirmedAt?: string | number | Date | null;
   validatedAt: string | number | Date | null;
   lastUsedAt: string | number | Date | null;
   createdByUserId: string | null;
@@ -81,15 +83,16 @@ export const NpmConnectionModel = createModel(() => {
     validated,
 
     async load(): Promise<void> {
+      const organizationId = activeOrganizationId.peek();
       try {
         const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
           "/api/v1/npm-connection",
         );
-        this.applyConnection(data.connection);
+        if (activeOrganizationId.peek() === organizationId) this.applyConnection(data.connection);
       } catch {
         // Keep the dashboard usable; scan creation enforces the requirement.
       } finally {
-        this.loaded.value = true;
+        if (activeOrganizationId.peek() === organizationId) this.loaded.value = true;
       }
     },
 
@@ -106,27 +109,32 @@ export const NpmConnectionModel = createModel(() => {
       this.validationStageId.value = "";
     },
 
-    async save(): Promise<void> {
+    async save(confirmPersonalOrganization = false): Promise<void> {
+      const organizationId = activeOrganizationId.peek();
       const trimmedToken = this.token.value.trim();
       if (!trimmedToken) return;
       this.status.value = "saving";
       this.error.value = null;
       try {
         const data = await saveNpmConnection({
+          confirmPersonalOrganization,
           token: trimmedToken,
           label: this.label.value.trim() || DEFAULT_LABEL,
           registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
         });
+        if (activeOrganizationId.peek() !== organizationId) return;
         this.applyConnection(data.connection);
         if (data.connection) {
           this.status.value = "validating";
-          const validation = await validateNpmConnection();
+          const validation = await validateNpmConnection(undefined, confirmPersonalOrganization);
+          if (activeOrganizationId.peek() !== organizationId) return;
           this.applyConnection(validation.connection);
           if (!validation.validation.ok) {
             this.error.value = "Saved token, but npm validation reported invalid access.";
           }
         }
       } catch (err) {
+        if (activeOrganizationId.peek() !== organizationId) return;
         this.error.value = errorMessage(err);
         await this.load();
       } finally {
@@ -134,17 +142,20 @@ export const NpmConnectionModel = createModel(() => {
       }
     },
 
-    async validate(): Promise<void> {
+    async validate(confirmPersonalOrganization = false): Promise<void> {
+      const organizationId = activeOrganizationId.peek();
       this.status.value = "validating";
       this.error.value = null;
       try {
         const stageId = this.validationStageId.value.trim() || undefined;
-        const data = await validateNpmConnection(stageId);
+        const data = await validateNpmConnection(stageId, confirmPersonalOrganization);
+        if (activeOrganizationId.peek() !== organizationId) return;
         this.applyConnection(data.connection);
         if (!data.validation.ok) {
           this.error.value = "Npm validation reported invalid access.";
         }
       } catch (err) {
+        if (activeOrganizationId.peek() !== organizationId) return;
         this.error.value = errorMessage(err);
         await this.load();
       } finally {
@@ -169,6 +180,7 @@ export const NpmConnectionModel = createModel(() => {
 });
 
 function saveNpmConnection(input: {
+  confirmPersonalOrganization?: boolean;
   token: string;
   label: string;
   registryUrl: string;
@@ -176,12 +188,15 @@ function saveNpmConnection(input: {
   return apiJson<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", input);
 }
 
-function validateNpmConnection(stageId?: string): Promise<{
+function validateNpmConnection(
+  stageId?: string,
+  confirmPersonalOrganization = false,
+): Promise<{
   validation: NpmCredentialValidation;
   connection: PublicNpmConnection | null;
 }> {
   return apiJson<{
     validation: NpmCredentialValidation;
     connection: PublicNpmConnection | null;
-  }>("/api/v1/npm-connection/validate", { stageId });
+  }>("/api/v1/npm-connection/validate", { stageId, confirmPersonalOrganization });
 }

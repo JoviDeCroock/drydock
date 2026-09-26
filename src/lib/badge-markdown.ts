@@ -32,9 +32,14 @@ export function shareBadgeMarkdown(input: {
   badgePublic: boolean;
   feedListed: boolean;
   npmPackageClaimOwned?: boolean;
+  npmPackageManagementAllowed?: boolean;
 }): string | null {
   if (!input.ecosystem || !input.packageName || (!input.badgePublic && !input.feedListed))
     return null;
-  if (input.ecosystem === "npm" && input.npmPackageClaimOwned !== true) return null;
+  if (
+    input.ecosystem === "npm" &&
+    (input.npmPackageClaimOwned !== true || input.npmPackageManagementAllowed !== true)
+  )
+    return null;
   return badgeMarkdown({ ...input, ecosystem: input.ecosystem, packageName: input.packageName });
 }

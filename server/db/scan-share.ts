@@ -26,7 +26,7 @@ import {
 
 export type { SharedScanRow };
 import type { AppDb } from "./client";
-import { npmPackageClaimMatches } from "./package-claims";
+import { npmPackageManagementAllowed } from "./package-claims";
 import { recordScanEvent } from "./events";
 import { scans } from "./schema";
 
@@ -490,7 +490,7 @@ const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' 
 const canonicalNpmBadgeOwner = and(
   inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
   inArray(scans.registryUrl, [...PUBLIC_NPM_REGISTRY_URLS]),
-  npmPackageClaimMatches(
+  npmPackageManagementAllowed(
     "https://registry.npmjs.org",
     scans.registryPackageName,
     scans.organizationId,

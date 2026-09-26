@@ -255,7 +255,7 @@ npm says the package is public, npm published this version, the organization
 approved it. That is the part an attacker must
 not be able to mint, so it is derived and immutable.
 
-_Consent_ belongs to the canonical package owner. The organization must hold
+_Consent_ belongs to the canonical package owner. A provisional personal claim cannot answer or control a badge until its owner explicitly chooses where to manage it. The organization must hold
 its public-npm package claim and have a completed staged review whose manifest
 agrees with npm's captured package name. Only that organization can turn the
 badge off; an opt-out from another organization's historical review cannot
@@ -356,7 +356,7 @@ one — never read null as `latest`), so a partner walking feed → badge filter
 the value the badge itself uses.
 
 **npm badges have one canonical organization.** Both listed and default-on
-candidates must match the durable package claim, the public npm registry, and
+candidates must match the package claim with confirmed personal management or durable shared ownership, the public npm registry, and
 the immutable registry package name, with the reviewed manifest agreeing. A manifest name, custom registry, or
 workflow-gate scan cannot occupy that namespace. The owner's disabled badge
 never falls back to another organization's history. Packages awaiting the

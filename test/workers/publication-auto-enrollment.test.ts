@@ -28,6 +28,7 @@ async function claimPackages(organizationId: string, names: string[]) {
         organizationId,
         firstStageId: `stage-${crypto.randomUUID()}`,
         claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
       })
       .onConflictDoNothing();
 }

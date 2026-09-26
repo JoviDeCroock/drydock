@@ -1,3 +1,4 @@
+import { PackageManagement } from "../../../features/package-claims/PackageManagement";
 /**
  * One package's reviewed releases, grouped by channel (dist-tag), newest
  * first. Where the dashboard answers "what is waiting for me", this page
@@ -77,6 +78,9 @@ function PackageReleasesView({
 }) {
   const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
+  const managementRevision = useSignal(0);
+  const badgeRevision = useSignal(0);
+  const claimRevision = useSignal(0);
   const organizations = useModel(OrganizationModel);
   const membership = useSignal<"resolving" | "member" | "not_member" | "unavailable">("resolving");
   const sessionChecked = useAuthedDashboardSession({
@@ -190,6 +194,7 @@ function PackageReleasesView({
             <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
             {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
               <PublicBadgeSection
+                key={`${managementRevision.value}:${badgeRevision.value}`}
                 packageName={packageName}
                 ecosystem={ecosystem as PublicEcosystem}
               />
@@ -229,7 +234,26 @@ function PackageReleasesView({
                 </div>
               )}
             </Show>
-            {ecosystem === "npm" ? <PackagePublicationSection packageName={packageName} /> : null}
+            {ecosystem === "npm" ? (
+              <>
+                <PackageManagement
+                  key={`${packageName}:${claimRevision.value}`}
+                  packageName={packageName}
+                  onChanged={() => {
+                    managementRevision.value++;
+                    void model.load();
+                  }}
+                />
+                <PackagePublicationSection
+                  key={managementRevision.value}
+                  onManagementChanged={() => {
+                    badgeRevision.value++;
+                    claimRevision.value++;
+                  }}
+                  packageName={packageName}
+                />
+              </>
+            ) : null}
           </>
         )}
       </Show>

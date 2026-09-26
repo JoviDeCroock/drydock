@@ -33,6 +33,24 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
+  "npm_package.management_confirmed": {
+    category: "organization",
+    label: "Package management confirmed",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
+  "npm_package.management_transferred": {
+    category: "organization",
+    label: "Package management transferred",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
+  "npm_package.management_received": {
+    category: "organization",
+    label: "Package management received",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
   "publication.discrepancy": {
     category: "security",
     label: "Publication alert raised",

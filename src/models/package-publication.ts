@@ -31,6 +31,7 @@ export interface PublicationAlertRecord {
 export interface PackagePublication {
   packageName: string;
   ownershipConflict?: boolean;
+  managementPending?: boolean;
   watch: PublicationWatch | null;
   observations: PublicationObservation[];
   /** The latest alerts, newest first; `moreAlerts` says older ones exist. */
@@ -88,6 +89,7 @@ export const PackagePublicationModel = createModel((packageName: string) => {
     publication.value = {
       ...existing,
       ownershipConflict: detail.watch.ownershipConflict ?? existing.ownershipConflict,
+      managementPending: detail.watch.managementPending ?? existing.managementPending,
       watch: detail.watch,
       observations: detail.observations,
     };
@@ -117,6 +119,10 @@ export const PackagePublicationModel = createModel((packageName: string) => {
     busy,
     error,
     canStop,
+    refresh() {
+      const current = generation;
+      return run(() => read(current));
+    },
     check() {
       const id = watchId();
       if (!id) return Promise.resolve();

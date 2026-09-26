@@ -6,7 +6,7 @@ import {
   type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
-import { npmPackageClaimMatches } from "./package-claims";
+import { npmPackageManagementAllowed } from "./package-claims";
 import { packageBadgeOptOuts, scans } from "./schema";
 
 /**
@@ -41,7 +41,7 @@ function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage)
   return sql`exists (
     select 1 from scans v
     where v.organization_id = ${organizationId}
-      and ${npmPackageClaimMatches("https://registry.npmjs.org", target.packageName, organizationId)}
+      and ${npmPackageManagementAllowed("https://registry.npmjs.org", target.packageName, organizationId)}
       and v.source in (${sql.join(
         REGISTRY_VERIFIED_SCAN_SOURCES.map((source) => sql`${source}`),
         sql`, `,
@@ -88,7 +88,11 @@ export async function isRegistryVerifiedPublisher(
     .where(
       and(
         eq(scans.organizationId, organizationId),
-        npmPackageClaimMatches("https://registry.npmjs.org", target.packageName, organizationId),
+        npmPackageManagementAllowed(
+          "https://registry.npmjs.org",
+          target.packageName,
+          organizationId,
+        ),
         inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
         eq(scans.status, "complete"),
         eq(scans.registryPackageName, target.packageName),

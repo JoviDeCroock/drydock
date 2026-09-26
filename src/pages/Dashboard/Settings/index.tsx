@@ -63,9 +63,10 @@ export default function SettingsPage() {
 
   const sessionChecked = useAuthedDashboardSession({
     onReady: async (_session, isCancelled) => {
-      await Promise.all([organizations.load(), npm.load()]);
+      await organizations.load();
       if (isCancelled()) return;
       await Promise.all([
+        npm.load(),
         githubApp.loadConfig(),
         githubApp.loadInstallations(),
         targets.load(),
@@ -197,7 +198,13 @@ export default function SettingsPage() {
             ) : null}
             {tab === "integrations" ? (
               <>
-                <NpmConnectionSection npm={npm} defaultOpen />
+                <NpmConnectionSection
+                  key={organizations.active.value?.id}
+                  npm={npm}
+                  organizations={organizations}
+                  onSwitchOrganization={onSwitchOrganization}
+                  defaultOpen
+                />
                 <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
               </>
             ) : null}

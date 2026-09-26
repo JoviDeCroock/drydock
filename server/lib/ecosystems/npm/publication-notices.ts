@@ -50,7 +50,7 @@ async function settles(
       watch.id,
       npmPublicationRegistry(env),
     );
-    if (!current || current.ownershipConflict) return false;
+    if (!current || current.ownershipConflict || current.managementPending) return false;
     const outcome = await send();
     if (outcome === "failed") {
       emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", context);
