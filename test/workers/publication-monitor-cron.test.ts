@@ -39,6 +39,7 @@ test("the scheduled handler backfills watches from review history and checks due
     organizationId,
     firstStageId: "history-stage",
     claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
   });
   // A published public release reviewed through staged discovery is the
   // history the backfill enrolls from.

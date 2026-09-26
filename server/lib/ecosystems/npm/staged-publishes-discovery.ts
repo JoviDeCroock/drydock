@@ -37,6 +37,8 @@ export interface DiscoverStagedPublishesInput {
   stageStartCoordinator?: StageStartCoordinator;
   /** Cron awaits this work so organization concurrency also bounds outcome lookups. */
   awaitReleaseOutcomes?: boolean;
+  /** Cron may reconcile existing releases while personal scan management awaits confirmation. */
+  admitNewScans?: boolean;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -231,6 +233,7 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
     stageStartCoordinator = createStageStartCoordinator(),
     awaitReleaseOutcomes = false,
+    admitNewScans = true,
   } = input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
@@ -240,7 +243,9 @@ export async function discoverAndQueueStagedPublishes(
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-  const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
+  const scanCandidates = admitNewScans
+    ? filterNewStagedPublishesByStageId(stagedItems, existingStageIds)
+    : [];
   const scanStarts = await mapWithConcurrency(
     scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,

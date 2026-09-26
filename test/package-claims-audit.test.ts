@@ -18,6 +18,7 @@ const row = (overrides = {}) => ({
   stage_id: "stage-1",
   organization_id: "org-1",
   organization_name: "Example",
+  organization_is_personal: 0,
   package_name: "example",
   staged_version: "1.0.0",
   registry_url: "https://registry.npmjs.org",
@@ -43,13 +44,14 @@ const approve = (rows: ReturnType<typeof row>[], overrides = {}) => ({
 });
 function database(rows: ReturnType<typeof row>[]) {
   const db = new DatabaseSync(":memory:");
-  db.exec(`CREATE TABLE organizations(id TEXT PRIMARY KEY, name TEXT NOT NULL);
+  db.exec(`CREATE TABLE organizations(id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_user_id TEXT NOT NULL);
     CREATE TABLE scans(id TEXT PRIMARY KEY, stage_id TEXT, organization_id TEXT, package_name TEXT, staged_version TEXT, registry_url TEXT, registry_package_name TEXT, registry_version TEXT, source TEXT, status TEXT, created_at INTEGER);
-    CREATE TABLE npm_package_claims(registry_url TEXT, ecosystem TEXT, package_name TEXT, organization_id TEXT, first_stage_id TEXT, claimed_at INTEGER, PRIMARY KEY(registry_url, ecosystem, package_name));`);
+    CREATE TABLE npm_package_claims(registry_url TEXT, ecosystem TEXT, package_name TEXT, organization_id TEXT, first_stage_id TEXT, claimed_at INTEGER, management_confirmed_at INTEGER, PRIMARY KEY(registry_url, ecosystem, package_name));`);
   for (const scan of rows) {
-    db.prepare("INSERT OR IGNORE INTO organizations VALUES (?, ?)").run(
+    db.prepare("INSERT OR IGNORE INTO organizations VALUES (?, ?, ?)").run(
       scan.organization_id,
       scan.organization_name,
+      "owner-1",
     );
     db.prepare("INSERT INTO scans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
       scan.id,
@@ -227,6 +229,95 @@ describe("private package ownership inventory", () => {
   });
 });
 
+describe("personal and shared approval management", () => {
+  it("derives claim type from the organization's actual owner and writes all seven claim columns", () => {
+    const rows = parse([
+      row({ organization_id: "personal:owner-1", organization_is_personal: 1 }),
+      row({
+        id: "scan-2",
+        organization_id: "shared-org",
+        package_name: "second",
+        registry_package_name: "second",
+      }),
+    ]);
+    const audit = buildAudit(rows);
+    expect(audit.packages.map((group) => group.organizations[0].claim_type)).toEqual([
+      "personal_provisional",
+      "shared_durable",
+    ]);
+    expect(renderAudit(audit)).toContain("personal_provisional");
+    const db = database(rows);
+    expect(parseInventory([{ success: true, results: db.prepare(INVENTORY_QUERY).all() }])).toEqual(
+      rows,
+    );
+    const selected = approve(rows);
+    selected.approvals.push({
+      ...selected.approvals[0],
+      organization_id: "shared-org",
+      evidence_scan_id: "scan-2",
+      package_name: "second",
+    });
+    db.exec(approvalSql(rows, selected));
+    const claims = db.prepare("SELECT * FROM npm_package_claims ORDER BY package_name").all();
+    expect(claims).toHaveLength(2);
+    expect(claims[0]).toMatchObject({
+      organization_id: "personal:owner-1",
+      management_confirmed_at: null,
+    });
+    expect(claims[1]).toMatchObject({
+      organization_id: "shared-org",
+      management_confirmed_at: claims[1].claimed_at,
+    });
+    expect(claims[1].management_confirmed_at).toBeGreaterThan(0);
+    db.close();
+  });
+  it("does not mistake an unmatched personal-looking organization ID for a personal workspace", () => {
+    const rows = parse([row({ organization_id: "personal:someone-else" })]);
+    const db = database(rows);
+    expect(parseInventory([{ success: true, results: db.prepare(INVENTORY_QUERY).all() }])).toEqual(
+      rows,
+    );
+    db.exec(approvalSql(rows, approve(rows)));
+    expect(
+      db.prepare("SELECT management_confirmed_at FROM npm_package_claims").get()
+        ?.management_confirmed_at,
+    ).toBeGreaterThan(0);
+    db.close();
+  });
+  it("fails if personal workspace classification changes after the inventory was reviewed", () => {
+    const rows = parse([row({ organization_id: "personal:owner-1", organization_is_personal: 1 })]);
+    const db = database(rows);
+    const sql = approvalSql(rows, approve(rows));
+    db.exec("UPDATE organizations SET owner_user_id = 'new-owner'");
+    expect(() => db.exec(sql)).toThrow(/malformed JSON/);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM npm_package_claims").get()?.count).toBe(0);
+    db.close();
+  });
+  it("preserves a personal management decision and original claim evidence on repeated application", () => {
+    const rows = parse([row({ organization_id: "personal:owner-1", organization_is_personal: 1 })]);
+    const db = database(rows);
+    const sql = approvalSql(rows, approve(rows));
+    db.exec(sql);
+    const original = db.prepare("SELECT * FROM npm_package_claims").get();
+    db.exec("UPDATE npm_package_claims SET management_confirmed_at = 1234");
+    db.exec(sql);
+    expect(db.prepare("SELECT * FROM npm_package_claims").get()).toEqual({
+      ...original,
+      management_confirmed_at: 1234,
+    });
+    db.exec("UPDATE npm_package_claims SET organization_id = 'shared-owner'");
+    expect(() => db.exec(sql)).toThrow(/malformed JSON/);
+    expect(
+      db.prepare("SELECT organization_id FROM npm_package_claims").get()?.organization_id,
+    ).toBe("shared-owner");
+    db.close();
+  });
+  it("rejects older exports without verified workspace classification", () => {
+    const { organization_is_personal: _classification, ...oldRow } = row();
+    expect(() => parse([oldRow])).toThrow(/unexpected columns/);
+  });
+});
+
 describe("reviewed SQL applies atomically", () => {
   it("groups trailing-slash history under a canonical claim and revalidates both organizations", () => {
     const rows = parse([
@@ -282,7 +373,7 @@ describe("reviewed SQL applies atomically", () => {
     );
     expect(() => db.exec(sql)).toThrow(/malformed JSON/);
     db.exec(
-      "DELETE FROM scans WHERE id = 'new'; INSERT INTO npm_package_claims VALUES ('https://registry.npmjs.org/', 'npm', 'example', 'org-1', 'stage', 1)",
+      "DELETE FROM scans WHERE id = 'new'; INSERT INTO npm_package_claims(registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at) VALUES ('https://registry.npmjs.org/', 'npm', 'example', 'org-1', 'stage', 1)",
     );
     expect(() => db.exec(sql)).toThrow(/malformed JSON/);
     db.close();
@@ -317,9 +408,9 @@ describe("reviewed SQL applies atomically", () => {
     "DELETE FROM scans",
     "INSERT INTO scans SELECT 'new', stage_id, 'new-org', package_name, staged_version, registry_url, registry_package_name, registry_version, source, status, created_at FROM scans",
     "INSERT INTO scans SELECT 'legacy-new', stage_id, 'new-org', package_name, staged_version, NULL, NULL, NULL, source, status, created_at FROM scans",
-    "INSERT INTO npm_package_claims VALUES ('https://registry.npmjs.org', 'npm', 'example', 'other', 'other-stage', 1)",
-    "INSERT INTO npm_package_claims VALUES ('https://registry.npmjs.org', 'npm', 'example', NULL, 'other-stage', 1)",
-    "INSERT INTO npm_package_claims VALUES ('*', 'npm', 'example', NULL, 'other-stage', 1)",
+    "INSERT INTO npm_package_claims(registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at) VALUES ('https://registry.npmjs.org', 'npm', 'example', 'other', 'other-stage', 1)",
+    "INSERT INTO npm_package_claims(registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at) VALUES ('https://registry.npmjs.org', 'npm', 'example', NULL, 'other-stage', 1)",
+    "INSERT INTO npm_package_claims(registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at) VALUES ('*', 'npm', 'example', NULL, 'other-stage', 1)",
   ])("rejects stale or conflicting state: %s", (mutation) => {
     const rows = parse([row()]);
     const sql = approvalSql(rows, approve(rows));

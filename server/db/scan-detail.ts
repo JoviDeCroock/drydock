@@ -5,7 +5,7 @@ import {
   loadScanArtifactMetadata,
   loadScanArtifacts,
 } from "../lib/scan/artifacts";
-import { npmPackageClaimMatches } from "./package-claims";
+import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-claims";
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
@@ -24,6 +24,11 @@ export async function getScan(
     db
       .select({
         ...getTableColumns(scans),
+        npmPackageManagementAllowed: npmPackageManagementAllowed(
+          sql`rtrim(scans.registry_url, '/')`,
+          sql`scans.registry_package_name`,
+          sql`scans.organization_id`,
+        ).mapWith(Boolean),
         npmPackageClaimOwned: npmPackageClaimMatches(
           sql`rtrim(scans.registry_url, '/')`,
           sql`scans.registry_package_name`,

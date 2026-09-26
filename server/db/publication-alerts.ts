@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
-import { publicationWatchOwnershipConflict } from "./publication-watches";
+import { publicationWatchBlocked } from "./publication-watches";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -28,7 +28,7 @@ export async function savePublicationObservation(
 ) {
   // Ownership may change while registry acquisition is in flight. Guard the
   // observation and alert together, including the conflict-update path.
-  const stillAuthorized = sql`not ${publicationWatchOwnershipConflict(registryUrl, packageName, observation.organizationId)}`;
+  const stillAuthorized = sql`not ${publicationWatchBlocked(registryUrl, packageName, observation.organizationId)}`;
   const writeObservation = db
     .insert(publicationObservations)
     .select(sql`select ${observation.id}, ${observation.watchId}, ${observation.organizationId},

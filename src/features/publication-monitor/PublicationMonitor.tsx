@@ -1,3 +1,4 @@
+import { WatchPackageDialog } from "../package-claims/PackageManagement";
 import {
   useComputed,
   useModel,
@@ -40,6 +41,7 @@ export function PublicationMonitor({
   });
   // Only the row whose check is in flight relabels its button; the model's
   // single `busy` flag disables everything else.
+  const watchTarget = useSignal<string | null>(null);
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
@@ -74,7 +76,7 @@ export function PublicationMonitor({
           class="flex items-center gap-2 shrink-0"
           onSubmit={(event) => {
             event.preventDefault();
-            void model.enroll();
+            watchTarget.value = model.packageName.peek().trim();
           }}
         >
           <Input
@@ -130,7 +132,9 @@ export function PublicationMonitor({
                   variant="secondary"
                   size="sm"
                   disabled={model.busy}
-                  onClick={() => void model.enroll(suggestion.packageName)}
+                  onClick={() => {
+                    watchTarget.value = suggestion.packageName;
+                  }}
                 >
                   Watch {suggestion.packageName}
                 </Button>
@@ -187,7 +191,7 @@ export function PublicationMonitor({
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={watch.ownershipConflict || model.busy}
+                      disabled={watch.managementPending || watch.ownershipConflict || model.busy}
                       onClick={() => void check(watch.id)}
                       title="Fetch the latest releases from npm and compare them with recorded approvals"
                     >
@@ -245,6 +249,18 @@ export function PublicationMonitor({
           })}
         </ul>
       </div>
+      <Show when={watchTarget}>
+        {(name) => (
+          <WatchPackageDialog
+            key={name}
+            packageName={name}
+            onClose={() => {
+              watchTarget.value = null;
+            }}
+            onChanged={() => void model.refresh()}
+          />
+        )}
+      </Show>
       <StopWatchingDialog
         packageName={stopPackageName}
         busy={model.busy}

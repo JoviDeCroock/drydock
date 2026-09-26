@@ -1,3 +1,4 @@
+import { PackageManagement } from "../../../features/package-claims/PackageManagement";
 import { useModel } from "@preact/signals";
 import { useRoute } from "preact-iso";
 import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
@@ -152,6 +153,14 @@ function ScanNotices({ model, view }: SectionProps) {
           report has to say about it. Rendered for failed scans too — a review
           that could not read the tarball is exactly when npm's own state is
           the only useful thing on the page. */}
+      {detail?.scan.registryPackageName && detail.scan.source !== "workflow_gate" ? (
+        <PackageManagement
+          key={`${detail.scan.organizationId}:${detail.scan.registryUrl}:${detail.scan.registryPackageName}`}
+          packageName={detail.scan.registryPackageName}
+          registryUrl={detail.scan.registryUrl ?? undefined}
+          onChanged={() => void model.load()}
+        />
+      ) : null}
       {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
 
       {!detail && !error ? (
@@ -382,6 +391,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}
           npmPackageClaimOwned={detail.scan.npmPackageClaimOwned}
+          npmPackageManagementAllowed={detail.scan.npmPackageManagementAllowed}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}

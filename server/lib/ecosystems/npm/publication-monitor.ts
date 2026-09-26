@@ -4,8 +4,8 @@ import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
   getPublicationWatch,
-  getPublicationOwnershipConflict,
-  publicationWatchOwnershipConflict,
+  getPublicationWatchBlocked,
+  publicationWatchBlocked,
   recordWatchCoverageGap,
   type PublicationObservation,
   type PublicationWatch,
@@ -287,7 +287,7 @@ export async function checkNpmPublicationWatch(
     .where(
       and(
         watchKey(watch),
-        sql`not ${publicationWatchOwnershipConflict(registry, watch.packageName, watch.organizationId)}`,
+        sql`not ${publicationWatchBlocked(registry, watch.packageName, watch.organizationId)}`,
         or(
           isNull(publicationWatches.lastCheckedAt),
           lt(publicationWatches.lastCheckedAt, new Date(now.getTime() - CLAIM_LEASE_MS)),
@@ -310,9 +310,7 @@ export async function checkNpmPublicationWatch(
       now,
       options.meter ?? { bytes: 0 },
     );
-    if (
-      await getPublicationOwnershipConflict(db, watch.organizationId, watch.packageName, registry)
-    )
+    if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
       return getPublicationWatch(db, watch.organizationId, watch.id, registry);
     await redeliverPendingAlerts(env, db, watch, attempted, now);
     // A read that got past the package document clears a package-wide gap; a
@@ -385,7 +383,7 @@ async function refreshObservedDistTags(
   now: Date,
   registry: string,
 ) {
-  const stillAuthorized = sql`not ${publicationWatchOwnershipConflict(registry, watch.packageName, watch.organizationId)}`;
+  const stillAuthorized = sql`not ${publicationWatchBlocked(registry, watch.packageName, watch.organizationId)}`;
   const updates = observed.flatMap((row) => {
     const tags = tagsFor(tagsByVersion, row.version);
     if (sameTags(row.distTags, tags)) return [];
@@ -604,9 +602,7 @@ async function examineReleases(
   let downloads = 0;
   let downloadDeadline: number | null = null;
   for (const item of pending) {
-    if (
-      await getPublicationOwnershipConflict(db, watch.organizationId, watch.packageName, registry)
-    )
+    if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
       break;
     if (examined >= RELEASES_PER_CHECK || lookups >= HISTORY_LOOKUPS_PER_CHECK) {
       note("pending_release_backlog");
@@ -713,7 +709,7 @@ async function dueWatchesByOrganization(db: AppDb, now: Date, limit: number, reg
       ) as organization_rank
       from publication_watches
       where (last_checked_at is null or last_checked_at < ${dueBefore})
-      and not ${publicationWatchOwnershipConflict(registry, sql`publication_watches.package_name`, sql`publication_watches.organization_id`)}
+      and not ${publicationWatchBlocked(registry, sql`publication_watches.package_name`, sql`publication_watches.organization_id`)}
     ) order by organization_rank, coalesce(last_checked_at, 0), id limit ${limit}`);
   if (ranked.length === 0) return [];
   const rows = await db

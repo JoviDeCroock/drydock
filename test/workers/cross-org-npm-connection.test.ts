@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { createOrganization } from "../../server/db/organizations";
 import { addOrganizationMember } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
@@ -194,17 +195,108 @@ describe("npm-connection routes answer role denials as 403", () => {
     const app = buildTestApp(mountNpmConnection, member);
 
     const upsert = await call(app, "POST", "/api/v1/npm-connection", {
-      body: { token: INTRUDER_TOKEN },
+      body: { token: INTRUDER_TOKEN, confirmPersonalOrganization: true },
       activeOrganizationId: owner.organizationId,
     });
     expect(upsert.status).toBe(403);
     expect(await upsert.json()).toEqual({ error: "forbidden" });
 
     const validate = await call(app, "POST", "/api/v1/npm-connection/validate", {
-      body: {},
+      body: { confirmPersonalOrganization: true },
       activeOrganizationId: owner.organizationId,
     });
     expect(validate.status).toBe(403);
     expect(await validate.json()).toEqual({ error: "forbidden" });
+  });
+});
+
+describe("explicit personal connection confirmation", () => {
+  test("saving needs literal true to confirm and later token edits preserve an existing choice", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+      expect(
+        (
+          await call(app, "POST", "/api/v1/npm-connection", {
+            body: { token: OWNER_TOKEN, confirmPersonalOrganization },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toBeNull();
+    }
+    await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN, confirmPersonalOrganization: true },
+    });
+    const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+      ?.personalOrganizationConfirmedAt;
+    expect(confirmed).toBeInstanceOf(Date);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: INTRUDER_TOKEN } });
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toEqual(confirmed);
+    const response = await call(app, "GET", "/api/v1/npm-connection");
+    expect(await response.json()).toMatchObject({
+      connection: { personalOrganizationConfirmedAt: confirmed?.toISOString() },
+    });
+  });
+  test("credential validation does not implicitly confirm personal discovery", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) =>
+        String(input).endsWith("/-/whoami")
+          ? Response.json({ username: "maintainer" })
+          : Response.json({ items: [], total: 0 }),
+      );
+    try {
+      for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+        expect(
+          (
+            await call(app, "POST", "/api/v1/npm-connection/validate", {
+              body: { confirmPersonalOrganization },
+            })
+          ).status,
+        ).toBe(200);
+        expect(
+          (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+        ).toBeNull();
+      }
+      expect(
+        (
+          await call(app, "POST", "/api/v1/npm-connection/validate", {
+            body: { confirmPersonalOrganization: true },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toBeInstanceOf(Date);
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  test("an explicit personal flag never writes consent onto a shared organization connection", async () => {
+    const owner = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared registry team",
+    });
+    const response = await call(
+      buildTestApp(mountNpmConnection, owner),
+      "POST",
+      "/api/v1/npm-connection",
+      {
+        body: { token: OWNER_TOKEN, confirmPersonalOrganization: true },
+        activeOrganizationId: organizationId,
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
   });
 });

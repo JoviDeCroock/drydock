@@ -36,7 +36,13 @@ function request(
     buildTestApp(mountPublicationWatches, owner),
     method,
     `/api/v1/publication-watches${path}`,
-    { body, activeOrganizationId: requestedOrganizationId },
+    {
+      body:
+        method === "POST" && path === "" && body && typeof body === "object"
+          ? { confirmPersonalOrganization: true, ...body }
+          : body,
+      activeOrganizationId: requestedOrganizationId,
+    },
   );
 }
 
@@ -104,6 +110,7 @@ test("GET derives historical public publishers, preserves opt-out and permits ex
     organizationId: owner.organizationId,
     firstStageId: "historical-stage",
     claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
   });
 
   const now = new Date();
@@ -296,6 +303,7 @@ describe("one package's monitoring for the package page", () => {
       expect(await theirs.json()).toEqual({
         packageName: "@scope/watched",
         ownershipConflict: false,
+        managementPending: false,
         watch: null,
         observations: [],
         alerts: [],
@@ -515,6 +523,7 @@ test("claim conflicts reject enrollment and checks while retaining existing obse
     organizationId: owner.organizationId,
     firstStageId: "stage-owner",
     claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
   });
   expect((await request(outsider, "POST", "", { packageName: "claimed-package" })).status).toBe(
     409,
@@ -551,6 +560,7 @@ test("wildcard reservations block watches until an exact registry claim resolves
     packageName,
     firstStageId: "legacy-stage",
     claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
   };
   await db.insert(npmPackageClaims).values({ ...claim, registryUrl: "*", organizationId: null });
   expect((await request(owner, "POST", "", { packageName })).status).toBe(409);
@@ -562,4 +572,20 @@ test("wildcard reservations block watches until an exact registry claim resolves
   const response = await request(owner, "POST", "", { packageName });
   expect(response.status).toBe(201);
   expect(await response.json()).toMatchObject({ watch: { ownershipConflict: false } });
+});
+
+test("personal watch enrollment requires an explicit boolean confirmation", async () => {
+  const owner = await seedOwner();
+  const app = buildTestApp(mountPublicationWatches, owner);
+  for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+    const response = await call(app, "POST", "/api/v1/publication-watches", {
+      body: { packageName: "personal-watch-choice", confirmPersonalOrganization },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "package_management_required" });
+  }
+  const confirmed = await call(app, "POST", "/api/v1/publication-watches", {
+    body: { packageName: "personal-watch-choice", confirmPersonalOrganization: true },
+  });
+  expect(confirmed.status).toBe(201);
 });

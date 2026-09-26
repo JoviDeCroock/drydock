@@ -23,6 +23,7 @@ export function ShareDialog({
   badgeTag,
   badgePublic,
   npmPackageClaimOwned,
+  npmPackageManagementAllowed,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -46,6 +47,7 @@ export function ShareDialog({
    */
   badgePublic: boolean;
   npmPackageClaimOwned?: boolean;
+  npmPackageManagementAllowed?: boolean;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -64,6 +66,7 @@ export function ShareDialog({
     badgePublic,
     feedListed: share !== null && share.threatFeedListedAt !== null,
     npmPackageClaimOwned,
+    npmPackageManagementAllowed,
   });
   // What the badge answers for. An untagged scan only ever answers the default
   // badge, so it reads as `latest` rather than as nothing.
@@ -170,6 +173,13 @@ export function ShareDialog({
           This organization has no confirmed assignment for this npm package. Its reports remain
           shareable, but its reviews cannot control the public badge. Contact support if historical
           ownership needs review.
+        </EmptyLine>
+      ) : null}
+      {badgeEcosystem === "npm" &&
+      npmPackageClaimOwned === true &&
+      npmPackageManagementAllowed !== true ? (
+        <EmptyLine>
+          Choose an organization for this package before enabling its public badge.
         </EmptyLine>
       ) : null}
       {badge ? (

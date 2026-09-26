@@ -9,6 +9,8 @@ import {
   deletePublicationWatch,
   getPublicationEnrollment,
   getPublicationOwnershipConflict,
+  getPublicationManagementPending,
+  PublicationWatchManagementError,
   getPublicationWatch,
   getPublicationWatchByPackage,
   listPublicationObservations,
@@ -21,6 +23,7 @@ import {
   requireActiveOrganizationContext,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
+import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
 import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
@@ -68,17 +71,30 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
     packageName,
     npmPublicationRegistry(c.env),
   );
-  const [enrollment, observations, ledger, ownershipConflict] = await Promise.all([
-    watch
-      ? Promise.resolve({ state: "watched" as const })
-      : getPublicationEnrollment(db, organizationId, packageName),
-    watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
-    listPublicationAlertsForPackage(db, organizationId, packageName, watch?.id ?? null),
-    getPublicationOwnershipConflict(db, organizationId, packageName, npmPublicationRegistry(c.env)),
-  ]);
+  const [enrollment, observations, ledger, ownershipConflict, managementPending] =
+    await Promise.all([
+      watch
+        ? Promise.resolve({ state: "watched" as const })
+        : getPublicationEnrollment(db, organizationId, packageName),
+      watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
+      listPublicationAlertsForPackage(db, organizationId, packageName, watch?.id ?? null),
+      getPublicationOwnershipConflict(
+        db,
+        organizationId,
+        packageName,
+        npmPublicationRegistry(c.env),
+      ),
+      getPublicationManagementPending(
+        db,
+        organizationId,
+        packageName,
+        npmPublicationRegistry(c.env),
+      ),
+    ]);
   return c.json({
     packageName,
     ownershipConflict,
+    managementPending,
     watch,
     observations,
     alerts: ledger.alerts,
@@ -91,11 +107,25 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
 npmPublicationWatchRoutes.post("/", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const body = await readJsonObject<{ packageName: unknown }>(c);
+  const body = await readJsonObject<{
+    packageName: unknown;
+    confirmPersonalOrganization?: unknown;
+  }>(c);
   const packageName = typeof body.packageName === "string" ? body.packageName.trim() : "";
   if (!isValidNpmPackageName(packageName)) {
     return c.json({ error: "Enter a valid public npm package name." }, 400);
   }
+  if (
+    organizationId === personalOrganizationId(c.get("authSession").userId) &&
+    body.confirmPersonalOrganization !== true
+  )
+    return c.json(
+      {
+        error: "Choose an organization before enabling personal package monitoring.",
+        code: "package_management_required",
+      },
+      409,
+    );
   try {
     const watch = await createPublicationWatch(
       db,
@@ -113,6 +143,8 @@ npmPublicationWatchRoutes.post("/", async (c) => {
     });
     return c.json({ watch }, 201);
   } catch (err) {
+    if (err instanceof PublicationWatchManagementError)
+      return c.json({ error: err.message, code: "package_management_required" }, 409);
     if (err instanceof PublicationWatchOwnershipError)
       return c.json({ error: "This package is already assigned to another organization." }, 409);
     if (err instanceof PublicationWatchLimitError) {
@@ -173,6 +205,14 @@ npmPublicationWatchRoutes.post("/:id/check", async (c) => {
     npmPublicationRegistry(c.env),
   );
   if (!watch) return c.json({ error: "not found" }, 404);
+  if (watch.managementPending)
+    return c.json(
+      {
+        error: "Choose an organization for this package before enabling monitoring.",
+        code: "package_management_required",
+      },
+      409,
+    );
   if (watch.ownershipConflict)
     return c.json(
       { error: "Monitoring is inactive because this package is assigned to another organization." },

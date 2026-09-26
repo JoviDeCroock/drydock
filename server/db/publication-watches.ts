@@ -12,7 +12,7 @@ import {
   sql,
   type SQLWrapper,
 } from "drizzle-orm";
-import { npmPackageClaimMatches } from "./package-claims";
+import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-claims";
 import type { AppDb } from "./client";
 import {
   npmPackageClaims,
@@ -28,6 +28,53 @@ const PUBLICATION_WATCH_LIMIT = 20;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 export class PublicationWatchOwnershipError extends Error {}
+export class PublicationWatchManagementError extends Error {}
+
+function publicationWatchManagementPending(
+  registryUrl: string,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql<boolean>`(${npmPackageClaimMatches(registryUrl, packageName, organizationId)}
+    and not ${npmPackageManagementAllowed(registryUrl, packageName, organizationId)})`.mapWith(
+    Boolean,
+  );
+}
+
+export function publicationWatchBlocked(
+  registryUrl: string,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql<boolean>`(${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)}
+    or ${publicationWatchManagementPending(registryUrl, packageName, organizationId)})`.mapWith(
+    Boolean,
+  );
+}
+
+export async function getPublicationManagementPending(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+  registryUrl = PUBLIC_NPM,
+): Promise<boolean> {
+  const [result] = await db.all<{ pending: number }>(
+    sql`select ${publicationWatchManagementPending(registryUrl, packageName, organizationId)} as pending`,
+  );
+  return Boolean(result?.pending);
+}
+
+export async function getPublicationWatchBlocked(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+  registryUrl = PUBLIC_NPM,
+): Promise<boolean> {
+  const [result] = await db.all<{ blocked: number }>(
+    sql`select ${publicationWatchBlocked(registryUrl, packageName, organizationId)} as blocked`,
+  );
+  return Boolean(result?.blocked);
+}
 
 const PUBLIC_NPM = "https://registry.npmjs.org";
 
@@ -97,6 +144,11 @@ const watchColumns = (registryUrl: string) => ({
   ...getTableColumns(publicationWatches),
   unresolvedAlertCount,
   unverifiedReleaseCount: unverifiedReleaseCount(),
+  managementPending: publicationWatchManagementPending(
+    registryUrl,
+    sql`publication_watches.package_name`,
+    sql`publication_watches.organization_id`,
+  ),
   ownershipConflict: publicationWatchOwnershipConflict(
     registryUrl,
     sql`publication_watches.package_name`,
@@ -206,7 +258,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatches)
       .select(
-        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20 and not ${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)}`,
+        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20 and not ${publicationWatchBlocked(registryUrl, packageName, organizationId)}`,
       )
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
@@ -214,7 +266,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatchCandidates)
       .select(
-        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName}) and not ${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)}`,
+        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName}) and not ${publicationWatchBlocked(registryUrl, packageName, organizationId)}`,
       )
       .onConflictDoUpdate({
         target: [publicationWatchCandidates.organizationId, publicationWatchCandidates.packageName],
@@ -231,6 +283,14 @@ export async function createPublicationWatch(
       ),
     )
     .limit(1);
+  if (
+    watch?.managementPending ||
+    (!watch &&
+      (await getPublicationManagementPending(db, organizationId, packageName, registryUrl)))
+  )
+    throw new PublicationWatchManagementError(
+      "Choose an organization for this package before enabling monitoring.",
+    );
   if (
     watch?.ownershipConflict ||
     (!watch &&

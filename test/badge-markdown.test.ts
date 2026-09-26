@@ -152,9 +152,23 @@ describe("share-dialog badge ownership", () => {
     expect(
       shareBadgeMarkdown({ ...scanBadge, feedListed: false, npmPackageClaimOwned: false }),
     ).toBeNull();
-    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: true })).toContain(
-      "registry-name",
-    );
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        npmPackageClaimOwned: true,
+        npmPackageManagementAllowed: true,
+      }),
+    ).toContain("registry-name");
+  });
+  test("personal management must be explicitly confirmed", () => {
+    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: true })).toBeNull();
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        npmPackageClaimOwned: true,
+        npmPackageManagementAllowed: false,
+      }),
+    ).toBeNull();
   });
   test("non-npm listed badges keep their existing sharing contract", () => {
     expect(shareBadgeMarkdown({ ...scanBadge, ecosystem: "pypi", badgePublic: false })).toContain(

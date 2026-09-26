@@ -70,6 +70,7 @@ export const npmPackageClaims = sqliteTable(
     }),
     firstStageId: text("first_stage_id").notNull(),
     claimedAt: integer("claimed_at", { mode: "timestamp_ms" }).notNull(),
+    managementConfirmedAt: integer("management_confirmed_at", { mode: "timestamp_ms" }),
   },
   (table) => ({
     packagePk: primaryKey({ columns: [table.registryUrl, table.ecosystem, table.packageName] }),
@@ -440,6 +441,9 @@ export const npmConnections = sqliteTable(
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    personalOrganizationConfirmedAt: integer("personal_organization_confirmed_at", {
+      mode: "timestamp_ms",
+    }),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),

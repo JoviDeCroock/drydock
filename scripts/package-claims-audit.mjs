@@ -10,6 +10,7 @@ const columns = [
   "stage_id",
   "organization_id",
   "organization_name",
+  "organization_is_personal",
   "package_name",
   "staged_version",
   "registry_url",
@@ -19,7 +20,15 @@ const columns = [
   "status",
   "created_at",
 ];
-export const INVENTORY_QUERY = `SELECT ${columns.map((column) => (column === "organization_name" ? "o.name AS organization_name" : `s.${column}`)).join(", ")} FROM scans s LEFT JOIN organizations o ON o.id = s.organization_id WHERE s.source IN ('manual', 'auto_discovery') ORDER BY s.id;`;
+const organizationIsPersonalSql =
+  "CASE WHEN o.id IS NULL THEN NULL ELSE o.id = ('personal:' || o.owner_user_id) END";
+const evidenceColumnSql = (column) =>
+  column === "organization_name"
+    ? "o.name"
+    : column === "organization_is_personal"
+      ? organizationIsPersonalSql
+      : `s.${column}`;
+export const INVENTORY_QUERY = `SELECT ${columns.map((column) => `${evidenceColumnSql(column)} AS ${column}`).join(", ")} FROM scans s LEFT JOIN organizations o ON o.id = s.organization_id WHERE s.source IN ('manual', 'auto_discovery') ORDER BY s.id;`;
 const nullable = new Set([
   "organization_id",
   "organization_name",
@@ -96,8 +105,10 @@ export function parseInventory(input) {
         if (
           column === "created_at"
             ? !Number.isSafeInteger(value)
-            : !(nullable.has(column) && value === null) &&
-              (typeof value !== "string" || !value || value.includes("\0"))
+            : column === "organization_is_personal"
+              ? ![null, 0, 1].includes(value)
+              : !(nullable.has(column) && value === null) &&
+                (typeof value !== "string" || !value || value.includes("\0"))
         ) {
           throw new Error("Inventory has an invalid field");
         }
@@ -118,7 +129,8 @@ function issues(row) {
       "unsupported_or_noncanonical_registry_url",
     !row.registry_package_name && "missing_registry_package_name",
     !row.registry_version && "missing_registry_version",
-    (!row.organization_id || !row.organization_name) && "missing_organization",
+    (!row.organization_id || !row.organization_name || row.organization_is_personal === null) &&
+      "missing_organization",
     row.registry_package_name &&
       row.package_name &&
       row.registry_package_name !== row.package_name &&
@@ -162,6 +174,12 @@ export function buildAudit(rows, options = {}) {
       organization = {
         id: row.organization_id,
         name: row.organization_name,
+        claim_type:
+          row.organization_is_personal === 1
+            ? "personal_provisional"
+            : row.organization_is_personal === 0
+              ? "shared_durable"
+              : "unresolved",
         scan_count: 0,
         sources: Object.create(null),
         statuses: Object.create(null),
@@ -206,7 +224,7 @@ const markdown = (value) =>
     (character) => `&#${character.charCodeAt(0)};`,
   );
 export function renderAudit(audit) {
-  return `# Private npm package ownership audit\n\nNo owners have been approved. ${audit.assumptions.missing_registry_url ? "Explicit operator assumption: missing registry URLs refer to https://registry.npmjs.org. Raw missing URLs remain recorded; missing package names and versions still require independent evidence." : "Missing registry coordinates require separate investigation."} Manifest fields are not ownership evidence.\n\nInventory SHA-256: ${audit.inventory_sha256}\n\n| Registry | Package (observed) | Organizations | Scans | Collision | Issues | Same-name history (registry / orgs / scans) |\n| --- | --- | --- | --- | --- | --- | --- |\n${audit.packages.map((group) => `| ${markdown(group.registry_url)} | ${markdown(group.package_name)} | ${group.organizations.map((org) => `${markdown(org.name)} (${markdown(org.id)}): ${org.scan_count}`).join("; ")} | ${group.scans.length} | ${group.collision ? "yes" : "no"} | ${[...new Set(group.scans.flatMap((row) => row.issues))].join(", ")} | ${group.related_history.map((other) => `${markdown(other.registry_url)} / ${other.organization_ids.map(markdown).join(", ")} / ${other.scan_count}`).join("; ")} |`).join("\n")}\n\nSee inventory.json for first/last timestamps, status/source counts, and each evidence scan.\n`;
+  return `# Private npm package ownership audit\n\nNo owners have been approved. ${audit.assumptions.missing_registry_url ? "Explicit operator assumption: missing registry URLs refer to https://registry.npmjs.org. Raw missing URLs remain recorded; missing package names and versions still require independent evidence." : "Missing registry coordinates require separate investigation."} Manifest fields are not ownership evidence.\n\nInventory SHA-256: ${audit.inventory_sha256}\n\n| Registry | Package (observed) | Organizations | Scans | Collision | Issues | Same-name history (registry / orgs / scans) |\n| --- | --- | --- | --- | --- | --- | --- |\n${audit.packages.map((group) => `| ${markdown(group.registry_url)} | ${markdown(group.package_name)} | ${group.organizations.map((org) => `${markdown(org.name)} (${markdown(org.id)}; ${org.claim_type}): ${org.scan_count}`).join("; ")} | ${group.scans.length} | ${group.collision ? "yes" : "no"} | ${[...new Set(group.scans.flatMap((row) => row.issues))].join(", ")} | ${group.related_history.map((other) => `${markdown(other.registry_url)} / ${other.organization_ids.map(markdown).join(", ")} / ${other.scan_count}`).join("; ")} |`).join("\n")}\n\nSee inventory.json for first/last timestamps, status/source counts, and each evidence scan.\n`;
 }
 
 export function approvalSql(rows, selection, options = {}) {
@@ -247,19 +265,19 @@ export function approvalSql(rows, selection, options = {}) {
     guards.push(`(SELECT COUNT(*) FROM scans s WHERE ${packagePredicate}) = ${related.length}`);
     for (const row of related) {
       guards.push(
-        `EXISTS (SELECT 1 FROM scans s LEFT JOIN organizations o ON o.id = s.organization_id WHERE ${columns.map((column) => `${column === "organization_name" ? "o.name" : `s.${column}`} IS ${sqlString(row[column])}`).join(" AND ")})`,
+        `EXISTS (SELECT 1 FROM scans s LEFT JOIN organizations o ON o.id = s.organization_id WHERE ${columns.map((column) => `${evidenceColumnSql(column)} IS ${sqlString(row[column])}`).join(" AND ")})`,
       );
     }
     guards.push(
       `NOT EXISTS (SELECT 1 FROM npm_package_claims WHERE (registry_url = '*' OR rtrim(registry_url, '/') = ${sqlString(registryUrl)}) AND ecosystem = 'npm' AND package_name = ${sqlString(evidence.registry_package_name)} AND (organization_id IS NOT ${sqlString(evidence.organization_id)} OR registry_url != ${sqlString(registryUrl)}))`,
     );
     values.push(
-      `(${[registryUrl, "npm", evidence.registry_package_name, evidence.organization_id, evidence.stage_id].map(sqlString).join(", ")})`,
+      `(${[registryUrl, "npm", evidence.registry_package_name, evidence.organization_id, evidence.stage_id, evidence.organization_is_personal].map(sqlString).join(", ")})`,
     );
   }
   // One statement is atomic on SQLite/D1. An invalid JSON guard aborts the
   // entire INSERT; DO NOTHING only makes identical-owner reruns idempotent.
-  const sql = `-- Private, explicitly reviewed ownership approvals. Never commit this file.\n-- Inventory SHA-256: ${audit.inventory_sha256}\n-- Missing registry URL assumption: ${audit.assumptions.missing_registry_url ?? "none"}\nWITH approved(registry_url, ecosystem, package_name, organization_id, first_stage_id) AS (VALUES\n${values.join(",\n")})\nINSERT INTO npm_package_claims (registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at)\nSELECT registry_url, ecosystem, package_name, organization_id, first_stage_id, CAST(strftime('%s', 'now') AS INTEGER) * 1000 FROM approved\nWHERE json_extract(CASE WHEN ${guards.join("\nAND ")} THEN '{"ok":1}' ELSE 'STALE_OR_CONFLICTING_PACKAGE_CLAIM_APPROVAL' END, '$.ok') = 1\nON CONFLICT(registry_url, ecosystem, package_name) DO NOTHING;\n`;
+  const sql = `-- Private, explicitly reviewed ownership approvals. Never commit this file.\n-- Inventory SHA-256: ${audit.inventory_sha256}\n-- Missing registry URL assumption: ${audit.assumptions.missing_registry_url ?? "none"}\nWITH approved(registry_url, ecosystem, package_name, organization_id, first_stage_id, is_personal) AS (VALUES\n${values.join(",\n")})\nINSERT INTO npm_package_claims (registry_url, ecosystem, package_name, organization_id, first_stage_id, claimed_at, management_confirmed_at)\nSELECT registry_url, ecosystem, package_name, organization_id, first_stage_id, CAST(strftime('%s', 'now') AS INTEGER) * 1000, CASE WHEN is_personal = 1 THEN NULL ELSE CAST(strftime('%s', 'now') AS INTEGER) * 1000 END FROM approved\nWHERE json_extract(CASE WHEN ${guards.join("\nAND ")} THEN '{"ok":1}' ELSE 'STALE_OR_CONFLICTING_PACKAGE_CLAIM_APPROVAL' END, '$.ok') = 1\nON CONFLICT(registry_url, ecosystem, package_name) DO NOTHING;\n`;
   if (Buffer.byteLength(sql, "utf8") > 90_000)
     throw new Error(
       "Approval SQL exceeds the conservative statement budget; approve fewer packages per artifact",

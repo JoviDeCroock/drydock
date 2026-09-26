@@ -1,4 +1,6 @@
-import { useModel } from "@preact/signals";
+import { OrganizationModel } from "../../../models/organization";
+import { Select } from "../../../components/Select";
+import { useModel, useSignal, useComputed } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { Alert } from "../../../components/Alert";
@@ -11,12 +13,31 @@ import { MonoLabel, Muted } from "../../../components/Typography";
 
 export function NpmConnectionSection({
   npm,
+  organizations,
+  onSwitchOrganization,
   defaultOpen = false,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  organizations: InstanceType<typeof OrganizationModel>;
+  onSwitchOrganization: (id: string) => Promise<void>;
   defaultOpen?: boolean;
 }) {
+  const active = organizations.active.value;
+  const destinations = organizations.organizations.value.filter(
+    (org) => !org.isPersonal && (org.role === "owner" || org.role === "admin"),
+  );
+  const selected = useSignal(active?.isPersonal ? (destinations[0]?.id ?? "") : (active?.id ?? ""));
+  const personalChosen = useSignal(false);
+  const choiceLabel = useComputed(() =>
+    selected.value === active?.id
+      ? npm.connection.value
+        ? "Enable automatic scans in personal workspace"
+        : "Continue in personal workspace"
+      : `Open ${destinations.find((org) => org.id === selected.value)?.name ?? "organization"} settings`,
+  );
   const connection = npm.connection.value;
+  const needsChoice =
+    active?.isPersonal && !connection?.personalOrganizationConfirmedAt && !personalChosen.value;
   const status = npm.status.value;
   const busy = npm.busy.value;
   const token = npm.token.value;
@@ -26,7 +47,8 @@ export function NpmConnectionSection({
 
   const onSave = async (event: Event) => {
     event.preventDefault();
-    await npm.save();
+    if (needsChoice || !active) return;
+    await npm.save(active.isPersonal);
   };
 
   return (
@@ -55,55 +77,104 @@ export function NpmConnectionSection({
           </Alert>
         ) : null}
 
-        <NpmTokenScopeGuide />
+        {needsChoice ? (
+          <div class="flex flex-col gap-3">
+            <Alert tone="info">
+              Choose where npm packages will be managed before enabling automatic scans.
+              {connection
+                ? " Automatic scans are waiting for this choice; you can still review stages manually."
+                : ""}{" "}
+              Existing reviews and credentials stay in this workspace.
+            </Alert>
+            <Select
+              aria-label="npm connection organization"
+              value={selected}
+              onChange={(id) => {
+                selected.value = id;
+              }}
+              disabled={busy}
+            >
+              <option value="" disabled>
+                Choose organization
+              </option>
+              {destinations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}
+                </option>
+              ))}
+              <option value={active.id}>Keep in personal workspace</option>
+            </Select>
+            <Button
+              disabled={busy || !selected.value}
+              onClick={async () => {
+                const target = selected.peek();
+                if (target === active.id) {
+                  if (connection) await npm.validate(true);
+                  else personalChosen.value = true;
+                } else {
+                  npm.token.value = "";
+                  await onSwitchOrganization(target);
+                }
+              }}
+            >
+              {choiceLabel}
+            </Button>
+          </div>
+        ) : null}
 
-        <form
-          class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
-          onSubmit={onSave}
-        >
-          <Field label="Connection name" for="npmLabel">
-            <Input
-              id="npmLabel"
-              type="text"
-              value={label}
-              onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
-              disabled={busy}
-            />
-          </Field>
-          <Field label="Registry" for="npmRegistry">
-            <Input
-              id="npmRegistry"
-              type="url"
-              value={registry}
-              onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
-              disabled={busy}
-            />
-          </Field>
-          <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
-            <Input
-              id="npmToken"
-              type="password"
-              value={token}
-              placeholder={connection ? "Paste a new read-only token" : "npm_... (read-only)"}
-              onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
-              disabled={busy}
-              autoComplete="off"
-              spellcheck={false}
-            />
-          </Field>
-          {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
-          <Button type="submit" disabled={busy || !token.trim()} class="shrink-0 h-[38px]">
-            {status === "saving"
-              ? "Saving…"
-              : status === "validating"
-                ? "Checking…"
-                : connection
-                  ? "Rotate"
-                  : "Save"}
-          </Button>
-        </form>
+        {!needsChoice ? (
+          <>
+            <NpmTokenScopeGuide />
 
-        <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
+            <form
+              class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
+              onSubmit={onSave}
+            >
+              <Field label="Connection name" for="npmLabel">
+                <Input
+                  id="npmLabel"
+                  type="text"
+                  value={label}
+                  onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
+                  disabled={busy}
+                />
+              </Field>
+              <Field label="Registry" for="npmRegistry">
+                <Input
+                  id="npmRegistry"
+                  type="url"
+                  value={registry}
+                  onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
+                  disabled={busy}
+                />
+              </Field>
+              <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
+                <Input
+                  id="npmToken"
+                  type="password"
+                  value={token}
+                  placeholder={connection ? "Paste a new read-only token" : "npm_... (read-only)"}
+                  onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
+                  disabled={busy}
+                  autoComplete="off"
+                  spellcheck={false}
+                />
+              </Field>
+              {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
+              <Button type="submit" disabled={busy || !token.trim()} class="shrink-0 h-[38px]">
+                {status === "saving"
+                  ? "Saving…"
+                  : status === "validating"
+                    ? "Checking…"
+                    : connection
+                      ? "Rotate"
+                      : "Save"}
+              </Button>
+            </form>
+
+            <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
+          </>
+        ) : null}
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
 

@@ -865,6 +865,7 @@ test("foreign and orphaned claims stop scheduled and direct polling without dele
     organizationId: owner.organizationId,
     firstStageId: "stage-claim",
     claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
   });
   const fetcher = vi
     .spyOn(globalThis, "fetch")
@@ -901,6 +902,7 @@ test("a claim acquired during registry fetching prevents observation and alert p
         organizationId: owner.organizationId,
         firstStageId: "race-stage",
         claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
       });
     }
     if (String(input).endsWith(".tgz")) return new Response(bytes);
@@ -929,5 +931,66 @@ test("a claim acquired during registry fetching prevents observation and alert p
   ).toEqual([]);
   expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
     ownershipConflict: true,
+  });
+});
+
+test("a provisional personal claim prevents direct and scheduled polling without removing the watch", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, watch } = await seed();
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: name,
+    organizationId,
+    firstStageId: "pending-personal-stage",
+    claimedAt: new Date(),
+    managementConfirmedAt: null,
+  });
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+  await checkNpmPublicationWatch(db, env, watch);
+  await sweepNpmPublicationWatches(db, env);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId)),
+  ).toEqual([]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    managementPending: true,
+    ownershipConflict: false,
+    lastCheckedAt: null,
+  });
+});
+
+test("a same-organization provisional claim acquired during fetch prevents observation and alert persistence", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, watch } = await seed();
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    await db.insert(npmPackageClaims).values({
+      registryUrl: "https://registry.npmjs.org",
+      ecosystem: "npm",
+      packageName: name,
+      organizationId,
+      firstStageId: "inflight-personal-stage",
+      claimedAt: new Date(),
+      managementConfirmedAt: null,
+    });
+    return Response.json(registryMetadata(watch, [version]));
+  });
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId)),
+  ).toEqual([]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    managementPending: true,
+    ownershipConflict: false,
+    distTagsCheckedAt: null,
   });
 });

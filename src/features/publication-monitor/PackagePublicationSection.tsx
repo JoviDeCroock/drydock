@@ -1,3 +1,4 @@
+import { WatchPackageDialog } from "../package-claims/PackageManagement";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
@@ -39,8 +40,15 @@ function notWatchedReason(packageName: string, enrollment: PublicationEnrollment
  * the same watch, observations and actions as the dashboard card, scoped to
  * this package. Self-contained so the page mounts it with one line.
  */
-export function PackagePublicationSection({ packageName }: { packageName: string }) {
+export function PackagePublicationSection({
+  packageName,
+  onManagementChanged,
+}: {
+  packageName: string;
+  onManagementChanged?: () => void;
+}) {
   const model = useModel(() => new PackagePublicationModel(packageName));
+  const watching = useSignal(false);
   return (
     <section class="flex flex-col gap-3" aria-label="Publication monitor">
       <SectionLabel as="h2" aside={<MonitorAside model={model} />}>
@@ -58,12 +66,32 @@ export function PackagePublicationSection({ packageName }: { packageName: string
         >
           {(publication) => (
             <>
-              <PublicationBody model={model} publication={publication} />
+              <PublicationBody
+                model={model}
+                publication={publication}
+                onWatch={() => {
+                  watching.value = true;
+                }}
+              />
               <EarlierAlerts publication={publication} />
             </>
           )}
         </Show>
       </Card>
+      <Show when={watching}>
+        {() => (
+          <WatchPackageDialog
+            packageName={packageName}
+            onClose={() => {
+              watching.value = false;
+            }}
+            onChanged={() => {
+              void model.refresh();
+              onManagementChanged?.();
+            }}
+          />
+        )}
+      </Show>
     </section>
   );
 }
@@ -121,7 +149,9 @@ function MonitorAside({ model }: { model: Model }) {
   return (
     <Show<PackagePublication | null> when={model.publication}>
       {(publication) =>
-        publication.ownershipConflict || publication.watch?.ownershipConflict ? (
+        publication.managementPending ||
+        publication.ownershipConflict ||
+        publication.watch?.ownershipConflict ? (
           <Badge tone="neutral">monitoring inactive</Badge>
         ) : publication.watch ? (
           publication.watch.unresolvedAlertCount > 0 ? (
@@ -143,8 +173,10 @@ function MonitorAside({ model }: { model: Model }) {
 function PublicationBody({
   model,
   publication,
+  onWatch,
 }: {
   model: Model;
+  onWatch: () => void;
   publication: PackagePublication;
 }) {
   // Stopping hides alert history and opts the package out, so the server
@@ -161,13 +193,15 @@ function PublicationBody({
         <EmptyLine>
           {publication.ownershipConflict
             ? "Monitoring inactive because this package is assigned to another organization. Previous observations remain available."
-            : notWatchedReason(publication.packageName, publication.enrollment)}
+            : publication.managementPending
+              ? "Choose an organization to enable monitoring for this package."
+              : notWatchedReason(publication.packageName, publication.enrollment)}
         </EmptyLine>
         <Button
           variant="secondary"
           size="sm"
           disabled={publication.ownershipConflict || model.busy}
-          onClick={() => void model.start()}
+          onClick={onWatch}
           title="Compare this package's public npm releases with this organization's approvals"
         >
           Watch package
@@ -190,7 +224,13 @@ function PublicationBody({
           <Button
             variant="secondary"
             size="sm"
-            disabled={publication.ownershipConflict || watch.ownershipConflict || model.busy}
+            disabled={
+              publication.managementPending ||
+              watch.managementPending ||
+              publication.ownershipConflict ||
+              watch.ownershipConflict ||
+              model.busy
+            }
             onClick={() => void model.check()}
             title="Fetch the latest releases from npm and compare them with recorded approvals"
           >

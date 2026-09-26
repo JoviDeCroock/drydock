@@ -111,6 +111,7 @@ export interface PersistedScanDetail {
     badgePublic?: boolean;
     /** Derived from the immutable registry package claim, never the manifest. */
     npmPackageClaimOwned?: boolean;
+    npmPackageManagementAllowed?: boolean;
     publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;

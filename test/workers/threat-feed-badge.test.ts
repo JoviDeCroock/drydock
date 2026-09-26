@@ -87,6 +87,7 @@ async function seedBadgeScan(
         organizationId: owner.organizationId,
         firstStageId: `stage-${crypto.randomUUID()}`,
         claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
       })
       .onConflictDoNothing();
   return seedCompletedScan(owner, {
@@ -2367,7 +2368,7 @@ describe("the badge switch and the publication monitor are independent", () => {
     await seedPublicRelease(owner, packageName, "3.0.1");
     const created = await request(app, "/api/v1/publication-watches", {
       method: "POST",
-      body: JSON.stringify({ packageName }),
+      body: JSON.stringify({ packageName, confirmPersonalOrganization: true }),
     });
     expect(created.status).toBe(201);
     const { watch } = (await created.json()) as { watch: { id: string; createdAt: string } };
@@ -3155,4 +3156,33 @@ test("authenticated scan detail exposes canonical ownership for the sharing cont
     .delete(schema.npmPackageClaims)
     .where(eq(schema.npmPackageClaims.packageName, packageName));
   expect(await ownedBy(owner, ownerScan)).toMatchObject({ scan: { npmPackageClaimOwned: false } });
+});
+
+test("a provisional personal claim cannot answer listed or default badges until management is confirmed", async () => {
+  const owner = await seedUser();
+  const app = publicApp(owner);
+  const packageName = `provisional-${crypto.randomUUID().slice(0, 8)}`;
+  const scanId = await seedApprovedListedRelease(owner, app, packageName, "1.0.0");
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({ registryVersionStatus: "published", badgePublic: true })
+    .where(eq(schema.scans.id, scanId));
+  await db
+    .update(schema.npmPackageClaims)
+    .set({ managementConfirmedAt: null })
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  await share(app, scanId, { threatFeed: false });
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  const response = await request(app, `/api/v1/scans/${scanId}`);
+  expect(await response.json()).toMatchObject({
+    scan: { npmPackageClaimOwned: true, npmPackageManagementAllowed: false },
+  });
+  expect((await setBadgeVisibility(app, packageName, true)).status).toBe(403);
+  await db
+    .update(schema.npmPackageClaims)
+    .set({ managementConfirmedAt: new Date() })
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("1.0.0 approved");
 });
