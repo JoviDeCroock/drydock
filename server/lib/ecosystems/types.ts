@@ -56,6 +56,23 @@ export interface StagedReleaseVisibility {
   access: string | null;
 }
 
+/** What a decided post-release review recorded on its publication alert. */
+export interface PostReleaseResolution {
+  packageName: string;
+  version: string;
+  resolution: "approved_after_release" | "declined_after_release";
+  /** `applied` when the decision may speak on the public badge; otherwise why not. */
+  resolutionBadge:
+    | "applied"
+    | "not_public_npm"
+    | "not_a_verified_publisher"
+    | "digests_unavailable"
+    | "digests_differ";
+  /** The badge key the decision may have changed, and every line to purge under it. */
+  badgeKey: string;
+  badgeTags: string[];
+}
+
 export interface PublicationMonitorAdapter {
   /** Cron: enroll packages that review history shows are public. */
   backfillWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
@@ -74,4 +91,14 @@ export interface PublicationMonitorAdapter {
       releases: readonly StagedReleaseVisibility[];
     },
   ): Promise<void>;
+  /**
+   * A published-pair review was decided. When it is the post-release review
+   * linked to one of the organization's publication alerts, record the
+   * resolution there; null otherwise.
+   */
+  resolvePostReleaseReview(
+    db: AppDb,
+    env: Cloudflare.Env,
+    input: { organizationId: string; scanId: string; actorUserId: string },
+  ): Promise<PostReleaseResolution | null>;
 }

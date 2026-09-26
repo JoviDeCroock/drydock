@@ -1,0 +1,10 @@
+{
+  "name": "@drydock/e2e-post-release",
+  "version": "1.0.0",
+  "description": "Public release fixture reviewed after it was published",
+  "files": [
+    "README.md",
+    "index.js"
+  ],
+  "main": "index.js"
+}

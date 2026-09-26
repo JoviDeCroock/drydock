@@ -13,6 +13,7 @@ import type {
 } from "../../server/lib/review";
 import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
 import { apiFetch, apiJson } from "./api";
+import type { PostReleaseBadgeEffect, PostReleaseResolution } from "./publication-watches";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
@@ -158,6 +159,20 @@ export interface PersistedScanDetail {
     metadataJson: unknown;
     createdAt: string | number | Date;
   }>;
+  /**
+   * Set when this review was started from a publication-monitor alert: it
+   * reviews a release after npm published it, and deciding it resolves the
+   * alert. Absent from older responses.
+   */
+  postRelease?: PostReleaseReviewLink | null;
+}
+
+export interface PostReleaseReviewLink {
+  packageName: string;
+  version: string;
+  resolution: PostReleaseResolution | null;
+  resolvedAt: string | null;
+  resolutionBadge: PostReleaseBadgeEffect | null;
 }
 
 export interface ListScansResponse {

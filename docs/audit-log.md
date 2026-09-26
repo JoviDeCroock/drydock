@@ -99,6 +99,11 @@ Publication monitoring adds `publication.discrepancy` (security severity) and
 `publication.acknowledged` (notice severity). Both carry package/version identity;
 acknowledgment records the member who acknowledged it and does not change approval
 or the observed evidence. Alert deduplication persists independently of audit retention.
+Reviewing an alert after release adds `publication.review_started` (info; the member
+who pressed Scan, with the review's scan id in metadata so the event outlives a
+failed review that is deleted) and `publication.review_resolved` (notice; the member
+who decided the linked review, the resolution, and whether the badge counts it,
+deep-linked to the review). Neither changes the observation's verdict.
 Watch lifecycle adds `publication_watch.started` (info; an explicit enrollment,
 which also clears a persisted opt-out) and `publication_watch.stopped` (notice;
 owner/admin only, since stopping deletes the watch's observations and persists an

@@ -8,7 +8,12 @@ import { computed, createModel, effect, signal } from "@preact/signals";
 import { encodePackageName } from "../lib/package-diff-path";
 import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
-import type { PublicationObservation, PublicationWatch } from "./publication-watches";
+import {
+  publicationReviewApiPath,
+  type PostReleaseResolution,
+  type PublicationObservation,
+  type PublicationWatch,
+} from "./publication-watches";
 
 export type PublicationEnrollment =
   | { state: "watched" }
@@ -26,6 +31,10 @@ export interface PublicationAlertRecord {
   acknowledgedAt: string | null;
   /** Raised in the current watch's observation window rather than an earlier one. */
   inCurrentWatch: boolean;
+  /** The post-release review linked to the alert, and how it resolved it. */
+  reviewScanId: string | null;
+  resolution: PostReleaseResolution | null;
+  resolvedAt: string | null;
 }
 
 export interface PackagePublication {
@@ -135,6 +144,27 @@ export const PackagePublicationModel = createModel((packageName: string) => {
           ),
         ),
       );
+    },
+    /**
+     * Start the alert's post-release review, or find the one already linked to
+     * it. Resolves to the review's scan id, or null when it failed (the error
+     * signal says why) or the organization changed meanwhile.
+     */
+    async review(observationId: string): Promise<string | null> {
+      const id = watchId();
+      if (!id) return null;
+      const current = generation;
+      let scanId: string | null = null;
+      await run(async () => {
+        const data = await apiFetch<{ scanId: string }>(
+          publicationReviewApiPath(id, observationId),
+          {
+            method: "POST",
+          },
+        );
+        if (current === generation) scanId = data.scanId;
+      });
+      return scanId;
     },
     start() {
       const current = generation;

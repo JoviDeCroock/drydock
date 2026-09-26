@@ -19,6 +19,8 @@ import {
   PUBLIC_NPM_REGISTRY_URLS,
   REGISTRY_VERIFIED_SCAN_SOURCES,
   badgeLookupKey,
+  badgePickKey,
+  badgeRowTag,
   publicPackageLookupKey,
   scanDistTag,
   type SharedScanRow,
@@ -355,7 +357,7 @@ export async function setThreatFeedListing(
 
 export const THREAT_FEED_MAX_ENTRIES = 100;
 
-const SHARED_SCAN_COLUMNS = {
+export const SHARED_SCAN_COLUMNS = {
   scanId: scans.id,
   // The registry's own version string for this release, as opposed to
   // `stagedVersion`, which the scan replaces with the inspected tarball's
@@ -556,6 +558,16 @@ export function compareBadgeCandidates(a: SharedScanRow, b: SharedScanRow): numb
     const order = compareSemver(versionB, versionA);
     if (order !== 0) return order;
   }
+  // For the same version, a publisher's decision on the bytes npm actually
+  // published outranks a review of the bytes that were staged, which may not
+  // be the ones consumers install.
+  if (Boolean(a.postRelease) !== Boolean(b.postRelease)) return a.postRelease ? -1 : 1;
+  // Two publishers' decisions after release on the same version: a decline
+  // wins, whichever came last, so one publisher cannot answer green over
+  // another's warning by deciding again.
+  if (a.postRelease && b.postRelease && a.decision !== b.decision) {
+    return a.decision === "no_publish" ? -1 : 1;
+  }
   return (
     (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0) ||
     b.scanId.localeCompare(a.scanId)
@@ -648,14 +660,14 @@ export async function findNewerPublishedRelease(
   limit = 20,
 ): Promise<string | null> {
   if (!pick.organizationId) return null;
-  const packageKey = badgeLookupKey(pick);
+  const packageKey = badgePickKey(pick);
   if (!packageKey) return null;
   // The pick's own place in the version order. Its registry version is the
   // trustworthy one for the comparison; a row without one (a gate review, or
   // one predating the column) can only be placed by its manifest version.
   const pickVersion = pick.registryVersion ?? pick.stagedVersion;
   if (!pickVersion) return null;
-  const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
+  const tag = badgeRowTag(pick) ?? DEFAULT_BADGE_TAG;
   const rows = await db
     .select({ registryVersion: scans.registryVersion })
     .from(scans)

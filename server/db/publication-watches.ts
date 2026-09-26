@@ -17,6 +17,7 @@ import {
   publicationObservations,
   publicationWatchCandidates,
   publicationWatches,
+  scans,
 } from "./schema";
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
@@ -25,7 +26,8 @@ const PUBLICATION_WATCH_LIMIT = 20;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 
-const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
+// An alert approved after release is resolved; a declined one stays open.
+const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and coalesce(a.resolution, '') <> 'approved_after_release' and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
 
 /**
  * How long a problem must last before it counts as a coverage gap: shorter
@@ -213,6 +215,14 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ...getTableColumns(publicationObservations),
       acknowledgedAt: publicationAlerts.acknowledgedAt,
       coverageGap: sql<boolean>`coalesce(${releaseCoverageGap(new Date())}, 0)`.mapWith(Boolean),
+      // The post-release review started from this release's alert, and what
+      // the organization decided on it. `status` above stays the verdict.
+      reviewScanId: publicationAlerts.reviewScanId,
+      reviewStatus: scans.status,
+      reviewDecision: scans.decision,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
+      resolutionBadge: publicationAlerts.resolutionBadge,
     })
     .from(publicationObservations)
     .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
@@ -224,6 +234,13 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
         eq(publicationAlerts.version, publicationObservations.version),
       ),
     )
+    .leftJoin(
+      scans,
+      and(
+        eq(scans.id, publicationAlerts.reviewScanId),
+        eq(scans.organizationId, publicationObservations.organizationId),
+      ),
+    )
     .where(
       and(
         eq(publicationObservations.organizationId, organizationId),
@@ -231,7 +248,7 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ),
     )
     .orderBy(
-      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null then 0 else 1 end`,
+      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and coalesce(${publicationAlerts.resolution}, '') <> 'approved_after_release' then 0 else 1 end`,
       desc(publicationObservations.firstSeenAt),
       desc(publicationObservations.id),
     )

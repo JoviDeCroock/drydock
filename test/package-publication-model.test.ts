@@ -36,6 +36,12 @@ const alert = {
   checkedAt: "2026-09-02T00:00:00.000Z",
   acknowledgedAt: null,
   coverageGap: false,
+  reviewScanId: null,
+  reviewStatus: null,
+  reviewDecision: null,
+  resolution: null,
+  resolvedAt: null,
+  resolutionBadge: null,
 };
 const watched: PackagePublication = {
   packageName: "@scope/package",
@@ -93,6 +99,26 @@ test("loads the watch, acknowledges an alert in place and mirrors the stop permi
     enrollment: { state: "watched" },
     viewer: { canStop: false },
   });
+});
+
+test("starts an alert's post-release review and hands back the review to open", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json(watched))
+    .mockResolvedValueOnce(json({ scanId: "scan-post-release", started: true }, 202))
+    .mockResolvedValueOnce(json({ error: "scan rate limit exceeded" }, 429));
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PackagePublicationModel("@scope/package");
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(await model.review("obs-1")).toBe("scan-post-release");
+  expect(fetchMock.mock.calls[1]?.[0]).toBe(
+    "/api/v1/publication-watches/watch-1/observations/obs-1/review",
+  );
+  expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  expect(model.busy.value).toBe(false);
+  // A refused start opens nothing and says why.
+  expect(await model.review("obs-1")).toBeNull();
+  expect(model.error.value).toBe("scan rate limit exceeded");
 });
 
 test("starts and stops a watch, re-reading the package state after each", async () => {

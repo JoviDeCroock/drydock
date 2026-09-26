@@ -147,9 +147,16 @@ export type AnalyticsEvent =
       packageName: string;
       /** The dist-tag, under the same rule as `packageName`: empty unless a review answered. */
       tag: string;
-      /** What the badge said: approved / blocked / reviewed / superseded / not_reviewed. */
+      /**
+       * What the badge said: approved / blocked / reviewed / superseded /
+       * superseded_blocked / not_reviewed.
+       */
       outcome: string;
-      /** Which route answered: `default` (no opt-in) or `listed`; empty when none did. */
+      /**
+       * Which route answered: `default` (no opt-in), `listed`, or
+       * `post_release` (a publisher's guarded decision after release); empty
+       * when none did.
+       */
       route: string;
     }
   | {

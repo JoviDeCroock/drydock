@@ -374,3 +374,42 @@ test("does not apply an acknowledgment response after an organization switch", a
   expect(model.detail.value).toBeNull();
   expect(model.watches.value).toEqual([]);
 });
+
+test("starts an alert's post-release review and returns the review to open", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+    )
+    .mockResolvedValueOnce(json({ scanId: "scan-1", started: false }));
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(await model.review(watch.id, "observation/1")).toBe("scan-1");
+  expect(fetchMock.mock.calls[1]?.[0]).toBe(
+    "/api/v1/publication-watches/watch-1/observations/observation%2F1/review",
+  );
+  expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  expect(model.busy.value).toBe(false);
+});
+
+test("a review started before an organization switch opens nothing", async () => {
+  const response = deferred();
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      )
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } })),
+  );
+  setActiveOrganizationId("org-a");
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  const pending = model.review(watch.id, "observation-1");
+  setActiveOrganizationId("org-b");
+  response.resolve(json({ scanId: "scan-from-org-a", started: true }, 202));
+  expect(await pending).toBeNull();
+});

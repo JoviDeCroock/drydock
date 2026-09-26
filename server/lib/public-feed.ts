@@ -1,5 +1,8 @@
 import type { scans } from "../db/schema";
-import { parseStagedArtifactIntegrity } from "./ecosystems/artifact-integrity";
+import {
+  parseStagedArtifactIntegrity,
+  publishedPairArtifactDigest,
+} from "./ecosystems/artifact-integrity";
 import { coloCacheDelete } from "./platform/colo-cache";
 
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
@@ -29,7 +32,17 @@ export type SharedScanRow = Pick<
   | "publicShareToken"
   | "publicFeedListedAt"
   | "completedAt"
-> & { scanId: string };
+> & {
+  scanId: string;
+  /**
+   * Set only by `listPostReleaseBadgeCandidates`, never read from a column: a
+   * published-pair review that resolved one of its organization's publication
+   * alerts, by a registry-verified publisher of the name, over the very bytes
+   * the monitor saw npm publish. `tag` is the badge line it was admitted to.
+   * The registry fields above then carry the alert's own coordinates.
+   */
+  postRelease?: { tag: string };
+};
 
 export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode"] as const;
 export type PublicEcosystem = (typeof PUBLIC_ECOSYSTEMS)[number];
@@ -232,7 +245,11 @@ function scanIdentity(row: {
   packageName: string | null;
   registryPackageName: string | null;
   registryUrl: string | null;
+  postRelease?: { tag: string };
 }): PackageIdentity {
+  // Admitted only through the post-release guard, which is the same
+  // credential-backed tie a staged review carries (see `postRelease`).
+  if (row.postRelease) return "registry-verified";
   const identity = scanPackageIdentity(row.source);
   if (identity !== "registry-verified") return identity;
   return scanPublicPackageName(row) ? "registry-verified" : "manifest-claimed";
@@ -363,7 +380,7 @@ export function badgeReleaseLineKey(row: {
  * Null for anything less — a legacy scan, an unverified or mismatched stage.
  * It is what a published tarball's bytes can be compared with.
  */
-export function verifiedStagedDigest(summaryJson: unknown): string | null {
+function verifiedStagedDigest(summaryJson: unknown): string | null {
   if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
     const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
     if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
@@ -374,6 +391,52 @@ export function verifiedStagedDigest(summaryJson: unknown): string | null {
     }
   }
   return null;
+}
+
+/** The badge line a candidate answers: its admission tag, or its staged dist-tag. */
+export function badgeRowTag(row: SharedScanRow): string | null {
+  return row.postRelease?.tag ?? scanDistTag(row.summaryJson);
+}
+
+/** The name a badge pick speaks for. */
+export function badgePickName(row: SharedScanRow): string | null {
+  return row.postRelease ? row.registryPackageName : scanPublicPackageName(row);
+}
+
+/** The badge key a pick's release line lives under. */
+export function badgePickKey(row: SharedScanRow): string | null {
+  if (row.postRelease) {
+    return row.registryPackageName ? publicPackageLookupKey("npm", row.registryPackageName) : null;
+  }
+  return badgeLookupKey(row);
+}
+
+/**
+ * The SHA-1 of the bytes a pick approved or blocked, for comparing with the
+ * published tarball: a staged review's verified digest, or the published bytes
+ * a post-release review read (which its guard already matched to the monitor).
+ */
+export function badgeReviewedDigest(row: SharedScanRow): string | null {
+  if (row.postRelease) return publishedPairArtifactDigest(row.summaryJson)?.sha1 ?? null;
+  return verifiedStagedDigest(row.summaryJson);
+}
+
+const STABLE_SEMVER_RE = /^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Which badge lines a post-release decision answers. A release has no staged
+ * dist-tag, so it answers any tag the monitor last recorded pointing at it,
+ * and the default `latest` badge whenever it is a stable version — the same
+ * floor the monitor evidence uses, because whoever can publish can also move
+ * a tag away, and that must not take a decline off the badge.
+ */
+export function postReleaseAnswersTag(
+  version: string,
+  distTags: readonly string[] | null,
+  tag: string,
+): boolean {
+  if (distTags?.includes(tag)) return true;
+  return tag === DEFAULT_BADGE_TAG && STABLE_SEMVER_RE.test(version);
 }
 
 /** npm's own access level for the stage, from its staged-publish record. */
@@ -440,7 +503,7 @@ export function isDefaultBadgePublic(row: {
 // A manifest claim must not displace a registry-verified npm review, and an
 // unaffiliated public review must not occupy the badge at all.
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
-  const eligible = rows.filter((row) => isBadgeEligibleSource(row.source));
+  const eligible = rows.filter((row) => row.postRelease || isBadgeEligibleSource(row.source));
   return eligible.find((row) => scanIdentity(row) === "registry-verified") ?? eligible[0] ?? null;
 }
 
@@ -542,8 +605,18 @@ export function buildUnavailableBadgePayload(tag: string = DEFAULT_BADGE_TAG): B
   };
 }
 
+export interface BadgeSupersession {
+  /** npm's version string for the release that now stands where the pick did. */
+  version: string;
+  /**
+   * The organization declined that release after it was published (a guarded
+   * post-release decision), so the badge says so rather than `not reviewed`.
+   */
+  blocked: boolean;
+}
+
 /**
- * `supersededBy` is the version of a newer published release on this line that
+ * `superseded` is the version of a newer published release on this line that
  * has no listed review (see `findNewerPublishedRelease`). The badge then
  * answers about *that* version rather than the older one it holds a review
  * for: a consumer reads the badge next to an install command, and a green
@@ -553,13 +626,17 @@ export function buildUnavailableBadgePayload(tag: string = DEFAULT_BADGE_TAG): B
  *
  * "not reviewed" is the same claim this badge already makes for a package with
  * no listed review at all: nothing is public, not that nobody looked. The
- * newer release's own decision is never consulted or disclosed.
+ * newer release's own decision is never consulted or disclosed — except a
+ * publisher's guarded decline of a release npm already published, which reads
+ * `blocked` (see `findPublicationDiscrepancy`).
  */
 export function buildBadgePayload(
   row: SharedScanRow | null,
   tag: string = DEFAULT_BADGE_TAG,
-  supersededBy: string | null = null,
+  superseded: string | BadgeSupersession | null = null,
 ): BadgePayload {
+  const supersession =
+    typeof superseded === "string" ? { version: superseded, blocked: false } : superseded;
   // The registry's own version wherever there is one. `stagedVersion` is
   // replaced with the *inspected tarball's* manifest after a scan, so it is
   // reviewed package bytes: sanitized by `badgeVersion`, but still an
@@ -576,14 +653,14 @@ export function buildBadgePayload(
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }
-  if (supersededBy) {
+  if (supersession) {
     return {
       schemaVersion: 1,
       // The pick no longer speaks for the line, so its identity qualifier
       // would describe a review this badge is not reporting.
       label: badgeLabel(null, tag),
-      message: `${badgeVersion(supersededBy)} not reviewed`,
-      color: "lightgrey",
+      message: `${badgeVersion(supersession.version)} ${supersession.blocked ? "blocked" : "not reviewed"}`,
+      color: supersession.blocked ? "red" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }

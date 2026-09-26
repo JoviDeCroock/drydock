@@ -68,8 +68,10 @@ plan against it, as a view count.
 What it does answer well: how many distinct packages have a live badge, what
 share of them are green versus grey (so "maintainers are not approving" is
 visible as a number), and how much of it comes from the no-opt-in `default`
-route versus a deliberate `listed` one. The `outcome` and `route` blobs are
-there for exactly those two questions.
+route versus a deliberate `listed` one, or a publisher's decision after release
+(`post_release`). The `outcome` and `route` blobs are there for exactly those two
+questions; `superseded_blocked` is a newer release its publisher declined after
+npm published it.
 
 Positionally, `blob5` is the package name, `blob6` the dist-tag, `blob7` the
 outcome, and `blob8` the route. The name, tag, and route are recorded only when

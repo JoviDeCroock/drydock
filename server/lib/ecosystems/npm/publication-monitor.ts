@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
@@ -12,13 +12,11 @@ import { publicationObservations, publicationWatches, scans } from "../../../db/
 import { recordProductEvent } from "../../analytics";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
-import type { PublicationMonitorAdapter } from "../types";
 import {
   createPackumentExtractor,
   type PackumentExtract,
   type PackumentVersion,
 } from "./packument-stream";
-import { backfillNpmPublicationWatches, enrollStagedReleases } from "./publication-auto-enrollment";
 import {
   deliverPublicationAlert,
   notifyCoverageGaps,
@@ -680,6 +678,82 @@ async function examineReleases(
 }
 
 /**
+ * Hash one observed release's published tarball once someone starts a
+ * post-release review of it. A check decides a release with no Drydock record
+ * from metadata alone and never downloads it, so without this the review's
+ * decision would have no digest of the monitor's own to be bound to. Same
+ * credential-free, bounded collector as a check (and switched off with it);
+ * it fills only digests never recorded, and leaves the observation's status
+ * and reason alone: they stay the historical verdict. Best-effort — a failure
+ * leaves the digests absent, which the decision reports as such.
+ */
+export async function recordPublishedReleaseDigests(
+  db: AppDb,
+  env: Cloudflare.Env,
+  target: { organizationId: string; packageName: string; version: string },
+): Promise<void> {
+  try {
+    const [observation] = await db
+      .select({ id: publicationObservations.id })
+      .from(publicationObservations)
+      .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
+      .where(
+        and(
+          eq(publicationWatches.organizationId, target.organizationId),
+          eq(publicationWatches.packageName, target.packageName),
+          eq(publicationObservations.organizationId, target.organizationId),
+          eq(publicationObservations.version, target.version),
+          isNull(publicationObservations.sha1),
+          isNull(publicationObservations.sha256),
+          // A tarball already found too large to hash stays so; every
+          // re-decision must not download it again.
+          or(
+            isNull(publicationObservations.reason),
+            ne(publicationObservations.reason, "artifact_too_large"),
+          ),
+        ),
+      )
+      .limit(1);
+    if (!observation) return;
+    if (!(await publicationMonitoringEnabled(env, target.organizationId))) return;
+    const registry = npmPublicationRegistry(env);
+    const meter: ByteMeter = { bytes: 0 };
+    const metadata = await fetchMetadata(target.packageName, registry, meter);
+    const artifact = await hashPublishedArtifact(
+      metadata.versions.get(target.version),
+      target.packageName,
+      target.version,
+      registry,
+      { deadlineMs: TARBALL_DEADLINE_MS, meter },
+    );
+    if (typeof artifact === "string") {
+      emitOperationalEvent("warn", "npm.publication_monitor.review_digest_unavailable", {
+        organizationId: target.organizationId,
+        reason: artifact,
+      });
+      return;
+    }
+    await db
+      .update(publicationObservations)
+      .set({ sha1: artifact.sha1, sha256: artifact.sha256 })
+      .where(
+        and(
+          eq(publicationObservations.id, observation.id),
+          eq(publicationObservations.organizationId, target.organizationId),
+          isNull(publicationObservations.sha1),
+          isNull(publicationObservations.sha256),
+        ),
+      );
+  } catch (err) {
+    emitOperationalEvent("warn", "npm.publication_monitor.review_digest_unavailable", {
+      organizationId: target.organizationId,
+      reason: err instanceof MetadataError ? err.reason : "check_failed",
+      error: describeOperationalError(err),
+    });
+  }
+}
+
+/**
  * Due watches in round-robin order across organizations: every organization's
  * oldest due watch before any organization's second. A limit taken from this
  * order gives each organization at most its share of the tick, however many
@@ -794,9 +868,3 @@ export async function sweepNpmPublicationWatches(
     durationMs: Date.now() - startedAt,
   });
 }
-
-export const npmPublicationMonitor: PublicationMonitorAdapter = {
-  backfillWatches: (db, env) => backfillNpmPublicationWatches(db, npmPublicationRegistry(env)),
-  sweepWatches: (db, env) => sweepNpmPublicationWatches(db, env),
-  registerStagedReleases: enrollStagedReleases,
-};

@@ -6,7 +6,7 @@ import {
   type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
-import { packageBadgeOptOuts, scans } from "./schema";
+import { packageBadgeOptOuts, publicationAlerts, scans } from "./schema";
 
 /**
  * The package a badge request addresses: the ecosystem and the name as the
@@ -35,7 +35,7 @@ export function badgePackage(ecosystem: PublicEcosystem, packageName: string): B
  * none of them count. Only npm has a registry-verified source, so no other
  * ecosystem has publishers in this sense.
  */
-function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage): SQL {
+export function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage): SQL {
   if (target.ecosystem !== "npm") return sql`0`;
   return sql`exists (
     select 1 from scans v
@@ -129,7 +129,7 @@ export async function readPackageBadgeVisibility(
   organizationId: string,
   target: BadgePackage,
 ): Promise<PackageBadgeVisibility> {
-  const [eligible, own, elsewhere, defaultOn, listed] = await Promise.all([
+  const [eligible, own, elsewhere, defaultOn, listed, postRelease] = await Promise.all([
     isRegistryVerifiedPublisher(db, organizationId, target),
     db
       .select({ createdAt: packageBadgeOptOuts.createdAt })
@@ -174,6 +174,30 @@ export async function readPackageBadgeVisibility(
         ),
       )
       .limit(1),
+    // A decision after release that passed the badge guard answers too, while
+    // its review still carries it (`eligible` below re-checks the publisher).
+    target.ecosystem === "npm"
+      ? db
+          .select({ id: publicationAlerts.id })
+          .from(publicationAlerts)
+          .innerJoin(
+            scans,
+            and(
+              eq(scans.id, publicationAlerts.reviewScanId),
+              eq(scans.organizationId, publicationAlerts.organizationId),
+            ),
+          )
+          .where(
+            and(
+              eq(publicationAlerts.organizationId, organizationId),
+              eq(publicationAlerts.packageName, target.packageName),
+              eq(publicationAlerts.resolutionBadge, "applied"),
+              eq(scans.status, "complete"),
+              sql`${scans.decision} = case ${publicationAlerts.resolution} when 'approved_after_release' then 'publish' when 'declined_after_release' then 'no_publish' end`,
+            ),
+          )
+          .limit(1)
+      : Promise.resolve([]),
   ]);
   const switchedOffByYou = eligible && own.length > 0;
   return {
@@ -181,7 +205,7 @@ export async function readPackageBadgeVisibility(
     switchedOffByYou,
     switchedOffAt: switchedOffByYou ? (own[0]?.createdAt ?? null) : null,
     switchedOffElsewhere: eligible && elsewhere.length > 0,
-    answersByDefault: defaultOn.length > 0,
+    answersByDefault: defaultOn.length > 0 || (eligible && postRelease.length > 0),
     listed: listed.length > 0,
   };
 }

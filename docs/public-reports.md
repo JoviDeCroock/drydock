@@ -136,11 +136,13 @@ together always verifies, which is what matters for the archival use case.
 `vscode`; npm names may contain `@scope/` slashes) returns a
 [shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
 for the most recent review of that package's release line that the badge may
-answer with. Two routes qualify a review: an **approved, published release of a
+answer with. Three routes qualify a review: an **approved, published release of a
 provably public npm package**, which needs no opt-in (see "Default-on" below),
-or any review an organization **deliberately feed-listed**. Candidates from
-both are ordered by _release_ — `compareBadgeCandidates`, semver over the
-registry's version — never by which scan finished last.
+any review an organization **deliberately feed-listed**, and a **registry-verified
+publisher's decision on a release after npm published it** (see "Decided after
+release" below). Candidates from all three are ordered by _release_ —
+`compareBadgeCandidates`, semver over the registry's version — never by which
+scan finished last.
 
 - Nothing qualifying → `not reviewed` (lightgrey). Always `200` so badge
   proxies never render an error, and byte-identical whether the package was
@@ -154,7 +156,8 @@ registry's version — never by which scan finished last.
   green / yellow / red by risk. Only via the listing route; a default-on badge
   never speaks for a review nobody acted on.
 - Listed and rejected (`no_publish`) → `<version> blocked` (red). Listing route
-  only, for the same reason.
+  only, for the same reason — except a publisher's guarded decline of a release
+  npm already published, which is the warning (see "Decided after release").
 
 The version rendered is npm's own `registry_version` wherever there is one, and
 falls back to the manifest's only for a review the registry never answered
@@ -167,8 +170,9 @@ to list. `isDefaultBadgePublic` decides that at write time, and every part of
 it fails closed (see "Default-on" below).
 
 Everything else keeps the second opt-in the threat feed takes: a report shared
-privately by link never becomes queryable by package name. **Published-pair
-reviews never answer the badge at all** — see package identity below.
+privately by link never becomes queryable by package name. **A published-pair
+review never answers the badge on its own** — see package identity below — only
+as the guarded post-release decision below.
 
 ### Default-on (`badge_public`)
 
@@ -200,7 +204,7 @@ is false unless all four of these are provable:
   publicly. `publication-auto-enrollment.ts` gates on the same field.
 - **A verified digest of the reviewed bytes.** The scan's `artifactIntegrity`
   must be `verified`: npm's declared digest for the stage and the digest of
-  the bytes the scan read agree (`verifiedStagedDigest`). A badge that answers
+  the bytes the scan read agree (`isDefaultBadgePublic`). A badge that answers
   unattended must be able to notice npm serving other bytes under the version
   it approves, and that takes a digest of the approved bytes to compare the
   published tarball with (see "Releasing again"). A review that could not
@@ -357,6 +361,72 @@ reads position to break ties. Nothing about the _report_ changes — a default-o
 badge carries no link, no findings, and no feed entry. It is a verdict, not
 evidence.
 
+### Decided after release
+
+The publication monitor raises an alert when npm publishes a version the
+organization never approved — a release straight to npm, bypassing staging. The
+organization can **Scan** the alert: a published-pair review of the published
+bytes, linked to the alert, decided on the review page (see
+[`publication-monitor.md`](./publication-monitor.md#reviewing-an-alert-after-release)).
+That decision answers the badge exactly like a decision before publication —
+`<version> approved` (green), or `<version> blocked` (red) for a decline, since
+the version is already public and the decline is the warning — but only when a
+guard, checked when the review is decided and recorded on the alert
+(`resolution_badge = 'applied'`), holds:
+
+- **A registry-verified publisher of the exact name.** The same rule the off
+  switch uses (`isRegistryVerifiedPublisher`): a completed staged review of a
+  public-npm stage the organization's own token could read, under npm's name.
+  A published-pair review needs no credential and anyone can run one against any
+  public package, so a watcher's decision resolves its own alert and nothing
+  else.
+- **The public npm registry**, for both the monitor that observed the release and
+  the review that read it.
+- **The reviewed bytes are the published bytes.** The digests of the tarball the
+  review's sandbox read (`stagedPublish.artifactDigest`) must equal the digests
+  the monitor recorded for the observation: every algorithm both carry agrees,
+  and at least one is shared. A release with no Drydock record was never hashed
+  by its check, so Scan asks the monitor to hash it.
+
+`listPostReleaseBadgeCandidates` enforces what can change again on every read:
+the organization is still a registry-verified publisher, the review is still a
+completed published-pair review of exactly the alerted release read from public
+npm, and its current decision is the one the resolution recorded. "Exactly the
+alerted release" is the registry-resolved pair the review was started for (its
+stage id, which is never redacted — the summary's copy of the name and version is
+stored through the secret redactor, so a token-shaped version would not match),
+never the name and version in the reviewed tarball's own `package.json`, which a
+hostile release controls and could otherwise use to keep a decline from landing. A row written
+some other way, or one that outlived its evidence, answers nothing. The
+candidate carries the alert's own coordinates (npm's version, from npm's
+packument), never the reviewed manifest. It answers the badge lines the
+monitor last recorded pointing at the version, and `latest` whenever the version
+is stable — a moved tag must not take a decline off the badge. For the same
+version, it outranks a review of the staged bytes, which may not be the ones
+consumers install. As with every route the badge is not organization-scoped;
+between two publishers' decisions on the same version a decline wins, whichever
+was made last, so one publisher cannot answer green over another's warning by
+deciding again. Publisher status is the off switch's rule and does not expire:
+an organization that once staged the name can still approve a later release
+another publisher has only been alerted about, not declined. The remedy is the
+same as for any co-publisher — decline it after release, or switch the badge
+off. The same rule cuts the other way: "a decline wins" compares only
+post-release decisions with each other, so any registry-verified publisher —
+including one that no longer publishes — can turn a version red, and the
+current maintainer can only answer that by switching the badge off; and a
+post-release approval outranks a listed review of the staged bytes of the same
+version. The off switch silences it like the other routes. The decision
+is re-evaluated only when the review is decided again: a resolution computed
+from a decision that has since changed never lands, and one whose review
+decision no longer matches is ignored on read.
+
+The monitor evidence reads the same decisions, for the pick's own organization
+(`findPublicationDiscrepancy`): a guarded approval of the quoted version clears
+its discrepancy and its byte mismatch, and one of a newer release clears that
+supersession; a guarded decline turns `not reviewed` into `blocked`. The
+observation's historical verdict is never rewritten; the decision is read beside
+it.
+
 ### Release lines (`?tag=`)
 
 A badge sits next to an install command, so it answers for the release that
@@ -405,14 +475,16 @@ low-risk color, because anyone can build an artifact whose manifest claims any
 name, and a badge is read by people who will not open the report behind it.
 
 **A tiebreak is not enough for a published-pair review, so it is not a badge
-candidate at all.** Ranking a `public-review` row last would still let it
+candidate by itself.** Ranking a `public-review` row last would still let it
 answer for a package nobody else has reviewed, and starting one needs no
 credential and no relationship to the package — any account can review any
 public release. That is a forged approval for a name the reviewer has no claim
 on. Two locks enforce it: `badgeLookupKey` gives such a scan no
 `public_package_key` on listing, so it never enters the badge index, and
 `listBadgeCandidateScans` excludes the source in SQL so a row that acquired a
-key some other way still never reaches `pickBadgeScan`.
+key some other way still never reaches `pickBadgeScan`. The one way one does is
+as a guarded decision after release, where the guard supplies the tie to the
+name that the review itself lacks (next section).
 
 ### Releasing again (`badge_package_key`)
 
@@ -627,7 +699,9 @@ quality of the review:
   review is shareable and feed-listable — publishing a review of a compromised
   public release is exactly what the feed is for — but it is never
   badge-discoverable, so it cannot render or displace an approval badge under
-  someone else's name.
+  someone else's name. The feed keeps this label even for a post-release review
+  that answers the badge ("Decided after release"): there, the guard, not the
+  review, supplies the tie to the name, and only on the badge.
 
 `scanPackageIdentity` allowlists the credential-backed sources rather than
 excluding the untrusted ones, so a scan source added later inherits
