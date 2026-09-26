@@ -6,7 +6,7 @@ import { PackageManagement } from "../../../features/package-claims/PackageManag
  * outcome agree with ours" — the per-package, per-channel question npm's
  * multiple trusted-publishing configurations make maintainers ask.
  */
-import type { ComponentChildren } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
@@ -81,6 +81,7 @@ function PackageReleasesView({
   const managementRevision = useSignal(0);
   const badgeRevision = useSignal(0);
   const claimRevision = useSignal(0);
+  const badgeKey = useComputed(() => `${managementRevision.value}:${badgeRevision.value}`);
   const organizations = useModel(OrganizationModel);
   const membership = useSignal<"resolving" | "member" | "not_member" | "unavailable">("resolving");
   const sessionChecked = useAuthedDashboardSession({
@@ -193,11 +194,12 @@ function PackageReleasesView({
           <>
             <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
             {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
-              <PublicBadgeSection
-                key={`${managementRevision.value}:${badgeRevision.value}`}
-                packageName={packageName}
-                ecosystem={ecosystem as PublicEcosystem}
-              />
+              <RemountOn revision={badgeKey}>
+                <PublicBadgeSection
+                  packageName={packageName}
+                  ecosystem={ecosystem as PublicEcosystem}
+                />
+              </RemountOn>
             ) : null}
             <Show
               when={hasReleases}
@@ -236,22 +238,24 @@ function PackageReleasesView({
             </Show>
             {ecosystem === "npm" ? (
               <>
-                <PackageManagement
-                  key={`${packageName}:${claimRevision.value}`}
-                  packageName={packageName}
-                  onChanged={() => {
-                    managementRevision.value++;
-                    void model.load();
-                  }}
-                />
-                <PackagePublicationSection
-                  key={managementRevision.value}
-                  onManagementChanged={() => {
-                    badgeRevision.value++;
-                    claimRevision.value++;
-                  }}
-                  packageName={packageName}
-                />
+                <RemountOn revision={claimRevision}>
+                  <PackageManagement
+                    packageName={packageName}
+                    onChanged={() => {
+                      managementRevision.value++;
+                      void model.load();
+                    }}
+                  />
+                </RemountOn>
+                <RemountOn revision={managementRevision}>
+                  <PackagePublicationSection
+                    onManagementChanged={() => {
+                      badgeRevision.value++;
+                      claimRevision.value++;
+                    }}
+                    packageName={packageName}
+                  />
+                </RemountOn>
               </>
             ) : null}
           </>
@@ -428,4 +432,19 @@ function Td({ children, class: className }: { children: ComponentChildren; class
   // Baseline, not top: a link, a Badge, and plain mono text have different
   // line boxes, and top alignment left their first lines visibly staggered.
   return <td class={`px-4 py-2.5 align-baseline ${className || ""}`}>{children}</td>;
+}
+
+/**
+ * Remounts its children when `revision` changes. Reading the revision here
+ * keeps that subscription out of the page, which would otherwise re-render
+ * every release row on each bump.
+ */
+function RemountOn({
+  revision,
+  children,
+}: {
+  revision: ReadonlySignal<string | number>;
+  children: ComponentChildren;
+}) {
+  return <Fragment key={revision.value}>{children}</Fragment>;
 }

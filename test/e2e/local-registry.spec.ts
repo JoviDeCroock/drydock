@@ -99,7 +99,11 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       .getByLabel("Managing organization")
       .selectOption({ label: "Keep in personal workspace" });
     await page.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Move to organization" })).toBeVisible();
+    // No shared organization to move into, so a confirmed claim offers no chooser.
+    await expect(
+      page.getByRole("button", { name: "Choose organization", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Move to organization" })).toHaveCount(0);
     await expect(page.getByText("release risk high").first()).toBeVisible();
     // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
     await expect(
@@ -660,7 +664,7 @@ test("personal package confirmation enables monitoring and respects stop watchin
   }
 });
 
-test("a second organization cannot claim or watch an already managed staged package", async ({
+test("a second organization cannot claim an already managed staged package but can still watch its releases", async ({
   browser,
   baseURL,
 }) => {
@@ -687,19 +691,18 @@ test("a second organization cannot claim or watch an already managed staged pack
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
-    const conflict = page.waitForResponse(
+    const enrolled = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/v1/publication-watches") &&
         response.request().method() === "POST",
     );
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
     await keepPersonalWatch(page);
-    expect((await conflict).status()).toBe(409);
-    await expect(
-      page.getByRole("dialog").getByText(/another organization|managed elsewhere/i),
-    ).toBeVisible();
+    // Monitoring a public release needs no ownership: another organization's
+    // claim must never silence this workspace's alerts.
+    expect((await enrolled).status()).toBe(201);
     await page.screenshot({
-      path: path.join(artifactsDir, "package-claim-conflict.png"),
+      path: path.join(artifactsDir, "package-claim-bystander-watch.png"),
       fullPage: true,
     });
   } finally {

@@ -101,3 +101,63 @@ test.each(["personal", "team"])(
     else expect(model!.movedTo.value).toMatchObject({ id: "team", transferred: true });
   },
 );
+
+test("a double-submitted choice sends one transfer", async () => {
+  const { writes } = mockApi();
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  const [first, second] = await Promise.all([model!.choose(), model!.choose()]);
+  expect([first, second]).toEqual(["moved", null]);
+  expect(writes).toHaveLength(1);
+});
+
+test("a permission denial reads as a sentence, while a conflict keeps the server's reason", async () => {
+  const { fetchMock } = mockApi();
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  fetchMock.mockImplementationOnce(async () =>
+    Response.json({ error: "forbidden" }, { status: 403 }),
+  );
+  expect(await model!.choose()).toBeNull();
+  expect(model!.error.value).toBe("You no longer have permission to manage this package here.");
+  fetchMock.mockImplementationOnce(async () =>
+    Response.json({ error: "The destination watch budget is full." }, { status: 409 }),
+  );
+  expect(await model!.choose()).toBeNull();
+  expect(model!.error.value).toBe("The destination watch budget is full.");
+});
+
+test("an already confirmed personal claim is not confirmed again", async () => {
+  const { writes } = mockApi({ ...provisional, managementConfirmed: true });
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  model!.selectedOrganizationId.value = personal.id;
+  expect(await model!.choose()).toBe("kept");
+  expect(writes).toEqual([]);
+  expect(await model!.choose(true)).toBe("watched");
+  expect(writes.map((write) => write.url)).toEqual(["/api/v1/publication-watches"]);
+});
+
+test("an initial read that finishes after an organization switch is discarded", async () => {
+  const { fetchMock } = mockApi();
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  model?.[Symbol.dispose]();
+  const pending: Array<() => void> = [];
+  fetchMock.mockImplementation(
+    (input: string) =>
+      new Promise<Response>((resolve) => {
+        const body =
+          input === "/api/v1/organizations"
+            ? { organizations: [personal, team] }
+            : { claim: provisional, destinations: [{ id: team.id, name: team.name }] };
+        pending.push(() => resolve(json(body)));
+      }),
+  );
+  model = new PackageClaimModel("@scope/package");
+  const stale = pending.splice(0);
+  setActiveOrganizationId(team.id);
+  await vi.waitFor(() => expect(pending).toHaveLength(2));
+  for (const resolve of pending.splice(0)) resolve();
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  for (const resolve of stale) resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(model!.organization.value?.id).toBe(team.id);
+  expect(model!.selectedOrganizationId.value).toBe(team.id);
+});

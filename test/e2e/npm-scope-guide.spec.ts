@@ -59,7 +59,46 @@ test("keeping npm access personal sends explicit automatic scanning consent", as
   });
 });
 
-async function installSettingsMocks(page: Page, personal = false, writes: unknown[] = []) {
+test("an existing personal connection stays rotatable while its workspace choice is pending", async ({
+  page,
+}) => {
+  const writes: unknown[] = [];
+  await installSettingsMocks(page, true, writes, {
+    id: "connection-guide",
+    organizationId: "org-guide",
+    registryUrl: "https://registry.npmjs.org",
+    label: "npm registry",
+    tokenFingerprint: "fingerprint",
+    tokenLast4: "abcd",
+    validationStatus: "invalid",
+    capabilitiesJson: null,
+    personalOrganizationConfirmedAt: null,
+    validatedAt: null,
+    lastUsedAt: null,
+    createdByUserId: "user-guide",
+    createdAt: "2026-07-12T00:00:00.000Z",
+    updatedAt: "2026-07-12T00:00:00.000Z",
+  });
+  await page.goto("/dashboard/settings?tab=integrations");
+  await expect(page.getByText(/Rotate the token below to resume/)).toBeVisible();
+  await expect(page.getByLabel("New npm token", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Disconnect npm" })).toBeVisible();
+  await expect(page.getByLabel("npm connection organization")).toHaveValue("org-team");
+  await page
+    .getByLabel("npm connection organization")
+    .selectOption({ label: "Keep in personal workspace" });
+  await page.getByRole("button", { name: "Enable automatic scans in personal workspace" }).click();
+  await expect(page.getByLabel("npm connection organization")).toHaveCount(0);
+  await expect(page.getByLabel("New npm token", { exact: true })).toBeVisible();
+  expect(writes).toEqual(["personal-confirmation"]);
+});
+
+async function installSettingsMocks(
+  page: Page,
+  personal = false,
+  writes: unknown[] = [],
+  connection: Record<string, unknown> | null = null,
+) {
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
 
@@ -108,7 +147,15 @@ async function installSettingsMocks(page: Page, personal = false, writes: unknow
 
     if (path === "/api/v1/npm-connection") {
       if (route.request().method() === "POST") writes.push(route.request().postDataJSON());
-      await fulfillJson(route, { connection: null });
+      await fulfillJson(route, { connection });
+      return;
+    }
+
+    if (path === "/api/v1/npm-connection/personal-confirmation") {
+      writes.push("personal-confirmation");
+      await fulfillJson(route, {
+        connection: { ...connection, personalOrganizationConfirmedAt: "2026-07-13T00:00:00.000Z" },
+      });
       return;
     }
 
@@ -277,6 +324,7 @@ for (const target of ["personal", "team", "personal_refresh_failure"] as const) 
       }
     } else {
       await expect(dialog.getByLabel("Managing organization")).toHaveValue("org-team");
+      await expect(dialog.getByText(/^Moving is permanent: Release team manages/)).toBeVisible();
       await page.screenshot({
         path: ".context/e2e-artifacts/personal-package-organization-choice.png",
         fullPage: true,

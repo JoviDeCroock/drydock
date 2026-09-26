@@ -299,4 +299,99 @@ describe("explicit personal connection confirmation", () => {
       (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
     ).toBeNull();
   });
+  test("validating a shared organization connection ignores the personal flag", async () => {
+    const owner = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared validation team",
+    });
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+      activeOrganizationId: organizationId,
+    });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ username: "maintainer" }));
+    try {
+      const response = await call(app, "POST", "/api/v1/npm-connection/validate", {
+        body: { confirmPersonalOrganization: true },
+        activeOrganizationId: organizationId,
+      });
+      expect(response.status).toBe(200);
+    } finally {
+      fetcher.mockRestore();
+    }
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+  });
+  test("personal confirmation is recorded without contacting npm and keeps the first choice", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    try {
+      const missing = await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(missing.status).toBe(404);
+      await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+      const response = await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(response.status).toBe(200);
+      const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+        ?.personalOrganizationConfirmedAt;
+      expect(confirmed).toBeInstanceOf(Date);
+      expect(await response.json()).toMatchObject({
+        connection: {
+          personalOrganizationConfirmedAt: confirmed?.toISOString(),
+          validationStatus: "unvalidated",
+        },
+      });
+      await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toEqual(confirmed);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  test("personal confirmation is refused from a shared organization and for a non-owner", async () => {
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared consent team",
+    });
+    await addOrganizationMember(owner.db, { organizationId, userId: admin.userId, role: "admin" });
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+      activeOrganizationId: organizationId,
+    });
+    for (const caller of [owner, admin]) {
+      const response = await call(
+        buildTestApp(mountNpmConnection, caller),
+        "POST",
+        "/api/v1/npm-connection/personal-confirmation",
+        { activeOrganizationId: organizationId },
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+    });
+    const foreign = await call(
+      buildTestApp(mountNpmConnection, admin),
+      "POST",
+      "/api/v1/npm-connection/personal-confirmation",
+      { activeOrganizationId: owner.organizationId },
+    );
+    // Access resolution never lands on another user's workspace, so the owner's row stays untouched.
+    expect(foreign.status).not.toBe(200);
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+  });
 });
