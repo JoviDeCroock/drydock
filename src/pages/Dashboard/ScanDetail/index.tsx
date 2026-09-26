@@ -1,7 +1,11 @@
 import { useModel } from "@preact/signals";
 import { useRoute } from "preact-iso";
 import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
-import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed";
+import {
+  badgeEcosystem,
+  scanDistTag,
+  scanPublicPackageName,
+} from "../../../../server/lib/public-feed";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
@@ -367,8 +371,16 @@ function ScanDialogs({ model, view }: SectionProps) {
           error={model.shareError}
           attestationAvailable={model.attestationAvailable}
           badgeEcosystem={badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
-          packageName={detail.scan.packageName}
+          // The name the badge index knows this review by, or null when its
+          // manifest disagrees with npm's name — then no snippet is offered.
+          packageName={scanPublicPackageName({
+            source: detail.scan.source ?? "",
+            packageName: detail.scan.packageName ?? null,
+            registryPackageName: detail.scan.registryPackageName ?? null,
+            registryUrl: detail.scan.registryUrl ?? null,
+          })}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
+          badgePublic={Boolean(detail.scan.badgePublic)}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}

@@ -222,6 +222,33 @@ export const scans = sqliteTable(
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
     publicPackageKey: text("public_package_key"),
+    // The *release line* a scan belongs to (`badgeReleaseLineKey`), written for
+    // every badge-eligible scan whether or not it is shared: npm's name for a
+    // staged scan, even when the manifest disagrees with it, and the claimed
+    // name for a gate scan. Not an authorization signal: a row answers only
+    // through `public_package_key` + `public_feed_listed_at` or `badge_public`,
+    // all of which require a public name. It answers one question the badge
+    // cannot answer from its candidates alone — has this package released
+    // again since the review the badge is quoting — so a green badge cannot
+    // keep vouching for a superseded version. Null for sources that may never
+    // occupy a badge.
+    badgePackageKey: text("badge_package_key"),
+    // Whether this review may answer the badge with no opt-in at all.
+    //
+    // A badge is a name-keyed anonymous surface, so "no opt-in" is only safe
+    // where four things are provable at write time, and it fails closed if
+    // any is not (`isDefaultBadgePublic`): the source is registry-verified and
+    // the manifest agrees with npm's name for the stage (npm let the
+    // organization's token read this exact stage, so this is its own review of
+    // that package, not a manifest claim); the registry is the public npm
+    // registry; and npm's own `access` for the stage is `public`, from the
+    // stage record rather than the name shape or the tarball's `publishConfig`;
+    // and the scan verified the bytes it read against npm's digest, so the
+    // published tarball can later be compared with them.
+    //
+    // Encoded once here rather than re-derived by readers: a disclosure gate
+    // should not be an inference three columns deep.
+    badgePublic: integer("badge_public", { mode: "boolean" }).notNull().default(false),
     // npm's own lifecycle status for this exact package version, as reported by
     // `GET /-/package/{name}/version/{version}/status`. This is the registry's
     // view of the release, never Drydock's: `decision` records what the
@@ -271,6 +298,11 @@ export const scans = sqliteTable(
     // index covered nothing and taxed every write to the busiest table.
     publicPackageKeyCompletedIdx: index("scans_public_package_key_completed_idx").on(
       table.publicPackageKey,
+      table.completedAt,
+    ),
+    // Serves the staleness probe: newest release on a line, listed or not.
+    badgePackageKeyCompletedIdx: index("scans_badge_package_key_completed_idx").on(
+      table.badgePackageKey,
       table.completedAt,
     ),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),
@@ -719,6 +751,43 @@ export const publicationWatchCandidates = sqliteTable(
       table.source,
       table.createdAt,
     ),
+  ],
+);
+
+/**
+ * A publisher's "public badge: off" for one package. While any row for the key
+ * belongs to an organization that still has a registry-verified review of the
+ * name (`registryVerifiedPublisherSql`), the badge is off for everyone — both
+ * routes, every organization's reviews. A row whose organization has lost that
+ * evidence is ignored, so rows may outlive it harmlessly.
+ *
+ * Consent is per (organization, package) because the badge is per package and
+ * outlives any one release — `scans.badge_public` is the *evidence* a release
+ * may be badged, written once and never edited. It is its own table, not a
+ * column on the watch candidates, because a row there is an enrollment
+ * decision the publication monitor acts on: "stop telling the world I
+ * approved this" must never start, stop, or suppress a watch, and the reverse.
+ *
+ * Keyed by the badge's own key (`publicPackageLookupKey`), so the switch and
+ * the badge route normalize a name identically — a legacy mixed-case npm name
+ * such as `JSONStream` is the same key in both. The key leads the unique index
+ * because the badge route asks by key alone.
+ */
+export const packageBadgeOptOuts = sqliteTable(
+  "package_badge_opt_outs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageKey: text("package_key").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    uniqueIndex("package_badge_opt_outs_package_org").on(table.packageKey, table.organizationId),
   ],
 );
 

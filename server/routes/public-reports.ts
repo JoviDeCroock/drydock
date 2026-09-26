@@ -1,11 +1,16 @@
 import { Hono, type Context } from "hono";
 import { attachDb } from "../middleware/db";
 import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
+import { findBadgeSupersession } from "../db/badge-publication-evidence";
+import { badgePackage, isPackageBadgeSwitchedOff } from "../db/package-badge";
 import {
   getScan,
   getScanFile,
   encodeThreatFeedCursor,
+  compareBadgeCandidates,
   listBadgeCandidateScans,
+  listDefaultBadgeCandidateScans,
+  type SharedScanRow,
   listThreatFeedScans,
   parseThreatFeedCursor,
   resolvePublicShareToken,
@@ -33,6 +38,7 @@ import { optionalWorkerExecutionContext } from "../lib/platform/execution-contex
 import { buildAttestationStatement, loadAttestationKey, signAttestation } from "../lib/attestation";
 import { sha256Hex } from "../lib/platform/crypto-utils";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import { recordProductEvent } from "../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
   buildReportExport,
@@ -155,6 +161,15 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 
 const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 
+/** The claim the badge ended up making, for the serve counter. */
+function badgeOutcome(match: SharedScanRow | null, supersededBy: string | null): string {
+  if (!match) return "not_reviewed";
+  if (supersededBy) return "superseded";
+  if (match.decision === "publish") return "approved";
+  if (match.decision === "no_publish") return "blocked";
+  return "reviewed";
+}
+
 publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
@@ -179,7 +194,28 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const tag = resolveBadgeTag(rawTag);
 
   const db = c.var.db;
-  const rows = await listBadgeCandidateScans(db, packageName, ecosystem, tag);
+  // Two ways in, unioned: reviews an organization deliberately listed, and
+  // approved releases of packages that need no opt-in at all. A review can
+  // satisfy both, so dedupe by id, and order the union rather than either
+  // half — `pickBadgeScan` reads position to break ties.
+  //
+  // A registry-verified publisher's "public badge: off" silences both routes
+  // for every organization: letting another organization's review answer
+  // instead would make "off" mean nothing. It answers exactly like a package
+  // nobody reviewed, so it adds no enumeration signal.
+  const target = badgePackage(ecosystem, packageName);
+  const [listed, defaultOn, switchedOff] = await Promise.all([
+    listBadgeCandidateScans(db, packageName, ecosystem, tag),
+    listDefaultBadgeCandidateScans(db, target.packageKey, tag),
+    isPackageBadgeSwitchedOff(db, target),
+  ]);
+  const byScanId = new Map(
+    ([] as SharedScanRow[])
+      .concat(switchedOff ? [] : defaultOn, switchedOff ? [] : listed)
+      .map((r) => [r.scanId, r]),
+  );
+  // By release, not by scan completion — see `compareBadgeCandidates`.
+  const rows = [...byScanId.values()].sort(compareBadgeCandidates);
   const match = pickBadgeScan(
     rows.filter(
       (row) =>
@@ -187,7 +223,30 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
         badgeTagMatches(scanDistTag(row.summaryJson), tag),
     ),
   );
-  return c.json(buildBadgePayload(match, tag), 200, {
+  // Indexed probes, only on a cache miss with a review to quote: has this
+  // organization published a newer release on this line that the badge cannot
+  // speak for, or has its publication monitor recorded npm serving something
+  // its reviews do not vouch for?
+  const supersededBy = match ? await findBadgeSupersession(db, match) : null;
+  // A serve, not an impression: shields (and Camo, on GitHub) sit in front of
+  // this handler, and the colo cache means repeats inside the TTL never reach
+  // it at all. What this counts is proxies refreshing their copy.
+  recordProductEvent(c.env, {
+    name: "badge.served",
+    ecosystem,
+    // Only a name and tag a review actually answered for. The endpoint replies
+    // `not reviewed` for any string, so recording the request would let
+    // anyone write arbitrary values into the dataset — a tag as much as a name.
+    packageName: match ? packageName : "",
+    tag: match ? tag : "",
+    outcome: badgeOutcome(match, supersededBy),
+    route: match
+      ? defaultOn.some((row) => row.scanId === match.scanId)
+        ? "default"
+        : "listed"
+      : "",
+  });
+  return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
     ...(match ? {} : { [COLO_CACHE_SKIP_HEADER]: "1" }),

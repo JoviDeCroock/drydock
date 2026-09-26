@@ -9,6 +9,7 @@ import {
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
+import { badgeReleaseLineKey, isDefaultBadgePublic } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import type { ScanStatus } from "./enums";
 import { NON_TERMINAL_STATUSES } from "./scan-status";
@@ -110,13 +111,41 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 
   const claimToken = `persist:${crypto.randomUUID()}`;
   const existing = await db
-    .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
+    .select({
+      id: scans.id,
+      status: scans.status,
+      reportDigest: scans.reportDigest,
+      source: scans.source,
+      registryUrl: scans.registryUrl,
+      registryPackageName: scans.registryPackageName,
+    })
     .from(scans)
     .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
     .limit(1);
   if (existing[0] && !NON_TERMINAL_STATUSES.some((status) => status === existing[0]?.status)) {
     return { persisted: false as const, reason: "already_terminal" as const };
   }
+
+  // The release line this scan belongs to, written whether or not it is ever
+  // shared: the badge needs to know a package released again to stop vouching
+  // for the version it quotes. Null for sources that may never hold a badge.
+  // `source` is stamped when the job row is created; the INSERT branch creates
+  // the row here and so takes the column default.
+  const badgeRow = {
+    source: existing[0]?.source ?? "manual",
+    packageName: scanValues.packageName,
+    // npm's name for the stage, recorded from npm's stage record when the job
+    // was created or reconciled against it during acquisition. The INSERT
+    // branch has none, so its scan has no public identity.
+    registryPackageName: existing[0]?.registryPackageName ?? null,
+    registryUrl: existing[0]?.registryUrl ?? null,
+    summaryJson: scanValues.summaryJson,
+  };
+  const badgePackageKey = badgeReleaseLineKey(badgeRow);
+  // Decided here, not by readers: the INSERT branch has no job row to take a
+  // registry from, so it resolves to false and the review keeps the explicit
+  // opt-in — the safe direction for a surface that needs no credential to read.
+  const badgePublic = isDefaultBadgePublic(badgeRow);
 
   // The UPDATE branch assumes the existing row is non-terminal and therefore
   // carries NULL artifact key columns: the pre-read above and `claimScanForRun`
@@ -133,6 +162,8 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
           risk: scanValues.risk,
           status: scanValues.status,
           summaryJson: scanValues.summaryJson,
+          badgePackageKey,
+          badgePublic,
           aiJson: scanValues.aiJson,
           errorJson: scanValues.errorJson,
           changedFileCount: scanValues.changedFileCount,
@@ -160,7 +191,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
         .returning({ id: scans.id })
     : db
         .insert(scans)
-        .values({ ...scanValues, reportDigest: claimToken })
+        .values({ ...scanValues, badgePackageKey, badgePublic, reportDigest: claimToken })
         .onConflictDoNothing({ target: scans.id })
         .returning({ id: scans.id });
 

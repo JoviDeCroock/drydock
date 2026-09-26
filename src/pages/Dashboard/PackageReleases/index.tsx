@@ -41,6 +41,8 @@ import { registryStatusBadge } from "../../../features/registry-status";
 import { DecisionState } from "../../../features/review/DecisionState";
 import { scanSourceLabel } from "../../../features/scan-source";
 import { PackagePublicationSection } from "../../../features/publication-monitor/PackagePublicationSection";
+import { PUBLIC_ECOSYSTEMS, type PublicEcosystem } from "../../../../server/lib/public-feed";
+import { PublicBadgeSection } from "./PublicBadgeSection";
 
 export default function PackageReleasesPage() {
   const location = useLocation();
@@ -186,6 +188,12 @@ function PackageReleasesView({
         {() => (
           <>
             <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
+            {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
+              <PublicBadgeSection
+                packageName={packageName}
+                ecosystem={ecosystem as PublicEcosystem}
+              />
+            ) : null}
             <Show
               when={hasReleases}
               fallback={

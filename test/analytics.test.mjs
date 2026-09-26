@@ -135,6 +135,14 @@ describe("recordProductEvent", () => {
         risk: "low",
         durationMs: 3,
       },
+      {
+        name: "badge.served",
+        ecosystem: "npm",
+        packageName: "left-pad",
+        tag: "latest",
+        outcome: "approved",
+        route: "default",
+      },
       { name: "scan.queued", organizationId: "org_1", ecosystem: "npm", source: "manual" },
       {
         name: "scan.failed",

@@ -106,6 +106,10 @@ export interface PersistedScanDetail {
     reportVersion?: number | null;
     reportDigest?: string | null;
     publicShareToken?: string | null;
+    /** Whether this package's badge answers with no opt-in at all. */
+    badgePublic?: boolean;
+    /** npm's name for the stage, which a staged review is publicly identified by. */
+    registryPackageName?: string | null;
     publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;

@@ -1,9 +1,24 @@
-import { and, desc, eq, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  not,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
+import { compareSemver } from "../lib/ecosystems/semver";
 import {
   BADGE_INELIGIBLE_SOURCES,
   DEFAULT_BADGE_TAG,
-  badgeEcosystem,
+  PUBLIC_NPM_REGISTRY_URLS,
+  REGISTRY_VERIFIED_SCAN_SOURCES,
+  badgeLookupKey,
   publicPackageLookupKey,
   scanDistTag,
   type SharedScanRow,
@@ -237,8 +252,10 @@ export async function revokePublicShare(
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
       // `public_package_key` is nulled by this same UPDATE, so the key that
-      // just went stale is recomputed from the (untouched) source + snapshot.
+      // just went stale is recomputed from the (untouched) identity columns.
       source: scans.source,
+      registryPackageName: scans.registryPackageName,
+      registryUrl: scans.registryUrl,
       summaryJson: scans.summaryJson,
     });
   if (updated.length === 0) return { revoked: false, publicPackageKey: null, publicBadgeTag: null };
@@ -258,24 +275,6 @@ export async function revokePublicShare(
 }
 
 /**
- * The badge cache key a row occupies, or null when it can never occupy one —
- * no package name, a source that may not answer the name-keyed badge index, or
- * a scan whose ecosystem was never established. Same rule as the key written on
- * listing, so a purge always addresses the entry the write created. Exported
- * for the decision routes, which purge a listed scan's badge when the recorded
- * decision changes what the cached payload asserts.
- */
-export function badgeLookupKey(row: {
-  source: string;
-  packageName: string | null;
-  summaryJson: unknown;
-}): string | null {
-  if (!row.packageName) return null;
-  const ecosystem = badgeEcosystem(row.source, row.summaryJson);
-  return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
-}
-
-/**
  * Toggle the threat-feed listing for an already-shared scan. Listing requires
  * an active share link (the feed entry links to the public report); unlisting
  * keeps the link itself intact. Returns the new state, or null when the scan
@@ -283,7 +282,12 @@ export function badgeLookupKey(row: {
  */
 export async function setThreatFeedListing(
   db: AppDb,
-  input: { scanId: string; organizationId: string; actorUserId: string; listed: boolean },
+  input: {
+    scanId: string;
+    organizationId: string;
+    actorUserId: string;
+    listed: boolean;
+  },
 ): Promise<PublicShareState | null> {
   const now = new Date();
   const scoped = and(
@@ -297,6 +301,8 @@ export async function setThreatFeedListing(
     .select({
       source: scans.source,
       packageName: scans.packageName,
+      registryPackageName: scans.registryPackageName,
+      registryUrl: scans.registryUrl,
       summaryJson: scans.summaryJson,
     })
     .from(scans)
@@ -304,7 +310,9 @@ export async function setThreatFeedListing(
     .limit(1);
   if (!candidate) return null;
   // Null here means "listed in the feed but not badge-discoverable" — the scan
-  // has no name, or is a gate scan whose ecosystem was never established.
+  // has no public name (a staged scan whose manifest disagrees with npm's name
+  // for the stage, or no name at all), or is a gate scan whose ecosystem was
+  // never established.
   const badgeKey = badgeLookupKey(candidate);
   const publicPackageKey = input.listed ? badgeKey : null;
   const updated = await db
@@ -349,6 +357,17 @@ export const THREAT_FEED_MAX_ENTRIES = 100;
 
 const SHARED_SCAN_COLUMNS = {
   scanId: scans.id,
+  // The registry's own version string for this release, as opposed to
+  // `stagedVersion`, which the scan replaces with the inspected tarball's
+  // manifest. Internal only, for ordering releases against each other.
+  registryVersion: scans.registryVersion,
+  // Internal only. The public feed and badge serializers build explicit
+  // objects and a test pins that neither ever grows an organization field;
+  // this is here so the badge's staleness probe can scope itself to the
+  // organization whose review it is about, in the same read.
+  organizationId: scans.organizationId,
+  registryPackageName: scans.registryPackageName,
+  registryUrl: scans.registryUrl,
   source: scans.source,
   packageName: scans.packageName,
   stagedVersion: scans.stagedVersion,
@@ -434,18 +453,49 @@ export function threatFeedNextCursor(
   return { listedAtMs: last.publicFeedListedAt.getTime(), scanId: last.scanId };
 }
 
+// Filtered in SQL for the same reason as the ecosystem: an active prerelease
+// line publishes far more often than the stable one, so a bounded page taken
+// before the tag filter would be all `rc` rows and the `latest` badge would
+// read "not reviewed" while a listed stable review sat just past the limit.
+// `badgeTagMatches` documents why an untagged scan answers only the default.
+function badgeTagMatchesSql(tag: string) {
+  const distTag = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.tag')`;
+  return tag === DEFAULT_BADGE_TAG
+    ? or(sql`${distTag} = ${tag}`, sql`${distTag} IS NULL`)
+    : sql`${distTag} = ${tag}`;
+}
+
+// Badge-ineligible sources never get a badge key, so this excludes nothing the
+// key filters admit today. It stays as the second lock: a row that acquired a
+// key before its source was reclassified, or through a future write that
+// forgets the rule, must still never speak for a badge.
+const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]);
+
+// The read-side lock for `scanPublicPackageName`: only a manifest-claimed gate
+// review answers under its own manifest name; any other row answers only while
+// that name is npm's name for the stage. A key written before the write-side
+// rule existed — or by a future write that forgets it — must still never let a
+// tarball's claimed name speak for a package the credential did not reach.
+// SQLite compares text exactly, which is how npm resolves names, and only the
+// public npm registry's names count. Coalesced so a missing name reads as "no",
+// never as NULL, and the predicate can be negated.
+const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' or (${scans.packageName} = ${scans.registryPackageName} and ${scans.registryUrl} in (${sql.join(
+  PUBLIC_NPM_REGISTRY_URLS.map((url) => sql`${url}`),
+  sql`, `,
+)})), 0)`;
+
 /**
- * Recent badge-eligible reviews for one package name. The badge is a
- * discoverable index keyed by package name, so — exactly like the threat
- * feed — it only ever reflects scans whose org explicitly opted into feed
- * listing; a privately shared link never becomes name-queryable.
+ * Recent badge candidates for one package name that an organization
+ * deliberately listed. The opt-in route: a privately shared link never becomes
+ * name-queryable, and this is the only way an undecided or rejected review —
+ * or a scoped, PyPI, VS Code, or manifest-claimed one — reaches the badge.
+ * `listDefaultBadgeCandidateScans` is the other route, for OSS packages that
+ * need no opt-in at all.
  *
  * Ecosystem is filtered in SQL over the persisted provenance snapshot
  * (staged-publish scans carry no snapshot and are npm by construction), so a
  * package that is busy in one ecosystem can never crowd another ecosystem's
- * review out of the bounded page. The dist-tag is filtered the same way and for
- * the same reason; `badgeTagMatches` documents why an untagged scan answers only
- * the default (`latest`) badge.
+ * review out of the bounded page.
  */
 export async function listBadgeCandidateScans(
   db: AppDb,
@@ -460,24 +510,10 @@ export async function listBadgeCandidateScans(
     ecosystem === "npm"
       ? or(sql`${provenanceEcosystem} = 'npm'`, sql`${provenanceEcosystem} IS NULL`)
       : sql`${provenanceEcosystem} = ${ecosystem}`;
-  // Filtered in SQL for the same reason as the ecosystem: an active prerelease
-  // line publishes far more often than the stable one, so a bounded page taken
-  // before the tag filter would be all `rc` rows and the `latest` badge would
-  // read "not reviewed" while a listed stable review sat just past the limit.
-  const distTag = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.tag')`;
-  const tagMatches =
-    tag === DEFAULT_BADGE_TAG
-      ? or(sql`${distTag} = ${tag}`, sql`${distTag} IS NULL`)
-      : sql`${distTag} = ${tag}`;
   // Rank registry-backed scans before applying the bounded page. Otherwise a
   // burst of newer manifest-claimed gate scans could crowd the verified review
   // out of the result set before pickBadgeScan gets a chance to prefer it.
   const packageIdentityPriority = sql<number>`CASE WHEN ${scans.source} = 'workflow_gate' THEN 1 ELSE 0 END`;
-  // Badge-ineligible sources never get a publicPackageKey, so this excludes
-  // nothing the key filter admits today. It stays as the second lock: a row
-  // that acquired a key before its source was reclassified, or through a future
-  // write that forgets the rule, must still never reach pickBadgeScan.
-  const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]);
   return db
     .select(SHARED_SCAN_COLUMNS)
     .from(scans)
@@ -489,12 +525,182 @@ export async function listBadgeCandidateScans(
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
         ecosystemMatches,
-        tagMatches,
+        badgeTagMatchesSql(tag),
         badgeEligibleSource,
+        publicNameIsRegistryName,
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
     .limit(limit);
+}
+
+/**
+ * Order badge candidates newest **release** first, not newest scan.
+ *
+ * Scan completion order is not release order: two releases staged together
+ * finish in whatever order their tarballs process, so ordering by
+ * `completed_at` lets a 3.0.0 review that happened to finish last outrank the
+ * 3.0.1 review beside it — and the badge then names a version nobody installs,
+ * in green, with nothing to notice it. `findNewerPublishedRelease` cannot
+ * catch that case either, because a newer release that *is* a candidate is
+ * deliberately not "a release the badge cannot speak for".
+ *
+ * The registry's version is the one compared wherever it exists; a row without
+ * one (a gate review) can only be placed by its manifest version. Completion
+ * time stays as the tiebreak for two rows describing the same version.
+ */
+export function compareBadgeCandidates(a: SharedScanRow, b: SharedScanRow): number {
+  const versionA = a.registryVersion ?? a.stagedVersion;
+  const versionB = b.registryVersion ?? b.stagedVersion;
+  if (versionA && versionB && versionA !== versionB) {
+    const order = compareSemver(versionB, versionA);
+    if (order !== 0) return order;
+  }
+  return (
+    (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0) ||
+    b.scanId.localeCompare(a.scanId)
+  );
+}
+
+/**
+ * Reviews that answer the badge for a package that needs no opt-in — one npm
+ * reports as public, reviewed through a stage npm let the organization's token
+ * read, under npm's own name for it (see `isDefaultBadgePublic`).
+ *
+ * Two extra conditions beyond that flag, both about the *release* rather than
+ * the package:
+ *
+ * - **Approved only.** Without a deliberate listing there is no consent to
+ *   publish a verdict the organization did not act on, so an undecided review
+ *   and a rejection are both simply absent here — indistinguishable from a
+ *   package nobody scanned. A maintainer who *wants* the badge to carry a
+ *   rejection lists that review explicitly, and `listBadgeCandidateScans`
+ *   picks it up with the full vocabulary.
+ * - **Published by the registry.** A staged version is not public until npm
+ *   publishes it. Without this the badge would announce a pending release —
+ *   its number and its timing — to anyone watching the README.
+ */
+export async function listDefaultBadgeCandidateScans(
+  db: AppDb,
+  packageKey: string,
+  tag: string = DEFAULT_BADGE_TAG,
+  limit = 20,
+): Promise<SharedScanRow[]> {
+  return db
+    .select(SHARED_SCAN_COLUMNS)
+    .from(scans)
+    .where(
+      and(
+        eq(scans.badgePackageKey, packageKey),
+        eq(scans.badgePublic, true),
+        eq(scans.decision, "publish"),
+        eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
+        eq(scans.registryVersionStatus, "published"),
+        // `badge_public` already requires all three; they are enforced again
+        // here so a write that ever gets the flag wrong still cannot let a
+        // manifest claim, or a name npm did not give, answer with no opt-in.
+        inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
+        badgeEligibleSource,
+        publicNameIsRegistryName,
+        badgeTagMatchesSql(tag),
+      ),
+    )
+    .orderBy(desc(scans.completedAt), desc(scans.id))
+    .limit(limit);
+}
+
+/**
+ * The version of a newer release on the same line that the badge is *not*
+ * speaking for, or null when the quoted review is still the current one.
+ *
+ * A badge lives in a README forever while listing is per scan, so without this
+ * a package that released again keeps a green "3.0.0 approved" badge next to
+ * an install command that fetches 3.0.1. This is what lets the badge say so.
+ *
+ * Three deliberate bounds, because a badge is an anonymous surface:
+ *
+ * - **Same organization.** Another organization's review of the same package
+ *   says nothing about this maintainer's release line, and letting it grey out
+ *   a badge would hand any account a lever on someone else's README.
+ * - **Only versions the registry itself published.** Both the gate
+ *   (`registry_version_status`) and the version this returns come from npm's
+ *   answer about `registry_version` — never from `staged_version`, which is
+ *   replaced with the *inspected tarball's* manifest after a scan and is
+ *   therefore reviewed package bytes. A badge must not render an attacker's
+ *   string, and must not name a version npm has not announced.
+ * - **Only unlisted releases.** A newer *listed* review is either the badge's
+ *   own pick or a deliberate preference (a registry-verified review outranks a
+ *   manifest-claimed one); neither is staleness.
+ *
+ * Recency is decided by **version order, not by scan time**: re-reviewing the
+ * quoted release, or an older one, completes later than the pick but is not a
+ * newer release, and must not take the badge off a valid review. The bounded
+ * page is ordered by completion only to keep the window recent.
+ *
+ * The decision on the newer scan is not consulted and is never disclosed:
+ * "not reviewed" here means what it already means elsewhere in the badge —
+ * nothing is listed for it — not that no one looked.
+ */
+export async function findNewerPublishedRelease(
+  db: AppDb,
+  pick: SharedScanRow,
+  limit = 20,
+): Promise<string | null> {
+  if (!pick.organizationId) return null;
+  const packageKey = badgeLookupKey(pick);
+  if (!packageKey) return null;
+  // The pick's own place in the version order. Its registry version is the
+  // trustworthy one for the comparison; a row without one (a gate review, or
+  // one predating the column) can only be placed by its manifest version.
+  const pickVersion = pick.registryVersion ?? pick.stagedVersion;
+  if (!pickVersion) return null;
+  const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
+  const rows = await db
+    .select({ registryVersion: scans.registryVersion })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.badgePackageKey, packageKey),
+        eq(scans.organizationId, pick.organizationId),
+        eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
+        // Not a badge candidate by either route: neither listed under this
+        // key, nor answering by default as an approved public release. A
+        // release with no public name (its manifest disagrees with npm's) is
+        // neither, however it was shared, so it still takes the badge off an
+        // older version.
+        // Coalesced so a NULL key reads as "not listed under this key" rather
+        // than a NULL that `not` would turn into an exclusion.
+        not(
+          and(
+            isNotNull(scans.publicFeedListedAt),
+            sql`coalesce(${scans.publicPackageKey} = ${packageKey}, 0)`,
+            publicNameIsRegistryName,
+          )!,
+        ),
+        or(
+          eq(scans.badgePublic, false),
+          isNull(scans.decision),
+          ne(scans.decision, "publish"),
+          not(publicNameIsRegistryName),
+        ),
+        eq(scans.registryVersionStatus, "published"),
+        isNotNull(scans.registryVersion),
+        badgeEligibleSource,
+        badgeTagMatchesSql(tag),
+      ),
+    )
+    .orderBy(desc(scans.completedAt), desc(scans.id))
+    .limit(limit);
+  let newest: string | null = null;
+  for (const row of rows) {
+    const candidate = row.registryVersion;
+    if (!candidate) continue;
+    if (compareSemver(candidate, pickVersion) <= 0) continue;
+    if (!newest || compareSemver(candidate, newest) > 0) newest = candidate;
+  }
+  return newest;
 }
 
 /**

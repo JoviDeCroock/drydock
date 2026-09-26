@@ -1,4 +1,5 @@
 import { env } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { type AppDb, createDb } from "../../../server/db/client";
 import { createScanJob, type PersistedScanInput } from "../../../server/db/scans";
 import * as schema from "../../../server/db/schema";
@@ -65,6 +66,11 @@ export interface SeedCompletedScanOptions {
   // Extra `createScanJob` columns (source, registryUrl, ...) for suites that
   // exercise how the job row was opened.
   job?: Partial<Parameters<typeof createScanJob>[1]>;
+  // Columns written straight onto the job row before the scan is persisted,
+  // for values `createScanJob` derives itself or would act on (passing a
+  // registry name there also supersedes earlier scans of the version), and
+  // that `persistScan` reads back when it completes the row.
+  jobColumns?: Partial<typeof schema.scans.$inferInsert>;
   // Anything else `persistScan` accepts (source, createdAt, provenance, ...)
   // spreads over the defaults last, so a suite can pin exactly the row it
   // needs without the helper growing an option per column.
@@ -95,6 +101,9 @@ export async function seedCompletedScan(
     ownerUserId: owner.userId,
     ...options.job,
   });
+  if (options.jobColumns) {
+    await db.update(schema.scans).set(options.jobColumns).where(eq(schema.scans.id, scanId));
+  }
   await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,

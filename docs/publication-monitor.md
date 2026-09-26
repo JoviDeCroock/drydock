@@ -229,6 +229,16 @@ release the organization has a Drydock record of. The monitor does not rewrite s
 findings, risk, decisions, signed public reports, public badge identity, or Release
 Receipt v1.
 
+The public README badge reads these observations, and the alert ledger, for the
+answering organization: a discrepancy for the version it quotes, or any
+observation other than an approved match for another release the badge's
+dist-tag now points at (by the recorded `dist_tags`), or for a newer release
+on the quoted line (inferred from version shape), turns it grey as `<version>
+not reviewed` instead of green. `unknown` about the quoted
+version itself does not, unless its published bytes differ from the reviewed
+ones. See
+[`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
+
 ## API and operation
 
 All endpoints require a Better Auth session and active-organization membership:

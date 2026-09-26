@@ -54,6 +54,37 @@ cannot ship without a privacy assertion.
 
 ## Known gaps
 
+**`badge.served` counts serves, never impressions.** A README badge is fetched
+by shields.io, and on GitHub by Camo in front of that, and this Worker caches
+the payload for 300s per colo — so up to three caches sit between a person
+looking at a README and this handler running. A recorded event means _a proxy
+refreshed its copy_, not that anyone looked. Per-viewer impressions are not
+recoverable for a README badge by any means available to us: Camo strips the
+referrer, an image cannot carry a beacon, and we do not control what a
+maintainer pastes. Treat the count as a lower bound on how widely a badge is
+embedded and as a relative signal between packages, and never publish it, or
+plan against it, as a view count.
+
+What it does answer well: how many distinct packages have a live badge, what
+share of them are green versus grey (so "maintainers are not approving" is
+visible as a number), and how much of it comes from the no-opt-in `default`
+route versus a deliberate `listed` one. The `outcome` and `route` blobs are
+there for exactly those two questions.
+
+Positionally, `blob5` is the package name, `blob6` the dist-tag, `blob7` the
+outcome, and `blob8` the route. The name, tag, and route are recorded only when
+a review answered; a `not_reviewed` serve records all three empty. The endpoint
+answers any string it is asked about, so recording the request would let anyone
+write arbitrary values — through the tag as easily as the name — into the
+dataset.
+
+Raising the resolution is a cost trade, not a code problem: lowering the badge
+TTL makes proxies refresh more often and the signal finer, and multiplies
+request volume on an anonymous surface. Serving the image from our own origin
+(the `drydock.org/b/*` route is reserved but unimplemented) would remove the
+shields hop and one cache layer, and give control of the image, but Camo would
+still sit in front of every GitHub reader.
+
 **No client instrumentation.** In-page interactions are invisible. `/diff`
 view-through is counted; a click on its "Create account" call-to-action is not.
 So the diff → signup conversion **rate** cannot be computed from this data —
@@ -127,6 +158,7 @@ low-volume one out of the dataset.
 | `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
+| `badge.served`             | `GET /public/badge/*`         | badge distribution breadth, and the green/grey mix   |
 | `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
 | `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
 | `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                      |

@@ -152,6 +152,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: summarizePackageVersion,
   },
+  "organization.package_badge_disabled": {
+    category: "security",
+    label: "Public badge turned off",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
+  "organization.package_badge_enabled": {
+    category: "security",
+    label: "Public badge turned back on",
+    severity: "security",
+    summarize: (m) => str(m.packageName),
+  },
   "organization.release_two_factor_changed": {
     category: "security",
     label: "Release two-factor policy changed",
