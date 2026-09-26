@@ -71,7 +71,8 @@ visible as a number), and how much of it comes from the no-opt-in `default`
 route versus a deliberate `listed` one, or a publisher's decision after release
 (`post_release`). The `outcome` and `route` blobs are there for exactly those two
 questions; `superseded_blocked` is a newer release its publisher declined after
-npm published it.
+npm published it, and `superseded_unapproved` is a release its publisher's own
+monitor saw npm publish without the publisher's approval, not yet decided.
 
 Positionally, `blob5` is the package name, `blob6` the dist-tag, `blob7` the
 outcome, and `blob8` the route. The name, tag, and route are recorded only when

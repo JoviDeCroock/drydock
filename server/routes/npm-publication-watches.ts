@@ -4,6 +4,7 @@ import {
   acknowledgePublicationAlert,
   findObservationAlert,
   linkPublicationAlertReview,
+  listPublicationAlertLog,
   listPublicationAlertsForPackage,
   unlinkPublicationAlertReview,
 } from "../db/publication-alerts";
@@ -86,6 +87,17 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
     enrollment,
     viewer: { canStop: roleCanManageIntegrations(role) },
   });
+});
+
+// The organization's log of releases published to npm without its approval,
+// across every package it watches or has watched. Read-only, and scoped to the
+// active organization's ledger. Registered before `/:id`, which would
+// otherwise read "alerts" as a watch id.
+npmPublicationWatchRoutes.get("/alerts", async (c) => {
+  const db = c.var.db;
+  const organizationId = await requireActiveOrganization(c, db);
+  const log = await listPublicationAlertLog(db, organizationId);
+  return c.json({ alerts: log.alerts, moreAlerts: log.more });
 });
 
 npmPublicationWatchRoutes.post("/", async (c) => {

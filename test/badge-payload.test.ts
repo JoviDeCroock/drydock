@@ -63,11 +63,29 @@ describe("badge payload", () => {
   });
 
   test("a release its publisher declined after npm published it reads blocked", () => {
-    expect(buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true })).toMatchObject({
+    expect(
+      buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true, unapproved: false }),
+    ).toMatchObject({
       label: "drydock",
       message: "3.0.1 blocked",
       color: "red",
     });
+  });
+
+  test("a release its publisher's monitor saw published without approval is flagged orange", () => {
+    expect(
+      buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: false, unapproved: true }),
+    ).toMatchObject({
+      label: "drydock",
+      message: "3.0.1 published without approval",
+      color: "orange",
+    });
+  });
+
+  test("a decline after release outranks the unapproved flag", () => {
+    expect(
+      buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true, unapproved: true }),
+    ).toMatchObject({ message: "3.0.1 blocked", color: "red" });
   });
 
   // `SharedScanRow` carries the owning organization so the badge's staleness

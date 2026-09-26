@@ -613,6 +613,20 @@ export interface BadgeSupersession {
    * post-release decision), so the badge says so rather than `not reviewed`.
    */
   blocked: boolean;
+  /**
+   * The organization's own publication monitor alerted on that release: npm
+   * published it without this organization's approval, despite its rejection,
+   * or with bytes other than the ones it reviewed, and nothing decided it
+   * since. Set only when the organization is a registry-verified publisher of
+   * the name, so the flag is the maintainer's own record, never a third
+   * party's claim about someone else's package.
+   */
+  unapproved: boolean;
+}
+
+function supersessionClaim(supersession: BadgeSupersession): string {
+  if (supersession.blocked) return "blocked";
+  return supersession.unapproved ? "published without approval" : "not reviewed";
 }
 
 /**
@@ -628,7 +642,9 @@ export interface BadgeSupersession {
  * no listed review at all: nothing is public, not that nobody looked. The
  * newer release's own decision is never consulted or disclosed — except a
  * publisher's guarded decline of a release npm already published, which reads
- * `blocked` (see `findPublicationDiscrepancy`).
+ * `blocked`, and a publisher's own monitor alert on a release npm published
+ * without its approval, which reads `published without approval` in orange
+ * until the publisher decides it (see `findPublicationDiscrepancy`).
  */
 export function buildBadgePayload(
   row: SharedScanRow | null,
@@ -636,7 +652,9 @@ export function buildBadgePayload(
   superseded: string | BadgeSupersession | null = null,
 ): BadgePayload {
   const supersession =
-    typeof superseded === "string" ? { version: superseded, blocked: false } : superseded;
+    typeof superseded === "string"
+      ? { version: superseded, blocked: false, unapproved: false }
+      : superseded;
   // The registry's own version wherever there is one. `stagedVersion` is
   // replaced with the *inspected tarball's* manifest after a scan, so it is
   // reviewed package bytes: sanitized by `badgeVersion`, but still an
@@ -659,8 +677,8 @@ export function buildBadgePayload(
       // The pick no longer speaks for the line, so its identity qualifier
       // would describe a review this badge is not reporting.
       label: badgeLabel(null, tag),
-      message: `${badgeVersion(supersession.version)} ${supersession.blocked ? "blocked" : "not reviewed"}`,
-      color: supersession.blocked ? "red" : "lightgrey",
+      message: `${badgeVersion(supersession.version)} ${supersessionClaim(supersession)}`,
+      color: supersession.blocked ? "red" : supersession.unapproved ? "orange" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }

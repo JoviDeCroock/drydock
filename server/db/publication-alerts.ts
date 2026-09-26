@@ -220,6 +220,40 @@ export async function listPublicationAlertsForPackage(
   return { alerts: rows.slice(0, PACKAGE_ALERT_PAGE), more: rows.length > PACKAGE_ALERT_PAGE };
 }
 
+const ALERT_LOG_PAGE = 100;
+
+/**
+ * The organization's log of unapproved publishes: every alert in its ledger,
+ * across all watched packages and watch windows, newest first, with the
+ * post-release decision recorded beside it. `watched` says whether the package
+ * is still watched now, since the ledger outlives a stopped watch. `more` says
+ * the ledger holds older alerts than the page lists.
+ */
+export async function listPublicationAlertLog(db: AppDb, organizationId: string) {
+  const rows = await db
+    .select({
+      packageName: publicationAlerts.packageName,
+      version: publicationAlerts.version,
+      status: publicationAlerts.status,
+      createdAt: publicationAlerts.createdAt,
+      acknowledgedAt: publicationAlerts.acknowledgedAt,
+      reviewScanId: publicationAlerts.reviewScanId,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
+      resolutionBadge: publicationAlerts.resolutionBadge,
+      // Qualified by hand: see listUnnotifiedPublicationAlerts.
+      watched:
+        sql<boolean>`exists(select 1 from publication_watches w where w.organization_id = publication_alerts.organization_id and w.package_name = publication_alerts.package_name)`.mapWith(
+          Boolean,
+        ),
+    })
+    .from(publicationAlerts)
+    .where(eq(publicationAlerts.organizationId, organizationId))
+    .orderBy(desc(publicationAlerts.createdAt), desc(publicationAlerts.id))
+    .limit(ALERT_LOG_PAGE + 1);
+  return { alerts: rows.slice(0, ALERT_LOG_PAGE), more: rows.length > ALERT_LOG_PAGE };
+}
+
 /** Record that delivery succeeded, so the alert stops being re-driven. */
 export async function markPublicationAlertNotified(db: AppDb, input: AlertKey) {
   await db

@@ -187,6 +187,31 @@ window are re-sent: after a stop and re-enrollment, an older window's alert is n
 emailed, because the dashboard can no longer show or acknowledge it. The durable
 dashboard alert remains available until the watch is stopped.
 
+## The log of unapproved publishes
+
+The dashboard card ends with **Unapproved publishes**: every alert in the
+organization's ledger, across all the packages it watches or has watched, newest
+first (the latest 100, and a note when older ones exist). Each entry is
+`<package>@<version>` linking to the package page, the alert's verdict, the
+post-release decision when one was made, and a line saying when it was raised,
+whether it was acknowledged or decided, and whether the package is still watched.
+It reads the same ledger as the watch rows and the package page, so a stopped watch
+does not remove an entry, and it reloads whenever the watch list does (a check, an
+acknowledgment, a stop). `unknown` evidence is never an entry: it is not a record
+that npm published without an approval. Acting on an entry happens where it always
+did: acknowledge or **Scan** it from its release list.
+
+The same event is written to the Worker logs for operators: each new alert emits
+`npm.publication_monitor.unapproved_publish` (warn) with the organization and watch
+ids, the package name, the version (both npm's public record), the verdict and its
+reason, through `emitOperationalEvent`. It is emitted once, by the check that
+created the alert, alongside the `publication.discrepancy` product event.
+
+When the organization is a registry-verified publisher of the package, the public
+README badge flags the release too: `<version> published without approval`, in
+orange, until the release is decided after it shipped (see
+[`public-reports.md`](./public-reports.md#flagging-an-unapproved-publish)).
+
 ## Reviewing an alert after release
 
 Each alert (dashboard card and package page) offers **Scan** beside **Acknowledge**.
@@ -299,6 +324,11 @@ All endpoints require a Better Auth session and active-organization membership:
   with per-watch `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
   `coverageGapSince`, plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
+- `GET /api/v1/publication-watches/alerts` returns the organization's log of
+  unapproved publishes: the latest 100 ledger alerts across all packages, newest
+  first, each with `packageName`, `version`, `status`, `createdAt`,
+  `acknowledgedAt`, `reviewScanId`, `resolution`, `resolvedAt`, `resolutionBadge` and
+  `watched`, plus `moreAlerts`. Read-only.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
 - `GET /api/v1/publication-watches/packages/:name` returns one package's watch (or
   `null`), its observations, the latest 50 ledger alerts (each with `inCurrentWatch`)

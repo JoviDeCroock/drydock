@@ -475,3 +475,72 @@ test("a manual check that fails after claiming the watch reports the failure, no
   );
   error.mockRestore();
 });
+
+describe("the organization's log of unapproved publishes", () => {
+  async function alertOn(
+    organizationId: string,
+    watch: { id: string; packageName: string },
+    version: string,
+    status: "published_without_approval" | "artifact_mismatch" | "unknown",
+  ) {
+    const now = new Date();
+    await savePublicationObservation(
+      createDb(env.DB),
+      {
+        id: crypto.randomUUID(),
+        watchId: watch.id,
+        organizationId,
+        version,
+        publishedAt: now,
+        firstSeenAt: now,
+        checkedAt: now,
+        status,
+      },
+      watch.packageName,
+    );
+  }
+
+  test("lists alerts across packages, including stopped watches, and never another organization's", async () => {
+    const owner = await seedOwner();
+    const outsider = await seedOwner();
+    const db = createDb(env.DB);
+    const kept = await createPublicationWatch(db, owner.organizationId, "log-kept");
+    const stopped = await createPublicationWatch(db, owner.organizationId, "log-stopped");
+    await alertOn(owner.organizationId, stopped, "1.0.0", "artifact_mismatch");
+    await alertOn(owner.organizationId, kept, "2.0.0", "published_without_approval");
+    // Unknown evidence is not an unapproved publish.
+    await alertOn(owner.organizationId, kept, "2.0.1", "unknown");
+    await deletePublicationWatch(db, owner.organizationId, stopped.id);
+    const foreign = await createPublicationWatch(db, outsider.organizationId, "log-kept");
+    await alertOn(outsider.organizationId, foreign, "9.9.9", "published_without_approval");
+
+    const response = await request(owner, "GET", "/alerts");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    const body = await response.json<{ alerts: unknown[]; moreAlerts: boolean }>();
+    expect(body.moreAlerts).toBe(false);
+    expect(body.alerts).toHaveLength(2);
+    expect(body.alerts).toEqual(
+      expect.arrayContaining([
+        {
+          packageName: "log-kept",
+          version: "2.0.0",
+          status: "published_without_approval",
+          createdAt: expect.any(String),
+          acknowledgedAt: null,
+          reviewScanId: null,
+          resolution: null,
+          resolvedAt: null,
+          resolutionBadge: null,
+          watched: true,
+        },
+        expect.objectContaining({ packageName: "log-stopped", version: "1.0.0", watched: false }),
+      ]),
+    );
+    // Selecting another organization falls back to the caller's own ledger.
+    const selected = await request(outsider, "GET", "/alerts", undefined, owner.organizationId);
+    expect(await selected.json()).toMatchObject({
+      alerts: [expect.objectContaining({ packageName: "log-kept", version: "9.9.9" })],
+    });
+  });
+});

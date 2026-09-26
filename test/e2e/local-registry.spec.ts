@@ -748,6 +748,12 @@ test("a publication alert is scanned, decided after release, and shows the outco
     await expect(
       row.getByRole("link", { name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab" }),
     ).toBeVisible();
+    // The organization's log of unapproved publishes lists it too.
+    await expect(monitor.getByRole("heading", { name: "Unapproved publishes" })).toBeVisible();
+    const logEntry = monitor
+      .locator("li")
+      .filter({ has: page.getByRole("link", { name: `${packageName}@1.1.0`, exact: true }) });
+    await expect(logEntry.getByText(/^raised .+ · not acknowledged$/)).toBeVisible();
 
     await row.getByRole("button", { name: "Scan", exact: true }).click();
     await page.waitForURL(/\/dashboard\/scans\/[^/?#]+/);

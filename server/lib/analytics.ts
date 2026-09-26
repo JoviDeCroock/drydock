@@ -149,7 +149,7 @@ export type AnalyticsEvent =
       tag: string;
       /**
        * What the badge said: approved / blocked / reviewed / superseded /
-       * superseded_blocked / not_reviewed.
+       * superseded_blocked / superseded_unapproved / not_reviewed.
        */
       outcome: string;
       /**

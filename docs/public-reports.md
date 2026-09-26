@@ -158,6 +158,13 @@ scan finished last.
 - Listed and rejected (`no_publish`) → `<version> blocked` (red). Listing route
   only, for the same reason — except a publisher's guarded decline of a release
   npm already published, which is the warning (see "Decided after release").
+- Published without approval → `<version> published without approval`
+  (orange). The answering organization is a registry-verified publisher of the
+  package, and its own publication monitor alerted on that release: npm
+  published it without the organization's approval, despite its rejection, or
+  with other bytes than it reviewed. Deciding the alert after release clears the
+  flag: an approval reads `approved`, a decline `blocked` (see "Flagging an
+  unapproved publish").
 
 The version rendered is npm's own `registry_version` wherever there is one, and
 falls back to the manifest's only for a review the registry never answered
@@ -423,9 +430,47 @@ decision no longer matches is ignored on read.
 The monitor evidence reads the same decisions, for the pick's own organization
 (`findPublicationDiscrepancy`): a guarded approval of the quoted version clears
 its discrepancy and its byte mismatch, and one of a newer release clears that
-supersession; a guarded decline turns `not reviewed` into `blocked`. The
-observation's historical verdict is never rewritten; the decision is read beside
-it.
+supersession; a guarded decline turns `not reviewed` (or `published without
+approval`) into `blocked`. The observation's historical verdict is never
+rewritten; the decision is read beside it.
+
+### Flagging an unapproved publish
+
+A release that npm published without going through the maintainer's approval is
+the event the badge most needs to say something about, and `not reviewed` —
+the same grey a package nobody scanned gets — undersells it. So when the
+monitor evidence below takes the badge off its pick, and the version it
+reports instead is one the answering organization's **own monitor alerted on**
+(`published_without_approval`, `published_despite_rejection`,
+`artifact_mismatch`, from the observations or the alert ledger), the badge
+reads `<version> published without approval` in orange.
+
+- **Only a registry-verified publisher's alert flags.** The pick's organization
+  must pass `isRegistryVerifiedPublisher` for the name, checked on every badge
+  read that would flag. An organization whose listed review only _claims_ the
+  name (a workflow gate) has no tie to the package's releases, and its alert
+  would read as an accusation against the real maintainer; its badge keeps the
+  grey `not reviewed`. Default-on picks always pass: `badge_public` already
+  requires the organization's own token to have read a public npm stage.
+- **Only a confirmed discrepancy.** `unknown` evidence, a newer staged review
+  that is not on the badge, or a byte mismatch the badge found itself while the
+  monitor still says `unknown` stay `not reviewed`: none of them is the
+  monitor's record that npm published without an approval.
+- **Deciding it clears it.** Scanning the alert and deciding the release after
+  it shipped ("Decided after release" above) is the remedy: a guarded approval
+  removes the release from the evidence, so the badge returns to the
+  approved pick (or answers `<version> approved` from the post-release
+  decision itself); a guarded decline reads `blocked`. A decision that fails
+  the guard (another registry, digests that differ) resolves the alert for the
+  organization but leaves the flag, because nothing established that the
+  published bytes are the approved ones.
+- **Nothing new leaks.** The version is npm's (from its packument); the claim
+  is the publisher's own monitor record, which its dashboard already lists
+  (see [`publication-monitor.md`](./publication-monitor.md#the-log-of-unapproved-publishes)).
+  The badge never says which of the three discrepancies it was, and never
+  names who published.
+
+The serve counter records it as `superseded_unapproved`.
 
 ### Release lines (`?tag=`)
 
@@ -542,15 +587,18 @@ back into a green badge.
 
 - **Another version where the quote stood** — npm now points the badge's tag
   at it (see below) — observed with anything but `approved_match` → that
-  version, `not reviewed`, exactly like the scan-based path. That includes
+  version, `not reviewed`, exactly like the scan-based path, or `published
+without approval` when it was a discrepancy (see "Flagging an unapproved
+  publish"). That includes
   `unknown`: an observation alone proves npm published the version, and
   nothing proves this organization approved it, so the badge must not keep
   vouching for the quoted one beside an install command that fetches another.
   An approved match is left to the scan-based path, which knows whether that
   release answers the badge itself.
 - **The quoted version itself** with a discrepancy — `published_without_approval`,
-  `published_despite_rejection`, `artifact_mismatch` → `<version> not
-reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
+  `published_despite_rejection`, `artifact_mismatch` → `<version> published
+without approval`, orange (`not reviewed`, lightgrey, when the organization
+  is not a registry-verified publisher). A green `3.0.0 approved` beside published bytes that
   differ from the approved ones, or a publication the approval did not precede,
   vouches for something the review did not establish. A `blocked` pick stays
   red: it already warns.
@@ -585,11 +633,12 @@ breaks them is not seen by the inference.
 
 Same organization-scoping as the scan probe, and the rendered version is npm's
 (the monitor reads it from npm's packument), so nothing new leaks: "not
-reviewed" is the claim the badge already makes. No watch and no alert means no
+reviewed" is the claim the badge already makes, and "published without
+approval" is only ever a registry-verified publisher's own record. No watch and no alert means no
 evidence, and the badge answers from the scans alone. npm only. Like the
 registry-status sweep, the monitor runs in cron with no request colo to purge,
-so a badge it turns grey does so within the 300s cache TTL rather than at
-once.
+so a badge it turns grey or orange does so within the 300s cache TTL rather
+than at once.
 
 The probe runs on a badge cache miss against `scans.badge_package_key`, the
 release line written for **every** badge-eligible scan, shared or not. For a

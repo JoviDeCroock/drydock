@@ -80,6 +80,7 @@ describe("public package monitoring", () => {
             time: { [version]: timestamp },
           });
     });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await checkNpmPublicationWatch(db, env, watch);
     const [observation] = await listPublicationObservations(db, organizationId, watch.id);
     expect(observation).toMatchObject({
@@ -87,6 +88,15 @@ describe("public package monitoring", () => {
       sha1: null,
       sha256: null,
       scanId: null,
+    });
+    expect(warn).toHaveBeenCalledWith("npm.publication_monitor.unapproved_publish", {
+      event: "npm.publication_monitor.unapproved_publish",
+      organizationId,
+      watchId: watch.id,
+      packageName: name,
+      version,
+      status: "published_without_approval",
+      reason: null,
     });
     // A release with no Drydock record needs no bytes: only metadata is read.
     expect(fetcher).toHaveBeenCalledTimes(1);

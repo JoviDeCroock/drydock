@@ -168,7 +168,10 @@ const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 /** The claim the badge ended up making, for the serve counter. */
 function badgeOutcome(match: SharedScanRow | null, superseded: BadgeSupersession | null): string {
   if (!match) return "not_reviewed";
-  if (superseded) return superseded.blocked ? "superseded_blocked" : "superseded";
+  if (superseded) {
+    if (superseded.blocked) return "superseded_blocked";
+    return superseded.unapproved ? "superseded_unapproved" : "superseded";
+  }
   if (match.decision === "publish") return "approved";
   if (match.decision === "no_publish") return "blocked";
   return "reviewed";
