@@ -43,14 +43,14 @@ The existing 15-minute cron checks watches independently of staged discovery.
 **Check now** runs a bounded check of one watch on demand (distinct from the
 Recent reviews **Check npm**, which runs stage discovery). The dashboard displays the latest
 100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
-last check, how many releases it has observed ("no new releases" only after a check
-that read npm) and any coverage problem; each package links to its package page,
+last check, how many releases it has recorded and any coverage problem; each package links to its package page,
 which shows the same watch, observations and controls for that package and says
 why an unwatched package is not watched. Each observed release links to its public
 diff against the published version it follows (recorded when observed), and to its
-Drydock review when one exists. An empty list claims "no new releases since you started watching"
-only after a successful check; before one, or after a failed registry read, it says
-releases are unknown. Checks drain a backlog in batches, so one
+Drydock review when one exists. The row and an empty list claim "no new releases"
+only after a check that finished with no problem; before a check they say it has
+not run, and after any problem (a failed read, a backlog, an unreadable version or
+tarball) the list says only that no releases are recorded yet, and the problem says what is unknown. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
 A record of the version is a staged review or workflow gate of exactly that package

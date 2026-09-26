@@ -109,31 +109,19 @@ const sourceLabels: Record<PublicationWatch["source"], string> = {
   published_history: "added from your past reviews",
 };
 
-// Check outcomes after which nothing is known about releases since
-// enrollment: an empty observation list would otherwise claim there are none.
-const COVERAGE_UNKNOWN = new Set([
-  "registry_evidence_unavailable",
-  "registry_metadata_too_large",
-  "publication_history_limit",
-  "check_failed",
-  "monitoring_disabled",
-]);
-
-function coverageUnknown(watch: Pick<PublicationWatch, "lastError">): boolean {
-  return Boolean(watch.lastError && COVERAGE_UNKNOWN.has(watch.lastError));
-}
-
 /**
- * What an empty release list means. Null when the watch's problem, shown above
- * the list, already says releases are unknown.
+ * What an empty release list means. "No new releases" is claimed only after a
+ * check that finished with no problem: any problem, even a backlog or one
+ * unreadable version, can leave a new release unexamined and so unrecorded.
  */
 export function emptyObservationsMessage(
   watch: Pick<PublicationWatch, "createdAt" | "lastCheckedAt" | "lastError">,
-): string | null {
+): string {
   if (!watch.lastCheckedAt) {
     return "Not checked yet. Drydock checks it automatically, or choose Check now.";
   }
-  if (coverageUnknown(watch)) return null;
+  // The watch's problem, shown above the list, says what is unknown.
+  if (watch.lastError) return "No releases recorded yet.";
   return `No new releases since you started watching on ${formatDateTime(watch.createdAt)}. Earlier releases are not checked.`;
 }
 
@@ -183,7 +171,7 @@ function releaseSummary(watch: PublicationWatch): string {
   if (watch.releaseCount > 0) {
     return `${checked} · ${watch.releaseCount} new ${pluralize("release", watch.releaseCount)}`;
   }
-  return coverageUnknown(watch) ? checked : `${checked} · no new releases`;
+  return watch.lastError ? checked : `${checked} · no new releases`;
 }
 
 export function watchMetaLine(watch: PublicationWatch): string {

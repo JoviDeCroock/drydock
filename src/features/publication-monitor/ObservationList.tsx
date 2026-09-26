@@ -29,11 +29,9 @@ export function ObservationList({
   acknowledge: (observationId: string) => void;
 }) {
   if (observations.length === 0) {
-    const message = emptyObservationsMessage(watch);
-    if (!message) return null;
     return (
       <div class="border-t border-border px-5 py-3.5">
-        <EmptyLine>{message}</EmptyLine>
+        <EmptyLine>{emptyObservationsMessage(watch)}</EmptyLine>
       </div>
     );
   }

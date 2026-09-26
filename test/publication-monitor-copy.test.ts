@@ -26,27 +26,25 @@ const watch: PublicationWatch = {
 };
 
 describe("publication monitor copy", () => {
-  test("an empty release list claims no releases only after a successful check", () => {
+  test("an empty release list claims no releases only after a check with no problem", () => {
     expect(emptyObservationsMessage(watch)).toMatch(
       /^No new releases since you started watching on .+\. Earlier releases are not checked\.$/,
     );
-    for (const lastError of [
-      "registry_evidence_unavailable",
-      "registry_metadata_too_large",
-      "check_failed",
-      "monitoring_disabled",
-    ]) {
-      // The watch's problem, shown above the list, already says so.
-      expect(emptyObservationsMessage({ ...watch, lastError })).toBeNull();
-      expect(watchProblemMessage(lastError)).toMatch(/unknown|cannot be checked|switched off/);
-    }
     expect(emptyObservationsMessage({ ...watch, lastCheckedAt: null })).toBe(
       "Not checked yet. Drydock checks it automatically, or choose Check now.",
     );
-    // A backlog is incomplete, not unknown: what was observed is still true.
-    expect(emptyObservationsMessage({ ...watch, lastError: "pending_release_backlog" })).toMatch(
-      /^No new releases since you started watching/,
-    );
+    // A backlog or one unreadable version can leave a new release unrecorded,
+    // so any problem withholds the claim; the problem itself says why.
+    for (const lastError of [
+      "registry_evidence_unavailable",
+      "check_failed",
+      "monitoring_disabled",
+      "pending_release_backlog",
+      "invalid_version_metadata",
+      "artifact_timeout",
+    ]) {
+      expect(emptyObservationsMessage({ ...watch, lastError })).toBe("No releases recorded yet.");
+    }
   });
 
   test("a watch enrolled from any staged review, discovered or submitted by hand, says so", () => {
@@ -60,8 +58,9 @@ describe("publication monitor copy", () => {
     expect(watchMetaLine(watch)).toMatch(/ · checked .+ · no new releases · /);
     expect(watchMetaLine({ ...watch, releaseCount: 1 })).toMatch(/ · 1 new release · /);
     expect(watchMetaLine({ ...watch, releaseCount: 3 })).toMatch(/ · 3 new releases · /);
-    // A failed registry read leaves releases unknown, so it claims none.
-    expect(watchMetaLine({ ...watch, lastError: "check_failed" })).not.toMatch(/no new releases/);
+    for (const lastError of ["check_failed", "pending_release_backlog"]) {
+      expect(watchMetaLine({ ...watch, lastError })).not.toMatch(/no new releases/);
+    }
   });
 
   test("alert labels speak only for this organization", () => {

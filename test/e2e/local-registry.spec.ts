@@ -534,6 +534,7 @@ test("an observed release opens what was published: its public diff and its revi
             lastCheckedAt: "2026-09-02T00:00:00.000Z",
             lastError: null,
             unresolvedAlertCount: 0,
+            releaseCount: 1,
           },
           observations: [
             {
