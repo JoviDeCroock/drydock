@@ -13,7 +13,7 @@ import { chunkForD1 } from "./d1-chunk";
 import { getScan } from "./scan-detail";
 import type { ScanSource } from "./enums";
 import { NON_TERMINAL_STATUSES, registrySupersessionPatch } from "./scan-status";
-import { scans } from "./schema";
+import { npmPackageClaims, scans } from "./schema";
 import {
   insertNpmPackageClaim,
   npmPackageClaimMatches,
@@ -145,7 +145,8 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
           and(
             ownsPackage,
             eq(scans.organizationId, input.organizationId),
-            eq(scans.registryUrl, claim.registryUrl),
+            // Legacy rows may carry the registry URL with a trailing slash.
+            sql`rtrim(${scans.registryUrl}, '/') = ${claim.registryUrl}`,
             eq(scans.registryPackageName, claim.packageName),
             eq(scans.registryVersion, input.stagedVersion!),
             inArray(scans.source, ["manual", "auto_discovery"]),
@@ -160,6 +161,45 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const detail = await getScan(db, input.id, input.organizationId);
   if (isStaged && !detail) throw new PackageClaimConflictError();
   return detail;
+}
+
+export type NpmPackageClaimAvailability = "owned" | "claimable" | "own_history" | "unavailable";
+
+/**
+ * Read-only mirror of the admission rules in `insertNpmPackageClaim`. It lets
+ * callers skip credentialed work and explain a refusal; the atomic batch in
+ * `createScanJob` stays authoritative. `own_history` means the organization's
+ * own pre-claim staged review of this exact registry/name awaits an audited
+ * owner decision; it never reports what another organization holds.
+ */
+export async function readNpmPackageClaimAvailability(
+  db: AppDb,
+  input: { registryUrl: string; packageName: string; organizationId: string },
+): Promise<NpmPackageClaimAvailability> {
+  const { registryUrl, packageName, organizationId } = input;
+  const stagedHistory = sql`${scans.source} in ('manual', 'auto_discovery')
+    and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${packageName}`;
+  const [row] = await db.all<{
+    owned: number;
+    claimed: number;
+    history: number;
+    ownHistory: number;
+  }>(sql`select
+    ${npmPackageClaimMatches(registryUrl, packageName, organizationId)} as owned,
+    exists(select 1 from ${npmPackageClaims}
+      where ${npmPackageClaims.registryUrl} in (${registryUrl}, '*')
+        and ${npmPackageClaims.ecosystem} = 'npm'
+        and ${npmPackageClaims.packageName} = ${packageName}) as claimed,
+    exists(select 1 from ${scans} where ${stagedHistory}
+      and (rtrim(${scans.registryUrl}, '/') = ${registryUrl}
+        or nullif(rtrim(${scans.registryUrl}, '/'), '') is null)) as history,
+    exists(select 1 from ${scans} where ${stagedHistory}
+      and ${scans.organizationId} = ${organizationId}
+      and rtrim(${scans.registryUrl}, '/') = ${registryUrl}) as ownHistory`);
+  if (row?.owned) return "owned";
+  if (row?.claimed) return "unavailable";
+  if (row?.history) return row.ownHistory ? "own_history" : "unavailable";
+  return "claimable";
 }
 
 export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {

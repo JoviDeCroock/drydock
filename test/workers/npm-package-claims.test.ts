@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { buildTestApp } from "./helpers/app";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
@@ -350,7 +351,9 @@ describe("npm package claim admission", () => {
         }),
       );
       const result = await request(a, "/api/v1/scans", input.stageId);
-      expect(result.response.status).toBe(503);
+      // A complete stage record with an unreviewable name is permanent; the
+      // other cases may resolve on retry.
+      expect(result.response.status).toBe(identity === "invalid" ? 422 : 503);
       expect(result.queue.send).not.toHaveBeenCalled();
       expect(
         await db
@@ -360,4 +363,142 @@ describe("npm package claim admission", () => {
       ).toHaveLength(0);
     },
   );
+});
+
+function stubStage(stage: { id: string; packageName: string }) {
+  const accessChecks = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith("/tarball")) {
+        accessChecks();
+        return new Response("", { status: 206 });
+      }
+      const record = { ...stage, version: "1.0.0", access: "public" };
+      return Response.json(
+        String(url).includes("?perPage") ? { items: [record], total: 1 } : record,
+      );
+    }),
+  );
+  return accessChecks;
+}
+
+async function seedHistoricalScan(org: Owner, packageName: string, registryUrl: string | null) {
+  await db.insert(schema.scans).values({
+    id: crypto.randomUUID(),
+    stageId: `stage-${crypto.randomUUID()}`,
+    organizationId: org.organizationId,
+    ownerUserId: org.userId,
+    packageName,
+    registryUrl,
+    registryPackageName: registryUrl ? packageName : null,
+    source: "manual",
+    status: "complete",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+describe("npm package claim edge cases", () => {
+  test("a legacy mixed-case name npm reports is admitted and claimed case-sensitively", async () => {
+    const [a, b] = await Promise.all([owner(), owner()]);
+    await connection(a);
+    const input = scanInput(a, `JSONStream-${crypto.randomUUID()}`);
+    stubStage({ id: input.stageId, packageName: input.packageName });
+    const manual = await request(a, "/api/v1/scans", input.stageId);
+    expect(manual.response.status).toBe(202);
+    expect(manual.queue.send).toHaveBeenCalledOnce();
+    const [claim] = await db
+      .select()
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, input.packageName));
+    expect(claim).toMatchObject({ registryUrl: REGISTRY, organizationId: a.organizationId });
+    // npm treats the lowercase spelling as a different package.
+    expect(await createScanJob(db, scanInput(b, input.packageName.toLowerCase()))).not.toBeNull();
+  });
+
+  test("manual conflict on the caller's own pre-claim history says it awaits support", async () => {
+    const [a, b] = await Promise.all([owner(), owner()]);
+    await Promise.all([connection(a), connection(b)]);
+    const input = scanInput(a, `own-history-${crypto.randomUUID()}`);
+    await seedHistoricalScan(a, input.packageName, `${REGISTRY}/`);
+    stubStage({ id: input.stageId, packageName: input.packageName });
+    const own = await request(a, "/api/v1/scans", input.stageId);
+    expect(own.response.status).toBe(409);
+    expect(((await own.response.json()) as { error: string }).error).toMatch(
+      /earlier reviews of this package/,
+    );
+    expect(own.queue.send).not.toHaveBeenCalled();
+    const other = await request(b, "/api/v1/scans", input.stageId);
+    expect(other.response.status).toBe(409);
+    expect(((await other.response.json()) as { error: string }).error).toBe(
+      new PackageClaimConflictError().message,
+    );
+  });
+
+  test.each(["other_claim", "own_history", "legacy_reservation"] as const)(
+    "discovery skips a %s stage before the credentialed access check and reports it",
+    async (blocker) => {
+      const [a, b] = await Promise.all([owner(), owner()]);
+      await connection(b);
+      const name = `blocked-${crypto.randomUUID()}`;
+      if (blocker === "other_claim") await createScanJob(db, scanInput(a, name));
+      else if (blocker === "own_history") await seedHistoricalScan(b, name, REGISTRY);
+      else await seedHistoricalScan(a, name, null);
+      const stageId = `stage-${crypto.randomUUID()}`;
+      const accessChecks = stubStage({ id: stageId, packageName: name });
+      const log = vi.spyOn(console, "log");
+      const discovery = await request(b, "/api/v1/staged-publishes/scan");
+      expect(await discovery.response.json()).toMatchObject({
+        found: 1,
+        created: 0,
+        skipped: 1,
+        claimBlocked: 1,
+      });
+      expect(accessChecks).not.toHaveBeenCalled();
+      expect(discovery.queue.send).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(
+        "staged_publishes.claim_blocked",
+        expect.objectContaining({ organizationId: b.organizationId, count: 1 }),
+      );
+      log.mockRestore();
+    },
+  );
+
+  test("supersession matches a same-owner legacy row stored with a trailing slash", async () => {
+    const a = await owner();
+    const first = scanInput(a, `slash-${crypto.randomUUID()}`);
+    await createScanJob(db, first);
+    await db
+      .update(schema.scans)
+      .set({ registryUrl: `${REGISTRY}/` })
+      .where(eq(schema.scans.id, first.id));
+    await createScanJob(db, scanInput(a, first.packageName));
+    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, first.id));
+    expect(row.registryStatusSupersededAt).toBeInstanceOf(Date);
+  });
+
+  test("persisting a scan whose job row vanished creates no row that reserves its name", async () => {
+    const a = await owner();
+    const id = crypto.randomUUID();
+    const packageName = `vanished-${crypto.randomUUID()}`;
+    const result = await persistScanWithArtifacts(db, {
+      id,
+      stageId: `stage-${crypto.randomUUID()}`,
+      organizationId: a.organizationId,
+      ownerUserId: a.userId,
+      packageJson: { name: packageName, version: "1.0.0" },
+      risk: "low",
+      status: "complete",
+      summary: {},
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+    });
+    expect(result).toMatchObject({ persisted: false, reason: "missing" });
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.id, id))).toHaveLength(0);
+    const b = await owner();
+    expect(await createScanJob(db, scanInput(b, packageName))).not.toBeNull();
+  });
 });
