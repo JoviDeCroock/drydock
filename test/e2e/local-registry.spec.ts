@@ -23,6 +23,7 @@ interface RegistryScenario {
     previousVersion?: string | null;
     ruleIds?: string[];
     baseline?: Record<string, unknown>;
+    admissionStatus?: number;
     errorCode?: string;
     errorIncludes?: string;
   };
@@ -93,6 +94,12 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
       timeout: 60_000,
     });
+    await page.getByRole("button", { name: "Choose organization", exact: true }).click();
+    await page
+      .getByLabel("Managing organization")
+      .selectOption({ label: "Keep in personal workspace" });
+    await page.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Move to organization" })).toBeVisible();
     await expect(page.getByText("release risk high").first()).toBeVisible();
     // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
     await expect(
@@ -280,14 +287,37 @@ test("a shared review is readable as an anonymous public report", async ({ brows
 
 for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   test(`scenario: ${scenario.name}`, async ({ browser, baseURL }) => {
-    const { context, page } = await openAuthenticatedPage(browser, baseURL);
+    // Admission-only probes use their own organization's request budget.
+    const context = scenario.expected.admissionStatus
+      ? await browser.newContext({ baseURL })
+      : (await openAuthenticatedPage(browser, baseURL)).context;
+    const page = context.pages()[0] ?? (await context.newPage());
     try {
+      if (scenario.expected.admissionStatus) await registerAndConnect(page);
       await page.goto("/dashboard");
       await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
         timeout: 30_000,
       });
 
       const created = await createScan(page, scenario.stageId);
+      if (scenario.expected.admissionStatus) {
+        expect(created.status, scenario.name).toBe(scenario.expected.admissionStatus);
+        expect((created.body as { error?: string })?.error).toContain(
+          scenario.expected.errorIncludes,
+        );
+        expect(created.body).not.toHaveProperty("scan");
+        const rows = await evaluateOnStablePage(
+          page,
+          async () => fetch("/api/v1/scans").then((response) => response.json()),
+          undefined,
+        );
+        expect(
+          (rows as { scans: { stageId: string }[] }).scans.some(
+            (scan: { stageId: string }) => scan.stageId === scenario.stageId,
+          ),
+        ).toBe(false);
+        return;
+      }
       expect(created.status, scenario.name).toBe(202);
       const scanId = created.body?.scan?.id;
       expect(scanId, `${scenario.name}: scan id present`).toBeTruthy();
@@ -349,6 +379,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(monitor.getByLabel("Public npm package")).toBeEnabled();
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-publication");
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await keepPersonalWatch(page);
     await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toBeVisible();
     // Materialize the fixture release after enrollment and before the check;
     // its stable registry timestamp must not appear to be in the future.
@@ -446,16 +477,16 @@ test("a package link names its organization, whatever this browser had active", 
   browser,
   baseURL,
 }) => {
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
-    await registerAndConnect(page);
+    // Reuse the fixture's claiming organization and completed review. This
+    // browser context owns its active-org selection, so org B cannot affect
+    // later tests or acquire the package from the existing owner.
+    expect(reviewedScanId).not.toBeNull();
     await page.goto("/dashboard");
-    const created = await createScan(page, uiStageId);
-    expect(created.status).toBe(202);
-    await pollScanUntilTerminal(page, String(created.body?.scan?.id));
+    await pollScanUntilTerminal(page, reviewedScanId!);
     // Org A holds the review; org B is created afterwards and made active.
     const orgs = await evaluateOnStablePage(
       page,
@@ -577,16 +608,14 @@ test("an observed release opens what was published: its public diff and its revi
   }
 });
 
-test("publication monitor automatically watches public staged discoveries and respects stop watching", async ({
+test("personal package confirmation enables monitoring and respects stop watching", async ({
   browser,
   baseURL,
 }) => {
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
-    await registerAndConnect(page);
     await page.goto("/dashboard");
     const monitor = page
       .locator("section")
@@ -594,12 +623,11 @@ test("publication monitor automatically watches public staged discoveries and re
     const reviews = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) });
-    await expect(monitor.getByText(/No packages watched yet/)).toBeVisible();
     await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
     const nativeRow = monitor
       .locator("li")
       .filter({ has: page.getByText("@drydock/e2e-native", { exact: true }) });
-    await expect(nativeRow.getByText(/from a staged review/)).toBeVisible({ timeout: 60_000 });
+    await expect(nativeRow.getByText(/added by hand/)).toBeVisible({ timeout: 60_000 });
     await nativeRow.getByRole("button", { name: "More actions for @drydock/e2e-native" }).click();
     await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
     await page
@@ -615,10 +643,11 @@ test("publication monitor automatically watches public staged discoveries and re
     await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
     expect((await nextDiscovery).ok()).toBe(true);
     await page.reload();
-    await expect(monitor.getByText(/from a staged review/).first()).toBeVisible();
+    await expect(monitor.getByLabel("Public npm package")).toBeVisible();
     await expect(nativeRow).toHaveCount(0);
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await keepPersonalWatch(page);
     await expect(nativeRow.getByText(/added by hand/)).toBeVisible();
     await monitor.scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -626,6 +655,53 @@ test("publication monitor automatically watches public staged discoveries and re
       fullPage: true,
     });
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a second organization cannot claim or watch an already managed staged package", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  try {
+    await registerAndConnect(page);
+    const attempted = await createScan(page, uiStageId);
+    expect(attempted.status).toBe(409);
+    expect(attempted.body).not.toHaveProperty("scan");
+    const state = await page.evaluate(async () => {
+      const discovery = await fetch("/api/v1/staged-publishes/scan", { method: "POST" });
+      const scans = await fetch("/api/v1/scans").then((response) => response.json());
+      return { discoveryStatus: discovery.status, scans };
+    });
+    expect(state.discoveryStatus).toBe(202);
+    expect(
+      (state.scans as { scans: { stageId: string }[] }).scans.some(
+        (scan: { stageId: string }) => scan.stageId === uiStageId,
+      ),
+    ).toBe(false);
+    await page.reload();
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
+    const conflict = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/v1/publication-watches") &&
+        response.request().method() === "POST",
+    );
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await keepPersonalWatch(page);
+    expect((await conflict).status()).toBe(409);
+    await expect(
+      page.getByRole("dialog").getByText(/another organization|managed elsewhere/i),
+    ).toBeVisible();
+    await page.screenshot({
+      path: path.join(artifactsDir, "package-claim-conflict.png"),
+      fullPage: true,
+    });
   } finally {
     await context.close();
   }
@@ -649,7 +725,10 @@ test("publication monitor explains deferred enrollment and offers gate packages 
   };
   await page.route("**/api/v1/publication-watches", async (route) => {
     if (route.request().method() === "POST") {
-      expect(route.request().postDataJSON()).toEqual({ packageName: watch.packageName });
+      expect(route.request().postDataJSON()).toEqual({
+        packageName: watch.packageName,
+        confirmPersonalOrganization: true,
+      });
       enrolled = true;
       await route.fulfill({ json: { watch } });
       return;
@@ -674,6 +753,7 @@ test("publication monitor explains deferred enrollment and offers gate packages 
     ).toBeVisible();
     await expect(monitor.getByText(/cannot tell whether they are\s+public on npm/)).toBeVisible();
     await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
+    await keepPersonalWatch(page);
     await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
     await expect(monitor.getByText(/added by hand/)).toBeVisible();
     await expect(monitor.getByText(/Automatic enrollment is deferred/)).toHaveCount(0);
@@ -714,6 +794,85 @@ test("registry journal limits credential forwarding", async () => {
     expect(entry.path).toMatch(
       /^\/(?:-\/(?:whoami|stage(?:\?|\/)|package\/[^/]+\/version\/[^/]+\/status)|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/))/i,
     );
+  }
+});
+
+test("personal package management moves to a team without moving private reviews or npm credentials", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    expect(reviewedScanId).toBeTruthy();
+    await page.goto(`/dashboard/scans/${reviewedScanId}`);
+    const destination = await page.evaluate(async () => {
+      const response = await fetch("/api/v1/organizations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Package release team" }),
+      });
+      if (!response.ok) throw new Error(`Organization creation failed: ${response.status}`);
+      return ((await response.json()) as { organization: { id: string; name: string } })
+        .organization;
+    });
+    await page.reload();
+    await page.getByRole("button", { name: "Move to organization", exact: true }).click();
+    await expect(page.getByLabel("Managing organization")).toHaveValue(destination.id);
+    await page.screenshot({
+      path: path.join(artifactsDir, "personal-package-organization-choice.png"),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Move to Package release team", exact: true }).click();
+    await expect(
+      page.getByText(/Your existing reviews remain private in this workspace/),
+    ).toBeVisible();
+    const manage = page.getByRole("link", { name: "Manage in Package release team" });
+    await expect(manage).toHaveAttribute(
+      "href",
+      `/dashboard/packages/@drydock/e2e-native?org=${destination.id}`,
+    );
+    const after = await page.evaluate(
+      async ({ scanId, targetId }) => {
+        const source = await fetch(`/api/v1/scans/${scanId}`).then((response) => response.json());
+        const targetHeaders = { "x-organization-id": targetId };
+        const connection = await fetch("/api/v1/npm-connection", { headers: targetHeaders }).then(
+          (response) => response.json(),
+        );
+        const scans = await fetch("/api/v1/scans", { headers: targetHeaders }).then((response) =>
+          response.json(),
+        );
+        const sourceConnection = await fetch("/api/v1/npm-connection").then((response) =>
+          response.json(),
+        );
+        return {
+          source: source as { scan: { id: string; npmPackageClaimOwned: boolean } },
+          connection: connection as { connection: unknown },
+          scans: scans as { scans: unknown[] },
+          sourceConnection: sourceConnection as { connection: unknown },
+        };
+      },
+      { scanId: reviewedScanId!, targetId: destination.id },
+    );
+    expect(after.source.scan.id).toBe(reviewedScanId);
+    expect(after.source.scan.npmPackageClaimOwned).toBe(false);
+    expect(after.connection.connection).toBeNull();
+    expect(after.scans.scans).toEqual([]);
+    expect(after.sourceConnection.connection).not.toBeNull();
+    await page.screenshot({
+      path: path.join(artifactsDir, "personal-package-transferred.png"),
+      fullPage: true,
+    });
+    await manage.click();
+    await expect(
+      page.getByRole("heading", { name: "@drydock/e2e-native", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/No npm releases.*have been reviewed/)).toBeVisible();
+    await expect(page.getByText("watching", { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
   }
 });
 
@@ -762,6 +921,7 @@ async function registerAndConnect(page: Page) {
       label: "Fake npm staging registry",
       registryUrl,
       token: "npm_e2e_token_0123456789",
+      confirmPersonalOrganization: true,
     },
   );
 }
@@ -915,4 +1075,12 @@ async function readJournal(): Promise<
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+async function keepPersonalWatch(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "Choose where to watch this package" });
+  await dialog
+    .getByLabel("Managing organization")
+    .selectOption({ label: "Keep in personal workspace" });
+  await dialog.getByRole("button", { name: "Keep here and watch package" }).click();
 }

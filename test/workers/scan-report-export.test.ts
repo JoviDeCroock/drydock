@@ -1,8 +1,8 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { createOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
 import { scansRoutes } from "../../server/routes/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { buildTestApp, type TestApp } from "./helpers/app";
@@ -133,7 +133,7 @@ describe("scan report JSON export", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -345,7 +345,7 @@ describe("scan report JSON export", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -393,7 +393,7 @@ describe("scan report JSON export", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -440,7 +440,7 @@ describe("scan report JSON export", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -520,7 +520,7 @@ describe("scan report JSON export", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,

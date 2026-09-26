@@ -1,10 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
 import { createOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
@@ -197,7 +197,7 @@ describe("public report sharing", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,

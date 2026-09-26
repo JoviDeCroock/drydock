@@ -102,6 +102,13 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   readonly codePatternSet?: CodePatternSet;
   parseInput(raw: unknown): TInput;
 
+  /** Validate registry coordinates before a staged admission can reserve a package. */
+  stagedClaimIdentity?(input: {
+    registryUrl?: string | null;
+    packageName?: string | null;
+    version?: string | null;
+  }): { registryUrl: string; packageName: string; version: string } | null;
+
   createBroker(ctx: AdapterContext, ref: AdapterConnectionRef): TBroker;
 
   acquireStaged(

@@ -1,3 +1,4 @@
+import { personalOrganizationId } from "./lib/auth/ownership";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
@@ -74,6 +75,9 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
             allowInsecureLocalhost,
             stageStartCoordinator,
             awaitReleaseOutcomes: true,
+            admitNewScans:
+              connection.organizationId !== personalOrganizationId(notificationOwnerUserId) ||
+              connection.personalOrganizationConfirmedAt !== null,
           },
           usable,
         );

@@ -1,8 +1,9 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { createScanJob, markScanFailed } from "../../server/db/scans";
+import { markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp } from "./helpers/app";
@@ -13,7 +14,7 @@ const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 async function seedScan(owner: SeededUser, status: "pending" | "running" | "complete" | "failed") {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
-  await createScanJob(db, {
+  await seedLegacyScanJob(db, {
     id: scanId,
     stageId: `stage-${scanId.slice(-12)}`,
     organizationId: owner.organizationId,

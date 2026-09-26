@@ -12,6 +12,7 @@ export interface NpmConnectionInput {
   tokenFingerprint: string;
   tokenLast4?: string | null;
   createdByUserId: string;
+  confirmPersonalOrganization?: boolean;
 }
 
 export interface NpmConnectionValidationInput {
@@ -19,6 +20,7 @@ export interface NpmConnectionValidationInput {
   validationStatus: NpmConnectionValidationStatus;
   capabilities?: unknown;
   validatedAt?: Date | null;
+  confirmPersonalOrganization?: boolean;
 }
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
@@ -36,6 +38,7 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     capabilitiesJson: null,
     validatedAt: null,
     lastUsedAt: null,
+    personalOrganizationConfirmedAt: input.confirmPersonalOrganization ? now : null,
     createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
@@ -56,6 +59,7 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
         validationStatus: values.validationStatus,
         capabilitiesJson: values.capabilitiesJson,
         validatedAt: values.validatedAt,
+        ...(input.confirmPersonalOrganization ? { personalOrganizationConfirmedAt: now } : {}),
         updatedAt: now,
       },
     });
@@ -89,6 +93,7 @@ export async function updateNpmConnectionValidation(
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
+      ...(input.confirmPersonalOrganization ? { personalOrganizationConfirmedAt: new Date() } : {}),
       updatedAt: new Date(),
     })
     .where(eq(npmConnections.organizationId, input.organizationId));

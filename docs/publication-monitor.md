@@ -14,8 +14,8 @@ Private packages and custom registries are not supported in production.
 
 Drydock automatically watches public npm packages from the organization's completed
 staged reviews whose captured registry status confirms publication. It also enrolls
-public packages as stages are discovered or manually submitted, before review runs.
-Only stages from public npm qualify in production; private or unknown visibility,
+public packages after verified staged admission claims them for the organization, before review runs.
+Automatic enrollment also requires a package claim belonging to this organization and confirmed management when it is a personal workspace. Historical packages awaiting audit do not auto-enroll. Only stages from public npm qualify in production; private or unknown visibility,
 custom registries, and published-pair reviews do not enroll packages. Completed npm
 workflow gates supply suggestions that require **Watch package**, because a gate
 alone does not establish public visibility.
@@ -28,7 +28,7 @@ where each watch came from and how many eligible packages await capacity at the
 20-watch limit. Deferred packages enroll at the next of those after a slot frees.
 
 You can also enter a public npm package name and choose **Watch package** without
-an npm token or existing scan. Duplicate enrollment preserves the original start
+an npm token or existing scan, provided the package is not claimed by another organization. A subscription never establishes ownership. Personal enrollment requires an explicit workspace choice; a provisional personal claim must be confirmed or moved before polling starts. If another organization subsequently claims the package, the existing watch becomes inactive and retains its observations; enrollment and manual checks return a conflict, and cron skips it. Duplicate enrollment preserves the original start
 time. Removing a watch deletes its observations and persists an organization-scoped
 opt-out, so later discovery or history reconciliation cannot silently restore it.
 Because stopping hides unacknowledged alerts and opts the package out, only owners

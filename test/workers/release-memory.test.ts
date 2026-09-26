@@ -1,9 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, recordScanDecision } from "../../server/db/scans";
+import { recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
   computeReleaseConsistency,
@@ -182,7 +183,7 @@ describe("release memory (prior-release consistency)", () => {
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
     const ruleFindings = [spawnFinding("test/spawn.js")];
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -221,7 +222,7 @@ describe("release memory (prior-release consistency)", () => {
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
     const ruleFindings = [spawnFinding("test/spawn.js")];
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,

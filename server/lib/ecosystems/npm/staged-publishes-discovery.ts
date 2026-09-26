@@ -15,6 +15,8 @@ import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import { enrollStagedReleases } from "./publication-auto-enrollment";
+import { isValidNpmPackageName } from "./registry";
+import { PackageClaimConflictError } from "../../../db/package-claims";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -35,6 +37,8 @@ export interface DiscoverStagedPublishesInput {
   stageStartCoordinator?: StageStartCoordinator;
   /** Cron awaits this work so organization concurrency also bounds outcome lookups. */
   awaitReleaseOutcomes?: boolean;
+  /** Cron may reconcile existing releases while personal scan management awaits confirmation. */
+  admitNewScans?: boolean;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -229,6 +233,7 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
     stageStartCoordinator = createStageStartCoordinator(),
     awaitReleaseOutcomes = false,
+    admitNewScans = true,
   } = input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
@@ -236,23 +241,25 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
-  // Runs even when npm lists no stages: this per-tick reconcile is how a
-  // connected organization enrolls newly published history, gate suggestions,
-  // and deferred packages once a slot frees.
-  await enrollStagedReleases(db, env, {
-    organizationId,
-    registryUrl: connection.registryUrl,
-    releases: stagedItems,
-  });
+
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-  const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
+  const scanCandidates = admitNewScans
+    ? filterNewStagedPublishesByStageId(stagedItems, existingStageIds)
+    : [];
   const scanStarts = await mapWithConcurrency(
     scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,
     (item) =>
       stageStartCoordinator.run(item.id, async () => {
         const stageId = item.id;
+        if (
+          !item.packageName ||
+          !isValidNpmPackageName(item.packageName) ||
+          !item.version?.trim()
+        ) {
+          return null;
+        }
         const access = await checkStagedPublishAccess(
           connection.registryUrl,
           connection.token,
@@ -261,7 +268,14 @@ export async function discoverAndQueueStagedPublishes(
             allowInsecureLocalhost,
           },
         );
-        if (!access.allowed) return null;
+        if (
+          !access.allowed ||
+          access.status === null ||
+          access.status < 200 ||
+          access.status >= 300
+        ) {
+          return null;
+        }
         const scanId = crypto.randomUUID();
         const detail = await createScanJob(db, {
           id: scanId,
@@ -274,6 +288,10 @@ export async function discoverAndQueueStagedPublishes(
           stagedCreatedAt: item.createdAt,
           stagedDeclaredSha1: item.shasum,
           registryUrl: connection.registryUrl,
+          stageAccessStatus: access.status,
+        }).catch((err: unknown) => {
+          if (err instanceof PackageClaimConflictError) return null;
+          throw err;
         });
         if (!detail) return null;
         recordProductEvent(env, {
@@ -314,6 +332,13 @@ export async function discoverAndQueueStagedPublishes(
       }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+  // Reconcile even when no stages or new scans were found. Newly admitted
+  // claims are visible here; pending personal claims remain ineligible.
+  await enrollStagedReleases(db, env, {
+    organizationId,
+    registryUrl: connection.registryUrl,
+    releases: stagedItems,
+  });
 
   // Resolving npm's own state for already-reviewed releases is advisory
   // annotation. Start it only after newly discovered scan rows exist, so a

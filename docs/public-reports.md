@@ -255,46 +255,25 @@ npm says the package is public, npm published this version, the organization
 approved it. That is the part an attacker must
 not be able to mint, so it is derived and immutable.
 
-_Consent_ is a different thing, and it belongs to the package's publishers. A
-**registry-verified publisher** of a package is an organization with a
-completed staged review of a stage on the public npm registry that its token
-could read, whose manifest agrees with npm's name for it — the evidence
-`scanPublicPackageName` accepts as a public identity. Any such publisher may
-switch the badge off, and **one publisher's switch silences it for everyone**:
-both routes, every organization's reviews, listed ones included, and the
-staleness probe never runs. Letting another organization's review answer
-instead would make "off" mean nothing. A switched-off badge answers exactly as a
-package nobody reviewed, so it adds no enumeration signal to the anonymous
-route.
-
-Nobody else can switch it: an organization that only watches the package, ran
-a published-pair review of it, has a workflow gate whose manifest claims the
-name, or staged it from another registry has no credential-backed tie to the
-name. `PUT` refuses such an organization (`403`, `code:
-"not_a_verified_publisher"`), and a withdrawal of one of its own reviews is
-what unlisting is for. The rule holds at read time too: an opt-out row counts
-only while its organization is still a registry-verified publisher
-(`isPackageBadgeSwitchedOff`), so a row that outlived its evidence — or was
-written some other way — cannot hold a badge off. Only npm has
-registry-verified reviews, so no PyPI or VS Code badge can be switched off;
-unlisting withdraws those.
+_Consent_ belongs to the canonical package owner. A provisional personal claim cannot answer or control a badge until its owner explicitly chooses where to manage it. The organization must hold
+its public-npm package claim and have a completed staged review whose manifest
+agrees with npm's captured package name. Only that organization can turn the
+badge off; an opt-out from another organization's historical review cannot
+suppress the canonical owner's badge. A switched-off badge answers exactly as
+a package nobody reviewed, with no fallback to another organization's scans.
 
 The package release page (`/dashboard/packages/:name`) carries a **Public
-badge** section over `GET /api/v1/packages/:name/badge[?ecosystem=]`, which
-any member may read: whether the organization is a verified publisher, whether
-its own switch is off, whether another publisher's is, whether an approved
-public release or a listed review of its own would answer, and what the public
-endpoint returns right now, with the README snippet to copy. Another
-publisher's switch is disclosed only to an organization that is itself a
-verified publisher of the package, and never names the other organization:
-telling anyone else would reveal another organization's review and choice to
-an account with no tie to the package. `PUT` on the same path with
-`{ "enabled": false | true }` sets the organization's own switch — owner/admin
-like sharing, audited as `organization.package_badge_disabled` / `_enabled`,
-and it purges the cached badge for `latest` and every dist-tag any review of the
-package carries. Turning it off inserts a row into `package_badge_opt_outs` for
-(badge key, organization); turning it back on deletes only that row, needs no
-evidence, and never overrides another publisher's switch.
+badge** section over `GET /api/v1/packages/:name/badge[?ecosystem=]`. Any member
+may read the organization's own state and the public endpoint's current answer.
+Only an eligible canonical owner receives the controls and snippet describing
+its approvals. `PUT` with `{ "enabled": false | true }` requires owner/admin,
+audits `organization.package_badge_disabled` / `_enabled`, and purges the badge
+cache for `latest` and every recorded dist-tag. Disabling without qualifying
+ownership and review evidence returns `403` (`not_a_verified_publisher`).
+Enabling only removes that organization's own opt-out row; it cannot override
+the canonical owner's choice. The switch is independent of watch enrollment.
+PyPI and VS Code remain outside this npm claim model; unlisting withdraws their
+manifest-claimed badges.
 
 The row is keyed by the badge's own key (`publicPackageLookupKey`) and the
 switch accepts any name the badge route does, so the two cannot normalize a
@@ -310,13 +289,9 @@ me about publications" must never grey out a README. The switch touches only
 the opt-out.
 
 The threat-feed entry is a separate surface and is unaffected by the switch;
-unlisting is still how that is withdrawn. One inference follows from "off for
-everyone": an organization that lists a review of a package and sees the badge
-keep saying `not reviewed` can infer that some publisher of the package
-switched it off. That is the cost of a switch that actually holds, and it names
-nobody.
+unlisting is still how that is withdrawn.
 
-Five limits are known and deliberate:
+Three limits are known and deliberate:
 
 - **A badge can outlive the organization's use of Drydock.** Staleness is
   detected from releases _this organization scanned_ and from what _its_
@@ -332,19 +307,6 @@ Five limits are known and deliberate:
   that changes a badge (decision, share, list, unlist, revoke) does purge. The
   old design had a user action behind every badge change; default-on removed
   that, and nothing replaced it.
-- **A badge is not organization-scoped.** Two organizations can both have
-  tokens npm lets read stages under the same name, and both answer. Which
-  verdict the badge shows is decided by release order (the registry's version,
-  `compareBadgeCandidates`), then by which review completed most recently —
-  not by which organization is "the" maintainer. That is the right outcome for
-  co-maintainers and an invisible handover for anyone else, with no dashboard
-  signal that a badge changed hands. Either publisher can switch it off for
-  both (see above).
-- **`isDefaultBadgePublic` cites an advisory check.** "npm let the
-  organization's token read this stage" rests on `checkStagedPublishAccess`,
-  which fails _open_ on a network error or any non-401/403/404 response. The
-  authorization that actually holds is the later credentialed tarball fetch.
-  Tightening that check is worth doing before this surface grows.
 - **Version comparison degrades on non-semver versions.** `compareSemver` falls
   back to `localeCompare` when either side fails to parse, so a review whose
   only version is an unparseable manifest string can order arbitrarily against
@@ -393,16 +355,18 @@ Feed entries carry the same `tag` (null when the release was never staged under
 one — never read null as `latest`), so a partner walking feed → badge filters on
 the value the badge itself uses.
 
-**Verified and unverified badges are visibly different.** Among listed
-candidates the newest **registry-verified** review wins (see package identity
-below), so on npm a workflow-gate scan claiming someone else's name cannot
-displace the real maintainer's staged review. That preference is only a
-tiebreak, and it does not generalize: only npm has a staged adapter, so every
-PyPI and VS Code review is a workflow gate and is _always_ manifest-claimed —
-there is never a registry-verified row to prefer. A manifest-claimed pick
-therefore renders as `drydock (unverified)` and never takes the clean green
-low-risk color, because anyone can build an artifact whose manifest claims any
-name, and a badge is read by people who will not open the report behind it.
+**npm badges have one canonical organization.** Both listed and default-on
+candidates must match the package claim with confirmed personal management or durable shared ownership, the public npm registry, and
+the immutable registry package name, with the reviewed manifest agreeing. A manifest name, custom registry, or
+workflow-gate scan cannot occupy that namespace. The owner's disabled badge
+never falls back to another organization's history. Packages awaiting the
+historical ownership audit answer `not reviewed`; migration must be audited
+before deployment (see [`package-claims.md`](./package-claims.md)).
+
+**Verified and unverified badges remain visibly different across ecosystems.**
+PyPI and VS Code gate reviews remain manifest-claimed and render as
+`drydock (unverified)`, without the clean green low-risk color. Those ecosystems
+are outside the npm claim model.
 
 **A tiebreak is not enough for a published-pair review, so it is not a badge
 candidate at all.** Ranking a `public-review` row last would still let it

@@ -1,10 +1,11 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
 import { annotateFindingsWithDiffStatus } from "../lib/review";
 import {
   loadScanArtifactFile,
   loadScanArtifactMetadata,
   loadScanArtifacts,
 } from "../lib/scan/artifacts";
+import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-claims";
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
@@ -21,7 +22,19 @@ export async function getScan(
 ) {
   const [scanRows, events] = await Promise.all([
     db
-      .select()
+      .select({
+        ...getTableColumns(scans),
+        npmPackageManagementAllowed: npmPackageManagementAllowed(
+          sql`rtrim(scans.registry_url, '/')`,
+          sql`scans.registry_package_name`,
+          sql`scans.organization_id`,
+        ).mapWith(Boolean),
+        npmPackageClaimOwned: npmPackageClaimMatches(
+          sql`rtrim(scans.registry_url, '/')`,
+          sql`scans.registry_package_name`,
+          sql`scans.organization_id`,
+        ).mapWith(Boolean),
+      })
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),

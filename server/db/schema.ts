@@ -15,6 +15,7 @@ import {
   integer,
   index,
   uniqueIndex,
+  primaryKey,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
@@ -51,6 +52,29 @@ export const organizations = sqliteTable(
   },
   (table) => ({
     ownerIdx: index("organizations_owner_idx").on(table.ownerUserId),
+  }),
+);
+
+export const npmPackageClaims = sqliteTable(
+  "npm_package_claims",
+  {
+    // '*' reserves a deleted legacy identity whose registry was never captured;
+    // it is never an owning claim and cannot authorize a scan or public badge.
+    registryUrl: text("registry_url").notNull(),
+    ecosystem: text("ecosystem").$type<"npm">().notNull(),
+    packageName: text("package_name").notNull(),
+    // Organization deletion retains the reservation; reconnecting a token or
+    // deleting a failed scan must never reopen a package for another claimant.
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
+    firstStageId: text("first_stage_id").notNull(),
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }).notNull(),
+    managementConfirmedAt: integer("management_confirmed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => ({
+    packagePk: primaryKey({ columns: [table.registryUrl, table.ecosystem, table.packageName] }),
+    orgIdx: index("npm_package_claims_org_idx").on(table.organizationId),
   }),
 );
 
@@ -417,6 +441,9 @@ export const npmConnections = sqliteTable(
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    personalOrganizationConfirmedAt: integer("personal_organization_confirmed_at", {
+      mode: "timestamp_ms",
+    }),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),

@@ -15,7 +15,8 @@
     "directory": "staged"
   },
   "failure": {
-    "stagedTarballStatus": 503
+    "stagedTarballStatus": 503,
+    "fullDownloadOnly": true
   },
   "expected": {
     "errorCode": "sandbox_download_transient",

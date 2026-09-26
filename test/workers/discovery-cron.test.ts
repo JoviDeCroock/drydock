@@ -7,7 +7,7 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { createOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
@@ -32,6 +32,8 @@ async function seedOrg(input: {
   token: string;
   validationStatus: ValidationStatus;
   connectionCreator?: "owner" | "other";
+  confirmed?: boolean;
+  shared?: boolean;
 }): Promise<SeededOrg> {
   const db = createDb(env.DB);
   const now = new Date();
@@ -45,7 +47,9 @@ async function seedOrg(input: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = input.shared
+    ? await createOrganization(db, { ownerUserId: userId, name: "Shared release team" })
+    : await ensurePersonalOrganization(db, { userId });
   if (!organizationId) throw new Error(`no personal organization for ${userId}`);
   let connectionCreatorUserId = userId;
   let connectionCreatorEmail = email;
@@ -64,6 +68,7 @@ async function seedOrg(input: {
   const encrypted = await encryptNpmToken(env, input.token);
   await upsertNpmConnection(db, {
     organizationId,
+    confirmPersonalOrganization: input.confirmed ?? true,
     registryUrl: REGISTRY_URL,
     label: "npm registry",
     createdByUserId: connectionCreatorUserId,
@@ -130,6 +135,79 @@ describe("staged publishes discovery cron", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
+
+  test.each([false, true])(
+    "unconfirmed workspace discovery admits new scans only for shared organizations (shared=%s)",
+    async (shared) => {
+      const org = await seedOrg({
+        index: 0,
+        token: "npm_unconfirmed_fixture_00000",
+        validationStatus: "valid",
+        confirmed: false,
+        shared,
+      });
+      const db = createDb(env.DB);
+      const historicalName = `historical-${crypto.randomUUID()}`;
+      const newName = `new-${crypto.randomUUID()}`;
+      const scanId = crypto.randomUUID();
+      await db.insert(schema.scans).values({
+        id: scanId,
+        stageId: `history-${crypto.randomUUID()}`,
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        source: "manual",
+        status: "complete",
+        packageName: historicalName,
+        registryPackageName: historicalName,
+        stagedVersion: "1.0.0",
+        registryVersion: "1.0.0",
+        registryUrl: REGISTRY_URL,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const fetcher = vi.fn(async (input: Request | string | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.endsWith("/status"))
+          return Response.json({
+            packageName: historicalName,
+            version: "1.0.0",
+            status: "published",
+          });
+        if (url.endsWith("/tarball")) return new Response("", { status: 206 });
+        return Response.json({
+          items: [{ id: "stage-unconfirmed-000001", name: newName, version: "1.0.0" }],
+          total: 1,
+          perPage: 50,
+          page: 0,
+        });
+      });
+      vi.stubGlobal("fetch", fetcher);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
+      const ctx = createExecutionContext();
+      await worker.scheduled(
+        scheduledController(),
+        { ...env, SCAN_QUEUE: queue } as unknown as Cloudflare.Env,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      expect(queue.send).toHaveBeenCalledTimes(shared ? 1 : 0);
+      const [historical] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+      expect(historical.registryVersionStatus).toBe("published");
+      expect(
+        (await getNpmConnection(db, org.organizationId))?.personalOrganizationConfirmedAt,
+      ).toBeNull();
+      const created = await db
+        .select()
+        .from(schema.scans)
+        .where(eq(schema.scans.packageName, newName));
+      expect(created).toHaveLength(shared ? 1 : 0);
+      if (!shared)
+        expect(fetcher.mock.calls.some(([input]) => String(input).endsWith("/tarball"))).toBe(
+          false,
+        );
+    },
+  );
 
   test("queues the valid org, alerts the expired org, and skips the disabled org", async () => {
     // (a) live token + discovery on, (b) token that now 401s + discovery on,
@@ -373,7 +451,7 @@ describe("staged publishes discovery cron", () => {
       const url = String(input instanceof Request ? input.url : input);
       expect(url).toContain("/-/stage");
       return Response.json({
-        items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
+        items: [{ id: STAGE_ID, name: "email-demo-package", version: "1.0.0" }],
         total: 1,
         perPage: 50,
         page: 0,

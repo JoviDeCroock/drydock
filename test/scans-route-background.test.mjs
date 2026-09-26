@@ -19,6 +19,7 @@ const npmConnectionMock = vi.hoisted(() => ({
 }));
 const stagedPublishesMock = vi.hoisted(() => ({
   checkStagedPublishAccess: vi.fn(),
+  fetchStagedPublishDetails: vi.fn(),
   StagedPublishesFetchError: class StagedPublishesFetchError extends Error {},
 }));
 
@@ -47,6 +48,10 @@ vi.mock("../server/db/scans.ts", async (importOriginal) => ({
 }));
 vi.mock("../server/lib/auth/active-organization.ts", () => activeOrgMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
+vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => ({
+  registerStagedPublicationCandidates: vi.fn(async () => ({ deferred: 0, suggestions: [] })),
+  enrollStagedReleases: vi.fn(async () => ({ deferred: 0, suggestions: [] })),
+}));
 vi.mock("../server/lib/ecosystems/npm/connection.ts", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, ...npmConnectionMock };
@@ -77,6 +82,7 @@ afterEach(() => {
     scanJobMock.executeScanJob,
     npmConnectionMock.decryptNpmToken,
     stagedPublishesMock.checkStagedPublishAccess,
+    stagedPublishesMock.fetchStagedPublishDetails,
   ]) {
     fn.mockReset();
   }
@@ -97,6 +103,12 @@ describe("scans route background fallback", () => {
       allowed: true,
       status: 206,
       detail: null,
+    });
+    stagedPublishesMock.fetchStagedPublishDetails.mockResolvedValue({
+      id: "stage-route-bg-000001",
+      packageName: "route-background",
+      version: "1.0.0",
+      access: "public",
     });
     scanJobMock.executeScanJob.mockResolvedValue({ id: "scan_route" });
     const backgrounded = [];

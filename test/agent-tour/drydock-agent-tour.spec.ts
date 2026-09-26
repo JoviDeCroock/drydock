@@ -38,7 +38,7 @@ test("agent tour: local Drydock release review walkthrough", async ({
   try {
     await page.goto("/");
     await expect(
-      page.getByRole("heading", { name: "Review the package artifact before it ships." }),
+      page.getByRole("heading", { name: "Read the release before the registry does." }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Put an artifact diff in every dependency PR." }),
@@ -124,10 +124,20 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await tour.capture(page, "failed-review", "Fail-closed review state for unavailable evidence.");
 
     await page.goto("/dashboard?filter=all");
-    await expect(page.getByRole("button", { name: "Check npm" })).toBeEnabled({
+    await expect(
+      page.getByRole("button", {
+        name: "Check npm",
+        description: "Find staged npm publishes and start reviews",
+      }),
+    ).toBeEnabled({
       timeout: 30_000,
     });
-    await page.getByRole("button", { name: "Check npm" }).click();
+    await page
+      .getByRole("button", {
+        name: "Check npm",
+        description: "Find staged npm publishes and start reviews",
+      })
+      .click();
     await expect(
       page.getByText(/Started \d+ new reviews? from npm|No open staged publishes found/),
     ).toBeVisible({ timeout: 60_000 });
@@ -155,7 +165,13 @@ async function register(page: Page) {
 
 async function connectNpmThroughSettings(page: Page) {
   await page.goto("/dashboard/settings?tab=integrations");
-  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Organization settings" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page
+    .getByLabel("npm connection organization")
+    .selectOption({ label: "Keep in personal workspace" });
+  await page.getByRole("button", { name: "Continue in personal workspace" }).click();
   await page.getByLabel("Connection name").fill("Fake npm staging registry");
   await page.getByLabel("Registry").fill(registryUrl);
   await page.getByLabel("npm token").fill("npm_agent_tour_token_0123456789");

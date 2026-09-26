@@ -8,7 +8,12 @@ import {
   createPublicationWatch,
   deletePublicationWatch,
 } from "../../server/db/publication-watches";
-import { publicationWatchCandidates, scanEvents, scans } from "../../server/db/schema";
+import {
+  npmPackageClaims,
+  publicationWatchCandidates,
+  scanEvents,
+  scans,
+} from "../../server/db/schema";
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
@@ -31,7 +36,13 @@ function request(
     buildTestApp(mountPublicationWatches, owner),
     method,
     `/api/v1/publication-watches${path}`,
-    { body, activeOrganizationId: requestedOrganizationId },
+    {
+      body:
+        method === "POST" && path === "" && body && typeof body === "object"
+          ? { confirmPersonalOrganization: true, ...body }
+          : body,
+      activeOrganizationId: requestedOrganizationId,
+    },
   );
 }
 
@@ -92,6 +103,16 @@ test("rejects URL and malformed package enrollment and preserves enrollment time
 
 test("GET derives historical public publishers, preserves opt-out and permits explicit reenrollment", async () => {
   const owner = await seedOwner();
+  await createDb(env.DB).insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: "@scope/history",
+    organizationId: owner.organizationId,
+    firstStageId: "historical-stage",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+
   const now = new Date();
   await createDb(env.DB)
     .insert(scans)
@@ -281,6 +302,8 @@ describe("one package's monitoring for the package page", () => {
       const theirs = await request(outsider, "GET", path("@scope/watched"), undefined, selector);
       expect(await theirs.json()).toEqual({
         packageName: "@scope/watched",
+        ownershipConflict: false,
+        managementPending: false,
         watch: null,
         observations: [],
         alerts: [],
@@ -471,4 +494,98 @@ test("a manual check that fails after claiming the watch reports the failure, no
     expect.objectContaining({ organizationId: owner.organizationId, watchId: watch.id }),
   );
   error.mockRestore();
+});
+
+test("claim conflicts reject enrollment and checks while retaining existing observation history", async () => {
+  const owner = await seedOwner();
+  const outsider = await seedOwner();
+  const db = createDb(env.DB);
+  const watch = await createPublicationWatch(db, outsider.organizationId, "claimed-package");
+  const observationId = crypto.randomUUID();
+  const now = new Date();
+  await savePublicationObservation(
+    db,
+    {
+      id: observationId,
+      watchId: watch.id,
+      organizationId: outsider.organizationId,
+      version: "1.0.0",
+      firstSeenAt: now,
+      checkedAt: now,
+      status: "unknown",
+    },
+    "claimed-package",
+  );
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: "claimed-package",
+    organizationId: owner.organizationId,
+    firstStageId: "stage-owner",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+  expect((await request(outsider, "POST", "", { packageName: "claimed-package" })).status).toBe(
+    409,
+  );
+  expect((await request(outsider, "POST", `/${watch.id}/check`)).status).toBe(409);
+  expect(await (await request(outsider, "GET", `/${watch.id}`)).json()).toMatchObject({
+    watch: { id: watch.id, ownershipConflict: true, lastCheckedAt: null },
+    observations: [{ id: observationId, version: "1.0.0" }],
+  });
+  expect(await (await request(outsider, "GET")).json()).toMatchObject({
+    watches: [{ id: watch.id, ownershipConflict: true }],
+  });
+  expect((await request(owner, "POST", "", { packageName: "claimed-package" })).status).toBe(201);
+  expect((await request(outsider, "DELETE", `/${watch.id}`)).status).toBe(200);
+  expect(await (await request(outsider, "GET", "/packages/claimed-package")).json()).toMatchObject({
+    packageName: "claimed-package",
+    ownershipConflict: true,
+    watch: null,
+  });
+  expect(
+    await db
+      .select()
+      .from(npmPackageClaims)
+      .where(eq(npmPackageClaims.packageName, "claimed-package")),
+  ).toHaveLength(1);
+});
+
+test("wildcard reservations block watches until an exact registry claim resolves ownership", async () => {
+  const owner = await seedOwner();
+  const db = createDb(env.DB);
+  const packageName = `reserved-${crypto.randomUUID().slice(0, 8)}`;
+  const claim = {
+    ecosystem: "npm" as const,
+    packageName,
+    firstStageId: "legacy-stage",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  };
+  await db.insert(npmPackageClaims).values({ ...claim, registryUrl: "*", organizationId: null });
+  expect((await request(owner, "POST", "", { packageName })).status).toBe(409);
+  await db.insert(npmPackageClaims).values({
+    ...claim,
+    registryUrl: "https://registry.npmjs.org",
+    organizationId: owner.organizationId,
+  });
+  const response = await request(owner, "POST", "", { packageName });
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({ watch: { ownershipConflict: false } });
+});
+
+test("personal watch enrollment requires an explicit boolean confirmation", async () => {
+  const owner = await seedOwner();
+  const app = buildTestApp(mountPublicationWatches, owner);
+  for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+    const response = await call(app, "POST", "/api/v1/publication-watches", {
+      body: { packageName: "personal-watch-choice", confirmPersonalOrganization },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "package_management_required" });
+  }
+  const confirmed = await call(app, "POST", "/api/v1/publication-watches", {
+    body: { packageName: "personal-watch-choice", confirmPersonalOrganization: true },
+  });
+  expect(confirmed.status).toBe(201);
 });

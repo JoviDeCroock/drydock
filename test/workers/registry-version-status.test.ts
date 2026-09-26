@@ -1,3 +1,4 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -9,7 +10,6 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   backfillScanRegistryReleaseIdentity,
-  createScanJob,
   deleteFailedScan,
   listScans,
   markRegistryPublishReminderSent,
@@ -179,7 +179,7 @@ describe("registry version status resolution", () => {
     await markScanPubliclyShared(older.scanId, org);
     const db = createDb(env.DB);
     const scanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-recovered-123",
       organizationId: org.organizationId,
@@ -220,7 +220,7 @@ describe("registry version status resolution", () => {
     });
     const db = createDb(env.DB);
     const scanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-partial-123",
       organizationId: org.organizationId,
@@ -250,7 +250,7 @@ describe("registry version status resolution", () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
     const scanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-mismatched-123",
       organizationId: org.organizationId,
@@ -279,7 +279,7 @@ describe("registry version status resolution", () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
     const scanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-concurrent-recovery-123",
       organizationId: org.organizationId,
@@ -335,7 +335,7 @@ describe("registry version status resolution", () => {
     const createdAt = new Date("2026-08-20T10:00:00.000Z");
     const older = await seedRegistryScan(org, { scanId: "scan-z", createdAt });
     const scanId = "scan-a";
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-recovered-123",
       organizationId: org.organizationId,
@@ -362,7 +362,7 @@ describe("registry version status resolution", () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
     const olderId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: olderId,
       stageId: "stage-older-recovered-123",
       organizationId: org.organizationId,
@@ -490,7 +490,7 @@ describe("registry version status resolution", () => {
     const stageId = `stage-${scanId.slice(0, 8)}`;
     const registryPackageName = "@drydock/registry-owned";
     const registryVersion = "3.2.1";
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: org.organizationId,
@@ -624,7 +624,7 @@ describe("registry version status resolution", () => {
     const older = await seedRegistryScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
     const replacementScanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: replacementScanId,
       stageId: "stage-restaged",
       organizationId: org.organizationId,
@@ -677,7 +677,7 @@ describe("registry version status resolution", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-20T10:00:00.000Z"));
     try {
-      await createScanJob(db, {
+      await seedLegacyScanJob(db, {
         id: "scan-z",
         stageId: "stage-original",
         organizationId: org.organizationId,
@@ -686,7 +686,7 @@ describe("registry version status resolution", () => {
         stagedVersion: VERSION,
         registryUrl: REGISTRY_URL,
       });
-      await createScanJob(db, {
+      await seedLegacyScanJob(db, {
         id: "scan-a",
         stageId: "stage-restaged",
         organizationId: org.organizationId,
@@ -734,7 +734,7 @@ describe("registry version status resolution", () => {
     const older = await seedRegistryScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
     const newerScanId = crypto.randomUUID();
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: newerScanId,
       stageId: "stage-restaged",
       organizationId: org.organizationId,
@@ -1372,7 +1372,7 @@ describe("registry version status resolution", () => {
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: crypto.randomUUID(),
       stageId: "stage-restaged",
       organizationId: org.organizationId,
@@ -1722,7 +1722,7 @@ describe("staged failure refinement", () => {
       const db = createDb(env.DB);
       const scanId = crypto.randomUUID();
       const stageId = `stage-${scanId.slice(0, 8)}`;
-      await createScanJob(db, {
+      await seedLegacyScanJob(db, {
         id: scanId,
         stageId,
         organizationId: org.organizationId,
@@ -1792,7 +1792,7 @@ describe("staged failure refinement", () => {
     const refining = refine(org, scanId, stageId);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    await createScanJob(createDb(env.DB), {
+    await seedLegacyScanJob(createDb(env.DB), {
       id: crypto.randomUUID(),
       stageId: "stage-restaged",
       organizationId: org.organizationId,

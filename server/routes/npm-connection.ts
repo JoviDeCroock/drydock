@@ -13,6 +13,7 @@ import {
   requireActiveOrganization,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
+import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { recordProductEvent } from "../lib/analytics";
 import {
@@ -43,6 +44,7 @@ npmConnectionRoutes.post("/", async (c) => {
     token?: unknown;
     label?: unknown;
     registryUrl?: unknown;
+    confirmPersonalOrganization?: unknown;
   }>(c);
   const token = typeof body.token === "string" ? body.token.trim() : "";
   const label =
@@ -81,6 +83,9 @@ npmConnectionRoutes.post("/", async (c) => {
         registryUrl,
         label,
         createdByUserId: session.userId,
+        confirmPersonalOrganization:
+          body.confirmPersonalOrganization === true &&
+          organizationId === personalOrganizationId(session.userId),
         ...encrypted,
       }),
       recordScanEvent(db, {
@@ -110,7 +115,9 @@ npmConnectionRoutes.post("/", async (c) => {
 npmConnectionRoutes.post("/validate", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = await readJsonObject<{ stageId?: unknown }>(c);
+  const body = await readJsonObject<{ stageId?: unknown; confirmPersonalOrganization?: unknown }>(
+    c,
+  );
   const stageId =
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
   if (stageId && !isValidStageId(stageId)) return c.json({ error: "invalid stageId" }, 400);
@@ -140,6 +147,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
         validationStatus: validation.status,
         capabilities: validation.capabilities,
         validatedAt: validation.ok ? new Date() : null,
+        confirmPersonalOrganization:
+          body.confirmPersonalOrganization === true &&
+          organizationId === personalOrganizationId(session.userId),
       }),
       recordScanEvent(db, {
         organizationId,

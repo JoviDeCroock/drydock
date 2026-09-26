@@ -1,3 +1,4 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -7,7 +8,9 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { createScanJob, listScans } from "../../server/db/scans";
+import { createOrganization } from "../../server/db/organizations";
+import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
+import { listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
@@ -43,7 +46,7 @@ describe("staged publishes route", () => {
       validationStatus: "valid",
       validatedAt: new Date(),
     });
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: `scan_${crypto.randomUUID()}`,
       stageId: "stage-existing-123",
       organizationId: owner.organizationId,
@@ -105,9 +108,12 @@ describe("staged publishes route", () => {
       skipped: 1,
       scans: [{ stageId: "stage-new-123", packageName: "@org/new", version: "1.1.0" }],
     });
-    expect(await listPublicationWatches(db, owner.organizationId)).toMatchObject([
-      { packageName: "@org/new", source: "staged_discovery" },
-    ]);
+    expect(await listPublicationWatches(db, owner.organizationId)).toEqual([]);
+    const [claim] = await db
+      .select()
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, "@org/new"));
+    expect(claim.managementConfirmedAt).toBeNull();
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
     const { scans } = await listScans(db, owner.organizationId);
@@ -130,9 +136,16 @@ describe("staged publishes route", () => {
   });
 });
 
-test("a manually submitted public stage enrolls before its queued review runs", async () => {
-  const owner = await seedUser();
+test("a manually submitted public stage in a shared organization enrolls before its queued review runs", async () => {
+  const personal = await seedUser();
   const db = createDb(env.DB);
+  const owner = {
+    ...personal,
+    organizationId: await createOrganization(db, {
+      ownerUserId: personal.userId,
+      name: "Managed package team",
+    }),
+  };
   await upsertNpmConnection(db, {
     organizationId: owner.organizationId,
     registryUrl: "https://registry.npmjs.org",
@@ -163,7 +176,7 @@ test("a manually submitted public stage enrolls before its queued review runs", 
     const response = await buildTestApp(mountStagedPublishes, owner).fetch(
       new Request("http://test.local/api/v1/scans", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", [ACTIVE_ORG_HEADER]: owner.organizationId },
         body: JSON.stringify({ stageId }),
       }),
       { ...env, SCAN_QUEUE: { send: vi.fn(async () => undefined) } } as unknown as Bindings,

@@ -6,6 +6,7 @@ import {
   type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
+import { npmPackageManagementAllowed } from "./package-claims";
 import { packageBadgeOptOuts, scans } from "./schema";
 
 /**
@@ -23,13 +24,13 @@ export function badgePackage(ecosystem: PublicEcosystem, packageName: string): B
 }
 
 /**
- * Whether `organizationId` is a **registry-verified publisher** of the
+ * Whether `organizationId` is the canonical, registry-verified publisher of the
  * package: it has a completed staged review of a stage on the public npm
  * registry that its token could read, under npm's name for the stage, with a
  * manifest that agrees — the same evidence `scanPublicPackageName` accepts as
  * a public identity.
  *
- * That is what earns a say over the badge for everyone. Watching a package,
+ * Its immutable package claim must match as well. Watching a package,
  * reviewing a published pair, or a workflow gate whose manifest claims the
  * name establishes nothing about the organization's relationship to it, so
  * none of them count. Only npm has a registry-verified source, so no other
@@ -40,6 +41,7 @@ function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage)
   return sql`exists (
     select 1 from scans v
     where v.organization_id = ${organizationId}
+      and ${npmPackageManagementAllowed("https://registry.npmjs.org", target.packageName, organizationId)}
       and v.source in (${sql.join(
         REGISTRY_VERIFIED_SCAN_SOURCES.map((source) => sql`${source}`),
         sql`, `,
@@ -56,11 +58,8 @@ function registryVerifiedPublisherSql(organizationId: SQL, target: BadgePackage)
 
 /**
  * Whether the package's public badge is switched off — for everyone, on both
- * routes. One counted opt-out is enough: it is a publisher of the package
- * saying the badge must not speak for it, and letting another organization's
- * review answer instead would make "off" mean nothing. A row only counts while
- * its organization is still a registry-verified publisher, so a row that
- * outlived that evidence cannot hold a badge off.
+ * routes. Only the canonical owner's opt-out counts; historical reviews or
+ * opt-outs in another organization cannot silence or replace its badge.
  */
 export async function isPackageBadgeSwitchedOff(db: AppDb, target: BadgePackage): Promise<boolean> {
   if (target.ecosystem !== "npm") return false;
@@ -89,6 +88,11 @@ export async function isRegistryVerifiedPublisher(
     .where(
       and(
         eq(scans.organizationId, organizationId),
+        npmPackageManagementAllowed(
+          "https://registry.npmjs.org",
+          target.packageName,
+          organizationId,
+        ),
         inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
         eq(scans.status, "complete"),
         eq(scans.registryPackageName, target.packageName),
@@ -181,8 +185,8 @@ export async function readPackageBadgeVisibility(
     switchedOffByYou,
     switchedOffAt: switchedOffByYou ? (own[0]?.createdAt ?? null) : null,
     switchedOffElsewhere: eligible && elsewhere.length > 0,
-    answersByDefault: defaultOn.length > 0,
-    listed: listed.length > 0,
+    answersByDefault: (target.ecosystem !== "npm" || eligible) && defaultOn.length > 0,
+    listed: (target.ecosystem !== "npm" || eligible) && listed.length > 0,
   };
 }
 

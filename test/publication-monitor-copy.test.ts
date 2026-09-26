@@ -26,6 +26,26 @@ const watch: PublicationWatch = {
 };
 
 describe("publication monitor copy", () => {
+  test("inactive watches never promise automatic checks or a current absence of releases", () => {
+    for (const lastCheckedAt of [null, watch.lastCheckedAt]) {
+      for (const lastError of [null, "check_in_progress"]) {
+        const current = { ...watch, lastCheckedAt, lastError };
+        expect(emptyObservationsMessage({ ...current, managementPending: true })).toBe(
+          "Monitoring is inactive. Choose an organization to enable checks.",
+        );
+        expect(emptyObservationsMessage({ ...current, ownershipConflict: true })).toBe(
+          "Monitoring is inactive because this package is assigned to another organization.",
+        );
+        expect(watchMetaLine({ ...current, managementPending: true })).toMatch(
+          /^Monitoring inactive/,
+        );
+        expect(watchMetaLine({ ...current, ownershipConflict: true })).toMatch(
+          /^Monitoring inactive/,
+        );
+      }
+    }
+  });
+
   test("an empty release list claims no releases only after a check with no problem", () => {
     expect(emptyObservationsMessage(watch)).toMatch(
       /^No new releases since you started watching on .+\. Earlier releases are not checked\.$/,

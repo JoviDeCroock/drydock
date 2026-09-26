@@ -11,6 +11,8 @@ export interface PublicationWatch {
   lastCheckedAt: string | null;
   lastError: string | null;
   unresolvedAlertCount: number;
+  ownershipConflict?: boolean;
+  managementPending?: boolean;
   /** Releases observed since enrollment, alerts or not. */
   releaseCount: number;
   /** A package-wide reason no release can be verified, and since when. */

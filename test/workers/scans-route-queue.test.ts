@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
+  getNpmConnection,
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
@@ -105,6 +106,14 @@ describe("scans route queue behavior", () => {
     const scans = await db.select().from(schema.scans).where(eq(schema.scans.id, body.scan.id));
     expect(scans).toHaveLength(1);
     expect(scans[0]?.organizationId).toBe(owner.organizationId);
+    expect(
+      (await getNpmConnection(db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+    const [claim] = await db
+      .select()
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, "@org/queued"));
+    expect(claim.managementConfirmedAt).toBeNull();
     // Stamped before the review runs, so a review that fails can still say when
     // npm created the stage.
     expect(scans[0]?.stagedCreatedAt?.toISOString()).toBe("2026-05-22T12:00:00.000Z");
