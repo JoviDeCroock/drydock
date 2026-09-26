@@ -4,6 +4,8 @@ import { createDb } from "../../server/db/client";
 import { createOrganization } from "../../server/db/organizations";
 import { addOrganizationMember } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
+import { scanEvents } from "../../server/db/schema";
+import { and, eq } from "drizzle-orm";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
@@ -350,6 +352,16 @@ describe("explicit personal connection confirmation", () => {
         (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
       ).toEqual(confirmed);
       expect(fetcher).not.toHaveBeenCalled();
+      const audit = await owner.db
+        .select()
+        .from(scanEvents)
+        .where(
+          and(
+            eq(scanEvents.organizationId, owner.organizationId),
+            eq(scanEvents.type, "npm_connection.personal_confirmed"),
+          ),
+        );
+      expect(audit).toHaveLength(1);
     } finally {
       fetcher.mockRestore();
     }

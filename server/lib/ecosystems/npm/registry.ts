@@ -29,9 +29,10 @@ export function isValidNpmPackageName(name: string): boolean {
 
 // npm requires lowercase only when a name is first registered; legacy packages
 // such as `JSONStream` keep publishing under their original mixed-case names,
-// which npm treats as distinct from the lowercase spelling. Use this only for a
-// name npm itself reported or that is looked up read-only, never to accept a
-// newly typed name. The charset is deliberately narrower than npm's historical
+// which npm treats as distinct from the lowercase spelling. Use it for names
+// npm itself reported and for read-only lookups (including the claims route,
+// which can only read or manage the caller's own claim), never to register or
+// watch a newly typed name. The charset is deliberately narrower than npm's historical
 // URL-safe set (`!'()*` are refused) so names stay inert in reports and URLs.
 const NPM_LEGACY_PACKAGE_NAME_RE =
   /^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;

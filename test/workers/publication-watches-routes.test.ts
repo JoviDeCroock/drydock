@@ -600,6 +600,31 @@ test("claim conflicts reject a competing manager's enrollment and checks while r
   ).toHaveLength(1);
 });
 
+test("watches deactivated by another organization's claim free their capacity", async () => {
+  const former = await seedOwner();
+  const owner = await seedOwner();
+  const db = createDb(env.DB);
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const handedOver = `handed-over-${suffix}`;
+  await seedStagedHistory(former, handedOver);
+  await createPublicationWatch(db, former.organizationId, handedOver);
+  for (let index = 0; index < 19; index += 1)
+    await createPublicationWatch(db, former.organizationId, `filler-${index}-${suffix}`);
+  expect((await request(former, "POST", "", { packageName: `extra-${suffix}` })).status).not.toBe(
+    201,
+  );
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: handedOver,
+    organizationId: owner.organizationId,
+    firstStageId: "stage-owner",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+  expect((await request(former, "POST", "", { packageName: `extra-${suffix}` })).status).toBe(201);
+});
+
 test("wildcard reservations block a competing manager's watches until an exact registry claim resolves ownership", async () => {
   const owner = await seedOwner();
   const bystander = await seedOwner();

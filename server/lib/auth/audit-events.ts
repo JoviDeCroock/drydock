@@ -206,6 +206,12 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: (m) => str(m.label) ?? str(m.registryUrl),
   },
+  "npm_connection.personal_confirmed": {
+    category: "integration",
+    label: "Personal automatic scanning enabled",
+    severity: "notice",
+    summarize: (m) => str(m.registryUrl),
+  },
   "npm_connection.validated": {
     category: "integration",
     label: "npm connection validated",
