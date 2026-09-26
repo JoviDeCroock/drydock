@@ -677,6 +677,16 @@ async function examineReleases(
       registry,
     );
     if (createdAlert && isPublicationAlert(verdict.status)) {
+      // One line per new unapproved publish on a watched package, so operators
+      // can follow them in the logs. Name and version are npm's public record.
+      emitOperationalEvent("warn", "npm.publication_monitor.unapproved_publish", {
+        organizationId: watch.organizationId,
+        watchId: watch.id,
+        packageName: watch.packageName,
+        version: item.version,
+        status: verdict.status,
+        reason: verdict.reason,
+      });
       recordProductEvent(env, {
         name: "publication.discrepancy",
         organizationId: watch.organizationId,
