@@ -75,12 +75,7 @@ npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
     await Promise.all([
       watch
         ? Promise.resolve({ state: "watched" as const })
-        : getPublicationEnrollment(
-            db,
-            organizationId,
-            packageName,
-            npmPublicationRegistry(c.env),
-          ),
+        : getPublicationEnrollment(db, organizationId, packageName, npmPublicationRegistry(c.env)),
       watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
       listPublicationAlertsForPackage(db, organizationId, packageName, watch?.id ?? null),
       getPublicationOwnershipConflict(
