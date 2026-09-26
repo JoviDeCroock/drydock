@@ -18,7 +18,7 @@ import {
   type PackumentExtract,
   type PackumentVersion,
 } from "./packument-stream";
-import { backfillNpmPublicationWatches, enrollStagedReleases } from "./publication-auto-enrollment";
+import { enrollStagedReleases } from "./publication-auto-enrollment";
 import {
   deliverPublicationAlert,
   notifyCoverageGaps,
@@ -798,7 +798,6 @@ export async function sweepNpmPublicationWatches(
 }
 
 export const npmPublicationMonitor: PublicationMonitorAdapter = {
-  backfillWatches: (db, env) => backfillNpmPublicationWatches(db, npmPublicationRegistry(env)),
   sweepWatches: (db, env) => sweepNpmPublicationWatches(db, env),
   registerStagedReleases: enrollStagedReleases,
 };
