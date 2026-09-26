@@ -46,6 +46,7 @@ import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
 import { PackageClaimConflictError } from "../../db/package-claims";
+import { readNpmPackageClaimAvailability } from "../../db/scan-jobs";
 
 export const scanLifecycleRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -91,7 +92,19 @@ scanLifecycleRoutes.post("/", async (c) => {
     if (err instanceof PackageClaimConflictError) return err;
     throw err;
   });
-  if (detail instanceof PackageClaimConflictError) return c.json({ error: detail.message }, 409);
+  if (detail instanceof PackageClaimConflictError) {
+    // The caller already proved stage access; only its own history is described.
+    const availability = await readNpmPackageClaimAvailability(db, {
+      registryUrl: prepared.registryUrl!,
+      packageName: prepared.packageName!,
+      organizationId,
+    });
+    const error =
+      availability === "own_history"
+        ? "This organization's earlier reviews of this package are awaiting an ownership confirmation by support. New reviews can start once support confirms it."
+        : detail.message;
+    return c.json({ error }, 409);
+  }
   if (!detail) return c.json({ error: "failed to create scan" }, 500);
   if (prepared.staged) {
     await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
@@ -205,9 +218,14 @@ async function prepareStagedScan(
     allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
   }).catch(() => null);
 
+  if (!staged?.packageName || staged.id !== input.stageId || !staged.version?.trim()) {
+    return {
+      error: c.json({ error: "Could not verify npm package identity. Try again later." }, 503),
+    };
+  }
+  // npm answered with a complete stage record; a name that still fails
+  // validation is permanent, so retrying would never help.
   if (
-    !staged?.packageName ||
-    staged.id !== input.stageId ||
     !getStagedAdapter("npm").stagedClaimIdentity?.({
       registryUrl: npmConnection.registryUrl,
       packageName: staged.packageName,
@@ -215,7 +233,10 @@ async function prepareStagedScan(
     })
   ) {
     return {
-      error: c.json({ error: "Could not verify npm package identity. Try again later." }, 503),
+      error: c.json(
+        { error: "npm reported a package name for this stage that Drydock cannot review." },
+        422,
+      ),
     };
   }
 

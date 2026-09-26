@@ -9,6 +9,7 @@ const dbMock = vi.hoisted(() => ({
   deletePendingScanJob: vi.fn(),
   listExistingScanStageIds: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
+  readNpmPackageClaimAvailability: vi.fn(),
   recordScanEvent: vi.fn(),
   updateNpmConnectionValidation: vi.fn(),
 }));
@@ -28,6 +29,7 @@ const enrollmentMock = vi.hoisted(() => ({ enrollStagedReleases: vi.fn(async () 
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
+vi.mock("../server/db/scan-jobs.ts", () => dbMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
@@ -48,6 +50,7 @@ const ctx = { waitUntil: vi.fn() };
 const db = {};
 
 beforeEach(() => {
+  dbMock.readNpmPackageClaimAvailability.mockResolvedValue("claimable");
   stagedPublishesMock.checkStagedPublishAccess.mockResolvedValue({
     allowed: true,
     status: 206,

@@ -122,78 +122,72 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     .from(scans)
     .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
     .limit(1);
-  if (existing[0] && !NON_TERMINAL_STATUSES.some((status) => status === existing[0]?.status)) {
+  const job = existing[0];
+  // Every source creates its job row before running, so a missing row means it
+  // was deleted mid-run. Recreating it would stamp the default staged source
+  // with no registry identity and a package name read from untrusted package
+  // bytes, which reserves that name in every registry for package claims.
+  if (!job) return { persisted: false as const, reason: "missing" as const };
+  if (!NON_TERMINAL_STATUSES.some((status) => status === job.status)) {
     return { persisted: false as const, reason: "already_terminal" as const };
   }
 
   // The release line this scan belongs to, written whether or not it is ever
   // shared: the badge needs to know a package released again to stop vouching
   // for the version it quotes. Null for sources that may never hold a badge.
-  // `source` is stamped when the job row is created; the INSERT branch creates
-  // the row here and so takes the column default.
   const badgeRow = {
-    source: existing[0]?.source ?? "manual",
+    source: job.source,
     packageName: scanValues.packageName,
     // npm's name for the stage, recorded from npm's stage record when the job
-    // was created or reconciled against it during acquisition. The INSERT
-    // branch has none, so its scan has no public identity.
-    registryPackageName: existing[0]?.registryPackageName ?? null,
-    registryUrl: existing[0]?.registryUrl ?? null,
+    // was created or reconciled against it during acquisition.
+    registryPackageName: job.registryPackageName,
+    registryUrl: job.registryUrl,
     summaryJson: scanValues.summaryJson,
   };
   const badgePackageKey = badgeReleaseLineKey(badgeRow);
-  // Decided here, not by readers: the INSERT branch has no job row to take a
-  // registry from, so it resolves to false and the review keeps the explicit
-  // opt-in — the safe direction for a surface that needs no credential to read.
   const badgePublic = isDefaultBadgePublic(badgeRow);
 
-  // The UPDATE branch assumes the existing row is non-terminal and therefore
-  // carries NULL artifact key columns: the pre-read above and `claimScanForRun`
-  // both refuse terminal rows, and the sole production caller always persists
+  // The update assumes the existing row is non-terminal and therefore carries
+  // NULL artifact key columns: the pre-read above and `claimScanForRun` both
+  // refuse terminal rows, and the sole production caller always persists
   // `status: "complete"`. A caller that persists a non-terminal status would
   // break that, and would have to sweep the artifact run this overwrites.
-  const claimScan = existing[0]
-    ? db
-        .update(scans)
-        .set({
-          packageName: scanValues.packageName,
-          stagedVersion: scanValues.stagedVersion,
-          previousVersion: scanValues.previousVersion,
-          risk: scanValues.risk,
-          status: scanValues.status,
-          summaryJson: scanValues.summaryJson,
-          badgePackageKey,
-          badgePublic,
-          aiJson: scanValues.aiJson,
-          errorJson: scanValues.errorJson,
-          changedFileCount: scanValues.changedFileCount,
-          findingCount: scanValues.findingCount,
-          riskSummaryJson: scanValues.riskSummaryJson,
-          reportVersion: scanValues.reportVersion,
-          artifactStorageVersion: scanValues.artifactStorageVersion,
-          artifactManifestKey: scanValues.artifactManifestKey,
-          artifactManifestDigest: scanValues.artifactManifestDigest,
-          artifactManifestSize: scanValues.artifactManifestSize,
-          reportArtifactKey: scanValues.reportArtifactKey,
-          fileSamplesArtifactKey: scanValues.fileSamplesArtifactKey,
-          diffArtifactKey: scanValues.diffArtifactKey,
-          completedAt: scanValues.completedAt,
-          reportDigest: claimToken,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(scans.id, input.id),
-            eq(scans.organizationId, input.organizationId),
-            inArray(scans.status, [...NON_TERMINAL_STATUSES]),
-          ),
-        )
-        .returning({ id: scans.id })
-    : db
-        .insert(scans)
-        .values({ ...scanValues, badgePackageKey, badgePublic, reportDigest: claimToken })
-        .onConflictDoNothing({ target: scans.id })
-        .returning({ id: scans.id });
+  const claimScan = db
+    .update(scans)
+    .set({
+      packageName: scanValues.packageName,
+      stagedVersion: scanValues.stagedVersion,
+      previousVersion: scanValues.previousVersion,
+      risk: scanValues.risk,
+      status: scanValues.status,
+      summaryJson: scanValues.summaryJson,
+      badgePackageKey,
+      badgePublic,
+      aiJson: scanValues.aiJson,
+      errorJson: scanValues.errorJson,
+      changedFileCount: scanValues.changedFileCount,
+      findingCount: scanValues.findingCount,
+      riskSummaryJson: scanValues.riskSummaryJson,
+      reportVersion: scanValues.reportVersion,
+      artifactStorageVersion: scanValues.artifactStorageVersion,
+      artifactManifestKey: scanValues.artifactManifestKey,
+      artifactManifestDigest: scanValues.artifactManifestDigest,
+      artifactManifestSize: scanValues.artifactManifestSize,
+      reportArtifactKey: scanValues.reportArtifactKey,
+      fileSamplesArtifactKey: scanValues.fileSamplesArtifactKey,
+      diffArtifactKey: scanValues.diffArtifactKey,
+      completedAt: scanValues.completedAt,
+      reportDigest: claimToken,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.id),
+        eq(scans.organizationId, input.organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    )
+    .returning({ id: scans.id });
 
   // D1 rejects transactions in Workers; the batch atomically claims and finalizes the row.
   const batch = [

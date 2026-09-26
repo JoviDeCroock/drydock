@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   compareSemver,
+  isValidLegacyNpmPackageName,
   isValidNpmPackageName,
   pickBaselineVersion,
   pickPreviousVersion,
@@ -23,6 +24,26 @@ describe("npm package name validation", () => {
     expect(isValidNpmPackageName("FOO")).toBe(false);
     expect(isValidNpmPackageName("")).toBe(false);
     expect(isValidNpmPackageName("a".repeat(215))).toBe(false);
+  });
+
+  test("legacy names npm still serves may be mixed-case but stay inert", () => {
+    expect(isValidLegacyNpmPackageName("JSONStream")).toBe(true);
+    expect(isValidLegacyNpmPackageName("@Acme/Tool")).toBe(true);
+    expect(isValidLegacyNpmPackageName("a".repeat(214))).toBe(true);
+    for (const name of [
+      "",
+      "a".repeat(215),
+      ".hidden",
+      "_private",
+      "../foo",
+      "foo/bar",
+      "foo bar",
+      "foo(bar)",
+      "node_modules",
+      "Favicon.ico",
+    ]) {
+      expect(isValidLegacyNpmPackageName(name), name).toBe(false);
+    }
   });
 });
 
