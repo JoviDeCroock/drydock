@@ -57,8 +57,6 @@ export interface StagedReleaseVisibility {
 }
 
 export interface PublicationMonitorAdapter {
-  /** Cron: enroll packages that review history shows are public. */
-  backfillWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
   /** Cron: check a bounded, per-organization-fair batch of due watches. */
   sweepWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
   /**

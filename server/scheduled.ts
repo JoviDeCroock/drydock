@@ -146,22 +146,13 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
 }
 
 // Public release monitoring also covers organizations with no registry
-// credential or discovery connection, so it runs outside the discovery sweep. Each
-// phase fails on its own: a broken backfill must not stop watches already
-// enrolled from being checked, and neither may disable stage review.
+// credential or discovery connection, so it runs outside the discovery sweep. A
+// failing ecosystem must not stop another's watches or disable stage review.
 async function runPublicationMonitorCron(env: Cloudflare.Env) {
   const db = createDb(env.DB);
   for (const ecosystem of ECOSYSTEMS) {
     const monitor = ecosystem.publicationMonitor;
     if (!monitor) continue;
-    try {
-      await monitor.backfillWatches(db, env);
-    } catch (err) {
-      emitOperationalEvent("error", "publication_monitor.backfill_failed", {
-        ecosystem: ecosystem.id,
-        error: describeOperationalError(err),
-      });
-    }
     try {
       await monitor.sweepWatches(db, env);
     } catch (err) {

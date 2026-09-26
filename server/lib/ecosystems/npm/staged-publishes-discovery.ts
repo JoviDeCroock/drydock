@@ -241,6 +241,7 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
+
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = admitNewScans
@@ -331,6 +332,8 @@ export async function discoverAndQueueStagedPublishes(
       }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+  // Reconcile even when no stages or new scans were found. Newly admitted
+  // claims are visible here; pending personal claims remain ineligible.
   await enrollStagedReleases(db, env, {
     organizationId,
     registryUrl: connection.registryUrl,

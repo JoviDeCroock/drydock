@@ -23,6 +23,7 @@ const stagedPublishesMock = vi.hoisted(() => ({
 }));
 const scanJobMock = vi.hoisted(() => ({ executeScanJob: vi.fn() }));
 const releaseOutcomeMock = vi.hoisted(() => ({ resolveNpmReleaseOutcomes: vi.fn() }));
+const enrollmentMock = vi.hoisted(() => ({ enrollStagedReleases: vi.fn(async () => undefined) }));
 
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
@@ -30,9 +31,7 @@ vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
-vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => ({
-  enrollStagedReleases: vi.fn(async () => undefined),
-}));
+vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => enrollmentMock);
 vi.mock("../server/lib/ecosystems/npm/release-outcome.ts", () => releaseOutcomeMock);
 
 const {
@@ -75,6 +74,7 @@ afterEach(() => {
     ...Object.values(stagedPublishesMock),
     ...Object.values(scanJobMock),
     ...Object.values(releaseOutcomeMock),
+    ...Object.values(enrollmentMock),
   ]) {
     if (typeof fn?.mockReset === "function") fn.mockReset();
   }
@@ -608,6 +608,30 @@ describe("discoverAndQueueStagedPublishes", () => {
 
     const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
     expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
+  });
+
+  test("reconciles publication enrollment even when npm lists no stages", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({ items: [] });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+
+    await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(enrollmentMock.enrollStagedReleases).toHaveBeenCalledWith(db, env, {
+      organizationId: "org_a",
+      registryUrl: "https://registry.npmjs.org",
+      releases: [],
+    });
   });
 
   test("starts nothing when every discovered stage is already known", async () => {

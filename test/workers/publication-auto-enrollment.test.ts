@@ -7,14 +7,8 @@ import {
   deletePublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
+import { npmPackageClaims, publicationWatchCandidates, scans } from "../../server/db/schema";
 import {
-  npmPackageClaims,
-  publicationWatchCandidates,
-  publicationWatches,
-  scans,
-} from "../../server/db/schema";
-import {
-  backfillNpmPublicationWatches,
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
@@ -247,39 +241,6 @@ describe("automatic publication enrollment", () => {
       .from(publicationWatchCandidates)
       .where(eq(publicationWatchCandidates.packageName, "stopped-manual"));
     expect(candidate?.stoppedAt).not.toBeNull();
-  });
-
-  test("cron continues past eight organizations and skips recorded evidence", async () => {
-    const orgs = [];
-    for (let i = 0; i < 10; i++) {
-      const org = await seed();
-      orgs.push(org);
-      await historicalScan(org.organizationId, `org-package-${i}`);
-    }
-    await backfillNpmPublicationWatches(orgs[0]!.db);
-    expect(
-      await orgs[0]!.db
-        .select()
-        .from(publicationWatches)
-        .where(
-          inArray(
-            publicationWatches.organizationId,
-            orgs.map((org) => org.organizationId),
-          ),
-        ),
-    ).toHaveLength(8);
-    await backfillNpmPublicationWatches(orgs[0]!.db);
-    expect(
-      await orgs[0]!.db
-        .select()
-        .from(publicationWatches)
-        .where(
-          inArray(
-            publicationWatches.organizationId,
-            orgs.map((org) => org.organizationId),
-          ),
-        ),
-    ).toHaveLength(10);
   });
 
   test("history and candidate inventory remain organization scoped", async () => {
