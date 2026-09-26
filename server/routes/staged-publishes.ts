@@ -62,7 +62,10 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       },
       usable,
     );
-    return c.json(result, 202);
+    // Blocked stages are only counted as skipped here: the caller has not
+    // proven read access to them, so it learns nothing about their claims.
+    const { claimBlocked: _claimBlocked, ...body } = result;
+    return c.json(body, 202);
   } catch (err) {
     if (err instanceof InvalidNpmConnectionError) {
       return c.json(

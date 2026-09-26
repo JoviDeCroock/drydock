@@ -177,29 +177,23 @@ export async function readNpmPackageClaimAvailability(
   input: { registryUrl: string; packageName: string; organizationId: string },
 ): Promise<NpmPackageClaimAvailability> {
   const { registryUrl, packageName, organizationId } = input;
-  const stagedHistory = sql`${scans.source} in ('manual', 'auto_discovery')
-    and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${packageName}`;
-  const [row] = await db.all<{
-    owned: number;
-    claimed: number;
-    history: number;
-    ownHistory: number;
-  }>(sql`select
-    ${npmPackageClaimMatches(registryUrl, packageName, organizationId)} as owned,
-    exists(select 1 from ${npmPackageClaims}
+  // Ordered cheapest-first; CASE stops at the first match, so an owned or
+  // claimed package never pays for the history scans.
+  const history = sql`${scans.source} in ('manual', 'auto_discovery')
+    and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${packageName}
+    and (rtrim(${scans.registryUrl}, '/') = ${registryUrl}
+      or nullif(rtrim(${scans.registryUrl}, '/'), '') is null)`;
+  const [row] = await db.all<{ state: NpmPackageClaimAvailability }>(sql`select case
+    when ${npmPackageClaimMatches(registryUrl, packageName, organizationId)} then 'owned'
+    when exists(select 1 from ${npmPackageClaims}
       where ${npmPackageClaims.registryUrl} in (${registryUrl}, '*')
         and ${npmPackageClaims.ecosystem} = 'npm'
-        and ${npmPackageClaims.packageName} = ${packageName}) as claimed,
-    exists(select 1 from ${scans} where ${stagedHistory}
-      and (rtrim(${scans.registryUrl}, '/') = ${registryUrl}
-        or nullif(rtrim(${scans.registryUrl}, '/'), '') is null)) as history,
-    exists(select 1 from ${scans} where ${stagedHistory}
-      and ${scans.organizationId} = ${organizationId}
-      and rtrim(${scans.registryUrl}, '/') = ${registryUrl}) as ownHistory`);
-  if (row?.owned) return "owned";
-  if (row?.claimed) return "unavailable";
-  if (row?.history) return row.ownHistory ? "own_history" : "unavailable";
-  return "claimable";
+        and ${npmPackageClaims.packageName} = ${packageName}) then 'unavailable'
+    when exists(select 1 from ${scans}
+      where ${scans.organizationId} = ${organizationId} and ${history}) then 'own_history'
+    when exists(select 1 from ${scans} where ${history}) then 'unavailable'
+    else 'claimable' end as state`);
+  return row?.state ?? "unavailable";
 }
 
 export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {

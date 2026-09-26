@@ -206,8 +206,16 @@ npmConnectionRoutes.post("/personal-confirmation", async (c) => {
   const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
   if (organizationId !== personalOrganizationId(session.userId))
     return c.json({ error: "Only your personal workspace needs this choice." }, 400);
+  const before = await getNpmConnection(db, organizationId);
   const connection = await confirmPersonalNpmConnection(db, organizationId);
   if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+  if (!before?.personalOrganizationConfirmedAt && connection.personalOrganizationConfirmedAt)
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      type: "npm_connection.personal_confirmed",
+      metadata: { registryUrl: connection.registryUrl },
+    });
   return c.json({ connection: publicNpmConnection(connection) });
 });
 

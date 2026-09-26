@@ -449,12 +449,9 @@ describe("npm package claim edge cases", () => {
       const accessChecks = stubStage({ id: stageId, packageName: name });
       const log = vi.spyOn(console, "log");
       const discovery = await request(b, "/api/v1/staged-publishes/scan");
-      expect(await discovery.response.json()).toMatchObject({
-        found: 1,
-        created: 0,
-        skipped: 1,
-        claimBlocked: 1,
-      });
+      const body = await discovery.response.json();
+      expect(body).toMatchObject({ found: 1, created: 0, skipped: 1 });
+      expect(body).not.toHaveProperty("claimBlocked");
       expect(accessChecks).not.toHaveBeenCalled();
       expect(discovery.queue.send).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalledWith(
