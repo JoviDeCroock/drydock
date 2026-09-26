@@ -277,10 +277,12 @@ export async function checkNpmPublicationWatch(
   // Claim first, before anything that can return early or throw. The lease
   // makes manual checks and overlapping cron invocations share the bound, and
   // it moves a switched-off or failing watch to the back of the sweep order
-  // instead of leaving it the oldest forever.
+  // instead of leaving it the oldest forever. It also marks the check
+  // unfinished until its outcome is written, so a running or killed check
+  // never inherits the previous check's clean result.
   const claimed = await db
     .update(publicationWatches)
-    .set({ lastCheckedAt: now })
+    .set({ lastCheckedAt: now, lastError: "check_in_progress" })
     .where(
       and(
         watchKey(watch),

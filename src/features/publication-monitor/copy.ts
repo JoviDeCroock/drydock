@@ -90,6 +90,8 @@ const watchProblems: Record<string, string> = {
   artifact_identity_invalid:
     "A release's registry metadata does not name a valid tarball on npm, so its bytes cannot be compared.",
   monitoring_disabled: "Publication monitoring is switched off for this organization.",
+  check_in_progress:
+    "The latest check has not finished, so new releases are unknown. Drydock retries on the next automatic check.",
   check_failed:
     "The latest check failed, so new releases are unknown. Drydock retries on the next automatic check.",
 };

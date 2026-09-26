@@ -58,7 +58,7 @@ describe("publication monitor copy", () => {
     expect(watchMetaLine(watch)).toMatch(/ · checked .+ · no new releases · /);
     expect(watchMetaLine({ ...watch, releaseCount: 1 })).toMatch(/ · 1 new release · /);
     expect(watchMetaLine({ ...watch, releaseCount: 3 })).toMatch(/ · 3 new releases · /);
-    for (const lastError of ["check_failed", "pending_release_backlog"]) {
+    for (const lastError of ["check_in_progress", "check_failed", "pending_release_backlog"]) {
       expect(watchMetaLine({ ...watch, lastError })).not.toMatch(/no new releases/);
     }
   });

@@ -273,7 +273,9 @@ sweep. A watch whose check throws is recorded (`check_failed`) and moved to the 
 the order rather than holding its place, and the sweep continues. One check examines up
 to six pending versions, at most three of which may download a tarball; the rest
 report a backlog and drain on later checks. A short database claim prevents
-overlapping manual and scheduled checks from multiplying work on the same watch.
+overlapping manual and scheduled checks from multiplying work on the same watch. The
+claim records `check_in_progress` until the check writes its outcome, so a check that
+is still running, or was killed before recording anything, never reads as a clean one.
 npm's full package document is read because only it carries per-version publish
 times (the abbreviated install document omits them); it streams into just the fields
 the verdict reads (`packument-stream.ts`), so memory stays flat, under a 64 MiB cap and
