@@ -6,6 +6,7 @@ import {
   PackageManagementConflictError,
 } from "../db/package-claims";
 import { listPackageBadgeTags } from "../db/package-badge";
+import { PUBLICATION_WATCH_LIMIT } from "../db/publication-watches";
 import { requireActiveOrganization } from "../lib/auth/active-organization";
 import { getStagedAdapter } from "../lib/ecosystems";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
@@ -75,8 +76,7 @@ npmPackageClaimRoutes.post("/:name{.+}", async (c) => {
     if (error instanceof PackageManagementConflictError)
       return c.json(
         {
-          error:
-            "Package management changed or the destination monitoring limit was reached. Reload and try again.",
+          error: `Package management changed, or the organization already monitors its limit of ${PUBLICATION_WATCH_LIMIT} packages. Reload, or stop monitoring another package in that organization, and try again.`,
         },
         409,
       );

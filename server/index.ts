@@ -135,6 +135,8 @@ app.get("/api", (c) =>
       publicationWatches:
         "GET/POST /api/v1/publication-watches; GET/DELETE /api/v1/publication-watches/:id; GET /api/v1/publication-watches/packages/:name; POST /api/v1/publication-watches/:id/check; POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge (organization-scoped public npm publication monitoring)",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
+      npmPackageClaims:
+        "GET/POST /api/v1/npm-package-claims/:name (the active organization's claim on an npm package; a personal owner keeps it or moves it to a shared organization they own or administer)",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
       organizationMembers:

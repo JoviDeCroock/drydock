@@ -1,6 +1,10 @@
 import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { npmPackageManagementAllowed } from "../../../db/package-claims";
-import { publicationWatchOwnershipConflict } from "../../../db/publication-watches";
+import {
+  PUBLICATION_WATCH_LIMIT,
+  publicationWatchCapacityAvailable,
+  publicationWatchOwnershipConflict,
+} from "../../../db/publication-watches";
 import type { AppDb } from "../../../db/client";
 import { publicationWatchCandidates, publicationWatches } from "../../../db/schema";
 import { emitOperationalEvent } from "../../platform/observability";
@@ -115,14 +119,14 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
       ),
     )
     .orderBy(asc(publicationWatchCandidates.createdAt), asc(publicationWatchCandidates.packageName))
-    .limit(20);
+    .limit(PUBLICATION_WATCH_LIMIT);
   for (const candidate of pending) {
     // Recheck both suppression and capacity in the insert itself. A concurrent
     // stop or enrollment can occur after the pending-candidate read.
     await db
       .insert(publicationWatches)
       .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null, null, null, null, null
-      where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20
+      where ${publicationWatchCapacityAvailable(registryUrl, organizationId)}
       and ${npmPackageManagementAllowed(registryUrl, candidate.packageName, organizationId)}
       and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history'))`)
       .onConflictDoNothing({

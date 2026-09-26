@@ -12,6 +12,7 @@ import {
 import { createScanJob } from "../../server/db/scan-jobs";
 import { getScan } from "../../server/db/scan-detail";
 import * as schema from "../../server/db/schema";
+import { publicationWatchOwnershipConflict } from "../../server/db/publication-watches";
 import { npmPackageClaimRoutes } from "../../server/routes/npm-package-claims";
 import { buildTestApp, call } from "./helpers/app";
 import { seedUser, type SeededUser } from "./helpers/seed";
@@ -262,12 +263,74 @@ describe("personal npm package management", () => {
       .from(schema.scanEvents)
       .where(eq(schema.scanEvents.organizationId, destination));
     expect(receipts).toHaveLength(1);
-    expect(receipts[0]?.metadataJson).toEqual({ packageName: owner.packageName });
+    expect(receipts[0]?.metadataJson).toEqual({
+      packageName: owner.packageName,
+      registryUrl,
+      sourceOrganizationId: owner.organizationId,
+      destinationOrganizationId: destination,
+      destinationOrganizationName: "Shared destination",
+    });
     expect(receipts[0]?.scanId).toBeNull();
+    const [sourceWatch] = await owner.db.all<{ conflict: number }>(sql`select
+      ${publicationWatchOwnershipConflict(registryUrl, owner.packageName, owner.organizationId)} as conflict`);
+    expect(sourceWatch?.conflict).toBe(1);
     await expect(
       manageNpmPackageClaim(owner.db, { ...input(owner), organizationId: destination }),
     ).rejects.toBeInstanceOf(PackageManagementAuthorizationError);
     expect((await readNpmPackageManagement(owner.db, input(owner))).claim).toBeNull();
+  });
+
+  test("confirming twice keeps the original confirmation and audit trail", async () => {
+    const owner = await fixture();
+    expect(await manageNpmPackageClaim(owner.db, input(owner))).toEqual({ changed: true });
+    const [first] = await owner.db
+      .select({ confirmedAt: schema.npmPackageClaims.managementConfirmedAt })
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, owner.packageName));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await manageNpmPackageClaim(owner.db, input(owner))).toEqual({ changed: false });
+    const [second] = await owner.db
+      .select({ confirmedAt: schema.npmPackageClaims.managementConfirmedAt })
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, owner.packageName));
+    expect(second?.confirmedAt).toEqual(first?.confirmedAt);
+    const events = await owner.db
+      .select()
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.organizationId, owner.organizationId),
+          eq(schema.scanEvents.type, "npm_package.management_confirmed"),
+        ),
+      );
+    expect(events).toHaveLength(1);
+  });
+
+  test("the management route maps foreign and full destinations", async () => {
+    const owner = await fixture();
+    const path = `/api/v1/npm-package-claims/${owner.packageName}`;
+    const stranger = await seedUser();
+    const strangersTeam = await team(stranger);
+    const forbidden = await call(app(owner), "POST", path, {
+      body: { targetOrganizationId: strangersTeam },
+    });
+    expect(forbidden.status).toBe(403);
+    const destination = await team(owner);
+    await owner.db.insert(schema.publicationWatches).values(
+      Array.from({ length: 20 }, (_, index) => ({
+        id: crypto.randomUUID(),
+        organizationId: destination,
+        packageName: `occupied-${index}-${crypto.randomUUID()}`,
+        source: "manual" as const,
+        createdAt: new Date(),
+      })),
+    );
+    const full = await call(app(owner), "POST", path, {
+      body: { targetOrganizationId: destination },
+    });
+    expect(full.status).toBe(409);
+    expect(((await full.json()) as { error: string }).error).toContain("limit of 20");
+    expect(await allowed(owner)).toEqual([{ scan: 1, management: 0 }]);
   });
 
   test("simultaneous transfers admit one destination and enroll only its watch", async () => {

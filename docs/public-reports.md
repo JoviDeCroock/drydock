@@ -187,8 +187,9 @@ is false unless all four of these are provable:
   the manifest's" below). A `workflow_gate` review only _claims_ the name in a
   tarball manifest — anyone can build one — so without this, approving a review
   of a tarball calling itself `react` would mint an authoritative-looking
-  approval for a package the reviewer has no claim on. Manifest-claimed reviews
-  keep the explicit opt-in.
+  approval for a package the reviewer has no claim on. PyPI and VS Code
+  manifest-claimed reviews keep the explicit opt-in; npm workflow-gate reviews
+  cannot answer the badge at all.
 - **The public npm registry.** A mirror, proxy, or enterprise registry proves
   nothing about whether the package is public.
 - **npm's own `access`.** The staged-publish record npm returns says whether
@@ -228,9 +229,12 @@ holds for a stage from any registry other than public npm: an organization may
 point its npm connection at any https registry, including one it runs, and
 that registry's stage record says nothing about a public npm name. `scanPublicPackageName` is the rule; `listBadgeCandidateScans` and
 `listDefaultBadgeCandidateScans` enforce it again in SQL, so a key written
-before the rule existed cannot answer either. Only a manifest-claimed gate
-review answers under its own manifest name, which is exactly the claim it makes
-and why it renders `unverified`.
+before the rule existed cannot answer either. Only a PyPI or VS Code
+manifest-claimed gate review answers under its own manifest name, which is
+exactly the claim it makes and why it renders `unverified`. An npm gate review
+never answers: the npm badge requires the package's organization claim, which
+only a verified staged admission (or an audited backfill of one) establishes,
+so npm badges previously answered by gate reviews go quiet on deployment.
 
 Two further conditions apply to the _release_ rather than the package, and
 `listDefaultBadgeCandidateScans` enforces both:
