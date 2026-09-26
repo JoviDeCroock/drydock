@@ -21,7 +21,12 @@ This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in
 [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes) — Drydock
 GitHub App installed, release target configured, publish workflow uploading the
-packed tarballs plus `SHA256SUMS`.
+packed tarballs plus `SHA256SUMS`. The
+[guided setup wizard](./workflow-gates.md#guided-setup) walks that prerequisite
+with you — it generates the workflow, links to each GitHub screen, and verifies
+the result — and surfaces the checklist below beside the generated workflow. The
+registry-side steps (1 and 2) stay manual, because only the npm account holder
+can take them.
 
 ## The recipe
 
@@ -52,9 +57,16 @@ On GitHub, in the repository:
    CLI ≥ 11.5.1 and no `NODE_AUTH_TOKEN` anywhere in the workflow:
 
 ```yaml
+permissions: {} # each job asks for exactly what it needs
+
 jobs:
   pack:
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # npm ci runs install scripts next
       - run: npm ci
       - run: npm pack --json > pack.json
       - run: sha256sum *.tgz > SHA256SUMS

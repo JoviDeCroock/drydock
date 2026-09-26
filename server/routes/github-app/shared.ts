@@ -57,7 +57,7 @@ export function validationErrorResponse(c: RouteContext, err: unknown) {
   return c.json({ error: "internal error" }, 500);
 }
 
-function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
+function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 | 503 {
   switch (code) {
     case "installation_missing":
       return 404;
@@ -73,5 +73,7 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
     case "unsupported_ecosystem":
     case "invalid_input":
       return 400;
+    case "github_unavailable":
+      return 503;
   }
 }

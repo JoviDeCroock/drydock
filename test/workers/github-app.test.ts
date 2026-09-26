@@ -311,6 +311,50 @@ describe("github-app routes", () => {
     });
   });
 
+  test("GET /installations/:id/repositories reports a failed token mint as unavailable", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi.fn(
+      async () => new Response("upstream detail s3cr3t", { status: 502 }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const res = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    // A GitHub outage is not a suspended installation: telling a maintainer to
+    // reinstall an App that is fine sends them the wrong way. GitHub's body
+    // stays server-side; the browser renders this message.
+    expect(res.status).toBe(503);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({ code: "github_unavailable" });
+    expect(text).not.toContain("s3cr3t");
+  });
+
+  test("GET /installations/:id/repositories keeps a failed listing's body server-side", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input instanceof Request ? input.url : input).includes("/access_tokens")
+        ? Response.json({ token: "install-token" })
+        : new Response('{"message":"internal s3cr3t"}', { status: 422 }),
+    ) as unknown as typeof globalThis.fetch;
+
+    const res = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories`,
+    );
+
+    expect(res.status).toBe(403);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({ code: "repository_not_accessible" });
+    expect(text).toContain("(422)");
+    expect(text).not.toContain("s3cr3t");
+  });
+
   test("GET /installations/:id/repositories follows GitHub pagination until exhausted", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);

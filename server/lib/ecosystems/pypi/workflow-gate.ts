@@ -10,15 +10,23 @@ import {
 } from "./";
 import { erasePackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
+import {
+  GATE_SETUP_ACTIONS,
+  GATE_SETUP_PINNING_NOTE,
+} from "../../workflow-gates/gate-setup-actions";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import { compactDuplicateTextSamples } from "../../workflow-gates/resolve";
 import type {
   ArchiveContents,
+  GateSetupTemplate,
+  GateSetupTemplateInput,
   ParsedGateArtifact,
   PreparedReleaseCandidate,
   WorkflowArtifactKind,
   WorkflowGateAdapter,
 } from "../../workflow-gates/types";
+
+const PYPI_GATE_ARTIFACT_NAME = "pypi-release-candidate";
 
 /**
  * PyPI workflow-gate adapter.
@@ -32,7 +40,7 @@ import type {
  */
 export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "pypi",
-  artifactName: "pypi-release-candidate",
+  artifactName: PYPI_GATE_ARTIFACT_NAME,
   // A platform wheel matrix can exceed the per-download ZIP cap, so PyPI
   // releases may shard across `pypi-release-candidate-*` uploads.
   shardedArtifactNames: true,
@@ -110,7 +118,99 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
       }),
     });
   },
+
+  gateSetupTemplate(input: GateSetupTemplateInput): GateSetupTemplate {
+    return pypiGateSetupTemplate(input);
+  },
 };
+
+/** PyPA's publish action, pinned like the shared actions in `gate-setup-actions.ts`. */
+const PYPI_PUBLISH_ACTION =
+  "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2";
+
+/**
+ * The PyPI publish workflow the setup wizard generates for a maintainer to
+ * commit.
+ *
+ * Same contract as the canonical example in `docs/pypi-workflow-gate.md`: build
+ * once, record `SHA256SUMS` in `dist/`, upload the whole directory, pause at
+ * the gated environment, re-check the digests on download, and hand the
+ * reviewed distributions to `pypa/gh-action-pypi-publish` over OIDC.
+ * `SHA256SUMS` is removed just before publish so it is never uploaded to PyPI.
+ *
+ * It is the single-build shape. A platform wheel matrix uploads one shard per
+ * leg and needs a publish job that downloads and checks every shard, which is
+ * the sharded example in the same doc — not something this template emits.
+ */
+function pypiGateSetupTemplate({
+  environmentName,
+  packageName,
+}: GateSetupTemplateInput): GateSetupTemplate {
+  return {
+    workflowPath: ".github/workflows/drydock-pypi-release.yml",
+    yaml: `# Drydock workflow gate — PyPI
+# Project: ${packageName}
+# Drydock reviews the built wheels/sdist before the publish job is allowed to run.
+name: "Publish ${packageName}"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# No token scope by default; each job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: ${GATE_SETUP_ACTIONS.checkout}
+        with:
+          # The build runs third-party build backends; keep the token off disk.
+          persist-credentials: false
+      - uses: ${GATE_SETUP_ACTIONS.setupPython}
+        with:
+          python-version: "3.x"
+      - run: python -m pip install build
+      - run: python -m build
+      # Record the digests Drydock reviews and the publish job re-checks.
+      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      - uses: ${GATE_SETUP_ACTIONS.uploadArtifact}
+        with:
+          name: ${PYPI_GATE_ARTIFACT_NAME}
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Drydock is this environment's deployment-protection rule: the job stays
+    # queued until the release is approved in Drydock.
+    environment: "${environmentName}"
+    permissions:
+      # OIDC for PyPI trusted publishing; no API token exists in this workflow.
+      id-token: write
+    steps:
+      - uses: ${GATE_SETUP_ACTIONS.downloadArtifact}
+        with:
+          name: ${PYPI_GATE_ARTIFACT_NAME}
+          path: dist
+      # Fail closed if the downloaded bytes drifted from what was reviewed.
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: rm dist/SHA256SUMS
+      - uses: ${PYPI_PUBLISH_ACTION}
+`,
+    notes: [
+      `On PyPI, add a trusted publisher for \`${packageName}\`: this repository, \`drydock-pypi-release.yml\`, and the environment set to \`${environmentName}\`.`,
+      "Delete any remaining PyPI API tokens for the project once the trusted publisher works, so the gated workflow is the only credentialed publish path.",
+      "This workflow builds once, on one runner. A platform wheel matrix needs the sharded shape in Drydock's PyPI gate docs instead: one upload per build leg, and a publish job that downloads and checks every shard.",
+      GATE_SETUP_PINNING_NOTE,
+    ],
+  };
+}
 
 interface PreparedArtifactEntry {
   path: string;

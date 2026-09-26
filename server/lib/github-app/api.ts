@@ -25,10 +25,10 @@ export async function fetchInstallationMetadata(
     },
   );
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    await discardBody(response);
     throw new GithubAppValidationError(
       "installation_missing",
-      `GitHub installation ${installationId} could not be fetched (${response.status}): ${text.slice(0, 200)}`,
+      `GitHub installation ${installationId} could not be fetched (${response.status})`,
     );
   }
   const data = (await response.json()) as {
@@ -55,6 +55,59 @@ export async function fetchInstallationMetadata(
   };
 }
 
+/**
+ * GitHub's error bodies stay on the server. The messages built from these
+ * responses reach the browser through `validationErrorResponse`, so they carry
+ * GitHub's status and nothing GitHub wrote; the body is cancelled rather than
+ * left unread.
+ */
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
+/**
+ * A refused or unusable installation-token mint, classified by what it means
+ * rather than by GitHub's wording.
+ *
+ * GitHub refusing a token for an installation it has suspended (403) or no
+ * longer has (404) is `installation_inactive`, a state the maintainer has to
+ * act on. Anything else — a 5xx, a rate limit, a 2xx without a token — is a
+ * mint that did not complete, `github_unavailable`, and retrying is the fix.
+ * Reporting those as an inactive installation sent maintainers to reinstall an
+ * App that was fine. `status` is null when GitHub answered 2xx without a token.
+ */
+export class InstallationTokenError extends GithubAppValidationError {
+  constructor(
+    readonly status: number | null,
+    rateLimited: boolean,
+  ) {
+    const refused = !rateLimited && (status === 403 || status === 404);
+    super(
+      refused ? "installation_inactive" : "github_unavailable",
+      status === null
+        ? "GitHub answered the installation token request without a token"
+        : `installation access token request failed (${status})`,
+    );
+    this.name = "InstallationTokenError";
+  }
+}
+
+/**
+ * GitHub signals a rate limit with 429, or with a 403 that carries
+ * `retry-after`, an exhausted `x-ratelimit-remaining`, or — for some secondary
+ * limits, which set neither header — only a message saying so. The message is
+ * read for that one test and never forwarded.
+ */
+function isGithubRateLimited(response: Response, body: string): boolean {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  return (
+    response.headers.has("retry-after") ||
+    response.headers.get("x-ratelimit-remaining") === "0" ||
+    /rate limit/i.test(body)
+  );
+}
+
 export async function getInstallationAccessToken(
   config: GithubAppConfig,
   installationId: string,
@@ -69,19 +122,11 @@ export async function getInstallationAccessToken(
     },
   );
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new GithubAppValidationError(
-      "installation_inactive",
-      `installation access token request failed (${response.status}): ${text.slice(0, 200)}`,
-    );
+    const body = await response.text().catch(() => "");
+    throw new InstallationTokenError(response.status, isGithubRateLimited(response, body));
   }
   const data = (await response.json()) as { token?: string };
-  if (!data.token) {
-    throw new GithubAppValidationError(
-      "installation_inactive",
-      "installation access token response missing token",
-    );
-  }
+  if (!data.token) throw new InstallationTokenError(null, false);
   return data.token;
 }
 
@@ -115,10 +160,10 @@ export async function fetchRepository(
     );
   }
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
+    await discardBody(response);
     throw new GithubAppValidationError(
       "repository_not_accessible",
-      `repository ${fullName} lookup failed (${response.status}): ${text.slice(0, 200)}`,
+      `repository ${fullName} lookup failed (${response.status})`,
     );
   }
   const data = (await response.json()) as {
@@ -149,10 +194,10 @@ export async function listInstallationRepositories(
     { headers: githubHeaders(token), maxPages: 50 },
     async (response) => {
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
+        await discardBody(response);
         throw new GithubAppValidationError(
           "repository_not_accessible",
-          `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
+          `installation repositories lookup failed (${response.status})`,
         );
       }
       const data = (await response.json()) as {
@@ -215,10 +260,10 @@ export async function listRepositoryEnvironments(
         );
       }
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
+        await discardBody(response);
         throw new GithubAppValidationError(
           "repository_not_accessible",
-          `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
+          `environments lookup for ${fullName} failed (${response.status})`,
         );
       }
       const data = (await response.json()) as {
