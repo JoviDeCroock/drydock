@@ -72,6 +72,15 @@ Current structured events cover:
   Verification silently covering nothing looks exactly like
   verification working, so a registry that stops returning digests — or a cap
   that starts biting — is visible as a coverage outage rather than silence.
+- `scan.gate_continuity.broken` when a registry stage of a package the
+  organization gates does not match an approved gate review
+  (`gate-not-approved`, `digest-mismatch`, `unverified`, or `ungated`; scan,
+  package, version, status, reason, and the gate scan id), and
+  `scan.gate_continuity.lookup_failed` when the check could not run
+  (`reason`: `history-unavailable` with the safe error, or
+  `registry-record-unavailable` when npm's stage record was missing for an
+  organization with a live release target); the scan persists an `unknown`
+  record rather than none unless the organization has no live release target.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.
