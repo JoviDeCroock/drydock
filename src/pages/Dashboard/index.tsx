@@ -17,6 +17,7 @@ import {
 } from "../../models/getting-started";
 import { NpmConnectionModel, npmConnectionScope } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
+import { normalizeRole, roleCanManageIntegrations } from "../../../server/lib/auth/roles";
 import {
   ScanListModel,
   type ScanDecision,
@@ -29,6 +30,7 @@ import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
 import { useAuthedDashboardSession } from "../../features/account/useAuthedDashboardSession";
+import { PublicationMonitor } from "../../features/publication-monitor/PublicationMonitor";
 import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
 import { scanSourceLabel } from "../../features/scan-source";
@@ -158,6 +160,10 @@ export default function DashboardPage() {
             error={overview.error}
           />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
+          <PublicationMonitor
+            reviews={scans.scans}
+            canStop={roleCanManageIntegrations(normalizeRole(organizations.active.value?.role))}
+          />
         </>
       ) : (
         <LoadingState
@@ -422,7 +428,10 @@ function RecentReviewsSection({
 
 const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "undecided", label: "Undecided" },
-  { value: "published_without_decision", label: "Published, no decision" },
+  {
+    value: "published_without_decision",
+    label: "Published with no decision in this organization",
+  },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
@@ -488,7 +497,7 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
     case "undecided":
       return "Nothing waiting on you. Switch to All to see earlier reviews.";
     case "published_without_decision":
-      return "No npm releases were published without a Drydock decision.";
+      return "No npm releases were published without a decision in this organization.";
     case "publish":
       return "No approved reviews yet.";
     case "no_publish":
@@ -595,7 +604,11 @@ function ScanRows({
                 {scan.packageName ? (
                   <span class="flex min-w-0 items-baseline">
                     <a
-                      href={packageReleasesPath(scan.packageName, scan.ecosystem)}
+                      href={packageReleasesPath(
+                        scan.packageName,
+                        scan.ecosystem,
+                        scan.organizationId,
+                      )}
                       class="min-w-0 truncate text-[14px] font-medium"
                       title={`All reviewed releases of ${scan.packageName}`}
                     >

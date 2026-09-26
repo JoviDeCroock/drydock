@@ -1,3 +1,4 @@
+import type { AppDb } from "../../db/client";
 import type { AnyPackageAdapter } from "./package-adapter";
 import type { WorkflowGateAdapter } from "../workflow-gates/types";
 import type { PublicDiffAdapter } from "../public-diff/types";
@@ -32,6 +33,10 @@ export type { EcosystemId } from "./labels";
  *    declared separately because reviewing an ecosystem's public releases
  *    under an organization is a deliberate product decision, not a free
  *    consequence of `/diff` supporting it.
+ *  - `publicationMonitor` — the public registry can be watched for releases
+ *    that reached it outside the organization's reviewed path, and compared
+ *    with the organization's prior decisions. The scheduled handler and the
+ *    staged-review route reach it only through this field.
  */
 export interface EcosystemModule {
   readonly id: EcosystemId;
@@ -41,4 +46,32 @@ export interface EcosystemModule {
   readonly gate?: WorkflowGateAdapter;
   readonly publicDiff?: PublicDiffAdapter;
   readonly published?: PublishedPairAdapter;
+  readonly publicationMonitor?: PublicationMonitorAdapter;
+}
+
+/** One staged release as the registry described it when it was listed or fetched. */
+export interface StagedReleaseVisibility {
+  packageName: string | null;
+  /** The registry's own access value; only `"public"` enrolls a watch. */
+  access: string | null;
+}
+
+export interface PublicationMonitorAdapter {
+  /** Cron: enroll packages that review history shows are public. */
+  backfillWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
+  /** Cron: check a bounded, per-organization-fair batch of due watches. */
+  sweepWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
+  /**
+   * A staged release was fetched from `registryUrl` for review. Best-effort:
+   * enrollment never throws back into the review that triggered it.
+   */
+  registerStagedReleases(
+    db: AppDb,
+    env: Cloudflare.Env,
+    input: {
+      organizationId: string;
+      registryUrl: string;
+      releases: readonly StagedReleaseVisibility[];
+    },
+  ): Promise<void>;
 }

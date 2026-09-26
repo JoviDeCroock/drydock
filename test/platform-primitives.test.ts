@@ -3,6 +3,7 @@ import { mapWithConcurrency } from "../server/lib/platform/concurrency";
 import {
   hexDecode,
   hexEncode,
+  sha1Hex,
   sha256Base64Url,
   sha256Hex,
 } from "../server/lib/platform/crypto-utils";
@@ -243,6 +244,12 @@ describe("digest and encoding primitives", () => {
     const bytes = new TextEncoder().encode(KNOWN);
     expect(await sha256Hex(bytes)).toBe(KNOWN_SHA256_HEX);
     expect(await sha256Hex(bytes.buffer as ArrayBuffer)).toBe(KNOWN_SHA256_HEX);
+  });
+
+  test("sha1Hex is lowercase hex, the encoding npm's dist.shasum uses", async () => {
+    expect(await sha1Hex(new TextEncoder().encode(KNOWN))).toBe(
+      "a9993e364706816aba3e25717850c26c9cd0d89d",
+    );
   });
 
   test("sha256Base64Url is the same digest in a different encoding", async () => {

@@ -154,7 +154,10 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     // discovery and we wait only for the "Started N new reviews" message —
     // the resulting background scans are exercised by the scenarios below.
     await page.goto("/dashboard");
-    const checkNpm = page.getByRole("button", { name: "Check npm" });
+    const checkNpm = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) })
+      .getByRole("button", { name: "Check npm", exact: true });
     await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
     await checkNpm.click();
     await expect(page.getByText(/Started \d+ new reviews? from npm/)).toBeVisible({
@@ -328,6 +331,360 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   });
 }
 
+test("publication monitor observes an unreviewed public release", async ({ browser, baseURL }) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) =>
+    browserErrors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
+  );
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Publication monitor/ }) });
+    await expect(monitor.getByLabel("Public npm package")).toBeEnabled();
+    await monitor.getByLabel("Public npm package").fill("@drydock/e2e-publication");
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toBeVisible();
+    // Materialize the fixture release after enrollment and before the check;
+    // its stable registry timestamp must not appear to be in the future.
+    const published = await fetch(`${registryUrl}/@drydock%2Fe2e-publication`);
+    expect(published.ok).toBe(true);
+    await published.json();
+    const publicationRow = monitor
+      .locator("li")
+      .filter({ has: page.getByText("@drydock/e2e-publication", { exact: true }) });
+    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
+    await expect(
+      monitor.getByText("Published with no approval in this organization", { exact: true }),
+    ).toBeVisible();
+    await expect(monitor.getByText("1.0.0", { exact: true })).toBeVisible();
+    await expect(monitor.getByRole("link", { name: "Open review" })).toHaveCount(0);
+    await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await monitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor-unacknowledged.png"),
+      fullPage: true,
+    });
+    // The card links the package to its page, which shows the same watch and
+    // alert and acknowledges it there.
+    await publicationRow
+      .getByRole("link", { name: "@drydock/e2e-publication", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/dashboard\/packages\/@drydock\/e2e-publication/);
+    const packageMonitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(packageMonitor.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await expect(packageMonitor.getByText(/added by hand · watching since/)).toBeVisible();
+    await expect(
+      packageMonitor.getByText("Published with no approval in this organization", { exact: true }),
+    ).toBeVisible();
+    await packageMonitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor-package-page.png"),
+      fullPage: true,
+    });
+    await packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }).click();
+    await expect(packageMonitor.getByText(/^Acknowledged /)).toBeVisible();
+    await expect(packageMonitor.getByText("watching", { exact: true })).toBeVisible();
+    await expect(
+      packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }),
+    ).toHaveCount(0);
+    await page.goto("/dashboard");
+    await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toHaveCount(
+      0,
+    );
+    await publicationRow.getByRole("button", { name: "Check releases", exact: true }).click();
+    await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
+    await expect(
+      monitor.getByText("Published with no approval in this organization", { exact: true }),
+    ).toBeVisible();
+    await monitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor.png"),
+      fullPage: true,
+    });
+    await monitor
+      .getByRole("button", { name: "More actions for @drydock/e2e-publication" })
+      .click();
+    await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
+    // Stopping confirms first and says the alert history survives it.
+    const stopDialog = page.getByRole("dialog", {
+      name: "Stop watching @drydock/e2e-publication?",
+    });
+    await expect(stopDialog.getByText(/stay listed on the package's page/)).toBeVisible();
+    await stopDialog.getByRole("button", { name: "Stop watching", exact: true }).click();
+    await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toHaveCount(0);
+    // The acknowledged alert is still on the package's page after the stop.
+    await page.goto("/dashboard/packages/@drydock/e2e-publication");
+    const stoppedMonitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(stoppedMonitor.getByText(/^Not watched\. Monitoring was stopped/)).toBeVisible();
+    await expect(
+      stoppedMonitor.getByText("Alerts from earlier watches of this package"),
+    ).toBeVisible();
+    await expect(stoppedMonitor.getByText(/^acknowledged /)).toBeVisible();
+    expect(browserErrors).toEqual([]);
+    const publicRequests = (await readJournal()).filter((entry) =>
+      /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(decodeURIComponent(entry.path)),
+    );
+    // A release with no Drydock record is decided from metadata alone: its
+    // bytes are never downloaded, so no padding can hide it.
+    expect(publicRequests.length).toBeGreaterThan(0);
+    expect(
+      publicRequests.some((entry) => entry.path.includes("/-/drydock-e2e-publication-1.0.0.tgz")),
+    ).toBe(false);
+    expect(publicRequests.every((entry) => entry.authorization === "absent")).toBe(true);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a package link names its organization, whatever this browser had active", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await registerAndConnect(page);
+    await page.goto("/dashboard");
+    const created = await createScan(page, uiStageId);
+    expect(created.status).toBe(202);
+    await pollScanUntilTerminal(page, String(created.body?.scan?.id));
+    // Org A holds the review; org B is created afterwards and made active.
+    const orgs = await evaluateOnStablePage(
+      page,
+      async () => {
+        const list = (await fetch("/api/v1/organizations").then((response) => response.json())) as {
+          organizations: { id: string; name: string }[];
+        };
+        const created = (await fetch("/api/v1/organizations", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Second workspace" }),
+        }).then((response) => response.json())) as { organization: { id: string; name: string } };
+        return {
+          a: list.organizations[0]!,
+          b: created.organization,
+        };
+      },
+      undefined,
+    );
+    await page.evaluate(
+      (id) => localStorage.setItem("drydock:active-organization-id", id),
+      orgs.b.id,
+    );
+
+    const linkToA = `/dashboard/packages/@drydock/e2e-native?org=${encodeURIComponent(orgs.a.id)}`;
+    await page.goto(linkToA);
+    await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible();
+    await expect(page.getByText(orgs.a.name, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("1 review", { exact: true })).toBeVisible();
+    // The organization stays in the address, so the page can be shared as-is.
+    expect(new URL(page.url()).searchParams.get("org")).toBe(orgs.a.id);
+
+    await page.goto(`/dashboard/packages/@drydock/e2e-native?org=${encodeURIComponent(orgs.b.id)}`);
+    await expect(page.getByText(/have been reviewed in\s+Second workspace\s+yet/)).toBeVisible();
+
+    await page.goto("/dashboard/packages/@drydock/e2e-native?org=org-that-is-not-mine");
+    await expect(
+      page.getByText(/You are not a member of the organization this link names/),
+    ).toBeVisible();
+    await expect(page.getByText("1 review", { exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("an observed release opens what was published: its public diff and its review", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  try {
+    await page.goto("/dashboard");
+    const organization = await evaluateOnStablePage(
+      page,
+      async () =>
+        (
+          (await fetch("/api/v1/organizations").then((response) => response.json())) as {
+            organizations: { id: string }[];
+          }
+        ).organizations[0]!,
+      undefined,
+    );
+    await page.route("**/api/v1/publication-watches/packages/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          packageName: "@drydock/e2e-diffed",
+          watch: {
+            id: "watch-diffed",
+            organizationId: organization.id,
+            packageName: "@drydock/e2e-diffed",
+            source: "manual",
+            createdAt: "2026-09-01T00:00:00.000Z",
+            lastCheckedAt: "2026-09-02T00:00:00.000Z",
+            lastError: null,
+            unresolvedAlertCount: 0,
+          },
+          observations: [
+            {
+              id: "obs-reviewed",
+              version: "1.1.0",
+              previousVersion: "1.0.0",
+              status: "unknown",
+              reason: "review_pending",
+              scanId: "scan-in-flight",
+              publishedAt: "2026-09-02T00:00:00.000Z",
+              firstSeenAt: "2026-09-02T00:00:00.000Z",
+              checkedAt: "2026-09-02T00:00:00.000Z",
+              acknowledgedAt: null,
+            },
+          ],
+          alerts: [],
+          enrollment: { state: "watched" },
+          viewer: { canStop: true },
+        }),
+      });
+    });
+    await page.goto(
+      `/dashboard/packages/@drydock/e2e-diffed?org=${encodeURIComponent(organization.id)}`,
+    );
+    const monitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(
+      monitor.getByText("a Drydock review of this version is still running", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      monitor.getByRole("link", {
+        name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab",
+      }),
+    ).toHaveAttribute("href", "/diff/@drydock/e2e-diffed/1.0.0/1.1.0");
+    await expect(monitor.getByRole("link", { name: "Open review" })).toHaveAttribute(
+      "href",
+      "/dashboard/scans/scan-in-flight",
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication monitor automatically watches public staged discoveries and respects stop watching", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await registerAndConnect(page);
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    const reviews = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) });
+    await expect(monitor.getByText(/No packages watched yet/)).toBeVisible();
+    await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
+    const nativeRow = monitor
+      .locator("li")
+      .filter({ has: page.getByText("@drydock/e2e-native", { exact: true }) });
+    await expect(nativeRow.getByText(/from a staged review/)).toBeVisible({ timeout: 60_000 });
+    await nativeRow.getByRole("button", { name: "More actions for @drydock/e2e-native" }).click();
+    await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "Stop watching @drydock/e2e-native?" })
+      .getByRole("button", { name: "Stop watching", exact: true })
+      .click();
+    await expect(nativeRow).toHaveCount(0);
+    const nextDiscovery = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/v1/staged-publishes/scan") &&
+        response.request().method() === "POST",
+    );
+    await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
+    expect((await nextDiscovery).ok()).toBe(true);
+    await page.reload();
+    await expect(monitor.getByText(/from a staged review/).first()).toBeVisible();
+    await expect(nativeRow).toHaveCount(0);
+    await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await expect(nativeRow.getByText(/added by hand/)).toBeVisible();
+    await monitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-auto-enrollment.png"),
+      fullPage: true,
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication monitor explains deferred enrollment and offers gate packages for explicit opt-in", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  let enrolled = false;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const watch = {
+    id: "gate-watch",
+    packageName: "@drydock/gate-package",
+    source: "manual",
+    createdAt: "2026-09-13T00:00:00.000Z",
+    lastCheckedAt: null,
+    lastError: null,
+  };
+  await page.route("**/api/v1/publication-watches", async (route) => {
+    if (route.request().method() === "POST") {
+      expect(route.request().postDataJSON()).toEqual({ packageName: watch.packageName });
+      enrolled = true;
+      await route.fulfill({ json: { watch } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        watches: enrolled ? [watch] : [],
+        autoEnrollment: {
+          deferred: enrolled ? 0 : 2,
+          suggestions: enrolled ? [] : [{ packageName: watch.packageName }],
+        },
+      },
+    });
+  });
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    await expect(
+      monitor.getByText(/Automatic enrollment is deferred for 2 packages/),
+    ).toBeVisible();
+    await expect(monitor.getByText(/workflow-gate packages need an explicit choice/)).toBeVisible();
+    await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
+    await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
+    await expect(monitor.getByText(/added by hand/)).toBeVisible();
+    await expect(monitor.getByText(/Automatic enrollment is deferred/)).toHaveCount(0);
+    await expect(
+      monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }),
+    ).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("registry journal limits credential forwarding", async () => {
   const journal = await readJournal();
   expect(journal.some((entry) => entry.path === "/-/whoami")).toBe(true);
@@ -339,7 +696,10 @@ test("registry journal limits credential forwarding", async () => {
   );
 
   for (const entry of journal.filter((item) => item.path !== "/__health")) {
-    expect(entry.authorization, entry.path).toBe("present");
+    const publicPublication = /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(
+      decodeURIComponent(entry.path),
+    );
+    expect(entry.authorization, entry.path).toBe(publicPublication ? "absent" : "present");
   }
 
   // Credentialed paths are allowlisted, not merely observed: this is what fails

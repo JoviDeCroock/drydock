@@ -30,6 +30,9 @@ vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
+vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => ({
+  enrollStagedReleases: vi.fn(async () => undefined),
+}));
 vi.mock("../server/lib/ecosystems/npm/release-outcome.ts", () => releaseOutcomeMock);
 
 const {

@@ -41,6 +41,7 @@ function stubRunArtifacts(runId: number, artifactPaths: string[]) {
 }
 
 const SHA = "cd".repeat(32);
+const SHA1 = "ef".repeat(20);
 
 describe("VS Code workflow-gate adapter", () => {
   test("registers vscode and classifies VSIX artifacts", () => {
@@ -101,6 +102,7 @@ describe("VS Code workflow-gate adapter", () => {
           path: "dist/remote-text-fetcher-1.0.0.vsix",
           bytes: new Uint8Array([1, 2, 3]),
           sha256: SHA,
+          sha1: SHA1,
           ecosystem: "vscode",
           kind: "vsix",
         },
@@ -176,6 +178,7 @@ describe("VS Code workflow-gate adapter", () => {
         {
           path: "dist/malformed.vsix",
           sha256: SHA,
+          sha1: SHA1,
           ecosystem: "vscode",
           kind: "vsix",
           files: [
@@ -337,6 +340,7 @@ function vsixArtifact(path: string, name: string, version: string) {
   return {
     path,
     sha256: SHA,
+    sha1: SHA1,
     ecosystem: "vscode",
     kind: "vsix",
     files: [

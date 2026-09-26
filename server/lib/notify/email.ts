@@ -15,6 +15,8 @@ interface SendEmailBinding {
 export interface EmailSendResult {
   ok: boolean;
   reason?: string;
+  /** No transport or no valid address: resending this message cannot succeed. */
+  undeliverable?: true;
 }
 
 const DEFAULT_FROM_ADDRESS = "drydock@drydock.org";
@@ -25,10 +27,11 @@ export async function sendNotificationEmail(
   input: SendEmailInput,
 ): Promise<EmailSendResult> {
   const binding = env.SEND_EMAIL as SendEmailBinding | undefined;
-  if (!binding) return { ok: false, reason: "SEND_EMAIL binding is not configured" };
+  if (!binding)
+    return { ok: false, reason: "SEND_EMAIL binding is not configured", undeliverable: true };
 
   const recipient = sanitizeAddress(input.to);
-  if (!recipient) return { ok: false, reason: "invalid recipient" };
+  if (!recipient) return { ok: false, reason: "invalid recipient", undeliverable: true };
 
   const fromAddress = sanitizeAddress(env.EMAIL_FROM_ADDRESS) ?? DEFAULT_FROM_ADDRESS;
   const fromName = (env.EMAIL_FROM_NAME ?? DEFAULT_FROM_NAME).replace(/[\r\n]/g, "").slice(0, 80);

@@ -131,7 +131,7 @@ Within a single org sweep, new staged publishes are started through a bounded-co
 
 ## Organization and auth model
 
-All non-auth `/api/*` endpoints require a Better Auth session and an active organization, with one deliberate exception: the anonymous public package-diff endpoints under `/api/public/v1/package-diff` (below). Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
+All non-auth `/api/*` endpoints require a Better Auth session and an active organization, with one deliberate exception: the anonymous public package-diff endpoints under `/api/public/v1/package-diff` (below). Users may belong to multiple organizations; scan data, npm connections, workflow gates, release targets, Slack installs, and settings must be organization-scoped. The `x-organization-id` header is only a selector: a selector for an organization the caller does not belong to falls back to their personal organization, except when the page also sends `x-organization-strict: 1` (a page whose URL names its organization, such as the package release view), where it is refused with a 403 `not_organization_member` rather than answered about the wrong organization. Email verification and membership/invitation behavior are described in [`organization-members.md`](./organization-members.md).
 
 ## Public package diff
 

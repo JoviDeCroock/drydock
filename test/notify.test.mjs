@@ -52,6 +52,8 @@ function slackEvents() {
 
 const {
   notifyNpmConnectionExpired,
+  notifyPublicationCoverageGap,
+  notifyPublicationDiscrepancy,
   notifyScanCompletion,
   notifyStagedReleaseApprovable,
   notifyStagedReleaseAwaitingApproval,
@@ -660,4 +662,248 @@ describe("Slack connection delivery", () => {
     const [slackEvent] = slackEvents();
     expect(slackEvent.type).toBe("scan.notification_sent");
   });
+});
+
+describe("notifyPublicationDiscrepancy", () => {
+  const input = {
+    env: { BETTER_AUTH_URL: "https://drydock.test" },
+    db: {},
+    organizationId: "org_1",
+    packageName: "@acme/package",
+    version: "2.0.0",
+    status: "published_without_approval",
+  };
+
+  test.each([
+    [
+      "published_without_approval",
+      "Published with no approval in Acme Corp",
+      "No approval in Acme Corp predates",
+    ],
+    [
+      "published_despite_rejection",
+      "Published despite a rejection in Acme Corp",
+      "published after it was rejected in Acme Corp",
+    ],
+    [
+      "artifact_mismatch",
+      "Published bytes differ from what Acme Corp reviewed",
+      "match no artifact reviewed in Acme Corp",
+    ],
+  ])(
+    "delivers %s evidence to configured email recipients and Slack",
+    async (status, title, evidence) => {
+      dbMock.resolveNotificationEmails.mockResolvedValue([
+        "lead@example.com",
+        "security@example.com",
+      ]);
+      dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+      await notifyPublicationDiscrepancy({ ...input, status });
+      expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1");
+      expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
+      for (const [, message] of emailMock.sendNotificationEmail.mock.calls) {
+        expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
+        expect(message.text).toContain(evidence);
+        expect(message.text).toContain("Organization: Acme Corp");
+        expect(message.text).toContain(
+          "https://drydock.test/dashboard/packages/@acme/package?org=org_1",
+        );
+        // Scoped to this organization's records, never an accusation.
+        expect(message.text).not.toMatch(/investigate who|unreviewed/i);
+      }
+      expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+      expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title,
+          packageLabel: "@acme/package@2.0.0",
+          statusLine: expect.stringContaining(evidence),
+          dashboardUrl: "https://drydock.test/dashboard/packages/@acme/package?org=org_1",
+        }),
+      );
+      expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(3);
+      for (const [, event] of dbMock.recordScanEvent.mock.calls) {
+        expect(event).toMatchObject({
+          organizationId: "org_1",
+          actorUserId: "user_1",
+          type: "scan.notification_sent",
+          metadata: { trigger: "publication_discrepancy", status },
+        });
+        expect(JSON.stringify(event)).not.toContain(BOT_TOKEN);
+      }
+    },
+  );
+
+  test("still sends Slack when email has no recipients", async () => {
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    await notifyPublicationDiscrepancy(input);
+    expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
+    expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+    expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+      input.db,
+      expect.objectContaining({
+        type: "scan.notification_failed",
+        metadata: expect.objectContaining({
+          reason: "no_recipients",
+          trigger: "publication_discrepancy",
+        }),
+      }),
+    );
+  });
+
+  test("records email failure while delivering Slack independently", async () => {
+    emailMock.sendNotificationEmail.mockResolvedValue({ ok: false, reason: "delivery_error" });
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    await notifyPublicationDiscrepancy(input);
+    expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+    expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+      input.db,
+      expect.objectContaining({
+        type: "scan.notification_failed",
+        metadata: expect.objectContaining({ channel: "email", reason: "delivery_error" }),
+      }),
+    );
+  });
+
+  test("does not deliver for an organization with no owner and keeps the alert pending", async () => {
+    dbMock.getOrganizationOwnerUserId.mockResolvedValue(null);
+    expect(await notifyPublicationDiscrepancy(input)).toBe("failed");
+    expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
+    expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
+  });
+
+  // The monitor marks an alert notified only on `delivered` or
+  // `no_destination`; `failed` is what makes it re-send on the next check.
+  test.each([
+    [
+      "one email lands while Slack fails",
+      { ok: true },
+      { ok: false, reason: "http_500" },
+      "delivered",
+    ],
+    ["only Slack lands", { ok: false, reason: "smtp down" }, { ok: true }, "delivered"],
+    [
+      "every configured channel fails",
+      { ok: false, reason: "smtp down" },
+      { ok: false, statusClass: "5xx", reason: "http_500" },
+      "failed",
+    ],
+    [
+      "email has no transport and Slack fails",
+      { ok: false, reason: "SEND_EMAIL binding is not configured", undeliverable: true },
+      { ok: false, statusClass: "5xx", reason: "http_500" },
+      "failed",
+    ],
+  ])("reports the real outcome when %s", async (_case, email, slack, outcome) => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    emailMock.sendNotificationEmail.mockResolvedValue(email);
+    slackMock.postSlackMessage.mockResolvedValue(slack);
+    expect(await notifyPublicationDiscrepancy(input)).toBe(outcome);
+  });
+
+  test.each([
+    [
+      "published_without_approval",
+      "review_pending",
+      "Published with no approval in Acme Corp",
+      "Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it.",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_without_decision",
+      "Published with no approval in Acme Corp",
+      "undecided review of these exact bytes",
+    ],
+    [
+      "published_despite_rejection",
+      "rejected_after_publication",
+      "Rejected in Acme Corp after it was published",
+      "rejected in Acme Corp after they were published",
+    ],
+    [
+      "artifact_mismatch",
+      "review_history_limit",
+      "Published bytes differ from what Acme Corp reviewed",
+      "Only the latest 100 Drydock records of this version were compared.",
+    ],
+  ])("words %s with reason %s for what the records show", async (status, reason, title, detail) => {
+    await notifyPublicationDiscrepancy({ ...input, status, reason });
+    const [[, message]] = emailMock.sendNotificationEmail.mock.calls;
+    expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
+    expect(message.text).toContain(detail);
+    expect(message.text).not.toMatch(/investigate who|unreviewed|compromis|attack/i);
+    expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+      input.db,
+      expect.objectContaining({ metadata: expect.objectContaining({ status, reason }) }),
+    );
+  });
+
+  test("a delivered alert stays delivered when recording the delivery fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dbMock.recordScanEvent.mockRejectedValue(new Error("D1 unavailable"));
+    try {
+      expect(await notifyPublicationDiscrepancy(input)).toBe("delivered");
+      expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        "notification.audit_failed",
+        expect.objectContaining({ organizationId: "org_1", type: "scan.notification_sent" }),
+      );
+    } finally {
+      dbMock.recordScanEvent.mockReset();
+      dbMock.recordScanEvent.mockResolvedValue(undefined);
+      warn.mockRestore();
+    }
+  });
+
+  test("reports no destination when nothing could ever receive it", async () => {
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+    expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
+    dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
+    emailMock.sendNotificationEmail.mockResolvedValue({
+      ok: false,
+      reason: "SEND_EMAIL binding is not configured",
+      undeliverable: true,
+    });
+    expect(await notifyPublicationDiscrepancy(input)).toBe("no_destination");
+  });
+});
+
+describe("notifyPublicationCoverageGap", () => {
+  const input = {
+    env: { BETTER_AUTH_URL: "https://drydock.test" },
+    db: {},
+    organizationId: "org_1",
+    packageName: "@acme/package",
+  };
+
+  test.each([
+    ["2.0.0", "artifact_too_large", "@acme/package@2.0.0", "larger than Drydock hashes"],
+    [null, "registry_metadata_too_large", "releases of @acme/package", "larger than Drydock reads"],
+  ])(
+    "says %s could not be verified (%s) without calling it a discrepancy",
+    async (version, reason, subject, detail) => {
+      dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+      expect(await notifyPublicationCoverageGap({ ...input, version, reason })).toBe("delivered");
+      const [[, message]] = emailMock.sendNotificationEmail.mock.calls;
+      expect(message.subject).toBe(
+        `Drydock could not verify ${subject} against Acme Corp's reviews`,
+      );
+      expect(message.text).toContain(detail);
+      expect(message.text).toContain("This is not a discrepancy");
+      expect(message.text).not.toMatch(/published with no approval|despite|differ/i);
+      expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ statusLine: expect.stringContaining(detail) }),
+      );
+      expect(dbMock.recordScanEvent).toHaveBeenCalledWith(
+        input.db,
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            trigger: "publication_coverage_gap",
+            version,
+            reason,
+          }),
+        }),
+      );
+    },
+  );
 });

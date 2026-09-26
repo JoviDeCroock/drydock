@@ -1,6 +1,6 @@
 import { readStreamBounded } from "../tar-parser.js";
 import { parseContentLength } from "../platform/bounded-body";
-import { sha256Hex } from "../platform/crypto-utils";
+import { sha1Hex, sha256Hex } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
@@ -39,6 +39,12 @@ export interface ResolvedReleaseFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
+  /**
+   * SHA-1 of the same bytes, npm's `dist.shasum` encoding. Recorded so a
+   * reviewed tarball can be matched with npm's own digest when the published
+   * copy cannot be hashed.
+   */
+  sha1: string;
   ecosystem: string;
   kind: string;
 }
@@ -301,6 +307,7 @@ async function processReleaseBundle<TArtifact>(
           path: entry.path,
           bytes: entry.bytes,
           sha256,
+          sha1: await sha1Hex(entry.bytes),
           ecosystem: classified.ecosystem,
           kind: classified.kind,
         }),

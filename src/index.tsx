@@ -94,8 +94,12 @@ if (typeof window !== "undefined") {
   // Adopt an emailed `?org=<id>` deep-link before the router mounts so the first
   // org-scoped request (which reads the active org from localStorage) targets the
   // organization the link is about. Scoped to the dashboard, the only surface the
-  // param means anything on.
-  if (location.pathname.startsWith("/dashboard")) {
+  // param means anything on. A package page keeps its `?org=` and pins it
+  // itself, so the organization stays part of the page's address.
+  if (
+    location.pathname.startsWith("/dashboard") &&
+    !location.pathname.startsWith("/dashboard/packages/")
+  ) {
     applyActiveOrganizationFromUrl();
   }
   if (isPrerenderedRoute(location.pathname) && appElement.firstChild) {

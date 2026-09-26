@@ -156,6 +156,10 @@ export const scans = sqliteTable(
     // never writes one, and the release timeline still has to show when the
     // release reached the registry.
     stagedCreatedAt: integer("staged_created_at", { mode: "timestamp_ms" }),
+    // The registry's own SHA-1 for the staged artifact, from the stage record
+    // the scan was queued from. Persisted up front so a review still in flight
+    // (no computed digest yet) can be matched against the published bytes.
+    stagedDeclaredSha1: text("staged_declared_sha1"),
     // Registry base URL captured when this staged release was discovered. npm
     // package coordinates are registry-local, so later connection edits must
     // never make an old scan query a different registry for the same name and
@@ -611,4 +615,145 @@ export const twoFactor = sqliteTable(
   (table) => ({
     userIdx: index("two_factor_user_idx").on(table.userId),
   }),
+);
+
+export const publicationWatches = sqliteTable(
+  "publication_watches",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    source: text("source", { enum: ["manual", "staged_discovery", "published_history"] })
+      .notNull()
+      .default("manual"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+    // A package-wide reason no release can currently be verified (npm's
+    // document too large to read, too many versions), when it began, and when
+    // the organization was told. Cleared once a check gets past it.
+    coverageGap: text("coverage_gap"),
+    coverageGapSince: integer("coverage_gap_since", { mode: "timestamp_ms" }),
+    coverageGapNotifiedAt: integer("coverage_gap_notified_at", { mode: "timestamp_ms" }),
+    // When the observations' dist-tags were last read from npm, so a reader
+    // can tell current tags from stale ones.
+    distTagsCheckedAt: integer("dist_tags_checked_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("publication_watches_org_package").on(table.organizationId, table.packageName),
+    index("publication_watches_due").on(table.lastCheckedAt),
+  ],
+);
+
+export const publicationObservations = sqliteTable(
+  "publication_observations",
+  {
+    id: text("id").primaryKey(),
+    watchId: text("watch_id")
+      .notNull()
+      .references(() => publicationWatches.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+    checkedAt: integer("checked_at", { mode: "timestamp_ms" }).notNull(),
+    status: text("status", {
+      enum: [
+        "approved_match",
+        "published_without_approval",
+        "published_despite_rejection",
+        "artifact_mismatch",
+        "unknown",
+      ],
+    }).notNull(),
+    reason: text("reason"),
+    sha256: text("sha256"),
+    sha1: text("sha1"),
+    scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),
+    // The published semver predecessor when the release was observed, so the
+    // observation can open the release's public diff without refetching npm.
+    previousVersion: text("previous_version"),
+    // The dist-tags that pointed at this version at the latest check, sorted.
+    // Refreshed on every check, settled observations included, so a consumer
+    // can tell which release line a version is on. Null before it was recorded,
+    // or when npm listed more tags than the monitor reads (unknown, not none).
+    distTags: text("dist_tags", { mode: "json" }).$type<string[]>(),
+    // When the organization was told this release could not be verified.
+    coverageNotifiedAt: integer("coverage_notified_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("publication_observations_watch_version").on(table.watchId, table.version),
+    index("publication_observations_org_watch").on(
+      table.organizationId,
+      table.watchId,
+      table.firstSeenAt,
+    ),
+  ],
+);
+
+export const publicationWatchCandidates = sqliteTable(
+  "publication_watch_candidates",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    source: text("source", {
+      enum: ["manual", "staged_discovery", "published_history", "workflow_gate"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    stoppedAt: integer("stopped_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("publication_watch_candidates_org_package").on(
+      table.organizationId,
+      table.packageName,
+    ),
+    index("publication_watch_candidates_pending").on(
+      table.stoppedAt,
+      table.source,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const publicationAlerts = sqliteTable(
+  "publication_alerts",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    version: text("version").notNull(),
+    status: text("status", {
+      enum: ["published_without_approval", "published_despite_rejection", "artifact_mismatch"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
+    acknowledgedBy: text("acknowledged_by").references(() => user.id, { onDelete: "set null" }),
+    /**
+     * When the organization was actually told. The alert row is committed
+     * before delivery is attempted, so without this a transport failure would
+     * leave a durable alert nobody was ever notified about and no way to find
+     * it again. Declared last so the column order matches the migration's
+     * `ALTER TABLE ... ADD`, which the alert insert relies on positionally.
+     */
+    notifiedAt: integer("notified_at", { mode: "timestamp_ms" }),
+    // Claimed by the check delivering it, so overlapping checks cannot send it
+    // twice; a claim older than the delivery lease may be taken over.
+    deliveryClaimedAt: integer("delivery_claimed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("publication_alerts_org_release").on(
+      table.organizationId,
+      table.packageName,
+      table.version,
+    ),
+  ],
 );

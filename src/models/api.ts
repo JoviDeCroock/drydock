@@ -1,4 +1,9 @@
-import { ACTIVE_ORG_HEADER, activeOrganizationId } from "./active-organization";
+import {
+  ACTIVE_ORG_HEADER,
+  ACTIVE_ORG_STRICT_HEADER,
+  activeOrganizationId,
+  pinnedOrganizationId,
+} from "./active-organization";
 
 export class ApiError extends Error {
   constructor(
@@ -18,7 +23,10 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
     ...(init?.headers as Record<string, string> | undefined),
   };
   const orgId = activeOrganizationId.peek();
-  if (orgId) headers[ACTIVE_ORG_HEADER] = orgId;
+  if (orgId) {
+    headers[ACTIVE_ORG_HEADER] = orgId;
+    if (pinnedOrganizationId.peek() === orgId) headers[ACTIVE_ORG_STRICT_HEADER] = "1";
+  }
   const res = await fetch(input, {
     credentials: "same-origin",
     ...init,
@@ -31,7 +39,10 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
     const code = typeof data?.code === "string" ? data.code : undefined;
     if (res.status === 401) throw new ApiError("Please sign in to continue.", 401, undefined, code);
     const detail = typeof data?.detail === "string" ? data.detail : undefined;
-    const message = data?.message || data?.error || "request failed";
+    const message =
+      code === "not_organization_member"
+        ? "You are not a member of this organization."
+        : data?.message || data?.error || "request failed";
     throw new ApiError(detail ? `${message}: ${detail}` : message, res.status, detail, code);
   }
   return data as T;

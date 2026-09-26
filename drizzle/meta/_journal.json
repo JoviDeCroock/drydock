@@ -225,6 +225,20 @@
       "when": 1789317585597,
       "tag": "0031_gorgeous_maverick",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1789491776844,
+      "tag": "0032_easy_bug",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1790144955299,
+      "tag": "0033_lying_starjammers",
+      "breakpoints": true
     }
   ]
 }

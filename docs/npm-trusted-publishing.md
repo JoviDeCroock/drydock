@@ -84,24 +84,25 @@ are the `id-token: write` permission and the absence of any token secret.
 
 ## Why each pin matters
 
-| Publish attempt                                                | Stopped by                                                                               |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `npm publish` with any token — laptop, CI secret, stolen token | Publishing access disallows tokens                                                       |
-| OIDC publish from another repository, workflow file, or a fork | Trusted publisher claim mismatch; npm refuses the exchange                               |
-| Editing the workflow to drop `environment: production`         | Environment is pinned in the trusted publisher config; the OIDC exchange fails           |
-| Running the publish job without (or against) a gate decision   | The deployment-protection rule holds the job; a Drydock rejection fails the run closed   |
-| Rebuilding or swapping the tarball after approval              | `sha256sum --check --strict` fails closed; the same digests are in the report Provenance |
-| A repo admin approving the deployment past the rule in the UI  | Admin bypass unchecked on the environment                                                |
+| Publish attempt                                                | Stopped by                                                                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm publish` with any token — laptop, CI secret, stolen token | Publishing access disallows tokens                                                                                                                      |
+| OIDC publish from another repository, workflow file, or a fork | Trusted publisher claim mismatch; npm refuses the exchange                                                                                              |
+| Editing the workflow to drop `environment: production`         | Environment is pinned in the trusted publisher config; the OIDC exchange fails                                                                          |
+| Running the publish job without (or against) a gate decision   | The deployment-protection rule holds the job; a Drydock rejection fails the run closed                                                                  |
+| Rebuilding or swapping the tarball after approval              | The recommended publish job rejects changed bytes with `sha256sum --check --strict`; this assumes the publish job and its checksum check remain trusted |
+| A repo admin approving the deployment past the rule in the UI  | Admin bypass unchecked on the environment                                                                                                               |
 
 Two properties compound on top of the table. Because the publish is OIDC-based,
 npm attaches provenance attestations (for public repositories) binding the
 published version to the repository and workflow run — so a version that _did_
-ship around this path is publicly distinguishable from one that went through
-it. And the review boundary
-stays intact under workflow tampering: pinning controls _which_ path can
-publish, while Drydock's review of the uploaded bytes judges _what_ that path
-is about to publish — a malicious workflow edit that produces malicious bytes
-still lands in front of the reviewer.
+ship around this path can carry different provenance evidence. Provenance is
+not proof of Drydock approval. Pinning controls which job can obtain the publish
+credential; Drydock reviews the uploaded bytes. If that job is subsequently
+allowed to publish different bytes or skip its checksum check, the registry does
+not bind the credential to Drydock's reviewed digest. The optional
+[publication monitor](./publication-monitor.md) compares actual public npm bytes
+with prior reviews after publication, including releases that bypass staging.
 
 Gate scans arriving through this path carry the `attested` source-binding tier
 (see [`intent-envelope.md`](./intent-envelope.md)): the signed
@@ -113,8 +114,10 @@ and the reviewed bytes were downloaded from that exact run.
 - **Interactive publish by the npm account itself.** "Disallow tokens" still
   permits a human with the account password, 2FA, and an OTP to `npm publish`
   from a laptop. npm has no "trusted publisher only" enforcement today; this is
-  the residual gap only the registry can close. Such a publish is _detectable_
-  — no provenance attestation, no gate review, no report — but not preventable.
+  the residual gap only the registry can close. Enrolled packages can be
+  monitored for publication without prior artifact approval, but that observation
+  happens after the package is public. Missing provenance alone does not prove
+  a bypass.
 - **npm account takeover, including 2FA.** Whoever controls the account can
   edit or remove the trusted publisher configuration and re-enable tokens.
   Every registry-side control roots in account security.

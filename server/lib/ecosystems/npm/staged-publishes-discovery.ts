@@ -14,6 +14,7 @@ import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
+import { enrollStagedReleases } from "./publication-auto-enrollment";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -235,6 +236,11 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
+  await enrollStagedReleases(db, env, {
+    organizationId,
+    registryUrl: connection.registryUrl,
+    releases: stagedItems,
+  });
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
@@ -263,6 +269,7 @@ export async function discoverAndQueueStagedPublishes(
           packageName: item.packageName,
           stagedVersion: item.version,
           stagedCreatedAt: item.createdAt,
+          stagedDeclaredSha1: item.shasum,
           registryUrl: connection.registryUrl,
         });
         if (!detail) return null;

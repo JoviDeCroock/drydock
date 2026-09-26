@@ -6,13 +6,17 @@
  * multiple trusted-publishing configurations make maintainers ask.
  */
 import type { ComponentChildren } from "preact";
-import { useComputed, useModel } from "@preact/signals";
+import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { sessionModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
+import { packageReleasesPath } from "../../../lib/package-releases-path";
+import { OrganizationModel } from "../../../models/organization";
+import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import {
   PackageReleasesModel,
   type PackageRelease,
@@ -36,20 +40,26 @@ import {
 import { registryStatusBadge } from "../../../features/registry-status";
 import { DecisionState } from "../../../features/review/DecisionState";
 import { scanSourceLabel } from "../../../features/scan-source";
+import { PackagePublicationSection } from "../../../features/publication-monitor/PackagePublicationSection";
 
 export default function PackageReleasesPage() {
   const location = useLocation();
   const route = useRoute();
   const packageName = route.params.name ?? "";
   const ecosystem = location.query.ecosystem || "npm";
+  // The page is one organization's history, so the organization is part of
+  // its address: `?org=` is kept, and every request on the page carries it.
+  const organizationId = location.query.org || null;
+  usePinnedOrganization(organizationId);
   // The model is built once per mount, so a navigation from one package page
-  // straight to another must remount rather than reuse a model bound to the
-  // previous name.
+  // straight to another (or to another organization's) must remount rather
+  // than reuse a model bound to the previous name.
   return (
     <PackageReleasesView
-      key={`${ecosystem}:${packageName}`}
+      key={`${organizationId ?? ""}:${ecosystem}:${packageName}`}
       packageName={packageName}
       ecosystem={ecosystem}
+      organizationId={organizationId}
     />
   );
 }
@@ -57,17 +67,62 @@ export default function PackageReleasesPage() {
 function PackageReleasesView({
   packageName,
   ecosystem,
+  organizationId,
 }: {
   packageName: string;
   ecosystem: string;
+  organizationId: string | null;
 }) {
   const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
-  const sessionChecked = useAuthedDashboardSession({ onReady: () => model.load() });
+  const organizations = useModel(OrganizationModel);
+  const membership = useSignal<"resolving" | "member" | "not_member" | "unavailable">("resolving");
+  const sessionChecked = useAuthedDashboardSession({
+    onReady: async (_session, isCancelled) => {
+      await organizations.load();
+      if (isCancelled()) return;
+      // Without the membership list an outage would read as "not a member";
+      // report the failed load instead of guessing.
+      if (organizations.error.peek()) {
+        membership.value = "unavailable";
+        return;
+      }
+      if (!organizationId) {
+        // An address without an organization would show whichever one this
+        // browser had active; name it in the URL before reading anything.
+        const active = organizations.active.peek();
+        if (active) location.route(packageReleasesPath(packageName, ecosystem, active.id), true);
+        return;
+      }
+      if (!organizations.organizations.peek().some((org) => org.id === organizationId)) {
+        membership.value = "not_member";
+        return;
+      }
+      membership.value = "member";
+      await model.load();
+    },
+  });
 
   const channels = useComputed(() => groupReleasesByChannel(model.releases.value));
-  const ready = useComputed(() => sessionChecked.value && model.loaded.value);
+  const ready = useComputed(
+    () => sessionChecked.value && membership.value === "member" && model.loaded.value,
+  );
   const hasReleases = useComputed(() => model.releases.value.length > 0);
+  const organizationName = useComputed(() =>
+    membership.value === "member" ? (organizations.active.value?.name ?? null) : null,
+  );
+
+  const organizationLabel = useComputed(() => organizationName.value ?? "this organization");
+
+  const openInOrganization = (id: string) => {
+    if (organizations.activate(id)) {
+      location.route(packageReleasesPath(packageName, ecosystem, id));
+    }
+  };
+  const onCreateOrganization = async (name: string) => {
+    const created = await organizations.create(name);
+    if (created) location.route(packageReleasesPath(packageName, ecosystem, created.id));
+  };
 
   const onSignOut = async () => {
     await sessionModel.signOut();
@@ -82,6 +137,14 @@ function PackageReleasesView({
           <LinkButton variant="ghost" size="sm" href="/dashboard/settings">
             Settings
           </LinkButton>
+          <OrgSwitcher
+            organizations={organizations.organizations.value}
+            activeOrganizationId={organizationId}
+            busy={organizations.busy.value}
+            error={organizations.error.value}
+            onActivate={openInOrganization}
+            onCreate={onCreateOrganization}
+          />
           <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
         </>
       }
@@ -91,15 +154,33 @@ function PackageReleasesView({
           ← Reviews
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0 break-words">{packageName}</h1>
-        <PackageDetailLine model={model} ecosystem={ecosystem} />
+        <PackageDetailLine
+          model={model}
+          ecosystem={ecosystem}
+          organizationName={organizationName}
+        />
       </header>
 
+      <Show when={() => membership.value === "not_member"}>
+        {() => (
+          <Alert tone="critical">
+            You are not a member of the organization this link names, so its history of{" "}
+            {packageName} is not shown. Pick one of your organizations from the switcher to see
+            yours.
+          </Alert>
+        )}
+      </Show>
+      <Show when={() => (membership.value === "unavailable" ? organizations.error.value : null)}>
+        {(message) => <Alert tone="critical">{message}</Alert>}
+      </Show>
       <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
 
       <Show
         when={ready}
         fallback={
-          <LoadingState title="Loading releases" detail="confirming session · reading reviews" />
+          <Show when={() => membership.value === "resolving" || membership.value === "member"}>
+            <LoadingState title="Loading releases" detail="confirming session · reading reviews" />
+          </Show>
         }
       >
         {() => (
@@ -110,9 +191,9 @@ function PackageReleasesView({
               fallback={
                 <Card>
                   <EmptyLine>
-                    No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in
-                    this organization yet. Reviews start from the dashboard once a staged publish or
-                    a gated release reaches Drydock.
+                    No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
+                    {organizationLabel} yet. Reviews start from the dashboard once a staged publish
+                    or a gated release reaches Drydock.
                   </EmptyLine>
                 </Card>
               }
@@ -140,6 +221,7 @@ function PackageReleasesView({
                 </div>
               )}
             </Show>
+            {ecosystem === "npm" ? <PackagePublicationSection packageName={packageName} /> : null}
           </>
         )}
       </Show>
@@ -152,16 +234,22 @@ function PackageReleasesView({
 function PackageDetailLine({
   model,
   ecosystem,
+  organizationName,
 }: {
   model: InstanceType<typeof PackageReleasesModel>;
   ecosystem: string;
+  // The page is pinned to one organization by its address; naming it here is
+  // what keeps a history from reading as some other organization's.
+  organizationName: ReadonlySignal<string | null>;
 }) {
   const parts = useComputed(() => {
     const summary = model.summary.value;
-    if (!summary) return [ecosystemLabel(ecosystem)];
+    const organization = organizationName.value;
+    if (!summary) return [ecosystemLabel(ecosystem), organization];
     const { totalReviews, channels, lastRelease } = summary;
     return [
       ecosystemLabel(ecosystem),
+      organization,
       `${totalReviews} ${pluralize("review", totalReviews)}`,
       `${channels.length} ${pluralize("channel", channels.length)}`,
       lastRelease

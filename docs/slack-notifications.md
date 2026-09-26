@@ -177,3 +177,16 @@ the route tests.
   Slack `fetch`: connect/callback/channels/channel/patch/delete/test, OAuth state
   CSRF (forged state, user mismatch, forbidden role), encryption-at-rest, event
   redaction, and the test-send rate limit.
+
+Publication monitoring sends `publication_discrepancy` notifications for newly observed
+releases with no approval in the alerting organization, releases published despite a
+rejection there, or bytes that differ from its approval; the copy names that
+organization and never implies nobody else reviewed the release. When the organization
+has an undecided review of the published bytes, it asks for that decision first. It
+also sends `publication_coverage_gap` notices, once per gap, when a release (or every
+release of a package) could not be verified for more than an hour; they say Drydock
+could not verify it and are never worded as a discrepancy.
+Email uses configured organization recipients with owner fallback; Slack is independent
+and links to the organization's dashboard. An alert that no channel accepted is re-sent
+on later checks of its watch; acknowledgment and retry rules are documented in
+[publication monitoring](./publication-monitor.md#alerts-and-acknowledgment).

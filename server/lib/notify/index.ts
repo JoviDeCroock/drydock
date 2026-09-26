@@ -14,6 +14,7 @@ import { scanUrl, settingsUrl } from "./links";
 
 export { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./gate-notifications";
 export { notifyOrganizationInvite } from "./organization-invite";
+export { notifyPublicationCoverageGap, notifyPublicationDiscrepancy } from "./publication-alerts";
 
 // The staged-publish notifiers below stay in this module because they render
 // npm's `stage approve` command: `approvalInstructions` is the one place the

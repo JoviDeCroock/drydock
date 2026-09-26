@@ -125,7 +125,10 @@ describe("deliverOrganizationNotification", () => {
     dbMock.resolveNotificationEmails.mockResolvedValue([]);
     dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
 
-    await expect(deliverOrganizationNotification(env, db, notification())).resolves.toBeUndefined();
+    // Slack landed, so the fan-out as a whole reached someone.
+    await expect(deliverOrganizationNotification(env, db, notification())).resolves.toBe(
+      "delivered",
+    );
 
     expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
     expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
@@ -152,11 +155,11 @@ describe("deliverOrganizationNotification", () => {
     ]);
   });
 
-  test("records an email failure per recipient with its reason and does not throw", async () => {
+  test("records an email failure per recipient with its reason and reports failed, not a throw", async () => {
     dbMock.resolveNotificationEmails.mockResolvedValue(["a@example.com"]);
     emailMock.sendNotificationEmail.mockResolvedValue({ ok: false, reason: "binding_missing" });
 
-    await expect(deliverOrganizationNotification(env, db, notification())).resolves.toBeUndefined();
+    await expect(deliverOrganizationNotification(env, db, notification())).resolves.toBe("failed");
 
     expect(events()).toEqual([
       {
@@ -192,7 +195,11 @@ describe("deliverOrganizationNotification", () => {
     dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
     secretBoxMock.decryptSlackBotToken.mockRejectedValue(new Error("bad key"));
 
-    await deliverOrganizationNotification(env, db, notification({ email: null }));
+    // A key that cannot decrypt the token stays broken until Slack is
+    // reconnected, so a resend cannot help: nowhere to deliver.
+    await expect(
+      deliverOrganizationNotification(env, db, notification({ email: null })),
+    ).resolves.toBe("no_destination");
 
     expect(slackMock.postSlackMessage).not.toHaveBeenCalled();
     const [event] = events();
@@ -206,12 +213,40 @@ describe("deliverOrganizationNotification", () => {
     });
   });
 
+  test("a Slack channel that is gone is no destination; a rate limit is worth a retry", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    slackMock.postSlackMessage.mockResolvedValue({
+      ok: false,
+      status: 200,
+      statusClass: "2xx",
+      reason: "channel_not_found",
+    });
+    await expect(
+      deliverOrganizationNotification(env, db, notification({ email: null })),
+    ).resolves.toBe("no_destination");
+    slackMock.postSlackMessage.mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusClass: "4xx",
+      rateLimited: true,
+      retryAfterSeconds: 30,
+      reason: "rate_limited",
+    });
+    await expect(
+      deliverOrganizationNotification(env, db, notification({ email: null })),
+    ).resolves.toBe("failed");
+  });
+
   test("skips Slack silently when the connection is disabled or has no channel", async () => {
     dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection({ enabled: false }));
-    await deliverOrganizationNotification(env, db, notification({ email: null }));
+    await expect(
+      deliverOrganizationNotification(env, db, notification({ email: null })),
+    ).resolves.toBe("no_destination");
 
     dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection({ channelId: null }));
-    await deliverOrganizationNotification(env, db, notification({ email: null }));
+    await expect(
+      deliverOrganizationNotification(env, db, notification({ email: null })),
+    ).resolves.toBe("no_destination");
 
     expect(secretBoxMock.decryptSlackBotToken).not.toHaveBeenCalled();
     expect(events()).toHaveLength(0);

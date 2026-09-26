@@ -1,6 +1,9 @@
 import { signal } from "@preact/signals";
 
 export const ACTIVE_ORG_HEADER = "x-organization-id";
+// Mirrors server/lib/auth/active-organization.ts: ask the server to refuse a
+// selector the caller is not a member of instead of falling back.
+export const ACTIVE_ORG_STRICT_HEADER = "x-organization-strict";
 const STORAGE_KEY = "drydock:active-organization-id";
 const ACTIVE_ORG_QUERY_PARAM = "org";
 
@@ -23,6 +26,23 @@ export function setActiveOrganizationId(id: string | null) {
     if (id) localStorage.setItem(STORAGE_KEY, id);
     else localStorage.removeItem(STORAGE_KEY);
   } catch {}
+}
+
+/**
+ * The organization a page's URL names (`?org=`), while that page is open.
+ * Every request the page and its sections make carries it as the active
+ * organization, strictly: a non-member gets a 403, never another organization's
+ * data. Null on pages whose organization is simply the remembered one.
+ */
+export const pinnedOrganizationId = signal<string | null>(null);
+
+export function pinOrganization(id: string) {
+  if (activeOrganizationId.peek() !== id) setActiveOrganizationId(id);
+  if (pinnedOrganizationId.peek() !== id) pinnedOrganizationId.value = id;
+}
+
+export function unpinOrganization() {
+  pinnedOrganizationId.value = null;
 }
 
 export function applyActiveOrganizationFromUrl() {

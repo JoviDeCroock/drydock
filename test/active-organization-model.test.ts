@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   activeOrganizationId,
   applyActiveOrganizationFromUrl,
+  pinOrganization,
+  pinnedOrganizationId,
   setActiveOrganizationId,
+  unpinOrganization,
 } from "../src/models/active-organization";
+import { apiFetch } from "../src/models/api";
 
 interface WindowStub {
   replacedTo: string | null;
@@ -27,7 +31,9 @@ function stubWindow(href: string): WindowStub {
 
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window;
+  unpinOrganization();
   setActiveOrganizationId(null);
+  vi.unstubAllGlobals();
 });
 
 describe("applyActiveOrganizationFromUrl", () => {
@@ -65,5 +71,52 @@ describe("applyActiveOrganizationFromUrl", () => {
 
     expect(() => applyActiveOrganizationFromUrl()).not.toThrow();
     expect(activeOrganizationId.value).toBe("existing_org");
+  });
+});
+
+describe("an organization pinned by the page's URL", () => {
+  function requestHeaders() {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    return async () => {
+      await apiFetch("/api/v1/anything");
+      const [, init] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
+      return init.headers as Record<string, string>;
+    };
+  }
+
+  test("is sent strictly with every request so the server refuses a non-member", async () => {
+    const headers = requestHeaders();
+    setActiveOrganizationId("org_remembered");
+    expect(await headers()).toMatchObject({ "x-organization-id": "org_remembered" });
+    expect(await headers()).not.toHaveProperty("x-organization-strict");
+
+    pinOrganization("org_from_link");
+    expect(activeOrganizationId.value).toBe("org_from_link");
+    expect(pinnedOrganizationId.value).toBe("org_from_link");
+    expect(await headers()).toMatchObject({
+      "x-organization-id": "org_from_link",
+      "x-organization-strict": "1",
+    });
+
+    // Leaving the page keeps the organization remembered but not strict.
+    unpinOrganization();
+    expect(activeOrganizationId.value).toBe("org_from_link");
+    expect(await headers()).not.toHaveProperty("x-organization-strict");
+  });
+
+  test("names the refusal instead of passing on a bare forbidden", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "forbidden", code: "not_organization_member" }), {
+            status: 403,
+          }),
+      ),
+    );
+    await expect(apiFetch("/api/v1/anything")).rejects.toThrow(
+      "You are not a member of this organization.",
+    );
   });
 });

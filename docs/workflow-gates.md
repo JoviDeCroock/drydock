@@ -157,6 +157,16 @@ jobs:
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
 
+## Observing publication
+
+Gate approval authorizes the configured job; registries do not consume a
+Drydock artifact-digest constraint. The checksum recipes assume that job remains
+trusted to run the check and publish the checked file. For explicitly enrolled
+public npm packages, the [publication monitor](./publication-monitor.md) hashes
+published bytes and compares them with prior staged or gate approvals. This is
+post-publication evidence and does not expand gate authority or cover PyPI and
+VS Code publication outcomes.
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -190,6 +200,13 @@ scan workbench, and re-validated into the `report.json` export as a top-level
 `provenance` field. A maintainer's CI can compare those digests against the
 checksum file it built and the bytes it is about to publish, closing the
 byte-continuity loop without trusting any single step.
+
+npm gate reviews also record `sha1` beside `digest` in `summary.stagedPublish`
+(not in `provenance` or the release manifest): the SHA-1 of the same reviewed
+tarball, in npm's `dist.shasum` encoding. It lets the
+[publication monitor](./publication-monitor.md) compare npm's own shasum with a
+gate review when the published tarball is too large or too slow to hash; gate
+reviews from before it was recorded carry SHA-256 only.
 
 ## Remaining work
 
