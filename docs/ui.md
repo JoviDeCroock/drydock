@@ -16,6 +16,13 @@ This file is only a compact implementation map.
   clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
   404 instead of reaching the server. `test/server-route-links.test.ts` guards
   the literal-href case.
+- `src/features/error-report/AppErrorBoundary.tsx` wraps the router. A render
+  error swaps the page for a recovery card (reload, `mailto:` bug report, copyable
+  details) and clears on the next navigation. Routes load through `lazyRoute`, so a
+  failed chunk load (a tab left open across a deploy) lands there too. The report is built by
+  `bug-report.ts`. It drops the query string and hash, and redacts a
+  `/reports/:token` share token, because the user sends it verbatim. Nothing is
+  sent automatically. Contact addresses live in `src/lib/contact.ts`.
 
 ## Primitives
 

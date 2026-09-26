@@ -8,12 +8,17 @@ import { BrandMark } from "./BrandMark";
 import { LinkButton } from "./Button";
 import { AikidoFootnote } from "./AikidoPartner";
 import { MonoLabel } from "./Typography";
+import { CONTACT_EMAIL, contactMailto } from "../lib/contact";
 
-const FEEDBACK_MAILTO =
-  "mailto:drydock@drydock.org?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
+const FEEDBACK_MAILTO = contactMailto(
+  "Drydock feedback",
+  "Tell us what's broken, confusing, or missing:\n\n",
+);
 
-const SECURITY_MAILTO =
-  "mailto:drydock@drydock.org?subject=Drydock%20security%20report&body=Describe%20the%20issue%20and%20how%20to%20reproduce%20it%3A%0A%0A";
+const SECURITY_MAILTO = contactMailto(
+  "Drydock security report",
+  "Describe the issue and how to reproduce it:\n\n",
+);
 
 const WIDTH_CLASS = {
   narrow: "max-w-[640px]",
@@ -96,7 +101,7 @@ function FeedbackButton() {
       href={FEEDBACK_MAILTO}
       variant="ghost"
       size="sm"
-      title="Email drydock@drydock.org with any issues"
+      title={`Email ${CONTACT_EMAIL} with any issues`}
     >
       Feedback
     </LinkButton>

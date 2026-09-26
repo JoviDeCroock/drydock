@@ -1,6 +1,8 @@
 import { hydrate, render } from "preact";
-import { ErrorBoundary, LocationProvider, Route, Router, lazy, prerender as ssr } from "preact-iso";
+import { ErrorBoundary, LocationProvider, Route, Router, prerender as ssr } from "preact-iso";
 import { Toaster } from "./components/Toast";
+import { AppErrorBoundary } from "./features/error-report/AppErrorBoundary";
+import { lazyRoute } from "./features/error-report/lazy-route";
 import { applyActiveOrganizationFromUrl } from "./models/active-organization";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import {
@@ -10,49 +12,50 @@ import {
 } from "./lib/prerender-routes";
 import "./style.css";
 
-const LandingPage = lazy(() => import("./pages/Landing"));
-const DocsPage = lazy(() => import("./pages/Docs"));
-const PrivacyPage = lazy(() => import("./pages/Privacy"));
-const LoginPage = lazy(() => import("./pages/Auth/Login"));
-const RegisterPage = lazy(() => import("./pages/Auth/Register"));
-const VerifyEmailPage = lazy(() => import("./pages/Auth/VerifyEmail"));
-const DashboardPage = lazy(() => import("./pages/Dashboard"));
-const ScanDetailPage = lazy(() => import("./pages/Dashboard/ScanDetail"));
-const PackageReleasesPage = lazy(() => import("./pages/Dashboard/PackageReleases"));
-const SettingsPage = lazy(() => import("./pages/Dashboard/Settings"));
-const AccountPage = lazy(() => import("./pages/Dashboard/Account"));
-const InvitePage = lazy(() => import("./pages/Dashboard/Invite"));
-const GithubAppCallbackPage = lazy(() => import("./pages/Dashboard/GithubAppCallback"));
-const PackageDiffPage = lazy(() => import("./pages/Diff"));
-const PublicReportPage = lazy(() => import("./pages/PublicReport"));
-const DiscoveryGuidePage = lazy(() => import("./pages/Guides"));
-const IncidentCasePage = lazy(() => import("./pages/Incidents"));
-const NotFoundPage = lazy(() => import("./pages/NotFound"));
+const LandingPage = lazyRoute(() => import("./pages/Landing"));
+const DocsPage = lazyRoute(() => import("./pages/Docs"));
+const PrivacyPage = lazyRoute(() => import("./pages/Privacy"));
+const LoginPage = lazyRoute(() => import("./pages/Auth/Login"));
+const RegisterPage = lazyRoute(() => import("./pages/Auth/Register"));
+const VerifyEmailPage = lazyRoute(() => import("./pages/Auth/VerifyEmail"));
+const DashboardPage = lazyRoute(() => import("./pages/Dashboard"));
+const ScanDetailPage = lazyRoute(() => import("./pages/Dashboard/ScanDetail"));
+const PackageReleasesPage = lazyRoute(() => import("./pages/Dashboard/PackageReleases"));
+const SettingsPage = lazyRoute(() => import("./pages/Dashboard/Settings"));
+const AccountPage = lazyRoute(() => import("./pages/Dashboard/Account"));
+const InvitePage = lazyRoute(() => import("./pages/Dashboard/Invite"));
+const GithubAppCallbackPage = lazyRoute(() => import("./pages/Dashboard/GithubAppCallback"));
+const PackageDiffPage = lazyRoute(() => import("./pages/Diff"));
+const PublicReportPage = lazyRoute(() => import("./pages/PublicReport"));
+const DiscoveryGuidePage = lazyRoute(() => import("./pages/Guides"));
+const IncidentCasePage = lazyRoute(() => import("./pages/Incidents"));
+const NotFoundPage = lazyRoute(() => import("./pages/NotFound"));
 
 export function App() {
   return (
     <LocationProvider>
-      <ErrorBoundary onError={(error) => console.error(error)}>
-        <Router>
-          <Route path="/" component={LandingPage} />
-          <Route path="/docs" component={DocsPage} />
-          <Route path="/privacy" component={PrivacyPage} />
-          <Route path="/npm-staged-publishing" component={DiscoveryGuidePage} />
-          <Route path="/github-actions-package-gate" component={DiscoveryGuidePage} />
-          <Route path="/npm-trusted-publishing" component={DiscoveryGuidePage} />
-          <Route path="/pypi-release-security" component={DiscoveryGuidePage} />
-          <Route path="/vscode-extension-security" component={DiscoveryGuidePage} />
-          <Route path="/package-tarball-diff" component={DiscoveryGuidePage} />
-          <Route path="/security" component={DiscoveryGuidePage} />
-          <Route path="/open-source" component={DiscoveryGuidePage} />
-          <Route path="/diff" component={PackageDiffPage} />
-          <Route path="/diff/*" component={PackageDiffPage} />
-          <Route path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
-          <Route path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
-          <Route path="/login" component={LoginPage} />
-          <Route path="/register" component={RegisterPage} />
-          <Route path="/verify-email" component={VerifyEmailPage} />
-          {/*
+      <ErrorBoundary>
+        <AppErrorBoundary>
+          <Router>
+            <Route path="/" component={LandingPage} />
+            <Route path="/docs" component={DocsPage} />
+            <Route path="/privacy" component={PrivacyPage} />
+            <Route path="/npm-staged-publishing" component={DiscoveryGuidePage} />
+            <Route path="/github-actions-package-gate" component={DiscoveryGuidePage} />
+            <Route path="/npm-trusted-publishing" component={DiscoveryGuidePage} />
+            <Route path="/pypi-release-security" component={DiscoveryGuidePage} />
+            <Route path="/vscode-extension-security" component={DiscoveryGuidePage} />
+            <Route path="/package-tarball-diff" component={DiscoveryGuidePage} />
+            <Route path="/security" component={DiscoveryGuidePage} />
+            <Route path="/open-source" component={DiscoveryGuidePage} />
+            <Route path="/diff" component={PackageDiffPage} />
+            <Route path="/diff/*" component={PackageDiffPage} />
+            <Route path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
+            <Route path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
+            <Route path="/login" component={LoginPage} />
+            <Route path="/register" component={RegisterPage} />
+            <Route path="/verify-email" component={VerifyEmailPage} />
+            {/*
             Both paths, like /diff above. `:token` is a required segment, so it
             cannot match the prerender URL `/reports` — without the bare route
             the shell falls through to `default` and every share link serves a
@@ -61,17 +64,21 @@ export function App() {
             token — the correct shell for a real share link — and swaps in the
             "no public index" explainer once mounted on the client.
           */}
-          <Route path="/reports" component={PublicReportPage} />
-          <Route path="/reports/:token" component={PublicReportPage} />
-          <Route path="/dashboard" component={DashboardPage} />
-          <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
-          <Route path="/dashboard/packages/:name+" component={PackageReleasesPage} />
-          <Route path="/dashboard/settings" component={SettingsPage} />
-          <Route path="/dashboard/account" component={AccountPage} />
-          <Route path="/dashboard/invite" component={InvitePage} />
-          <Route path="/dashboard/settings/github-app/callback" component={GithubAppCallbackPage} />
-          <Route default component={NotFoundPage} />
-        </Router>
+            <Route path="/reports" component={PublicReportPage} />
+            <Route path="/reports/:token" component={PublicReportPage} />
+            <Route path="/dashboard" component={DashboardPage} />
+            <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
+            <Route path="/dashboard/packages/:name+" component={PackageReleasesPage} />
+            <Route path="/dashboard/settings" component={SettingsPage} />
+            <Route path="/dashboard/account" component={AccountPage} />
+            <Route path="/dashboard/invite" component={InvitePage} />
+            <Route
+              path="/dashboard/settings/github-app/callback"
+              component={GithubAppCallbackPage}
+            />
+            <Route default component={NotFoundPage} />
+          </Router>
+        </AppErrorBoundary>
       </ErrorBoundary>
       <Toaster />
     </LocationProvider>
