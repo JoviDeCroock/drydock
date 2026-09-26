@@ -24,7 +24,7 @@ interface BugReport {
   page: string;
   time: string;
   browser: string;
-  /** The thrown value's name and message, which can span lines. */
+  /** `name: message` for an Error, otherwise the thrown value as text; it can span lines. */
   error: string;
   frames: string[];
 }

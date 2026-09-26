@@ -67,6 +67,7 @@ describe("buildBugReport", () => {
     expect(text).not.toContain(token);
     expect(text).toContain("Page: /reports/[redacted]");
     expect(text).toContain("Error: Error: could not render report [redacted]");
+    expect(mailtoBody({ error, pathname: `/reports/${token}` }).href).not.toContain(token);
   });
 
   test("redacts a share token before truncation can split it", () => {
