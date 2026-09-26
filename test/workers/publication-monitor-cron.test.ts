@@ -29,11 +29,11 @@ function runScheduled() {
     .then(() => waitOnExecutionContext(ctx));
 }
 
-test("the scheduled handler backfills watches from review history and checks due watches", async () => {
+test("without an npm connection, the scheduled handler checks due watches but enrolls no history", async () => {
   const { db, organizationId } = await seedUser({ name: "Watcher" });
   await createPublicationWatch(db, organizationId, name);
-  // A published public release reviewed through staged discovery is the
-  // history the backfill enrolls from.
+  // With no npm connection there is no discovery sweep, so this history waits
+  // for the organization to list its watches.
   await db.insert(scans).values({
     id: crypto.randomUUID(),
     stageId: "history-stage",
@@ -58,12 +58,8 @@ test("the scheduled handler backfills watches from review history and checks due
   vi.spyOn(console, "log").mockImplementation(() => {});
   await runScheduled();
   const watches = await listPublicationWatches(db, organizationId);
-  expect(watches.map((item) => [item.packageName, item.source]).sort()).toEqual([
-    [name, "manual"],
-    ["history-package", "published_history"],
-  ]);
+  expect(watches.map((item) => [item.packageName, item.source])).toEqual([[name, "manual"]]);
   expect(watches.map((item) => [item.lastCheckedAt !== null, item.lastError])).toEqual([
-    [true, null],
     [true, null],
   ]);
   expect(fetcher).toHaveBeenCalledWith(

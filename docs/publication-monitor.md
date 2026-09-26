@@ -20,11 +20,12 @@ custom registries, and published-pair reviews do not enroll packages. Completed 
 workflow gates supply suggestions that require **Watch package**, because a gate
 alone does not establish public visibility.
 
-Historical enrollment runs when the dashboard lists watches and in bounded cron
-batches. It starts monitoring at enrollment time, never at the older review date;
+Historical enrollment runs in bounded per-organization batches whenever the
+dashboard lists watches, a stage is submitted, or the discovery cron sweeps an
+organization's npm connection, including sweeps that find no stages. It starts monitoring at enrollment time, never at the older review date;
 older releases are not retrospectively reported as bypasses. The dashboard shows
 where each watch came from and how many eligible packages await capacity at the
-20-watch limit. Deferred packages enroll as slots become available.
+20-watch limit. Deferred packages enroll at the next of those after a slot frees.
 
 You can also enter a public npm package name and choose **Watch package** without
 an npm token or existing scan. Duplicate enrollment preserves the original start

@@ -234,22 +234,3 @@ export async function enrollStagedReleases(
     });
   }
 }
-
-export async function backfillNpmPublicationWatches(db: AppDb, registryUrl = PUBLIC_NPM) {
-  if (!validMonitoringRegistry(registryUrl)) return;
-  // Process previously unrecorded evidence rather than restarting the first
-  // organizations each tick. Deferred candidates rejoin once a slot is freed.
-  const organizations = await db.all<{ organizationId: string }>(sql`
-    select organizationId from (
-      select s.organization_id as organizationId, min(s.created_at) as pendingAt from scans s
-      where s.organization_id is not null and (${historicalEligibility(registryUrl)} or ${gateEligibility()}) group by s.organization_id
-      union all
-      select c.organization_id as organizationId, min(c.created_at) as pendingAt from publication_watch_candidates c
-      where c.stopped_at is null and c.source in ('staged_discovery', 'published_history')
-      and not exists(select 1 from publication_watches w where w.organization_id = c.organization_id and w.package_name = c.package_name)
-      and (select count(*) from publication_watches w where w.organization_id = c.organization_id) < 20
-      group by c.organization_id
-    ) group by organizationId order by min(pendingAt), organizationId limit 8`);
-  for (const organization of organizations)
-    await reconcilePublicationWatches(db, organization.organizationId, registryUrl);
-}
