@@ -29,11 +29,11 @@ function runScheduled() {
     .then(() => waitOnExecutionContext(ctx));
 }
 
-test("the scheduled handler checks due watches without enrolling from review history", async () => {
+test("without an npm connection, the scheduled handler checks due watches but enrolls no history", async () => {
   const { db, organizationId } = await seedUser({ name: "Watcher" });
   await createPublicationWatch(db, organizationId, name);
-  // Review history enrolls when the organization lists its watches, never
-  // from the cron.
+  // With no npm connection there is no discovery sweep, so this history waits
+  // for the organization to list its watches.
   await db.insert(scans).values({
     id: crypto.randomUUID(),
     stageId: "history-stage",

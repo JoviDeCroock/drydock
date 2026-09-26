@@ -236,6 +236,9 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
+  // Runs even when npm lists no stages: this per-tick reconcile is how a
+  // connected organization enrolls newly published history, gate suggestions,
+  // and deferred packages once a slot frees.
   await enrollStagedReleases(db, env, {
     organizationId,
     registryUrl: connection.registryUrl,
