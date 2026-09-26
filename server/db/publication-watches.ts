@@ -140,9 +140,12 @@ function releaseCoverageGap(now: Date) {
 const unverifiedReleaseCount = () =>
   sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id and o.status = 'unknown' and o.reason in ${sql.raw(`(${RELEASE_COVERAGE_GAP_REASONS.map((reason) => `'${reason}'`).join(", ")})`)} and o.first_seen_at <= ${Date.now() - COVERAGE_GAP_AFTER_MS})`;
 
+const releaseCount = sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id)`;
+
 const watchColumns = (registryUrl: string) => ({
   ...getTableColumns(publicationWatches),
   unresolvedAlertCount,
+  releaseCount,
   unverifiedReleaseCount: unverifiedReleaseCount(),
   managementPending: publicationWatchManagementPending(
     registryUrl,

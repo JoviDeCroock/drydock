@@ -72,11 +72,11 @@ export function isPublicationAlert(status: PublicationObservation["status"]): bo
 
 const watchProblems: Record<string, string> = {
   registry_evidence_unavailable:
-    "Registry evidence could not be retrieved. Coverage is unknown until a successful check.",
+    "Drydock could not read this package from npm, so new releases are unknown until a check succeeds.",
   pending_release_backlog:
-    "More releases are waiting to be checked. Existing observations are retained; coverage is incomplete.",
+    "More releases are waiting to be checked. The next check continues where this one stopped.",
   invalid_version_metadata:
-    "Some registry versions have invalid metadata and could not be checked. Coverage is incomplete.",
+    "npm lists some versions with invalid metadata, so those versions could not be checked.",
   registry_metadata_too_large:
     "npm's document for this package is larger than Drydock reads (64 MiB), so its releases cannot be checked. This does not resolve by itself.",
   publication_history_limit:
@@ -84,19 +84,22 @@ const watchProblems: Record<string, string> = {
   artifact_too_large:
     "A published tarball exceeds the 256 MiB hashing limit, so that release may not be comparable with its reviews.",
   artifact_timeout:
-    "A published tarball did not download in time. It is retried on the next check; coverage is incomplete.",
+    "A published tarball did not download in time. It is retried on the next check.",
   artifact_unavailable:
-    "A published tarball could not be downloaded. It is retried on the next check; coverage is incomplete.",
+    "A published tarball could not be downloaded. It is retried on the next check.",
   artifact_identity_invalid:
     "A release's registry metadata does not name a valid tarball on npm, so its bytes cannot be compared.",
   monitoring_disabled: "Publication monitoring is switched off for this organization.",
-  check_failed: "The latest check failed. It is retried on the next scheduled check.",
+  check_in_progress:
+    "A check is running or did not finish, so new releases are unknown until one completes.",
+  check_failed:
+    "The latest check failed, so new releases are unknown. Drydock retries on the next automatic check.",
 };
 
 export function watchProblemMessage(lastError: string): string {
   return (
     watchProblems[lastError] ??
-    "Latest check incomplete. Coverage is unknown until a successful check."
+    "The latest check did not finish, so new releases are unknown until a check succeeds."
   );
 }
 
@@ -104,28 +107,31 @@ export function watchProblemMessage(lastError: string): string {
 // submitted by hand; "a staged review" is true of both.
 const sourceLabels: Record<PublicationWatch["source"], string> = {
   manual: "added by hand",
-  staged_discovery: "from a staged review",
-  published_history: "from published review history",
+  staged_discovery: "added from a staged review",
+  published_history: "added from your past reviews",
 };
 
-// Check outcomes after which nothing is known about releases since
-// enrollment: an empty observation list would otherwise claim there are none.
-const COVERAGE_UNKNOWN = new Set([
-  "registry_evidence_unavailable",
-  "registry_metadata_too_large",
-  "publication_history_limit",
-  "check_failed",
-  "monitoring_disabled",
-]);
-
+/**
+ * What an empty release list means. "No new releases" is claimed only after a
+ * check that finished with no problem: any problem, even a backlog or one
+ * unreadable version, can leave a new release unexamined and so unrecorded.
+ */
 export function emptyObservationsMessage(
-  watch: Pick<PublicationWatch, "lastCheckedAt" | "lastError">,
+  watch: Pick<
+    PublicationWatch,
+    "createdAt" | "lastCheckedAt" | "lastError" | "managementPending" | "ownershipConflict"
+  >,
 ): string {
-  if (!watch.lastCheckedAt) return "Not checked yet, so releases since enrollment are unknown.";
-  if (watch.lastError && COVERAGE_UNKNOWN.has(watch.lastError)) {
-    return "Releases since enrollment are unknown until a check succeeds.";
+  if (watch.managementPending)
+    return "Monitoring is inactive. Choose an organization to enable checks.";
+  if (watch.ownershipConflict)
+    return "Monitoring is inactive because this package is assigned to another organization.";
+  if (!watch.lastCheckedAt) {
+    return "Not checked yet. Drydock checks it automatically, or choose Check now.";
   }
-  return "No releases since enrollment. Earlier releases are not checked.";
+  // The watch's problem, shown above the list, says what is unknown.
+  if (watch.lastError) return "No releases recorded yet.";
+  return `No new releases since you started watching on ${formatDateTime(watch.createdAt)}. Earlier releases are not checked.`;
 }
 
 // Mirrors the server's gap threshold: a shorter problem is only the watch's
@@ -166,13 +172,21 @@ export function coverageGapMessage(
   return null;
 }
 
+// What the latest check found, so a check that turns up nothing still reads
+// as an answer rather than as a button that did nothing.
+function releaseSummary(watch: PublicationWatch): string {
+  if (!watch.lastCheckedAt) return "not checked yet";
+  const checked = `checked ${formatDateTime(watch.lastCheckedAt)}`;
+  if (watch.releaseCount > 0) {
+    return `${checked} · ${watch.releaseCount} new ${pluralize("release", watch.releaseCount)}`;
+  }
+  return watch.lastError ? checked : `${checked} · no new releases`;
+}
+
 export function watchMetaLine(watch: PublicationWatch): string {
   if (watch.managementPending)
     return "Monitoring inactive · choose an organization to enable monitoring";
   if (watch.ownershipConflict)
     return "Monitoring inactive · package assigned to another organization · previous observations retained";
-  const checked = watch.lastCheckedAt
-    ? `checked ${formatDateTime(watch.lastCheckedAt)}`
-    : "not checked yet";
-  return `${sourceLabels[watch.source]} · watching since ${formatDateTime(watch.createdAt)} · ${checked}`;
+  return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
 }
