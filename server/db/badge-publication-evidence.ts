@@ -11,7 +11,12 @@ import {
   type BadgeSupersession,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
-import { badgePackage, registryVerifiedPublisherSql, type BadgePackage } from "./package-badge";
+import {
+  badgePackage,
+  isRegistryVerifiedPublisher,
+  registryVerifiedPublisherSql,
+  type BadgePackage,
+} from "./package-badge";
 import { findNewerPublishedRelease, SHARED_SCAN_COLUMNS, type SharedScanRow } from "./scan-share";
 import { publicationAlerts, publicationObservations, publicationWatches, scans } from "./schema";
 
@@ -335,12 +340,17 @@ async function findPublicationDiscrepancy(
     );
   }
   let newest: string | null = null;
+  // Versions the monitor recorded a discrepancy for: published without this
+  // organization's approval, despite its rejection, or with other bytes.
+  // `unknown` is not among them — the evidence could not be established.
+  const alertedVersions = new Set<string>();
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =
     reviewedDigest !== null && publishedSha1 !== null && publishedSha1 !== reviewedDigest;
   // A holder is evidence however long ago it was first seen, so it is read
   // whether or not it falls inside the observation window.
   for (const { version, status } of [...observed, ...alerted, ...tagged]) {
+    if (discrepancies.has(status)) alertedVersions.add(version);
     if (version === pickVersion) {
       if (discrepancies.has(status)) pickDisqualified = true;
       continue;
@@ -351,18 +361,40 @@ async function findPublicationDiscrepancy(
     if (decisions.get(version) === "approved") continue;
     if (!newest || compareSemver(version, newest) > 0) newest = version;
   }
-  if (newest) return { version: newest, blocked: decisions.get(newest) === "declined" };
-  // The quoted version itself, decided after release: an approval vouches for
-  // the published bytes, whatever the monitor recorded before it; a decline
-  // is the badge's own warning.
-  const pickDecision = decisions.get(pickVersion);
-  if (pickDecision === "declined") {
-    return pick.decision === "no_publish" ? null : { version: pickVersion, blocked: true };
+  const answer = (version: string, blocked: boolean): BadgeSupersession => ({
+    version,
+    blocked,
+    unapproved: !blocked && alertedVersions.has(version),
+  });
+  let result: BadgeSupersession | null;
+  if (newest) {
+    result = answer(newest, decisions.get(newest) === "declined");
+  } else {
+    // The quoted version itself, decided after release: an approval vouches
+    // for the published bytes, whatever the monitor recorded before it; a
+    // decline is the badge's own warning.
+    const pickDecision = decisions.get(pickVersion);
+    if (pickDecision === "declined") {
+      result = pick.decision === "no_publish" ? null : answer(pickVersion, true);
+    } else if (pickDecision === "approved") {
+      result = null;
+    } else {
+      result =
+        pickDisqualified && pick.decision !== "no_publish" ? answer(pickVersion, false) : null;
+    }
   }
-  if (pickDecision === "approved") return null;
-  return pickDisqualified && pick.decision !== "no_publish"
-    ? { version: pickVersion, blocked: false }
-    : null;
+  // The flag says the maintainer's own monitor saw npm publish this without
+  // the maintainer's approval. Only a registry-verified publisher's record may
+  // say that on a README: another organization that listed a review of the
+  // package has no tie to its releases, and its alert would read as an
+  // accusation against the real maintainer. Everyone else keeps `not reviewed`.
+  if (
+    result?.unapproved &&
+    !(await isRegistryVerifiedPublisher(db, pick.organizationId, badgePackage("npm", packageName)))
+  ) {
+    result = { ...result, unapproved: false };
+  }
+  return result;
 }
 
 /**
@@ -381,10 +413,12 @@ export async function findBadgeSupersession(
     findPublicationDiscrepancy(db, pick),
   ]);
   if (!newerRelease) return discrepancy;
-  if (!discrepancy) return { version: newerRelease, blocked: false };
+  const reviewed: BadgeSupersession = { version: newerRelease, blocked: false, unapproved: false };
+  if (!discrepancy) return reviewed;
   const order = compareSemver(newerRelease, discrepancy.version);
-  // The same release both ways: a guarded decline after release is the more
-  // specific answer about the bytes consumers install.
+  // The same release both ways: a guarded decline after release, or the
+  // monitor's alert on it, is the more specific answer about the bytes
+  // consumers install.
   if (order === 0) return discrepancy;
-  return order > 0 ? { version: newerRelease, blocked: false } : discrepancy;
+  return order > 0 ? reviewed : discrepancy;
 }
