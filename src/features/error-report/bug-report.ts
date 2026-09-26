@@ -20,41 +20,83 @@ export interface BugReportInput {
   occurredAt: Date;
 }
 
+interface BugReport {
+  page: string;
+  time: string;
+  browser: string;
+  /** `name: message` for an Error, otherwise the thrown value as text; it can span lines. */
+  error: string;
+  frames: string[];
+}
+
 /**
- * The plain-text details a reader can review, copy, or email. The user sends
- * this themselves, so it must not carry anything they would not expect to be
+ * The details a reader can review, copy, or email. The user sends them
+ * themselves, so they must not carry anything the user would not expect to be
  * sharing: the query string and hash are dropped (verification, invite, and
  * OAuth callback parameters live there) and a public-report share token — a
  * bearer capability in the path — is replaced wherever it appears.
  */
-export function buildBugReport({ error, pathname, userAgent, occurredAt }: BugReportInput): string {
+export function buildBugReport({
+  error,
+  pathname,
+  userAgent,
+  occurredAt,
+}: BugReportInput): BugReport {
   const shareToken = reportShareToken(pathname);
   const scrub = (text: string) => (shareToken ? text.replaceAll(shareToken, REDACTED) : text);
   const { summary, frames } = describeError(error, scrub);
-
-  const lines = [
-    `Page: ${truncate(scrub(pathname), MAX_FIELD_CHARS)}`,
-    `Time: ${occurredAt.toISOString()}`,
-    `Browser: ${truncate(userAgent, MAX_FIELD_CHARS)}`,
-    `Error: ${summary}`,
-  ];
-  if (frames.length > 0) {
-    lines.push("Stack:", ...frames.map((frame) => `  ${frame}`));
-  }
-  // `encodeURIComponent` throws on a lone surrogate, and this text is built
+  // `encodeURIComponent` throws on a lone surrogate, and this report is built
   // while the fallback renders, where a throw would blank the page again.
-  return lines.join("\n").replace(LONE_SURROGATE, "\uFFFD");
+  const wellFormed = (text: string) => text.replace(LONE_SURROGATE, "\uFFFD");
+  return {
+    page: wellFormed(truncate(scrub(pathname), MAX_FIELD_CHARS)),
+    time: occurredAt.toISOString(),
+    browser: wellFormed(truncate(userAgent, MAX_FIELD_CHARS)),
+    error: wellFormed(summary),
+    frames: frames.map(wellFormed),
+  };
 }
 
-/** Drops trailing stack lines until the encoded link fits; the copyable text stays whole. */
-export function bugReportMailto(report: string): string {
-  const lines = report.split("\n");
-  for (let kept = lines.length; kept > 0; kept--) {
-    const trimmed = kept < lines.length ? "\n(trimmed; use Copy details for the rest)" : "";
-    const href = mailtoFor(`${lines.slice(0, kept).join("\n")}${trimmed}`);
+export function bugReportText(report: BugReport): string {
+  return formatReport(report);
+}
+
+/**
+ * Sheds detail until the encoded link fits: stack frames from the end, then the
+ * browser, then the tail of the error summary, so the error outlasts everything
+ * but the page and time. The copyable text stays whole.
+ */
+export function bugReportMailto(report: BugReport): string {
+  const whole = mailtoFor(formatReport(report));
+  if (whole.length <= MAX_MAILTO_CHARS) return whole;
+  for (const shorter of shorterReports(report)) {
+    const href = mailtoFor(`${formatReport(shorter)}\n(trimmed; use Copy details for the rest)`);
     if (href.length <= MAX_MAILTO_CHARS) return href;
   }
   return mailtoFor("(details too long; use Copy details and paste them here)");
+}
+
+type ReportParts = Omit<BugReport, "browser"> & { browser?: string };
+
+function* shorterReports(report: BugReport): Generator<ReportParts> {
+  for (let kept = report.frames.length - 1; kept >= 0; kept--) {
+    yield { ...report, frames: report.frames.slice(0, kept) };
+  }
+  const bare = { page: report.page, time: report.time, error: report.error, frames: [] };
+  yield bare;
+  // A non-ASCII message encodes to several characters per code point, so a
+  // bounded one can still overflow the link on its own.
+  for (let kept = Array.from(report.error).length - 1; kept > 1; kept--) {
+    yield { ...bare, error: truncate(report.error, kept) };
+  }
+}
+
+function formatReport({ page, time, browser, error, frames }: ReportParts): string {
+  const lines = [`Page: ${page}`, `Time: ${time}`];
+  if (browser !== undefined) lines.push(`Browser: ${browser}`);
+  lines.push(`Error: ${error}`);
+  if (frames.length > 0) lines.push("Stack:", ...frames.map((frame) => `  ${frame}`));
+  return lines.join("\n");
 }
 
 function mailtoFor(details: string): string {
