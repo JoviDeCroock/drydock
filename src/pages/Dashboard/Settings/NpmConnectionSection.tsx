@@ -1,8 +1,9 @@
 import { OrganizationModel } from "../../../models/organization";
 import { Select } from "../../../components/Select";
 import { useModel, useSignal, useComputed } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { formatTimestamp } from "../../../lib/format";
-import { NpmConnectionModel } from "../../../models/npm-connection";
+import { NpmConnectionModel, type PublicNpmConnection } from "../../../models/npm-connection";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -11,203 +12,267 @@ import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { MonoLabel, Muted } from "../../../components/Typography";
 
+type NpmModel = ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+type Organizations = InstanceType<typeof OrganizationModel>;
+
 export function NpmConnectionSection({
   npm,
   organizations,
   onSwitchOrganization,
   defaultOpen = false,
 }: {
-  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
-  organizations: InstanceType<typeof OrganizationModel>;
+  npm: NpmModel;
+  organizations: Organizations;
   onSwitchOrganization: (id: string) => Promise<void>;
   defaultOpen?: boolean;
 }) {
-  const active = organizations.active.value;
-  const destinations = organizations.organizations.value.filter(
-    (org) => !org.isPersonal && (org.role === "owner" || org.role === "admin"),
-  );
-  const selected = useSignal(active?.isPersonal ? (destinations[0]?.id ?? "") : (active?.id ?? ""));
   const personalChosen = useSignal(false);
-  const choiceLabel = useComputed(() =>
-    selected.value === active?.id
-      ? npm.connection.value
-        ? "Enable automatic scans in personal workspace"
-        : "Continue in personal workspace"
-      : `Open ${destinations.find((org) => org.id === selected.value)?.name ?? "organization"} settings`,
+  const needsChoice = useComputed(
+    () =>
+      organizations.active.value?.isPersonal === true &&
+      !npm.connection.value?.personalOrganizationConfirmedAt &&
+      !personalChosen.value,
   );
-  const connection = npm.connection.value;
-  const needsChoice =
-    active?.isPersonal && !connection?.personalOrganizationConfirmedAt && !personalChosen.value;
-  const status = npm.status.value;
-  const busy = npm.busy.value;
-  const token = npm.token.value;
-  const label = npm.label.value;
-  const registry = npm.registry.value;
-  const error = npm.error.value;
+  // A pending workspace choice must not strand an existing connection: its
+  // token stays rotatable (e.g. after it turns invalid) and removable.
+  const showForm = useComputed(() => !needsChoice.value || npm.connection.value !== null);
 
   const onSave = async (event: Event) => {
     event.preventDefault();
-    if (needsChoice || !active) return;
-    await npm.save(active.isPersonal);
+    const active = organizations.active.peek();
+    if (!active || (needsChoice.peek() && !npm.connection.peek())) return;
+    // Rotating a token while the choice is still pending is not consent.
+    await npm.save(active.isPersonal && !needsChoice.peek());
   };
 
   return (
-    <CollapsibleCard
-      title="npm access"
-      defaultOpen={defaultOpen}
-      aside={
-        // Only a broken token earns colour; a valid or pending connection is the
-        // expected state and reads as plain text.
-        connection?.validationStatus === "invalid" ? (
-          <Badge tone="critical">invalid</Badge>
-        ) : (
-          <MonoLabel>{connection ? connection.validationStatus : "not connected"}</MonoLabel>
-        )
-      }
-    >
+    <CollapsibleCard title="npm access" defaultOpen={defaultOpen} aside={<NpmStatus npm={npm} />}>
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Connect npm to review your organization's staged packages.
         </Muted>
 
-        {connection && connection.validationStatus === "invalid" ? (
+        <Show when={() => npm.connection.value?.validationStatus === "invalid"}>
           <Alert tone="critical">
             Drydock can no longer reach the staging registry with this token, so staged-release
             reviews are paused. Rotate the token below to resume.
           </Alert>
-        ) : null}
+        </Show>
 
-        {needsChoice ? (
-          <div class="flex flex-col gap-3">
-            <Alert tone="info">
-              Choose where npm packages will be managed before enabling automatic scans.
-              {connection
-                ? " Automatic scans are waiting for this choice; you can still review stages manually."
-                : ""}{" "}
-              Existing reviews and credentials stay in this workspace.
-            </Alert>
-            <Select
-              aria-label="npm connection organization"
-              value={selected}
-              onChange={(id) => {
-                selected.value = id;
+        <Show when={needsChoice}>
+          {() => (
+            <WorkspaceChoice
+              npm={npm}
+              organizations={organizations}
+              onSwitchOrganization={onSwitchOrganization}
+              onKeepPersonal={() => {
+                personalChosen.value = true;
               }}
-              disabled={busy}
-            >
-              <option value="" disabled>
-                Choose organization
-              </option>
-              {destinations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-              <option value={active.id}>Keep in personal workspace</option>
-            </Select>
-            <Button
-              disabled={busy || !selected.value}
-              onClick={async () => {
-                const target = selected.peek();
-                if (target === active.id) {
-                  if (connection) await npm.validate(true);
-                  else personalChosen.value = true;
-                } else {
-                  npm.token.value = "";
-                  await onSwitchOrganization(target);
-                }
-              }}
-            >
-              {choiceLabel}
-            </Button>
-          </div>
-        ) : null}
+            />
+          )}
+        </Show>
 
-        {!needsChoice ? (
-          <>
-            <NpmTokenScopeGuide />
+        <Show when={showForm}>{() => <NpmTokenForm npm={npm} onSubmit={onSave} />}</Show>
 
-            <form
-              class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
-              onSubmit={onSave}
-            >
-              <Field label="Connection name" for="npmLabel">
-                <Input
-                  id="npmLabel"
-                  type="text"
-                  value={label}
-                  onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
-                  disabled={busy}
-                />
-              </Field>
-              <Field label="Registry" for="npmRegistry">
-                <Input
-                  id="npmRegistry"
-                  type="url"
-                  value={registry}
-                  onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
-                  disabled={busy}
-                />
-              </Field>
-              <Field label={connection ? "New npm token" : "npm token"} for="npmToken">
-                <Input
-                  id="npmToken"
-                  type="password"
-                  value={token}
-                  placeholder={connection ? "Paste a new read-only token" : "npm_... (read-only)"}
-                  onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
-                  disabled={busy}
-                  autoComplete="off"
-                  spellcheck={false}
-                />
-              </Field>
-              {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
-              <Button type="submit" disabled={busy || !token.trim()} class="shrink-0 h-[38px]">
-                {status === "saving"
-                  ? "Saving…"
-                  : status === "validating"
-                    ? "Checking…"
-                    : connection
-                      ? "Rotate"
-                      : "Save"}
-              </Button>
-            </form>
+        <Show when={npm.error}>{(error) => <Alert tone="critical">{error}</Alert>}</Show>
 
-            <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
-          </>
-        ) : null}
-
-        {error ? <Alert tone="critical">{error}</Alert> : null}
-
-        {connection ? (
-          <details class="text-[13px] text-ink-muted">
-            <summary class="cursor-pointer focus-visible:outline-accent">
-              Connection details
-            </summary>
-            <dl class="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-4 m-0 pt-4">
-              <MetadataField label="label" value={connection.label} />
-              <MetadataField label="registry" value={connection.registryUrl} />
-              <MetadataField label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
-              <MetadataField
-                label="validated"
-                value={connection.validatedAt ? formatTimestamp(connection.validatedAt) : "not yet"}
-              />
-              <MetadataField
-                label="last used"
-                value={connection.lastUsedAt ? formatTimestamp(connection.lastUsedAt) : "never"}
-              />
-            </dl>
-          </details>
-        ) : null}
-
-        {connection ? (
-          <div class="flex items-center justify-end border-t border-border pt-4 gap-3">
-            <Button variant="danger" size="sm" onClick={() => void npm.remove()} disabled={busy}>
-              {status === "deleting" ? "Removing…" : "Disconnect npm"}
-            </Button>
-          </div>
-        ) : null}
+        <Show<PublicNpmConnection | null> when={npm.connection}>
+          {(connection) => (
+            <>
+              <details class="text-[13px] text-ink-muted">
+                <summary class="cursor-pointer focus-visible:outline-accent">
+                  Connection details
+                </summary>
+                <dl class="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-4 m-0 pt-4">
+                  <MetadataField label="label" value={connection.label} />
+                  <MetadataField label="registry" value={connection.registryUrl} />
+                  <MetadataField
+                    label="token"
+                    value={`•••• ${connection.tokenLast4 || "stored"}`}
+                  />
+                  <MetadataField
+                    label="validated"
+                    value={
+                      connection.validatedAt ? formatTimestamp(connection.validatedAt) : "not yet"
+                    }
+                  />
+                  <MetadataField
+                    label="last used"
+                    value={connection.lastUsedAt ? formatTimestamp(connection.lastUsedAt) : "never"}
+                  />
+                </dl>
+              </details>
+              <div class="flex items-center justify-end border-t border-border pt-4 gap-3">
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void npm.remove()}
+                  disabled={npm.busy}
+                >
+                  <Show when={() => npm.status.value === "deleting"} fallback="Disconnect npm">
+                    Removing…
+                  </Show>
+                </Button>
+              </div>
+            </>
+          )}
+        </Show>
       </SettingsCardBody>
     </CollapsibleCard>
+  );
+}
+
+function NpmStatus({ npm }: { npm: NpmModel }) {
+  const connection = npm.connection.value;
+  // Only a broken token earns colour; a valid or pending connection is the
+  // expected state and reads as plain text.
+  return connection?.validationStatus === "invalid" ? (
+    <Badge tone="critical">invalid</Badge>
+  ) : (
+    <MonoLabel>{connection ? connection.validationStatus : "not connected"}</MonoLabel>
+  );
+}
+
+function WorkspaceChoice({
+  npm,
+  organizations,
+  onSwitchOrganization,
+  onKeepPersonal,
+}: {
+  npm: NpmModel;
+  organizations: Organizations;
+  onSwitchOrganization: (id: string) => Promise<void>;
+  onKeepPersonal: () => void;
+}) {
+  const destinations = useComputed(() =>
+    organizations.organizations.value.filter(
+      (org) => !org.isPersonal && (org.role === "owner" || org.role === "admin"),
+    ),
+  );
+  // Shared organizations take precedence: the choice starts on the first one
+  // the caller manages. The section is remounted per active organization, so a
+  // snapshot of the active id is enough here.
+  const activeId = organizations.active.peek()?.id ?? "";
+  const selected = useSignal(destinations.peek()[0]?.id ?? "");
+  const choiceLabel = useComputed(() =>
+    selected.value === activeId
+      ? npm.connection.value
+        ? "Enable automatic scans in personal workspace"
+        : "Continue in personal workspace"
+      : `Open ${destinations.value.find((org) => org.id === selected.value)?.name ?? "organization"} settings`,
+  );
+  const disabled = useComputed(() => npm.busy.value || !selected.value);
+  return (
+    <div class="flex flex-col gap-3">
+      <Alert tone="info">
+        Choose where npm packages will be managed before enabling automatic scans.
+        <Show when={npm.connection}>
+          {" "}
+          Automatic scans are waiting for this choice; you can still review stages manually and
+          rotate or disconnect the token below.
+        </Show>{" "}
+        Existing reviews and credentials stay in this workspace.
+      </Alert>
+      <Select
+        aria-label="npm connection organization"
+        value={selected}
+        onChange={(id) => {
+          selected.value = id;
+        }}
+        disabled={npm.busy}
+      >
+        <option value="" disabled>
+          Choose organization
+        </option>
+        {destinations.value.map((org) => (
+          <option key={org.id} value={org.id}>
+            {org.name}
+          </option>
+        ))}
+        <option value={activeId}>Keep in personal workspace</option>
+      </Select>
+      <Button
+        disabled={disabled}
+        onClick={async () => {
+          const target = selected.peek();
+          if (target === activeId) {
+            // Recording consent never waits on npm: validation can fail for
+            // reasons unrelated to the workspace choice.
+            if (!npm.connection.peek() || (await npm.confirmPersonalOrganization()))
+              onKeepPersonal();
+          } else {
+            npm.token.value = "";
+            await onSwitchOrganization(target);
+          }
+        }}
+      >
+        {choiceLabel}
+      </Button>
+    </div>
+  );
+}
+
+function NpmTokenForm({ npm, onSubmit }: { npm: NpmModel; onSubmit: (event: Event) => void }) {
+  const submitDisabled = useComputed(() => npm.busy.value || !npm.token.value.trim());
+  const submitLabel = useComputed(() =>
+    npm.status.value === "saving"
+      ? "Saving…"
+      : npm.status.value === "validating"
+        ? "Checking…"
+        : npm.connection.value
+          ? "Rotate"
+          : "Save",
+  );
+  const tokenLabel = useComputed(() => (npm.connection.value ? "New npm token" : "npm token"));
+  const tokenPlaceholder = useComputed(() =>
+    npm.connection.value ? "Paste a new read-only token" : "npm_... (read-only)",
+  );
+  return (
+    <>
+      <NpmTokenScopeGuide />
+
+      <form
+        class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
+        onSubmit={onSubmit}
+      >
+        <Field label="Connection name" for="npmLabel">
+          <Input
+            id="npmLabel"
+            type="text"
+            value={npm.label}
+            onInput={(e) => (npm.label.value = (e.target as HTMLInputElement).value)}
+            disabled={npm.busy}
+          />
+        </Field>
+        <Field label="Registry" for="npmRegistry">
+          <Input
+            id="npmRegistry"
+            type="url"
+            value={npm.registry}
+            onInput={(e) => (npm.registry.value = (e.target as HTMLInputElement).value)}
+            disabled={npm.busy}
+          />
+        </Field>
+        <Field label={tokenLabel.value} for="npmToken">
+          <Input
+            id="npmToken"
+            type="password"
+            value={npm.token}
+            placeholder={tokenPlaceholder}
+            onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
+            disabled={npm.busy}
+            autoComplete="off"
+            spellcheck={false}
+          />
+        </Field>
+        {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
+        <Button type="submit" disabled={submitDisabled} class="shrink-0 h-[38px]">
+          {submitLabel}
+        </Button>
+      </form>
+
+      <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
+    </>
   );
 }
 

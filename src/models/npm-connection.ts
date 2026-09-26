@@ -1,4 +1,4 @@
-import { computed, createModel, signal } from "@preact/signals";
+import { computed, createModel, effect, signal } from "@preact/signals";
 import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
@@ -69,6 +69,47 @@ export const NpmConnectionModel = createModel(() => {
   const isConnected = computed(() => connection.value !== null);
   const validated = computed(() => connection.value?.validationStatus === "valid");
 
+  // Responses are applied only if no organization switch happened since the
+  // request started. Comparing organization IDs alone would accept a stale
+  // response after an A -> B -> A switch.
+  let generation = 0;
+  let latestLoad = 0;
+  effect(() => {
+    void activeOrganizationId.value;
+    generation++;
+    status.value = "idle";
+    error.value = null;
+  });
+
+  function applyConnection(next: PublicNpmConnection | null) {
+    connection.value = next;
+    if (next) {
+      label.value = next.label;
+      registry.value = next.registryUrl;
+    } else {
+      label.value = DEFAULT_LABEL;
+      registry.value = DEFAULT_REGISTRY;
+    }
+    token.value = "";
+    validationStageId.value = "";
+  }
+
+  async function load(): Promise<void> {
+    const current = generation;
+    const request = ++latestLoad;
+    const isCurrent = () => current === generation && request === latestLoad;
+    try {
+      const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+        "/api/v1/npm-connection",
+      );
+      if (isCurrent()) applyConnection(data.connection);
+    } catch {
+      // Keep the dashboard usable; scan creation enforces the requirement.
+    } finally {
+      if (isCurrent()) loaded.value = true;
+    }
+  }
+
   return {
     connection,
     loaded,
@@ -81,99 +122,100 @@ export const NpmConnectionModel = createModel(() => {
     busy,
     isConnected,
     validated,
-
-    async load(): Promise<void> {
-      const organizationId = activeOrganizationId.peek();
-      try {
-        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
-          "/api/v1/npm-connection",
-        );
-        if (activeOrganizationId.peek() === organizationId) this.applyConnection(data.connection);
-      } catch {
-        // Keep the dashboard usable; scan creation enforces the requirement.
-      } finally {
-        if (activeOrganizationId.peek() === organizationId) this.loaded.value = true;
-      }
-    },
-
-    applyConnection(next: PublicNpmConnection | null) {
-      this.connection.value = next;
-      if (next) {
-        this.label.value = next.label;
-        this.registry.value = next.registryUrl;
-      } else {
-        this.label.value = DEFAULT_LABEL;
-        this.registry.value = DEFAULT_REGISTRY;
-      }
-      this.token.value = "";
-      this.validationStageId.value = "";
-    },
+    load,
 
     async save(confirmPersonalOrganization = false): Promise<void> {
-      const organizationId = activeOrganizationId.peek();
-      const trimmedToken = this.token.value.trim();
+      const current = generation;
+      const trimmedToken = token.peek().trim();
       if (!trimmedToken) return;
-      this.status.value = "saving";
-      this.error.value = null;
+      status.value = "saving";
+      error.value = null;
       try {
         const data = await saveNpmConnection({
           confirmPersonalOrganization,
           token: trimmedToken,
-          label: this.label.value.trim() || DEFAULT_LABEL,
-          registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
+          label: label.peek().trim() || DEFAULT_LABEL,
+          registryUrl: registry.peek().trim() || DEFAULT_REGISTRY,
         });
-        if (activeOrganizationId.peek() !== organizationId) return;
-        this.applyConnection(data.connection);
+        if (current !== generation) return;
+        applyConnection(data.connection);
         if (data.connection) {
-          this.status.value = "validating";
+          status.value = "validating";
           const validation = await validateNpmConnection(undefined, confirmPersonalOrganization);
-          if (activeOrganizationId.peek() !== organizationId) return;
-          this.applyConnection(validation.connection);
+          if (current !== generation) return;
+          applyConnection(validation.connection);
           if (!validation.validation.ok) {
-            this.error.value = "Saved token, but npm validation reported invalid access.";
+            error.value = "Saved token, but npm validation reported invalid access.";
           }
         }
       } catch (err) {
-        if (activeOrganizationId.peek() !== organizationId) return;
-        this.error.value = errorMessage(err);
-        await this.load();
+        if (current !== generation) return;
+        error.value = errorMessage(err);
+        await load();
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
       }
     },
 
     async validate(confirmPersonalOrganization = false): Promise<void> {
-      const organizationId = activeOrganizationId.peek();
-      this.status.value = "validating";
-      this.error.value = null;
+      const current = generation;
+      status.value = "validating";
+      error.value = null;
       try {
-        const stageId = this.validationStageId.value.trim() || undefined;
+        const stageId = validationStageId.peek().trim() || undefined;
         const data = await validateNpmConnection(stageId, confirmPersonalOrganization);
-        if (activeOrganizationId.peek() !== organizationId) return;
-        this.applyConnection(data.connection);
+        if (current !== generation) return;
+        applyConnection(data.connection);
         if (!data.validation.ok) {
-          this.error.value = "Npm validation reported invalid access.";
+          error.value = "Npm validation reported invalid access.";
         }
       } catch (err) {
-        if (activeOrganizationId.peek() !== organizationId) return;
-        this.error.value = errorMessage(err);
-        await this.load();
+        if (current !== generation) return;
+        error.value = errorMessage(err);
+        await load();
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
+      }
+    },
+
+    /**
+     * Records the personal-workspace choice for an existing connection. It does
+     * not contact npm, so an unreachable registry cannot block the choice, and
+     * it leaves any token being typed in the form untouched.
+     */
+    async confirmPersonalOrganization(): Promise<boolean> {
+      const current = generation;
+      status.value = "saving";
+      error.value = null;
+      try {
+        const data = await apiJson<{ connection: PublicNpmConnection | null }>(
+          "/api/v1/npm-connection/personal-confirmation",
+          {},
+        );
+        if (current !== generation) return false;
+        connection.value = data.connection;
+        return true;
+      } catch (err) {
+        if (current === generation) error.value = errorMessage(err);
+        return false;
+      } finally {
+        if (current === generation) status.value = "idle";
       }
     },
 
     async remove(): Promise<void> {
-      this.status.value = "deleting";
-      this.error.value = null;
+      const current = generation;
+      status.value = "deleting";
+      error.value = null;
       try {
         await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
-        this.connection.value = null;
-        this.token.value = "";
+        if (current !== generation) return;
+        connection.value = null;
+        token.value = "";
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (current === generation) error.value = errorMessage(err);
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
       }
     },
   };

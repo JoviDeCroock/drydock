@@ -100,6 +100,26 @@ export async function updateNpmConnectionValidation(
   return getNpmConnection(db, input.organizationId);
 }
 
+/**
+ * Records the personal-workspace discovery choice without touching token or
+ * validation state. Callers must have already established that the
+ * organization is the caller's own personal workspace; an earlier choice keeps
+ * its original timestamp.
+ */
+export async function confirmPersonalNpmConnection(db: AppDb, organizationId: string) {
+  const now = new Date();
+  await db
+    .update(npmConnections)
+    .set({ personalOrganizationConfirmedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(npmConnections.organizationId, organizationId),
+        isNull(npmConnections.personalOrganizationConfirmedAt),
+      ),
+    );
+  return getNpmConnection(db, organizationId);
+}
+
 export async function markNpmConnectionUsedIfStale(
   db: AppDb,
   organizationId: string,

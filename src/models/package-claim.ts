@@ -1,6 +1,6 @@
 import { createModel, effect, signal } from "@preact/signals";
 import { activeOrganizationId } from "./active-organization";
-import { apiFetch, apiJson, errorMessage } from "./api";
+import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import type { Organization } from "./organization";
 import { encodePackageName } from "../lib/package-diff-path";
 
@@ -90,7 +90,8 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
       error.value = null;
       let committed: "watched" | "kept" | "moved" | null = null;
       try {
-        if (data.claim?.kind === "personal" && data.claim.canManage) {
+        const alreadyKept = targetId === source.id && data.claim?.managementConfirmed === true;
+        if (data.claim?.kind === "personal" && data.claim.canManage && !alreadyKept) {
           await apiJson(endpoint, { targetOrganizationId: targetId, registryUrl });
           if (current !== generation) return null;
           committed = targetId === source.id ? "kept" : "moved";
@@ -118,7 +119,7 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
         if (current !== generation) return null;
         error.value = committed
           ? `Your package choice was saved, but a follow-up request failed: ${errorMessage(err)}. Reload to check its current status.`
-          : errorMessage(err);
+          : choiceErrorMessage(err);
         return committed;
       } finally {
         if (current === generation) busy.value = false;
@@ -126,3 +127,10 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
     },
   };
 });
+
+function choiceErrorMessage(err: unknown): string {
+  // The server answers a lost role or a moved claim with a bare "forbidden".
+  if (err instanceof ApiError && err.status === 403)
+    return "You no longer have permission to manage this package here.";
+  return errorMessage(err);
+}

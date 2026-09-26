@@ -7,6 +7,7 @@ import {
   type ReadonlySignal,
 } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { useId } from "preact/hooks";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -42,6 +43,9 @@ export function PublicationMonitor({
   // Only the row whose check is in flight relabels its button; the model's
   // single `busy` flag disables everything else.
   const watchTarget = useSignal<string | null>(null);
+  const nameError = useSignal<string | null>(null);
+  const nameInvalid = useComputed(() => nameError.value !== null);
+  const nameErrorId = useId();
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
@@ -76,17 +80,27 @@ export function PublicationMonitor({
         </div>
         <form
           class="flex items-center gap-2 shrink-0"
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
-            watchTarget.value = model.packageName.peek().trim();
+            const name = model.packageName.peek().trim();
+            if (!name) {
+              nameError.value = "Enter a public npm package name, such as @scope/package.";
+              return;
+            }
+            nameError.value = null;
+            watchTarget.value = name;
           }}
         >
           <Input
             class="flex-1 min-w-0 md:flex-none md:w-64"
             aria-label="Public npm package"
+            aria-invalid={nameInvalid}
+            aria-describedby={nameErrorId}
             value={model.packageName}
             onInput={(event) => {
               model.packageName.value = event.currentTarget.value;
+              nameError.value = null;
             }}
             placeholder="@scope/package"
             required
@@ -96,6 +110,15 @@ export function PublicationMonitor({
             Watch package
           </Button>
         </form>
+      </div>
+      <div id={nameErrorId}>
+        <Show when={nameError}>
+          {(message) => (
+            <div class="px-5 pb-4">
+              <Alert tone="warn">{message}</Alert>
+            </div>
+          )}
+        </Show>
       </div>
       <Show when={model.error}>
         {(message) => (

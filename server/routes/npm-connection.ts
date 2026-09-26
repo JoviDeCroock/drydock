@@ -4,6 +4,7 @@ import { guardRateLimit } from "../lib/rate-limit";
 import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { recordScanEvent } from "../db/events";
 import {
+  confirmPersonalNpmConnection,
   deleteNpmConnection,
   getNpmConnection,
   updateNpmConnectionValidation,
@@ -192,6 +193,22 @@ npmConnectionRoutes.post("/validate", async (c) => {
     });
     return c.json({ error: "failed to validate npm connection" }, 500);
   }
+});
+
+// The personal-workspace choice is a consent record, not a credential check:
+// it must not depend on npm being reachable, or an outage would leave the
+// choice unrecordable.
+npmConnectionRoutes.post("/personal-confirmation", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
+  const db = c.var.db;
+  const session = c.get("authSession");
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+  if (organizationId !== personalOrganizationId(session.userId))
+    return c.json({ error: "Only your personal workspace needs this choice." }, 400);
+  const connection = await confirmPersonalNpmConnection(db, organizationId);
+  if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+  return c.json({ connection: publicNpmConnection(connection) });
 });
 
 npmConnectionRoutes.delete("/", async (c) => {

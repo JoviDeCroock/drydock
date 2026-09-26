@@ -76,3 +76,67 @@ test("an older organization load cannot replace the current connection", async (
   await personalLoad;
   expect(model.connection.value?.organizationId).toBe("team");
 });
+test("a response from an earlier visit to the same organization is ignored", async () => {
+  const pending: Array<(body: unknown) => void> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          pending.push((body) => resolve(json(body)));
+        }),
+    ),
+  );
+  setActiveOrganizationId("personal");
+  model = new NpmConnectionModel();
+  const first = model.load();
+  setActiveOrganizationId("team");
+  const second = model.load();
+  setActiveOrganizationId("personal");
+  const third = model.load();
+  pending[2]!({ connection: { ...connection, label: "current" } });
+  await third;
+  expect(model.loaded.value).toBe(true);
+  pending[0]!({ connection: { ...connection, label: "stale" } });
+  pending[1]!({ connection: { ...connection, organizationId: "team" } });
+  await Promise.all([first, second]);
+  expect(model.connection.value?.label).toBe("current");
+});
+test("loaded waits for the current organization's response after a mid-load switch", async () => {
+  const pending: Array<(body: unknown) => void> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          pending.push((body) => resolve(json(body)));
+        }),
+    ),
+  );
+  setActiveOrganizationId("personal");
+  model = new NpmConnectionModel();
+  const first = model.load();
+  setActiveOrganizationId("team");
+  pending[0]!({ connection });
+  await first;
+  expect(model.loaded.value).toBe(false);
+  expect(model.connection.value).toBeNull();
+  const second = model.load();
+  pending[1]!({ connection: null });
+  await second;
+  expect(model.loaded.value).toBe(true);
+});
+test("confirming the personal workspace never contacts npm validation and keeps the typed token", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(json({ connection }));
+  vi.stubGlobal("fetch", fetchMock);
+  setActiveOrganizationId("personal");
+  model = new NpmConnectionModel();
+  model.token.value = "npm_typed";
+  expect(await model.confirmPersonalOrganization()).toBe(true);
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/npm-connection/personal-confirmation",
+  ]);
+  expect(model.connection.value?.personalOrganizationConfirmedAt).toBe(123);
+  expect(model.token.value).toBe("npm_typed");
+  expect(model.busy.value).toBe(false);
+});

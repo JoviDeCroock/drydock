@@ -22,6 +22,13 @@ const protectedRoutes: RouteCase[] = [
   },
   { method: "DELETE", path: "/api/v1/npm-connection" },
   { method: "POST", path: "/api/v1/npm-connection/validate", body: {} },
+  { method: "POST", path: "/api/v1/npm-connection/personal-confirmation", body: {} },
+  { method: "GET", path: "/api/v1/npm-package-claims/preact" },
+  {
+    method: "POST",
+    path: "/api/v1/npm-package-claims/preact",
+    body: { targetOrganizationId: "org_test" },
+  },
   { method: "GET", path: "/api/v1/scans" },
   { method: "GET", path: "/api/v1/scans/overview" },
   { method: "GET", path: "/api/v1/publication-watches" },
