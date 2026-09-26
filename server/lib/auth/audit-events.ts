@@ -43,7 +43,11 @@ const REGISTRY: Record<string, AuditEventDef> = {
     category: "organization",
     label: "Package management transferred",
     severity: "notice",
-    summarize: (m) => str(m.packageName),
+    summarize: (m) => {
+      const pkg = str(m.packageName);
+      const destination = str(m.destinationOrganizationName);
+      return pkg && destination ? `${pkg} → ${destination}` : pkg;
+    },
   },
   "npm_package.management_received": {
     category: "organization",

@@ -18,8 +18,27 @@ import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-w
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 
 const seedOwner = () => seedUser({ name: "Publication reviewer" });
+
+/** Staged reviews make an organization a competing (or former) package manager. */
+async function seedStagedHistory(
+  seeded: Awaited<ReturnType<typeof seedOwner>>,
+  packageName: string,
+  registryUrl: string | null = "https://registry.npmjs.org",
+) {
+  await seedLegacyScanJob(createDb(env.DB), {
+    id: crypto.randomUUID(),
+    stageId: crypto.randomUUID(),
+    organizationId: seeded.organizationId,
+    ownerUserId: seeded.userId,
+    source: "manual",
+    packageName,
+    stagedVersion: "0.9.0",
+    registryUrl,
+  });
+}
 
 const mountPublicationWatches = (app: TestApp) => {
   app.route("/api/v1/publication-watches", npmPublicationWatchRoutes);
@@ -496,10 +515,40 @@ test("a manual check that fails after claiming the watch reports the failure, no
   error.mockRestore();
 });
 
-test("claim conflicts reject enrollment and checks while retaining existing observation history", async () => {
+test("another organization's claim leaves third-party monitoring and its answers unchanged", async () => {
+  const owner = await seedOwner();
+  const bystander = await seedOwner();
+  const db = createDb(env.DB);
+  const packageName = `bystander-${crypto.randomUUID().slice(0, 8)}`;
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName,
+    organizationId: owner.organizationId,
+    firstStageId: "stage-owner",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+  const unwatched = await (await request(bystander, "GET", `/packages/${packageName}`)).json();
+  expect(unwatched).toMatchObject({ packageName, ownershipConflict: false, watch: null });
+  const created = await request(bystander, "POST", "", { packageName });
+  expect(created.status).toBe(201);
+  expect(await created.json()).toMatchObject({ watch: { ownershipConflict: false } });
+  await db
+    .update(npmPackageClaims)
+    .set({ organizationId: null })
+    .where(eq(npmPackageClaims.packageName, packageName));
+  expect(await (await request(bystander, "GET", `/packages/${packageName}`)).json()).toMatchObject({
+    ownershipConflict: false,
+    watch: { ownershipConflict: false },
+  });
+});
+
+test("claim conflicts reject a competing manager's enrollment and checks while retaining existing observation history", async () => {
   const owner = await seedOwner();
   const outsider = await seedOwner();
   const db = createDb(env.DB);
+  await seedStagedHistory(outsider, "claimed-package");
   const watch = await createPublicationWatch(db, outsider.organizationId, "claimed-package");
   const observationId = crypto.randomUUID();
   const now = new Date();
@@ -551,10 +600,12 @@ test("claim conflicts reject enrollment and checks while retaining existing obse
   ).toHaveLength(1);
 });
 
-test("wildcard reservations block watches until an exact registry claim resolves ownership", async () => {
+test("wildcard reservations block a competing manager's watches until an exact registry claim resolves ownership", async () => {
   const owner = await seedOwner();
+  const bystander = await seedOwner();
   const db = createDb(env.DB);
   const packageName = `reserved-${crypto.randomUUID().slice(0, 8)}`;
+  await seedStagedHistory(owner, packageName, null);
   const claim = {
     ecosystem: "npm" as const,
     packageName,
@@ -564,6 +615,7 @@ test("wildcard reservations block watches until an exact registry claim resolves
   };
   await db.insert(npmPackageClaims).values({ ...claim, registryUrl: "*", organizationId: null });
   expect((await request(owner, "POST", "", { packageName })).status).toBe(409);
+  expect((await request(bystander, "POST", "", { packageName })).status).toBe(201);
   await db.insert(npmPackageClaims).values({
     ...claim,
     registryUrl: "https://registry.npmjs.org",

@@ -24,7 +24,7 @@ import {
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
 /** Watches per organization; enrollment SQL enforces the same bound. */
-const PUBLICATION_WATCH_LIMIT = 20;
+export const PUBLICATION_WATCH_LIMIT = 20;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 export class PublicationWatchOwnershipError extends Error {}
@@ -78,21 +78,46 @@ export async function getPublicationWatchBlocked(
 
 const PUBLIC_NPM = "https://registry.npmjs.org";
 
+/**
+ * Monitoring a public release needs no ownership, so a claim only silences an
+ * organization that competed for or handed over management: one holding its
+ * own staged reviews of the package. Anyone else keeps observing it, so the
+ * first claimant (possibly holding a stolen read token) cannot switch off
+ * every other organization's alerts for the release it is about to publish.
+ */
 export function publicationWatchOwnershipConflict(
   registryUrl: string,
   packageName: string | SQLWrapper,
   organizationId: string | SQLWrapper,
 ) {
-  return sql<boolean>`(exists (select 1 from ${npmPackageClaims} claim
+  return sql<boolean>`((exists (select 1 from ${npmPackageClaims} claim
     where claim.registry_url = ${registryUrl} and claim.ecosystem = 'npm'
       and claim.package_name = ${packageName}
       and (claim.organization_id is null or claim.organization_id != ${organizationId}))
     or (exists (select 1 from ${npmPackageClaims} reserved
       where reserved.registry_url = '*' and reserved.ecosystem = 'npm'
         and reserved.package_name = ${packageName})
-      and not ${npmPackageClaimMatches(registryUrl, packageName, organizationId)}))`.mapWith(
-    Boolean,
-  );
+      and not ${npmPackageClaimMatches(registryUrl, packageName, organizationId)}))
+    and exists (select 1 from scans staged_history
+      where staged_history.organization_id = ${organizationId}
+        and staged_history.source in ('manual', 'auto_discovery')
+        and coalesce(staged_history.registry_package_name, staged_history.package_name) = ${packageName}
+        and (rtrim(staged_history.registry_url, '/') = ${registryUrl}
+          or nullif(rtrim(staged_history.registry_url, '/'), '') is null)))`.mapWith(Boolean);
+}
+
+/**
+ * Whether an organization has a free watch slot. A watch deactivated by
+ * another organization's claim can no longer poll, so it holds no slot.
+ */
+export function publicationWatchCapacityAvailable(
+  registryUrl: string,
+  organizationId: string | SQLWrapper,
+) {
+  return sql<boolean>`((select count(*) from publication_watches counted
+    where counted.organization_id = ${organizationId}
+      and not ${publicationWatchOwnershipConflict(registryUrl, sql`counted.package_name`, organizationId)})
+    < ${PUBLICATION_WATCH_LIMIT})`.mapWith(Boolean);
 }
 
 export async function getPublicationOwnershipConflict(
@@ -208,6 +233,7 @@ export async function getPublicationEnrollment(
   db: AppDb,
   organizationId: string,
   packageName: string,
+  registryUrl = PUBLIC_NPM,
 ): Promise<PublicationEnrollment> {
   const [candidate] = await db
     .select({
@@ -225,11 +251,10 @@ export async function getPublicationEnrollment(
   if (!candidate) return { state: "not_enrolled" };
   if (candidate.stoppedAt) return { state: "stopped", stoppedAt: candidate.stoppedAt };
   if (candidate.source === "workflow_gate") return { state: "suggested" };
-  const [{ watches }] = await db
-    .select({ watches: sql<number>`count(*)` })
-    .from(publicationWatches)
-    .where(eq(publicationWatches.organizationId, organizationId));
-  return { state: watches >= PUBLICATION_WATCH_LIMIT ? "deferred" : "pending" };
+  const [capacity] = await db.all<{ available: number }>(
+    sql`select ${publicationWatchCapacityAvailable(registryUrl, organizationId)} as available`,
+  );
+  return { state: capacity?.available ? "pending" : "deferred" };
 }
 
 export async function getPublicationWatch(
@@ -261,7 +286,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatches)
       .select(
-        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20 and not ${publicationWatchBlocked(registryUrl, packageName, organizationId)}`,
+        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where ${publicationWatchCapacityAvailable(registryUrl, organizationId)} and not ${publicationWatchBlocked(registryUrl, packageName, organizationId)}`,
       )
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
@@ -303,7 +328,9 @@ export async function createPublicationWatch(
       "This package is already assigned to another organization.",
     );
   if (!watch)
-    throw new PublicationWatchLimitError("At most 20 packages can be monitored per organization");
+    throw new PublicationWatchLimitError(
+      `At most ${PUBLICATION_WATCH_LIMIT} packages can be monitored per organization`,
+    );
   return watch;
 }
 export async function deletePublicationWatch(db: AppDb, organizationId: string, id: string) {

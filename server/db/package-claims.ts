@@ -1,5 +1,6 @@
-import { and, eq, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AppDb } from "./client";
+import { publicationWatchCapacityAvailable } from "./publication-watches";
 import {
   npmPackageClaims,
   organizations,
@@ -180,12 +181,18 @@ export async function manageNpmPackageClaim(
   const capacity = monitor
     ? sql`(exists(select 1 from publication_watches
       where organization_id = ${input.targetOrganizationId} and package_name = ${input.packageName})
-      or (select count(*) from publication_watches where organization_id = ${input.targetOrganizationId}) < 20)`
+      or ${publicationWatchCapacityAvailable(input.registryUrl, input.targetOrganizationId)})`
     : sql`1`;
   const successful = sql`exists(select 1 from scan_events where id = ${receiptId})`;
   const eventType = confirming
     ? "npm_package.management_confirmed"
     : "npm_package.management_transferred";
+  const metadata = sql`json_object('packageName', ${input.packageName},
+    'registryUrl', ${input.registryUrl},
+    'sourceOrganizationId', ${input.organizationId},
+    'destinationOrganizationId', ${input.targetOrganizationId},
+    'destinationOrganizationName',
+      (select name from organizations where id = ${input.targetOrganizationId}))`;
   // The receipt is written immediately after the guarded UPDATE. Later batch
   // statements depend on that receipt, never on a stale ownership pre-read or
   // a timestamp that a concurrent confirmation could also have written.
@@ -202,18 +209,19 @@ export async function manageNpmPackageClaim(
           eq(npmPackageClaims.ecosystem, "npm"),
           eq(npmPackageClaims.packageName, input.packageName),
           eq(npmPackageClaims.organizationId, input.organizationId),
+          // Confirming twice keeps the original decision and its audit trail.
+          confirming ? isNull(npmPackageClaims.managementConfirmedAt) : undefined,
           authorized,
           capacity,
         ),
       ),
     db.insert(scanEvents).select(sql`select ${receiptId}, ${input.organizationId},
-      ${input.userId}, null, ${eventType}, ${JSON.stringify({ packageName: input.packageName })},
-      ${now.getTime()} where changes() > 0`),
+      ${input.userId}, null, ${eventType}, ${metadata}, ${now.getTime()} where changes() > 0`),
     ...(!confirming
       ? [
           db.insert(scanEvents).select(sql`select ${crypto.randomUUID()},
       ${input.targetOrganizationId}, ${input.userId}, null, 'npm_package.management_received',
-      ${JSON.stringify({ packageName: input.packageName })}, ${now.getTime()} where ${successful}`),
+      ${metadata}, ${now.getTime()} where ${successful}`),
         ]
       : []),
     ...(monitor
@@ -242,5 +250,13 @@ export async function manageNpmPackageClaim(
     .select({ id: scanEvents.id })
     .from(scanEvents)
     .where(eq(scanEvents.id, receiptId));
-  if (!receipt) throw new PackageManagementConflictError();
+  if (receipt) return { changed: true };
+  if (confirming) {
+    const [already] = await db.all<{ confirmed: number }>(sql`select exists(select 1
+      from npm_package_claims where registry_url = ${input.registryUrl} and ecosystem = 'npm'
+        and package_name = ${input.packageName} and organization_id = ${input.organizationId}
+        and management_confirmed_at is not null) and ${authorized} as confirmed`);
+    if (already?.confirmed) return { changed: false };
+  }
+  throw new PackageManagementConflictError();
 }
