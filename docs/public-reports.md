@@ -450,7 +450,11 @@ reads `<version> published without approval` in orange.
   read that would flag. An organization whose listed review only _claims_ the
   name (a workflow gate) has no tie to the package's releases, and its alert
   would read as an accusation against the real maintainer; its badge keeps the
-  grey `not reviewed`. Default-on picks always pass: `badge_public` already
+  grey `not reviewed`. Publisher status does not expire (the off switch's rule):
+  an organization that once staged the name and still answers the badge with its
+  own review can flag releases after the package changed hands. Its remedy is the
+  same as for any co-publisher: decide the release after it shipped, or switch the
+  badge off. Default-on picks always pass: `badge_public` already
   requires the organization's own token to have read a public npm stage.
 - **Only a confirmed discrepancy.** `unknown` evidence, a newer staged review
   that is not on the badge, or a byte mismatch the badge found itself while the

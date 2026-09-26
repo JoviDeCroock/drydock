@@ -49,7 +49,7 @@ list surface; observations expand inline under their row. The advisory meta
 line states that checks happen after publication; unknown evidence never
 receives an approval badge. The card ends with the **Unapproved publishes** log
 (`UnapprovedPublishLog.tsx` over `src/models/publication-alert-log.ts`), which reloads
-whenever the watch list does. See [publication monitoring](./publication-monitor.md) for scope and API.
+after a check, an acknowledgment, an enrollment or a stop. See [publication monitoring](./publication-monitor.md) for scope and API.
 
 Three surfaces render the same review: the authenticated scan workbench
 (`src/pages/Dashboard/ScanDetail/`), the anonymous public diff

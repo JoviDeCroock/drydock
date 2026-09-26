@@ -46,9 +46,16 @@ export function PublicationMonitor({
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
-  // Each reload of the watch list (a check, an acknowledgment, a stop) may
-  // have changed the ledger, so the log reloads with it.
-  const logRefreshKey = useComputed(() => (model.loaded.value ? model.watches.value : undefined));
+  // A check, an acknowledgment, an enrollment or a stop may have changed the
+  // ledger, and each changes one of these fields. A string, so expanding a row
+  // (which replaces the list with equal watches) does not reload the log.
+  const logRefreshKey = useComputed(() =>
+    model.loaded.value
+      ? model.watches.value
+          .map((watch) => `${watch.id}:${watch.lastCheckedAt}:${watch.unresolvedAlertCount}`)
+          .join(",")
+      : undefined,
+  );
   const confirmStop = async () => {
     const target = stopTarget.peek();
     if (!target) return;

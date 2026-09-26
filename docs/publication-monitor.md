@@ -196,8 +196,8 @@ first (the latest 100, and a note when older ones exist). Each entry is
 post-release decision when one was made, and a line saying when it was raised,
 whether it was acknowledged or decided, and whether the package is still watched.
 It reads the same ledger as the watch rows and the package page, so a stopped watch
-does not remove an entry, and it reloads whenever the watch list does (a check, an
-acknowledgment, a stop). `unknown` evidence is never an entry: it is not a record
+does not remove an entry, and it reloads after a check, an acknowledgment, an
+enrollment or a stop (not when a row is merely expanded). `unknown` evidence is never an entry: it is not a record
 that npm published without an approval. Acting on an entry happens where it always
 did: acknowledge or **Scan** it from its release list.
 
