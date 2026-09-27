@@ -212,7 +212,8 @@ created the alert, alongside the `publication.discrepancy` product event.
 
 When the organization is a registry-verified publisher of the package, the public
 README badge flags the release too: `<version> published without approval`, in
-orange, until the release is decided after it shipped (see
+orange, or `<version> blocked`, in red, when the organization had rejected it and
+npm published it anyway, until the release is decided after it shipped (see
 [`public-reports.md`](./public-reports.md#flagging-an-unapproved-publish)).
 
 ## Reviewing an alert after release

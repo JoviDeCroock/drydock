@@ -2647,20 +2647,68 @@ async function seedApprovedDefaultRelease(
 }
 
 describe("the badge reads the organization's publication monitor", () => {
-  test.each([
-    "artifact_mismatch",
-    "published_despite_rejection",
-    "published_without_approval",
-  ] as const)("%s for the quoted version takes the green off it", async (status) => {
+  test.each(["artifact_mismatch", "published_without_approval"] as const)(
+    "%s for the quoted version takes the green off it",
+    async (status) => {
+      const owner = await seedUser();
+      const app = publicApp(owner);
+      const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+      await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+      await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+      expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+        message: "3.0.0 published without approval",
+        color: "orange",
+      });
+    },
+  );
+
+  test("a release npm published despite the publisher's rejection reads blocked", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
 
-    await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.0 published without approval",
-      color: "orange",
+      label: "drydock",
+      message: "3.0.1 blocked",
+      color: "red",
+    });
+  });
+
+  test("anyone but a registry-verified publisher gets grey for a rejection npm published over", async () => {
+    const claimant = await seedUser();
+    const app = publicApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+
+    await recordObservation(
+      claimant.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
+      color: "lightgrey",
+    });
+    // The flag's own guard, should such a pick ever answer: grey, not red.
+    expect(await supersessionOf(gate)).toEqual({
+      version: "3.0.1",
+      blocked: false,
+      unapproved: false,
     });
   });
 
