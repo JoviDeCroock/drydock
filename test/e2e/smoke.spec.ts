@@ -155,6 +155,31 @@ test("a legacy public report stays evidence-only", async ({ page }) => {
   expect(fileRequests).toEqual([]);
 });
 
+// `lazyRoute` rests on preact-iso's Router ignoring a rejected lazy import, which
+// would otherwise leave the previous page on screen. Aborting the chunk stands in
+// for a tab left open across a deploy that removed its hashed assets.
+test("a route chunk that fails to load shows the recovery card", async ({ page }) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Read the release before the registry does." }),
+  ).toBeVisible({ timeout: 30_000 });
+
+  const privacyChunk = "**/src/pages/Privacy/**";
+  await page.route(privacyChunk, (route) => route.abort());
+  await page.getByRole("link", { name: "Privacy", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Something went wrong" })).toBeVisible();
+  await expect(page.getByText(/^Page: \/privacy$/m)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Email bug report" })).toHaveAttribute(
+    "href",
+    /^mailto:/,
+  );
+
+  await page.unroute(privacyChunk);
+  await page.getByRole("button", { name: "Reload page" }).click();
+  await expect(page.getByRole("heading", { name: "Privacy Policy" })).toBeVisible();
+});
+
 async function installPublicReportMocks(
   page: Page,
   fileRequests: string[],

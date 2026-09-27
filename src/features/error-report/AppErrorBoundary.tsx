@@ -7,7 +7,7 @@ import { CopyButton } from "../../components/CopyButton";
 import { PageShell } from "../../components/PageShell";
 import { MonoLabel, Muted } from "../../components/Typography";
 import { CONTACT_EMAIL } from "../../lib/contact";
-import { buildBugReport, bugReportMailto } from "./bug-report";
+import { buildBugReport, bugReportMailto, bugReportText } from "./bug-report";
 
 /**
  * Replaces a page that threw while rendering with a recovery card instead of a
@@ -33,16 +33,15 @@ export function AppErrorBoundary({ children }: { children: ComponentChildren }) 
 }
 
 function ErrorFallback({ error, path }: { error: unknown; path: string }) {
-  const report = useMemo(
-    () =>
-      buildBugReport({
-        error,
-        pathname: path,
-        userAgent: navigator.userAgent,
-        occurredAt: new Date(),
-      }),
-    [error, path],
-  );
+  const { text, mailto } = useMemo(() => {
+    const report = buildBugReport({
+      error,
+      pathname: path,
+      userAgent: navigator.userAgent,
+      occurredAt: new Date(),
+    });
+    return { text: bugReportText(report), mailto: bugReportMailto(report) };
+  }, [error, path]);
 
   return (
     <PageShell width="narrow">
@@ -54,17 +53,17 @@ function ErrorFallback({ error, path }: { error: unknown; path: string }) {
         </Muted>
         <div class="mt-2 flex flex-wrap gap-2">
           <Button onClick={() => location.reload()}>Reload page</Button>
-          <LinkButton href={bugReportMailto(report)} variant="secondary">
+          <LinkButton href={mailto} variant="secondary">
             Email bug report
           </LinkButton>
         </div>
         <div class="mt-2 flex flex-col gap-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <MonoLabel as="p">Error details</MonoLabel>
-            <CopyButton text={report} label="Copy details" variant="ghost" />
+            <CopyButton text={text} label="Copy details" variant="ghost" />
           </div>
           <pre class="m-0 max-h-56 overflow-auto rounded-md border border-border bg-surface-2 p-3 font-mono text-[12px] leading-[1.55] text-ink-muted whitespace-pre-wrap break-words">
-            {report}
+            {text}
           </pre>
           <Muted class="text-[12px] m-0">
             Nothing is sent automatically. Review the details before you share them.
