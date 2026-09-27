@@ -56,6 +56,26 @@ describe("the public badge counts a publisher's decision after release", () => {
     });
   });
 
+  test("a rejection npm published over reads blocked until the publisher approves it after release", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    await seedStagedRelease(owner, app, packageName, "1.0.0");
+    await seedAlert(owner, packageName, "1.0.1", { status: "published_despite_rejection" });
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 blocked",
+      color: "red",
+    });
+
+    const scanId = await seedPublishedReview(owner, packageName, "1.0.1");
+    await linkReview(owner, packageName, "1.0.1", scanId);
+    await decide(app, scanId, "publish");
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 approved",
+      color: "brightgreen",
+    });
+  });
+
   test("bytes the review read that differ from the published ones never reach the badge", async () => {
     const { owner, app, packageName } = await publisherWithDirectRelease();
     const scanId = await seedPublishedReview(owner, packageName, "1.0.1", { digests: OTHER });
