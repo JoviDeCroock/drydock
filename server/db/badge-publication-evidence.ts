@@ -344,6 +344,9 @@ async function findPublicationDiscrepancy(
   // organization's approval, despite its rejection, or with other bytes.
   // `unknown` is not among them — the evidence could not be established.
   const alertedVersions = new Set<string>();
+  // Of those, the ones this organization rejected before npm published them
+  // anyway: its warning already exists, so the badge reads `blocked`.
+  const rejectedVersions = new Set<string>();
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =
     reviewedDigest !== null && publishedSha1 !== null && publishedSha1 !== reviewedDigest;
@@ -351,6 +354,7 @@ async function findPublicationDiscrepancy(
   // whether or not it falls inside the observation window.
   for (const { version, status } of [...observed, ...alerted, ...tagged]) {
     if (discrepancies.has(status)) alertedVersions.add(version);
+    if (status === "published_despite_rejection") rejectedVersions.add(version);
     if (version === pickVersion) {
       if (discrepancies.has(status)) pickDisqualified = true;
       continue;
@@ -388,11 +392,22 @@ async function findPublicationDiscrepancy(
   // say that on a README: another organization that listed a review of the
   // package has no tie to its releases, and its alert would read as an
   // accusation against the real maintainer. Everyone else keeps `not reviewed`.
-  if (
-    result?.unapproved &&
-    !(await isRegistryVerifiedPublisher(db, pick.organizationId, badgePackage("npm", packageName)))
-  ) {
-    result = { ...result, unapproved: false };
+  //
+  // A publisher's rejection that npm published over is its own verdict on a
+  // release that is public now, so it reads `blocked`, like a decline after
+  // release. A guarded approval after release has already cleared it above.
+  if (result?.unapproved) {
+    if (
+      !(await isRegistryVerifiedPublisher(
+        db,
+        pick.organizationId,
+        badgePackage("npm", packageName),
+      ))
+    ) {
+      result = { ...result, unapproved: false };
+    } else if (rejectedVersions.has(result.version)) {
+      result = { ...result, blocked: true, unapproved: false };
+    }
   }
   return result;
 }
