@@ -41,7 +41,7 @@ function describe(
       return {
         title: `Published with no approval in ${organization}`,
         detail: UNDECIDED_REVIEW_REASONS.has(reason ?? "")
-          ? `No approval in ${organization} predates the publication of this release. Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it. Deciding before a stage is approved on npm keeps a release like this from alerting.`
+          ? `No approval in ${organization} predates the publication of this release. Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it.${reason === "review_failed" ? "" : " An approval recorded in Drydock before the stage is approved on npm keeps a release like this from alerting."}`
           : `No approval in ${organization} predates the publication of this release.${newestOnly}`,
       };
     case "published_despite_rejection":

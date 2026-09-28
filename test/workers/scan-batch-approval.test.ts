@@ -77,7 +77,18 @@ describe("batch approval of low-risk staged reviews", () => {
         requiresManualReview: false,
       },
     });
+    const aiUnavailable = await seedReview(owner, "@batch/ai-unavailable", {
+      aiJson: { status: "unavailable", releaseAssessment: "not_assessed" },
+    });
     const excluded = await Promise.all([
+      // A clean diff over a package that already carries a critical finding:
+      // its page reads "package context only", not "likely safe".
+      seedReview(owner, "@batch/risky-package", {
+        riskSummaryJson: { ...LOW_RISK, artifactRisk: "critical", contextFindingCount: 1 },
+      }),
+      seedReview(owner, "@batch/diverged", {
+        summaryJson: { releaseConsistency: { status: "diverged", newFindingCount: 1 } },
+      }),
       seedReview(owner, "@batch/medium", {
         riskSummaryJson: { ...LOW_RISK, releaseRisk: "medium", releaseFindingCount: 1 },
       }),
@@ -109,7 +120,9 @@ describe("batch approval of low-risk staged reviews", () => {
     await seedReview(stranger, "@batch/elsewhere");
 
     const body = await listApprovable(owner);
-    expect(body.scans.map((scan) => scan.id).sort()).toEqual([plain, lowFindings, aiClean].sort());
+    expect(body.scans.map((scan) => scan.id).sort()).toEqual(
+      [plain, lowFindings, aiClean, aiUnavailable].sort(),
+    );
     expect(body.scans.find((scan) => scan.id === lowFindings)?.releaseFindingCount).toBe(2);
     expect(body.more).toBe(false);
     for (const id of excluded)
@@ -123,11 +136,17 @@ describe("batch approval of low-risk staged reviews", () => {
     const medium = await seedReview(owner, "@batch/medium", {
       riskSummaryJson: { ...LOW_RISK, releaseRisk: "medium", releaseFindingCount: 1 },
     });
+    // Approved earlier by the same person: listed again, it gains no second event.
+    const earlier = await seedReview(owner, "@batch/earlier", {
+      decision: "publish",
+      decidedAt: new Date(Date.now() - 60_000),
+      decidedByUserId: owner.userId,
+    });
     const stranger = await seedUser();
     const foreign = await seedReview(stranger, "@batch/foreign");
 
     const res = await approve(owner, {
-      scanIds: [first, second, medium, foreign, "scan_missing", first],
+      scanIds: [first, second, medium, earlier, foreign, "scan_missing", first],
       reason: "  monorepo release  ",
     });
     expect(res.status).toBe(200);
@@ -136,7 +155,7 @@ describe("batch approval of low-risk staged reviews", () => {
       skipped: string[];
     };
     expect(body.approved.map((row) => row.id).sort()).toEqual([first, second].sort());
-    expect(body.skipped.sort()).toEqual([foreign, medium, "scan_missing"].sort());
+    expect(body.skipped.sort()).toEqual([earlier, foreign, medium, "scan_missing"].sort());
 
     for (const id of [first, second]) {
       expect(await readDecision(id)).toEqual({

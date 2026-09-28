@@ -186,12 +186,15 @@ that staged many packages at once is not one dialog per package. Its dialog
 (`src/pages/Dashboard/BatchApprovalDialog.tsx`) lists each candidate as a ticked
 row linking to its review, with its release-finding count in mono, one optional
 reason, and one primary `Approve N releases`. The server decides which reviews
-qualify (`listBatchApprovableScans`: low release risk, a compared baseline, no AI
-flag, still undecided and actionable on npm) and re-checks that as it writes, so
+qualify (`listBatchApprovableScans`: release and artifact risk both low, a
+compared baseline, no findings new since the last approved release, no AI flag,
+still undecided and actionable on npm; a clean diff over a risky package is
+left out) and re-checks that as it writes, so
 the result view says how many were approved and how many changed underneath and
 stayed undecided, then links npm's staged-packages page, because approving here
-publishes nothing. `ScanBatchApprovalModel` follows the list the way the
-overview strip does.
+publishes nothing. The dialog lists what qualified when it opened, so reviews
+completing meanwhile do not join the batch ticked. `ScanBatchApprovalModel`
+follows the list the way the overview strip does.
 
 ## Dashboard onboarding funnel
 

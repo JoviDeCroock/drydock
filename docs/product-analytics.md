@@ -118,7 +118,9 @@ rows — which is correct, they were.
 
 **`blob8` on `scan.decided` says how the decision was made:** `single` for one
 decision through either route, `batch` for a review approved through
-`POST /api/v1/scans/batch-approval`, which emits one event per approved review.
+`POST /api/v1/scans/batch-approval`, which emits one event per approved review
+and no `ai_review.decided`: a batch approval is not a judgment of each review's
+AI result.
 Rows written before the dimension existed have no `blob8`; all of them were
 single decisions.
 

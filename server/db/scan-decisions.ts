@@ -112,11 +112,13 @@ export const BATCH_APPROVAL_LIMIT = 50;
 
 /**
  * Staged reviews one action may approve together: rows of the **Undecided**
- * queue whose review page reads "likely safe" or "package context only" (low
- * release risk, compared against a published baseline) and that the AI
- * reviewer did not ask a person to look at. Everything else keeps its own
- * decision. The approval re-checks this in the same statement that writes it,
- * so a review that changed after the list loaded stays undecided.
+ * queue whose whole package reads low (release and artifact risk), compared
+ * against a published baseline, with no findings new since the last approved
+ * release and nothing the AI reviewer asked a person to look at. Each reads
+ * "likely safe" on its own page; a clean diff over a risky package ("package
+ * context only") does not qualify. Everything else keeps its own decision. The
+ * approval re-checks this in the same statement that writes it, so a review
+ * that changed after the list loaded stays undecided.
  */
 function batchApprovableConditions(organizationId: string) {
   return [
@@ -125,7 +127,9 @@ function batchApprovableConditions(organizationId: string) {
     inArray(scans.source, ["manual", "auto_discovery"]),
     ...undecidedQueueConditions(),
     sql`json_extract(${scans.riskSummaryJson}, '$.releaseRisk') = 'low'`,
+    sql`json_extract(${scans.riskSummaryJson}, '$.artifactRisk') = 'low'`,
     sql`json_extract(${scans.summaryJson}, '$.baseline.comparisonSkipped') is null`,
+    sql`coalesce(json_extract(${scans.summaryJson}, '$.releaseConsistency.status'), 'none') != 'diverged'`,
     sql`coalesce(json_extract(${scans.aiJson}, '$.requiresManualReview'), 0) = 0`,
     sql`coalesce(json_extract(${scans.aiJson}, '$.releaseAssessment'), 'not_assessed') in ('nothing_unusual', 'not_assessed')`,
   ];
@@ -210,9 +214,10 @@ export async function recordBatchApproval(
         createdAt: scans.createdAt,
         risk: scans.risk,
         riskSummaryJson: scans.riskSummaryJson,
-        aiJson: scans.aiJson,
         source: scans.source,
-        summaryJson: scans.summaryJson,
+        // Only the stage record: the badge key and dist-tag read nothing else,
+        // and the full summary carries the whole file list.
+        stagedPublish: sql<string | null>`json_extract(${scans.summaryJson}, '$.stagedPublish')`,
         packageName: scans.packageName,
         stagedVersion: scans.stagedVersion,
         registryPackageName: scans.registryPackageName,
@@ -221,7 +226,10 @@ export async function recordBatchApproval(
         publicFeedListedAt: scans.publicFeedListedAt,
       }),
     // One event per row the update above just wrote: same decider, same instant.
-    db.insert(scanEvents)
+    // A same-millisecond resubmit by the same decider matches those rows again;
+    // their events already exist, so it records nothing rather than failing.
+    db
+      .insert(scanEvents)
       .select(sql`select 'scan-decided:' || ${scans.id} || ':' || ${now.getTime()},
       ${input.organizationId}, ${input.actorUserId}, ${scans.id}, 'scan.decided', ${metadata},
       ${now.getTime()}
@@ -232,19 +240,37 @@ export async function recordBatchApproval(
         eq(scans.decision, "publish"),
         eq(scans.decidedByUserId, input.actorUserId),
         eq(scans.decidedAt, now),
-      )}`),
+      )}`)
+      .onConflictDoNothing(),
   ]);
 
-  for (const row of updated) {
-    recordDecisionEvent(env, row, {
-      organizationId: input.organizationId,
-      decision: "publish",
-      ecosystem: "npm",
-      via: "batch",
-      now,
-    });
+  const approved = updated.map(({ stagedPublish, ...row }) => ({
+    ...row,
+    summaryJson: { stagedPublish: parseStagedPublish(stagedPublish) },
+  }));
+  for (const row of approved) {
+    recordDecisionEvent(
+      env,
+      { ...row, aiJson: null },
+      {
+        organizationId: input.organizationId,
+        decision: "publish",
+        ecosystem: "npm",
+        via: "batch",
+        now,
+      },
+    );
   }
-  return updated;
+  return approved;
+}
+
+function parseStagedPublish(value: string | null): unknown {
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
@@ -355,6 +381,9 @@ function recordDecisionEvent(
     timeToDecisionMs: Math.max(0, input.now.getTime() - toEpochMs(row.createdAt)),
   });
 
+  // A batch approval is not a judgment of each review's AI result, so it stays
+  // out of the reviewer feedback dataset.
+  if (input.via === "batch") return;
   const aiReview = parsePersistedAiReview(row.aiJson);
   // The disabled-review placeholder is persisted so report consumers can
   // explain why no advisory result exists, but it is not a reviewer attempt

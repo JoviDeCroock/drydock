@@ -34,7 +34,10 @@ import {
   type ScanDecisionFilter,
   type ScanListItem,
 } from "../../models/scan";
-import { ScanBatchApprovalModel } from "../../models/scan-batch-approval";
+import {
+  ScanBatchApprovalModel,
+  type BatchApprovalCandidate,
+} from "../../models/scan-batch-approval";
 import { ScanOverviewModel } from "../../models/scan-overview";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
@@ -284,7 +287,11 @@ function RecentReviewsSection({
   const quickDecisionScan = useSignal<ScanListItem | null>(null);
   const deleteScan = useSignal<ScanListItem | null>(null);
   const batch = useModel(ScanBatchApprovalModel);
-  const batchOpen = useSignal(false);
+  // The dialog lists what qualified when it opened: reviews completing while it
+  // is open must not join the batch already ticked.
+  const batchSnapshot = useSignal<{ candidates: BatchApprovalCandidate[]; more: boolean } | null>(
+    null,
+  );
   // The candidates follow the list like the overview strip does: every
   // refresh, decision, or discovery can change which reviews qualify.
   useSignalEffect(() => {
@@ -349,7 +356,10 @@ function RecentReviewsSection({
               size="sm"
               onClick={() => {
                 batch.error.value = null;
-                batchOpen.value = true;
+                batchSnapshot.value = {
+                  candidates: batch.candidates.peek(),
+                  more: batch.more.peek(),
+                };
               }}
               title="Approve the undecided reviews that read likely safe"
             >
@@ -452,13 +462,13 @@ function RecentReviewsSection({
           />
         )}
       </Show>
-      <Show when={batchOpen}>
-        {() => (
+      <Show when={batchSnapshot}>
+        {(snapshot) => (
           <BatchApprovalDialog
             open={true}
-            onClose={() => (batchOpen.value = false)}
-            candidates={batch.candidates.value}
-            more={batch.more.value}
+            onClose={() => (batchSnapshot.value = null)}
+            candidates={snapshot.candidates}
+            more={snapshot.more}
             saving={batch.saving.value}
             error={batch.error.value}
             onApprove={onBatchApprove}

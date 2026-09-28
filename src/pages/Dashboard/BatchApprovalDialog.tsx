@@ -41,6 +41,10 @@ export function BatchApprovalDialog({
   // What was submitted, kept for the result view: the list refresh that
   // follows an approval drops the approved rows from `candidates`.
   const submitted = useSignal<readonly BatchApprovalCandidate[]>([]);
+  // Spans the approval and the list refresh after it, which `saving` does not,
+  // so the form cannot be submitted twice before the result view shows.
+  const submitting = useSignal(false);
+  const busy = saving || submitting.value;
 
   useEffect(() => {
     if (!open) return;
@@ -58,16 +62,21 @@ export function BatchApprovalDialog({
     excluded.value = next;
   };
   const submit = async () => {
-    if (saving || !selected.length) return;
+    if (busy || !selected.length) return;
     const trimmed = reasonDraft.value.trim();
     submitted.value = selected;
-    result.value = await onApprove(
-      selected.map((scan) => scan.id),
-      trimmed.length ? trimmed : null,
-    );
+    submitting.value = true;
+    try {
+      result.value = await onApprove(
+        selected.map((scan) => scan.id),
+        trimmed.length ? trimmed : null,
+      );
+    } finally {
+      submitting.value = false;
+    }
   };
   const handleClose = () => {
-    if (saving) return;
+    if (busy) return;
     onClose();
   };
 
@@ -119,13 +128,14 @@ export function BatchApprovalDialog({
                 aria-label={`Approve ${label}`}
                 checked={!excluded.value.has(scan.id)}
                 onChange={(e) => toggle(scan.id, (e.target as HTMLInputElement).checked)}
-                disabled={saving}
+                disabled={busy}
               />
+              {/* Wraps rather than truncates: the version is what is being approved. */}
               <a
                 href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
                 target="_blank"
                 rel="noopener"
-                class="font-mono text-[13px] text-ink underline-offset-2 hover:underline min-w-0 truncate"
+                class="font-mono text-[13px] text-ink underline-offset-2 hover:underline min-w-0 break-all"
               >
                 {label}
               </a>
@@ -150,17 +160,17 @@ export function BatchApprovalDialog({
           value={reasonDraft.value}
           placeholder="e.g. monorepo release, reviewed together"
           onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
-          disabled={saving}
+          disabled={busy}
           maxLength={500}
           autoComplete="off"
           spellcheck={false}
         />
       </Field>
       <div class="flex flex-wrap gap-2">
-        <Button onClick={() => void submit()} disabled={saving || !selected.length}>
-          {saving ? "Saving…" : `Approve ${count(selected.length, "release")}`}
+        <Button onClick={() => void submit()} disabled={busy || !selected.length}>
+          {busy ? "Saving…" : `Approve ${count(selected.length, "release")}`}
         </Button>
-        <Button variant="secondary" onClick={handleClose} disabled={saving}>
+        <Button variant="secondary" onClick={handleClose} disabled={busy}>
           Cancel
         </Button>
       </div>

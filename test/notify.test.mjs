@@ -862,6 +862,24 @@ describe("notifyPublicationDiscrepancy", () => {
     );
   });
 
+  test("advises approving before npm only for a review that could still be decided", async () => {
+    const advice = "An approval recorded in Drydock before the stage is approved on npm";
+    await notifyPublicationDiscrepancy({
+      ...input,
+      status: "published_without_approval",
+      reason: "reviewed_without_decision",
+    });
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).toContain(advice);
+
+    emailMock.sendNotificationEmail.mockClear();
+    await notifyPublicationDiscrepancy({
+      ...input,
+      status: "published_without_approval",
+      reason: "review_failed",
+    });
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).not.toContain(advice);
+  });
+
   test("a delivered alert stays delivered when recording the delivery fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     dbMock.recordScanEvent.mockRejectedValue(new Error("D1 unavailable"));

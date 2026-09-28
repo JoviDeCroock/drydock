@@ -96,6 +96,32 @@ describe("ScanBatchApprovalModel", () => {
   });
 });
 
+test("an approval drops what it approved, and a list read that started before it", async () => {
+  const stale = deferred<Response>();
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(jsonResponse({ scans: [candidate("a"), candidate("b")], more: false }))
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValueOnce(jsonResponse({ approved: [{ id: "a" }], skipped: [] }))
+    .mockResolvedValueOnce(jsonResponse({ scans: [candidate("b")], more: false }));
+  vi.stubGlobal("fetch", fetchMock);
+  setActiveOrganizationId("org-a");
+  model = new ScanBatchApprovalModel();
+
+  await model.refresh();
+  const beforeApproval = model.refresh();
+  await model.approve(["a"], null);
+  expect(model.candidates.value.map((scan) => scan.id)).toEqual(["b"]);
+
+  stale.resolve(jsonResponse({ scans: [candidate("a"), candidate("b")], more: false }));
+  await beforeApproval;
+  expect(model.candidates.value.map((scan) => scan.id)).toEqual(["b"]);
+
+  // A read after the approval starts fresh instead of joining the stale one.
+  await model.refresh();
+  expect(fetchMock).toHaveBeenCalledTimes(4);
+});
+
 test("the npm staged-packages link is offered only when every stage is on public npm", () => {
   expect(npmStagedPackagesListUrlFor([candidate("a"), { registryUrl: null }])).toBe(
     "https://www.npmjs.com/settings/~/staged-packages/",

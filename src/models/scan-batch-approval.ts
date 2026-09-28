@@ -29,16 +29,20 @@ export const ScanBatchApprovalModel = createModel(() => {
   const saving = signal(false);
   const error = signal<string | null>(null);
   let inflight: { organizationId: string | null; promise: Promise<void> } | null = null;
+  // Bumped by every approval: a list read that started before one may still
+  // hold the reviews it just approved, so its answer is dropped.
+  let generation = 0;
 
   async function fetchCandidates(organizationId: string | null): Promise<void> {
+    const startedAt = generation;
     try {
       const data = await apiFetch<BatchApprovalList>(endpoint);
-      if (activeOrganizationId.peek() !== organizationId) return;
+      if (activeOrganizationId.peek() !== organizationId || startedAt !== generation) return;
       candidates.value = data.scans;
       more.value = data.more;
     } catch {
       // The action is optional: without a list it simply is not offered.
-      if (activeOrganizationId.peek() !== organizationId) return;
+      if (activeOrganizationId.peek() !== organizationId || startedAt !== generation) return;
       candidates.value = [];
       more.value = false;
     } finally {
@@ -79,6 +83,10 @@ export const ScanBatchApprovalModel = createModel(() => {
       try {
         const result = await apiJson<BatchApprovalResult>(endpoint, { scanIds, reason });
         if (activeOrganizationId.peek() !== organizationId) return null;
+        generation += 1;
+        inflight = null;
+        const approved = new Set(result.approved.map((row) => row.id));
+        candidates.value = candidates.peek().filter((scan) => !approved.has(scan.id));
         return result;
       } catch (err) {
         if (activeOrganizationId.peek() === organizationId) error.value = errorMessage(err);
