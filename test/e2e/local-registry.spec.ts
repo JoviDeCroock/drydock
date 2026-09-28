@@ -94,16 +94,29 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
       timeout: 60_000,
     });
-    await page.getByRole("button", { name: "Choose organization", exact: true }).click();
-    await page
-      .getByLabel("Managing organization")
-      .selectOption({ label: "Keep in personal workspace" });
-    await page.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
-    // No shared organization to move into, so a confirmed claim offers no chooser.
+    // With no shared organization to move into, keeping is the only choice:
+    // the pending card offers it as a button, with no one-option picker.
     await expect(
-      page.getByRole("button", { name: "Choose organization", exact: true }),
+      page.getByText("Choose where this package is managed", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Managing organization")).toHaveCount(0);
+    await page.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
+    // The kept confirmation takes focus from the button it replaced, and a
+    // confirmed claim with nowhere to move offers no further control.
+    await expect(
+      page.getByText("Managed in your personal workspace", { exact: true }),
+    ).toBeFocused();
+    await expect(
+      page.getByText("Choose where this package is managed", { exact: true }),
     ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Move to organization" })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText("Managed in your personal workspace", { exact: true })).toHaveCount(
+      0,
+    );
     await expect(page.getByText("release risk high").first()).toBeVisible();
     // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
     await expect(
@@ -383,7 +396,6 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await expect(monitor.getByLabel("Public npm package")).toBeEnabled();
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-publication");
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
-    await keepPersonalWatch(page);
     await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toBeVisible();
     // Materialize the fixture release after enrollment and before the check;
     // its stable registry timestamp must not appear to be in the future.
@@ -651,7 +663,6 @@ test("personal package confirmation enables monitoring and respects stop watchin
     await expect(nativeRow).toHaveCount(0);
     await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
-    await keepPersonalWatch(page);
     await expect(nativeRow.getByText(/added by hand/)).toBeVisible();
     await monitor.scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -697,7 +708,6 @@ test("a second organization cannot claim an already managed staged package but c
         response.request().method() === "POST",
     );
     await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
-    await keepPersonalWatch(page);
     // Monitoring a public release needs no ownership: another organization's
     // claim must never silence this workspace's alerts.
     expect((await enrolled).status()).toBe(201);
@@ -756,7 +766,6 @@ test("publication monitor explains deferred enrollment and offers gate packages 
     ).toBeVisible();
     await expect(monitor.getByText(/cannot tell whether they are\s+public on npm/)).toBeVisible();
     await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
-    await keepPersonalWatch(page);
     await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
     await expect(monitor.getByText(/added by hand/)).toBeVisible();
     await expect(monitor.getByText(/Automatic enrollment is deferred/)).toHaveCount(0);
@@ -764,6 +773,123 @@ test("publication monitor explains deferred enrollment and offers gate packages 
       monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }),
     ).toHaveCount(0);
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication monitor checks names inline and asks for a management choice only for a pending personal claim", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const posts: unknown[] = [];
+  let kept = false;
+  const watch = {
+    id: "pending-claim-watch",
+    packageName: "@drydock/pending-claim",
+    source: "manual",
+    createdAt: "2026-09-13T00:00:00.000Z",
+    lastCheckedAt: null,
+    lastError: null,
+  };
+  await page.route("**/api/v1/publication-watches", async (route) => {
+    if (route.request().method() === "POST") {
+      posts.push(route.request().postDataJSON());
+      if (!kept) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: "Choose an organization for this package before enabling monitoring.",
+            code: "package_management_required",
+          },
+        });
+        return;
+      }
+      await route.fulfill({ status: 201, json: { watch } });
+      return;
+    }
+    await route.fulfill({
+      json: { watches: kept ? [watch] : [], autoEnrollment: { deferred: 0, suggestions: [] } },
+    });
+  });
+  await page.route("**/api/v1/npm-package-claims/**", async (route) => {
+    if (route.request().method() === "POST") {
+      kept = true;
+      await route.fulfill({ json: { managed: true } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        claim: { kind: "personal", managementConfirmed: kept, canManage: true },
+        destinations: [],
+      },
+    });
+  });
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    const input = monitor.getByLabel("Public npm package");
+    await input.fill("Not A Package");
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await expect(
+      monitor.getByText("Enter a valid public npm package name, such as @scope/package."),
+    ).toBeVisible();
+    await expect(page.getByText(/Package management could not be loaded/)).toHaveCount(0);
+    expect(posts).toEqual([]);
+
+    await input.fill(watch.packageName);
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Choose where this package is managed" });
+    await expect(dialog).toBeVisible();
+    // With nowhere else to manage it, the dialog offers only the keep.
+    await expect(dialog.getByLabel("Managing organization")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
+    // The dialog is gone, so focus lands on the row it produced.
+    await expect(monitor.getByRole("link", { name: watch.packageName, exact: true })).toBeFocused();
+    await expect(input).toHaveValue("");
+    expect(posts).toEqual([
+      { packageName: watch.packageName, confirmPersonalOrganization: true },
+      { packageName: watch.packageName, confirmPersonalOrganization: true },
+    ]);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a personal connection awaiting its workspace choice is called out on the dashboard until it is made", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  try {
+    await registerAndConnect(page, { confirmPersonalOrganization: false });
+    await page.reload();
+    const callout = page.getByRole("alert").filter({ hasText: "Automatic scans are off." });
+    await expect(callout).toBeVisible({ timeout: 30_000 });
+    // One notice per connection state, pointing at the card that records the choice.
+    await expect(page.getByText(/Check npm is paused|npm discovery is paused/)).toHaveCount(0);
+    await callout.getByRole("link", { name: "Settings → Integrations" }).click();
+    await expect(page.getByText("automatic scans off", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+    await page
+      .getByRole("button", { name: "Enable automatic scans in personal workspace", exact: true })
+      .click();
+    await expect(page.getByText("valid", { exact: true })).toBeVisible();
+    await page.goto("/dashboard");
+    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("Automatic scans are off.")).toHaveCount(0);
   } finally {
     await context.close();
   }
@@ -828,9 +954,12 @@ test("personal package management moves to a team without moving private reviews
       fullPage: true,
     });
     await page.getByRole("button", { name: "Move to Package release team", exact: true }).click();
-    await expect(
-      page.getByText(/Your existing reviews remain private in this workspace/),
-    ).toBeVisible();
+    const moved = page
+      .getByText(/Package release team now manages this package/)
+      .locator("xpath=ancestor::div[@tabindex='-1']");
+    // The notice replaces the button that was clicked, so it takes focus.
+    await expect(moved).toBeFocused();
+    await expect(moved).toContainText("your existing reviews of it stay private in this workspace");
     const manage = page.getByRole("link", { name: "Manage in Package release team" });
     await expect(manage).toHaveAttribute(
       "href",
@@ -879,7 +1008,7 @@ test("personal package management moves to a team without moving private reviews
   }
 });
 
-async function registerAndConnect(page: Page) {
+async function registerAndConnect(page: Page, { confirmPersonalOrganization = true } = {}) {
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const email = `e2e-${unique}@example.test`;
 
@@ -924,7 +1053,7 @@ async function registerAndConnect(page: Page) {
       label: "Fake npm staging registry",
       registryUrl,
       token: "npm_e2e_token_0123456789",
-      confirmPersonalOrganization: true,
+      confirmPersonalOrganization,
     },
   );
 }
@@ -1078,12 +1207,4 @@ async function readJournal(): Promise<
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-}
-
-async function keepPersonalWatch(page: Page) {
-  const dialog = page.getByRole("dialog", { name: "Choose where to watch this package" });
-  await dialog
-    .getByLabel("Managing organization")
-    .selectOption({ label: "Keep in personal workspace" });
-  await dialog.getByRole("button", { name: "Keep here and watch package" }).click();
 }

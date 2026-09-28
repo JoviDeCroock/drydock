@@ -34,6 +34,15 @@ export async function getScan(
           sql`scans.registry_package_name`,
           sql`scans.organization_id`,
         ).mapWith(Boolean),
+        // Only a staged review establishes competing history, which is what
+        // lets this organization be told that another one manages the package
+        // (never which). An ownerless reservation is not another manager.
+        npmPackageManagedElsewhere: sql<boolean>`(scans.source in ('manual', 'auto_discovery')
+          and exists (select 1 from npm_package_claims elsewhere
+            where elsewhere.registry_url = rtrim(scans.registry_url, '/')
+              and elsewhere.ecosystem = 'npm'
+              and elsewhere.package_name = scans.registry_package_name
+              and elsewhere.organization_id != scans.organization_id))`.mapWith(Boolean),
       })
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))

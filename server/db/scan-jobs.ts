@@ -18,6 +18,8 @@ import {
   insertNpmPackageClaim,
   npmPackageClaimMatches,
   PackageClaimConflictError,
+  blockingClaimRegistry,
+  preClaimRegistryMatches,
   reserveDeletedNpmPackages,
 } from "./package-claims";
 
@@ -181,12 +183,11 @@ export async function readNpmPackageClaimAvailability(
   // claimed package never pays for the history scans.
   const history = sql`${scans.source} in ('manual', 'auto_discovery')
     and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${packageName}
-    and (rtrim(${scans.registryUrl}, '/') = ${registryUrl}
-      or nullif(rtrim(${scans.registryUrl}, '/'), '') is null)`;
+    and ${preClaimRegistryMatches(scans.registryUrl, registryUrl)}`;
   const [row] = await db.all<{ state: NpmPackageClaimAvailability }>(sql`select case
     when ${npmPackageClaimMatches(registryUrl, packageName, organizationId)} then 'owned'
     when exists(select 1 from ${npmPackageClaims}
-      where ${npmPackageClaims.registryUrl} in (${registryUrl}, '*')
+      where ${blockingClaimRegistry(npmPackageClaims.registryUrl, registryUrl)}
         and ${npmPackageClaims.ecosystem} = 'npm'
         and ${npmPackageClaims.packageName} = ${packageName}) then 'unavailable'
     when exists(select 1 from ${scans}

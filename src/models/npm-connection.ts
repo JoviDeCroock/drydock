@@ -33,6 +33,25 @@ export function npmConnectionScope(connection: PublicNpmConnection | null): stri
   return typeof whoami === "string" && whoami ? `@${whoami}` : null;
 }
 
+/**
+ * The one dashboard notice a stored connection needs, if any. An invalid token
+ * stops all discovery. An unvalidated one pauses "Check npm". A personal
+ * workspace that has not recorded its workspace choice gets no new scheduled
+ * reviews; for an unvalidated token that fact joins the same notice, since
+ * both are fixed in the same settings card.
+ */
+export function npmConnectionNotice(
+  connection: PublicNpmConnection | null,
+  personalWorkspace: boolean,
+): "invalid" | "unvalidated" | "unvalidated_choice" | "choice" | null {
+  if (!connection) return null;
+  if (connection.validationStatus === "invalid") return "invalid";
+  const choicePending = personalWorkspace && !connection.personalOrganizationConfirmedAt;
+  if (connection.validationStatus !== "valid")
+    return choicePending ? "unvalidated_choice" : "unvalidated";
+  return choicePending ? "choice" : null;
+}
+
 export interface NpmCredentialValidation {
   ok: boolean;
   status: "valid" | "invalid";
@@ -74,12 +93,6 @@ export const NpmConnectionModel = createModel(() => {
   // response after an A -> B -> A switch.
   let generation = 0;
   let latestLoad = 0;
-  effect(() => {
-    void activeOrganizationId.value;
-    generation++;
-    status.value = "idle";
-    error.value = null;
-  });
 
   function applyConnection(next: PublicNpmConnection | null) {
     connection.value = next;
@@ -93,6 +106,17 @@ export const NpmConnectionModel = createModel(() => {
     token.value = "";
     validationStageId.value = "";
   }
+
+  // The previous organization's connection is not this one's; until the new
+  // organization's load lands, the connection is unknown rather than absent.
+  effect(() => {
+    void activeOrganizationId.value;
+    generation++;
+    status.value = "idle";
+    error.value = null;
+    applyConnection(null);
+    loaded.value = false;
+  });
 
   async function load(): Promise<void> {
     const current = generation;

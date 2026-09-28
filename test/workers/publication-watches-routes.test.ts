@@ -11,6 +11,7 @@ import {
 import {
   npmPackageClaims,
   publicationWatchCandidates,
+  publicationWatches,
   scanEvents,
   scans,
 } from "../../server/db/schema";
@@ -443,7 +444,17 @@ describe("one package's monitoring for the package page", () => {
       .values([
         candidate("gate-package", "workflow_gate"),
         candidate("discovered-package", "staged_discovery"),
+        candidate("unmanaged-package", "staged_discovery"),
       ]);
+    await db.insert(npmPackageClaims).values({
+      registryUrl: "https://registry.npmjs.org",
+      ecosystem: "npm",
+      packageName: "discovered-package",
+      organizationId: owner.organizationId,
+      firstStageId: "stage-discovered",
+      claimedAt: new Date(),
+      managementConfirmedAt: new Date(),
+    });
     const state = async (name: string) =>
       (await (await request(owner, "GET", path(name))).json<{ enrollment: unknown }>()).enrollment;
     expect(await state("stopped-package")).toEqual({
@@ -452,6 +463,8 @@ describe("one package's monitoring for the package page", () => {
     });
     expect(await state("gate-package")).toEqual({ state: "suggested" });
     expect(await state("discovered-package")).toEqual({ state: "pending" });
+    // Auto-enrollment only enrolls managed packages; nothing will enroll this one.
+    expect(await state("unmanaged-package")).toEqual({ state: "not_enrolled" });
     expect(await state("never-seen")).toEqual({ state: "not_enrolled" });
     for (let index = 0; index < 20; index++) {
       await createPublicationWatch(db, owner.organizationId, `filler-${index}`);
@@ -481,6 +494,20 @@ describe("one package's monitoring for the package page", () => {
       viewer: { canStop: false },
     });
     expect((await request(owner, "GET", path("Not A Package"))).status).toBe(400);
+  });
+
+  test("answers for a legacy mixed-case watch created by managing its claim", async () => {
+    const owner = await seedOwner();
+    await createDb(env.DB).insert(publicationWatches).values({
+      id: crypto.randomUUID(),
+      organizationId: owner.organizationId,
+      packageName: "JSONStream",
+      source: "manual",
+      createdAt: new Date(),
+    });
+    const response = await request(owner, "GET", path("JSONStream"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ watch: { packageName: "JSONStream" } });
   });
 });
 

@@ -10,6 +10,29 @@ import {
   scans,
 } from "./schema";
 
+const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
+
+/**
+ * Whether a staged scan's registry column counts as history for `registryUrl`.
+ * A registry that was never recorded predates stored coordinates, when
+ * Drydock reviewed only public npm, so it counts for public npm alone. Counting
+ * it everywhere let an organization pointing its connection at a registry it
+ * runs learn which names other organizations had reviewed.
+ */
+export function preClaimRegistryMatches(registryColumn: SQLWrapper, registryUrl: string) {
+  return registryUrl === PUBLIC_NPM_REGISTRY
+    ? sql`(rtrim(${registryColumn}, '/') = ${registryUrl}
+        or nullif(rtrim(${registryColumn}, '/'), '') is null)`
+    : sql`rtrim(${registryColumn}, '/') = ${registryUrl}`;
+}
+
+/** Claim keys that block a first claim; '*' reserves unknown-registry history. */
+export function blockingClaimRegistry(registryColumn: SQLWrapper, registryUrl: string) {
+  return registryUrl === PUBLIC_NPM_REGISTRY
+    ? sql`${registryColumn} in (${registryUrl}, '*')`
+    : sql`${registryColumn} = ${registryUrl}`;
+}
+
 export class PackageClaimConflictError extends Error {
   constructor() {
     super(
@@ -55,10 +78,9 @@ export function insertNpmPackageClaim(
       where not exists (select 1 from ${scans}
         where ${scans.source} in ('manual', 'auto_discovery')
           and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${input.packageName}
-          and (rtrim(${scans.registryUrl}, '/') = ${input.registryUrl}
-            or nullif(rtrim(${scans.registryUrl}, '/'), '') is null))
+          and ${preClaimRegistryMatches(scans.registryUrl, input.registryUrl)})
         and not exists (select 1 from ${npmPackageClaims}
-          where ${npmPackageClaims.registryUrl} = '*'
+          where ${blockingClaimRegistry(npmPackageClaims.registryUrl, input.registryUrl)}
             and ${npmPackageClaims.ecosystem} = 'npm'
             and ${npmPackageClaims.packageName} = ${input.packageName})`)
     .onConflictDoNothing();
@@ -67,17 +89,33 @@ export function insertNpmPackageClaim(
 /** Preserve pre-claim evidence atomically before its last scan can disappear. */
 export function reserveDeletedNpmPackages(db: AppDb, deletionCondition: SQL | undefined) {
   // '*' is an unassigned reservation for a historical scan whose registry was
-  // never recorded. It blocks automatic claims in every registry; it can never
-  // authorize a scan, badge, or watch. An explicit audited exact claim can.
+  // never recorded. Like that history, it blocks automatic public npm claims;
+  // it can never authorize a scan, badge, or watch. An explicit audited exact
+  // claim can.
+  //
+  // Reserve only when no other staged history of the name survives: that
+  // history keeps blocking claims itself, and an ownerless reservation would
+  // silence the remaining history holders' monitoring and turn their own
+  // pre-claim history into a package they can no longer have audited. Unknown
+  // registries compare as public npm, matching preClaimRegistryMatches. Inside
+  // the id subquery, the unaliased `scans` rebinds the deletion condition.
+  const deletion = deletionCondition ?? sql`1 = 0`;
   return db
     .insert(npmPackageClaims)
     .select(sql`select coalesce(nullif(rtrim(${scans.registryUrl}, '/'), ''), '*'),
       'npm', coalesce(${scans.registryPackageName}, ${scans.packageName}),
       null, ${scans.stageId}, ${Date.now()}, null
       from ${scans}
-      where ${deletionCondition ?? sql`1 = 0`}
+      where ${deletion}
         and ${scans.source} in ('manual', 'auto_discovery')
         and coalesce(${scans.registryPackageName}, ${scans.packageName}) is not null
+        and not exists (select 1 from scans remaining
+          where remaining.source in ('manual', 'auto_discovery')
+            and coalesce(remaining.registry_package_name, remaining.package_name)
+              = coalesce(${scans.registryPackageName}, ${scans.packageName})
+            and coalesce(nullif(rtrim(remaining.registry_url, '/'), ''), ${PUBLIC_NPM_REGISTRY})
+              = coalesce(nullif(rtrim(${scans.registryUrl}, '/'), ''), ${PUBLIC_NPM_REGISTRY})
+            and remaining.id not in (select ${scans.id} from ${scans} where ${deletion}))
       order by ${scans.createdAt}, ${scans.id}`)
     .onConflictDoNothing();
 }
@@ -183,6 +221,20 @@ export async function manageNpmPackageClaim(
       where organization_id = ${input.targetOrganizationId} and package_name = ${input.packageName})
       or ${publicationWatchCapacityAvailable(input.registryUrl, input.targetOrganizationId)})`
     : sql`1`;
+  // A move deactivates the source watch, so it must not proceed without a slot
+  // for the destination's. Keeping management in place loses no monitoring:
+  // the badge must never wait on a watch slot, and a full budget only defers
+  // the watch; auto-enrollment picks up its manual candidate once a slot frees.
+  const ownershipCapacity = confirming ? sql`1` : capacity;
+  // The monitor skips releases published before a watch's created_at. Start
+  // the destination at the source's last check (a lease taken when a check
+  // starts), so releases published while the source was paused awaiting this
+  // choice are examined. A last check that failed or hit the per-run cap can
+  // still leave earlier releases unexamined; reaching further back would alert
+  // the destination for every release reviewed only in the source.
+  const baseline = sql`coalesce((select coalesce(last_checked_at, created_at)
+    from publication_watches where organization_id = ${input.organizationId}
+      and package_name = ${input.packageName}), ${now.getTime()})`;
   const successful = sql`exists(select 1 from scan_events where id = ${receiptId})`;
   const eventType = confirming
     ? "npm_package.management_confirmed"
@@ -212,7 +264,7 @@ export async function manageNpmPackageClaim(
           // Confirming twice keeps the original decision and its audit trail.
           confirming ? isNull(npmPackageClaims.managementConfirmedAt) : undefined,
           authorized,
-          capacity,
+          ownershipCapacity,
         ),
       ),
     db.insert(scanEvents).select(sql`select ${receiptId}, ${input.organizationId},
@@ -229,8 +281,8 @@ export async function manageNpmPackageClaim(
           db
             .insert(publicationWatches)
             .select(sql`select ${crypto.randomUUID()}, ${input.targetOrganizationId},
-        ${input.packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null
-        where ${successful}`)
+        ${input.packageName}, 'manual', ${baseline}, null, null, null, null, null, null
+        where ${successful} and ${capacity}`)
             .onConflictDoNothing(),
           db
             .insert(publicationWatchCandidates)

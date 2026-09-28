@@ -366,6 +366,61 @@ describe("explicit personal connection confirmation", () => {
       fetcher.mockRestore();
     }
   });
+  test("saving or validating repeats of the personal choice keep the first one and audit it once", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    const choose = { token: OWNER_TOKEN, confirmPersonalOrganization: true };
+    await call(app, "POST", "/api/v1/npm-connection", { body: choose });
+    const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+      ?.personalOrganizationConfirmedAt;
+    expect(confirmed).toBeInstanceOf(Date);
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ username: "maintainer" }));
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await call(app, "POST", "/api/v1/npm-connection/validate", {
+        body: { confirmPersonalOrganization: true },
+      });
+      await call(app, "POST", "/api/v1/npm-connection", { body: choose });
+      await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+    } finally {
+      fetcher.mockRestore();
+    }
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toEqual(confirmed);
+    const audit = await owner.db
+      .select()
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, owner.organizationId),
+          eq(scanEvents.type, "npm_connection.personal_confirmed"),
+        ),
+      );
+    expect(audit).toHaveLength(1);
+  });
+  test("concurrent personal choices audit the first confirmation once", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        call(app, "POST", "/api/v1/npm-connection/personal-confirmation"),
+      ),
+    );
+    const audit = await owner.db
+      .select()
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, owner.organizationId),
+          eq(scanEvents.type, "npm_connection.personal_confirmed"),
+        ),
+      );
+    expect(audit).toHaveLength(1);
+  });
   test("personal confirmation is refused from a shared organization and for a non-owner", async () => {
     const owner = await seedUser();
     const admin = await seedUser();

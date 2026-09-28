@@ -1,5 +1,5 @@
 import type { NpmConnectionValidationStatus } from "./enums";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -22,6 +22,11 @@ export interface NpmConnectionValidationInput {
   validatedAt?: Date | null;
   confirmPersonalOrganization?: boolean;
 }
+
+// Consent is recorded once; token rotation or revalidation that repeats the
+// choice keeps the original timestamp and its single audit event.
+const keepFirstConfirmation = (now: Date) =>
+  sql`coalesce(${npmConnections.personalOrganizationConfirmedAt}, ${now.getTime()})`;
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
   const now = new Date();
@@ -59,7 +64,9 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
         validationStatus: values.validationStatus,
         capabilitiesJson: values.capabilitiesJson,
         validatedAt: values.validatedAt,
-        ...(input.confirmPersonalOrganization ? { personalOrganizationConfirmedAt: now } : {}),
+        ...(input.confirmPersonalOrganization
+          ? { personalOrganizationConfirmedAt: keepFirstConfirmation(now) }
+          : {}),
         updatedAt: now,
       },
     });
@@ -93,7 +100,9 @@ export async function updateNpmConnectionValidation(
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
-      ...(input.confirmPersonalOrganization ? { personalOrganizationConfirmedAt: new Date() } : {}),
+      ...(input.confirmPersonalOrganization
+        ? { personalOrganizationConfirmedAt: keepFirstConfirmation(new Date()) }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(npmConnections.organizationId, input.organizationId));

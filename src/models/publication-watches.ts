@@ -1,6 +1,6 @@
 import { createModel, effect, signal } from "@preact/signals";
 import { activeOrganizationId } from "./active-organization";
-import { apiFetch, apiJson, errorMessage } from "./api";
+import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicationWatch {
   id: string;
@@ -62,6 +62,9 @@ interface WatchDetail {
 }
 
 const endpoint = "/api/v1/publication-watches";
+/** The server's code for a personal claim still awaiting its Keep or Move choice. */
+export const MANAGEMENT_REQUIRED = "package_management_required";
+export type EnrollOutcome = "watched" | "management_required" | null;
 
 export const PublicationWatchesModel = createModel(() => {
   const watches = signal<PublicationWatch[]>([]);
@@ -114,6 +117,20 @@ export const PublicationWatchesModel = createModel(() => {
     );
   }
 
+  /** Resolves once `busy` is false; a queued follow-up refresh may start right after. */
+  function whenIdle(): Promise<void> {
+    if (!busy.peek()) return Promise.resolve();
+    return new Promise((resolve) => {
+      // The first, synchronous call sees `busy` true, so `stop` is assigned
+      // before the call that uses it.
+      const stop = busy.subscribe((value) => {
+        if (value) return;
+        stop();
+        resolve();
+      });
+    });
+  }
+
   function show(id: string, check = false) {
     return run(
       () =>
@@ -157,12 +174,54 @@ export const PublicationWatchesModel = createModel(() => {
     error,
     refresh,
     show,
-    enroll(suggestedPackageName?: string) {
+    /**
+     * Watches a package. In a personal workspace the explicit action is the
+     * workspace choice the server asks for; a personal claim that still needs
+     * its Keep or Move choice answers "management_required" instead of an error.
+     */
+    async enroll(
+      suggestedPackageName?: string,
+      options: {
+        confirmPersonalOrganization?: boolean;
+        /**
+         * Wait behind in-flight work instead of being dropped as a duplicate:
+         * for a programmatic retry no disabled button guards, such as the
+         * watch that follows a management choice.
+         */
+        wait?: boolean;
+      } = {},
+    ): Promise<EnrollOutcome> {
       const name = (suggestedPackageName ?? packageName.peek()).trim();
-      if (!name) return Promise.resolve();
-      return run(
-        () => apiJson<{ watch: PublicationWatch }>(endpoint, { packageName: name }),
-        ({ watch }) => {
+      if (!name) return null;
+      if (options.wait) {
+        const current = generation;
+        while (busy.peek()) {
+          await whenIdle();
+          // An organization switch clears `busy`; the retry belongs to the old one.
+          if (current !== generation) return null;
+        }
+      }
+      let outcome: EnrollOutcome = null;
+      await run(
+        async () => {
+          try {
+            return await apiJson<{ watch: PublicationWatch }>(
+              endpoint,
+              options.confirmPersonalOrganization
+                ? { packageName: name, confirmPersonalOrganization: true }
+                : { packageName: name },
+            );
+          } catch (err) {
+            if (err instanceof ApiError && err.code === MANAGEMENT_REQUIRED) return null;
+            throw err;
+          }
+        },
+        (data) => {
+          if (!data) {
+            outcome = "management_required";
+            return;
+          }
+          const { watch } = data;
           watches.value = [watch, ...watches.peek().filter((existing) => existing.id !== watch.id)];
           if (suggestedPackageName === undefined) packageName.value = "";
           autoEnrollment.value = {
@@ -173,8 +232,10 @@ export const PublicationWatchesModel = createModel(() => {
           };
           detail.value = null;
           refreshPending = true;
+          outcome = "watched";
         },
       );
+      return outcome;
     },
     acknowledge(watchId: string, observationId: string) {
       return run(

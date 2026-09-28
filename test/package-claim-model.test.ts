@@ -1,11 +1,16 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { PackageClaimModel } from "../src/models/package-claim";
+import { PackageClaimModel, managementChoicePending } from "../src/models/package-claim";
 import { activeOrganizationId, setActiveOrganizationId } from "../src/models/active-organization";
 
 let model: InstanceType<typeof PackageClaimModel> | null = null;
 const personal = { id: "personal", name: "Personal", isPersonal: true, role: "owner" };
 const team = { id: "team", name: "Release team", isPersonal: false, role: "admin" };
-const provisional = { kind: "personal", managementConfirmed: false, canManage: true };
+const provisional = { kind: "personal", managementConfirmed: false, canManage: true } as const;
+type Claim = {
+  kind: "personal" | "organization";
+  managementConfirmed: boolean;
+  canManage: boolean;
+};
 function json(body: unknown) {
   return new Response(JSON.stringify(body));
 }
@@ -15,17 +20,20 @@ afterEach(() => {
   setActiveOrganizationId(null);
   vi.unstubAllGlobals();
 });
-function mockApi(claim: typeof provisional | null = provisional) {
-  const writes: Array<{ url: string; body: unknown; headers: unknown }> = [];
+function mockApi(
+  claim: Claim | null = provisional,
+  destinations = [{ id: team.id, name: team.name }],
+) {
+  const writes: Array<{ url: string; body: unknown }> = [];
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     if (init?.method === "POST") {
-      writes.push({ url: input, body: JSON.parse(String(init.body)), headers: init.headers });
+      writes.push({ url: input, body: JSON.parse(String(init.body)) });
       return json({ managed: true });
     }
     return json(
       input === "/api/v1/organizations"
         ? { organizations: [personal, team] }
-        : { claim, destinations: [{ id: team.id, name: team.name }] },
+        : { claim, destinations },
     );
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -33,41 +41,81 @@ function mockApi(claim: typeof provisional | null = provisional) {
   model = new PackageClaimModel("@scope/package", "https://registry.npmjs.org");
   return { writes, fetchMock };
 }
+
+test("only a manageable, unconfirmed personal claim needs the choice", () => {
+  expect(managementChoicePending({ claim: provisional, destinations: [] })).toBe(true);
+  expect(
+    managementChoicePending({
+      claim: { ...provisional, managementConfirmed: true },
+      destinations: [],
+    }),
+  ).toBe(false);
+  expect(
+    managementChoicePending({
+      claim: { kind: "organization", managementConfirmed: false, canManage: true },
+      destinations: [],
+    }),
+  ).toBe(false);
+  expect(managementChoicePending({ claim: null, destinations: [] })).toBe(false);
+  expect(managementChoicePending(null)).toBe(false);
+});
+
 test("defaults to a shared destination and transfers only the claim, without switching organization", async () => {
   const { writes } = mockApi();
   await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  expect(model!.pending.value).toBe(true);
   expect(model!.selectedOrganizationId.value).toBe(team.id);
-  expect(await model!.choose(true)).toBe("moved");
-  expect(writes).toHaveLength(1);
-  expect(writes[0]).toMatchObject({
-    url: "/api/v1/npm-package-claims/@scope/package",
-    body: { targetOrganizationId: team.id, registryUrl: "https://registry.npmjs.org" },
-  });
-  expect(model!.movedTo.value).toMatchObject({ id: team.id, transferred: true });
+  expect(await model!.choose()).toBe("moved");
+  expect(writes).toEqual([
+    {
+      url: "/api/v1/npm-package-claims/@scope/package",
+      body: { targetOrganizationId: team.id, registryUrl: "https://registry.npmjs.org" },
+    },
+  ]);
+  expect(model!.movedTo.value).toEqual({ id: team.id, name: team.name });
   expect(activeOrganizationId.value).toBe(personal.id);
 });
-test("explicit personal selection confirms the claim before enrolling the watch", async () => {
+
+test("with no shared organization, the personal workspace is preselected and keeping confirms it", async () => {
+  const { writes } = mockApi(provisional, []);
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  expect(model!.selectedOrganizationId.value).toBe(personal.id);
+  expect(await model!.choose()).toBe("kept");
+  expect(writes.map((write) => write.body)).toEqual([
+    { targetOrganizationId: personal.id, registryUrl: "https://registry.npmjs.org" },
+  ]);
+  expect(model!.kept.value).toBe(true);
+  expect(model!.movedTo.value).toBeNull();
+});
+
+test("choosing enrolls no watch itself; watching stays the monitor's action", async () => {
   const { writes } = mockApi();
   await vi.waitFor(() => expect(model!.loading.value).toBe(false));
   model!.selectedOrganizationId.value = personal.id;
-  expect(await model!.choose(true)).toBe("watched");
-  expect(writes.map((write) => write.body)).toEqual([
-    { targetOrganizationId: personal.id, registryUrl: "https://registry.npmjs.org" },
-    { packageName: "@scope/package", confirmPersonalOrganization: true },
-  ]);
+  expect(await model!.choose()).toBe("kept");
+  expect(writes.map((write) => write.url)).toEqual(["/api/v1/npm-package-claims/@scope/package"]);
 });
-test("an unclaimed watch does not acquire a claim, and choosing a team only offers navigation", async () => {
-  const { writes } = mockApi(null);
-  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
-  expect(await model!.choose(true)).toBe("moved");
-  expect(writes).toEqual([]);
-  expect(model!.movedTo.value?.transferred).toBe(false);
-  model!.selectedOrganizationId.value = personal.id;
-  expect(await model!.choose(true)).toBe("watched");
-  expect(writes).toHaveLength(1);
-  expect(writes[0]?.url).toBe("/api/v1/publication-watches");
+
+test("without a manageable personal claim there is nothing to choose or transfer", async () => {
+  for (const claim of [
+    null,
+    { kind: "organization", managementConfirmed: true, canManage: true },
+    { ...provisional, canManage: false },
+  ] as const) {
+    const { writes } = mockApi(claim);
+    await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+    expect(model!.pending.value).toBe(false);
+    expect(await model!.choose()).toBeNull();
+    model!.selectedOrganizationId.value = personal.id;
+    expect(await model!.choose()).toBeNull();
+    expect(writes).toEqual([]);
+    expect(model!.movedTo.value).toBeNull();
+    model![Symbol.dispose]();
+    model = null;
+  }
 });
-test("an organization switch during confirmation cannot enroll a watch in the destination", async () => {
+
+test("an organization switch during confirmation discards its result", async () => {
   const { fetchMock } = mockApi();
   await vi.waitFor(() => expect(model!.loading.value).toBe(false));
   let finish!: () => void;
@@ -78,11 +126,11 @@ test("an organization switch during confirmation cannot enroll a watch in the de
       }),
   );
   model!.selectedOrganizationId.value = personal.id;
-  const request = model!.choose(true);
+  const request = model!.choose();
   setActiveOrganizationId(team.id);
   finish();
   expect(await request).toBeNull();
-  expect(fetchMock.mock.calls.some(([url]) => url === "/api/v1/publication-watches")).toBe(false);
+  expect(model!.kept.value).toBe(false);
   expect(model!.movedTo.value).toBeNull();
 });
 
@@ -98,7 +146,7 @@ test.each(["personal", "team"])(
     expect(model!.error.value).toContain("choice was saved");
     if (target === "personal")
       expect(model!.management.value?.claim?.managementConfirmed).toBe(true);
-    else expect(model!.movedTo.value).toMatchObject({ id: "team", transferred: true });
+    else expect(model!.movedTo.value).toEqual({ id: "team", name: "Release team" });
   },
 );
 
@@ -123,16 +171,33 @@ test("a permission denial reads as a sentence, while a conflict keeps the server
   );
   expect(await model!.choose()).toBeNull();
   expect(model!.error.value).toBe("The destination watch budget is full.");
+  expect(model!.movedTo.value).toBeNull();
 });
 
 test("an already confirmed personal claim is not confirmed again", async () => {
   const { writes } = mockApi({ ...provisional, managementConfirmed: true });
   await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  expect(model!.pending.value).toBe(false);
   model!.selectedOrganizationId.value = personal.id;
   expect(await model!.choose()).toBe("kept");
   expect(writes).toEqual([]);
-  expect(await model!.choose(true)).toBe("watched");
-  expect(writes.map((write) => write.url)).toEqual(["/api/v1/publication-watches"]);
+});
+
+test("a name the claims route refuses has nothing to manage and reports no failure", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string) =>
+      input === "/api/v1/organizations"
+        ? json({ organizations: [personal] })
+        : Response.json({ error: "Enter a valid npm package and registry." }, { status: 400 }),
+    ),
+  );
+  setActiveOrganizationId(personal.id);
+  model = new PackageClaimModel("Not A Package");
+  await vi.waitFor(() => expect(model!.loading.value).toBe(false));
+  expect(model.error.value).toBeNull();
+  expect(model.management.value).toEqual({ claim: null, destinations: [] });
+  expect(model.pending.value).toBe(false);
 });
 
 test("an initial read that finishes after an organization switch is discarded", async () => {

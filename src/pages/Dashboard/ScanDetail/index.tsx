@@ -1,12 +1,14 @@
-import { PackageManagement } from "../../../features/package-claims/PackageManagement";
+import { StandalonePackageManagement } from "../../../features/package-claims/PackageManagement";
 import { useModel } from "@preact/signals";
 import { useRoute } from "preact-iso";
 import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
 import {
   badgeEcosystem,
+  REGISTRY_VERIFIED_SCAN_SOURCES,
   scanDistTag,
   scanPublicPackageName,
 } from "../../../../server/lib/public-feed";
+import { npmBadgeAuthorityNote } from "../../../lib/badge-markdown";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
@@ -153,8 +155,10 @@ function ScanNotices({ model, view }: SectionProps) {
           report has to say about it. Rendered for failed scans too — a review
           that could not read the tarball is exactly when npm's own state is
           the only useful thing on the page. */}
-      {detail?.scan.registryPackageName && detail.scan.source !== "workflow_gate" ? (
-        <PackageManagement
+      {/* Only a staged review's registry identity carries a package claim. */}
+      {detail?.scan.registryPackageName &&
+      (REGISTRY_VERIFIED_SCAN_SOURCES as readonly string[]).includes(detail.scan.source ?? "") ? (
+        <StandalonePackageManagement
           key={`${detail.scan.organizationId}:${detail.scan.registryUrl}:${detail.scan.registryPackageName}`}
           packageName={detail.scan.registryPackageName}
           registryUrl={detail.scan.registryUrl ?? undefined}
@@ -354,6 +358,19 @@ function ScanDialogs({ model, view }: SectionProps) {
   const gate = model.gate.value;
   const completeAndCurrent =
     detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null;
+  const shareEcosystem = detail
+    ? badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)
+    : null;
+  // The name the badge index knows this review by, or null when its manifest
+  // disagrees with npm's name — then no snippet is offered.
+  const sharePackageName = detail
+    ? scanPublicPackageName({
+        source: detail.scan.source ?? "",
+        packageName: detail.scan.packageName ?? null,
+        registryPackageName: detail.scan.registryPackageName ?? null,
+        registryUrl: detail.scan.registryUrl ?? null,
+      })
+    : null;
   return (
     <>
       {detail && completeAndCurrent && !isWorkflowGate ? (
@@ -379,19 +396,20 @@ function ScanDialogs({ model, view }: SectionProps) {
           status={model.shareStatus}
           error={model.shareError}
           attestationAvailable={model.attestationAvailable}
-          badgeEcosystem={badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
-          // The name the badge index knows this review by, or null when its
-          // manifest disagrees with npm's name — then no snippet is offered.
-          packageName={scanPublicPackageName({
-            source: detail.scan.source ?? "",
-            packageName: detail.scan.packageName ?? null,
-            registryPackageName: detail.scan.registryPackageName ?? null,
-            registryUrl: detail.scan.registryUrl ?? null,
-          })}
+          badgeEcosystem={shareEcosystem}
+          packageName={sharePackageName}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}
           npmPackageClaimOwned={detail.scan.npmPackageClaimOwned}
           npmPackageManagementAllowed={detail.scan.npmPackageManagementAllowed}
+          npmBadgeNote={npmBadgeAuthorityNote({
+            ecosystem: shareEcosystem,
+            source: detail.scan.source ?? "",
+            packageName: sharePackageName,
+            npmPackageClaimOwned: detail.scan.npmPackageClaimOwned,
+            npmPackageManagementAllowed: detail.scan.npmPackageManagementAllowed,
+            npmPackageManagedElsewhere: detail.scan.npmPackageManagedElsewhere,
+          })}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}

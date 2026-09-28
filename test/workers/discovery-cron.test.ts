@@ -1,6 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createDb } from "../../server/db/client";
 import {
   getNpmConnection,
@@ -208,6 +208,56 @@ describe("staged publishes discovery cron", () => {
         );
     },
   );
+
+  test("records monitoring candidates even when queuing a new scan fails", async () => {
+    const org = await seedOrg({
+      index: 0,
+      token: "npm_valid_queuefail01",
+      validationStatus: "valid",
+      shared: true,
+    });
+    const packageName = `queue-fail-${crypto.randomUUID()}`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.endsWith(`/-/stage/${STAGE_ID}/tarball`)) return new Response("", { status: 206 });
+        return Response.json({
+          items: [{ id: STAGE_ID, name: packageName, version: "1.0.0", access: "public" }],
+          total: 1,
+          perPage: 50,
+          page: 0,
+        });
+      }),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const queue = {
+      send: vi.fn(async (_message: QueueMessage) => {
+        throw new Error("queue unavailable");
+      }),
+    };
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      scheduledController(),
+      { ...env, SCAN_QUEUE: queue, SEND_EMAIL: { send: vi.fn() } } as unknown as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(queue.send).toHaveBeenCalledTimes(1);
+    expect(
+      await createDb(env.DB)
+        .select({ source: schema.publicationWatchCandidates.source })
+        .from(schema.publicationWatchCandidates)
+        .where(
+          and(
+            eq(schema.publicationWatchCandidates.organizationId, org.organizationId),
+            eq(schema.publicationWatchCandidates.packageName, packageName),
+          ),
+        ),
+    ).toEqual([{ source: "staged_discovery" }]);
+  });
 
   test("queues the valid org, alerts the expired org, and skips the disabled org", async () => {
     // (a) live token + discovery on, (b) token that now 401s + discovery on,

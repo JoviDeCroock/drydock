@@ -24,6 +24,7 @@ export function ShareDialog({
   badgePublic,
   npmPackageClaimOwned,
   npmPackageManagementAllowed,
+  npmBadgeNote,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -48,6 +49,8 @@ export function ShareDialog({
   badgePublic: boolean;
   npmPackageClaimOwned?: boolean;
   npmPackageManagementAllowed?: boolean;
+  /** Why this review cannot answer the npm badge (`npmBadgeAuthorityNote`). */
+  npmBadgeNote: string | null;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -168,20 +171,7 @@ export function ShareDialog({
         </EmptyLine>
       )}
 
-      {badgeEcosystem === "npm" && npmPackageClaimOwned !== true ? (
-        <EmptyLine>
-          This organization has no confirmed assignment for this npm package. Its reports remain
-          shareable, but its reviews cannot control the public badge. Contact support if historical
-          ownership needs review.
-        </EmptyLine>
-      ) : null}
-      {badgeEcosystem === "npm" &&
-      npmPackageClaimOwned === true &&
-      npmPackageManagementAllowed !== true ? (
-        <EmptyLine>
-          Choose an organization for this package before enabling its public badge.
-        </EmptyLine>
-      ) : null}
+      {npmBadgeNote ? <EmptyLine>{npmBadgeNote}</EmptyLine> : null}
       {badge ? (
         <div class="flex flex-col gap-1.5">
           <MonoLabel as="span">README badge</MonoLabel>

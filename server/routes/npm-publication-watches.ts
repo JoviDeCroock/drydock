@@ -28,7 +28,7 @@ import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
 import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
-import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
+import { isValidLegacyNpmPackageName, isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
 import { readJsonObject } from "../lib/platform/http";
 import { guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
@@ -56,11 +56,12 @@ npmPublicationWatchRoutes.get("/", async (c) => {
 
 // One package's monitoring state for the package page. Read-only: unlike the
 // list, it never reconciles enrollment, and the package name is a filter over
-// this organization's rows, never an authority. `{.+}` keeps a scoped name's
-// `/`.
+// this organization's rows, never an authority. Legacy mixed-case names are
+// accepted because managing a claim such as `JSONStream` creates their watch.
+// `{.+}` keeps a scoped name's `/`.
 npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
   const packageName = c.req.param("name").trim();
-  if (!isValidNpmPackageName(packageName)) {
+  if (!isValidLegacyNpmPackageName(packageName)) {
     return c.json({ error: "Enter a valid public npm package name." }, 400);
   }
   const db = c.var.db;

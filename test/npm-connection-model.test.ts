@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { NpmConnectionModel } from "../src/models/npm-connection";
+import { NpmConnectionModel, npmConnectionNotice } from "../src/models/npm-connection";
 import { setActiveOrganizationId } from "../src/models/active-organization";
 
 let model: InstanceType<typeof NpmConnectionModel> | null = null;
@@ -139,4 +139,37 @@ test("confirming the personal workspace never contacts npm validation and keeps 
   expect(model.connection.value?.personalOrganizationConfirmedAt).toBe(123);
   expect(model.token.value).toBe("npm_typed");
   expect(model.busy.value).toBe(false);
+});
+test("an organization switch forgets the previous organization's connection until the next load", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ connection }))
+    .mockResolvedValueOnce(json({ connection: null }));
+  vi.stubGlobal("fetch", fetchMock);
+  setActiveOrganizationId("personal");
+  model = new NpmConnectionModel();
+  await model.load();
+  expect(model.connection.value?.organizationId).toBe("personal");
+  expect(model.label.value).toBe("npm");
+  setActiveOrganizationId("team");
+  expect(model.connection.value).toBeNull();
+  expect(model.loaded.value).toBe(false);
+  expect(model.label.value).toBe("npm registry");
+  await model.load();
+  expect(model.loaded.value).toBe(true);
+  expect(model.connection.value).toBeNull();
+});
+test("the dashboard gets one npm notice, joining a pending workspace choice to an unvalidated token", () => {
+  const pending = { ...connection, personalOrganizationConfirmedAt: null } as never;
+  const withStatus = (validationStatus: string) =>
+    ({ ...connection, personalOrganizationConfirmedAt: null, validationStatus }) as never;
+  expect(npmConnectionNotice(pending, true)).toBe("choice");
+  expect(npmConnectionNotice(withStatus("unvalidated"), true)).toBe("unvalidated_choice");
+  expect(npmConnectionNotice(withStatus("unvalidated"), false)).toBe("unvalidated");
+  // An invalid token stops all discovery, whatever the workspace choice.
+  expect(npmConnectionNotice(withStatus("invalid"), true)).toBe("invalid");
+  // A shared organization needs no personal choice, and a recorded one is done.
+  expect(npmConnectionNotice(pending, false)).toBeNull();
+  expect(npmConnectionNotice(connection as never, true)).toBeNull();
+  expect(npmConnectionNotice(null, true)).toBeNull();
 });

@@ -1,6 +1,6 @@
 import { OrganizationModel } from "../../../models/organization";
 import { Select } from "../../../components/Select";
-import { useModel, useSignal, useComputed } from "@preact/signals";
+import { type ReadonlySignal, useModel, useSignal, useComputed } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { formatTimestamp } from "../../../lib/format";
 import { NpmConnectionModel, type PublicNpmConnection } from "../../../models/npm-connection";
@@ -46,7 +46,11 @@ export function NpmConnectionSection({
   };
 
   return (
-    <CollapsibleCard title="npm access" defaultOpen={defaultOpen} aside={<NpmStatus npm={npm} />}>
+    <CollapsibleCard
+      title="npm access"
+      defaultOpen={defaultOpen}
+      aside={<NpmStatus npm={npm} choicePending={needsChoice} />}
+    >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Connect npm to review your organization's staged packages.
@@ -122,15 +126,20 @@ export function NpmConnectionSection({
   );
 }
 
-function NpmStatus({ npm }: { npm: NpmModel }) {
+function NpmStatus({
+  npm,
+  choicePending,
+}: {
+  npm: NpmModel;
+  choicePending: ReadonlySignal<boolean>;
+}) {
   const connection = npm.connection.value;
-  // Only a broken token earns colour; a valid or pending connection is the
-  // expected state and reads as plain text.
-  return connection?.validationStatus === "invalid" ? (
-    <Badge tone="critical">invalid</Badge>
-  ) : (
-    <MonoLabel>{connection ? connection.validationStatus : "not connected"}</MonoLabel>
-  );
+  // Only a problem earns colour: a broken token, or a personal connection
+  // whose automatic scans wait for the workspace choice. A valid or pending
+  // validation is the expected state and reads as plain text.
+  if (connection?.validationStatus === "invalid") return <Badge tone="critical">invalid</Badge>;
+  if (connection && choicePending.value) return <Badge tone="medium">automatic scans off</Badge>;
+  return <MonoLabel>{connection ? connection.validationStatus : "not connected"}</MonoLabel>;
 }
 
 function WorkspaceChoice({
@@ -150,47 +159,52 @@ function WorkspaceChoice({
     ),
   );
   // Shared organizations take precedence: the choice starts on the first one
-  // the caller manages. The section is remounted per active organization, so a
-  // snapshot of the active id is enough here.
+  // the caller manages, or on this workspace when it is the only option. The
+  // section is remounted per active organization, so snapshots suffice here.
   const activeId = organizations.active.peek()?.id ?? "";
-  const selected = useSignal(destinations.peek()[0]?.id ?? "");
-  const choiceLabel = useComputed(() =>
-    selected.value === activeId
-      ? npm.connection.value
+  const hasDestinations = destinations.peek().length > 0;
+  const selected = useSignal(destinations.peek()[0]?.id ?? activeId);
+  const choiceLabel = useComputed(() => {
+    if (selected.value === activeId)
+      return npm.connection.value
         ? "Enable automatic scans in personal workspace"
-        : "Continue in personal workspace"
-      : `Open ${destinations.value.find((org) => org.id === selected.value)?.name ?? "organization"} settings`,
-  );
+        : "Continue in personal workspace";
+    const target = destinations.value.find((org) => org.id === selected.value);
+    return target ? `Open ${target.name} settings` : "Choose an organization";
+  });
   const disabled = useComputed(() => npm.busy.value || !selected.value);
   return (
     <div class="flex flex-col gap-3">
       <Alert tone="info">
-        Choose where npm packages will be managed before enabling automatic scans.
+        {hasDestinations
+          ? "Choose where npm packages will be managed before enabling automatic scans."
+          : "Confirm that this personal workspace manages your npm packages before enabling automatic scans."}
         <Show when={npm.connection}>
           {" "}
           Automatic scans are waiting for this choice; you can still review stages manually and
           rotate or disconnect the token below.
-        </Show>{" "}
-        Existing reviews and credentials stay in this workspace.
+        </Show>
+        {hasDestinations ? " Existing reviews and credentials stay in this workspace." : null}
       </Alert>
-      <Select
-        aria-label="npm connection organization"
-        value={selected}
-        onChange={(id) => {
-          selected.value = id;
-        }}
-        disabled={npm.busy}
-      >
-        <option value="" disabled>
-          Choose organization
-        </option>
-        {destinations.value.map((org) => (
-          <option key={org.id} value={org.id}>
-            {org.name}
-          </option>
-        ))}
-        <option value={activeId}>Keep in personal workspace</option>
-      </Select>
+      {/* A one-option picker is noise: without a shared organization the
+          button alone makes the choice. */}
+      {hasDestinations ? (
+        <Select
+          aria-label="npm connection organization"
+          value={selected}
+          onChange={(id) => {
+            selected.value = id;
+          }}
+          disabled={npm.busy}
+        >
+          {destinations.value.map((org) => (
+            <option key={org.id} value={org.id}>
+              {org.name}
+            </option>
+          ))}
+          <option value={activeId}>Keep in personal workspace</option>
+        </Select>
+      ) : null}
       <Button
         disabled={disabled}
         onClick={async () => {

@@ -99,6 +99,8 @@ async function recordCandidates(
 }
 
 async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: string) {
+  // A manual candidate without a watch is a Keep or move deferred by a full
+  // budget: removing a watch always stops its candidate.
   const pending = await db
     .select({
       packageName: publicationWatchCandidates.packageName,
@@ -114,7 +116,7 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
           publicationWatchCandidates.packageName,
           organizationId,
         ),
-        sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history')`,
+        sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history', 'manual')`,
         sql`not exists(select 1 from publication_watches w where w.organization_id = ${organizationId} and w.package_name = ${publicationWatchCandidates.packageName})`,
       ),
     )
@@ -128,7 +130,7 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
       .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null, null, null, null, null
       where ${publicationWatchCapacityAvailable(registryUrl, organizationId)}
       and ${npmPackageManagementAllowed(registryUrl, candidate.packageName, organizationId)}
-      and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history'))`)
+      and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history', 'manual'))`)
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
       });
@@ -153,7 +155,7 @@ async function enrollmentSummary(
           publicationWatchCandidates.packageName,
           organizationId,
         ),
-        sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history')`,
+        sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history', 'manual')`,
         missingWatch,
       ),
     );

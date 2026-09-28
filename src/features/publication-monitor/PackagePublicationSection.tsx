@@ -1,5 +1,4 @@
-import { WatchPackageDialog } from "../package-claims/PackageManagement";
-import { useComputed, useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel, useSignal, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -42,13 +41,15 @@ function notWatchedReason(packageName: string, enrollment: PublicationEnrollment
  */
 export function PackagePublicationSection({
   packageName,
-  onManagementChanged,
+  personalWorkspace,
+  onManagementRequired,
 }: {
   packageName: string;
-  onManagementChanged?: () => void;
+  personalWorkspace: ReadonlySignal<boolean>;
+  /** A watch found a personal claim still awaiting its Keep or Move choice. */
+  onManagementRequired: () => void;
 }) {
   const model = useModel(() => new PackagePublicationModel(packageName));
-  const watching = useSignal(false);
   return (
     <section class="flex flex-col gap-3" aria-label="Publication monitor">
       <SectionLabel as="h2" aside={<MonitorAside model={model} />}>
@@ -69,8 +70,11 @@ export function PackagePublicationSection({
               <PublicationBody
                 model={model}
                 publication={publication}
-                onWatch={() => {
-                  watching.value = true;
+                onWatch={async () => {
+                  const outcome = await model.start({
+                    confirmPersonalOrganization: personalWorkspace.peek(),
+                  });
+                  if (outcome === "management_required") onManagementRequired();
                 }}
               />
               <EarlierAlerts publication={publication} />
@@ -78,20 +82,6 @@ export function PackagePublicationSection({
           )}
         </Show>
       </Card>
-      <Show when={watching}>
-        {() => (
-          <WatchPackageDialog
-            packageName={packageName}
-            onClose={() => {
-              watching.value = false;
-            }}
-            onChanged={() => {
-              void model.refresh();
-              onManagementChanged?.();
-            }}
-          />
-        )}
-      </Show>
     </section>
   );
 }
@@ -145,23 +135,27 @@ function EarlierAlerts({ publication }: { publication: PackagePublication }) {
   );
 }
 
+// An inactive watch's reason is stated once, in the section body.
+function inactive(publication: PackagePublication): boolean {
+  return Boolean(
+    publication.managementPending ||
+    publication.ownershipConflict ||
+    publication.watch?.managementPending ||
+    publication.watch?.ownershipConflict,
+  );
+}
+
 function MonitorAside({ model }: { model: Model }) {
   return (
     <Show<PackagePublication | null> when={model.publication}>
       {(publication) =>
-        publication.managementPending ||
-        publication.ownershipConflict ||
-        publication.watch?.ownershipConflict ? (
-          <Badge tone="neutral">monitoring inactive</Badge>
-        ) : publication.watch ? (
-          publication.watch.unresolvedAlertCount > 0 ? (
-            <Badge tone="critical">
-              {publication.watch.unresolvedAlertCount} unacknowledged{" "}
-              {pluralize("alert", publication.watch.unresolvedAlertCount)}
-            </Badge>
-          ) : (
-            <Badge tone="ok">watching</Badge>
-          )
+        publication.watch && publication.watch.unresolvedAlertCount > 0 ? (
+          <Badge tone="critical">
+            {publication.watch.unresolvedAlertCount} unacknowledged{" "}
+            {pluralize("alert", publication.watch.unresolvedAlertCount)}
+          </Badge>
+        ) : inactive(publication) ? null : publication.watch ? (
+          <Badge tone="ok">watching</Badge>
         ) : (
           <Badge tone="neutral">not watched</Badge>
         )
@@ -188,19 +182,26 @@ function PublicationBody({
   );
   const { watch } = publication;
   if (!watch) {
+    // Neither inactive state has a watch control: another organization's
+    // claim cannot be watched past, and the management choice on this page
+    // (which says what waits on it) starts monitoring itself.
+    if (publication.ownershipConflict || publication.managementPending)
+      return (
+        <div class="px-5 py-4">
+          <EmptyLine>
+            {publication.ownershipConflict
+              ? "Monitoring inactive because this package is assigned to another organization."
+              : "Not watched."}
+          </EmptyLine>
+        </div>
+      );
     return (
       <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-        <EmptyLine>
-          {publication.ownershipConflict
-            ? "Monitoring inactive because this package is assigned to another organization. Previous observations remain available."
-            : publication.managementPending
-              ? "Choose an organization to enable monitoring for this package."
-              : notWatchedReason(publication.packageName, publication.enrollment)}
-        </EmptyLine>
+        <EmptyLine>{notWatchedReason(publication.packageName, publication.enrollment)}</EmptyLine>
         <Button
           variant="secondary"
           size="sm"
-          disabled={publication.ownershipConflict || model.busy}
+          disabled={model.busy}
           onClick={onWatch}
           title="Compare this package's public npm releases with this organization's approvals"
         >
@@ -224,13 +225,7 @@ function PublicationBody({
           <Button
             variant="secondary"
             size="sm"
-            disabled={
-              publication.managementPending ||
-              watch.managementPending ||
-              publication.ownershipConflict ||
-              watch.ownershipConflict ||
-              model.busy
-            }
+            disabled={inactive(publication) || model.busy}
             onClick={() => void model.check()}
             title="Ask npm for new releases now instead of waiting for the automatic check"
           >

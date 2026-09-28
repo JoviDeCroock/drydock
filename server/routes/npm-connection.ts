@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { readJsonObject } from "../lib/platform/http";
 import { guardRateLimit } from "../lib/rate-limit";
 import { requireVerifiedEmail } from "../lib/auth/email-verification";
+import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
+import { scanEvents } from "../db/schema";
 import {
   confirmPersonalNpmConnection,
   deleteNpmConnection,
@@ -78,6 +80,7 @@ npmConnectionRoutes.post("/", async (c) => {
       encryptNpmToken(c.env, token),
     ]);
     if (limited) return limited;
+    const before = await getNpmConnection(db, organizationId);
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
@@ -100,6 +103,7 @@ npmConnectionRoutes.post("/", async (c) => {
         },
       }),
     ]);
+    await recordPersonalConfirmation(db, session.userId, before, connection);
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
@@ -163,6 +167,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
         },
       }),
     ]);
+    await recordPersonalConfirmation(db, session.userId, connection, updated);
     // The onboarding funnel's one measurable step inside the product: getting a
     // token validated is the last thing a new organization does before its
     // first review depends on an external staged publish.
@@ -195,6 +200,34 @@ npmConnectionRoutes.post("/validate", async (c) => {
   }
 });
 
+type StoredNpmConnection = Awaited<ReturnType<typeof getNpmConnection>>;
+
+/**
+ * Audits the personal-workspace choice once, whichever route first records it.
+ * The event ID is derived from the stored first-confirmation timestamp, so
+ * concurrent requests that all observed an unconfirmed connection write it once.
+ */
+async function recordPersonalConfirmation(
+  db: AppDb,
+  actorUserId: string,
+  before: StoredNpmConnection,
+  after: StoredNpmConnection,
+) {
+  const confirmedAt = after?.personalOrganizationConfirmedAt;
+  if (before?.personalOrganizationConfirmedAt || !after || !confirmedAt) return;
+  await db
+    .insert(scanEvents)
+    .values({
+      id: `npm-connection-personal-confirmed:${after.organizationId}:${confirmedAt.getTime()}`,
+      organizationId: after.organizationId,
+      actorUserId,
+      type: "npm_connection.personal_confirmed",
+      metadataJson: { registryUrl: after.registryUrl },
+      createdAt: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
 // The personal-workspace choice is a consent record, not a credential check:
 // it must not depend on npm being reachable, or an outage would leave the
 // choice unrecordable.
@@ -209,13 +242,7 @@ npmConnectionRoutes.post("/personal-confirmation", async (c) => {
   const before = await getNpmConnection(db, organizationId);
   const connection = await confirmPersonalNpmConnection(db, organizationId);
   if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
-  if (!before?.personalOrganizationConfirmedAt && connection.personalOrganizationConfirmedAt)
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "npm_connection.personal_confirmed",
-      metadata: { registryUrl: connection.registryUrl },
-    });
+  await recordPersonalConfirmation(db, session.userId, before, connection);
   return c.json({ connection: publicNpmConnection(connection) });
 });
 

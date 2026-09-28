@@ -12,7 +12,12 @@ import {
   sql,
   type SQLWrapper,
 } from "drizzle-orm";
-import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-claims";
+import {
+  blockingClaimRegistry,
+  npmPackageClaimMatches,
+  npmPackageManagementAllowed,
+  preClaimRegistryMatches,
+} from "./package-claims";
 import type { AppDb } from "./client";
 import {
   npmPackageClaims,
@@ -95,15 +100,17 @@ export function publicationWatchOwnershipConflict(
       and claim.package_name = ${packageName}
       and (claim.organization_id is null or claim.organization_id != ${organizationId}))
     or (exists (select 1 from ${npmPackageClaims} reserved
-      where reserved.registry_url = '*' and reserved.ecosystem = 'npm'
+      where ${blockingClaimRegistry(sql`reserved.registry_url`, registryUrl)}
+        and reserved.registry_url = '*' and reserved.ecosystem = 'npm'
         and reserved.package_name = ${packageName})
       and not ${npmPackageClaimMatches(registryUrl, packageName, organizationId)}))
     and exists (select 1 from scans staged_history
       where staged_history.organization_id = ${organizationId}
         and staged_history.source in ('manual', 'auto_discovery')
         and coalesce(staged_history.registry_package_name, staged_history.package_name) = ${packageName}
-        and (rtrim(staged_history.registry_url, '/') = ${registryUrl}
-          or nullif(rtrim(staged_history.registry_url, '/'), '') is null)))`.mapWith(Boolean);
+        and ${preClaimRegistryMatches(sql`staged_history.registry_url`, registryUrl)}))`.mapWith(
+    Boolean,
+  );
 }
 
 /**
@@ -251,6 +258,15 @@ export async function getPublicationEnrollment(
   if (!candidate) return { state: "not_enrolled" };
   if (candidate.stoppedAt) return { state: "stopped", stoppedAt: candidate.stoppedAt };
   if (candidate.source === "workflow_gate") return { state: "suggested" };
+  if (candidate.source !== "manual") {
+    // Auto-enrollment only enrolls packages this organization manages, so a
+    // candidate awaiting audit, a management choice, or held elsewhere never
+    // enrolls on its own.
+    const [managed] = await db.all<{ allowed: number }>(
+      sql`select ${npmPackageManagementAllowed(registryUrl, packageName, organizationId)} as allowed`,
+    );
+    if (!managed?.allowed) return { state: "not_enrolled" };
+  }
   const [capacity] = await db.all<{ available: number }>(
     sql`select ${publicationWatchCapacityAvailable(registryUrl, organizationId)} as available`,
   );

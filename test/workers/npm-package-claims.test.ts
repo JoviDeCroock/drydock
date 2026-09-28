@@ -1,5 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { buildTestApp } from "./helpers/app";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -17,7 +17,9 @@ import {
   deletePendingScanJob,
   discardScanAttempt,
   markScanFailed,
+  readNpmPackageClaimAvailability,
 } from "../../server/db/scan-jobs";
+import { publicationWatchOwnershipConflict } from "../../server/db/publication-watches";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { scansRoutes } from "../../server/routes/scans";
@@ -144,6 +146,95 @@ describe("npm package claim admission", () => {
       }
     },
   );
+  test("deleting one of several historical scans adds no reservation that mutes the others", async () => {
+    const a = await owner();
+    const packageName = `kept-${crypto.randomUUID()}`;
+    const historical = (id: string) => ({
+      id,
+      stageId: `stage-${id}`,
+      organizationId: a.organizationId,
+      ownerUserId: a.userId,
+      packageName,
+      registryPackageName: packageName,
+      registryUrl: REGISTRY,
+      source: "manual" as const,
+      status: "failed" as const,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    await db.insert(schema.scans).values([historical(first), historical(second)]);
+    const claims = () =>
+      db
+        .select()
+        .from(schema.npmPackageClaims)
+        .where(eq(schema.npmPackageClaims.packageName, packageName));
+    const state = async () => {
+      const [row] = await db.all<{ conflict: number }>(
+        sql`select ${publicationWatchOwnershipConflict(REGISTRY, packageName, a.organizationId)} as conflict`,
+      );
+      return {
+        availability: await readNpmPackageClaimAvailability(db, {
+          registryUrl: REGISTRY,
+          packageName,
+          organizationId: a.organizationId,
+        }),
+        conflict: row?.conflict,
+      };
+    };
+    await deleteFailedScan(db, first, a.organizationId);
+    expect(await claims()).toEqual([]);
+    expect(await state()).toEqual({ availability: "own_history", conflict: 0 });
+    await deleteFailedScan(db, second, a.organizationId);
+    expect(await claims()).toMatchObject([{ registryUrl: REGISTRY, organizationId: null }]);
+    // With no staged history left, the reservation blocks claims but not watching.
+    expect(await state()).toEqual({ availability: "unavailable", conflict: 0 });
+  });
+
+  test("unknown-registry history and reservations block only public npm", async () => {
+    const [a, b] = await Promise.all([owner(), owner()]);
+    const custom = "https://registry.example.test";
+    const [historyName, reservedName] = [
+      `legacy-${crypto.randomUUID()}`,
+      `star-${crypto.randomUUID()}`,
+    ];
+    await db.insert(schema.scans).values({
+      id: crypto.randomUUID(),
+      stageId: `stage-${crypto.randomUUID()}`,
+      organizationId: a.organizationId,
+      ownerUserId: a.userId,
+      packageName: historyName,
+      source: "manual",
+      status: "complete",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    await db.insert(schema.npmPackageClaims).values({
+      registryUrl: "*",
+      ecosystem: "npm",
+      packageName: reservedName,
+      organizationId: null,
+      firstStageId: "deleted-stage",
+      claimedAt: new Date(),
+    });
+    for (const packageName of [historyName, reservedName]) {
+      const availability = (registryUrl: string) =>
+        readNpmPackageClaimAvailability(db, {
+          registryUrl,
+          packageName,
+          organizationId: b.organizationId,
+        });
+      expect(await availability(REGISTRY)).toBe("unavailable");
+      expect(await availability(custom)).toBe("claimable");
+      await expect(createScanJob(db, scanInput(b, packageName))).rejects.toBeInstanceOf(
+        PackageClaimConflictError,
+      );
+      await expect(
+        createScanJob(db, { ...scanInput(b, packageName), registryUrl: custom }),
+      ).resolves.toBeTruthy();
+    }
+  });
+
   test("concurrent first scans from different orgs admit one canonical owner", async () => {
     const [a, b] = await Promise.all([owner(), owner()]);
     const name = `race-${crypto.randomUUID()}`;

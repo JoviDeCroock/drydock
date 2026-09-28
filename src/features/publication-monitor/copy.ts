@@ -122,10 +122,8 @@ export function emptyObservationsMessage(
     "createdAt" | "lastCheckedAt" | "lastError" | "managementPending" | "ownershipConflict"
   >,
 ): string {
-  if (watch.managementPending)
-    return "Monitoring is inactive. Choose an organization to enable checks.";
-  if (watch.ownershipConflict)
-    return "Monitoring is inactive because this package is assigned to another organization.";
+  // The meta line above says why an inactive watch is not checked.
+  if (watch.managementPending || watch.ownershipConflict) return "No releases recorded.";
   if (!watch.lastCheckedAt) {
     return "Not checked yet. Drydock checks it automatically, or choose Check now.";
   }
@@ -184,9 +182,8 @@ function releaseSummary(watch: PublicationWatch): string {
 }
 
 export function watchMetaLine(watch: PublicationWatch): string {
-  if (watch.managementPending)
-    return "Monitoring inactive · choose an organization to enable monitoring";
+  if (watch.managementPending) return "Monitoring inactive · management choice pending";
   if (watch.ownershipConflict)
-    return "Monitoring inactive · package assigned to another organization · previous observations retained";
+    return "Monitoring inactive · package assigned to another organization";
   return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
 }

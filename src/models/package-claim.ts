@@ -1,4 +1,4 @@
-import { createModel, effect, signal } from "@preact/signals";
+import { computed, createModel, effect, signal } from "@preact/signals";
 import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import type { Organization } from "./organization";
@@ -13,14 +13,29 @@ export interface PackageClaimManagement {
   destinations: Array<{ id: string; name: string }>;
 }
 
+/** A personal claim whose owner has not yet chosen to keep or move it. */
+export function managementChoicePending(management: PackageClaimManagement | null): boolean {
+  const claim = management?.claim;
+  return claim?.kind === "personal" && claim.canManage && !claim.managementConfirmed;
+}
+
+/** A personal claim its owner can still move to a shared organization. */
+function movable(management: PackageClaimManagement | null): boolean {
+  const claim = management?.claim;
+  return claim?.kind === "personal" && claim.canManage === true;
+}
+
 export const PackageClaimModel = createModel((packageName: string, registryUrl?: string) => {
   const management = signal<PackageClaimManagement | null>(null);
   const organization = signal<Organization | null>(null);
   const selectedOrganizationId = signal("");
-  const movedTo = signal<{ id: string; name: string; transferred: boolean } | null>(null);
+  // Set only once a transfer committed; the destination then manages the package.
+  const movedTo = signal<{ id: string; name: string } | null>(null);
+  const kept = signal(false);
   const loading = signal(true);
   const busy = signal(false);
   const error = signal<string | null>(null);
+  const pending = computed(() => managementChoicePending(management.value));
   let generation = 0;
   const endpoint = `/api/v1/npm-package-claims/${encodePackageName(packageName)}`;
 
@@ -33,14 +48,16 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
     ]);
     if (current !== generation) return;
     management.value = result;
-    organization.value =
+    const source =
       orgs.organizations.find((org) => org.id === activeOrganizationId.peek()) ??
       orgs.organizations[0] ??
       null;
+    organization.value = source;
+    // A shared destination is preferred; with none, keeping is the only choice.
     if (!selectedOrganizationId.peek())
-      selectedOrganizationId.value = organization.peek()?.isPersonal
-        ? (result.destinations[0]?.id ?? "")
-        : (organization.peek()?.id ?? "");
+      selectedOrganizationId.value = source?.isPersonal
+        ? (result.destinations[0]?.id ?? source.id)
+        : (source?.id ?? "");
   }
 
   async function load() {
@@ -50,7 +67,12 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
     try {
       await read(current);
     } catch (err) {
-      if (current === generation) error.value = errorMessage(err);
+      if (current !== generation) return;
+      // The claims route refuses names it could never have claimed (a gate
+      // review's manifest name, say), so there is nothing to manage.
+      if (err instanceof ApiError && err.status === 400)
+        management.value = { claim: null, destinations: [] };
+      else error.value = errorMessage(err);
     } finally {
       if (current === generation) loading.value = false;
     }
@@ -61,6 +83,7 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
     management.value = null;
     organization.value = null;
     movedTo.value = null;
+    kept.value = false;
     selectedOrganizationId.value = "";
     busy.value = false;
     void load();
@@ -74,53 +97,46 @@ export const PackageClaimModel = createModel((packageName: string, registryUrl?:
     organization,
     selectedOrganizationId,
     movedTo,
+    kept,
+    pending,
     loading,
     busy,
     error,
     load,
-    async choose(watch = false): Promise<"watched" | "kept" | "moved" | null> {
+    /** Keeps the claim in the personal workspace or moves it to the selected organization. */
+    async choose(): Promise<"kept" | "moved" | null> {
       const source = organization.peek();
       const data = management.peek();
       const targetId = selectedOrganizationId.peek();
-      if (!source || !data || !targetId || busy.peek()) return null;
+      if (!source || !data?.claim || !movable(data) || !targetId || busy.peek()) return null;
       const current = generation;
       const target = data.destinations.find((item) => item.id === targetId);
       if (targetId !== source.id && !target) return null;
+      if (targetId === source.id && data.claim.managementConfirmed) return "kept";
       busy.value = true;
       error.value = null;
-      let committed: "watched" | "kept" | "moved" | null = null;
+      let committed = false;
       try {
-        const alreadyKept = targetId === source.id && data.claim?.managementConfirmed === true;
-        if (data.claim?.kind === "personal" && data.claim.canManage && !alreadyKept) {
-          await apiJson(endpoint, { targetOrganizationId: targetId, registryUrl });
-          if (current !== generation) return null;
-          committed = targetId === source.id ? "kept" : "moved";
-          management.value = {
-            ...data,
-            claim: targetId === source.id ? { ...data.claim, managementConfirmed: true } : null,
-          };
-        }
-        if (targetId !== source.id && target) {
-          movedTo.value = { ...target, transferred: data.claim?.canManage === true };
-          if (committed) await read(current);
-          return current === generation ? "moved" : null;
-        }
-        if (watch) {
-          await apiJson("/api/v1/publication-watches", {
-            packageName,
-            confirmPersonalOrganization: source.isPersonal,
-          });
-          if (current !== generation) return null;
-          committed = "watched";
+        await apiJson(endpoint, { targetOrganizationId: targetId, registryUrl });
+        if (current !== generation) return null;
+        committed = true;
+        if (target) {
+          movedTo.value = target;
+          management.value = { ...data, claim: null };
+        } else {
+          kept.value = true;
+          management.value = { ...data, claim: { ...data.claim, managementConfirmed: true } };
         }
         await read(current);
-        return current === generation ? (watch ? "watched" : "kept") : null;
+        return current === generation ? (target ? "moved" : "kept") : null;
       } catch (err) {
         if (current !== generation) return null;
-        error.value = committed
-          ? `Your package choice was saved, but a follow-up request failed: ${errorMessage(err)}. Reload to check its current status.`
-          : choiceErrorMessage(err);
-        return committed;
+        if (!committed) {
+          error.value = choiceErrorMessage(err);
+          return null;
+        }
+        error.value = `Your package choice was saved, but a follow-up request failed: ${errorMessage(err)}. Reload to check its current status.`;
+        return target ? "moved" : "kept";
       } finally {
         if (current === generation) busy.value = false;
       }

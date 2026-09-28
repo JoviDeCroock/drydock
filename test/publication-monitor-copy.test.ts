@@ -30,18 +30,19 @@ describe("publication monitor copy", () => {
     for (const lastCheckedAt of [null, watch.lastCheckedAt]) {
       for (const lastError of [null, "check_in_progress"]) {
         const current = { ...watch, lastCheckedAt, lastError };
-        expect(emptyObservationsMessage({ ...current, managementPending: true })).toBe(
-          "Monitoring is inactive. Choose an organization to enable checks.",
+        // The meta line states the reason once; the release list only says
+        // what it holds.
+        expect(watchMetaLine({ ...current, managementPending: true })).toBe(
+          "Monitoring inactive · management choice pending",
         );
-        expect(emptyObservationsMessage({ ...current, ownershipConflict: true })).toBe(
-          "Monitoring is inactive because this package is assigned to another organization.",
+        expect(watchMetaLine({ ...current, ownershipConflict: true })).toBe(
+          "Monitoring inactive · package assigned to another organization",
         );
-        expect(watchMetaLine({ ...current, managementPending: true })).toMatch(
-          /^Monitoring inactive/,
-        );
-        expect(watchMetaLine({ ...current, ownershipConflict: true })).toMatch(
-          /^Monitoring inactive/,
-        );
+        for (const inactive of [{ managementPending: true }, { ownershipConflict: true }]) {
+          expect(emptyObservationsMessage({ ...current, ...inactive })).toBe(
+            "No releases recorded.",
+          );
+        }
       }
     }
   });

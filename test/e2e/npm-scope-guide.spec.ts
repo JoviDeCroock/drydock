@@ -93,11 +93,56 @@ test("an existing personal connection stays rotatable while its workspace choice
   expect(writes).toEqual(["personal-confirmation"]);
 });
 
+test("a personal-only workspace confirms automatic scans with one button and no picker", async ({
+  page,
+}) => {
+  const writes: unknown[] = [];
+  await installSettingsMocks(page, true, writes, null, false);
+  await page.goto("/dashboard/settings?tab=integrations");
+  await expect(page.getByLabel("npm connection organization")).toHaveCount(0);
+  await expect(page.getByLabel("npm token", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Continue in personal workspace" }).click();
+  await page.getByLabel("npm token", { exact: true }).fill("npm_fake_read_only");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toMatchObject({ confirmPersonalOrganization: true });
+});
+
+test("a valid personal connection awaiting its workspace choice does not read as healthy", async ({
+  page,
+}) => {
+  await installSettingsMocks(page, true, [], {
+    id: "connection-guide",
+    organizationId: "org-guide",
+    registryUrl: "https://registry.npmjs.org",
+    label: "npm registry",
+    tokenFingerprint: "fingerprint",
+    tokenLast4: "abcd",
+    validationStatus: "valid",
+    capabilitiesJson: null,
+    personalOrganizationConfirmedAt: null,
+    validatedAt: "2026-07-12T00:00:00.000Z",
+    lastUsedAt: null,
+    createdByUserId: "user-guide",
+    createdAt: "2026-07-12T00:00:00.000Z",
+    updatedAt: "2026-07-12T00:00:00.000Z",
+  });
+  await page.goto("/dashboard/settings?tab=integrations");
+  await expect(page.getByText("automatic scans off", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("npm connection organization")
+    .selectOption({ label: "Keep in personal workspace" });
+  await page.getByRole("button", { name: "Enable automatic scans in personal workspace" }).click();
+  await expect(page.getByText("automatic scans off", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("valid", { exact: true })).toBeVisible();
+});
+
 async function installSettingsMocks(
   page: Page,
   personal = false,
   writes: unknown[] = [],
   connection: Record<string, unknown> | null = null,
+  withTeam = personal,
 ) {
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -128,7 +173,7 @@ async function installSettingsMocks(
             createdAt: "2026-07-12T00:00:00.000Z",
             updatedAt: "2026-07-12T00:00:00.000Z",
           },
-          ...(personal
+          ...(withTeam
             ? [
                 {
                   id: "org-team",
@@ -212,14 +257,12 @@ async function fulfillJson(route: Route, json: unknown, status = 200) {
 }
 
 for (const target of ["personal", "team", "personal_refresh_failure"] as const) {
-  test(`watch dialog ${target === "team" ? "transfer" : target === "personal" ? "confirmation" : "saved choice despite refresh failure"} refreshes the package management card`, async ({
+  test(`package management ${target === "team" ? "transfer" : target === "personal" ? "confirmation" : "saved choice despite refresh failure"} refreshes the badge and monitor`, async ({
     page,
   }) => {
     await installSettingsMocks(page, true);
     let confirmed = false;
     let moved = false;
-    let watched = false;
-    let badgeReads = 0;
     const browserErrors: string[] = [];
     page.on("pageerror", (error) => browserErrors.push(error.message));
     await page.route("**/api/v1/npm-package-claims/**", async (route) => {
@@ -239,110 +282,189 @@ for (const target of ["personal", "team", "personal_refresh_failure"] as const) 
           },
         });
     });
-    await page.route("**/api/v1/packages/example/releases", (route) =>
-      route.fulfill({
-        json: {
-          package: { name: "example", ecosystem: "npm" },
-          summary: {
-            totalReviews: 0,
-            channels: [],
-            lastRelease: null,
-            publishedWithoutDecision: 0,
-            publishedDespiteBlock: 0,
-          },
-          releases: [],
-          nextCursor: null,
-          limit: 50,
-        },
-      }),
-    );
-    await page.route("**/api/v1/packages/example/badge", (route) => {
-      badgeReads++;
-      return route.fulfill({
-        json: {
-          package: { name: "example", ecosystem: "npm" },
-          badge: {
-            eligible: false,
-            switchedOffByYou: false,
-            switchedOffElsewhere: false,
-            answersByDefault: false,
-            listed: false,
-            canManage: false,
-          },
-        },
-      });
-    });
-    await page.route("**/public/badge/npm/example", (route) =>
-      route.fulfill({ json: { label: "Drydock", message: "unknown", color: "grey" } }),
-    );
+    const reads = await mockPackageReads(page);
     await page.route("**/api/v1/publication-watches/packages/example", (route) =>
       route.fulfill({
         json: {
           packageName: "example",
           ownershipConflict: moved,
           managementPending: !confirmed,
-          watch: watched
-            ? {
-                id: "watch-example",
-                organizationId: "org-guide",
-                packageName: "example",
-                source: "manual",
-                createdAt: "2026-09-26T00:00:00Z",
-                unresolvedAlertCount: 0,
-                unverifiedReleaseCount: 0,
-              }
-            : null,
+          watch: null,
           observations: [],
           alerts: [],
           moreAlerts: false,
-          enrollment: { state: watched ? "watched" : "not_enrolled" },
+          enrollment: { state: "not_enrolled" },
           viewer: { canStop: true },
         },
       }),
     );
-    await page.route("**/api/v1/publication-watches", async (route) => {
-      watched = true;
-      await route.fulfill({ json: { watch: {} } });
-    });
     await page.goto("/dashboard/packages/example?org=org-guide");
+    // The pending choice is stated once, beside its control; the badge says
+    // nothing about it and the monitor only that nothing is watched.
     await expect(
-      page.getByRole("button", { name: "Choose organization", exact: true }),
+      page.getByText("Choose where this package is managed", { exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Watch package", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Choose where to watch this package" });
+    await expect(page.getByText(/until you choose where/)).toHaveCount(0);
+    await expect(page.getByText(/Only the organization that manages this package/)).toHaveCount(0);
+    await expect(page.getByText("Not watched.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Watch package", exact: true })).toHaveCount(0);
+    await expect(page.getByText(/monitoring inactive/i)).toHaveCount(0);
+    await expect(page.getByText(/contact support/i)).toHaveCount(0);
+    const choice = page.getByLabel("Managing organization");
+    await expect(choice).toHaveValue("org-team");
     if (target !== "team") {
-      await dialog.getByLabel("Managing organization").selectOption("org-guide");
-      await dialog.getByRole("button", { name: "Keep here and watch package" }).click();
-      if (target === "personal_refresh_failure") {
-        await expect(dialog.getByText(/Your package choice was saved/)).toBeVisible();
-        await expect(page.getByText("watching", { exact: true })).toBeVisible();
-      } else {
-        await expect(dialog).toHaveCount(0);
-        await expect(
-          page.getByRole("button", { name: "Move to organization", exact: true }),
-        ).toBeVisible();
-      }
+      await choice.selectOption("org-guide");
+      await page.getByRole("button", { name: "Keep in personal workspace", exact: true }).click();
+      await expect(
+        page.getByText("Managed in your personal workspace", { exact: true }),
+      ).toBeFocused();
+      if (target === "personal_refresh_failure")
+        await expect(page.getByText(/Your package choice was saved/)).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Move to organization", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Watch package", exact: true })).toBeVisible();
     } else {
-      await expect(dialog.getByLabel("Managing organization")).toHaveValue("org-team");
-      await expect(dialog.getByText(/^Moving is permanent: Release team manages/)).toBeVisible();
+      await expect(page.getByText(/^Moving is permanent: Release team manages/)).toBeVisible();
       await page.screenshot({
         path: ".context/e2e-artifacts/personal-package-organization-choice.png",
         fullPage: true,
       });
-      await dialog.getByRole("button", { name: "Move to Release team" }).click();
-      await expect(dialog.getByRole("link", { name: "Manage in Release team" })).toBeVisible();
+      await page.getByRole("button", { name: "Move to Release team" }).click();
+      const notice = page
+        .getByText(/Release team now manages this package/)
+        .locator("xpath=ancestor::div[@tabindex='-1']");
+      await expect(notice).toBeFocused();
+      await expect(notice.getByRole("link", { name: "Manage in Release team" })).toHaveAttribute(
+        "href",
+        "/dashboard/packages/example?org=org-team",
+      );
       await expect(
         page.getByText("Managed in your personal workspace", { exact: true }),
       ).toHaveCount(0);
+      await expect(
+        page.getByText(
+          "Monitoring inactive because this package is assigned to another organization.",
+        ),
+      ).toBeVisible();
+      // Another organization's claim cannot be watched past from here.
+      await expect(page.getByRole("button", { name: "Watch package", exact: true })).toHaveCount(0);
       await page.screenshot({
-        path: ".context/e2e-artifacts/personal-package-dialog-transferred.png",
+        path: ".context/e2e-artifacts/personal-package-transferred.png",
         fullPage: true,
       });
     }
     await expect(
-      page.getByRole("button", { name: "Choose organization", exact: true }),
+      page.getByText("Choose where this package is managed", { exact: true }),
     ).toHaveCount(0);
-    await expect.poll(() => badgeReads).toBeGreaterThan(1);
+    await expect.poll(() => reads.badge).toBeGreaterThan(1);
     expect(browserErrors).toEqual([]);
   });
 }
+
+async function mockPackageReads(page: Page) {
+  const reads = { badge: 0 };
+  await page.route("**/api/v1/packages/example/releases", (route) =>
+    route.fulfill({
+      json: {
+        package: { name: "example", ecosystem: "npm" },
+        summary: {
+          totalReviews: 0,
+          channels: [],
+          lastRelease: null,
+          publishedWithoutDecision: 0,
+          publishedDespiteBlock: 0,
+        },
+        releases: [],
+        nextCursor: null,
+        limit: 50,
+      },
+    }),
+  );
+  await page.route("**/api/v1/packages/example/badge", (route) => {
+    reads.badge++;
+    return route.fulfill({
+      json: {
+        package: { name: "example", ecosystem: "npm" },
+        badge: {
+          eligible: false,
+          switchedOffByYou: false,
+          switchedOffElsewhere: false,
+          answersByDefault: false,
+          listed: false,
+          canManage: false,
+        },
+      },
+    });
+  });
+  await page.route("**/public/badge/npm/example", (route) =>
+    route.fulfill({ json: { label: "Drydock", message: "unknown", color: "grey" } }),
+  );
+  return reads;
+}
+
+test("the package page watches directly with the personal flag and turns a pending claim into the choice card", async ({
+  page,
+}) => {
+  await installSettingsMocks(page, true);
+  let releaseClaim!: () => void;
+  const claimHeld = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  let pending = false;
+  const posts: unknown[] = [];
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  await page.route("**/api/v1/npm-package-claims/**", async (route) => {
+    await claimHeld;
+    await route.fulfill({
+      json: {
+        claim: pending ? { kind: "personal", managementConfirmed: false, canManage: true } : null,
+        destinations: [],
+      },
+    });
+  });
+  await mockPackageReads(page);
+  await page.route("**/api/v1/publication-watches/packages/example", (route) =>
+    route.fulfill({
+      json: {
+        packageName: "example",
+        ownershipConflict: false,
+        managementPending: pending,
+        watch: null,
+        observations: [],
+        alerts: [],
+        moreAlerts: false,
+        enrollment: { state: "not_enrolled" },
+        viewer: { canStop: true },
+      },
+    }),
+  );
+  await page.route("**/api/v1/publication-watches", async (route) => {
+    posts.push(route.request().postDataJSON());
+    // A stage reviewed since the page loaded left a pending personal claim.
+    pending = true;
+    await route.fulfill({
+      status: 409,
+      json: {
+        error: "Choose an organization for this package before enabling monitoring.",
+        code: "package_management_required",
+      },
+    });
+  });
+  await page.goto("/dashboard/packages/example?org=org-guide");
+  await expect(page.getByText("public endpoint says")).toBeVisible();
+  // Until the claim is read, the badge cannot tell its manager from a bystander.
+  await expect(page.getByText(/Only the organization that manages this package/)).toHaveCount(0);
+  releaseClaim();
+  await expect(page.getByText(/Only the organization that manages this package/)).toBeVisible();
+  await page.getByRole("button", { name: "Watch package", exact: true }).click();
+  await expect(
+    page.getByText("Choose where this package is managed", { exact: true }),
+  ).toBeVisible();
+  expect(posts).toEqual([{ packageName: "example", confirmPersonalOrganization: true }]);
+  await expect(page.getByRole("button", { name: "Watch package", exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Only the organization that manages this package/)).toHaveCount(0);
+  await expect(page.getByText("Choose where this package is managed")).toHaveCount(1);
+  expect(browserErrors).toEqual([]);
+});

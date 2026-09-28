@@ -68,6 +68,105 @@ test("enrolls a package with no scan history, checks it, and removes its detail"
   expect(model.detail.value).toBeNull();
 });
 
+test("a personal workspace's watch carries its explicit choice and clears the input", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(json({ watch }, 201))
+    .mockResolvedValue(
+      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  model.packageName.value = "@scope/package";
+  expect(await model.enroll(undefined, { confirmPersonalOrganization: true })).toBe("watched");
+  expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({
+    packageName: "@scope/package",
+    confirmPersonalOrganization: true,
+  });
+  expect(model.packageName.value).toBe("");
+  expect(model.watches.value).toEqual([watch]);
+});
+
+test("a pending personal claim asks for the management choice instead of reporting an error", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({
+          watches: [],
+          autoEnrollment: { deferred: 0, suggestions: [{ packageName: "@scope/package" }] },
+        }),
+      )
+      .mockResolvedValueOnce(
+        json(
+          {
+            error: "Choose an organization for this package before enabling monitoring.",
+            code: "package_management_required",
+          },
+          409,
+        ),
+      ),
+  );
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  model.packageName.value = "@scope/package";
+  expect(await model.enroll(undefined, { confirmPersonalOrganization: true })).toBe(
+    "management_required",
+  );
+  expect(model.error.value).toBeNull();
+  expect(model.packageName.value).toBe("@scope/package");
+  expect(model.watches.value).toEqual([]);
+  expect(model.autoEnrollment.value.suggestions).toEqual([{ packageName: "@scope/package" }]);
+  expect(model.busy.value).toBe(false);
+});
+
+test("a waited retry runs after an in-flight refresh instead of being dropped", async () => {
+  const refresh = deferred();
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockReturnValueOnce(refresh.promise)
+    .mockResolvedValueOnce(json({ watch }, 201))
+    .mockResolvedValue(
+      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  const listing = model.refresh();
+  // Without waiting, a click-guarded duplicate is dropped while busy.
+  expect(await model.enroll("@scope/package")).toBeNull();
+  const retry = model.enroll("@scope/package", { wait: true });
+  await Promise.resolve();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  refresh.resolve(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+  await listing;
+  expect(await retry).toBe("watched");
+  expect(fetchMock.mock.calls[2]?.[1].method).toBe("POST");
+  expect(model.watches.value).toEqual([watch]);
+});
+
+test("a waited retry is abandoned when the organization changes first", async () => {
+  const refresh = deferred();
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockReturnValueOnce(refresh.promise)
+    .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+  vi.stubGlobal("fetch", fetchMock);
+  setActiveOrganizationId("org-a");
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  void model.refresh();
+  const retry = model.enroll("@scope/package", { wait: true });
+  setActiveOrganizationId("org-b");
+  expect(await retry).toBeNull();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
+
 test("keeps enrollment input and reports a failed request", async () => {
   vi.stubGlobal(
     "fetch",
@@ -81,7 +180,7 @@ test("keeps enrollment input and reports a failed request", async () => {
   model = new PublicationWatchesModel();
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
   model.packageName.value = "bad package";
-  await model.enroll();
+  expect(await model.enroll()).toBeNull();
   expect(model.packageName.value).toBe("bad package");
   expect(model.error.value).toBe("Package name is invalid");
   expect(model.busy.value).toBe(false);

@@ -13,6 +13,7 @@ import { createScanJob } from "../../server/db/scan-jobs";
 import { getScan } from "../../server/db/scan-detail";
 import * as schema from "../../server/db/schema";
 import { publicationWatchOwnershipConflict } from "../../server/db/publication-watches";
+import { reconcilePublicationWatches } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPackageClaimRoutes } from "../../server/routes/npm-package-claims";
 import { buildTestApp, call } from "./helpers/app";
 import { seedUser, type SeededUser } from "./helpers/seed";
@@ -433,6 +434,103 @@ describe("personal npm package management", () => {
         .from(schema.publicationWatchCandidates)
         .where(eq(schema.publicationWatchCandidates.organizationId, destination)),
     ).toEqual([]);
+  });
+
+  test("keeping management at a full watch budget confirms the claim and enrolls the watch once a slot frees", async () => {
+    const owner = await fixture();
+    await owner.db.insert(schema.publicationWatches).values(
+      Array.from({ length: 20 }, (_, i) => ({
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        packageName: `full-${i}`,
+        source: "manual" as const,
+        createdAt: new Date(),
+      })),
+    );
+    // A deliberate stop: Keep is an explicit enrollment, so it clears it.
+    await owner.db.insert(schema.publicationWatchCandidates).values({
+      id: crypto.randomUUID(),
+      organizationId: owner.organizationId,
+      packageName: owner.packageName,
+      source: "manual",
+      createdAt: new Date(),
+      stoppedAt: new Date(),
+    });
+    await expect(manageNpmPackageClaim(owner.db, input(owner))).resolves.toEqual({
+      changed: true,
+    });
+    expect(await allowed(owner)).toEqual([{ scan: 1, management: 1 }]);
+    expect(
+      await owner.db
+        .select()
+        .from(schema.publicationWatches)
+        .where(eq(schema.publicationWatches.packageName, owner.packageName)),
+    ).toEqual([]);
+    expect(
+      await owner.db
+        .select({
+          source: schema.publicationWatchCandidates.source,
+          stoppedAt: schema.publicationWatchCandidates.stoppedAt,
+        })
+        .from(schema.publicationWatchCandidates)
+        .where(eq(schema.publicationWatchCandidates.packageName, owner.packageName)),
+    ).toEqual([{ source: "manual", stoppedAt: null }]);
+    await owner.db
+      .delete(schema.publicationWatches)
+      .where(eq(schema.publicationWatches.packageName, "full-0"));
+    await reconcilePublicationWatches(owner.db, owner.organizationId);
+    expect(
+      await owner.db
+        .select({ source: schema.publicationWatches.source })
+        .from(schema.publicationWatches)
+        .where(eq(schema.publicationWatches.packageName, owner.packageName)),
+    ).toEqual([{ source: "manual" }]);
+  });
+
+  test.each([
+    ["last check", new Date(Date.UTC(2026, 7, 1)), new Date(Date.UTC(2026, 7, 20))],
+    ["creation when it never checked", new Date(Date.UTC(2026, 7, 1)), null],
+  ])(
+    "a moved package's destination watch starts from the source watch's %s",
+    async (_label, createdAt, lastCheckedAt) => {
+      const owner = await fixture();
+      const destination = await team(owner);
+      await owner.db.insert(schema.publicationWatches).values({
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        packageName: owner.packageName,
+        source: "staged_discovery",
+        createdAt,
+        lastCheckedAt,
+      });
+      await manageNpmPackageClaim(owner.db, input(owner, destination));
+      const [watch] = await owner.db
+        .select({ createdAt: schema.publicationWatches.createdAt })
+        .from(schema.publicationWatches)
+        .where(
+          and(
+            eq(schema.publicationWatches.organizationId, destination),
+            eq(schema.publicationWatches.packageName, owner.packageName),
+          ),
+        );
+      expect(watch?.createdAt).toEqual(lastCheckedAt ?? createdAt);
+    },
+  );
+
+  test("scan detail says another organization manages a moved package, never an ownerless one", async () => {
+    const owner = await fixture();
+    const destination = await team(owner);
+    const managedElsewhere = async () =>
+      (await getScan(owner.db, owner.scanId, owner.organizationId))?.scan
+        .npmPackageManagedElsewhere;
+    expect(await managedElsewhere()).toBe(false);
+    await manageNpmPackageClaim(owner.db, input(owner, destination));
+    expect(await managedElsewhere()).toBe(true);
+    await owner.db
+      .update(schema.npmPackageClaims)
+      .set({ organizationId: null })
+      .where(eq(schema.npmPackageClaims.packageName, owner.packageName));
+    expect(await managedElsewhere()).toBe(false);
   });
 
   test("GET never discloses another organization claim and validates coordinates", async () => {

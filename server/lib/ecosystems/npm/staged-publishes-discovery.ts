@@ -251,6 +251,15 @@ export async function discoverAndQueueStagedPublishes(
   const scanCandidates = admitNewScans
     ? filterNewStagedPublishesByStageId(stagedItems, existingStageIds)
     : [];
+  // Reconcile even when no stages or new scans were found, and even when a scan
+  // start throws. Newly admitted claims are visible here; pending personal
+  // claims remain ineligible. Enrollment reports its own failures.
+  const enroll = () =>
+    enrollStagedReleases(db, env, {
+      organizationId,
+      registryUrl: connection.registryUrl,
+      releases: stagedItems,
+    });
   const scanStarts = await mapWithConcurrency(
     scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,
@@ -345,7 +354,11 @@ export async function discoverAndQueueStagedPublishes(
         }
         return startedScan;
       }),
-  );
+  ).catch(async (err: unknown) => {
+    await enroll();
+    throw err;
+  });
+  await enroll();
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
   const claimBlocked = scanStarts.filter((start) => start === CLAIM_BLOCKED).length;
   if (claimBlocked) {
@@ -355,14 +368,6 @@ export async function discoverAndQueueStagedPublishes(
       count: claimBlocked,
     });
   }
-  // Reconcile even when no stages or new scans were found. Newly admitted
-  // claims are visible here; pending personal claims remain ineligible.
-  await enrollStagedReleases(db, env, {
-    organizationId,
-    registryUrl: connection.registryUrl,
-    releases: stagedItems,
-  });
-
   // Resolving npm's own state for already-reviewed releases is advisory
   // annotation. Start it only after newly discovered scan rows exist, so a
   // restaged version's new incarnation can supersede its historical review

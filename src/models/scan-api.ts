@@ -112,6 +112,8 @@ export interface PersistedScanDetail {
     /** Derived from the immutable registry package claim, never the manifest. */
     npmPackageClaimOwned?: boolean;
     npmPackageManagementAllowed?: boolean;
+    /** Another organization (never named), or an ownerless reservation, holds the claim. */
+    npmPackageManagedElsewhere?: boolean;
     publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;

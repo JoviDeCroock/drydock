@@ -7,8 +7,13 @@
 import { computed, createModel, effect, signal } from "@preact/signals";
 import { encodePackageName } from "../lib/package-diff-path";
 import { activeOrganizationId } from "./active-organization";
-import { apiFetch, apiJson, errorMessage } from "./api";
-import type { PublicationObservation, PublicationWatch } from "./publication-watches";
+import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
+import {
+  MANAGEMENT_REQUIRED,
+  type EnrollOutcome,
+  type PublicationObservation,
+  type PublicationWatch,
+} from "./publication-watches";
 
 export type PublicationEnrollment =
   | { state: "watched" }
@@ -148,12 +153,26 @@ export const PackagePublicationModel = createModel((packageName: string) => {
         ),
       );
     },
-    start() {
+    /** See `PublicationWatchesModel.enroll` for the personal-workspace flag. */
+    async start(options: { confirmPersonalOrganization?: boolean } = {}): Promise<EnrollOutcome> {
       const current = generation;
-      return run(async () => {
-        await apiJson(endpoint, { packageName });
+      let outcome: EnrollOutcome = null;
+      await run(async () => {
+        try {
+          await apiJson(
+            endpoint,
+            options.confirmPersonalOrganization
+              ? { packageName, confirmPersonalOrganization: true }
+              : { packageName },
+          );
+          outcome = "watched";
+        } catch (err) {
+          if (!(err instanceof ApiError && err.code === MANAGEMENT_REQUIRED)) throw err;
+          outcome = "management_required";
+        }
         await read(current);
       });
+      return current === generation ? outcome : null;
     },
     stop() {
       const id = watchId();

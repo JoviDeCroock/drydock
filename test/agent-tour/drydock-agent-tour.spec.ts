@@ -168,9 +168,7 @@ async function connectNpmThroughSettings(page: Page) {
   await expect(page.getByRole("heading", { name: "Organization settings" })).toBeVisible({
     timeout: 30_000,
   });
-  await page
-    .getByLabel("npm connection organization")
-    .selectOption({ label: "Keep in personal workspace" });
+  // A fresh account has only its personal workspace, so the choice is one button.
   await page.getByRole("button", { name: "Continue in personal workspace" }).click();
   await page.getByLabel("Connection name").fill("Fake npm staging registry");
   await page.getByLabel("Registry").fill(registryUrl);

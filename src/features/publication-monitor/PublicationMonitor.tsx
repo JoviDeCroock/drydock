@@ -1,4 +1,3 @@
-import { WatchPackageDialog } from "../package-claims/PackageManagement";
 import {
   useComputed,
   useModel,
@@ -7,7 +6,8 @@ import {
   type ReadonlySignal,
 } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { useId } from "preact/hooks";
+import { useId, useRef } from "preact/hooks";
+import { isValidNpmPackageName } from "../../../server/lib/ecosystems/npm/registry";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -16,6 +16,7 @@ import { Input } from "../../components/Input";
 import { Menu, MenuItem } from "../../components/Menu";
 import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
 import { packageReleasesPath } from "../../lib/package-releases-path";
+import { PackageManagementDialog } from "../package-claims/PackageManagement";
 import { PublicationWatchesModel } from "../../models/publication-watches";
 import { watchMetaLine, watchProblemMessage } from "./copy";
 import { CoverageGap } from "./CoverageGap";
@@ -27,10 +28,12 @@ import { StopWatchingDialog } from "./StopWatchingDialog";
 export function PublicationMonitor({
   reviews,
   canStop,
+  personalWorkspace,
 }: {
   reviews: ReadonlySignal<unknown>;
   /** Stopping deletes alert history, so only integration managers may. */
   canStop: boolean;
+  personalWorkspace: ReadonlySignal<boolean>;
 }) {
   const model = useModel(PublicationWatchesModel);
   const lastReviews = useSignal(reviews.peek());
@@ -40,12 +43,13 @@ export function PublicationMonitor({
     lastReviews.value = next;
     void model.refresh();
   });
-  // Only the row whose check is in flight relabels its button; the model's
-  // single `busy` flag disables everything else.
-  const watchTarget = useSignal<string | null>(null);
+  // A pending personal claim needs its Keep or Move choice before a watch.
+  const managing = useSignal<{ packageName: string; typed: boolean } | null>(null);
   const nameError = useSignal<string | null>(null);
   const nameInvalid = useComputed(() => nameError.value !== null);
   const nameErrorId = useId();
+  // Only the row whose check is in flight relabels its button; the model's
+  // single `busy` flag disables everything else.
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
@@ -55,6 +59,33 @@ export function PublicationMonitor({
     await model.remove(target.id);
     stopTarget.value = null;
   };
+
+  const formRef = useRef<HTMLFormElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  async function startWatching(packageName: string, typed: boolean) {
+    const outcome = await model.enroll(typed ? undefined : packageName, {
+      confirmPersonalOrganization: personalWorkspace.peek(),
+    });
+    if (outcome === "management_required") managing.value = { packageName, typed };
+  }
+
+  // After Keep, the dialog unmounts and the suggestion that opened it may be
+  // gone, so the watch follows the choice and focus lands on its row.
+  async function watchAfterKeep(packageName: string, typed: boolean) {
+    const outcome = await model.enroll(typed ? undefined : packageName, {
+      confirmPersonalOrganization: personalWorkspace.peek(),
+      wait: true,
+    });
+    // Keeping enrolls the watch on its own, so list it even if this failed.
+    if (outcome !== "watched") void model.refresh();
+    setTimeout(() => {
+      const row = [
+        ...(listRef.current?.querySelectorAll<HTMLElement>("[data-watch-package]") ?? []),
+      ].find((link) => link.dataset.watchPackage === packageName);
+      (row ?? formRef.current?.querySelector("input"))?.focus();
+    }, 0);
+  }
 
   async function check(id: string) {
     checkingId.value = id;
@@ -79,17 +110,18 @@ export function PublicationMonitor({
           </p>
         </div>
         <form
+          ref={formRef}
           class="flex items-center gap-2 shrink-0"
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
             const name = model.packageName.peek().trim();
-            if (!name) {
-              nameError.value = "Enter a public npm package name, such as @scope/package.";
+            if (!isValidNpmPackageName(name)) {
+              nameError.value = "Enter a valid public npm package name, such as @scope/package.";
               return;
             }
             nameError.value = null;
-            watchTarget.value = name;
+            void startWatching(name, true);
           }}
         >
           <Input
@@ -157,9 +189,7 @@ export function PublicationMonitor({
                   variant="secondary"
                   size="sm"
                   disabled={model.busy}
-                  onClick={() => {
-                    watchTarget.value = suggestion.packageName;
-                  }}
+                  onClick={() => void startWatching(suggestion.packageName, false)}
                 >
                   Watch {suggestion.packageName}
                 </Button>
@@ -182,7 +212,7 @@ export function PublicationMonitor({
             </EmptyLine>
           </div>
         </Show>
-        <ul class="list-none p-0 m-0">
+        <ul ref={listRef} class="list-none p-0 m-0">
           {model.watches.value.map((watch) => {
             const detail = model.detail.value;
             const expanded = detail?.watch.id === watch.id ? detail : null;
@@ -192,6 +222,7 @@ export function PublicationMonitor({
                 <div class="px-5 py-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 transition-colors duration-150 hover:bg-surface-2">
                   <div class="flex min-w-0 flex-col gap-1.5">
                     <a
+                      data-watch-package={watch.packageName}
                       href={packageReleasesPath(watch.packageName, null, watch.organizationId)}
                       class="min-w-0 truncate text-[14px] font-medium text-ink"
                     >
@@ -274,15 +305,19 @@ export function PublicationMonitor({
           })}
         </ul>
       </div>
-      <Show when={watchTarget}>
-        {(name) => (
-          <WatchPackageDialog
-            key={name}
-            packageName={name}
+      <Show when={managing}>
+        {(target) => (
+          <PackageManagementDialog
+            key={target.packageName}
+            packageName={target.packageName}
             onClose={() => {
-              watchTarget.value = null;
+              managing.value = null;
             }}
-            onChanged={() => void model.refresh()}
+            onKept={() => {
+              managing.value = null;
+              void watchAfterKeep(target.packageName, target.typed);
+            }}
+            onMoved={() => void model.refresh()}
           />
         )}
       </Show>
