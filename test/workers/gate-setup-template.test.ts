@@ -10,6 +10,10 @@ import {
 } from "../../server/lib/github-app/gate-setup";
 import { GATE_SETUP_NPM_CLI_VERSION } from "../../server/lib/workflow-gates/gate-setup-actions";
 import type { GateSetupTemplate } from "../../server/lib/workflow-gates/types";
+import {
+  GATE_WORKFLOW_EXAMPLE_ENVIRONMENT,
+  GATE_WORKFLOW_EXAMPLES,
+} from "../../src/pages/Docs/gate-workflow-examples";
 
 /**
  * The setup wizard's generated workflows.
@@ -270,6 +274,33 @@ describe("gate setup templates", () => {
     expect(publish.indexOf("actions/setup-node@")).toBeLessThan(install);
     expect(generated.notes.join("\n")).toContain("devDependencies");
   });
+});
+
+describe("Docs page workflow examples", () => {
+  test("cover every ecosystem the wizard can generate for", () => {
+    expect(Object.keys(GATE_WORKFLOW_EXAMPLES).sort()).toEqual(
+      gateSetupEcosystemOptions()
+        .map((option) => option.id)
+        .sort(),
+    );
+  });
+
+  // The Docs page tells maintainers its examples are the files the wizard
+  // writes. They are copies, because the browser bundle cannot import the
+  // Worker's adapters, so this is what keeps that sentence true.
+  test.each(Object.entries(GATE_WORKFLOW_EXAMPLES))(
+    "the %s example is the file the wizard writes",
+    (ecosystem, example) => {
+      const generated = getWorkflowGateAdapter(ecosystem).gateSetupTemplate?.({
+        environmentName: GATE_WORKFLOW_EXAMPLE_ENVIRONMENT,
+        packageName: example.packageName,
+      });
+      expect(
+        example.yaml,
+        "src/pages/Docs/gate-workflow-examples.ts drifted from the adapter template; copy the rendered YAML back",
+      ).toBe(generated?.yaml);
+    },
+  );
 });
 
 describe("gate setup identity allowlist", () => {
