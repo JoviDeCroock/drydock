@@ -5,13 +5,8 @@
  * reading its risk figures off the denormalized summary so a page of rows
  * never has to load findings.
  */
-import { and, desc, eq, isNull, lt, notInArray, or } from "drizzle-orm";
-import {
-  npmReleaseOutcome,
-  NPM_RELEASE_OUTCOME_FAILURE_CODES,
-  SETTLED_NPM_VERSION_STATUSES,
-  type NpmReleaseOutcome,
-} from "../lib/ecosystems/npm/version-status";
+import { and, desc, eq, lt, or } from "drizzle-orm";
+import { npmReleaseOutcome, type NpmReleaseOutcome } from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
 import type { ScanDecisionFilter } from "./enums";
 import {
@@ -20,6 +15,7 @@ import {
   publishedWithoutDecisionConditions,
   registryFailureCodeSql,
   scanEcosystemSql,
+  undecidedQueueConditions,
 } from "./scan-query";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
 import { scans } from "./schema";
@@ -77,24 +73,10 @@ export async function listScans(
   );
   const decisionFilter = options.decisionFilter ?? "undecided";
   const registryFailureCode = registryFailureCodeSql;
-  const settledFailureCodes = Object.values(NPM_RELEASE_OUTCOME_FAILURE_CODES);
 
   const conditions = [eq(scans.organizationId, organizationId)];
   if (decisionFilter === "undecided") {
-    // Superseded reviews are immutable history, not pending work: the decision
-    // route refuses them, so leaving them in the default queue creates rows the
-    // reviewer can never resolve. Settled npm releases are no longer pending;
-    // completed reviews remain decidable while failed reviews are read-only.
-    // Both stay visible under the `all` filter.
-    conditions.push(
-      isNull(scans.decision),
-      isNull(scans.registryStatusSupersededAt),
-      or(
-        isNull(scans.registryVersionStatus),
-        notInArray(scans.registryVersionStatus, [...SETTLED_NPM_VERSION_STATUSES]),
-      )!,
-      or(isNull(registryFailureCode), notInArray(registryFailureCode, settledFailureCodes))!,
-    );
+    conditions.push(...undecidedQueueConditions());
   } else if (decisionFilter === "published_without_decision") {
     conditions.push(...publishedWithoutDecisionConditions());
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));

@@ -40,7 +40,14 @@ export { listPackageReleases } from "./scan-package-releases";
 
 export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
-export { recordGatePackageDecision, recordScanDecision } from "./scan-decisions";
+export {
+  BATCH_APPROVAL_LIMIT,
+  listBatchApprovableScans,
+  recordBatchApproval,
+  recordGatePackageDecision,
+  recordScanDecision,
+  type BatchApprovableScan,
+} from "./scan-decisions";
 
 export {
   compareBadgeCandidates,

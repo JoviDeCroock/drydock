@@ -180,6 +180,19 @@ there, says `undecided` / `superseded` in plain text — and a recorded decision
 `DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
 the same action repeated down a list is not the region's primary action.
 
+When the **Undecided** list holds two or more reviews that read likely safe, the
+header offers a secondary `Approve N low-risk` beside the filter, so a release
+that staged many packages at once is not one dialog per package. Its dialog
+(`src/pages/Dashboard/BatchApprovalDialog.tsx`) lists each candidate as a ticked
+row linking to its review, with its release-finding count in mono, one optional
+reason, and one primary `Approve N releases`. The server decides which reviews
+qualify (`listBatchApprovableScans`: low release risk, a compared baseline, no AI
+flag, still undecided and actionable on npm) and re-checks that as it writes, so
+the result view says how many were approved and how many changed underneath and
+stayed undecided, then links npm's staged-packages page, because approving here
+publishes nothing. `ScanBatchApprovalModel` follows the list the way the
+overview strip does.
+
 ## Dashboard onboarding funnel
 
 `src/pages/Dashboard/GettingStarted.tsx` lists three steps — a first release

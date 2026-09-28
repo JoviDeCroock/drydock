@@ -13,7 +13,7 @@ import type { Bindings, Variables } from "../../types";
 
 export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-const DECISION_REASON_MAX = 500;
+export const DECISION_REASON_MAX = 500;
 const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
 
 scanDecisionRoutes.post("/:id/decision", async (c) => {

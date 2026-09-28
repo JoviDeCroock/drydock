@@ -6,7 +6,7 @@
  * Every decision writes an audit event carrying the risk the reviewer actually
  * saw, so an override stays attributable after the fact.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
 import { scanEcosystem } from "../lib/public-feed";
@@ -14,7 +14,9 @@ import { recordProductEvent } from "../lib/analytics";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import { getScan } from "./scan-detail";
-import { githubWorkflowGates, scans } from "./schema";
+import { undecidedQueueConditions } from "./scan-query";
+import { readScanRiskBreakdown } from "./scan-risk";
+import { githubWorkflowGates, scanEvents, scans } from "./schema";
 
 import type { ScanDecision } from "./enums";
 
@@ -79,6 +81,7 @@ export async function recordScanDecision(
     organizationId: input.organizationId,
     decision: input.decision,
     ecosystem: scanEcosystem(updated[0].source, updated[0].summaryJson) ?? "npm",
+    via: "single",
     now,
   });
 
@@ -102,6 +105,146 @@ function readRiskSummaryValue(value: unknown): unknown {
   } catch {
     return null;
   }
+}
+
+/** The most reviews one batch approval covers. */
+export const BATCH_APPROVAL_LIMIT = 50;
+
+/**
+ * Staged reviews one action may approve together: rows of the **Undecided**
+ * queue whose review page reads "likely safe" or "package context only" (low
+ * release risk, compared against a published baseline) and that the AI
+ * reviewer did not ask a person to look at. Everything else keeps its own
+ * decision. The approval re-checks this in the same statement that writes it,
+ * so a review that changed after the list loaded stays undecided.
+ */
+function batchApprovableConditions(organizationId: string) {
+  return [
+    eq(scans.organizationId, organizationId),
+    eq(scans.status, "complete"),
+    inArray(scans.source, ["manual", "auto_discovery"]),
+    ...undecidedQueueConditions(),
+    sql`json_extract(${scans.riskSummaryJson}, '$.releaseRisk') = 'low'`,
+    sql`json_extract(${scans.summaryJson}, '$.baseline.comparisonSkipped') is null`,
+    sql`coalesce(json_extract(${scans.aiJson}, '$.requiresManualReview'), 0) = 0`,
+    sql`coalesce(json_extract(${scans.aiJson}, '$.releaseAssessment'), 'not_assessed') in ('nothing_unusual', 'not_assessed')`,
+  ];
+}
+
+export interface BatchApprovableScan {
+  id: string;
+  packageName: string | null;
+  stagedVersion: string | null;
+  registryUrl: string | null;
+  releaseFindingCount: number;
+  createdAt: Date;
+}
+
+/** Newest first; `more` says the queue holds more than one batch covers. */
+export async function listBatchApprovableScans(
+  db: AppDb,
+  organizationId: string,
+): Promise<{ scans: BatchApprovableScan[]; more: boolean }> {
+  const rows = await db
+    .select({
+      id: scans.id,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      registryUrl: scans.registryUrl,
+      riskSummaryJson: scans.riskSummaryJson,
+      createdAt: scans.createdAt,
+    })
+    .from(scans)
+    .where(and(...batchApprovableConditions(organizationId)))
+    .orderBy(desc(scans.createdAt), desc(scans.id))
+    .limit(BATCH_APPROVAL_LIMIT + 1);
+  return {
+    scans: rows.slice(0, BATCH_APPROVAL_LIMIT).map((row) => ({
+      id: row.id,
+      packageName: row.packageName,
+      stagedVersion: row.stagedVersion,
+      registryUrl: row.registryUrl,
+      releaseFindingCount: readScanRiskBreakdown(row.riskSummaryJson)?.releaseFindingCount ?? 0,
+      createdAt: row.createdAt,
+    })),
+    more: rows.length > BATCH_APPROVAL_LIMIT,
+  };
+}
+
+export interface RecordBatchApprovalInput {
+  organizationId: string;
+  actorUserId: string;
+  scanIds: readonly string[];
+  reason?: string | null;
+}
+
+/**
+ * Approve the listed reviews that are still batch-approvable, each with the
+ * same audit event a single decision writes. The decisions and their events
+ * land in one transaction. Returns the approved rows; a listed review that
+ * was decided, superseded, or settled on npm in the meantime is left alone.
+ */
+export async function recordBatchApproval(
+  db: AppDb,
+  input: RecordBatchApprovalInput,
+  env?: Cloudflare.Env,
+) {
+  const scanIds = [...new Set(input.scanIds)];
+  if (!scanIds.length) return [];
+  const now = new Date();
+  const reason = input.reason?.trim() ? input.reason.trim() : null;
+  const metadata = JSON.stringify({ decision: "publish", reason, batch: true });
+  const [updated] = await db.batch([
+    db
+      .update(scans)
+      .set({
+        decision: "publish",
+        decisionReason: reason,
+        decidedByUserId: input.actorUserId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      .where(and(inArray(scans.id, scanIds), ...batchApprovableConditions(input.organizationId)))
+      .returning({
+        id: scans.id,
+        createdAt: scans.createdAt,
+        risk: scans.risk,
+        riskSummaryJson: scans.riskSummaryJson,
+        aiJson: scans.aiJson,
+        source: scans.source,
+        summaryJson: scans.summaryJson,
+        packageName: scans.packageName,
+        stagedVersion: scans.stagedVersion,
+        registryPackageName: scans.registryPackageName,
+        registryUrl: scans.registryUrl,
+        badgePublic: scans.badgePublic,
+        publicFeedListedAt: scans.publicFeedListedAt,
+      }),
+    // One event per row the update above just wrote: same decider, same instant.
+    db.insert(scanEvents)
+      .select(sql`select 'scan-decided:' || ${scans.id} || ':' || ${now.getTime()},
+      ${input.organizationId}, ${input.actorUserId}, ${scans.id}, 'scan.decided', ${metadata},
+      ${now.getTime()}
+      from ${scans}
+      where ${and(
+        inArray(scans.id, scanIds),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.decision, "publish"),
+        eq(scans.decidedByUserId, input.actorUserId),
+        eq(scans.decidedAt, now),
+      )}`),
+  ]);
+
+  for (const row of updated) {
+    recordDecisionEvent(env, row, {
+      organizationId: input.organizationId,
+      decision: "publish",
+      ecosystem: "npm",
+      via: "batch",
+      now,
+    });
+  }
+  return updated;
 }
 
 export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
@@ -171,6 +314,7 @@ export async function recordGatePackageDecision(
     organizationId: input.organizationId,
     decision: input.decision,
     ecosystem: "gate",
+    via: "single",
     now,
   });
 
@@ -191,7 +335,13 @@ function recordDecisionEvent(
     riskSummaryJson: unknown;
     aiJson: unknown;
   },
-  input: { organizationId: string; decision: string; ecosystem: string; now: Date },
+  input: {
+    organizationId: string;
+    decision: string;
+    ecosystem: string;
+    via: "single" | "batch";
+    now: Date;
+  },
 ): void {
   const breakdown = normalizeScanRiskBreakdown(readRiskSummaryValue(row.riskSummaryJson));
   recordProductEvent(env, {
@@ -201,6 +351,7 @@ function recordDecisionEvent(
     decision: input.decision,
     releaseRisk: breakdown?.releaseRisk ?? row.risk,
     artifactRisk: breakdown?.artifactRisk ?? row.risk,
+    via: input.via,
     timeToDecisionMs: Math.max(0, input.now.getTime() - toEpochMs(row.createdAt)),
   });
 

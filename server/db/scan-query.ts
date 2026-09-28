@@ -1,5 +1,8 @@
-import { inArray, isNull, or, sql } from "drizzle-orm";
-import { NPM_RELEASE_OUTCOME_FAILURE_CODES } from "../lib/ecosystems/npm/version-status";
+import { inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import {
+  NPM_RELEASE_OUTCOME_FAILURE_CODES,
+  SETTLED_NPM_VERSION_STATUSES,
+} from "../lib/ecosystems/npm/version-status";
 import { scans } from "./schema";
 
 // Query fragments the dashboard list and the package-release view share, so
@@ -52,5 +55,26 @@ export function publishedWithoutDecisionConditions() {
     isNull(scans.decision),
     isNull(scans.registryStatusSupersededAt),
     publishedReleaseOutcomeCondition(),
+  ];
+}
+
+/**
+ * The default **Undecided** work queue: reviews a decision can still act on.
+ * Superseded reviews are immutable history, not pending work: the decision
+ * route refuses them, so leaving them in the queue creates rows the reviewer
+ * can never resolve. Settled npm releases are no longer pending; completed
+ * reviews remain decidable while failed reviews are read-only. Both stay
+ * visible under the `all` filter. Batch approval selects from this same set.
+ */
+export function undecidedQueueConditions() {
+  const settledFailureCodes = Object.values(NPM_RELEASE_OUTCOME_FAILURE_CODES);
+  return [
+    isNull(scans.decision),
+    isNull(scans.registryStatusSupersededAt),
+    or(
+      isNull(scans.registryVersionStatus),
+      notInArray(scans.registryVersionStatus, [...SETTLED_NPM_VERSION_STATUSES]),
+    )!,
+    or(isNull(registryFailureCodeSql), notInArray(registryFailureCodeSql, settledFailureCodes))!,
   ];
 }

@@ -116,6 +116,12 @@ published-pair review. It reported a literal `npm` before published-pair
 reviews shipped, so rows written then are indistinguishable from staged npm
 rows — which is correct, they were.
 
+**`blob8` on `scan.decided` says how the decision was made:** `single` for one
+decision through either route, `batch` for a review approved through
+`POST /api/v1/scans/batch-approval`, which emits one event per approved review.
+Rows written before the dimension existed have no `blob8`; all of them were
+single decisions.
+
 **`blob4` on the scan-lifecycle events is only as specific as the path knows.**
 `scan.queued`, `scan.failed`, and `scan.discarded` reported a literal `npm`
 until published-pair reviews shipped, because the staged path is npm-only.

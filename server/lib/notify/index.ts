@@ -21,6 +21,11 @@ export { notifyPublicationCoverageGap, notifyPublicationDiscrepancy } from "./pu
 // notify layer speaks an ecosystem's grammar, and its stage-id import is
 // allowlisted here by `test/ecosystem-branching-invariants.test.mjs`.
 
+// A decision made after npm published the release still goes on record, but the
+// publication monitor only counts an approval that came first.
+const DECIDE_FIRST =
+  "Decide in Drydock before you approve the stage on npm: the publication monitor counts a release as approved only when the approval here came first.";
+
 export interface NotifyScanCompletionInput {
   env: Cloudflare.Env;
   db: AppDb;
@@ -62,6 +67,7 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
               releaseRisk ? `Release risk: ${releaseRisk}.` : null,
               releaseMemory ? `Release memory: ${releaseMemory}` : null,
               dashboardUrl ? `Review the report: ${dashboardUrl}` : null,
+              scan?.source === "manual" || scan?.source === "auto_discovery" ? DECIDE_FIRST : null,
               "",
               "— Drydock",
             ],
@@ -264,7 +270,7 @@ export async function notifyStagedReleaseApprovable(
       ? "Drydock decision: publish — approved here, waiting on npm's own approval."
       : input.decision === "no_publish"
         ? "Drydock decision: do not publish — recorded here; nothing on npm changes until someone approves the stage."
-        : "Drydock decision: none recorded yet.";
+        : `Drydock decision: none recorded yet. ${DECIDE_FIRST}`;
   const instructions = approvalInstructions(stageId, input.registryUrl);
 
   await deliverOrganizationNotification(env, db, {

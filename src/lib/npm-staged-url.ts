@@ -30,6 +30,16 @@ export function npmStagedPackagesUrlFor(scan: NpmStagedScan): string | null {
   return buildNpmStagedPackagesUrl(scan.packageName);
 }
 
+/** npm's staged-packages page across packages, when every stage is on public npm. */
+export function npmStagedPackagesListUrlFor(
+  scans: readonly { registryUrl?: string | null }[],
+): string | null {
+  if (!scans.length || !scans.every((scan) => usesPublicNpmRegistry(scan.registryUrl))) {
+    return null;
+  }
+  return new URL("/settings/~/staged-packages/", NPM_WEB_ORIGIN).toString();
+}
+
 function usesPublicNpmRegistry(value: string | null | undefined): boolean {
   if (!value) return true;
   try {

@@ -1008,6 +1008,70 @@ test("personal package management moves to a team without moving private reviews
   }
 });
 
+// Runs last: it decides reviews the earlier tests leave undecided.
+test("undecided low-risk reviews can be approved together, leaving an unticked one undecided", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await page.goto("/dashboard");
+    const reviews = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) });
+    const offer = reviews.getByRole("button", { name: /^Approve \d+\+? low-risk$/ });
+    await expect(offer).toBeVisible({ timeout: 30_000 });
+    const candidates = await evaluateOnStablePage(
+      page,
+      async () => {
+        const response = await fetch("/api/v1/scans/batch-approval");
+        return (
+          (await response.json()) as {
+            scans: Array<{ id: string; packageName: string; stagedVersion: string }>;
+          }
+        ).scans;
+      },
+      undefined,
+    );
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    const [kept, ...approved] = candidates;
+
+    await offer.click();
+    const dialog = page.getByRole("dialog", { name: "Approve low-risk releases" });
+    await dialog
+      .getByRole("checkbox", { name: `Approve ${kept!.packageName}@${kept!.stagedVersion}` })
+      .uncheck();
+    const release = approved.length === 1 ? "release" : "releases";
+    await page.screenshot({ path: path.join(artifactsDir, "batch-approval.png"), fullPage: true });
+    await dialog
+      .getByRole("button", { name: `Approve ${approved.length} ${release}`, exact: true })
+      .click();
+    const done = page.getByRole("dialog", { name: "Releases approved" });
+    await expect(
+      done.getByText(`Approved ${approved.length} ${release} in Drydock`, { exact: false }),
+    ).toBeVisible();
+    await done.getByRole("button", { name: "Done", exact: true }).click();
+
+    const decisions = await evaluateOnStablePage(
+      page,
+      async (ids) =>
+        Promise.all(
+          ids.map(async (id) => {
+            const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}`);
+            return ((await response.json()) as { scan: { decision: string | null } }).scan.decision;
+          }),
+        ),
+      [kept!.id, ...approved.map((scan) => scan.id)],
+    );
+    expect(decisions).toEqual([null, ...approved.map(() => "publish")]);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 async function registerAndConnect(page: Page, { confirmPersonalOrganization = true } = {}) {
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const email = `e2e-${unique}@example.test`;

@@ -85,7 +85,8 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release decision recorded",
     severity: "notice",
     summarize: (m) => {
-      const decision = m.decision === "publish" ? "approved publish" : "blocked publish";
+      const verdict = m.decision === "publish" ? "approved publish" : "blocked publish";
+      const decision = m.batch === true ? `${verdict} in a batch` : verdict;
       const reason = str(m.reason);
       return reason ? `${decision} · ${reason}` : decision;
     },
