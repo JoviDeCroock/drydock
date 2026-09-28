@@ -9,7 +9,12 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { deleteOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
+import {
+  createOrganization,
+  deleteOrganization,
+  ensurePersonalOrganization,
+} from "../../server/db/organizations";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { PackageClaimConflictError } from "../../server/db/package-claims";
 import {
   createScanJob,
@@ -184,7 +189,7 @@ describe("npm package claim admission", () => {
     };
     await deleteFailedScan(db, first, a.organizationId);
     expect(await claims()).toEqual([]);
-    expect(await state()).toEqual({ availability: "own_history", conflict: 0 });
+    expect(await state()).toEqual({ availability: "claimable", conflict: 0 });
     await deleteFailedScan(db, second, a.organizationId);
     expect(await claims()).toMatchObject([{ registryUrl: REGISTRY, organizationId: null }]);
     // With no staged history left, the reservation blocks claims but not watching.
@@ -306,41 +311,117 @@ describe("npm package claim admission", () => {
   });
 
   test.each([false, true])(
-    "historical identity stays pending audit (legacy=%s)",
+    "an organization's own pre-claim history does not block its next verified scan (legacy=%s)",
     async (legacy) => {
-      const a = await owner();
+      const [a, b] = await Promise.all([owner(), owner()]);
       const input = scanInput(a, `historical-${crypto.randomUUID()}`);
-      await db.insert(schema.scans).values({
-        id: crypto.randomUUID(),
-        stageId: `stage-${crypto.randomUUID()}`,
-        organizationId: a.organizationId,
-        ownerUserId: a.userId,
-        packageName: input.packageName,
-        registryUrl: legacy ? null : REGISTRY,
-        registryPackageName: legacy ? null : input.packageName,
-        source: "manual",
-        status: "complete",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      await expect(createScanJob(db, input)).rejects.toBeInstanceOf(PackageClaimConflictError);
+      await seedHistoricalScan(a, input.packageName, legacy ? null : REGISTRY);
+      await expect(createScanJob(db, scanInput(b, input.packageName))).rejects.toBeInstanceOf(
+        PackageClaimConflictError,
+      );
+      expect(await createScanJob(db, input)).not.toBeNull();
       expect(
         await db
-          .select()
+          .select({ organizationId: schema.npmPackageClaims.organizationId })
           .from(schema.npmPackageClaims)
           .where(eq(schema.npmPackageClaims.packageName, input.packageName)),
-      ).toHaveLength(0);
-      await db.insert(schema.npmPackageClaims).values({
-        registryUrl: REGISTRY,
-        ecosystem: "npm",
-        packageName: input.packageName,
-        organizationId: a.organizationId,
-        firstStageId: "audited-historical-stage",
-        claimedAt: new Date(),
-      });
-      expect(await createScanJob(db, input)).not.toBeNull();
+      ).toEqual([{ organizationId: a.organizationId }]);
     },
   );
+
+  test("unrelated pre-claim history still waits for an audited owner", async () => {
+    const [a, b] = await Promise.all([owner(), owner()]);
+    const input = scanInput(a, `contested-${crypto.randomUUID()}`);
+    await seedHistoricalScan(a, input.packageName, REGISTRY);
+    await seedHistoricalScan(b, input.packageName, null);
+    for (const org of [a, b]) {
+      await expect(createScanJob(db, scanInput(org, input.packageName))).rejects.toBeInstanceOf(
+        PackageClaimConflictError,
+      );
+      expect(
+        await readNpmPackageClaimAvailability(db, {
+          registryUrl: REGISTRY,
+          packageName: input.packageName,
+          organizationId: org.organizationId,
+        }),
+      ).toBe("own_history");
+    }
+  });
+
+  test("a team claims past its members' personal history, never the reverse", async () => {
+    const [member, outsider] = await Promise.all([owner(), owner()]);
+    const team = await createOrganization(db, {
+      ownerUserId: member.userId,
+      name: "Release team",
+    });
+    const teamOrg = { ...member, organizationId: team };
+    const handoff = `handoff-${crypto.randomUUID()}`;
+    await seedHistoricalScan(member, handoff, null);
+    await seedHistoricalScan(teamOrg, handoff, REGISTRY);
+    await expect(createScanJob(db, scanInput(member, handoff))).rejects.toBeInstanceOf(
+      PackageClaimConflictError,
+    );
+    expect(await createScanJob(db, scanInput(teamOrg, handoff))).not.toBeNull();
+    const [claim] = await db
+      .select()
+      .from(schema.npmPackageClaims)
+      .where(eq(schema.npmPackageClaims.packageName, handoff));
+    expect(claim).toMatchObject({ organizationId: team, managementConfirmedAt: expect.any(Date) });
+
+    const unrelated = `unrelated-${crypto.randomUUID()}`;
+    await seedHistoricalScan(outsider, unrelated, REGISTRY);
+    await expect(createScanJob(db, scanInput(teamOrg, unrelated))).rejects.toBeInstanceOf(
+      PackageClaimConflictError,
+    );
+  });
+
+  test("a team without its own history gets no say over a member's personal package", async () => {
+    const [member, teamOwner] = await Promise.all([owner(), owner()]);
+    const team = await createOrganization(db, {
+      ownerUserId: teamOwner.userId,
+      name: "Other team",
+    });
+    await addOrganizationMember(db, {
+      organizationId: team,
+      userId: member.userId,
+      role: "member",
+    });
+    const teamOrg = { ...teamOwner, organizationId: team };
+    const name = `personal-${crypto.randomUUID()}`;
+    await seedHistoricalScan(member, name, null);
+    const availability = () =>
+      readNpmPackageClaimAvailability(db, {
+        registryUrl: REGISTRY,
+        packageName: name,
+        organizationId: team,
+      });
+    expect(await availability()).toBe("unavailable");
+    await expect(createScanJob(db, scanInput(teamOrg, name))).rejects.toBeInstanceOf(
+      PackageClaimConflictError,
+    );
+    // With its own history, a plain member's personal history no longer blocks it.
+    await seedHistoricalScan(teamOrg, name, REGISTRY);
+    expect(await availability()).toBe("claimable");
+    expect(await createScanJob(db, scanInput(teamOrg, name))).not.toBeNull();
+  });
+
+  test("two teams with their own history of a member's package stay contested", async () => {
+    const member = await owner();
+    const teams = await Promise.all(
+      ["First team", "Second team"].map((name) =>
+        createOrganization(db, { ownerUserId: member.userId, name }),
+      ),
+    );
+    const name = `contested-${crypto.randomUUID()}`;
+    await seedHistoricalScan(member, name, REGISTRY);
+    for (const team of teams)
+      await seedHistoricalScan({ ...member, organizationId: team }, name, REGISTRY);
+    for (const team of teams) {
+      await expect(
+        createScanJob(db, scanInput({ ...member, organizationId: team }, name)),
+      ).rejects.toBeInstanceOf(PackageClaimConflictError);
+    }
+  });
 
   test("failed atomic scan insert rolls back the proposed claim", async () => {
     const a = await owner();
@@ -508,11 +589,12 @@ describe("npm package claim edge cases", () => {
     expect(await createScanJob(db, scanInput(b, input.packageName.toLowerCase()))).not.toBeNull();
   });
 
-  test("manual conflict on the caller's own pre-claim history says it awaits support", async () => {
-    const [a, b] = await Promise.all([owner(), owner()]);
+  test("manual conflict on the caller's contested pre-claim history says it awaits support", async () => {
+    const [a, b, c] = await Promise.all([owner(), owner(), owner()]);
     await Promise.all([connection(a), connection(b)]);
     const input = scanInput(a, `own-history-${crypto.randomUUID()}`);
     await seedHistoricalScan(a, input.packageName, `${REGISTRY}/`);
+    await seedHistoricalScan(c, input.packageName, REGISTRY);
     stubStage({ id: input.stageId, packageName: input.packageName });
     const own = await request(a, "/api/v1/scans", input.stageId);
     expect(own.response.status).toBe(409);
@@ -534,8 +616,10 @@ describe("npm package claim edge cases", () => {
       await connection(b);
       const name = `blocked-${crypto.randomUUID()}`;
       if (blocker === "other_claim") await createScanJob(db, scanInput(a, name));
-      else if (blocker === "own_history") await seedHistoricalScan(b, name, REGISTRY);
-      else await seedHistoricalScan(a, name, null);
+      else if (blocker === "own_history") {
+        await seedHistoricalScan(b, name, REGISTRY);
+        await seedHistoricalScan(a, name, REGISTRY);
+      } else await seedHistoricalScan(a, name, null);
       const stageId = `stage-${crypto.randomUUID()}`;
       const accessChecks = stubStage({ id: stageId, packageName: name });
       const log = vi.spyOn(console, "log");
@@ -552,6 +636,18 @@ describe("npm package claim edge cases", () => {
       log.mockRestore();
     },
   );
+
+  test("discovery admits a stage whose only pre-claim history is the organization's own", async () => {
+    const b = await owner();
+    await connection(b);
+    const name = `own-legacy-${crypto.randomUUID()}`;
+    await seedHistoricalScan(b, name, null);
+    const stageId = `stage-${crypto.randomUUID()}`;
+    stubStage({ id: stageId, packageName: name });
+    const discovery = await request(b, "/api/v1/staged-publishes/scan");
+    expect(await discovery.response.json()).toMatchObject({ found: 1, created: 1, skipped: 0 });
+    expect(discovery.queue.send).toHaveBeenCalledOnce();
+  });
 
   test("supersession matches a same-owner legacy row stored with a trailing slash", async () => {
     const a = await owner();

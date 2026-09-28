@@ -19,6 +19,7 @@ import {
   npmPackageClaimMatches,
   PackageClaimConflictError,
   blockingClaimRegistry,
+  conflictingPreClaimHistory,
   preClaimRegistryMatches,
   reserveDeletedNpmPackages,
 } from "./package-claims";
@@ -171,8 +172,9 @@ export type NpmPackageClaimAvailability = "owned" | "claimable" | "own_history" 
  * Read-only mirror of the admission rules in `insertNpmPackageClaim`. It lets
  * callers skip credentialed work and explain a refusal; the atomic batch in
  * `createScanJob` stays authoritative. `own_history` means the organization's
- * own pre-claim staged review of this exact registry/name awaits an audited
- * owner decision; it never reports what another organization holds.
+ * own pre-claim staged review of this exact registry/name is contested by
+ * unrelated pre-claim history and awaits an audited owner decision; it is only
+ * reported to an organization with its own competing history.
  */
 export async function readNpmPackageClaimAvailability(
   db: AppDb,
@@ -190,9 +192,10 @@ export async function readNpmPackageClaimAvailability(
       where ${blockingClaimRegistry(npmPackageClaims.registryUrl, registryUrl)}
         and ${npmPackageClaims.ecosystem} = 'npm'
         and ${npmPackageClaims.packageName} = ${packageName}) then 'unavailable'
-    when exists(select 1 from ${scans}
-      where ${scans.organizationId} = ${organizationId} and ${history}) then 'own_history'
-    when exists(select 1 from ${scans} where ${history}) then 'unavailable'
+    when ${conflictingPreClaimHistory(registryUrl, packageName, organizationId)} then
+      case when exists(select 1 from ${scans}
+        where ${scans.organizationId} = ${organizationId} and ${history})
+      then 'own_history' else 'unavailable' end
     else 'claimable' end as state`);
   return row?.state ?? "unavailable";
 }

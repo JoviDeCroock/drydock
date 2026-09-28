@@ -26,6 +26,43 @@ export function preClaimRegistryMatches(registryColumn: SQLWrapper, registryUrl:
     : sql`rtrim(${registryColumn}, '/') = ${registryUrl}`;
 }
 
+/**
+ * Pre-claim staged history that blocks `organizationId`'s first claim. Before
+ * claims existed, any organization could review a package its token reached,
+ * so history held by an unrelated organization waits for an audited owner
+ * decision. The claimant's own history does not block it: its next scan is
+ * verified by npm exactly like a brand-new package's first scan. Nor does a
+ * personal workspace whose owner belongs to a shared organization that holds
+ * its own history of the package: the team is the package's continuing home,
+ * as the move chooser's preference for a shared organization reflects. A team
+ * without its own history gets no say over a member's personal package, and
+ * the reverse is not exempt.
+ */
+export function conflictingPreClaimHistory(
+  registryUrl: string,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql`exists (select 1 from scans prior_scan
+    where prior_scan.source in ('manual', 'auto_discovery')
+      and coalesce(prior_scan.registry_package_name, prior_scan.package_name) = ${packageName}
+      and ${preClaimRegistryMatches(sql`prior_scan.registry_url`, registryUrl)}
+      and prior_scan.organization_id is not ${organizationId}
+      and not exists (select 1 from organizations prior_org
+        join organization_members prior_member on prior_member.user_id = prior_org.owner_user_id
+        join organizations claimant on claimant.id = prior_member.organization_id
+        where prior_org.id = prior_scan.organization_id
+          and prior_org.id = 'personal:' || prior_org.owner_user_id
+          and claimant.id = ${organizationId}
+          and claimant.id != 'personal:' || claimant.owner_user_id
+          and exists (select 1 from scans claimant_scan
+            where claimant_scan.organization_id = claimant.id
+              and claimant_scan.source in ('manual', 'auto_discovery')
+              and coalesce(claimant_scan.registry_package_name, claimant_scan.package_name)
+                = ${packageName}
+              and ${preClaimRegistryMatches(sql`claimant_scan.registry_url`, registryUrl)})))`;
+}
+
 /** Claim keys that block a first claim; '*' reserves unknown-registry history. */
 export function blockingClaimRegistry(registryColumn: SQLWrapper, registryUrl: string) {
   return registryUrl === PUBLIC_NPM_REGISTRY
@@ -66,19 +103,16 @@ export function insertNpmPackageClaim(
     now: Date;
   },
 ) {
-  // Pre-claim history is ambiguous: even a single org may have connected the
-  // wrong token. Only an audited backfill may establish that historical owner.
-  // Legacy rows without registry coordinates reserve the name conservatively.
+  // Unrelated pre-claim history waits for an audited backfill; the claimant's
+  // own (see conflictingPreClaimHistory) does not. Legacy rows without registry
+  // coordinates count as public npm history.
   return db
     .insert(npmPackageClaims)
     .select(sql`select ${input.registryUrl}, 'npm', ${input.packageName},
       ${input.organizationId}, ${input.stageId}, ${input.now.getTime()},
       case when exists(select 1 from organizations o where o.id = ${input.organizationId}
         and o.id = 'personal:' || o.owner_user_id) then null else ${input.now.getTime()} end
-      where not exists (select 1 from ${scans}
-        where ${scans.source} in ('manual', 'auto_discovery')
-          and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${input.packageName}
-          and ${preClaimRegistryMatches(scans.registryUrl, input.registryUrl)})
+      where not ${conflictingPreClaimHistory(input.registryUrl, input.packageName, input.organizationId)}
         and not exists (select 1 from ${npmPackageClaims}
           where ${blockingClaimRegistry(npmPackageClaims.registryUrl, input.registryUrl)}
             and ${npmPackageClaims.ecosystem} = 'npm'
@@ -94,9 +128,11 @@ export function reserveDeletedNpmPackages(db: AppDb, deletionCondition: SQL | un
   // claim can.
   //
   // Reserve only when no other staged history of the name survives: that
-  // history keeps blocking claims itself, and an ownerless reservation would
-  // silence the remaining history holders' monitoring and turn their own
-  // pre-claim history into a package they can no longer have audited. Unknown
+  // history keeps blocking unrelated organizations itself, and an ownerless
+  // reservation would silence the remaining holders' monitoring and block
+  // their own next claim. Complete history only disappears with its
+  // organization, so a contest ends when one contender deletes its
+  // organization and the remaining holder claims with its next scan. Unknown
   // registries compare as public npm, matching preClaimRegistryMatches. Inside
   // the id subquery, the unaliased `scans` rebinds the deletion condition.
   const deletion = deletionCondition ?? sql`1 = 0`;
