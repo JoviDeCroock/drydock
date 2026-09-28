@@ -16,6 +16,7 @@ import {
   normalizeRepositoryUrl,
   type IntentEnvelope,
 } from "../intent-envelope";
+import type { GateContinuity } from "./gate-continuity-record";
 import {
   describeOperationalError,
   durationMsSince,
@@ -107,6 +108,13 @@ export interface ArtifactFacts {
    * `analyzeRelease` returns.
    */
   declaredRepository: string | null;
+  /**
+   * SHA-256 of the staged artifact's wire bytes when the adapter computed one,
+   * read off the staged details before they are released. Used to bind the
+   * review to a workflow-gate review of the same bytes.
+   */
+  stagedArtifactSha256: string | null;
+  stagedArtifactDigestVerified: boolean;
 }
 
 export interface DeterministicFindings {
@@ -229,6 +237,8 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
         files: staged.artifact.files,
       }),
     ),
+    stagedArtifactSha256: adapter.stagedArtifactSha256?.(staged.details) ?? null,
+    stagedArtifactDigestVerified: adapter.stagedArtifactDigestVerified?.(staged.details) ?? false,
   };
 }
 
@@ -425,6 +435,10 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   // Advisory source-binding classification computed by the pipeline; persisted
   // with the scan but never allowed to influence risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Advisory gate-continuity record; null when the scan is not a registry
+  // stage or the organization does not gate this package (no live release
+  // target has reviewed it, and no gate scan of this version exists).
+  gateContinuity: GateContinuity | null;
 }
 
 export interface PersistedScanOutcome {
@@ -494,6 +508,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    gateContinuity: args.gateContinuity,
     safety,
   };
   const reportJson = canonicalJson(reportPayload);
@@ -533,6 +548,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      gateContinuity: args.gateContinuity,
       safety: result.safety,
     },
     ai: args.aiFindings,
