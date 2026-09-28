@@ -79,7 +79,7 @@ export async function savePublicationObservation(
       .select(
         // The creating check holds the delivery claim: it delivers right after.
         // Positional over every column, so the trailing nulls are the review
-        // and resolution columns (migration 0035), in declaration order.
+        // and resolution columns (migration 0037), in declaration order.
         sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()}, null, null, null, null, null, null, null where ${stillAuthorized} and exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
       )
       .onConflictDoNothing({
