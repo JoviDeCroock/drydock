@@ -9,6 +9,7 @@ import type {
 } from "../../public-diff/types";
 import { DETERMINISTIC_RULES_VERSION } from "../../review";
 import { fetchPublicPackageMetadata } from "./public-metadata";
+import { npmPublicationRegistry } from "./publication-registry";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import { buildNpmFindings } from "./findings";
 import {
@@ -50,8 +51,15 @@ export const npmPublicDiff: PublicDiffAdapter = {
   // npm keeps the historical un-prefixed tag so existing purge tooling works.
   cacheTag: (packageName) => `public-diff:${packageName}`,
 
-  async listVersions(env, ctx, packageName): Promise<PublicDiffVersionListing> {
-    const metadata = await fetchPublicPackageMetadata(env, ctx, packageName, PUBLIC_NPM_REGISTRY);
+  publishedRegistryUrl: npmPublicationRegistry,
+
+  async listVersions(env, ctx, packageName, registryUrl): Promise<PublicDiffVersionListing> {
+    const metadata = await fetchPublicPackageMetadata(
+      env,
+      ctx,
+      packageName,
+      registryUrl ?? PUBLIC_NPM_REGISTRY,
+    );
 
     const tagsByVersion = new Map<string, string[]>();
     for (const [tag, version] of Object.entries(metadata["dist-tags"] ?? {})) {
@@ -139,6 +147,14 @@ export const npmPublicDiff: PublicDiffAdapter = {
     return {
       from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
+      ...(toPreview
+        ? {}
+        : {
+            toDigests: {
+              sha1: toArchive.archiveSha1 ?? null,
+              sha256: toArchive.archiveSha256 ?? null,
+            },
+          }),
       buildFindings: (fileDiff, manifestDiff) =>
         buildNpmFindings({
           staged: {

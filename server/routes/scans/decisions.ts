@@ -8,7 +8,14 @@ import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
-import { badgeLookupKey, purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
+import { postReleaseLink } from "../../db/publication-alerts";
+import { getPublicationMonitor } from "../../lib/ecosystems";
+import {
+  badgeLookupKey,
+  purgePublicFeedCache,
+  scanDistTag,
+  scanEcosystem,
+} from "../../lib/public-feed";
 import type { Bindings, Variables } from "../../types";
 
 export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -77,5 +84,31 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     );
   }
 
-  return c.json(updated);
+  // A published-pair review started from a publication alert resolves that
+  // alert. Whether the decision may also speak on the public badge is decided
+  // there; either way the badge may have changed, so purge every line the
+  // package's badge answers on.
+  if (updated.scan.source === "published") {
+    const ecosystem = scanEcosystem(updated.scan.source, updated.scan.summaryJson);
+    const resolved = ecosystem
+      ? await getPublicationMonitor(ecosystem)?.resolvePostReleaseReview(db, c.env, {
+          organizationId,
+          scanId: updated.scan.id,
+          actorUserId: session.userId,
+        })
+      : null;
+    for (const tag of resolved?.badgeTags ?? []) {
+      purgePublicFeedCache(
+        optionalWorkerExecutionContext(c),
+        canonicalOrigin(c),
+        resolved?.badgeKey ?? null,
+        tag,
+      );
+    }
+  }
+
+  return c.json({
+    ...updated,
+    postRelease: await postReleaseLink(db, organizationId, updated.scan.id, updated.scan.source),
+  });
 });

@@ -2,14 +2,18 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { compareSemver } from "../lib/ecosystems/semver";
 import {
   DEFAULT_BADGE_TAG,
-  scanDistTag,
+  PUBLIC_NPM_REGISTRY_URLS,
+  badgePickName,
+  badgeReviewedDigest,
+  badgeRowTag,
+  postReleaseAnswersTag,
   scanEcosystem,
-  scanPublicPackageName,
-  verifiedStagedDigest,
+  type BadgeSupersession,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
-import { findNewerPublishedRelease, type SharedScanRow } from "./scan-share";
-import { publicationAlerts, publicationObservations, publicationWatches } from "./schema";
+import { badgePackage, registryVerifiedPublisherSql, type BadgePackage } from "./package-badge";
+import { findNewerPublishedRelease, SHARED_SCAN_COLUMNS, type SharedScanRow } from "./scan-share";
+import { publicationAlerts, publicationObservations, publicationWatches, scans } from "./schema";
 
 /**
  * What the publication monitor records when npm served something the
@@ -89,10 +93,121 @@ function supersedesQuote(
   return onQuotedLine(version, pickVersion, tag) && compareSemver(version, pickVersion) > 0;
 }
 
+// Newest decisions first; bounded because it runs on every badge cache miss.
+// Post-release decisions are made by people, one per alerted release.
+const POST_RELEASE_WINDOW = OBSERVATION_WINDOW;
+
 /**
- * The version the badge must report as `not reviewed` because the answering
- * organization's own publication monitor saw npm serve something its reviews
- * do not vouch for — or null when the monitor has nothing to say.
+ * Post-release decisions that may speak on the public badge: a published-pair
+ * review that resolved one of its organization's publication alerts, whose
+ * guard recorded `applied` when it was decided — the organization was a
+ * registry-verified publisher of the name, the review read the release from
+ * public npm, and the reviewed tarball's digest equals the one the monitor
+ * recorded for it.
+ *
+ * The parts that can change are enforced again here, so a row that outlived
+ * its evidence never answers: the organization must still be a
+ * registry-verified publisher (the same rule the off switch holds opt-outs
+ * to), the review must still be a completed published-pair review of exactly
+ * the alerted release from public npm, and its current decision must be the
+ * one the resolution recorded. `organizationId` narrows to one organization's
+ * decisions, for the monitor evidence; without it, every publisher's count.
+ */
+function listPostReleaseDecisions(db: AppDb, target: BadgePackage, organizationId: string | null) {
+  const reviewedRegistry = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.registryUrl')`;
+  return db
+    .select({
+      ...SHARED_SCAN_COLUMNS,
+      organizationId: publicationAlerts.organizationId,
+      version: publicationAlerts.version,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
+      // Qualified by hand: see `listUnnotifiedPublicationAlerts`.
+      distTags: sql<
+        string | null
+      >`(select o.dist_tags from publication_observations o join publication_watches w on w.id = o.watch_id where w.organization_id = publication_alerts.organization_id and w.package_name = publication_alerts.package_name and o.organization_id = publication_alerts.organization_id and o.version = publication_alerts.version)`,
+    })
+    .from(publicationAlerts)
+    .innerJoin(
+      scans,
+      and(
+        eq(scans.id, publicationAlerts.reviewScanId),
+        eq(scans.organizationId, publicationAlerts.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(publicationAlerts.packageName, target.packageName),
+        organizationId ? eq(publicationAlerts.organizationId, organizationId) : undefined,
+        eq(publicationAlerts.resolutionBadge, "applied"),
+        eq(scans.source, "published"),
+        eq(scans.status, "complete"),
+        // The registry-resolved pair the review was started for, by its
+        // unredacted stage id — never the reviewed manifest's name and version,
+        // nor the summary's redacted copy (see `resolvePostReleaseReview`).
+        sql`${scans.stageId} = 'published:npm:' || ${publicationAlerts.packageName} || '@' || ${publicationAlerts.version}`,
+        sql`json_extract(${scans.summaryJson}, '$.stagedPublish.mode') = 'published_pair'`,
+        inArray(reviewedRegistry, [...PUBLIC_NPM_REGISTRY_URLS]),
+        sql`${scans.decision} = case ${publicationAlerts.resolution} when 'approved_after_release' then 'publish' when 'declined_after_release' then 'no_publish' end`,
+        registryVerifiedPublisherSql(sql`${publicationAlerts.organizationId}`, target),
+      ),
+    )
+    .orderBy(desc(publicationAlerts.resolvedAt), desc(publicationAlerts.id))
+    .limit(POST_RELEASE_WINDOW);
+}
+
+function parseDistTags(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((tag) => typeof tag === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The third way into the badge: a publisher's decision on a release after npm
+ * published it, which answers exactly like a decision before publication —
+ * `<version> approved`, or `<version> blocked` for a decline, since the
+ * version is already public and the decline is the warning. Each row carries
+ * the alert's own coordinates, which the guard bound to the reviewed bytes.
+ * npm only: the monitor watches nothing else.
+ */
+export async function listPostReleaseBadgeCandidates(
+  db: AppDb,
+  target: BadgePackage,
+  tag: string,
+): Promise<SharedScanRow[]> {
+  if (target.ecosystem !== "npm") return [];
+  const rows = await listPostReleaseDecisions(db, target, null);
+  return rows.flatMap(
+    ({ version, resolution: _resolution, resolvedAt, distTags, ...row }): SharedScanRow[] =>
+      postReleaseAnswersTag(version, parseDistTags(distTags), tag)
+        ? [
+            {
+              ...row,
+              registryVersion: version,
+              stagedVersion: version,
+              packageName: target.packageName,
+              registryPackageName: target.packageName,
+              registryUrl: PUBLIC_NPM_REGISTRY_URLS[0],
+              // Answers by the guard, never through a share or a listing.
+              publicShareToken: null,
+              publicFeedListedAt: null,
+              completedAt: resolvedAt,
+              postRelease: { tag },
+            },
+          ]
+        : [],
+  );
+}
+
+/**
+ * The version the badge must report as `not reviewed` (or `blocked`) because
+ * the answering organization's own publication monitor saw npm serve
+ * something its reviews do not vouch for — or null when the monitor has
+ * nothing to say.
  *
  * Two cases, mirroring the two ways the pick can be wrong:
  *
@@ -117,6 +232,13 @@ function supersedesQuote(
  *   leaves an approved quote alone, and a `blocked` pick stays red: it already
  *   warns.
  *
+ * Either case is answered by the organization's own guarded decision after
+ * release (`listPostReleaseDecisions`), made on the published bytes
+ * themselves: an approval clears that version — it no longer supersedes the
+ * quote, and the quote's own discrepancy or byte mismatch no longer greys it —
+ * and a decline turns `not reviewed` into `blocked`. The observation's own
+ * status is never rewritten; the decision is read beside it.
+ *
  * Only the pick's own organization's evidence counts, for the same reason the
  * staleness probe is organization-scoped: another account's watch must not be
  * a lever on someone else's README. The alert ledger is read alongside the
@@ -125,16 +247,19 @@ function supersedesQuote(
  * no evidence, and the badge falls back to what the scans say. npm only — the
  * monitor watches nothing else.
  */
-async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promise<string | null> {
+async function findPublicationDiscrepancy(
+  db: AppDb,
+  pick: SharedScanRow,
+): Promise<BadgeSupersession | null> {
   if (!pick.organizationId) return null;
   if (scanEcosystem(pick.source, pick.summaryJson) !== "npm") return null;
-  const packageName = scanPublicPackageName(pick);
+  const packageName = badgePickName(pick);
   const pickVersion = pick.registryVersion ?? pick.stagedVersion;
   if (!packageName || !pickVersion) return null;
-  const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
+  const tag = badgeRowTag(pick) ?? DEFAULT_BADGE_TAG;
 
-  const reviewedDigest = verifiedStagedDigest(pick.summaryJson);
-  const [observed, alerted, quoted, tagged] = await Promise.all([
+  const reviewedDigest = badgeReviewedDigest(pick);
+  const [observed, alerted, quoted, tagged, decided] = await Promise.all([
     db
       .select({ version: publicationObservations.version, status: publicationObservations.status })
       .from(publicationObservations)
@@ -192,10 +317,23 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
       )
       .orderBy(desc(publicationObservations.firstSeenAt))
       .limit(TAGGED_WINDOW),
+    // This organization's guarded decisions after release. The observations
+    // keep their historical verdicts; these say what the organization decided
+    // about the published bytes since.
+    listPostReleaseDecisions(db, badgePackage("npm", packageName), pick.organizationId),
   ]);
 
   const discrepancies: ReadonlySet<string> = new Set(DISCREPANCY_STATUSES);
   const tagHolders: ReadonlySet<string> = new Set(tagged.map((row) => row.version));
+  const decisions = new Map<string, "approved" | "declined">();
+  // Newest decision first, so the first one seen for a version is current.
+  for (const row of decided) {
+    if (decisions.has(row.version)) continue;
+    decisions.set(
+      row.version,
+      row.resolution === "approved_after_release" ? "approved" : "declined",
+    );
+  }
   let newest: string | null = null;
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =
@@ -208,26 +346,45 @@ async function findPublicationDiscrepancy(db: AppDb, pick: SharedScanRow): Promi
       continue;
     }
     if (!supersedesQuote(version, tagHolders, pickVersion, tag)) continue;
+    // Approved after release: the organization vouched for the published
+    // bytes since, so the release no longer stands against the quote.
+    if (decisions.get(version) === "approved") continue;
     if (!newest || compareSemver(version, newest) > 0) newest = version;
   }
-  if (newest) return newest;
-  return pickDisqualified && pick.decision !== "no_publish" ? pickVersion : null;
+  if (newest) return { version: newest, blocked: decisions.get(newest) === "declined" };
+  // The quoted version itself, decided after release: an approval vouches for
+  // the published bytes, whatever the monitor recorded before it; a decline
+  // is the badge's own warning.
+  const pickDecision = decisions.get(pickVersion);
+  if (pickDecision === "declined") {
+    return pick.decision === "no_publish" ? null : { version: pickVersion, blocked: true };
+  }
+  if (pickDecision === "approved") return null;
+  return pickDisqualified && pick.decision !== "no_publish"
+    ? { version: pickVersion, blocked: false }
+    : null;
 }
 
 /**
  * The version the badge reports instead of its pick, or null when the pick
  * still speaks for the line: the newest of a newer release this organization
  * reviewed but did not put on the badge (`findNewerPublishedRelease`) and what
- * its publication monitor recorded (`findPublicationDiscrepancy`).
+ * its publication monitor recorded (`findPublicationDiscrepancy`), `blocked`
+ * when the organization declined that release after it was published.
  */
 export async function findBadgeSupersession(
   db: AppDb,
   pick: SharedScanRow,
-): Promise<string | null> {
+): Promise<BadgeSupersession | null> {
   const [newerRelease, discrepancy] = await Promise.all([
     findNewerPublishedRelease(db, pick),
     findPublicationDiscrepancy(db, pick),
   ]);
-  if (!newerRelease || !discrepancy) return newerRelease ?? discrepancy;
-  return compareSemver(newerRelease, discrepancy) >= 0 ? newerRelease : discrepancy;
+  if (!newerRelease) return discrepancy;
+  if (!discrepancy) return { version: newerRelease, blocked: false };
+  const order = compareSemver(newerRelease, discrepancy.version);
+  // The same release both ways: a guarded decline after release is the more
+  // specific answer about the bytes consumers install.
+  if (order === 0) return discrepancy;
+  return order > 0 ? { version: newerRelease, blocked: false } : discrepancy;
 }
