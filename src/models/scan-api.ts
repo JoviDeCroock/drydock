@@ -85,6 +85,7 @@ export interface ScanListItem {
   reportDigest?: string | null;
   /** Registry captured when the staged release was submitted. */
   registryUrl?: string | null;
+  registryPackageName?: string | null;
   /** npm's lifecycle status for this exact staged version, or null if unknown. */
   registryVersionStatus?: string | null;
   registryVersionStatusAt?: string | number | Date | null;
@@ -108,8 +109,11 @@ export interface PersistedScanDetail {
     publicShareToken?: string | null;
     /** Whether this package's badge answers with no opt-in at all. */
     badgePublic?: boolean;
-    /** npm's name for the stage, which a staged review is publicly identified by. */
-    registryPackageName?: string | null;
+    /** Derived from the immutable registry package claim, never the manifest. */
+    npmPackageClaimOwned?: boolean;
+    npmPackageManagementAllowed?: boolean;
+    /** Another organization (never named), or an ownerless reservation, holds the claim. */
+    npmPackageManagedElsewhere?: boolean;
     publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;

@@ -36,7 +36,7 @@ import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
 } from "../../lib/ecosystems/npm/staged-publishes";
-import { getPublicationMonitor, getPublishedAdapter } from "../../lib/ecosystems";
+import { getPublicationMonitor, getPublishedAdapter, getStagedAdapter } from "../../lib/ecosystems";
 import { publishedPairStageId } from "../../lib/ecosystems/published-pair";
 import { PublicDiffError } from "../../lib/public-diff/error";
 import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
@@ -45,6 +45,8 @@ import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list
 import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
+import { PackageClaimConflictError } from "../../db/package-claims";
+import { readNpmPackageClaimAvailability } from "../../db/scan-jobs";
 
 export const scanLifecycleRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -85,8 +87,32 @@ scanLifecycleRoutes.post("/", async (c) => {
     stagedCreatedAt: prepared.stagedCreatedAt,
     stagedDeclaredSha1: prepared.stagedDeclaredSha1,
     registryUrl: prepared.registryUrl,
+    stageAccessStatus: prepared.stageAccessStatus,
+  }).catch((err: unknown) => {
+    if (err instanceof PackageClaimConflictError) return err;
+    throw err;
   });
+  if (detail instanceof PackageClaimConflictError) {
+    // The caller already proved stage access; only its own history is described.
+    const availability = await readNpmPackageClaimAvailability(db, {
+      registryUrl: prepared.registryUrl!,
+      packageName: prepared.packageName!,
+      organizationId,
+    });
+    const error =
+      availability === "own_history"
+        ? "This organization's earlier reviews of this package are awaiting an ownership confirmation by support. New reviews can start once support confirms it."
+        : detail.message;
+    return c.json({ error }, 409);
+  }
   if (!detail) return c.json({ error: "failed to create scan" }, 500);
+  if (prepared.staged) {
+    await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
+      organizationId,
+      registryUrl: prepared.registryUrl!,
+      releases: [prepared.staged],
+    });
+  }
   const message: ScanQueueMessage = {
     ...prepared.input,
     scanId,
@@ -139,6 +165,8 @@ interface PreparedScan {
    * release owns, and a review of an already-public version has no claim on them.
    */
   registryUrl: string | null;
+  stageAccessStatus?: number | null;
+  staged?: NonNullable<Awaited<ReturnType<typeof fetchStagedPublishDetails>>>;
 }
 
 async function prepareStagedScan(
@@ -180,18 +208,36 @@ async function prepareStagedScan(
     };
   }
 
-  // Best-effort: staged metadata gives the scan a package label up front, so
-  // a scan whose tarball never parses still shows which package it was for.
+  if (access.status === null || access.status < 200 || access.status >= 300) {
+    return { error: c.json({ error: "Could not verify npm stage access. Try again later." }, 503) };
+  }
+
+  // Package claims need a registry identity before admission; manifest bytes
+  // cannot grant ownership and a transient metadata failure must not reserve it.
   const staged = await fetchStagedPublishDetails(npmConnection.registryUrl, token, input.stageId, {
     allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
   }).catch(() => null);
 
-  if (staged) {
-    await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
-      organizationId,
+  if (!staged?.packageName || staged.id !== input.stageId || !staged.version?.trim()) {
+    return {
+      error: c.json({ error: "Could not verify npm package identity. Try again later." }, 503),
+    };
+  }
+  // npm answered with a complete stage record; a name that still fails
+  // validation is permanent, so retrying would never help.
+  if (
+    !getStagedAdapter("npm").stagedClaimIdentity?.({
       registryUrl: npmConnection.registryUrl,
-      releases: [staged],
-    });
+      packageName: staged.packageName,
+      version: staged.version,
+    })
+  ) {
+    return {
+      error: c.json(
+        { error: "npm reported a package name for this stage that Drydock cannot review." },
+        422,
+      ),
+    };
   }
 
   return {
@@ -203,6 +249,8 @@ async function prepareStagedScan(
     stagedCreatedAt: staged?.createdAt ?? null,
     stagedDeclaredSha1: staged?.shasum ?? null,
     registryUrl: npmConnection.registryUrl,
+    stageAccessStatus: access.status,
+    staged,
   };
 }
 

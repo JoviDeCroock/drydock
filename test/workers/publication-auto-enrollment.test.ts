@@ -7,7 +7,7 @@ import {
   deletePublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
-import { publicationWatchCandidates, scans } from "../../server/db/schema";
+import { npmPackageClaims, publicationWatchCandidates, scans } from "../../server/db/schema";
 import {
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
@@ -16,6 +16,22 @@ import { seedUser } from "./helpers/seed";
 
 const registry = "https://registry.npmjs.org";
 const seed = () => seedUser({ name: "Monitor" });
+async function claimPackages(organizationId: string, names: string[]) {
+  const db = createDb(env.DB);
+  for (const packageName of names)
+    await db
+      .insert(npmPackageClaims)
+      .values({
+        registryUrl: registry,
+        ecosystem: "npm",
+        packageName,
+        organizationId,
+        firstStageId: `stage-${crypto.randomUUID()}`,
+        claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
+      })
+      .onConflictDoNothing();
+}
 async function historicalScan(
   organizationId: string,
   name: string,
@@ -23,6 +39,8 @@ async function historicalScan(
 ) {
   const db = createDb(env.DB);
   const id = crypto.randomUUID();
+  if (!overrides.source || overrides.source === "manual" || overrides.source === "auto_discovery")
+    await claimPackages(organizationId, [name]);
   await db.insert(scans).values({
     id,
     stageId: `stage-${id}`,
@@ -62,6 +80,10 @@ describe("automatic publication enrollment", () => {
       { packageName: "private-package", access: "restricted" },
       { packageName: "unknown-package", access: null },
     ];
+    await claimPackages(
+      organizationId,
+      items.map((item) => item.packageName),
+    );
     await registerStagedPublicationCandidates(db, organizationId, items, "https://private.example");
     expect(await listPublicationWatches(db, organizationId)).toEqual([]);
     await registerStagedPublicationCandidates(db, organizationId, items, registry);
@@ -130,6 +152,7 @@ describe("automatic publication enrollment", () => {
       summaryJson: gateSummary("promoted-package"),
     });
     await reconcilePublicationWatches(db, organizationId);
+    await claimPackages(organizationId, ["promoted-package"]);
     await registerStagedPublicationCandidates(
       db,
       organizationId,
@@ -189,6 +212,10 @@ describe("automatic publication enrollment", () => {
       packageName: `candidate-${String(i).padStart(2, "0")}`,
       access: "public",
     }));
+    await claimPackages(
+      organizationId,
+      items.map((item) => item.packageName),
+    );
     expect(
       (await registerStagedPublicationCandidates(db, organizationId, items, registry)).deferred,
     ).toBe(2);
@@ -266,6 +293,10 @@ test("concurrent explicit and automatic enrollment share the atomic active cap",
     packageName: `auto-${index}`,
     access: "public",
   }));
+  await claimPackages(
+    organizationId,
+    items.map((item) => item.packageName),
+  );
   const results = await Promise.allSettled([
     registerStagedPublicationCandidates(db, organizationId, items, registry),
     ...Array.from({ length: 10 }, (_, index) =>
@@ -274,4 +305,33 @@ test("concurrent explicit and automatic enrollment share the atomic active cap",
   ]);
   expect(results[0]!.status).toBe("fulfilled");
   expect(await listPublicationWatches(db, organizationId)).toHaveLength(20);
+});
+
+test("automatic enrollment skips foreign claims and unaudited legacy history", async () => {
+  const owner = await seed();
+  const outsider = await seed();
+  await historicalScan(owner.organizationId, "claimed-package");
+  await historicalScan(outsider.organizationId, "claimed-package");
+  await historicalScan(outsider.organizationId, "legacy-package");
+  await outsider.db
+    .delete(npmPackageClaims)
+    .where(eq(npmPackageClaims.packageName, "legacy-package"));
+  await registerStagedPublicationCandidates(
+    outsider.db,
+    outsider.organizationId,
+    [
+      { packageName: "claimed-package", access: "public" },
+      { packageName: "legacy-package", access: "public" },
+    ],
+    registry,
+  );
+  expect(await reconcilePublicationWatches(outsider.db, outsider.organizationId)).toEqual({
+    deferred: 0,
+    suggestions: [],
+  });
+  expect(await listPublicationWatches(outsider.db, outsider.organizationId)).toEqual([]);
+  await reconcilePublicationWatches(owner.db, owner.organizationId);
+  expect(await listPublicationWatches(owner.db, owner.organizationId)).toMatchObject([
+    { packageName: "claimed-package" },
+  ]);
 });

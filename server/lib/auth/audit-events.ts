@@ -33,6 +33,28 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
+  "npm_package.management_confirmed": {
+    category: "organization",
+    label: "Package management confirmed",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
+  "npm_package.management_transferred": {
+    category: "organization",
+    label: "Package management transferred",
+    severity: "notice",
+    summarize: (m) => {
+      const pkg = str(m.packageName);
+      const destination = str(m.destinationOrganizationName);
+      return pkg && destination ? `${pkg} → ${destination}` : pkg;
+    },
+  },
+  "npm_package.management_received": {
+    category: "organization",
+    label: "Package management received",
+    severity: "notice",
+    summarize: (m) => str(m.packageName),
+  },
   "publication.discrepancy": {
     category: "security",
     label: "Publication alert raised",
@@ -183,6 +205,12 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "npm connection saved",
     severity: "notice",
     summarize: (m) => str(m.label) ?? str(m.registryUrl),
+  },
+  "npm_connection.personal_confirmed": {
+    category: "integration",
+    label: "Personal automatic scanning enabled",
+    severity: "notice",
+    summarize: (m) => str(m.registryUrl),
   },
   "npm_connection.validated": {
     category: "integration",

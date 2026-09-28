@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { badgeMarkdown } from "../src/lib/badge-markdown";
+import {
+  badgeMarkdown,
+  shareBadgeMarkdown,
+  npmBadgeAuthorityNote,
+} from "../src/lib/badge-markdown";
 
 const ORIGIN = "https://drydock.org";
 const REPORT = "https://drydock.org/reports/tok_abc123";
@@ -131,5 +135,104 @@ describe("badgeMarkdown", () => {
     });
     expect(md.startsWith("[![Drydock review](")).toBe(true);
     expect(md.endsWith(")")).toBe(true);
+  });
+});
+
+describe("share-dialog badge ownership", () => {
+  const scanBadge = {
+    origin: ORIGIN,
+    ecosystem: "npm" as const,
+    packageName: "registry-name",
+    reportUrl: REPORT,
+    badgePublic: true,
+    feedListed: true,
+  };
+  test("legacy listed and default-public scans cannot offer a badge without canonical ownership", () => {
+    expect(shareBadgeMarkdown(scanBadge)).toBeNull();
+    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: false })).toBeNull();
+    expect(
+      shareBadgeMarkdown({ ...scanBadge, badgePublic: false, npmPackageClaimOwned: false }),
+    ).toBeNull();
+    expect(
+      shareBadgeMarkdown({ ...scanBadge, feedListed: false, npmPackageClaimOwned: false }),
+    ).toBeNull();
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        npmPackageClaimOwned: true,
+        npmPackageManagementAllowed: true,
+      }),
+    ).toContain("registry-name");
+  });
+  test("personal management must be explicitly confirmed", () => {
+    expect(shareBadgeMarkdown({ ...scanBadge, npmPackageClaimOwned: true })).toBeNull();
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        npmPackageClaimOwned: true,
+        npmPackageManagementAllowed: false,
+      }),
+    ).toBeNull();
+  });
+  test("non-npm listed badges keep their existing sharing contract", () => {
+    expect(shareBadgeMarkdown({ ...scanBadge, ecosystem: "pypi", badgePublic: false })).toContain(
+      "pypi",
+    );
+    expect(
+      shareBadgeMarkdown({
+        ...scanBadge,
+        ecosystem: "vscode",
+        badgePublic: false,
+        feedListed: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("share-dialog npm badge note", () => {
+  const staged = {
+    ecosystem: "npm" as const,
+    source: "auto_discovery",
+    packageName: "registry-name",
+  };
+  test("an npm workflow-gate review is told it never answers the badge, whatever its claim", () => {
+    for (const claim of [{}, { npmPackageClaimOwned: false }, { npmPackageClaimOwned: true }]) {
+      expect(npmBadgeAuthorityNote({ ...staged, source: "workflow_gate", ...claim })).toBe(
+        "Workflow-gate reviews do not answer the npm badge; only staged reviews on public npm do.",
+      );
+    }
+  });
+  test("a staged review names the choice, another manager, or the missing claim", () => {
+    expect(
+      npmBadgeAuthorityNote({
+        ...staged,
+        npmPackageClaimOwned: true,
+        npmPackageManagementAllowed: true,
+      }),
+    ).toBeNull();
+    expect(npmBadgeAuthorityNote({ ...staged, npmPackageClaimOwned: true })).toBe(
+      "This review cannot answer the npm badge until you choose where this package is managed.",
+    );
+    const elsewhere = npmBadgeAuthorityNote({
+      ...staged,
+      source: "manual",
+      npmPackageClaimOwned: false,
+      npmPackageManagedElsewhere: true,
+    });
+    expect(elsewhere).toBe(
+      "This review cannot answer the npm badge because another organization manages this package.",
+    );
+    const unmanaged = npmBadgeAuthorityNote({ ...staged, npmPackageClaimOwned: false });
+    expect(unmanaged).toBe(
+      "This review cannot answer the npm badge because this organization does not manage this package.",
+    );
+    // A deliberate move is not a support case.
+    for (const note of [elsewhere, unmanaged]) expect(note).not.toMatch(/support/i);
+  });
+  test("reviews without an npm public identity carry no claim note", () => {
+    expect(npmBadgeAuthorityNote({ ...staged, packageName: null })).toBeNull();
+    expect(npmBadgeAuthorityNote({ ...staged, ecosystem: "pypi" })).toBeNull();
+    expect(npmBadgeAuthorityNote({ ...staged, ecosystem: null })).toBeNull();
+    expect(npmBadgeAuthorityNote({ ...staged, source: "published_pair" })).toBeNull();
   });
 });

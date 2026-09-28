@@ -1,3 +1,4 @@
+import { createDb } from "../../server/db/client";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -7,11 +8,21 @@ import {
   getPublicationWatch,
   listPublicationObservations,
 } from "../../server/db/publication-watches";
-import { publicationObservations, publicationWatches, scans } from "../../server/db/schema";
-import { checkNpmPublicationWatch } from "../../server/lib/ecosystems/npm/publication-monitor";
+import {
+  npmPackageClaims,
+  publicationAlerts,
+  publicationObservations,
+  publicationWatches,
+  scans,
+} from "../../server/db/schema";
+import {
+  checkNpmPublicationWatch,
+  sweepNpmPublicationWatches,
+} from "../../server/lib/ecosystems/npm/publication-monitor";
 import type { ReviewEvidence } from "../../server/lib/ecosystems/npm/publication-verdict";
 import { createHash } from "node:crypto";
 import { seedUser } from "./helpers/seed";
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 
 const name = "@drydock/publication-test";
 const version = "1.0.0";
@@ -49,9 +60,26 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
   };
 }
 async function seed() {
-  const { db, organizationId } = await seedUser({ name: "Watcher" });
+  const { db, organizationId, userId } = await seedUser({ name: "Watcher" });
   const watch = await createPublicationWatch(db, organizationId, name);
-  return { db, organizationId, watch };
+  return { db, organizationId, userId, watch };
+}
+/** Staged reviews make an organization a competing (or former) package manager. */
+async function seedStagedHistory(
+  db: Awaited<ReturnType<typeof seed>>["db"],
+  organizationId: string,
+  userId: string,
+) {
+  await seedLegacyScanJob(db, {
+    id: crypto.randomUUID(),
+    stageId: crypto.randomUUID(),
+    organizationId,
+    ownerUserId: userId,
+    source: "auto_discovery",
+    packageName: name,
+    stagedVersion: "0.9.0",
+    registryUrl: "https://registry.npmjs.org",
+  });
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -858,4 +886,176 @@ test("once a sweep's byte budget is spent, no tarball download starts", async ()
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
     "pending_release_backlog",
   );
+});
+
+test("another organization's claim never silences a watcher without staged history", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, watch } = await seed();
+  const owner = await seed();
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: name,
+    organizationId: owner.organizationId,
+    firstStageId: "stage-claim",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => new Response("{}", { status: 200 }));
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher).toHaveBeenCalled();
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    ownershipConflict: false,
+    lastCheckedAt: expect.any(Date),
+  });
+  await db
+    .update(npmPackageClaims)
+    .set({ organizationId: null })
+    .where(eq(npmPackageClaims.packageName, name));
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    ownershipConflict: false,
+  });
+});
+
+test("foreign and orphaned claims stop a competing manager's scheduled and direct polling without deleting watches", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, userId, watch } = await seed();
+  await seedStagedHistory(db, organizationId, userId);
+  const owner = await seed();
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: name,
+    organizationId: owner.organizationId,
+    firstStageId: "stage-claim",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async () => new Response("{}", { status: 200 }));
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    ownershipConflict: true,
+    lastCheckedAt: null,
+  });
+  await db
+    .update(npmPackageClaims)
+    .set({ organizationId: null })
+    .where(eq(npmPackageClaims.packageName, name));
+  await sweepNpmPublicationWatches(db, env);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    ownershipConflict: true,
+    lastCheckedAt: null,
+  });
+});
+
+test("a claim acquired during registry fetching prevents a competing manager's observation and alert persistence", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, userId, watch } = await seed();
+  await seedStagedHistory(db, organizationId, userId);
+  const owner = await seed();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (!String(input).endsWith(".tgz")) {
+      await db.insert(npmPackageClaims).values({
+        registryUrl: "https://registry.npmjs.org",
+        ecosystem: "npm",
+        packageName: name,
+        organizationId: owner.organizationId,
+        firstStageId: "race-stage",
+        claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
+      });
+    }
+    if (String(input).endsWith(".tgz")) return new Response(bytes);
+    return Response.json({
+      name,
+      versions: {
+        [version]: {
+          name,
+          version,
+          dist: {
+            tarball:
+              "https://registry.npmjs.org/@drydock/publication-test/-/publication-test-1.0.0.tgz",
+          },
+        },
+      },
+      time: { [version]: watch.createdAt.toISOString() },
+    });
+  });
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId)),
+  ).toEqual([]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    ownershipConflict: true,
+  });
+});
+
+test("a provisional personal claim prevents direct and scheduled polling without removing the watch", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, watch } = await seed();
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: name,
+    organizationId,
+    firstStageId: "pending-personal-stage",
+    claimedAt: new Date(),
+    managementConfirmedAt: null,
+  });
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}));
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher).not.toHaveBeenCalled();
+  await sweepNpmPublicationWatches(db, env);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId)),
+  ).toEqual([]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    managementPending: true,
+    ownershipConflict: false,
+    lastCheckedAt: null,
+  });
+});
+
+test("a same-organization provisional claim acquired during fetch prevents observation and alert persistence", async () => {
+  await createDb(env.DB).delete(npmPackageClaims).where(eq(npmPackageClaims.packageName, name));
+  const { db, organizationId, watch } = await seed();
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    await db.insert(npmPackageClaims).values({
+      registryUrl: "https://registry.npmjs.org",
+      ecosystem: "npm",
+      packageName: name,
+      organizationId,
+      firstStageId: "inflight-personal-stage",
+      claimedAt: new Date(),
+      managementConfirmedAt: null,
+    });
+    return Response.json(registryMetadata(watch, [version]));
+  });
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect(
+    await db
+      .select()
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId)),
+  ).toEqual([]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    managementPending: true,
+    ownershipConflict: false,
+    distTagsCheckedAt: null,
+  });
 });

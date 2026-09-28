@@ -20,7 +20,7 @@ import backfillBadgeKeysSql from "../../scripts/backfill-badge-package-key.sql?r
 // The digest seeded scans verified their staged bytes against.
 const REVIEWED_SHA1 = "a".repeat(40);
 
-function seedBadgeScan(
+async function seedBadgeScan(
   owner: ScanOwner,
   options: {
     packageName?: string;
@@ -75,6 +75,21 @@ function seedBadgeScan(
         }
       : null;
   const staged = source === "manual" || source === "auto_discovery";
+  const registryName =
+    options.registryPackageName === undefined ? packageName : options.registryPackageName;
+  if (staged && registryName)
+    await createDb(env.DB)
+      .insert(schema.npmPackageClaims)
+      .values({
+        registryUrl: (options.registryUrl ?? "https://registry.npmjs.org").replace(/\/+$/, ""),
+        ecosystem: "npm",
+        packageName: registryName,
+        organizationId: owner.organizationId,
+        firstStageId: `stage-${crypto.randomUUID()}`,
+        claimedAt: new Date(),
+        managementConfirmedAt: new Date(),
+      })
+      .onConflictDoNothing();
   return seedCompletedScan(owner, {
     job: {
       source,
@@ -330,6 +345,7 @@ describe("shields badge endpoint", () => {
       packageName,
       stagedVersion: version,
       registryUrl,
+      stageAccessStatus: 200,
     });
 
     const [superseded] = await db
@@ -398,11 +414,10 @@ describe("shields badge endpoint", () => {
       source: "workflow_gate",
     });
     await share(publicApp(spoofer), gateOnly, { threatFeed: true });
-    // A gate-only claim still answers the badge — but says so. No credential
-    // ever tied this org to that name.
+    // A gate-only report never establishes registry-authoritative npm badge ownership.
     expect((await fetchBadge(app, "npm", gateOnlyName)).body).toMatchObject({
-      label: "drydock (unverified)",
-      message: "2.0.0 reviewed · low risk",
+      label: "drydock",
+      message: "not reviewed",
       color: "lightgrey",
     });
   });
@@ -642,7 +657,7 @@ describe("shields badge endpoint", () => {
     );
   });
 
-  test("an approved manifest-claimed release stays visibly unverified", async () => {
+  test("an approved manifest-claimed npm release cannot answer a badge", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -657,8 +672,8 @@ describe("shields badge endpoint", () => {
     // (gate or staged) recorded it.
     await env.DB.prepare("UPDATE scans SET decision = 'publish' WHERE id = ?").bind(scanId).run();
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      label: "drydock (unverified)",
-      message: "2.0.0 approved",
+      label: "drydock",
+      message: "not reviewed",
       color: "lightgrey",
     });
   });
@@ -2353,7 +2368,7 @@ describe("the badge switch and the publication monitor are independent", () => {
     await seedPublicRelease(owner, packageName, "3.0.1");
     const created = await request(app, "/api/v1/publication-watches", {
       method: "POST",
-      body: JSON.stringify({ packageName }),
+      body: JSON.stringify({ packageName, confirmPersonalOrganization: true }),
     });
     expect(created.status).toBe(201);
     const { watch } = (await created.json()) as { watch: { id: string; createdAt: string } };
@@ -2414,37 +2429,41 @@ async function seedTwoPublishers(packageName: string) {
   return { first, firstApp, second, secondApp };
 }
 
-describe("a publisher's switch holds for every organization", () => {
-  test("either registry-verified publisher turns it off for both", async () => {
+describe("the canonical owner controls the badge across historical organizations", () => {
+  test("only the canonical owner can switch off a package with competing historical reviews", async () => {
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     const { firstApp, secondApp } = await seedTwoPublishers(packageName);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
-
-    // The first publisher's review is not the one answering; switching off
-    // must still silence the badge rather than let the other one speak.
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    expect((await setBadgeVisibility(secondApp, packageName, true)).status).toBe(403);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
     expect((await setBadgeVisibility(firstApp, packageName, true)).status).toBe(200);
     expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
-    await setBadgeVisibility(firstApp, packageName, false);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
-
-    expect((await setBadgeVisibility(secondApp, packageName, true)).status).toBe(200);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await setBadgeVisibility(firstApp, packageName, false)).status).toBe(200);
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
   });
 
-  test("turning your own switch back on does not override another publisher's", async () => {
+  test("an older opt-out from a losing organization cannot silence the canonical owner", async () => {
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const { firstApp, secondApp } = await seedTwoPublishers(packageName);
+    const { firstApp, second, secondApp } = await seedTwoPublishers(packageName);
+    await createDb(env.DB)
+      .insert(schema.packageBadgeOptOuts)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: second.organizationId,
+        packageKey: `npm:${packageName}`,
+        createdAt: new Date(),
+      });
     await setBadgeVisibility(firstApp, packageName, true);
-    await setBadgeVisibility(secondApp, packageName, true);
     await setBadgeVisibility(firstApp, packageName, false);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("not reviewed");
-
-    // A co-publisher learns why, without being told who.
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
     const read = await readBadgeVisibility(firstApp, packageName);
     expect(read.body.badge).toMatchObject({
       eligible: true,
       switchedOffByYou: false,
-      switchedOffElsewhere: true,
+      switchedOffElsewhere: false,
+    });
+    expect((await readBadgeVisibility(secondApp, packageName)).body.badge).toMatchObject({
+      eligible: false,
     });
     expect(JSON.stringify(read.body)).not.toContain("organization");
   });
@@ -2463,7 +2482,7 @@ describe("a publisher's switch holds for every organization", () => {
 
     const refused = await setBadgeVisibility(claimantApp, packageName, true);
     expect(refused.status).toBe(403);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
   });
 
   test("a published-pair reviewer cannot switch the badge off", async () => {
@@ -2472,7 +2491,7 @@ describe("a publisher's switch holds for every organization", () => {
     const reviewer = await seedUser();
     await seedBadgeScan(reviewer, { packageName, version: "3.0.1", source: "published" });
     expect((await setBadgeVisibility(publicApp(reviewer), packageName, true)).status).toBe(403);
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
   });
 
   test("an opt-out whose organization has no verified review is ignored", async () => {
@@ -2487,7 +2506,7 @@ describe("a publisher's switch holds for every organization", () => {
       packageKey: `npm:${packageName}`,
       createdAt: new Date(),
     });
-    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    expect((await fetchBadge(firstApp, "npm", packageName)).body.message).toBe("3.0.0 approved");
 
     // Clearing it needs no evidence: it only ever removes the caller's own row.
     const cleared = await setBadgeVisibility(publicApp(bystander), packageName, false);
@@ -3048,4 +3067,122 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
   });
+});
+
+describe("canonical npm badge authority", () => {
+  test("legacy foreign scans cannot displace the owner through either badge route", async () => {
+    const owner = await seedUser();
+    const outsider = await seedUser();
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const app = publicApp(owner);
+    await seedApprovedListedRelease(owner, app, packageName, "1.0.0");
+    const foreignScan = await seedBadgeScan(owner, { packageName, version: "9.0.0" });
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        organizationId: outsider.organizationId,
+        decision: "publish",
+        badgePublic: true,
+        registryVersionStatus: "published",
+      })
+      .where(eq(schema.scans.id, foreignScan));
+    await share(publicApp(outsider), foreignScan, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("1.0.0 approved");
+    await share(publicApp(outsider), foreignScan, { threatFeed: false });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("1.0.0 approved");
+  });
+
+  test("listed custom registry reviews cannot answer the public npm namespace", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      registryUrl: "https://npm.internal.example.com",
+    });
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("manifest names and stale persisted keys never redirect an npm badge", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const forgedName = `forged-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "1.0.0");
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ packageName: forgedName, decision: "publish" })
+      .where(eq(schema.scans.id, scanId));
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", forgedName)).body.message).toBe("not reviewed");
+    await db
+      .update(schema.scans)
+      .set({ badgePackageKey: `npm:${forgedName}`, publicPackageKey: `npm:${forgedName}` })
+      .where(eq(schema.scans.id, scanId));
+    expect((await fetchBadge(app, "npm", forgedName)).body.message).toBe("not reviewed");
+  });
+});
+
+test("authenticated scan detail exposes canonical ownership for the sharing controls", async () => {
+  const owner = await seedUser();
+  const outsider = await seedUser();
+  const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+  const db = createDb(env.DB);
+  const ownerScan = await seedBadgeScan(owner, { packageName, version: "1.0.0" });
+  const losingScan = await seedBadgeScan(owner, { packageName, version: "2.0.0" });
+  await db
+    .update(schema.scans)
+    .set({ organizationId: outsider.organizationId })
+    .where(eq(schema.scans.id, losingScan));
+  async function ownedBy(person: SeededUser, scanId: string) {
+    const response = await request(publicApp(person), `/api/v1/scans/${scanId}`);
+    expect(response.status).toBe(200);
+    return response.json<{ scan: { npmPackageClaimOwned: boolean } }>();
+  }
+  expect(await ownedBy(owner, ownerScan)).toMatchObject({ scan: { npmPackageClaimOwned: true } });
+  expect(await ownedBy(outsider, losingScan)).toMatchObject({
+    scan: { npmPackageClaimOwned: false },
+  });
+  await db
+    .update(schema.npmPackageClaims)
+    .set({ organizationId: null })
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect(await ownedBy(owner, ownerScan)).toMatchObject({ scan: { npmPackageClaimOwned: false } });
+  expect((await setBadgeVisibility(publicApp(owner), packageName, true)).status).toBe(403);
+  await db
+    .delete(schema.npmPackageClaims)
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect(await ownedBy(owner, ownerScan)).toMatchObject({ scan: { npmPackageClaimOwned: false } });
+});
+
+test("a provisional personal claim cannot answer listed or default badges until management is confirmed", async () => {
+  const owner = await seedUser();
+  const app = publicApp(owner);
+  const packageName = `provisional-${crypto.randomUUID().slice(0, 8)}`;
+  const scanId = await seedApprovedListedRelease(owner, app, packageName, "1.0.0");
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({ registryVersionStatus: "published", badgePublic: true })
+    .where(eq(schema.scans.id, scanId));
+  await db
+    .update(schema.npmPackageClaims)
+    .set({ managementConfirmedAt: null })
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  await share(app, scanId, { threatFeed: false });
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  const response = await request(app, `/api/v1/scans/${scanId}`);
+  expect(await response.json()).toMatchObject({
+    scan: { npmPackageClaimOwned: true, npmPackageManagementAllowed: false },
+  });
+  expect((await setBadgeVisibility(app, packageName, true)).status).toBe(403);
+  await db
+    .update(schema.npmPackageClaims)
+    .set({ managementConfirmedAt: new Date() })
+    .where(eq(schema.npmPackageClaims.packageName, packageName));
+  expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("1.0.0 approved");
 });

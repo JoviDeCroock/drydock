@@ -29,6 +29,7 @@ async function seedOrgWithValidConnection(index: number): Promise<string> {
   const encrypted = await encryptNpmToken(env, "npm_test_token_0123456789");
   await upsertNpmConnection(db, {
     organizationId,
+    confirmPersonalOrganization: true,
     registryUrl: "https://registry.npmjs.org",
     label: "npm registry",
     createdByUserId: userId,

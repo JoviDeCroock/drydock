@@ -1,8 +1,11 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { createOrganization } from "../../server/db/organizations";
 import { addOrganizationMember } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
+import { scanEvents } from "../../server/db/schema";
+import { and, eq } from "drizzle-orm";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
@@ -194,17 +197,268 @@ describe("npm-connection routes answer role denials as 403", () => {
     const app = buildTestApp(mountNpmConnection, member);
 
     const upsert = await call(app, "POST", "/api/v1/npm-connection", {
-      body: { token: INTRUDER_TOKEN },
+      body: { token: INTRUDER_TOKEN, confirmPersonalOrganization: true },
       activeOrganizationId: owner.organizationId,
     });
     expect(upsert.status).toBe(403);
     expect(await upsert.json()).toEqual({ error: "forbidden" });
 
     const validate = await call(app, "POST", "/api/v1/npm-connection/validate", {
-      body: {},
+      body: { confirmPersonalOrganization: true },
       activeOrganizationId: owner.organizationId,
     });
     expect(validate.status).toBe(403);
     expect(await validate.json()).toEqual({ error: "forbidden" });
+  });
+});
+
+describe("explicit personal connection confirmation", () => {
+  test("saving needs literal true to confirm and later token edits preserve an existing choice", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+      expect(
+        (
+          await call(app, "POST", "/api/v1/npm-connection", {
+            body: { token: OWNER_TOKEN, confirmPersonalOrganization },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toBeNull();
+    }
+    await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN, confirmPersonalOrganization: true },
+    });
+    const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+      ?.personalOrganizationConfirmedAt;
+    expect(confirmed).toBeInstanceOf(Date);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: INTRUDER_TOKEN } });
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toEqual(confirmed);
+    const response = await call(app, "GET", "/api/v1/npm-connection");
+    expect(await response.json()).toMatchObject({
+      connection: { personalOrganizationConfirmedAt: confirmed?.toISOString() },
+    });
+  });
+  test("credential validation does not implicitly confirm personal discovery", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) =>
+        String(input).endsWith("/-/whoami")
+          ? Response.json({ username: "maintainer" })
+          : Response.json({ items: [], total: 0 }),
+      );
+    try {
+      for (const confirmPersonalOrganization of [undefined, false, "true"]) {
+        expect(
+          (
+            await call(app, "POST", "/api/v1/npm-connection/validate", {
+              body: { confirmPersonalOrganization },
+            })
+          ).status,
+        ).toBe(200);
+        expect(
+          (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+        ).toBeNull();
+      }
+      expect(
+        (
+          await call(app, "POST", "/api/v1/npm-connection/validate", {
+            body: { confirmPersonalOrganization: true },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toBeInstanceOf(Date);
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  test("an explicit personal flag never writes consent onto a shared organization connection", async () => {
+    const owner = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared registry team",
+    });
+    const response = await call(
+      buildTestApp(mountNpmConnection, owner),
+      "POST",
+      "/api/v1/npm-connection",
+      {
+        body: { token: OWNER_TOKEN, confirmPersonalOrganization: true },
+        activeOrganizationId: organizationId,
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+  });
+  test("validating a shared organization connection ignores the personal flag", async () => {
+    const owner = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared validation team",
+    });
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+      activeOrganizationId: organizationId,
+    });
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ username: "maintainer" }));
+    try {
+      const response = await call(app, "POST", "/api/v1/npm-connection/validate", {
+        body: { confirmPersonalOrganization: true },
+        activeOrganizationId: organizationId,
+      });
+      expect(response.status).toBe(200);
+    } finally {
+      fetcher.mockRestore();
+    }
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+  });
+  test("personal confirmation is recorded without contacting npm and keeps the first choice", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    try {
+      const missing = await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(missing.status).toBe(404);
+      await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+      const response = await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(response.status).toBe(200);
+      const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+        ?.personalOrganizationConfirmedAt;
+      expect(confirmed).toBeInstanceOf(Date);
+      expect(await response.json()).toMatchObject({
+        connection: {
+          personalOrganizationConfirmedAt: confirmed?.toISOString(),
+          validationStatus: "unvalidated",
+        },
+      });
+      await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+      expect(
+        (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+      ).toEqual(confirmed);
+      expect(fetcher).not.toHaveBeenCalled();
+      const audit = await owner.db
+        .select()
+        .from(scanEvents)
+        .where(
+          and(
+            eq(scanEvents.organizationId, owner.organizationId),
+            eq(scanEvents.type, "npm_connection.personal_confirmed"),
+          ),
+        );
+      expect(audit).toHaveLength(1);
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  test("saving or validating repeats of the personal choice keep the first one and audit it once", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    const choose = { token: OWNER_TOKEN, confirmPersonalOrganization: true };
+    await call(app, "POST", "/api/v1/npm-connection", { body: choose });
+    const confirmed = (await getNpmConnection(owner.db, owner.organizationId))
+      ?.personalOrganizationConfirmedAt;
+    expect(confirmed).toBeInstanceOf(Date);
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ username: "maintainer" }));
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await call(app, "POST", "/api/v1/npm-connection/validate", {
+        body: { confirmPersonalOrganization: true },
+      });
+      await call(app, "POST", "/api/v1/npm-connection", { body: choose });
+      await call(app, "POST", "/api/v1/npm-connection/personal-confirmation");
+    } finally {
+      fetcher.mockRestore();
+    }
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toEqual(confirmed);
+    const audit = await owner.db
+      .select()
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, owner.organizationId),
+          eq(scanEvents.type, "npm_connection.personal_confirmed"),
+        ),
+      );
+    expect(audit).toHaveLength(1);
+  });
+  test("concurrent personal choices audit the first confirmation once", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(mountNpmConnection, owner);
+    await call(app, "POST", "/api/v1/npm-connection", { body: { token: OWNER_TOKEN } });
+    await Promise.all(
+      Array.from({ length: 4 }, () =>
+        call(app, "POST", "/api/v1/npm-connection/personal-confirmation"),
+      ),
+    );
+    const audit = await owner.db
+      .select()
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, owner.organizationId),
+          eq(scanEvents.type, "npm_connection.personal_confirmed"),
+        ),
+      );
+    expect(audit).toHaveLength(1);
+  });
+  test("personal confirmation is refused from a shared organization and for a non-owner", async () => {
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const organizationId = await createOrganization(owner.db, {
+      ownerUserId: owner.userId,
+      name: "Shared consent team",
+    });
+    await addOrganizationMember(owner.db, { organizationId, userId: admin.userId, role: "admin" });
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+      activeOrganizationId: organizationId,
+    });
+    for (const caller of [owner, admin]) {
+      const response = await call(
+        buildTestApp(mountNpmConnection, caller),
+        "POST",
+        "/api/v1/npm-connection/personal-confirmation",
+        { activeOrganizationId: organizationId },
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(
+      (await getNpmConnection(owner.db, organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
+
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: { token: OWNER_TOKEN },
+    });
+    const foreign = await call(
+      buildTestApp(mountNpmConnection, admin),
+      "POST",
+      "/api/v1/npm-connection/personal-confirmation",
+      { activeOrganizationId: owner.organizationId },
+    );
+    // Access resolution never lands on another user's workspace, so the owner's row stays untouched.
+    expect(foreign.status).not.toBe(200);
+    expect(
+      (await getNpmConnection(owner.db, owner.organizationId))?.personalOrganizationConfirmedAt,
+    ).toBeNull();
   });
 });

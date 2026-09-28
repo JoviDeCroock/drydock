@@ -1,4 +1,5 @@
-import { computed, createModel, signal } from "@preact/signals";
+import { computed, createModel, effect, signal } from "@preact/signals";
+import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicNpmConnection {
@@ -10,6 +11,7 @@ export interface PublicNpmConnection {
   tokenLast4: string | null;
   validationStatus: string;
   capabilitiesJson: unknown;
+  personalOrganizationConfirmedAt?: string | number | Date | null;
   validatedAt: string | number | Date | null;
   lastUsedAt: string | number | Date | null;
   createdByUserId: string | null;
@@ -29,6 +31,25 @@ export function npmConnectionScope(connection: PublicNpmConnection | null): stri
   if (!capabilities || typeof capabilities !== "object") return null;
   const whoami = (capabilities as { whoami?: unknown }).whoami;
   return typeof whoami === "string" && whoami ? `@${whoami}` : null;
+}
+
+/**
+ * The one dashboard notice a stored connection needs, if any. An invalid token
+ * stops all discovery. An unvalidated one pauses "Check npm". A personal
+ * workspace that has not recorded its workspace choice gets no new scheduled
+ * reviews; for an unvalidated token that fact joins the same notice, since
+ * both are fixed in the same settings card.
+ */
+export function npmConnectionNotice(
+  connection: PublicNpmConnection | null,
+  personalWorkspace: boolean,
+): "invalid" | "unvalidated" | "unvalidated_choice" | "choice" | null {
+  if (!connection) return null;
+  if (connection.validationStatus === "invalid") return "invalid";
+  const choicePending = personalWorkspace && !connection.personalOrganizationConfirmedAt;
+  if (connection.validationStatus !== "valid")
+    return choicePending ? "unvalidated_choice" : "unvalidated";
+  return choicePending ? "choice" : null;
 }
 
 export interface NpmCredentialValidation {
@@ -67,6 +88,52 @@ export const NpmConnectionModel = createModel(() => {
   const isConnected = computed(() => connection.value !== null);
   const validated = computed(() => connection.value?.validationStatus === "valid");
 
+  // Responses are applied only if no organization switch happened since the
+  // request started. Comparing organization IDs alone would accept a stale
+  // response after an A -> B -> A switch.
+  let generation = 0;
+  let latestLoad = 0;
+
+  function applyConnection(next: PublicNpmConnection | null) {
+    connection.value = next;
+    if (next) {
+      label.value = next.label;
+      registry.value = next.registryUrl;
+    } else {
+      label.value = DEFAULT_LABEL;
+      registry.value = DEFAULT_REGISTRY;
+    }
+    token.value = "";
+    validationStageId.value = "";
+  }
+
+  // The previous organization's connection is not this one's; until the new
+  // organization's load lands, the connection is unknown rather than absent.
+  effect(() => {
+    void activeOrganizationId.value;
+    generation++;
+    status.value = "idle";
+    error.value = null;
+    applyConnection(null);
+    loaded.value = false;
+  });
+
+  async function load(): Promise<void> {
+    const current = generation;
+    const request = ++latestLoad;
+    const isCurrent = () => current === generation && request === latestLoad;
+    try {
+      const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
+        "/api/v1/npm-connection",
+      );
+      if (isCurrent()) applyConnection(data.connection);
+    } catch {
+      // Keep the dashboard usable; scan creation enforces the requirement.
+    } finally {
+      if (isCurrent()) loaded.value = true;
+    }
+  }
+
   return {
     connection,
     loaded,
@@ -79,96 +146,107 @@ export const NpmConnectionModel = createModel(() => {
     busy,
     isConnected,
     validated,
+    load,
 
-    async load(): Promise<void> {
-      try {
-        const data = await apiFetch<{ connection: PublicNpmConnection | null }>(
-          "/api/v1/npm-connection",
-        );
-        this.applyConnection(data.connection);
-      } catch {
-        // Keep the dashboard usable; scan creation enforces the requirement.
-      } finally {
-        this.loaded.value = true;
-      }
-    },
-
-    applyConnection(next: PublicNpmConnection | null) {
-      this.connection.value = next;
-      if (next) {
-        this.label.value = next.label;
-        this.registry.value = next.registryUrl;
-      } else {
-        this.label.value = DEFAULT_LABEL;
-        this.registry.value = DEFAULT_REGISTRY;
-      }
-      this.token.value = "";
-      this.validationStageId.value = "";
-    },
-
-    async save(): Promise<void> {
-      const trimmedToken = this.token.value.trim();
+    async save(confirmPersonalOrganization = false): Promise<void> {
+      const current = generation;
+      const trimmedToken = token.peek().trim();
       if (!trimmedToken) return;
-      this.status.value = "saving";
-      this.error.value = null;
+      status.value = "saving";
+      error.value = null;
       try {
         const data = await saveNpmConnection({
+          confirmPersonalOrganization,
           token: trimmedToken,
-          label: this.label.value.trim() || DEFAULT_LABEL,
-          registryUrl: this.registry.value.trim() || DEFAULT_REGISTRY,
+          label: label.peek().trim() || DEFAULT_LABEL,
+          registryUrl: registry.peek().trim() || DEFAULT_REGISTRY,
         });
-        this.applyConnection(data.connection);
+        if (current !== generation) return;
+        applyConnection(data.connection);
         if (data.connection) {
-          this.status.value = "validating";
-          const validation = await validateNpmConnection();
-          this.applyConnection(validation.connection);
+          status.value = "validating";
+          const validation = await validateNpmConnection(undefined, confirmPersonalOrganization);
+          if (current !== generation) return;
+          applyConnection(validation.connection);
           if (!validation.validation.ok) {
-            this.error.value = "Saved token, but npm validation reported invalid access.";
+            error.value = "Saved token, but npm validation reported invalid access.";
           }
         }
       } catch (err) {
-        this.error.value = errorMessage(err);
-        await this.load();
+        if (current !== generation) return;
+        error.value = errorMessage(err);
+        await load();
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
       }
     },
 
-    async validate(): Promise<void> {
-      this.status.value = "validating";
-      this.error.value = null;
+    async validate(confirmPersonalOrganization = false): Promise<void> {
+      const current = generation;
+      status.value = "validating";
+      error.value = null;
       try {
-        const stageId = this.validationStageId.value.trim() || undefined;
-        const data = await validateNpmConnection(stageId);
-        this.applyConnection(data.connection);
+        const stageId = validationStageId.peek().trim() || undefined;
+        const data = await validateNpmConnection(stageId, confirmPersonalOrganization);
+        if (current !== generation) return;
+        applyConnection(data.connection);
         if (!data.validation.ok) {
-          this.error.value = "Npm validation reported invalid access.";
+          error.value = "Npm validation reported invalid access.";
         }
       } catch (err) {
-        this.error.value = errorMessage(err);
-        await this.load();
+        if (current !== generation) return;
+        error.value = errorMessage(err);
+        await load();
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
+      }
+    },
+
+    /**
+     * Records the personal-workspace choice for an existing connection. It does
+     * not contact npm, so an unreachable registry cannot block the choice, and
+     * it leaves any token being typed in the form untouched.
+     */
+    async confirmPersonalOrganization(): Promise<boolean> {
+      const current = generation;
+      status.value = "saving";
+      error.value = null;
+      try {
+        const data = await apiJson<{ connection: PublicNpmConnection | null }>(
+          "/api/v1/npm-connection/personal-confirmation",
+          {},
+        );
+        if (current !== generation) return false;
+        connection.value = data.connection;
+        return true;
+      } catch (err) {
+        if (current === generation) error.value = errorMessage(err);
+        return false;
+      } finally {
+        if (current === generation) status.value = "idle";
       }
     },
 
     async remove(): Promise<void> {
-      this.status.value = "deleting";
-      this.error.value = null;
+      const current = generation;
+      status.value = "deleting";
+      error.value = null;
       try {
         await apiFetch<{ ok: boolean }>("/api/v1/npm-connection", { method: "DELETE" });
-        this.connection.value = null;
-        this.token.value = "";
+        if (current !== generation) return;
+        connection.value = null;
+        token.value = "";
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (current === generation) error.value = errorMessage(err);
       } finally {
-        this.status.value = "idle";
+        if (current === generation) status.value = "idle";
       }
     },
   };
 });
 
 function saveNpmConnection(input: {
+  confirmPersonalOrganization?: boolean;
   token: string;
   label: string;
   registryUrl: string;
@@ -176,12 +254,15 @@ function saveNpmConnection(input: {
   return apiJson<{ connection: PublicNpmConnection | null }>("/api/v1/npm-connection", input);
 }
 
-function validateNpmConnection(stageId?: string): Promise<{
+function validateNpmConnection(
+  stageId?: string,
+  confirmPersonalOrganization = false,
+): Promise<{
   validation: NpmCredentialValidation;
   connection: PublicNpmConnection | null;
 }> {
   return apiJson<{
     validation: NpmCredentialValidation;
     connection: PublicNpmConnection | null;
-  }>("/api/v1/npm-connection/validate", { stageId });
+  }>("/api/v1/npm-connection/validate", { stageId, confirmPersonalOrganization });
 }

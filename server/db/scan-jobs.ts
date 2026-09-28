@@ -6,14 +6,23 @@
  * organization-scoped on every statement; a scan is only ever claimed by the
  * organization that created it.
  */
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
 import { deleteScanArtifacts } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import { getScan } from "./scan-detail";
 import type { ScanSource } from "./enums";
 import { NON_TERMINAL_STATUSES, registrySupersessionPatch } from "./scan-status";
-import { scans } from "./schema";
+import { npmPackageClaims, scans } from "./schema";
+import {
+  insertNpmPackageClaim,
+  npmPackageClaimMatches,
+  PackageClaimConflictError,
+  blockingClaimRegistry,
+  conflictingPreClaimHistory,
+  preClaimRegistryMatches,
+  reserveDeletedNpmPackages,
+} from "./package-claims";
 
 export interface CreateScanJobInput {
   id: string;
@@ -44,6 +53,8 @@ export interface CreateScanJobInput {
   stagedDeclaredSha1?: string | null;
   /** Registry base URL whose namespace the package coordinates belong to. */
   registryUrl?: string | null;
+  /** Fresh authenticated stage-tarball response; only a positive response can claim a package. */
+  stageAccessStatus?: number | null;
 }
 
 // `published` is a manual review of an already-public release: no registry
@@ -69,6 +80,24 @@ function sha1OrNull(value: string | null | undefined): string | null {
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const now = new Date();
   const source = input.source ?? "manual";
+  const isStaged = source === "manual" || source === "auto_discovery";
+  const identity = isStaged
+    ? (await import("../lib/ecosystems")).getStagedAdapter("npm").stagedClaimIdentity?.({
+        registryUrl: input.registryUrl,
+        packageName: input.packageName,
+        version: input.stagedVersion,
+      })
+    : null;
+  if (
+    isStaged &&
+    (!identity ||
+      !Number.isInteger(input.stageAccessStatus) ||
+      input.stageAccessStatus! < 200 ||
+      input.stageAccessStatus! >= 300)
+  ) {
+    throw new Error("A staged scan requires verified npm access and registry package identity");
+  }
+  const registryUrl = identity?.registryUrl ?? null;
   const values = {
     id: input.id,
     stageId: input.stageId,
@@ -79,30 +108,50 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     stagedVersion: input.stagedVersion ?? null,
     stagedCreatedAt: registryTimestampOrNull(input.stagedCreatedAt),
     stagedDeclaredSha1: sha1OrNull(input.stagedDeclaredSha1),
-    registryUrl: input.registryUrl ?? null,
-    registryPackageName:
-      source !== "workflow_gate" && input.registryUrl ? (input.packageName ?? null) : null,
-    registryVersion:
-      source !== "workflow_gate" && input.registryUrl ? (input.stagedVersion ?? null) : null,
+    registryUrl,
+    registryPackageName: isStaged ? (input.packageName ?? null) : null,
+    registryVersion: isStaged ? (input.stagedVersion ?? null) : null,
     risk: "unknown",
     status: "pending" as const,
     source,
     createdAt: now,
     updatedAt: now,
   };
-  const create = db.insert(scans).values(values);
-  if (source !== "workflow_gate" && input.registryUrl && input.packageName && input.stagedVersion) {
+  if (isStaged) {
+    const claim = {
+      registryUrl: registryUrl!,
+      packageName: input.packageName!,
+      organizationId: input.organizationId,
+      stageId: input.stageId,
+      now,
+    };
+    const ownsPackage = npmPackageClaimMatches(
+      claim.registryUrl,
+      claim.packageName,
+      claim.organizationId,
+    );
+    // INSERT ... SELECT needs every column in schema order. Preserve the same
+    // encoders/defaults as values(), including timestamp and JSON columns.
+    const insertValues: Partial<typeof scans.$inferInsert> = values;
+    const selectedValues = Object.entries(getTableColumns(scans)).map(([key, column]) =>
+      sql.param(insertValues[key as keyof typeof insertValues] ?? column.default ?? null, column),
+    );
     await db.batch([
-      create,
+      insertNpmPackageClaim(db, claim),
+      db
+        .insert(scans)
+        .select(sql`select ${sql.join(selectedValues, sql`, `)} where ${ownsPackage}`),
       db
         .update(scans)
         .set(registrySupersessionPatch(now))
         .where(
           and(
+            ownsPackage,
             eq(scans.organizationId, input.organizationId),
-            eq(scans.registryUrl, input.registryUrl),
-            eq(scans.registryPackageName, input.packageName),
-            eq(scans.registryVersion, input.stagedVersion),
+            // Legacy rows may carry the registry URL with a trailing slash.
+            sql`rtrim(${scans.registryUrl}, '/') = ${claim.registryUrl}`,
+            eq(scans.registryPackageName, claim.packageName),
+            eq(scans.registryVersion, input.stagedVersion!),
             inArray(scans.source, ["manual", "auto_discovery"]),
             isNull(scans.registryStatusSupersededAt),
             ne(scans.id, input.id),
@@ -110,21 +159,54 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
         ),
     ]);
   } else {
-    await create;
+    await db.insert(scans).values(values);
   }
-  return getScan(db, input.id, input.organizationId);
+  const detail = await getScan(db, input.id, input.organizationId);
+  if (isStaged && !detail) throw new PackageClaimConflictError();
+  return detail;
+}
+
+export type NpmPackageClaimAvailability = "owned" | "claimable" | "own_history" | "unavailable";
+
+/**
+ * Read-only mirror of the admission rules in `insertNpmPackageClaim`. It lets
+ * callers skip credentialed work and explain a refusal; the atomic batch in
+ * `createScanJob` stays authoritative. `own_history` means the organization's
+ * own pre-claim staged review of this exact registry/name is contested by
+ * unrelated pre-claim history and awaits an audited owner decision; it is only
+ * reported to an organization with its own competing history.
+ */
+export async function readNpmPackageClaimAvailability(
+  db: AppDb,
+  input: { registryUrl: string; packageName: string; organizationId: string },
+): Promise<NpmPackageClaimAvailability> {
+  const { registryUrl, packageName, organizationId } = input;
+  // Ordered cheapest-first; CASE stops at the first match, so an owned or
+  // claimed package never pays for the history scans.
+  const history = sql`${scans.source} in ('manual', 'auto_discovery')
+    and coalesce(${scans.registryPackageName}, ${scans.packageName}) = ${packageName}
+    and ${preClaimRegistryMatches(scans.registryUrl, registryUrl)}`;
+  const [row] = await db.all<{ state: NpmPackageClaimAvailability }>(sql`select case
+    when ${npmPackageClaimMatches(registryUrl, packageName, organizationId)} then 'owned'
+    when exists(select 1 from ${npmPackageClaims}
+      where ${blockingClaimRegistry(npmPackageClaims.registryUrl, registryUrl)}
+        and ${npmPackageClaims.ecosystem} = 'npm'
+        and ${npmPackageClaims.packageName} = ${packageName}) then 'unavailable'
+    when ${conflictingPreClaimHistory(registryUrl, packageName, organizationId)} then
+      case when exists(select 1 from ${scans}
+        where ${scans.organizationId} = ${organizationId} and ${history})
+      then 'own_history' else 'unavailable' end
+    else 'claimable' end as state`);
+  return row?.state ?? "unavailable";
 }
 
 export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {
-  await db
-    .delete(scans)
-    .where(
-      and(
-        eq(scans.id, scanId),
-        eq(scans.organizationId, organizationId),
-        eq(scans.status, "pending"),
-      ),
-    );
+  const condition = and(
+    eq(scans.id, scanId),
+    eq(scans.organizationId, organizationId),
+    eq(scans.status, "pending"),
+  );
+  await db.batch([reserveDeletedNpmPackages(db, condition), db.delete(scans).where(condition)]);
 }
 
 export type DeleteFailedScanResult =
@@ -142,16 +224,15 @@ export async function deleteFailedScan(
   scanId: string,
   organizationId: string,
 ): Promise<DeleteFailedScanResult> {
-  const deleted = await db
-    .delete(scans)
-    .where(
-      and(
-        eq(scans.id, scanId),
-        eq(scans.organizationId, organizationId),
-        eq(scans.status, "failed"),
-      ),
-    )
-    .returning({ source: scans.source });
+  const condition = and(
+    eq(scans.id, scanId),
+    eq(scans.organizationId, organizationId),
+    eq(scans.status, "failed"),
+  );
+  const [, deleted] = await db.batch([
+    reserveDeletedNpmPackages(db, condition),
+    db.delete(scans).where(condition).returning({ source: scans.source }),
+  ]);
   if (deleted[0]) return { outcome: "deleted", source: deleted[0].source };
 
   const [existing] = await db
@@ -224,7 +305,8 @@ export async function markScanFailed(
 }
 
 export async function discardScanAttempt(db: AppDb, scanId: string, organizationId: string) {
-  await db.delete(scans).where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+  const condition = and(eq(scans.id, scanId), eq(scans.organizationId, organizationId));
+  await db.batch([reserveDeletedNpmPackages(db, condition), db.delete(scans).where(condition)]);
 }
 
 /**
@@ -246,7 +328,7 @@ export async function discardGateScans(
   const discarded = artifactBucket
     ? await db.select({ id: scans.id }).from(scans).where(condition)
     : [];
-  await db.delete(scans).where(condition);
+  await db.batch([reserveDeletedNpmPackages(db, condition), db.delete(scans).where(condition)]);
   await Promise.all(
     discarded.map(({ id }) => deleteScanArtifacts(artifactBucket, organizationId, id)),
   );

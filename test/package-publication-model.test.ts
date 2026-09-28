@@ -108,7 +108,7 @@ test("starts and stops a watch, re-reading the package state after each", async 
   model = new PackagePublicationModel("@scope/package");
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
   expect(model.publication.value?.enrollment.state).toBe("stopped");
-  await model.start();
+  expect(await model.start()).toBe("watched");
   expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
     method: "POST",
     body: JSON.stringify({ packageName: "@scope/package" }),
@@ -118,6 +118,32 @@ test("starts and stops a watch, re-reading the package state after each", async 
   expect(fetchMock.mock.calls[3]?.[0]).toBe("/api/v1/publication-watches/watch-1");
   expect(fetchMock.mock.calls[3]?.[1]).toMatchObject({ method: "DELETE" });
   expect(model.publication.value?.watch).toBeNull();
+});
+
+test("a personal workspace's watch carries its explicit choice, and a pending claim asks for it", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json(notWatched))
+    .mockResolvedValueOnce(
+      json(
+        {
+          error: "Choose an organization for this package before enabling monitoring.",
+          code: "package_management_required",
+        },
+        409,
+      ),
+    )
+    .mockResolvedValueOnce(json({ ...notWatched, managementPending: true }));
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PackagePublicationModel("@scope/package");
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(await model.start({ confirmPersonalOrganization: true })).toBe("management_required");
+  expect(JSON.parse(fetchMock.mock.calls[1]?.[1].body)).toEqual({
+    packageName: "@scope/package",
+    confirmPersonalOrganization: true,
+  });
+  expect(model.error.value).toBeNull();
+  expect(model.publication.value?.managementPending).toBe(true);
 });
 
 test("an organization switch discards the previous organization's response", async () => {

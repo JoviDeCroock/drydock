@@ -4,7 +4,7 @@
  * registry-verified publisher's owners and admins — the "public badge: off"
  * switch, which silences the badge for every organization's reviews.
  */
-import { useComputed, useModel, useSignal } from "@preact/signals";
+import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { badgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
@@ -25,12 +25,19 @@ function switchedOff(state: PackageBadgeState): boolean {
   return state.switchedOffByYou || state.switchedOffElsewhere;
 }
 
-function describeBadge(state: PackageBadgeState, ecosystem: PublicEcosystem): string {
+function describeBadge(
+  state: PackageBadgeState,
+  ecosystem: PublicEcosystem,
+  managementPending: boolean | null | undefined,
+): string | null {
   if (!state.eligible && ecosystem !== "npm") {
     return "This badge has no off switch: only npm has registry-verified reviews. To withdraw one of your own reviews from it, unlist the review.";
   }
+  // Until the claim is known this could be the package's own manager; while
+  // its choice is pending, the choice card on this page is where that is said.
+  if (!state.eligible && (managementPending === null || managementPending === true)) return null;
   if (!state.eligible) {
-    return "Only an organization with a registry-verified review of this package — a staged release on public npm whose manifest matches npm's name — can switch its badge off. To withdraw one of your own reviews from it, unlist the review.";
+    return "Only the organization that manages this package controls its badge, once it has a completed staged review on public npm.";
   }
   const since = state.switchedOffAt ? ` since ${formatDateTime(state.switchedOffAt)}` : "";
   if (state.switchedOffByYou && state.switchedOffElsewhere) {
@@ -97,9 +104,12 @@ function ReadmeSnippet({ markdown }: { markdown: string }) {
 export function PublicBadgeSection({
   packageName,
   ecosystem,
+  managementPending,
 }: {
   packageName: string;
   ecosystem: PublicEcosystem;
+  /** A personal npm claim awaiting its Keep or Move choice; null until the claim is read. */
+  managementPending?: ReadonlySignal<boolean | null>;
 }) {
   const model = useModel(() => new PackageBadgeModel(packageName, ecosystem));
 
@@ -136,7 +146,9 @@ export function PublicBadgeSection({
                     {(preview) => <EndpointPreview preview={preview} />}
                   </Show>
                 </span>
-                <EmptyLine>{describeBadge(state, ecosystem)}</EmptyLine>
+                <Show when={() => describeBadge(state, ecosystem, managementPending?.value)}>
+                  {(description) => <EmptyLine>{description}</EmptyLine>}
+                </Show>
               </div>
               {state.eligible ? (
                 state.canManage ? (
@@ -154,7 +166,7 @@ export function PublicBadgeSection({
                 )
               ) : null}
             </div>
-            {markdown ? <ReadmeSnippet markdown={markdown} /> : null}
+            {state.eligible && markdown ? <ReadmeSnippet markdown={markdown} /> : null}
           </Card>
         )}
       </Show>

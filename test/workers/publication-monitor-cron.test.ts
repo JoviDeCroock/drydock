@@ -5,7 +5,7 @@ import {
   createPublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
-import { publicationWatches, scans } from "../../server/db/schema";
+import { npmPackageClaims, publicationWatches, scans } from "../../server/db/schema";
 import { sweepNpmPublicationWatches } from "../../server/lib/ecosystems/npm/publication-monitor";
 import worker from "../../server";
 import { seedUser } from "./helpers/seed";
@@ -32,6 +32,15 @@ function runScheduled() {
 test("without an npm connection, the scheduled handler checks due watches but enrolls no history", async () => {
   const { db, organizationId } = await seedUser({ name: "Watcher" });
   await createPublicationWatch(db, organizationId, name);
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: "history-package",
+    organizationId,
+    firstStageId: "history-stage",
+    claimedAt: new Date(),
+    managementConfirmedAt: new Date(),
+  });
   // With no npm connection there is no discovery sweep, so this history waits
   // for the organization to list its watches.
   await db.insert(scans).values({

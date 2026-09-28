@@ -4,6 +4,8 @@ import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
   getPublicationWatch,
+  getPublicationWatchBlocked,
+  publicationWatchBlocked,
   recordWatchCoverageGap,
   type PublicationObservation,
   type PublicationWatch,
@@ -274,6 +276,7 @@ export async function checkNpmPublicationWatch(
   options: { monitoringEnabled?: boolean; meter?: ByteMeter } = {},
 ) {
   const now = new Date();
+  const registry = npmPublicationRegistry(env);
   // Claim first, before anything that can return early or throw. The lease
   // makes manual checks and overlapping cron invocations share the bound, and
   // it moves a switched-off or failing watch to the back of the sweep order
@@ -286,6 +289,7 @@ export async function checkNpmPublicationWatch(
     .where(
       and(
         watchKey(watch),
+        sql`not ${publicationWatchBlocked(registry, watch.packageName, watch.organizationId)}`,
         or(
           isNull(publicationWatches.lastCheckedAt),
           lt(publicationWatches.lastCheckedAt, new Date(now.getTime() - CLAIM_LEASE_MS)),
@@ -293,13 +297,13 @@ export async function checkNpmPublicationWatch(
       ),
     )
     .returning({ id: publicationWatches.id });
-  if (!claimed.length) return getPublicationWatch(db, watch.organizationId, watch.id);
+  if (!claimed.length) return getPublicationWatch(db, watch.organizationId, watch.id, registry);
   try {
     const enabled =
       options.monitoringEnabled ?? (await publicationMonitoringEnabled(env, watch.organizationId));
     if (!enabled) {
       await setLastError(db, watch, "monitoring_disabled");
-      return getPublicationWatch(db, watch.organizationId, watch.id);
+      return getPublicationWatch(db, watch.organizationId, watch.id, registry);
     }
     const { lastError, attempted, watchGap } = await examineReleases(
       db,
@@ -308,6 +312,8 @@ export async function checkNpmPublicationWatch(
       now,
       options.meter ?? { bytes: 0 },
     );
+    if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
+      return getPublicationWatch(db, watch.organizationId, watch.id, registry);
     await redeliverPendingAlerts(env, db, watch, attempted, now);
     // A read that got past the package document clears a package-wide gap; a
     // failed read records one only when none is recorded, so an outage never
@@ -317,7 +323,7 @@ export async function checkNpmPublicationWatch(
     });
     await notifyCoverageGaps(env, db, watch, now);
     await setLastError(db, watch, lastError);
-    return getPublicationWatch(db, watch.organizationId, watch.id);
+    return getPublicationWatch(db, watch.organizationId, watch.id, registry);
   } catch (err) {
     // The claim already moved the watch; record why, so neither the dashboard
     // nor the package page reads a coverage claim from a check that failed.
@@ -377,7 +383,9 @@ async function refreshObservedDistTags(
   observed: readonly ObservedRelease[],
   tagsByVersion: ReadonlyMap<string, string[]> | null,
   now: Date,
+  registry: string,
 ) {
+  const stillAuthorized = sql`not ${publicationWatchBlocked(registry, watch.packageName, watch.organizationId)}`;
   const updates = observed.flatMap((row) => {
     const tags = tagsFor(tagsByVersion, row.version);
     if (sameTags(row.distTags, tags)) return [];
@@ -388,6 +396,7 @@ async function refreshObservedDistTags(
         .where(
           and(
             eq(publicationObservations.id, row.id),
+            stillAuthorized,
             eq(publicationObservations.organizationId, watch.organizationId),
           ),
         ),
@@ -397,7 +406,10 @@ async function refreshObservedDistTags(
     const [first, ...rest] = updates.slice(offset, offset + 50);
     if (first) await db.batch([first, ...rest]);
   }
-  await db.update(publicationWatches).set({ distTagsCheckedAt: now }).where(watchKey(watch));
+  await db
+    .update(publicationWatches)
+    .set({ distTagsCheckedAt: now })
+    .where(and(watchKey(watch), stillAuthorized));
 }
 
 /**
@@ -554,7 +566,7 @@ async function examineReleases(
     [...metadata.versions.keys()].map((version) => [version, true as const]),
   );
   const tagsByVersion = distTagsByVersion(metadata);
-  await refreshObservedDistTags(db, watch, observed, tagsByVersion, now);
+  await refreshObservedDistTags(db, watch, observed, tagsByVersion, now, registry);
   const existing = new Map(observed.map((item) => [item.version, item]));
   const pending: { version: string; publishedAt: Date | null; previous?: ObservedRelease }[] = [];
   // A version the monitor cannot consider is never skipped quietly: it is a
@@ -592,6 +604,8 @@ async function examineReleases(
   let downloads = 0;
   let downloadDeadline: number | null = null;
   for (const item of pending) {
+    if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
+      break;
     if (examined >= RELEASES_PER_CHECK || lookups >= HISTORY_LOOKUPS_PER_CHECK) {
       note("pending_release_backlog");
       break;
@@ -662,6 +676,7 @@ async function examineReleases(
         distTags: tagsFor(tagsByVersion, item.version),
       },
       watch.packageName,
+      registry,
     );
     if (createdAlert && isPublicationAlert(verdict.status)) {
       recordProductEvent(env, {
@@ -687,7 +702,7 @@ async function examineReleases(
  * order gives each organization at most its share of the tick, however many
  * watches it holds.
  */
-async function dueWatchesByOrganization(db: AppDb, now: Date, limit: number) {
+async function dueWatchesByOrganization(db: AppDb, now: Date, limit: number, registry: string) {
   const dueBefore = now.getTime() - WATCH_DUE_AFTER_MS;
   const ranked = await db.all<{ id: string }>(sql`
     select id from (
@@ -695,7 +710,8 @@ async function dueWatchesByOrganization(db: AppDb, now: Date, limit: number) {
         partition by organization_id order by coalesce(last_checked_at, 0), id
       ) as organization_rank
       from publication_watches
-      where last_checked_at is null or last_checked_at < ${dueBefore}
+      where (last_checked_at is null or last_checked_at < ${dueBefore})
+      and not ${publicationWatchBlocked(registry, sql`publication_watches.package_name`, sql`publication_watches.organization_id`)}
     ) order by organization_rank, coalesce(last_checked_at, 0), id limit ${limit}`);
   if (ranked.length === 0) return [];
   const rows = await db
@@ -758,7 +774,12 @@ export async function sweepNpmPublicationWatches(
   const deadline = startedAt + (options.deadlineMs ?? SWEEP_DEADLINE_MS);
   // Over-fetch so watches of switched-off organizations, which are deferred
   // rather than checked, do not leave the check budget unspent.
-  const candidates = await dueWatchesByOrganization(db, now, budget * 2);
+  const candidates = await dueWatchesByOrganization(
+    db,
+    now,
+    budget * 2,
+    npmPublicationRegistry(env),
+  );
   const enabled = new Map<string, Promise<boolean>>();
   const deferred = new Set<string>();
   const counts = { checked: 0, failed: 0, skipped: 0, switchedOff: 0 };

@@ -15,6 +15,9 @@ import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import { enrollStagedReleases } from "./publication-auto-enrollment";
+import { isValidLegacyNpmPackageName } from "./registry";
+import { PackageClaimConflictError } from "../../../db/package-claims";
+import { readNpmPackageClaimAvailability } from "../../../db/scan-jobs";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -35,17 +38,22 @@ export interface DiscoverStagedPublishesInput {
   stageStartCoordinator?: StageStartCoordinator;
   /** Cron awaits this work so organization concurrency also bounds outcome lookups. */
   awaitReleaseOutcomes?: boolean;
+  /** Cron may reconcile existing releases while personal scan management awaits confirmation. */
+  admitNewScans?: boolean;
 }
 
 export interface DiscoverStagedPublishesResult {
   found: number;
   created: number;
   skipped: number;
+  /** Stages whose package another claim or unresolved pre-claim history holds. */
+  claimBlocked: number;
   queued: boolean;
   scans: StartedStagedPublishScan[];
 }
 
 const STAGED_PUBLISH_SCAN_START_CONCURRENCY = 5;
+const CLAIM_BLOCKED = Symbol("claim_blocked");
 
 export class InvalidNpmConnectionError extends Error {
   constructor(
@@ -229,6 +237,7 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
     stageStartCoordinator = createStageStartCoordinator(),
     awaitReleaseOutcomes = false,
+    admitNewScans = true,
   } = input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
@@ -236,23 +245,44 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
-  // Runs even when npm lists no stages: this per-tick reconcile is how a
-  // connected organization enrolls newly published history, gate suggestions,
-  // and deferred packages once a slot frees.
-  await enrollStagedReleases(db, env, {
-    organizationId,
-    registryUrl: connection.registryUrl,
-    releases: stagedItems,
-  });
+
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-  const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
+  const scanCandidates = admitNewScans
+    ? filterNewStagedPublishesByStageId(stagedItems, existingStageIds)
+    : [];
+  // Reconcile even when no stages or new scans were found, and even when a scan
+  // start throws. Newly admitted claims are visible here; pending personal
+  // claims remain ineligible. Enrollment reports its own failures.
+  const enroll = () =>
+    enrollStagedReleases(db, env, {
+      organizationId,
+      registryUrl: connection.registryUrl,
+      releases: stagedItems,
+    });
   const scanStarts = await mapWithConcurrency(
     scanCandidates,
     STAGED_PUBLISH_SCAN_START_CONCURRENCY,
     (item) =>
       stageStartCoordinator.run(item.id, async () => {
         const stageId = item.id;
+        if (
+          !item.packageName ||
+          !isValidLegacyNpmPackageName(item.packageName) ||
+          !item.version?.trim()
+        ) {
+          return null;
+        }
+        // Without a scan row a blocked stage is revisited every tick, so skip
+        // it before spending a credentialed registry request on it.
+        const availability = await readNpmPackageClaimAvailability(db, {
+          registryUrl: connection.registryUrl,
+          packageName: item.packageName,
+          organizationId,
+        });
+        if (availability === "unavailable" || availability === "own_history") {
+          return CLAIM_BLOCKED;
+        }
         const access = await checkStagedPublishAccess(
           connection.registryUrl,
           connection.token,
@@ -261,7 +291,14 @@ export async function discoverAndQueueStagedPublishes(
             allowInsecureLocalhost,
           },
         );
-        if (!access.allowed) return null;
+        if (
+          !access.allowed ||
+          access.status === null ||
+          access.status < 200 ||
+          access.status >= 300
+        ) {
+          return null;
+        }
         const scanId = crypto.randomUUID();
         const detail = await createScanJob(db, {
           id: scanId,
@@ -274,7 +311,12 @@ export async function discoverAndQueueStagedPublishes(
           stagedCreatedAt: item.createdAt,
           stagedDeclaredSha1: item.shasum,
           registryUrl: connection.registryUrl,
+          stageAccessStatus: access.status,
+        }).catch((err: unknown) => {
+          if (err instanceof PackageClaimConflictError) return CLAIM_BLOCKED;
+          throw err;
         });
+        if (detail === CLAIM_BLOCKED) return CLAIM_BLOCKED;
         if (!detail) return null;
         recordProductEvent(env, {
           name: "scan.queued",
@@ -312,9 +354,20 @@ export async function discoverAndQueueStagedPublishes(
         }
         return startedScan;
       }),
-  );
+  ).catch(async (err: unknown) => {
+    await enroll();
+    throw err;
+  });
+  await enroll();
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
-
+  const claimBlocked = scanStarts.filter((start) => start === CLAIM_BLOCKED).length;
+  if (claimBlocked) {
+    emitOperationalEvent("info", "staged_publishes.claim_blocked", {
+      organizationId,
+      source,
+      count: claimBlocked,
+    });
+  }
   // Resolving npm's own state for already-reviewed releases is advisory
   // annotation. Start it only after newly discovered scan rows exist, so a
   // restaged version's new incarnation can supersede its historical review
@@ -354,6 +407,7 @@ export async function discoverAndQueueStagedPublishes(
     found: stageIds.length,
     created: startedScans.length,
     skipped: stageIds.length - startedScans.length,
+    claimBlocked,
     queued: Boolean(env.SCAN_QUEUE),
     scans: startedScans,
   };
@@ -422,9 +476,9 @@ function filterNewStagedPublishesByStageId(
 }
 
 function isStartedStagedPublishScan(
-  scan: StartedStagedPublishScan | null,
+  scan: StartedStagedPublishScan | typeof CLAIM_BLOCKED | null,
 ): scan is StartedStagedPublishScan {
-  return scan !== null;
+  return scan !== null && scan !== CLAIM_BLOCKED;
 }
 
 /**

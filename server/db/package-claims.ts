@@ -1,0 +1,350 @@
+import { and, eq, isNull, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import type { AppDb } from "./client";
+import { publicationWatchCapacityAvailable } from "./publication-watches";
+import {
+  npmPackageClaims,
+  organizations,
+  publicationWatches,
+  publicationWatchCandidates,
+  scanEvents,
+  scans,
+} from "./schema";
+
+const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
+
+/**
+ * Whether a staged scan's registry column counts as history for `registryUrl`.
+ * A registry that was never recorded predates stored coordinates, when
+ * Drydock reviewed only public npm, so it counts for public npm alone. Counting
+ * it everywhere let an organization pointing its connection at a registry it
+ * runs learn which names other organizations had reviewed.
+ */
+export function preClaimRegistryMatches(registryColumn: SQLWrapper, registryUrl: string) {
+  return registryUrl === PUBLIC_NPM_REGISTRY
+    ? sql`(rtrim(${registryColumn}, '/') = ${registryUrl}
+        or nullif(rtrim(${registryColumn}, '/'), '') is null)`
+    : sql`rtrim(${registryColumn}, '/') = ${registryUrl}`;
+}
+
+/**
+ * Pre-claim staged history that blocks `organizationId`'s first claim. Before
+ * claims existed, any organization could review a package its token reached,
+ * so history held by an unrelated organization waits for an audited owner
+ * decision. The claimant's own history does not block it: its next scan is
+ * verified by npm exactly like a brand-new package's first scan. Nor does a
+ * personal workspace whose owner belongs to a shared organization that holds
+ * its own history of the package: the team is the package's continuing home,
+ * as the move chooser's preference for a shared organization reflects. A team
+ * without its own history gets no say over a member's personal package, and
+ * the reverse is not exempt.
+ */
+export function conflictingPreClaimHistory(
+  registryUrl: string,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql`exists (select 1 from scans prior_scan
+    where prior_scan.source in ('manual', 'auto_discovery')
+      and coalesce(prior_scan.registry_package_name, prior_scan.package_name) = ${packageName}
+      and ${preClaimRegistryMatches(sql`prior_scan.registry_url`, registryUrl)}
+      and prior_scan.organization_id is not ${organizationId}
+      and not exists (select 1 from organizations prior_org
+        join organization_members prior_member on prior_member.user_id = prior_org.owner_user_id
+        join organizations claimant on claimant.id = prior_member.organization_id
+        where prior_org.id = prior_scan.organization_id
+          and prior_org.id = 'personal:' || prior_org.owner_user_id
+          and claimant.id = ${organizationId}
+          and claimant.id != 'personal:' || claimant.owner_user_id
+          and exists (select 1 from scans claimant_scan
+            where claimant_scan.organization_id = claimant.id
+              and claimant_scan.source in ('manual', 'auto_discovery')
+              and coalesce(claimant_scan.registry_package_name, claimant_scan.package_name)
+                = ${packageName}
+              and ${preClaimRegistryMatches(sql`claimant_scan.registry_url`, registryUrl)})))`;
+}
+
+/** Claim keys that block a first claim; '*' reserves unknown-registry history. */
+export function blockingClaimRegistry(registryColumn: SQLWrapper, registryUrl: string) {
+  return registryUrl === PUBLIC_NPM_REGISTRY
+    ? sql`${registryColumn} in (${registryUrl}, '*')`
+    : sql`${registryColumn} = ${registryUrl}`;
+}
+
+export class PackageClaimConflictError extends Error {
+  constructor() {
+    super(
+      "This package is unavailable for this organization. Contact support to resolve ownership.",
+    );
+    this.name = "PackageClaimConflictError";
+  }
+}
+
+/** A claim authorizes staged admission for its org, never access to another org's scan. */
+export function npmPackageClaimMatches(
+  registryUrl: string | SQLWrapper,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql`exists (select 1 from ${npmPackageClaims}
+    where ${npmPackageClaims.registryUrl} = ${registryUrl}
+      and ${npmPackageClaims.ecosystem} = 'npm'
+      and ${npmPackageClaims.packageName} = ${packageName}
+      and ${npmPackageClaims.organizationId} = ${organizationId})`;
+}
+
+/** Must be batched with the scan insert conditioned on the resulting owner. */
+export function insertNpmPackageClaim(
+  db: AppDb,
+  input: {
+    registryUrl: string;
+    packageName: string;
+    organizationId: string;
+    stageId: string;
+    now: Date;
+  },
+) {
+  // Unrelated pre-claim history waits for an audited backfill; the claimant's
+  // own (see conflictingPreClaimHistory) does not. Legacy rows without registry
+  // coordinates count as public npm history.
+  return db
+    .insert(npmPackageClaims)
+    .select(sql`select ${input.registryUrl}, 'npm', ${input.packageName},
+      ${input.organizationId}, ${input.stageId}, ${input.now.getTime()},
+      case when exists(select 1 from organizations o where o.id = ${input.organizationId}
+        and o.id = 'personal:' || o.owner_user_id) then null else ${input.now.getTime()} end
+      where not ${conflictingPreClaimHistory(input.registryUrl, input.packageName, input.organizationId)}
+        and not exists (select 1 from ${npmPackageClaims}
+          where ${blockingClaimRegistry(npmPackageClaims.registryUrl, input.registryUrl)}
+            and ${npmPackageClaims.ecosystem} = 'npm'
+            and ${npmPackageClaims.packageName} = ${input.packageName})`)
+    .onConflictDoNothing();
+}
+
+/** Preserve pre-claim evidence atomically before its last scan can disappear. */
+export function reserveDeletedNpmPackages(db: AppDb, deletionCondition: SQL | undefined) {
+  // '*' is an unassigned reservation for a historical scan whose registry was
+  // never recorded. Like that history, it blocks automatic public npm claims;
+  // it can never authorize a scan, badge, or watch. An explicit audited exact
+  // claim can.
+  //
+  // Reserve only when no other staged history of the name survives: that
+  // history keeps blocking unrelated organizations itself, and an ownerless
+  // reservation would silence the remaining holders' monitoring and block
+  // their own next claim. Complete history only disappears with its
+  // organization, so a contest ends when one contender deletes its
+  // organization and the remaining holder claims with its next scan. Unknown
+  // registries compare as public npm, matching preClaimRegistryMatches. Inside
+  // the id subquery, the unaliased `scans` rebinds the deletion condition.
+  const deletion = deletionCondition ?? sql`1 = 0`;
+  return db
+    .insert(npmPackageClaims)
+    .select(sql`select coalesce(nullif(rtrim(${scans.registryUrl}, '/'), ''), '*'),
+      'npm', coalesce(${scans.registryPackageName}, ${scans.packageName}),
+      null, ${scans.stageId}, ${Date.now()}, null
+      from ${scans}
+      where ${deletion}
+        and ${scans.source} in ('manual', 'auto_discovery')
+        and coalesce(${scans.registryPackageName}, ${scans.packageName}) is not null
+        and not exists (select 1 from scans remaining
+          where remaining.source in ('manual', 'auto_discovery')
+            and coalesce(remaining.registry_package_name, remaining.package_name)
+              = coalesce(${scans.registryPackageName}, ${scans.packageName})
+            and coalesce(nullif(rtrim(remaining.registry_url, '/'), ''), ${PUBLIC_NPM_REGISTRY})
+              = coalesce(nullif(rtrim(${scans.registryUrl}, '/'), ''), ${PUBLIC_NPM_REGISTRY})
+            and remaining.id not in (select ${scans.id} from ${scans} where ${deletion}))
+      order by ${scans.createdAt}, ${scans.id}`)
+    .onConflictDoNothing();
+}
+
+/** A personal reservation permits review, but management needs an explicit choice. */
+export function npmPackageManagementAllowed(
+  registryUrl: string | SQLWrapper,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql`exists (select 1 from npm_package_claims managed
+    join organizations management_org on management_org.id = managed.organization_id
+    where managed.registry_url = ${registryUrl} and managed.ecosystem = 'npm'
+      and managed.package_name = ${packageName} and managed.organization_id = ${organizationId}
+      and (management_org.id != 'personal:' || management_org.owner_user_id
+        or managed.management_confirmed_at is not null))`;
+}
+
+function personalOwner(organizationId: string, userId: string) {
+  return sql`exists(select 1 from organizations source_org
+    join organization_members source_member on source_member.organization_id = source_org.id
+    where source_org.id = ${organizationId} and source_org.id = 'personal:' || ${userId}
+      and source_org.owner_user_id = ${userId} and source_member.user_id = ${userId}
+      and source_member.role = 'owner')`;
+}
+
+function sharedManager(organizationId: string | SQLWrapper, userId: string) {
+  return sql`exists(select 1 from organizations destination_org
+    join organization_members destination_member on destination_member.organization_id = destination_org.id
+    where destination_org.id = ${organizationId}
+      and destination_org.id != 'personal:' || destination_org.owner_user_id
+      and destination_member.user_id = ${userId} and destination_member.role in ('owner', 'admin'))`;
+}
+
+export async function readNpmPackageManagement(
+  db: AppDb,
+  input: { registryUrl: string; packageName: string; organizationId: string; userId: string },
+) {
+  const [claim] = await db
+    .select({
+      personal:
+        sql<boolean>`${organizations.id} = 'personal:' || ${organizations.ownerUserId}`.mapWith(
+          Boolean,
+        ),
+      confirmed: npmPackageClaims.managementConfirmedAt,
+      canManage: personalOwner(input.organizationId, input.userId).mapWith(Boolean),
+    })
+    .from(npmPackageClaims)
+    .innerJoin(organizations, eq(organizations.id, npmPackageClaims.organizationId))
+    .where(
+      and(
+        eq(npmPackageClaims.registryUrl, input.registryUrl),
+        eq(npmPackageClaims.ecosystem, "npm"),
+        eq(npmPackageClaims.packageName, input.packageName),
+        eq(npmPackageClaims.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1);
+  const destinations = await db.all<{
+    id: string;
+    name: string;
+  }>(sql`select id, name from organizations
+    where ${personalOwner(input.organizationId, input.userId)}
+      and ${sharedManager(sql`organizations.id`, input.userId)} order by name, id`);
+  return {
+    claim: claim
+      ? {
+          kind: claim.personal ? ("personal" as const) : ("organization" as const),
+          managementConfirmed: !claim.personal || claim.confirmed !== null,
+          canManage: claim.canManage,
+        }
+      : null,
+    destinations,
+  };
+}
+
+export class PackageManagementAuthorizationError extends Error {}
+export class PackageManagementConflictError extends Error {}
+
+export async function manageNpmPackageClaim(
+  db: AppDb,
+  input: {
+    registryUrl: string;
+    packageName: string;
+    organizationId: string;
+    userId: string;
+    targetOrganizationId: string;
+    /** Server-selected registry; never read from the request body. */
+    monitoringRegistryUrl?: string;
+  },
+) {
+  const confirming = input.organizationId === input.targetOrganizationId;
+  const authorized = sql`${personalOwner(input.organizationId, input.userId)} and
+    ${confirming ? sql`1` : sharedManager(input.targetOrganizationId, input.userId)}`;
+  const [permission] = await db.all<{ allowed: number }>(sql`select ${authorized} as allowed`);
+  if (!permission?.allowed) throw new PackageManagementAuthorizationError();
+  const now = new Date();
+  const receiptId = crypto.randomUUID();
+  const monitor =
+    input.registryUrl === (input.monitoringRegistryUrl ?? "https://registry.npmjs.org");
+  const capacity = monitor
+    ? sql`(exists(select 1 from publication_watches
+      where organization_id = ${input.targetOrganizationId} and package_name = ${input.packageName})
+      or ${publicationWatchCapacityAvailable(input.registryUrl, input.targetOrganizationId)})`
+    : sql`1`;
+  // A move deactivates the source watch, so it must not proceed without a slot
+  // for the destination's. Keeping management in place loses no monitoring:
+  // the badge must never wait on a watch slot, and a full budget only defers
+  // the watch; auto-enrollment picks up its manual candidate once a slot frees.
+  const ownershipCapacity = confirming ? sql`1` : capacity;
+  // The monitor skips releases published before a watch's created_at. Start
+  // the destination at the source's last check (a lease taken when a check
+  // starts), so releases published while the source was paused awaiting this
+  // choice are examined. A last check that failed or hit the per-run cap can
+  // still leave earlier releases unexamined; reaching further back would alert
+  // the destination for every release reviewed only in the source.
+  const baseline = sql`coalesce((select coalesce(last_checked_at, created_at)
+    from publication_watches where organization_id = ${input.organizationId}
+      and package_name = ${input.packageName}), ${now.getTime()})`;
+  const successful = sql`exists(select 1 from scan_events where id = ${receiptId})`;
+  const eventType = confirming
+    ? "npm_package.management_confirmed"
+    : "npm_package.management_transferred";
+  const metadata = sql`json_object('packageName', ${input.packageName},
+    'registryUrl', ${input.registryUrl},
+    'sourceOrganizationId', ${input.organizationId},
+    'destinationOrganizationId', ${input.targetOrganizationId},
+    'destinationOrganizationName',
+      (select name from organizations where id = ${input.targetOrganizationId}))`;
+  // The receipt is written immediately after the guarded UPDATE. Later batch
+  // statements depend on that receipt, never on a stale ownership pre-read or
+  // a timestamp that a concurrent confirmation could also have written.
+  await db.batch([
+    db
+      .update(npmPackageClaims)
+      .set({
+        organizationId: input.targetOrganizationId,
+        managementConfirmedAt: now,
+      })
+      .where(
+        and(
+          eq(npmPackageClaims.registryUrl, input.registryUrl),
+          eq(npmPackageClaims.ecosystem, "npm"),
+          eq(npmPackageClaims.packageName, input.packageName),
+          eq(npmPackageClaims.organizationId, input.organizationId),
+          // Confirming twice keeps the original decision and its audit trail.
+          confirming ? isNull(npmPackageClaims.managementConfirmedAt) : undefined,
+          authorized,
+          ownershipCapacity,
+        ),
+      ),
+    db.insert(scanEvents).select(sql`select ${receiptId}, ${input.organizationId},
+      ${input.userId}, null, ${eventType}, ${metadata}, ${now.getTime()} where changes() > 0`),
+    ...(!confirming
+      ? [
+          db.insert(scanEvents).select(sql`select ${crypto.randomUUID()},
+      ${input.targetOrganizationId}, ${input.userId}, null, 'npm_package.management_received',
+      ${metadata}, ${now.getTime()} where ${successful}`),
+        ]
+      : []),
+    ...(monitor
+      ? [
+          db
+            .insert(publicationWatches)
+            .select(sql`select ${crypto.randomUUID()}, ${input.targetOrganizationId},
+        ${input.packageName}, 'manual', ${baseline}, null, null, null, null, null, null
+        where ${successful} and ${capacity}`)
+            .onConflictDoNothing(),
+          db
+            .insert(publicationWatchCandidates)
+            .select(sql`select ${crypto.randomUUID()}, ${input.targetOrganizationId},
+        ${input.packageName}, 'manual', ${now.getTime()}, null where ${successful}`)
+            .onConflictDoUpdate({
+              target: [
+                publicationWatchCandidates.organizationId,
+                publicationWatchCandidates.packageName,
+              ],
+              set: { source: "manual", stoppedAt: null },
+            }),
+        ]
+      : []),
+  ]);
+  const [receipt] = await db
+    .select({ id: scanEvents.id })
+    .from(scanEvents)
+    .where(eq(scanEvents.id, receiptId));
+  if (receipt) return { changed: true };
+  if (confirming) {
+    const [already] = await db.all<{ confirmed: number }>(sql`select exists(select 1
+      from npm_package_claims where registry_url = ${input.registryUrl} and ecosystem = 'npm'
+        and package_name = ${input.packageName} and organization_id = ${input.organizationId}
+        and management_confirmed_at is not null) and ${authorized} as confirmed`);
+    if (already?.confirmed) return { changed: false };
+  }
+  throw new PackageManagementConflictError();
+}

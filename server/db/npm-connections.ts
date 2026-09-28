@@ -1,5 +1,5 @@
 import type { NpmConnectionValidationStatus } from "./enums";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -12,6 +12,7 @@ export interface NpmConnectionInput {
   tokenFingerprint: string;
   tokenLast4?: string | null;
   createdByUserId: string;
+  confirmPersonalOrganization?: boolean;
 }
 
 export interface NpmConnectionValidationInput {
@@ -19,7 +20,13 @@ export interface NpmConnectionValidationInput {
   validationStatus: NpmConnectionValidationStatus;
   capabilities?: unknown;
   validatedAt?: Date | null;
+  confirmPersonalOrganization?: boolean;
 }
+
+// Consent is recorded once; token rotation or revalidation that repeats the
+// choice keeps the original timestamp and its single audit event.
+const keepFirstConfirmation = (now: Date) =>
+  sql`coalesce(${npmConnections.personalOrganizationConfirmedAt}, ${now.getTime()})`;
 
 export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) {
   const now = new Date();
@@ -36,6 +43,7 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     capabilitiesJson: null,
     validatedAt: null,
     lastUsedAt: null,
+    personalOrganizationConfirmedAt: input.confirmPersonalOrganization ? now : null,
     createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
@@ -56,6 +64,9 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
         validationStatus: values.validationStatus,
         capabilitiesJson: values.capabilitiesJson,
         validatedAt: values.validatedAt,
+        ...(input.confirmPersonalOrganization
+          ? { personalOrganizationConfirmedAt: keepFirstConfirmation(now) }
+          : {}),
         updatedAt: now,
       },
     });
@@ -89,10 +100,33 @@ export async function updateNpmConnectionValidation(
       validationStatus: input.validationStatus,
       capabilitiesJson: input.capabilities ?? null,
       validatedAt: input.validatedAt ?? null,
+      ...(input.confirmPersonalOrganization
+        ? { personalOrganizationConfirmedAt: keepFirstConfirmation(new Date()) }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(npmConnections.organizationId, input.organizationId));
   return getNpmConnection(db, input.organizationId);
+}
+
+/**
+ * Records the personal-workspace discovery choice without touching token or
+ * validation state. Callers must have already established that the
+ * organization is the caller's own personal workspace; an earlier choice keeps
+ * its original timestamp.
+ */
+export async function confirmPersonalNpmConnection(db: AppDb, organizationId: string) {
+  const now = new Date();
+  await db
+    .update(npmConnections)
+    .set({ personalOrganizationConfirmedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(npmConnections.organizationId, organizationId),
+        isNull(npmConnections.personalOrganizationConfirmedAt),
+      ),
+    );
+  return getNpmConnection(db, organizationId);
 }
 
 export async function markNpmConnectionUsedIfStale(

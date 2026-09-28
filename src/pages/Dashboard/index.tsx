@@ -1,4 +1,10 @@
-import { useSignal, useModel, useSignalEffect } from "@preact/signals";
+import {
+  type ReadonlySignal,
+  useComputed,
+  useSignal,
+  useModel,
+  useSignalEffect,
+} from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useQuerySignal } from "../../lib/query-state";
@@ -15,7 +21,11 @@ import {
   markGettingStartedDone,
   openGettingStartedPanel,
 } from "../../models/getting-started";
-import { NpmConnectionModel, npmConnectionScope } from "../../models/npm-connection";
+import {
+  NpmConnectionModel,
+  npmConnectionNotice,
+  npmConnectionScope,
+} from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import { normalizeRole, roleCanManageIntegrations } from "../../../server/lib/auth/roles";
 import {
@@ -56,6 +66,7 @@ export default function DashboardPage() {
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const overview = useModel(ScanOverviewModel);
+  const personalWorkspace = useComputed(() => organizations.active.value?.isPersonal === true);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -153,7 +164,7 @@ export default function DashboardPage() {
       {workspaceLoaded ? (
         <>
           <DashboardOnboarding scans={scans} npm={npm} />
-          <NpmTokenStaleCallout npm={npm} />
+          <NpmConnectionCallout npm={npm} personalWorkspace={personalWorkspace} />
           <OverviewStrip
             overview={overview.overview}
             loaded={overview.loaded}
@@ -162,6 +173,7 @@ export default function DashboardPage() {
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
           <PublicationMonitor
             reviews={scans.scans}
+            personalWorkspace={personalWorkspace}
             canStop={roleCanManageIntegrations(normalizeRole(organizations.active.value?.role))}
           />
         </>
@@ -510,25 +522,38 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
 // A non-valid stored token is a failure, not a setup step, so it gets a callout
 // above the reviews box. Invalid tokens stop all discovery; unvalidated tokens
 // keep their scheduled retry while the on-demand action remains unavailable.
-function NpmTokenStaleCallout({
+// A personal workspace without its recorded workspace choice gets no new
+// scheduled reviews, and otherwise only the Settings card that records it says
+// so. Each state gets one callout, since all are fixed in the same place.
+function NpmConnectionCallout({
   npm,
+  personalWorkspace,
 }: {
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+  personalWorkspace: ReadonlySignal<boolean>;
 }) {
   return (
-    <Show<string | null>
-      when={() => {
-        const status = npm.connection.value?.validationStatus;
-        return status && status !== "valid" ? status : null;
-      }}
-    >
-      {(status) => (
+    <Show when={() => npmConnectionNotice(npm.connection.value, personalWorkspace.value)}>
+      {(notice) => (
         <Alert tone="warn">
-          {status === "unvalidated" ? (
+          {notice === "unvalidated" ? (
             <>
               <strong>Check npm is paused.</strong> The stored npm token has not validated, so
               on-demand discovery is unavailable. Scheduled discovery will retry validation
               automatically, or revalidate it now in{" "}
+            </>
+          ) : notice === "unvalidated_choice" ? (
+            <>
+              <strong>npm reviews are paused.</strong> The stored npm token has not validated, so
+              on-demand discovery is unavailable, and this personal workspace has not confirmed
+              where its npm packages are managed, so scheduled discovery starts no new reviews.
+              Revalidate the token and make the choice in{" "}
+            </>
+          ) : notice === "choice" ? (
+            <>
+              <strong>Automatic scans are off.</strong> This personal workspace has not confirmed
+              where its npm packages are managed, so scheduled discovery starts no new reviews. Make
+              the choice in{" "}
             </>
           ) : (
             <>

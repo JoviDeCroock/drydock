@@ -24,6 +24,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md) — atpm's OIDC trusted publishing, the Sigstore bundles Drydock re-verifies against a pinned root, and the anonymous public-diff link atpm's own dashboard uses to hand a maintainer a pre-publish review with no account. Review only: Drydock does not approve, gate, or watch an atpm release.
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
+- [`package-claims.md`](./package-claims.md) — canonical npm organization ownership and private, audited historical migration.
 - [`public-reports.md`](./public-reports.md) — public share links, signed report attestations, badges, and the threat feed.
 - [`release-receipts.md`](./release-receipts.md) — authenticated canonical Release Receipt v1, report digest binding, workflow/staged control evidence, and schema limitations.
 

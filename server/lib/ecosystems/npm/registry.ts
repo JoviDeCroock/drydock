@@ -27,6 +27,24 @@ export function isValidNpmPackageName(name: string): boolean {
   return NPM_PACKAGE_NAME_RE.test(name);
 }
 
+// npm requires lowercase only when a name is first registered; legacy packages
+// such as `JSONStream` keep publishing under their original mixed-case names,
+// which npm treats as distinct from the lowercase spelling. Use it for names
+// npm itself reported and for read-only lookups (including the claims route,
+// which can only read or manage the caller's own claim), never to register or
+// watch a newly typed name. The charset is deliberately narrower than npm's historical
+// URL-safe set (`!'()*` are refused) so names stay inert in reports and URLs.
+const NPM_LEGACY_PACKAGE_NAME_RE =
+  /^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+const NPM_RESERVED_PACKAGE_NAMES = new Set(["node_modules", "favicon.ico"]);
+
+export function isValidLegacyNpmPackageName(name: string): boolean {
+  if (typeof name !== "string") return false;
+  if (name.length === 0 || name.length > 214) return false;
+  if (NPM_RESERVED_PACKAGE_NAMES.has(name.toLowerCase())) return false;
+  return NPM_LEGACY_PACKAGE_NAME_RE.test(name);
+}
+
 // npm's abbreviated packument (the media type the npm CLI itself asks for)
 // drops readmes and every per-version manifest field we do not read, which for
 // a long-lived package is the difference between a multi-megabyte document and
@@ -53,7 +71,8 @@ export async function fetchPackageMetadata(
   name: string,
   options: FetchPackageMetadataOptions = {},
 ): Promise<RegistryMetadata> {
-  if (!isValidNpmPackageName(name)) {
+  // Read-only lookup of a name npm already serves; the name is URL-encoded below.
+  if (!isValidLegacyNpmPackageName(name)) {
     throw new Error("invalid package name");
   }
   const registry = (

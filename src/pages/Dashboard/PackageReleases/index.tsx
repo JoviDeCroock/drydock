@@ -5,7 +5,7 @@
  * outcome agree with ours" — the per-package, per-channel question npm's
  * multiple trusted-publishing configurations make maintainers ask.
  */
-import type { ComponentChildren } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
@@ -40,7 +40,9 @@ import {
 import { registryStatusBadge } from "../../../features/registry-status";
 import { DecisionState } from "../../../features/review/DecisionState";
 import { scanSourceLabel } from "../../../features/scan-source";
+import { PackageManagement } from "../../../features/package-claims/PackageManagement";
 import { PackagePublicationSection } from "../../../features/publication-monitor/PackagePublicationSection";
+import { PackageClaimModel } from "../../../models/package-claim";
 import { PUBLIC_ECOSYSTEMS, type PublicEcosystem } from "../../../../server/lib/public-feed";
 import { PublicBadgeSection } from "./PublicBadgeSection";
 
@@ -78,6 +80,7 @@ function PackageReleasesView({
   const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
   const organizations = useModel(OrganizationModel);
+  const personalWorkspace = useComputed(() => organizations.active.value?.isPersonal === true);
   const membership = useSignal<"resolving" | "member" | "not_member" | "unavailable">("resolving");
   const sessionChecked = useAuthedDashboardSession({
     onReady: async (_session, isCancelled) => {
@@ -131,6 +134,40 @@ function PackageReleasesView({
     location.route("/", true);
   };
   const user = sessionModel.user.value;
+
+  const releases = (
+    <Show
+      when={hasReleases}
+      fallback={
+        <Card>
+          <EmptyLine>
+            No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
+            {organizationLabel} yet. Reviews start from the dashboard once a staged publish or a
+            gated release reaches Drydock.
+          </EmptyLine>
+        </Card>
+      }
+    >
+      {() => (
+        <div class="flex flex-col gap-6">
+          {channels.value.map((channel) => (
+            <ChannelSection key={channel.tag ?? ""} tag={channel.tag} releases={channel.releases} />
+          ))}
+          <Show when={model.nextCursor}>
+            {() => (
+              <div class="flex justify-center">
+                <LoadMoreButton
+                  loading={model.loadingMore}
+                  label="Load older releases"
+                  onClick={() => void model.loadMore()}
+                />
+              </div>
+            )}
+          </Show>
+        </div>
+      )}
+    </Show>
+  );
 
   return (
     <PageShell
@@ -188,48 +225,25 @@ function PackageReleasesView({
         {() => (
           <>
             <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
-            {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
-              <PublicBadgeSection
+            {ecosystem === "npm" ? (
+              <NpmPackageSections
                 packageName={packageName}
-                ecosystem={ecosystem as PublicEcosystem}
-              />
-            ) : null}
-            <Show
-              when={hasReleases}
-              fallback={
-                <Card>
-                  <EmptyLine>
-                    No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
-                    {organizationLabel} yet. Reviews start from the dashboard once a staged publish
-                    or a gated release reaches Drydock.
-                  </EmptyLine>
-                </Card>
-              }
-            >
-              {() => (
-                <div class="flex flex-col gap-6">
-                  {channels.value.map((channel) => (
-                    <ChannelSection
-                      key={channel.tag ?? ""}
-                      tag={channel.tag}
-                      releases={channel.releases}
-                    />
-                  ))}
-                  <Show when={model.nextCursor}>
-                    {() => (
-                      <div class="flex justify-center">
-                        <LoadMoreButton
-                          loading={model.loadingMore}
-                          label="Load older releases"
-                          onClick={() => void model.loadMore()}
-                        />
-                      </div>
-                    )}
-                  </Show>
-                </div>
-              )}
-            </Show>
-            {ecosystem === "npm" ? <PackagePublicationSection packageName={packageName} /> : null}
+                personalWorkspace={personalWorkspace}
+                onManagementChanged={() => void model.load()}
+              >
+                {releases}
+              </NpmPackageSections>
+            ) : (
+              <>
+                {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
+                  <PublicBadgeSection
+                    packageName={packageName}
+                    ecosystem={ecosystem as PublicEcosystem}
+                  />
+                ) : null}
+                {releases}
+              </>
+            )}
           </>
         )}
       </Show>
@@ -404,4 +418,73 @@ function Td({ children, class: className }: { children: ComponentChildren; class
   // Baseline, not top: a link, a Badge, and plain mono text have different
   // line boxes, and top alignment left their first lines visibly staggered.
   return <td class={`px-4 py-2.5 align-baseline ${className || ""}`}>{children}</td>;
+}
+
+/**
+ * An npm package's claim-aware sections around its release list. One claim
+ * model serves the management choice and the badge, so a pending choice is
+ * stated beside its control and only referred to elsewhere; a committed
+ * choice remounts the sections whose authority it changed.
+ */
+function NpmPackageSections({
+  packageName,
+  personalWorkspace,
+  onManagementChanged,
+  children,
+}: {
+  packageName: string;
+  personalWorkspace: ReadonlySignal<boolean>;
+  onManagementChanged: () => void;
+  children: ComponentChildren;
+}) {
+  const claim = useModel(() => new PackageClaimModel(packageName));
+  const revision = useSignal(0);
+  const claimPending = useComputed(() => {
+    const loading = claim.loading.value;
+    const management = claim.management.value;
+    const pending = claim.pending.value;
+    return loading || !management ? null : pending;
+  });
+  return (
+    <>
+      <PackageManagement
+        model={claim}
+        packageName={packageName}
+        onChanged={() => {
+          revision.value++;
+          onManagementChanged();
+        }}
+      />
+      <RemountOn revision={revision}>
+        <PublicBadgeSection
+          packageName={packageName}
+          ecosystem="npm"
+          managementPending={claimPending}
+        />
+      </RemountOn>
+      {children}
+      <RemountOn revision={revision}>
+        <PackagePublicationSection
+          packageName={packageName}
+          personalWorkspace={personalWorkspace}
+          onManagementRequired={() => void claim.load()}
+        />
+      </RemountOn>
+    </>
+  );
+}
+
+/**
+ * Remounts its children when `revision` changes. Reading the revision here
+ * keeps that subscription out of the page, which would otherwise re-render
+ * every release row on each bump.
+ */
+function RemountOn({
+  revision,
+  children,
+}: {
+  revision: ReadonlySignal<string | number>;
+  children: ComponentChildren;
+}) {
+  return <Fragment key={revision.value}>{children}</Fragment>;
 }

@@ -8,11 +8,13 @@ import {
 } from "../../../db/publication-alerts";
 import {
   claimReleaseCoverageNotice,
+  getPublicationWatch,
   claimWatchCoverageNotice,
   listUnnotifiedReleaseCoverageGaps,
   releaseReleaseCoverageNotice,
   releaseWatchCoverageNotice,
 } from "../../../db/publication-watches";
+import { npmPublicationRegistry } from "./publication-registry";
 import { notifyPublicationCoverageGap, notifyPublicationDiscrepancy } from "../../notify";
 import type { NotificationDeliveryOutcome } from "../../notify/deliver";
 import { emitOperationalEvent } from "../../platform/observability";
@@ -35,11 +37,20 @@ export interface PendingAlert {
  * `failed` leaves it for a later check.
  */
 async function settles(
+  env: Cloudflare.Env,
+  db: AppDb,
   watch: Watch,
   send: () => Promise<NotificationDeliveryOutcome>,
 ): Promise<boolean> {
   const context = { organizationId: watch.organizationId, watchId: watch.id };
   try {
+    const current = await getPublicationWatch(
+      db,
+      watch.organizationId,
+      watch.id,
+      npmPublicationRegistry(env),
+    );
+    if (!current || current.ownershipConflict || current.managementPending) return false;
     const outcome = await send();
     if (outcome === "failed") {
       emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", context);
@@ -71,7 +82,7 @@ export async function deliverPublicationAlert(
     packageName: watch.packageName,
     version: alert.version,
   };
-  const delivered = await settles(watch, () =>
+  const delivered = await settles(env, db, watch, () =>
     notifyPublicationDiscrepancy({ env, db, ...key, status: alert.status, reason: alert.reason }),
   );
   try {
@@ -139,7 +150,7 @@ export async function notifyCoverageGaps(env: Cloudflare.Env, db: AppDb, watch: 
   const base = { env, db, organizationId: watch.organizationId, packageName: watch.packageName };
   const reason = await claimWatchCoverageNotice(db, watch, now);
   if (reason) {
-    const sent = await settles(watch, () =>
+    const sent = await settles(env, db, watch, () =>
       notifyPublicationCoverageGap({ ...base, version: null, reason }),
     );
     if (!sent) await releaseWatchCoverageNotice(db, watch, now);
@@ -147,7 +158,7 @@ export async function notifyCoverageGaps(env: Cloudflare.Env, db: AppDb, watch: 
   for (const gap of await listUnnotifiedReleaseCoverageGaps(db, watch, now)) {
     const key = { organizationId: watch.organizationId, observationId: gap.id };
     if (!(await claimReleaseCoverageNotice(db, key, now))) continue;
-    const sent = await settles(watch, () =>
+    const sent = await settles(env, db, watch, () =>
       notifyPublicationCoverageGap({ ...base, version: gap.version, reason: gap.reason ?? "" }),
     );
     if (!sent) await releaseReleaseCoverageNotice(db, key, now);

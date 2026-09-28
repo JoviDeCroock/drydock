@@ -1,0 +1,19 @@
+{
+  "stageId": "stage-access-failure-000001",
+  "packageName": "@drydock/e2e-access-failure",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-05-26T00:00:00.000Z",
+  "staged": {
+    "directory": "staged"
+  },
+  "failure": {
+    "stagedTarballStatus": 503
+  },
+  "expected": {
+    "admissionStatus": 503,
+    "errorIncludes": "Could not verify npm stage access"
+  }
+}

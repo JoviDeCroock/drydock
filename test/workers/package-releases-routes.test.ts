@@ -1,3 +1,4 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
@@ -6,7 +7,7 @@ import {
   ACTIVE_ORG_HEADER,
   ACTIVE_ORG_STRICT_HEADER,
 } from "../../server/lib/auth/active-organization";
-import { createScanJob, recordRegistryVersionStatus } from "../../server/db/scans";
+import { recordRegistryVersionStatus } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { packagesRoutes } from "../../server/routes/packages";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -32,7 +33,7 @@ async function seedRelease(owner: SeededUser, packageName: string, options: Seed
   const stageId = `stage-${scanId.slice(-12)}`;
   const source = options.source ?? "manual";
   const staged = source === "manual" || source === "auto_discovery";
-  await createScanJob(db, {
+  await seedLegacyScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,

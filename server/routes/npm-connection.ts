@@ -2,8 +2,11 @@ import { Hono } from "hono";
 import { readJsonObject } from "../lib/platform/http";
 import { guardRateLimit } from "../lib/rate-limit";
 import { requireVerifiedEmail } from "../lib/auth/email-verification";
+import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
+import { scanEvents } from "../db/schema";
 import {
+  confirmPersonalNpmConnection,
   deleteNpmConnection,
   getNpmConnection,
   updateNpmConnectionValidation,
@@ -13,6 +16,7 @@ import {
   requireActiveOrganization,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
+import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { recordProductEvent } from "../lib/analytics";
 import {
@@ -43,6 +47,7 @@ npmConnectionRoutes.post("/", async (c) => {
     token?: unknown;
     label?: unknown;
     registryUrl?: unknown;
+    confirmPersonalOrganization?: unknown;
   }>(c);
   const token = typeof body.token === "string" ? body.token.trim() : "";
   const label =
@@ -75,12 +80,16 @@ npmConnectionRoutes.post("/", async (c) => {
       encryptNpmToken(c.env, token),
     ]);
     if (limited) return limited;
+    const before = await getNpmConnection(db, organizationId);
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
         registryUrl,
         label,
         createdByUserId: session.userId,
+        confirmPersonalOrganization:
+          body.confirmPersonalOrganization === true &&
+          organizationId === personalOrganizationId(session.userId),
         ...encrypted,
       }),
       recordScanEvent(db, {
@@ -94,6 +103,7 @@ npmConnectionRoutes.post("/", async (c) => {
         },
       }),
     ]);
+    await recordPersonalConfirmation(db, session.userId, before, connection);
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
@@ -110,7 +120,9 @@ npmConnectionRoutes.post("/", async (c) => {
 npmConnectionRoutes.post("/validate", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = await readJsonObject<{ stageId?: unknown }>(c);
+  const body = await readJsonObject<{ stageId?: unknown; confirmPersonalOrganization?: unknown }>(
+    c,
+  );
   const stageId =
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
   if (stageId && !isValidStageId(stageId)) return c.json({ error: "invalid stageId" }, 400);
@@ -140,6 +152,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
         validationStatus: validation.status,
         capabilities: validation.capabilities,
         validatedAt: validation.ok ? new Date() : null,
+        confirmPersonalOrganization:
+          body.confirmPersonalOrganization === true &&
+          organizationId === personalOrganizationId(session.userId),
       }),
       recordScanEvent(db, {
         organizationId,
@@ -152,6 +167,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
         },
       }),
     ]);
+    await recordPersonalConfirmation(db, session.userId, connection, updated);
     // The onboarding funnel's one measurable step inside the product: getting a
     // token validated is the last thing a new organization does before its
     // first review depends on an external staged publish.
@@ -182,6 +198,52 @@ npmConnectionRoutes.post("/validate", async (c) => {
     });
     return c.json({ error: "failed to validate npm connection" }, 500);
   }
+});
+
+type StoredNpmConnection = Awaited<ReturnType<typeof getNpmConnection>>;
+
+/**
+ * Audits the personal-workspace choice once, whichever route first records it.
+ * The event ID is derived from the stored first-confirmation timestamp, so
+ * concurrent requests that all observed an unconfirmed connection write it once.
+ */
+async function recordPersonalConfirmation(
+  db: AppDb,
+  actorUserId: string,
+  before: StoredNpmConnection,
+  after: StoredNpmConnection,
+) {
+  const confirmedAt = after?.personalOrganizationConfirmedAt;
+  if (before?.personalOrganizationConfirmedAt || !after || !confirmedAt) return;
+  await db
+    .insert(scanEvents)
+    .values({
+      id: `npm-connection-personal-confirmed:${after.organizationId}:${confirmedAt.getTime()}`,
+      organizationId: after.organizationId,
+      actorUserId,
+      type: "npm_connection.personal_confirmed",
+      metadataJson: { registryUrl: after.registryUrl },
+      createdAt: new Date(),
+    })
+    .onConflictDoNothing();
+}
+
+// The personal-workspace choice is a consent record, not a credential check:
+// it must not depend on npm being reachable, or an outage would leave the
+// choice unrecordable.
+npmConnectionRoutes.post("/personal-confirmation", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
+  const db = c.var.db;
+  const session = c.get("authSession");
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+  if (organizationId !== personalOrganizationId(session.userId))
+    return c.json({ error: "Only your personal workspace needs this choice." }, 400);
+  const before = await getNpmConnection(db, organizationId);
+  const connection = await confirmPersonalNpmConnection(db, organizationId);
+  if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
+  await recordPersonalConfirmation(db, session.userId, before, connection);
+  return c.json({ connection: publicNpmConnection(connection) });
 });
 
 npmConnectionRoutes.delete("/", async (c) => {

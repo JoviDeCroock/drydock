@@ -1,3 +1,5 @@
+import { normalizeRegistryUrl } from "./connection";
+import { isValidLegacyNpmPackageName } from "./registry";
 import type { NpmStagedDetails } from "./staged-publishes";
 import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
@@ -27,6 +29,24 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     }
     const maxFiles = typeof value.maxFiles === "number" ? value.maxFiles : undefined;
     return { stageId, maxFiles };
+  },
+
+  // The name comes from npm's own stage record, so legacy mixed-case names are
+  // admitted and kept case-sensitive: npm treats `JSONStream` and `jsonstream`
+  // as different packages.
+  stagedClaimIdentity({ registryUrl, packageName, version }) {
+    if (
+      !registryUrl ||
+      !packageName ||
+      !isValidLegacyNpmPackageName(packageName) ||
+      !version?.trim()
+    )
+      return null;
+    return {
+      registryUrl: normalizeRegistryUrl(registryUrl, { allowInsecureLocalhost: true }),
+      packageName,
+      version,
+    };
   },
 
   createBroker(ctx, ref) {

@@ -325,6 +325,7 @@ export function badgeLookupKey(row: {
   const name = scanPublicPackageName(row);
   if (!name) return null;
   const ecosystem = badgeEcosystem(row.source, row.summaryJson);
+  if (ecosystem === "npm" && scanPackageIdentity(row.source) !== "registry-verified") return null;
   return ecosystem ? publicPackageLookupKey(ecosystem, name) : null;
 }
 

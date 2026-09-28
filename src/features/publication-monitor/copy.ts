@@ -117,8 +117,13 @@ const sourceLabels: Record<PublicationWatch["source"], string> = {
  * unreadable version, can leave a new release unexamined and so unrecorded.
  */
 export function emptyObservationsMessage(
-  watch: Pick<PublicationWatch, "createdAt" | "lastCheckedAt" | "lastError">,
+  watch: Pick<
+    PublicationWatch,
+    "createdAt" | "lastCheckedAt" | "lastError" | "managementPending" | "ownershipConflict"
+  >,
 ): string {
+  // The meta line above says why an inactive watch is not checked.
+  if (watch.managementPending || watch.ownershipConflict) return "No releases recorded.";
   if (!watch.lastCheckedAt) {
     return "Not checked yet. Drydock checks it automatically, or choose Check now.";
   }
@@ -177,5 +182,8 @@ function releaseSummary(watch: PublicationWatch): string {
 }
 
 export function watchMetaLine(watch: PublicationWatch): string {
+  if (watch.managementPending) return "Monitoring inactive · management choice pending";
+  if (watch.ownershipConflict)
+    return "Monitoring inactive · package assigned to another organization";
   return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
 }
