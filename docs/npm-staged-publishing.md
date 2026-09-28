@@ -164,7 +164,10 @@ What this buys:
   version (a PyPI or VS Code gate of the same name is never evidence). The
   lookup is keyed on npm's own stage record (package name and version from the
   registry), never on the tarball's manifest, so a hostile stage cannot rename
-  itself out of its package's gate history.
+  itself out of its package's gate history. The stage is admitted like any
+  other, through the [package claim](./package-claims.md): a gate review never
+  establishes the claim, and a stage whose package another organization
+  claims gets no staged review here, so it carries no continuity record.
 
 | Gate continuity     | Meaning                                                                                                                                                                                                                                                                                                                      |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
