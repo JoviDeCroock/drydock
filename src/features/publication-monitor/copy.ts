@@ -7,6 +7,7 @@ import type {
   PublicationObservation,
   PublicationWatch,
 } from "../../models/publication-watches";
+import type { PublicationAlertLogEntry } from "../../models/publication-alert-log";
 
 export const observationStatusLabels: Record<PublicationObservation["status"], string> = {
   approved_match: "Approved bytes published",
@@ -256,4 +257,26 @@ export function watchMetaLine(watch: PublicationWatch): string {
   if (watch.ownershipConflict)
     return "Monitoring inactive · package assigned to another organization";
   return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
+}
+
+/**
+ * The metadata line of an entry in the unapproved-publish log: when it was
+ * raised, where it stands, and whether the package is still watched.
+ */
+export function alertLogMetaLine(
+  entry: Pick<
+    PublicationAlertLogEntry,
+    "createdAt" | "acknowledgedAt" | "resolution" | "resolvedAt" | "watched"
+  >,
+): string {
+  const parts = [`raised ${formatDateTime(entry.createdAt)}`];
+  if (entry.resolution && entry.resolvedAt) {
+    parts.push(`decided ${formatDateTime(entry.resolvedAt)}`);
+  } else if (entry.acknowledgedAt) {
+    parts.push(`acknowledged ${formatDateTime(entry.acknowledgedAt)}`);
+  } else {
+    parts.push("not acknowledged");
+  }
+  if (!entry.watched) parts.push("no longer watched");
+  return parts.join(" · ");
 }

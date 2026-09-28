@@ -406,8 +406,9 @@ test("publication monitor observes an unreviewed public release", async ({ brows
       .locator("li")
       .filter({ has: page.getByText("@drydock/e2e-publication", { exact: true }) });
     await publicationRow.getByRole("button", { name: "Check now", exact: true }).click();
+    // Scoped to the watch row: the Unapproved publishes log repeats the verdict.
     await expect(
-      monitor.getByText("Published with no approval in this organization", { exact: true }),
+      publicationRow.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
     await expect(monitor.getByText("1.0.0", { exact: true })).toBeVisible();
     await expect(monitor.getByRole("link", { name: "Open review" })).toHaveCount(0);
@@ -447,7 +448,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     await publicationRow.getByRole("button", { name: "Check now", exact: true }).click();
     await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
     await expect(
-      monitor.getByText("Published with no approval in this organization", { exact: true }),
+      publicationRow.getByText("Published with no approval in this organization", { exact: true }),
     ).toBeVisible();
     await monitor.scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -958,6 +959,12 @@ test("a publication alert is scanned, decided after release, and shows the outco
     await expect(
       row.getByRole("link", { name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab" }),
     ).toBeVisible();
+    // The organization's log of unapproved publishes lists it too.
+    await expect(monitor.getByRole("heading", { name: "Unapproved publishes" })).toBeVisible();
+    const logEntry = monitor
+      .locator("li")
+      .filter({ has: page.getByRole("link", { name: `${packageName}@1.1.0`, exact: true }) });
+    await expect(logEntry.getByText(/^raised .+ · not acknowledged$/)).toBeVisible();
 
     await row.getByRole("button", { name: "Scan", exact: true }).click();
     await page.waitForURL(/\/dashboard\/scans\/[^/?#]+/);

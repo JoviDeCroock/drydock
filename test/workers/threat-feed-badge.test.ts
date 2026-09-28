@@ -3,7 +3,11 @@ import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
-import { OBSERVATION_WINDOW } from "../../server/db/badge-publication-evidence";
+import {
+  OBSERVATION_WINDOW,
+  findBadgeSupersession,
+} from "../../server/db/badge-publication-evidence";
+import { SHARED_SCAN_COLUMNS } from "../../server/db/scan-share";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
@@ -2527,6 +2531,17 @@ type ObservationStatus =
   | "artifact_mismatch"
   | "unknown";
 
+// What the monitor evidence says about a scan as the badge's pick, read
+// directly: no npm pick can answer without the package claim, so this is the
+// only way to reach the evidence's own guards for one that has none.
+async function supersessionOf(scanId: string) {
+  const [pick] = await createDb(env.DB)
+    .select(SHARED_SCAN_COLUMNS)
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  return findBadgeSupersession(createDb(env.DB), pick!);
+}
+
 async function recordObservation(
   organizationId: string,
   packageName: string,
@@ -2632,20 +2647,68 @@ async function seedApprovedDefaultRelease(
 }
 
 describe("the badge reads the organization's publication monitor", () => {
-  test.each([
-    "artifact_mismatch",
-    "published_despite_rejection",
-    "published_without_approval",
-  ] as const)("%s for the quoted version takes the green off it", async (status) => {
+  test.each(["artifact_mismatch", "published_without_approval"] as const)(
+    "%s for the quoted version takes the green off it",
+    async (status) => {
+      const owner = await seedUser();
+      const app = publicApp(owner);
+      const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+      await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+      await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+      expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+        message: "3.0.0 published without approval",
+        color: "orange",
+      });
+    },
+  );
+
+  test("a release npm published despite the publisher's rejection reads blocked", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
 
-    await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.0 not reviewed",
+      label: "drydock",
+      message: "3.0.1 blocked",
+      color: "red",
+    });
+  });
+
+  test("anyone but a registry-verified publisher gets grey for a rejection npm published over", async () => {
+    const claimant = await seedUser();
+    const app = publicApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+
+    await recordObservation(
+      claimant.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
       color: "lightgrey",
+    });
+    // The flag's own guard, should such a pick ever answer: grey, not red.
+    expect(await supersessionOf(gate)).toEqual({
+      version: "3.0.1",
+      blocked: false,
+      unapproved: false,
     });
   });
 
@@ -2663,8 +2726,8 @@ describe("the badge reads the organization's publication monitor", () => {
       "published_without_approval",
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.1 not reviewed",
-      color: "lightgrey",
+      message: "3.0.1 published without approval",
+      color: "orange",
     });
   });
 
@@ -2764,7 +2827,7 @@ describe("the badge reads the organization's publication monitor", () => {
       "published_without_approval",
     );
     expect((await fetchBadge(app, "npm", packageName, { tag: "v1" })).body.message).toBe(
-      "1.9.1 not reviewed",
+      "1.9.1 published without approval",
     );
   });
 
@@ -2827,7 +2890,9 @@ describe("the badge reads the organization's publication monitor", () => {
 
     // Stopping a watch deletes its observations; the alert ledger stays.
     await recordAlertOnly(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.0 published without approval",
+    );
   });
 
   test("a deliberately listed review is held to the same evidence", async () => {
@@ -2840,7 +2905,43 @@ describe("the badge reads the organization's publication monitor", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.0 published without approval",
+    );
+  });
+
+  test("only a registry-verified publisher's own alert flags the badge; anyone else's greys it", async () => {
+    // A workflow gate only claims the name in its tarball manifest, so the
+    // organization that listed it has no tie to the package's releases, and
+    // no claim: its review never answers the npm badge at all.
+    const claimant = await seedUser();
+    const app = publicApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await recordObservation(
+      claimant.organizationId,
+      packageName,
+      "3.0.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
+      color: "lightgrey",
+    });
+    // The flag's own guard, should such a pick ever answer: grey, not orange.
+    expect(await supersessionOf(gate)).toEqual({
+      version: "3.0.1",
+      blocked: false,
+      unapproved: false,
+    });
   });
 
   test("a blocked review stays red: a discrepancy does not make it less true", async () => {
@@ -2880,8 +2981,8 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       { distTags: ["latest"] },
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.1-0 not reviewed",
-      color: "lightgrey",
+      message: "3.0.1-0 published without approval",
+      color: "orange",
     });
   });
 
@@ -2903,7 +3004,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     // Recorded tags only add supersessions; the version-shape floor still
     // counts a newer stable release on `latest`'s line.
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 
   test("the tag's own badge is superseded by the release npm points it at", async () => {
@@ -2938,7 +3041,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: ["latest"] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("2.9.9 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "2.9.9 published without approval",
+    );
   });
 
   test("moving the tag back to the quote does not clear a newer unapproved release", async () => {
@@ -2959,7 +3064,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     // Whoever can publish 3.0.1 can also point `latest` back at 3.0.0; that
     // must not turn the badge green while 3.0.1 is still published.
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.1 published without approval",
+    );
   });
 
   test("a recorded tag holder never clears an alert", async () => {
@@ -2970,12 +3077,16 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
 
     // Its watch is gone, so the alert has no tags of its own.
     await recordAlertOnly(owner.organizationId, packageName, "4.0.0", "published_without_approval");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 
   test("`latest` moved to an older approved release leaves the quote approved", async () => {
@@ -3031,7 +3142,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       Array.from({ length: OBSERVATION_WINDOW }, (_, index) => `0.0.${index}`),
       "published_without_approval",
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1-0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.1-0 published without approval",
+    );
   });
 
   test("a missing tag is never read as off the line", async () => {
@@ -3058,14 +3171,18 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: ["next"] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
 
     // Seeing `latest` on the quote does not take it back: a recorded tag is
     // a snapshot, and the newer unapproved release is still published.
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 });
 
