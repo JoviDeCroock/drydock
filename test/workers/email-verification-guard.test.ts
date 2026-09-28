@@ -103,6 +103,7 @@ describe("email verification guard", () => {
       "/api/v1/github-app/install",
       "/api/v1/github-app/install/callback",
       "/api/v1/scans/scan-1/decision",
+      "/api/v1/scans/batch-approval",
       "/api/v1/github-app/workflow-gates/gate-1/decision",
     ]) {
       const res = await post(app, path, {});

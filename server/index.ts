@@ -128,6 +128,7 @@ app.get("/api", (c) =>
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",
       scanOverview: "GET /api/v1/scans/overview",
+      scanBatchApproval: "GET/POST /api/v1/scans/batch-approval",
       scanDetail: "GET /api/v1/scans/:id",
       packageReleases:
         "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",

@@ -47,6 +47,8 @@ export type AnalyticsEvent =
       decision: string;
       releaseRisk: string;
       artifactRisk: string;
+      /** `batch` when one action approved several staged reviews. */
+      via: "single" | "batch";
       timeToDecisionMs: number;
     }
   | {
@@ -254,7 +256,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       return base(
         event.organizationId,
         event.ecosystem,
-        [event.decision, event.releaseRisk, event.artifactRisk],
+        [event.decision, event.releaseRisk, event.artifactRisk, event.via],
         [event.timeToDecisionMs],
       );
     case "ai_review.finished":

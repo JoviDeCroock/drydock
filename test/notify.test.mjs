@@ -358,6 +358,9 @@ describe("notifyStagedReleaseApprovable", () => {
     expect(message.text).toContain("Release risk: medium.");
     expect(message.text).toContain("Findings: 5 findings (2 on the release diff).");
     expect(message.text).toContain("Drydock decision: none recorded yet.");
+    expect(message.text).toContain(
+      "Decide in Drydock before you approve the stage on npm: the publication monitor counts a release as approved only when the approval here came first.",
+    );
     expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1?org=org_1");
     expect(message.text).toContain(
       "npm stage approve stage-safe_123 --registry 'https://registry.example.test/npm'",
@@ -445,6 +448,27 @@ describe("notifyScanCompletion", () => {
       expect(event.type).toBe("scan.notification_sent");
       expect(event.metadata).toMatchObject({ outcome: "complete", channel: "email" });
     }
+  });
+
+  test("asks for the decision before npm approval only for a staged review", async () => {
+    const decideFirst = "Decide in Drydock before you approve the stage on npm";
+    dbMock.getScan.mockResolvedValue({
+      scan: { packageName: "demo-package", stagedVersion: "1.2.0", risk: "low", source: "manual" },
+    });
+    await notifyScanCompletion(scanInput());
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).toContain(decideFirst);
+
+    emailMock.sendNotificationEmail.mockClear();
+    dbMock.getScan.mockResolvedValue({
+      scan: {
+        packageName: "demo-package",
+        stagedVersion: "1.2.0",
+        risk: "low",
+        source: "published",
+      },
+    });
+    await notifyScanCompletion(scanInput());
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).not.toContain(decideFirst);
   });
 
   test("surfaces approved release memory and the release-delta risk", async () => {
@@ -836,6 +860,24 @@ describe("notifyPublicationDiscrepancy", () => {
       input.db,
       expect.objectContaining({ metadata: expect.objectContaining({ status, reason }) }),
     );
+  });
+
+  test("advises approving before npm only for a review that could still be decided", async () => {
+    const advice = "An approval recorded in Drydock before the stage is approved on npm";
+    await notifyPublicationDiscrepancy({
+      ...input,
+      status: "published_without_approval",
+      reason: "reviewed_without_decision",
+    });
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).toContain(advice);
+
+    emailMock.sendNotificationEmail.mockClear();
+    await notifyPublicationDiscrepancy({
+      ...input,
+      status: "published_without_approval",
+      reason: "review_failed",
+    });
+    expect(emailMock.sendNotificationEmail.mock.calls[0][1].text).not.toContain(advice);
   });
 
   test("a delivered alert stays delivered when recording the delivery fails", async () => {

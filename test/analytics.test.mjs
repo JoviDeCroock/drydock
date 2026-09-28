@@ -159,6 +159,7 @@ describe("recordProductEvent", () => {
         decision: "publish",
         releaseRisk: "low",
         artifactRisk: "high",
+        via: "single",
         timeToDecisionMs: 300_000,
       },
       {

@@ -34,6 +34,10 @@ import {
   type ScanDecisionFilter,
   type ScanListItem,
 } from "../../models/scan";
+import {
+  ScanBatchApprovalModel,
+  type BatchApprovalCandidate,
+} from "../../models/scan-batch-approval";
 import { ScanOverviewModel } from "../../models/scan-overview";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
@@ -54,6 +58,7 @@ import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
 import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
+import { BatchApprovalDialog } from "./BatchApprovalDialog";
 import { GettingStarted } from "./GettingStarted";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
@@ -281,6 +286,21 @@ function RecentReviewsSection({
   const discoveryRefreshing = stagedPublishes.refreshing.value;
   const quickDecisionScan = useSignal<ScanListItem | null>(null);
   const deleteScan = useSignal<ScanListItem | null>(null);
+  const batch = useModel(ScanBatchApprovalModel);
+  // The dialog lists what qualified when it opened: reviews completing while it
+  // is open must not join the batch already ticked.
+  const batchSnapshot = useSignal<{ candidates: BatchApprovalCandidate[]; more: boolean } | null>(
+    null,
+  );
+  // The candidates follow the list like the overview strip does: every
+  // refresh, decision, or discovery can change which reviews qualify.
+  useSignalEffect(() => {
+    void scans.scans.value;
+    if (scans.filter.value !== "undecided") return;
+    void batch.refresh();
+  });
+  const batchCount = batch.candidates.value.length;
+  const offerBatch = scans.filter.value === "undecided" && batchCount >= 2;
   const startedLabels = discovery?.scans.map(formatStartedScanLabel).filter(Boolean) ?? [];
   const onDiscover = async () => {
     await discoverStagedPublishes(stagedPublishes, scans);
@@ -294,6 +314,11 @@ function RecentReviewsSection({
       quickDecisionScan.value = null;
     }
     return saved;
+  };
+  const onBatchApprove = async (scanIds: string[], reason: string | null) => {
+    const result = await batch.approve(scanIds, reason);
+    if (result) await scans.refresh();
+    return result;
   };
   const onDeleteConfirm = async () => {
     const scan = deleteScan.peek();
@@ -325,6 +350,22 @@ function RecentReviewsSection({
             disabled={scans.refreshing.value}
             onChange={(filter) => (scans.filter.value = filter)}
           />
+          {offerBatch ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                batch.error.value = null;
+                batchSnapshot.value = {
+                  candidates: batch.candidates.peek(),
+                  more: batch.more.peek(),
+                };
+              }}
+              title="Approve the undecided reviews that read likely safe"
+            >
+              {`Approve ${batchCount}${batch.more.value ? "+" : ""} low-risk`}
+            </Button>
+          ) : null}
           {/* A disabled control with the reason only in a tooltip is a dead
               end on touch and for screen readers, so the unmet requirement is
               rendered as text with the link that resolves it. */}
@@ -418,6 +459,19 @@ function RecentReviewsSection({
             npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
             scan={scan}
             onSubmit={onQuickDecisionSubmit}
+          />
+        )}
+      </Show>
+      <Show when={batchSnapshot}>
+        {(snapshot) => (
+          <BatchApprovalDialog
+            open={true}
+            onClose={() => (batchSnapshot.value = null)}
+            candidates={snapshot.candidates}
+            more={snapshot.more}
+            saving={batch.saving.value}
+            error={batch.error.value}
+            onApprove={onBatchApprove}
           />
         )}
       </Show>
