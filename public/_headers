@@ -1,10 +1,11 @@
 # Security headers for Cloudflare-served static assets.
 #
-# The SPA HTML document, JS and CSS are served by Cloudflare's edge BEFORE the
-# Worker runs (only run_worker_first paths — /api, /api/*, /webhooks/* — reach
-# the Worker), so the Worker's applySecurityHeaders() never touches them. This
-# file is how those static responses get a Content-Security-Policy and the rest
-# of the security headers. Worker-served JSON responses keep their own policy.
+# Deployed configs set run_worker_first: true, so every asset reaches the
+# browser through the Worker's ASSETS binding. The binding attaches these
+# headers, then server/middleware/security-headers.ts replaces them. It must
+# replace rather than append the CSP: HTML documents get a per-response script
+# nonce there, which a static file cannot carry, and a second, un-nonced policy
+# would still be enforced.
 #
 # Vite copies public/ to the asset root at build time, so this lands at /_headers
 # where Cloudflare consumes it as config rather than serving it.

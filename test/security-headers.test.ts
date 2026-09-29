@@ -1,12 +1,17 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { API_CSP, DOCUMENT_CSP, SECURITY_HEADERS } from "../server/lib/platform/security-headers";
+import {
+  API_CSP,
+  createScriptNonce,
+  DOCUMENT_CSP,
+  documentCspWithScriptNonce,
+  SECURITY_HEADERS,
+} from "../server/lib/platform/security-headers";
 
-// The HTML document the browser (and external scanners like Aikido) load is a
-// static asset served by Cloudflare's edge, bypassing the Worker. Its security
-// headers come from public/_headers, which can't import the shared module — so
-// this guard asserts the hand-copied values still match the source of truth.
+// public/_headers can't import the shared module, so this guard asserts its
+// hand-copied values still match the source of truth. The ASSETS binding
+// attaches them to every asset before the Worker's middleware replaces them.
 const headersFile = readFileSync(
   fileURLToPath(new URL("../public/_headers", import.meta.url)),
   "utf8",
@@ -97,5 +102,26 @@ describe("public/_headers static-asset security headers", () => {
     expect(directives.get("worker-src")).toBe("'none'");
     expect(directives.get("manifest-src")).toBe("'self'");
     expect(directives.get("media-src")).toBe("'self'");
+  });
+});
+
+describe("document CSP script nonce", () => {
+  test("adds the nonce to the script directives and changes nothing else", () => {
+    const base = parseCsp(DOCUMENT_CSP);
+    const nonced = parseCsp(documentCspWithScriptNonce("abc123=="));
+    expect(nonced.get("script-src")).toBe("'self' 'nonce-abc123=='");
+    expect(nonced.get("script-src-elem")).toBe("'self' 'nonce-abc123=='");
+    expect(nonced.get("script-src-attr")).toBe("'none'");
+    for (const [name, value] of base) {
+      if (name !== "script-src" && name !== "script-src-elem") expect(nonced.get(name)).toBe(value);
+    }
+    expect(nonced.size).toBe(base.size);
+    expect(documentCspWithScriptNonce("abc123==")).not.toContain("'unsafe-inline'");
+  });
+
+  test("draws a fresh 128-bit nonce each time", () => {
+    const nonces = new Set(Array.from({ length: 50 }, () => createScriptNonce()));
+    expect(nonces.size).toBe(50);
+    for (const nonce of nonces) expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/);
   });
 });
