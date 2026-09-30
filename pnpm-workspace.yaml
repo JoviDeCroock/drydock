@@ -15,8 +15,9 @@ overrides:
   ws: 8.21.0
   # ajv (via @modelcontextprotocol/sdk) permits fast-uri 3.x releases with the
   # host-confusion and SSRF advisories fixed in 3.1.6 (GHSA-5jgf-p345-68v8,
-  # GHSA-fph4-wmhf-6fwf, GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp).
-  fast-uri: ^3.1.6
+  # GHSA-fph4-wmhf-6fwf, GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp), and the host
+  # case-normalization advisory fixed in 3.1.8 (GHSA-hrr3-gc8f-f4qj).
+  fast-uri: ^3.1.8
   # Express permits qs releases affected by bracket-key array-limit bypass and
   # attacker-controlled isBuffer denial of service (GHSA-x5fp-wj9c-mxmx,
   # GHSA-4mjr-xmp4-gh2g); keep the transitive parser on the patched line.
@@ -28,8 +29,13 @@ overrides:
   # resolver on the patched line.
   proxy-addr: ^2.0.8
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
-  # retry, cookie, and header handling until its dependency floor catches up.
-  undici: ^7.29.0
+  # retry, cookie, header, decompression, WebSocket, and TLS handling (7.29.1)
+  # until its dependency floor catches up.
+  undici: ^7.29.1
+  # express-rate-limit (via @modelcontextprotocol/sdk) permits ip-address
+  # releases whose subnet checks mis-compare addresses and whose IPv6 parse
+  # diagnostics grow with input (GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw).
+  ip-address: ^10.7.1
 
 # The Agent SDK's tracing-only subpath does not load its Babel decorator build
 # plugin. The package nevertheless declares Babel 8's decorator plugin as a
