@@ -211,6 +211,7 @@ function ScanReport({ model, view }: SectionProps) {
               changedFilesOnly={view.changedFilesOnly}
               selectedPath={model.selectedPath}
               findingCounts={view.findingCounts}
+              treeNotice={view.treeNotice}
               onSelect={(path) => {
                 view.findingTarget.value = null;
                 model.selectPath(path);
@@ -285,10 +286,13 @@ function VerdictComparison({ model, view }: SectionProps) {
   return versions ? (
     <VersionPicker
       options={versions.versions}
-      selected={model.selectedVersion.value}
+      selected={model.comparisonVersion.value}
       defaultVersion={model.defaultPreviousVersion.value}
+      // A scan that recorded no baseline compared against nothing, and that
+      // stays its default rather than the endpoint's semver guess.
+      noneLabel={model.defaultPreviousVersion.value ? undefined : "no baseline (default)"}
       stagedVersion={versions.stagedVersion}
-      onChange={(value) => model.selectVersion(value)}
+      onChange={(value) => model.selectVersion(value || null)}
       disabled={model.compareLoading.value}
     />
   ) : (
@@ -320,7 +324,9 @@ function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
   return (
     <>
       {compareLoading ? (
-        <LoadingLine size="inline">Fetching {model.selectedVersion.value} via sandbox</LoadingLine>
+        <LoadingLine size="inline">
+          Fetching {model.comparisonVersion.value} via sandbox
+        </LoadingLine>
       ) : null}
       {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
     </>
@@ -331,6 +337,7 @@ function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
 function ScanDiffPanel({ model, view }: SectionProps) {
   return (
     <DiffWorkbench
+      tree={view.releaseTree.value.kind}
       entry={view.selectedEntry.value}
       stagedMeta={view.stagedFileMeta.value}
       staged={view.stagedFile.value}
@@ -338,7 +345,8 @@ function ScanDiffPanel({ model, view }: SectionProps) {
       previousContent={view.previousFile.value}
       compareReady={Boolean(model.compare.value)}
       compareLoading={model.compareLoading.value}
-      selectedVersion={model.selectedVersion.value}
+      compareFailed={Boolean(model.compareFailure.value)}
+      selectedVersion={model.comparisonVersion.value}
       stagedVersion={model.detail.value?.scan.stagedVersion ?? null}
       findings={view.selectedFindings.value}
       findingTarget={

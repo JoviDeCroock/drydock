@@ -1,5 +1,6 @@
 import {
   annotateFindingsWithDiffStatus as annotateReviewFindingsWithDiffStatus,
+  createPackageDiff,
   normalizeFindingDiffStatus,
   type DiffEntry,
   type FileRecord,
@@ -12,6 +13,31 @@ import type { PersistedFinding } from "./types";
 // Scan-workbench-specific diff helpers. The pieces the anonymous /diff surface
 // also needs (finding counts, entry filtering, the shared finding shape) live in
 // `src/features/review/`; what stays here is tied to the persisted scan model.
+
+export type ReleaseTreeState =
+  | { kind: "entries"; entries: DiffEntry[] }
+  | { kind: "loading"; version: string }
+  | { kind: "failed"; version: string; message: string };
+
+// What the release tree shows for the chosen comparison. The persisted diff
+// describes only the version the scan diffed; any other version shows its own
+// delta once its compare payload arrives, and a loading or failed state until
+// then — never the scan baseline's delta under another version's name.
+export function selectReleaseTree(input: {
+  isDefault: boolean;
+  version: string | null;
+  persisted: DiffEntry[];
+  compareFiles: FileRecord[] | null;
+  stagedFiles: FileRecord[];
+  failure: string | null;
+}): ReleaseTreeState {
+  if (input.isDefault || !input.version) return { kind: "entries", entries: input.persisted };
+  if (input.compareFiles) {
+    return { kind: "entries", entries: createPackageDiff(input.compareFiles, input.stagedFiles) };
+  }
+  if (input.failure) return { kind: "failed", version: input.version, message: input.failure };
+  return { kind: "loading", version: input.version };
+}
 
 export type DiffWorkbenchState =
   | { kind: "empty"; message: string }
@@ -35,6 +61,7 @@ export function selectDiffWorkbenchState(input: {
   previousHasNoLoadableBody: boolean;
   compareReady: boolean;
   compareLoading: boolean;
+  compareFailed: boolean;
 }): DiffWorkbenchState {
   if (!input.hasEntry) {
     return { kind: "empty", message: "Select a file from the tree to diff." };
@@ -46,11 +73,16 @@ export function selectDiffWorkbenchState(input: {
   // Previous version still being fetched via the sandbox. Keyed off
   // compareLoading too (not just compareReady) so a stale cache entry from a
   // prior version can't flash a wrong diff while the new fetch is in flight.
-  if (
-    needsPrevious &&
-    input.entryStatus !== "unchanged" &&
-    (input.compareLoading || !input.compareReady)
-  ) {
+  // A failed fetch ends the wait: without the previous side, DiffView would
+  // render a modified file as all added.
+  const awaitsPrevious = needsPrevious && input.entryStatus !== "unchanged";
+  if (awaitsPrevious && !input.compareLoading && !input.compareReady && input.compareFailed) {
+    return {
+      kind: "empty",
+      message: "The previous version could not be loaded, so this file cannot be diffed.",
+    };
+  }
+  if (awaitsPrevious && (input.compareLoading || !input.compareReady)) {
     return {
       kind: "processing",
       title: "Loading comparison",

@@ -32,7 +32,10 @@ function scanDetail(
   };
 }
 
-function stubVersionsAndCompare(defaultPreviousVersion: string | null) {
+function stubVersionsAndCompare(
+  defaultPreviousVersion: string | null,
+  failCompareFor: string | null = null,
+) {
   return stubFetchRoutes({
     "/versions": () =>
       jsonResponse({
@@ -45,12 +48,11 @@ function stubVersionsAndCompare(defaultPreviousVersion: string | null) {
           { version: STABLE_BASELINE, distTags: [] },
         ],
       }),
-    "/compare": (url) =>
-      jsonResponse({
-        version: new URL(url, "http://localhost").searchParams.get("version"),
-        files: [],
-        packageJson: null,
-      }),
+    "/compare": (url) => {
+      const version = new URL(url, "http://localhost").searchParams.get("version");
+      if (version === failCompareFor) return jsonResponse({ error: "unknown version" }, 404);
+      return jsonResponse({ version, files: [], packageJson: null });
+    },
   });
 }
 
@@ -69,16 +71,19 @@ describe("ScanDetailModel comparison default", () => {
     vi.useRealTimers();
   });
 
-  test("moves a selection made while the scan ran onto the baseline it records", async () => {
-    stubVersionsAndCompare(NEWEST_RC);
+  test("follows the baseline a running scan records, never the endpoint's guess", async () => {
+    const fetchMock = stubVersionsAndCompare(NEWEST_RC);
     model = new ScanDetailModel("scan-1");
     model.detail.value = scanDetail("running", null);
     await model.loadVersions();
-    expect(model.selectedVersion.value).toBe(NEWEST_RC);
+
+    expect(model.comparisonVersion.value).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/compare"))).toBe(false);
 
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
 
-    expect(model.selectedVersion.value).toBe(STABLE_BASELINE);
+    expect(model.selectedVersion.value).toBeNull();
+    expect(model.comparisonVersion.value).toBe(STABLE_BASELINE);
     expect(model.defaultPreviousVersion.value).toBe(STABLE_BASELINE);
     expect(model.isDefaultComparison.value).toBe(true);
   });
@@ -92,50 +97,52 @@ describe("ScanDetailModel comparison default", () => {
 
     model.selectVersion(NEWEST_RC);
 
-    expect(model.isDefaultComparison.value).toBe(false);
-    expect(model.defaultPreviousVersion.value).toBe(STABLE_BASELINE);
-  });
-
-  test("never labels the endpoint's stale guess as the default once a baseline exists", async () => {
-    // The versions payload fetched mid-scan is kept for the page's lifetime.
-    stubVersionsAndCompare(NEWEST_RC);
-    model = new ScanDetailModel("scan-1");
-    model.detail.value = scanDetail("running", null);
-    await model.loadVersions();
-    model.selectVersion(NEWEST_RC);
-    model.detail.value = scanDetail("complete", STABLE_BASELINE);
-    model.selectVersion(NEWEST_RC);
-
-    expect(model.defaultPreviousVersion.value).toBe(STABLE_BASELINE);
+    expect(model.comparisonVersion.value).toBe(NEWEST_RC);
     expect(model.isDefaultComparison.value).toBe(false);
   });
 
-  test("keeps the old guess when the reader picks it after the scan completes", async () => {
+  test("picking the recorded baseline follows the default instead of pinning it", () => {
+    stubVersionsAndCompare(STABLE_BASELINE);
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+
+    model.selectVersion(STABLE_BASELINE);
+
+    expect(model.selectedVersion.value).toBeNull();
+    expect(model.isDefaultComparison.value).toBe(true);
+  });
+
+  test("keeps a reader's pick through a detail refresh", async () => {
     stubVersionsAndCompare(NEWEST_RC);
     model = new ScanDetailModel("scan-1");
-    model.detail.value = scanDetail("running", null);
-    await model.loadVersions();
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    await model.loadVersions();
     model.selectVersion(NEWEST_RC);
 
     // A decision save or claim change replaces the detail wholesale.
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
 
-    expect(model.selectedVersion.value).toBe(NEWEST_RC);
+    expect(model.comparisonVersion.value).toBe(NEWEST_RC);
     expect(model.isDefaultComparison.value).toBe(false);
   });
 
-  test("keeps a version the reader chose while the scan ran", async () => {
-    stubVersionsAndCompare(NEWEST_RC);
+  test("a scan that recorded no baseline compares against nothing by default", async () => {
+    const fetchMock = stubVersionsAndCompare(NEWEST_RC);
     model = new ScanDetailModel("scan-1");
-    model.detail.value = scanDetail("running", null);
+    model.detail.value = scanDetail("complete", null);
     await model.loadVersions();
-    model.selectVersion("11.0.0-rc.1");
 
-    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    expect(model.defaultPreviousVersion.value).toBeNull();
+    expect(model.comparisonVersion.value).toBeNull();
+    expect(model.isDefaultComparison.value).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/compare"))).toBe(false);
 
-    expect(model.selectedVersion.value).toBe("11.0.0-rc.1");
+    model.selectVersion(NEWEST_RC);
     expect(model.isDefaultComparison.value).toBe(false);
+
+    model.selectVersion(null);
+    expect(model.comparisonVersion.value).toBeNull();
   });
 
   test("judges a linked version against the recorded baseline before versions load", () => {
@@ -145,8 +152,20 @@ describe("ScanDetailModel comparison default", () => {
     expect(model.isDefaultComparison.value).toBe(true);
 
     // A `?version=` link restores the selection before the versions request lands.
-    model.selectVersion(NEWEST_RC);
+    model.selectedVersion.value = NEWEST_RC;
 
     expect(model.isDefaultComparison.value).toBe(false);
+  });
+
+  test("records a failed comparison against the version it was for", async () => {
+    stubVersionsAndCompare(STABLE_BASELINE, NEWEST_RC);
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+    await vi.waitFor(() => expect(model?.compareFailure.value).toBe("unknown version"));
+
+    model.selectVersion(STABLE_BASELINE);
+
+    expect(model.compareFailure.value).toBeNull();
   });
 });

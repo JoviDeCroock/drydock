@@ -20,6 +20,7 @@ function VersionSelect({
   options,
   selected,
   defaultVersion = null,
+  noneLabel,
   disabledVersion = null,
   disabled,
   size,
@@ -30,6 +31,8 @@ function VersionSelect({
   options: VersionOption[];
   selected: string | null;
   defaultVersion?: string | null;
+  /** An option for comparing against no version at all; picking it passes "". */
+  noneLabel?: string;
   /** The other side of a pair; a version cannot be compared against itself. */
   disabledVersion?: string | null;
   disabled?: boolean;
@@ -43,7 +46,7 @@ function VersionSelect({
       value={selected ?? ""}
       size={size}
       onChange={(value) => {
-        if (value && value !== selected) onChange(value);
+        if (value !== (selected ?? "")) onChange(value);
       }}
       disabled={disabled || options.length === 0}
       mono
@@ -56,6 +59,8 @@ function VersionSelect({
         <option value={selected ?? ""}>
           {defaultVersion ? `${defaultVersion} (default)` : "no published versions"}
         </option>
+      ) : noneLabel ? (
+        <option value="">{noneLabel}</option>
       ) : null}
       {options.map((option) => (
         <option
@@ -76,6 +81,7 @@ export function VersionPicker({
   options,
   selected,
   defaultVersion,
+  noneLabel,
   stagedVersion,
   onChange,
   disabled,
@@ -83,6 +89,7 @@ export function VersionPicker({
   options: VersionOption[];
   selected: string | null;
   defaultVersion: string | null;
+  noneLabel?: string;
   stagedVersion: string | null;
   onChange: (version: string) => void;
   disabled?: boolean;
@@ -103,6 +110,7 @@ export function VersionPicker({
           options={options}
           selected={selected}
           defaultVersion={defaultVersion}
+          noneLabel={noneLabel}
           disabled={disabled}
           onChange={onChange}
         />
