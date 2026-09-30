@@ -179,6 +179,9 @@ row's Decide button says it; a gate or superseded row, which offers no button
 there, says `undecided` / `superseded` in plain text — and a recorded decision renders as plain
 `DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
 the same action repeated down a list is not the region's primary action.
+A row's package name opens the package release view once the review has an
+outcome; while the review is queued or running it opens that review instead
+(`scanRowPackageLink`), since the in-flight review is what the reader is after.
 
 When the **Undecided** list holds two or more reviews that read likely safe, the
 header offers a secondary `Approve N low-risk` beside the filter, so a release
