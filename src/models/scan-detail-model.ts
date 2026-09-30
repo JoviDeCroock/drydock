@@ -80,14 +80,28 @@ export const ScanDetailModel = createModel((id: string) => {
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
+  // The version the persisted report (diff, risk summary, finding annotations)
+  // was computed against. The page asks the versions endpoint as soon as the
+  // scan has a package name, often while it is still running, and until the
+  // scan records a baseline the endpoint can only guess the semver
+  // predecessor: for a stable release cut after release candidates that is
+  // the newest rc, not the dist-tag baseline the pipeline goes on to diff.
+  const defaultPreviousVersion = computed(
+    () => detail.value?.scan.previousVersion ?? versions.value?.defaultPreviousVersion ?? null,
+  );
+  // Whether the persisted report describes the selected comparison. When it
+  // does not, the tree must be rebuilt from the compare payload, or it shows
+  // the baseline's delta beside file bodies fetched from the selected version.
   const isDefaultComparison = computed(() => {
     const selected = selectedVersion.value;
+    const baseline = detail.value?.scan.previousVersion;
     const v = versions.value;
-    // Until versions metadata arrives we can't tell what the default is.
-    // Treat the current selection as default so the persisted risk summary
-    // stays in view instead of flickering to computed-from-empty-compare values.
-    if (!v) return true;
-    return selected === (v.defaultPreviousVersion ?? null);
+    const defaultVersion = defaultPreviousVersion.value;
+    // Nothing selected yet, or no default known (the scan has no baseline of
+    // its own and versions metadata has not arrived): keep the persisted risk
+    // summary in view instead of flickering to computed-from-empty-compare values.
+    if (selected === null || (!baseline && !v)) return true;
+    return selected === defaultVersion;
   });
   const compare = computed(() => {
     const cache = compareCache.value;
@@ -127,6 +141,20 @@ export const ScanDetailModel = createModel((id: string) => {
       disposed = true;
       clearTimeout(timer);
     };
+  });
+
+  // A selection that followed the endpoint's guess moves to the baseline the
+  // scan actually diffed once it is recorded, so the picker, the tree, and
+  // the file bodies all describe the persisted report. A version the reader
+  // chose themselves is left alone.
+  effect(() => {
+    const baseline = detail.value?.scan.previousVersion;
+    const v = versions.value;
+    if (!baseline || !v) return;
+    const guessed = v.defaultPreviousVersion;
+    if (guessed && baseline !== guessed && selectedVersion.peek() === guessed) {
+      selectedVersion.value = baseline;
+    }
   });
 
   // Auto-load comparison data when the user picks a version.
@@ -215,6 +243,7 @@ export const ScanDetailModel = createModel((id: string) => {
     isWorkflowGate,
     status,
     isPolling,
+    defaultPreviousVersion,
     isDefaultComparison,
     compare,
 

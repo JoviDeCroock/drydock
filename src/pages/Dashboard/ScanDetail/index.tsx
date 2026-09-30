@@ -286,7 +286,7 @@ function VerdictComparison({ model, view }: SectionProps) {
     <VersionPicker
       options={versions.versions}
       selected={model.selectedVersion.value}
-      defaultVersion={versions.defaultPreviousVersion}
+      defaultVersion={model.defaultPreviousVersion.value}
       stagedVersion={versions.stagedVersion}
       onChange={(value) => model.selectVersion(value)}
       disabled={model.compareLoading.value}
