@@ -106,8 +106,22 @@ describe("ScanDetailModel comparison default", () => {
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
     model.selectVersion(NEWEST_RC);
 
-    expect(model.versions.value?.defaultPreviousVersion).toBe(NEWEST_RC);
     expect(model.defaultPreviousVersion.value).toBe(STABLE_BASELINE);
+    expect(model.isDefaultComparison.value).toBe(false);
+  });
+
+  test("keeps the old guess when the reader picks it after the scan completes", async () => {
+    stubVersionsAndCompare(NEWEST_RC);
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("running", null);
+    await model.loadVersions();
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+
+    // A decision save or claim change replaces the detail wholesale.
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+
+    expect(model.selectedVersion.value).toBe(NEWEST_RC);
     expect(model.isDefaultComparison.value).toBe(false);
   });
 

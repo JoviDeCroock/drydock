@@ -145,16 +145,19 @@ export const ScanDetailModel = createModel((id: string) => {
 
   // A selection that followed the endpoint's guess moves to the baseline the
   // scan actually diffed once it is recorded, so the picker, the tree, and
-  // the file bodies all describe the persisted report. A version the reader
-  // chose themselves is left alone.
+  // the file bodies all describe the persisted report. The fetched default is
+  // corrected in the same step, so this happens once: a reader who later picks
+  // the old guess keeps it through every later detail refresh.
   effect(() => {
     const baseline = detail.value?.scan.previousVersion;
     const v = versions.value;
     if (!baseline || !v) return;
     const guessed = v.defaultPreviousVersion;
-    if (guessed && baseline !== guessed && selectedVersion.peek() === guessed) {
-      selectedVersion.value = baseline;
-    }
+    if (!guessed || guessed === baseline) return;
+    batch(() => {
+      versions.value = { ...v, defaultPreviousVersion: baseline };
+      if (selectedVersion.peek() === guessed) selectedVersion.value = baseline;
+    });
   });
 
   // Auto-load comparison data when the user picks a version.
