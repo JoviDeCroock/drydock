@@ -11,7 +11,6 @@ import { useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { formatDateTime, formatRelativeTime, pluralize } from "../../lib/format";
 import { useNow } from "../../lib/use-now";
-import { packageReleasesPath } from "../../lib/package-releases-path";
 import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
 import {
@@ -60,6 +59,7 @@ import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
 import { BatchApprovalDialog } from "./BatchApprovalDialog";
 import { GettingStarted } from "./GettingStarted";
+import { scanRowPackageLink } from "./scan-row-link";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 import { StageCommandDialogHost } from "./ScanDetail/StageCommandDialog";
@@ -682,17 +682,7 @@ function ScanRows({
                 <ScanRiskChip scan={scan} />
                 {scan.packageName ? (
                   <span class="flex min-w-0 items-baseline">
-                    <a
-                      href={packageReleasesPath(
-                        scan.packageName,
-                        scan.ecosystem,
-                        scan.organizationId,
-                      )}
-                      class="min-w-0 truncate text-[14px] font-medium"
-                      title={`All reviewed releases of ${scan.packageName}`}
-                    >
-                      {scan.packageName}
-                    </a>
+                    <ScanPackageName scan={scan} packageName={scan.packageName} />
                     {scan.stagedVersion ? (
                       <a
                         href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
@@ -770,6 +760,15 @@ function ScanRows({
         </li>
       ))}
     </ul>
+  );
+}
+
+function ScanPackageName({ scan, packageName }: { scan: ScanListItem; packageName: string }) {
+  const link = scanRowPackageLink({ ...scan, packageName });
+  return (
+    <a href={link.href} class="min-w-0 truncate text-[14px] font-medium" title={link.title}>
+      {packageName}
+    </a>
   );
 }
 
