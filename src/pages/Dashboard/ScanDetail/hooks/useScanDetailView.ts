@@ -2,16 +2,17 @@ import { batch, useComputed, useSignal, useSignalEffect } from "@preact/signals"
 import { useLocation } from "preact-iso";
 import { displayedAiResult, type AiReview } from "../../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../../server/lib/intent-envelope";
-import { createPackageDiff, type DiffEntry } from "../../../../../server/lib/review";
+import type { DiffEntry } from "../../../../../server/lib/review";
 import { npmStagedPackagesUrlFor } from "../../../../lib/npm-staged-url";
 import { getDashboardReturnUrl, useQuerySignal } from "../../../../lib/query-state";
 import { sessionModel } from "../../../../models/auth";
 import type { WorkflowGateDecision } from "../../../../models/github-app";
 import type { ScanDecision, ScanDetailModelInstance } from "../../../../models/scan";
 import { findingCountsByPath } from "../../../../features/review/diff-entries";
+import type { TreeNotice } from "../../../../features/review/ReviewWorkbench";
 import type { ReviewFinding } from "../../../../features/review/types";
 import { useSelectedDiffFile } from "../../../../features/review/useSelectedDiffFile";
-import { scanFilesToFileRecords } from "../diff-helpers";
+import { scanFilesToFileRecords, selectReleaseTree } from "../diff-helpers";
 import { releaseConsistencyDiverged } from "../ReleaseConsistencyNotice";
 import { buildReleaseVerdict } from "../ReleaseRecommendation";
 import { assistantFlagsRelease } from "../ReviewerSummary";
@@ -21,6 +22,8 @@ import { useScanFileContent } from "./useScanFileContent";
 import { useScanVersions } from "./useScanVersions";
 
 export type ReleaseVerdict = ReturnType<typeof buildReleaseVerdict>;
+
+const NO_ENTRIES: DiffEntry[] = [];
 
 /**
  * Move the reader to a report section. Focus without scroll first so the
@@ -97,17 +100,11 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
 
-  const diffEntries = useComputed<DiffEntry[]>(() => {
+  // The diff the scan persisted, against the version it recorded.
+  const persistedEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
-    const compare = model.compare.value;
-    const isDefault = model.isDefaultComparison.value;
-    const persistedSummary = summary.value;
+    const persistedDiff = summary.value.diff ?? [];
     if (!detail) return [];
-    if (compare && !isDefault) {
-      const stagedRecords = scanFilesToFileRecords(detail.files);
-      return createPackageDiff(compare.files, stagedRecords);
-    }
-    const persistedDiff = persistedSummary.diff ?? [];
     if (persistedDiff.length) return persistedDiff;
     return detail.files.map((file) => ({
       path: file.path,
@@ -118,17 +115,57 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     }));
   });
 
+  // Mapped once per detail rather than on every comparison-state change: the
+  // file list can run to thousands of entries.
+  const stagedRecords = useComputed(() => {
+    const detail = model.detail.value;
+    return detail ? scanFilesToFileRecords(detail.files) : [];
+  });
+  const releaseTree = useComputed(() => {
+    const compare = model.compare.value;
+    return selectReleaseTree({
+      isDefault: model.isDefaultComparison.value,
+      version: model.comparisonVersion.value,
+      persisted: persistedEntries.value,
+      compareFiles: compare?.files ?? null,
+      stagedFiles: stagedRecords.value,
+      failure: model.compareFailure.value,
+    });
+  });
+  // The release tree: empty while another version's comparison loads or after
+  // it failed, and the workbench says which.
+  const diffEntries = useComputed<DiffEntry[]>(() =>
+    releaseTree.value.kind === "entries" ? releaseTree.value.entries : NO_ENTRIES,
+  );
+  const treeNotice = useComputed<TreeNotice | null>(() => {
+    const tree = releaseTree.value;
+    if (tree.kind === "loading")
+      return { tone: "loading", text: `Comparing against ${tree.version}` };
+    if (tree.kind === "failed") {
+      return { tone: "unavailable", text: `${tree.version} could not be compared.` };
+    }
+    return null;
+  });
+  // The verdict and finding annotations keep describing the persisted report
+  // until another version's comparison has arrived to recompute them from.
+  const reportIsPersisted = useComputed(
+    () => model.isDefaultComparison.value || !model.compare.value,
+  );
+  const reportEntries = useComputed(() =>
+    reportIsPersisted.value ? persistedEntries.value : diffEntries.value,
+  );
+
   const findingsWithDiffStatus = useFindingsWithDiff(
     model.detail,
     model.compare,
-    diffEntries,
-    model.isDefaultComparison,
+    reportEntries,
+    reportIsPersisted,
   );
   const selected = useSelectedDiffFile(diffEntries, model.selectedPath, findingsWithDiffStatus);
   // Per-file finding counts for the tree, built once from the same finding set
   // that feeds the inline annotations and the risk-signals index.
   const findingCounts = useComputed(() => findingCountsByPath(findingsWithDiffStatus.value));
-  const fileContent = useScanFileContent(model, model.selectedPath, model.selectedVersion);
+  const fileContent = useScanFileContent(model, model.selectedPath, model.comparisonVersion);
 
   const npmStagedPackagesUrl = useComputed(() => {
     const scan = model.detail.value?.scan;
@@ -138,9 +175,9 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
   const verdict = useComputed<ReleaseVerdict | null>(() => {
     const detail = model.detail.value;
     const persistedSummary = summary.value;
-    const entries = diffEntries.value;
+    const entries = reportEntries.value;
     const findings = findingsWithDiffStatus.value;
-    const usePersistedRiskSummary = model.isDefaultComparison.value || !model.compare.value;
+    const usePersistedRiskSummary = reportIsPersisted.value;
     const isWorkflowGate = model.isWorkflowGate.value;
     const aiResult = ai.value;
     if (!detail || detail.scan.status !== "complete") return null;
@@ -284,6 +321,8 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     summary,
     ai,
     intentEnvelope,
+    releaseTree,
+    treeNotice,
     diffEntries,
     findingsWithDiffStatus,
     selectedEntry: selected.entry,

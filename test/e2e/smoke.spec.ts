@@ -106,6 +106,40 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   expect(errors).toEqual([]);
 });
 
+test("the release tree waits for a picked version instead of showing the baseline's delta", async ({
+  page,
+}) => {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  // The rc already shipped both staged files byte for byte.
+  await installWorkflowGateMocks(page, false, {
+    version: "1.2.0-rc.1",
+    distTags: ["rc"],
+    files: released.then(() => [
+      { path: "src/gate_demo/__init__.py", size: 102, sha256: "b".repeat(64), flags: [] },
+      {
+        path: "dist/qrb.it.darwin-arm64.node",
+        size: 4_278_592,
+        sha256: "c".repeat(64),
+        flags: ["binary"],
+      },
+    ]),
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const tree = page.locator("#release-workbench aside");
+  await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
+  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
+  await expect(tree.getByText("__init__.py")).toHaveCount(0);
+  await expect(page.getByText("Loading comparison")).toBeVisible();
+
+  release();
+  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
+  await expect(tree.getByText("0 / 2")).toBeVisible();
+});
+
 // The public report is the one review surface with no session and no npm
 // credentials, so its diff has to come entirely from the report export plus the
 // share-token file route. Mocked here rather than driven through the seeded
@@ -248,7 +282,17 @@ function publicReportExport() {
   };
 }
 
-async function installWorkflowGateMocks(page: Page, reviewNotes = false) {
+async function installWorkflowGateMocks(
+  page: Page,
+  reviewNotes = false,
+  // A second published version the reader can compare against, whose file
+  // list arrives when `files` settles.
+  otherVersion?: {
+    version: string;
+    distTags: string[];
+    files: Promise<Array<{ path: string; size: number; sha256: string; flags: string[] }>>;
+  },
+) {
   let packageDecision: "publish" | "no_publish" | null = null;
   let gateStatus: "pending" | "rejected" = "pending";
 
@@ -277,12 +321,52 @@ async function installWorkflowGateMocks(page: Page, reviewNotes = false) {
       return;
     }
 
+    // The server names the scan's recorded baseline as the default even when
+    // the registry lists no versions for the package.
     if (path === `/api/v1/scans/${scanId}/versions`) {
       await fulfillJson(route, {
         packageName: "@drydock/gate-demo",
         stagedVersion: "1.2.0",
-        defaultPreviousVersion: null,
-        versions: [],
+        defaultPreviousVersion: "1.1.0",
+        versions: otherVersion
+          ? [
+              { version: otherVersion.version, distTags: otherVersion.distTags },
+              { version: "1.1.0", distTags: ["latest"] },
+            ]
+          : [],
+      });
+      return;
+    }
+
+    // The workbench loads the baseline's file list to diff a modified file.
+    if (
+      path === `/api/v1/scans/${scanId}/compare` &&
+      otherVersion &&
+      url.searchParams.get("version") === otherVersion.version
+    ) {
+      await fulfillJson(route, {
+        version: otherVersion.version,
+        files: await otherVersion.files,
+        packageJson: null,
+        findingAnnotations: [],
+      });
+      return;
+    }
+
+    if (path === `/api/v1/scans/${scanId}/compare`) {
+      expect(url.searchParams.get("version")).toBe("1.1.0");
+      await fulfillJson(route, {
+        version: "1.1.0",
+        files: [
+          {
+            path: "dist/qrb.it.darwin-arm64.node",
+            size: 4_100_000,
+            sha256: "e".repeat(64),
+            flags: ["binary"],
+          },
+        ],
+        packageJson: null,
+        findingAnnotations: [],
       });
       return;
     }

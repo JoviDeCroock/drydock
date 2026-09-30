@@ -3,6 +3,7 @@ import {
   annotatePersistedFindings,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
+  selectReleaseTree,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers";
 import { hasNoLoadableBody } from "../src/features/review/diff-entries";
 
@@ -65,6 +66,7 @@ describe("selectDiffWorkbenchState", () => {
     previousHasNoLoadableBody: false,
     compareReady: true,
     compareLoading: false,
+    compareFailed: false,
   };
 
   test("prompts to pick a file when nothing is selected", () => {
@@ -87,6 +89,30 @@ describe("selectDiffWorkbenchState", () => {
     const state = selectDiffWorkbenchState({ ...base, compareLoading: true });
     expect(state.kind).toBe("processing");
     expect(state.title).toBe("Loading comparison");
+  });
+
+  test("stops waiting on a previous version whose compare failed", () => {
+    const state = selectDiffWorkbenchState({
+      ...base,
+      compareReady: false,
+      compareFailed: true,
+      hasPreviousMeta: false,
+      hasPreviousContent: false,
+    });
+    expect(state).toEqual({
+      kind: "empty",
+      message: "The previous version could not be loaded, so this file cannot be diffed.",
+    });
+  });
+
+  test("keeps waiting on a retry of a previously failed compare", () => {
+    const state = selectDiffWorkbenchState({
+      ...base,
+      compareReady: false,
+      compareLoading: true,
+      compareFailed: true,
+    });
+    expect(state.kind).toBe("processing");
   });
 
   test("shows processing once the compare resolves but the file body is loading", () => {
@@ -155,6 +181,53 @@ describe("selectDiffWorkbenchState", () => {
 
   test("renders the diff once both sides are ready", () => {
     expect(selectDiffWorkbenchState(base)).toEqual({ kind: "diff" });
+  });
+});
+
+describe("selectReleaseTree", () => {
+  const record = (path, sha256) => ({ path, size: 1, sha256, flags: [] });
+  const persisted = [{ path: "legacy.cjs", status: "removed", flags: [] }];
+  const base = {
+    isDefault: false,
+    version: "2.0.0-rc.1",
+    persisted,
+    compareFiles: null,
+    stagedFiles: [record("index.js", "a")],
+    failure: null,
+  };
+
+  test("shows the persisted diff for the scan's own baseline", () => {
+    expect(selectReleaseTree({ ...base, isDefault: true })).toEqual({
+      kind: "entries",
+      entries: persisted,
+    });
+  });
+
+  test("shows the persisted diff when there is no comparison version at all", () => {
+    expect(selectReleaseTree({ ...base, version: null })).toEqual({
+      kind: "entries",
+      entries: persisted,
+    });
+  });
+
+  test("never shows the baseline's delta while another version is loading", () => {
+    expect(selectReleaseTree(base)).toEqual({ kind: "loading", version: "2.0.0-rc.1" });
+  });
+
+  test("reports a failed comparison instead of the baseline's delta", () => {
+    expect(selectReleaseTree({ ...base, failure: "unknown version" })).toEqual({
+      kind: "failed",
+      version: "2.0.0-rc.1",
+      message: "unknown version",
+    });
+  });
+
+  test("diffs the staged files against the chosen version once it arrives", () => {
+    const state = selectReleaseTree({ ...base, compareFiles: [record("index.js", "a")] });
+    expect(state).toEqual({
+      kind: "entries",
+      entries: [expect.objectContaining({ path: "index.js", status: "unchanged" })],
+    });
   });
 });
 
