@@ -1,5 +1,5 @@
 import * as ai from "ai";
-import type { LanguageModel, LanguageModelUsage } from "ai";
+import type { JSONValue, LanguageModel, LanguageModelUsage, ModelMessage } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   AI_REVIEWER_VERSION,
@@ -8,12 +8,15 @@ import {
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
   MAX_REVIEW_OUTPUT_TOKENS,
+  CONTEXT_CHARS_PER_TOKEN,
   selectReportedFindings,
+  SUBMIT_CONTEXT_TOKENS,
   type AiReviewSubmission,
 } from "./contract";
-import { buildAiReviewPayload, buildEvidenceIndex, createAiReviewTools } from "./evidence";
+import { buildAiReviewPayload, buildEvidenceIndex, createAiReviewSession } from "./evidence";
 import type {
   AiReview,
+  AiReviewCoverage,
   AiReviewResult,
   AiReviewStatus,
   AiReviewUsage,
@@ -33,9 +36,9 @@ export { AI_REVIEWER_VERSION } from "./contract";
 // Every candidate must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
 // makes the cached-input price, not the headline input price, the cost driver,
-// and it makes the context window a floor rather than a feature — evidence is
-// capped at MAX_TOTAL_TOOL_RESPONSE_CHARS, so anything past ~64k is unusable
-// spend. The fallback is agentic and cache-discounted: a failover that cannot
+// and it makes the context window a floor: it must hold SUBMIT_CONTEXT_TOKENS
+// plus a step, and anything past that is capacity the loop never uses. The
+// fallback is agentic and cache-discounted: a failover that cannot
 // finish the loop returns `invalid`, which floors the scan at medium and
 // escalates to manual review, so a "cheap" model that misses the submission
 // costs more than it saves. Re-check all candidates against
@@ -139,6 +142,10 @@ export async function analyzeWithAi(
       // Steps finished so far in this attempt; the tool policy reads it to know
       // whether refusing a submit still leaves room for a read and a re-submit.
       let completedSteps = 0;
+      // Set once a step's input passes SUBMIT_CONTEXT_TOKENS; from then on only
+      // submit_review is offered and the coverage gate stands down.
+      let contextFull = false;
+      let session: ReturnType<typeof createAiReviewSession> | null = null;
       try {
         const reasoningEffort = aiReviewReasoningEffort(candidateModel);
         const languageModel =
@@ -150,7 +157,7 @@ export async function analyzeWithAi(
             extraHeaders: aiReviewRequestHeaders(env, options, candidateModel, attempt),
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           });
-        const tools = createAiReviewTools(
+        session = createAiReviewSession(
           options,
           (review) => {
             submittedReview = review;
@@ -160,32 +167,46 @@ export async function analyzeWithAi(
             // The gate needs two more steps after the refused one (a read, then
             // the re-submit) before the forced final step; past that point a
             // refusal could only end the run as `invalid`.
-            enforceCoverage: () => completedSteps < MAX_AGENT_STEPS - 2,
+            enforceCoverage: () => !contextFull && completedSteps < MAX_AGENT_STEPS - 2,
           },
         );
 
+        const system = buildReviewerSystemPrompt(options.ecosystem);
         const result = await tracedAi.generateText({
           model: languageModel,
-          system: buildReviewerSystemPrompt(options.ecosystem),
-          messages: [{ role: "user", content: JSON.stringify(payload) }],
-          tools,
+          system,
+          messages: [
+            { role: "user", content: JSON.stringify(payload) },
+            ...coverageReadMessages(session.seedCoverageRead()),
+          ],
+          tools: session.tools,
           // Stop on a recorded review, not on the mere presence of a submit_review
           // call: an invalid one (rejected by validation, so `execute` never fires)
           // must let the model see the tool error and retry instead of ending the loop.
           stopWhen: [() => submittedReview !== null, ai.stepCountIs(MAX_AGENT_STEPS)],
           ...aiReviewTraceTelemetry(options, traceConversationId),
-          // The last step the budget allows offers only submit_review and forces
-          // the call: a run that spends every step gathering evidence would
-          // otherwise end unrecorded, discarding the whole token spend and
-          // degrading to the `invalid` fallback. A forced submission that still
-          // fails validation falls through to that fallback as before.
-          prepareStep: ({ stepNumber }) =>
-            stepNumber >= MAX_AGENT_STEPS - 1
+          // The last step the budget allows, or the first once the context is
+          // nearly full, offers only submit_review and forces the call: a run
+          // that keeps gathering evidence would otherwise end unrecorded,
+          // discarding the whole token spend and degrading to the `invalid`
+          // fallback. A forced submission that still fails validation falls
+          // through to that fallback as before.
+          prepareStep: ({ stepNumber, steps, messages }) => {
+            // A step's input tokens are its whole prompt. A provider that
+            // reports none (0) must not silence the guard, so estimate then.
+            const promptTokens =
+              steps.at(-1)?.usage.inputTokens ||
+              Math.ceil(
+                (system.length + JSON.stringify(messages).length) / CONTEXT_CHARS_PER_TOKEN,
+              );
+            contextFull ||= promptTokens >= SUBMIT_CONTEXT_TOKENS;
+            return stepNumber >= MAX_AGENT_STEPS - 1 || contextFull
               ? {
                   toolChoice: { type: "tool", toolName: "submit_review" },
                   activeTools: ["submit_review"],
                 }
-              : undefined,
+              : undefined;
+          },
           // Clamp a near-miss submission to the schema limits rather than discarding
           // the whole review. Substitute the repaired call only once it re-validates;
           // anything we can't make valid returns null so the model retries.
@@ -222,6 +243,7 @@ export async function analyzeWithAi(
             action: "done",
             durationMs: durationMsSince(attemptStartedAtMs),
             usage,
+            coverage: session.coverage(),
           });
           return { review: normalizeParsedReview(candidateModel, submittedReview), usage };
         }
@@ -235,6 +257,7 @@ export async function analyzeWithAi(
             action: "done",
             durationMs: durationMsSince(attemptStartedAtMs),
             usage,
+            coverage: session.coverage(),
           });
           return { review: textReview, usage };
         }
@@ -247,6 +270,7 @@ export async function analyzeWithAi(
           action,
           durationMs: durationMsSince(attemptStartedAtMs),
           usage,
+          coverage: session.coverage(),
         });
         if (hasFallback) {
           transientFailures.push(`${candidateModel}: invalid review`);
@@ -275,6 +299,7 @@ export async function analyzeWithAi(
           action: shouldRetry ? "retry" : shouldFallback ? "fallback" : "stop",
           durationMs: durationMsSince(attemptStartedAtMs),
           usage: completedStepUsage,
+          coverage: session?.coverage() ?? null,
         });
 
         if (shouldRetry) {
@@ -411,6 +436,7 @@ interface AiAttemptTelemetry {
   action: AiAttemptAction;
   durationMs: number;
   usage: AiReviewUsage | null;
+  coverage: AiReviewCoverage | null;
 }
 
 function recordAiReviewAttempt(
@@ -432,7 +458,50 @@ function recordAiReviewAttempt(
     cachedInputTokens: attempt.usage?.cachedInputTokens ?? 0,
     outputTokens: attempt.usage?.outputTokens ?? 0,
     totalTokens: attempt.usage?.totalTokens ?? 0,
+    changedFiles: attempt.coverage?.changedFiles ?? 0,
+    changedFilesFullyShown: attempt.coverage?.changedFilesFullyShown ?? 0,
+    requiredPaths: attempt.coverage?.requiredPaths ?? 0,
+    requiredPathsUnread: attempt.coverage?.requiredPathsUnread ?? 0,
+    coverageRejections: attempt.coverage?.coverageRejections ?? 0,
+    evidenceChars: attempt.coverage?.evidenceChars ?? 0,
+    coverageReadChars: attempt.coverage?.coverageReadChars ?? 0,
   });
+}
+
+// The app's coverage read as the opening tool exchange: one assistant turn of
+// read calls and their results, so package text reaches the model as tool
+// output (hostile evidence) exactly as the model's own reads do, never as part
+// of the top-level task.
+function coverageReadMessages(
+  calls: ReturnType<ReturnType<typeof createAiReviewSession>["seedCoverageRead"]>,
+): ModelMessage[] {
+  if (calls.length === 0) return [];
+  return [
+    {
+      role: "assistant",
+      content: calls.map((call) => ({
+        type: "tool-call" as const,
+        toolCallId: call.toolCallId,
+        toolName: "read",
+        input: call.input,
+      })),
+    },
+    {
+      role: "tool",
+      content: calls.map((call) => ({
+        type: "tool-result" as const,
+        toolCallId: call.toolCallId,
+        toolName: "read",
+        output: { type: "json" as const, value: toJsonValue(call.output) },
+      })),
+    },
+  ];
+}
+
+// Tool outputs carry `undefined` notes; a JSON round trip drops them so the
+// value is plain JSON, as the provider will serialize it anyway.
+function toJsonValue(value: unknown): JSONValue {
+  return JSON.parse(JSON.stringify(value)) as JSONValue;
 }
 
 // The per-request headers that decide cache affinity and Gateway attribution.

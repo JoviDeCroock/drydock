@@ -52,6 +52,18 @@ export interface AiReviewUsage {
   steps: number;
 }
 
+// What one agent attempt was shown, for aggregate telemetry only: counts, never
+// paths or text. "Fully shown" means read to the end of its rendered evidence.
+export interface AiReviewCoverage {
+  changedFiles: number;
+  changedFilesFullyShown: number;
+  requiredPaths: number;
+  requiredPathsUnread: number;
+  coverageRejections: number;
+  evidenceChars: number;
+  coverageReadChars: number;
+}
+
 export interface AiReviewResult {
   review: AiReview;
   usage: AiReviewUsage | null;

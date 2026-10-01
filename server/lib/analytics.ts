@@ -80,6 +80,13 @@ export type AnalyticsEvent =
       cachedInputTokens: number;
       outputTokens: number;
       totalTokens: number;
+      changedFiles: number;
+      changedFilesFullyShown: number;
+      requiredPaths: number;
+      requiredPathsUnread: number;
+      coverageRejections: number;
+      evidenceChars: number;
+      coverageReadChars: number;
     }
   | {
       name: "ai_review.decided";
@@ -287,6 +294,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
           event.cachedInputTokens,
           event.outputTokens,
           event.totalTokens,
+          event.changedFiles,
+          event.changedFilesFullyShown,
+          event.requiredPaths,
+          event.requiredPathsUnread,
+          event.coverageRejections,
+          event.evidenceChars,
+          event.coverageReadChars,
         ],
       );
     case "ai_review.decided":

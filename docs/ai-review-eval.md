@@ -83,44 +83,77 @@ reach the model.
 
 ## Evidence coverage
 
-The loop does not rely on the model volunteering reads. `buildEvidenceIndex`
-computes a priority-ordered required-evidence set: a changed manifest, targets
-of consumer-install lifecycle entries (preinstall/install/postinstall) this
-release added or modified (even when the target file itself is unchanged), files
-with deterministic findings, changed native or executable payloads, and changed
-entrypoints (or all entrypoints when the manifest's entrypoints changed). The
-set is capped at `MAX_REQUIRED_EVIDENCE_PATHS` so two batched read calls cover
-it, and the cap is filled round-robin across those tiers so a hostile lifecycle
-hook naming many benign files cannot evict the changed entrypoint or payload.
-Only npm's manifest summary carries `scripts`; PyPI and VS Code releases get
-the same gate from the remaining tiers. The set ships as `requiredEvidencePaths` in the
-task and every tool response reports `unreadRequiredPaths`.
+The loop does not rely on the model volunteering reads. Production runs before
+1.9.0 mostly made one batched read and submitted, so what the model is shown up
+front is what gets checked.
 
-`submit_review` refuses a submission while required paths remain unread, with
-three release valves so the gate can only delay a verdict, never lose one: it
-stops refusing after `MAX_COVERAGE_REJECTIONS`, once the shared evidence budget
-is exhausted, and when fewer than two steps remain before the forced final
-submit. A path counts as read from its head (offset 0, whatever came back, so a binary
-payload or an empty post-budget read satisfies it) or when a continuation
-returned text; `offset` is only accepted with a single path, so a batch cannot
-satisfy the gate with empty windows.
+**Coverage read.** Before the model's first turn the app reads the release
+itself: the required set first, then every other changed file in evidence
+priority order, within `COVERAGE_READ_CHARS` of the evidence budget. It runs
+through the real `read` tool, with the same windows and budget accounting, and
+opens the conversation as an assistant `read` call plus its tool result. Package
+text therefore reaches the model as tool output, never inside the top-level
+task. The budget is water-filled: files below a common ceiling are shown whole,
+and what they leave raises the ceiling for the long ones. Required paths start
+with half the budget, so one huge entrypoint cannot crowd out the release, and
+then take back whatever the rest left unused. When the ceiling for the rest
+falls below `MIN_COVERAGE_READ_SHARE`, the lowest-priority files drop out of
+the coverage read but stay reachable through `read` and `search_files`. The task's
+`coverageRead` counts what was shown, and manifest entries carry
+`shown:full` or `shown:partial`.
 
-An adapter whose findings cite files outside the reviewed tree supplies
-`evidencePathAliases`. PyPI release findings are pinned to
+**Required evidence.** `buildEvidenceIndex` computes a priority-ordered
+required set: a changed manifest, targets of consumer-install lifecycle entries
+(preinstall/install/postinstall) this release added or modified (even when the
+target file itself is unchanged), files with deterministic findings, changed
+native or executable payloads, and changed entrypoints (or all entrypoints when
+the manifest's entrypoints changed). The set is capped at
+`MAX_REQUIRED_EVIDENCE_PATHS`, filled round-robin across those tiers so a
+hostile lifecycle hook naming many benign files cannot evict the changed
+entrypoint or payload. Only npm's manifest summary carries `scripts`; PyPI and
+VS Code releases get the same gate from the remaining tiers. The set ships as
+`requiredEvidencePaths` in the task, and every tool response reports
+`unreadRequiredPaths`.
+
+A required path counts as read only once its rendered evidence has been shown
+to the end. Coverage is the prefix shown contiguously from offset 0; a window
+that starts past it does not extend it. A binary or unsupported file is
+covered once its metadata is returned. The gate owes required paths in priority
+order only while their unread remainders fit the remaining budget, less one
+read call (`MAX_TOOL_RESPONSE_CHARS`) kept back for searching. A file too long to finish drops off
+`unreadRequiredPaths` and the prompt tells the model to search it, rather than
+the gate draining the budget on a read that cannot complete. `submit_review` refuses a submission
+while any required path is not read to the end. It has three release valves, so
+the gate can only delay a verdict, never lose one: it stops refusing after
+`MAX_COVERAGE_REJECTIONS`, once the shared evidence budget is exhausted, and when
+fewer than two steps remain before a forced submit.
+
+**Finding paths.** An adapter whose findings cite files outside the reviewed
+tree supplies `evidencePathAliases`. PyPI release findings are pinned to
 `<artifact filename>/<path>`, while the reviewed tree names the same file
 `sdist/...` or `wheel/<tags>/...`; before 1.8.1 those files were neither
-readable nor required, so a PyPI release's finding files never reached the
-coverage gate. Findings keep their reported path, so deterministic assessments
-still cite it; only evidence lookup goes through the alias.
+readable nor required. Findings keep their reported path, so deterministic
+assessments still cite it; only evidence lookup goes through the alias.
 
-The changed-file manifest, `list_files`, and `search_files` all walk paths in
-evidence-priority order rather than alphabetically, so the 300-entry manifest
-cap on a large dist rebuild drops chunks rather than the lifecycle script, and
-a docs file with many hits cannot crowd the script out of a search result
-(`MAX_SEARCH_MATCHES_PER_FILE` also caps hits per file). Search matches carry a
-1-based `line`, and `read` accepts `offset` and returns `nextOffset` so the
-model can walk a file longer than one call's share instead of only ever seeing
-its head. Any change to this contract bumps `AI_REVIEWER_VERSION`.
+**Reading.** The changed-file manifest, `list_files`, and `search_files` all walk
+paths in evidence-priority order rather than alphabetically. The 300-entry
+manifest cap on a large dist rebuild therefore drops chunks rather than the
+lifecycle script, and a docs file with many hits cannot crowd the script out of
+a search result (`MAX_SEARCH_MATCHES_PER_FILE` also caps hits per file). Search
+matches carry a 1-based `line`. A `read` without `offset` (or with `offset: 0`,
+which models often fill in) continues each path where it stopped, so cut
+required files are finished with ordinary batched reads rather than one offset
+call per file. A path already shown in full returns no text at no budget cost.
+A nonzero `offset` applies to a single path. Line diffing costs roughly
+lines times edit length, so one `DIFF_WORK_BUDGET` covers a whole review: each
+file's edit cap (at most `MAX_DIFF_EDIT_LENGTH`) shrinks to what is left, and no
+file may spend more than `MAX_FILE_DIFF_WORK`, so one rewritten bundle cannot
+starve the rest. A modified file past its cap shows the lines it removed and
+added as unordered sets, matched as multisets with line endings ignored. That
+costs linear time and no budget, and unlike the staged text it still shows a
+removed check. Without the budget, a release re-indenting a few hundred files
+spent minutes of CPU diffing before the first turn. Any change to this contract bumps
+`AI_REVIEWER_VERSION`.
 
 ## Agent Traces
 
@@ -159,7 +192,11 @@ review-level availability and latency without storing package evidence.
 that are recovered by a retry or fallback. Its dimensions are outcome
 (`complete`, `invalid`, `rate_limited`, `capacity`, `timeout`, or `error`), next
 action (`done`, `retry`, `fallback`, or `stop`), model, and reviewer version;
-doubles carry duration, attempt number, steps, and token counts. It deliberately
+doubles carry duration, attempt number, steps, and token counts. From 1.9.0 it
+also records counts of what the attempt was shown: changed files, changed files
+read to the end, required paths, required paths still unread when it ended,
+coverage rejections, evidence characters returned, and how many of those came
+from the coverage read. These are counts only, never paths or text. It deliberately
 has no organization, scan, stage, package, prompt, or evidence identifier. Use
 this event for model cost, throttling, and failover analysis: attributing all
 tokens in `ai_review.finished` to its final model would miss an invalid model's
@@ -178,11 +215,20 @@ occurred.
 
 Routing is fixed before a model runs: every release uses GLM 5.3 Flash first,
 with `reasoning_effort: "high"`. Kimi K2.7 Code remains the fallback when GLM
-is unavailable, times out, exhausts the step budget, or submits an invalid
-review. Kimi keeps its provider-default reasoning configuration. Model output
+is unavailable, times out, or submits an invalid review. Kimi keeps its provider-default reasoning configuration. Model output
 never changes this order.
 
-The agent is capped at 20 steps. A capacity/5xx failure gets one jittered retry;
+The agent may take up to `MAX_AGENT_STEPS` (100) steps: the model is cheap
+enough that a deep review should end on evidence, not on a step count. Two
+bounds remain. The evidence budget (`MAX_TOTAL_TOOL_RESPONSE_CHARS`, coverage
+read included) caps the package text a run can see. Once a step's input passes
+`SUBMIT_CONTEXT_TOKENS`, set under the smallest candidate's context window
+(Kimi K2.7, 262,144 tokens), the next step may only call `submit_review`, so a
+long run ends in a review rather than a context-overflow error. When the
+provider reports no input tokens, the guard estimates them from the prompt's
+length at `CONTEXT_CHARS_PER_TOKEN`. The last step
+the budget allows is forced the same way. A capacity/5xx failure gets one
+jittered retry;
 a 429 or timeout moves directly to the next model because a sub-second retry
 cannot escape a minute quota. An invalid completed run also moves to the next
 model without re-running the same model. Do not add AI Gateway retries on top of
@@ -298,9 +344,10 @@ The harness deliberately asserts no winner: picking a model is a judgement call
 across all three axes. Unsupported ecosystems and fixtures omitted by `--limit`
 remain explicit in the report rather than disappearing from its denominator.
 
-Context window is not a selection criterion. Evidence is capped at
-`MAX_TOTAL_TOOL_RESPONSE_CHARS`, so any window past that is spend on capacity
-the reviewer refuses to use; treat it as a floor to clear, not a feature to buy.
+Context window is a floor, not a selection criterion. A candidate must hold
+`SUBMIT_CONTEXT_TOKENS` plus one more step; past that the loop forces a
+submission, so a larger window is capacity the reviewer never uses. Lowering
+the smallest candidate's window means lowering `SUBMIT_CONTEXT_TOKENS` with it.
 
 ## Promotion checklist
 
