@@ -199,6 +199,8 @@ The publication monitor's cron sweep (and its authenticated **Check now** button
 
 Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.
 
+Every response goes through the Worker (`run_worker_first`), and `server/middleware/security-headers.ts` sets its policy. `/api/*` and `/public/*` responses get the deny-all API policy, even when they are HTML. Every other response gets the `DOCUMENT_CSP` policy, which allows only same-origin scripts. An HTML response outside `/api` and `/public` also gets a random `script-src` nonce, generated fresh for each response. It exists only for Cloudflare's JavaScript detections: Bot Fight Mode injects an inline script into every page, and the plan cannot turn it off. Cloudflare copies the nonce from the response header onto the scripts it injects. The app itself ships no inline script and must not depend on the nonce. `'unsafe-inline'` stays out of the policy.
+
 ## Known gaps / future work
 
 - Public report sharing is an explicit owner/admin opt-in per completed scan; the threat feed is a second opt-in on top of it, and so is the badge — except that an approved, npm-published release of a provably public npm package answers the badge with no opt-in. Owner/admin of the canonical npm package owner with a completed registry-verified review can switch its badge off. Both badge paths require that claim, and opt-outs from other organizations' historical scans do not suppress the owner. Qualifying ownership is enforced on write and again on read; enabling only removes the caller organization's own opt-out row. See `public-reports.md` and the authorization posture section above.

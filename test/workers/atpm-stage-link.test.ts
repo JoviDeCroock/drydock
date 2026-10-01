@@ -164,6 +164,9 @@ describe("/api/public/v1/package-diff/atpm-stage", () => {
     expect(body).toContain("/diff");
     expect(body).not.toContain("<style>");
     expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+    // An HTML page under /api keeps the deny-all policy; only HTML outside /api
+    // and /public gets a script nonce.
+    expect(response.headers.get("Content-Security-Policy")).not.toContain("nonce-");
   });
 
   test("does not describe an unresolved publisher as an approved candidate", async () => {

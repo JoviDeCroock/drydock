@@ -1,14 +1,18 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker, { redactCapabilityPath } from "../../server";
+import {
+  DOCUMENT_CSP,
+  documentCspWithScriptNonce,
+} from "../../server/lib/platform/security-headers";
 
 const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
 
 // HSTS guards against protocol-downgrade / SSL-stripping man-in-the-middle
 // attacks by forcing clients onto HTTPS. It must ride on every response the
 // Worker emits, including error responses, so a single missed path can't be the
-// one a downgrade attack lands on. The static-asset delivery path is covered
-// separately by test/security-headers.test.ts (public/_headers drift guard).
+// one a downgrade attack lands on. Assets reach the browser through the Worker
+// too; the document CSP tests below cover that path.
 describe("worker security headers", () => {
   async function fetchHeaders(path: string, method = "GET"): Promise<Headers> {
     const ctx = createExecutionContext();
@@ -56,6 +60,52 @@ describe("worker security headers", () => {
     expect(publicHeaders.get("Strict-Transport-Security")).toBe(HSTS_VALUE);
     // Still readable by a cross-origin verifier even though it is a 404.
     expect(publicHeaders.get("access-control-allow-origin")).toBe("*");
+  });
+});
+
+describe("document CSP nonce", () => {
+  // The real binding attaches public/_headers to every asset it returns, so a
+  // document reaches the middleware already carrying the un-nonced policy.
+  const assetEnv = {
+    ...env,
+    ASSETS: {
+      fetch: async (request: Request) =>
+        new URL(request.url).pathname.startsWith("/assets/")
+          ? new Response("export {}", {
+              headers: {
+                "Content-Type": "text/javascript",
+                "Content-Security-Policy": DOCUMENT_CSP,
+              },
+            })
+          : new Response("<!doctype html><title>Drydock</title>", {
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Security-Policy": DOCUMENT_CSP,
+              },
+            }),
+    } as Fetcher,
+  } satisfies Cloudflare.Env;
+
+  async function fetchCsp(path: string): Promise<string | null> {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(new Request(`https://drydock.org${path}`), assetEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    return res.headers.get("Content-Security-Policy");
+  }
+
+  test("gives every HTML document its own script nonce", async () => {
+    const first = await fetchCsp("/dashboard/settings");
+    const second = await fetchCsp("/dashboard/settings");
+    const nonce = /script-src-elem 'self' 'nonce-([^']+)'/.exec(first ?? "")?.[1] ?? "";
+    // Exact: the static policy must be replaced, not joined, or the browser
+    // enforces both and the un-nonced one still blocks the injected script.
+    expect(first).toBe(documentCspWithScriptNonce(nonce));
+    expect(nonce).not.toBe("");
+    expect(second).not.toContain(nonce);
+  });
+
+  test("keeps the plain document policy on non-HTML assets", async () => {
+    expect(await fetchCsp("/assets/index.js")).toBe(DOCUMENT_CSP);
   });
 });
 
