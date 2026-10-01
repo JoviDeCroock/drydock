@@ -50,6 +50,8 @@ interface EvidenceIndex {
   // stay unread and budget remains. Priority-ordered and capped.
   requiredPaths: string[];
   ruleFindings: SelectiveAiReviewOptions["ruleFindings"];
+  // Finding file -> the path the reviewer reads it under, where they differ.
+  aliases: Map<string, string>;
 }
 
 // Optional loop-side policy hooks. `enforceCoverage` lets the agent loop lift
@@ -416,6 +418,7 @@ export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceI
   const changedPaths = new Set(
     options.diff.filter((entry) => entry.status !== "unchanged").map((entry) => entry.path),
   );
+  const aliases = new Map(Object.entries(options.findingPathAliases ?? {}));
   const packageJsonPath = resolveKnownPath(
     "package.json",
     stagedByPath,
@@ -429,7 +432,9 @@ export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceI
     : "";
   const findingPaths = new Set(
     options.ruleFindings
-      .map((finding) => resolveKnownPath(finding.file, stagedByPath, previousByPath, diffByPath))
+      .map((finding) =>
+        resolveKnownPath(finding.file, stagedByPath, previousByPath, diffByPath, aliases),
+      )
       .filter((path): path is string => Boolean(path)),
   );
   const entrypointPaths = resolvePathSet(
@@ -479,11 +484,12 @@ export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceI
     orderedAllowedPaths: [],
     requiredPaths: [],
     ruleFindings: options.ruleFindings,
+    aliases,
   };
   // Scores are computed once: the comparator runs O(n log n) times and a
   // per-call finding scan inside it was measured at a second for a large
   // release with a few hundred findings.
-  const findingPriority = findingPriorityByPath(allowedPaths, options.ruleFindings);
+  const findingPriority = findingPriorityByPath(allowedPaths, options.ruleFindings, aliases);
   const priority = new Map(
     [...allowedPaths].map((path) => [path, evidencePriority(path, index, findingPriority)]),
   );
@@ -567,11 +573,12 @@ const FINDING_PRIORITY: Record<string, number> = {
 function findingPriorityByPath(
   allowedPaths: Set<string>,
   ruleFindings: SelectiveAiReviewOptions["ruleFindings"],
+  aliases: Map<string, string>,
 ): Map<string, number> {
   const byPath = new Map<string, number>();
   for (const finding of ruleFindings) {
     const weight = FINDING_PRIORITY[finding.severity] ?? 0;
-    for (const path of candidatePackagePaths(finding.file)) {
+    for (const path of evidencePathCandidates(finding.file, aliases)) {
       if (!allowedPaths.has(path)) continue;
       byPath.set(path, Math.max(byPath.get(path) ?? 0, weight));
     }
@@ -624,7 +631,7 @@ function resolveToolPath(
     return { ok: false, error: "Path must be a safe package-relative path." };
   }
 
-  for (const path of candidatePackagePaths(rawPath)) {
+  for (const path of evidencePathCandidates(rawPath, index.aliases)) {
     if (index.allowedPaths.has(path)) {
       return { ok: true, path };
     }
@@ -642,9 +649,10 @@ function resolveKnownPath(
   stagedByPath: Map<string, FileRecord>,
   previousByPath: Map<string, FileRecord>,
   diffByPath: Map<string, DiffEntry>,
+  aliases: Map<string, string> = new Map(),
 ): string | null {
   if (!isSafePackagePath(rawPath)) return null;
-  for (const path of candidatePackagePaths(rawPath)) {
+  for (const path of evidencePathCandidates(rawPath, aliases)) {
     if (stagedByPath.has(path) || previousByPath.has(path) || diffByPath.has(path)) {
       return path;
     }
@@ -663,6 +671,14 @@ function resolvePathSet(
       .map((path) => resolveKnownPath(path, stagedByPath, previousByPath, diffByPath))
       .filter((path): path is string => typeof path === "string"),
   );
+}
+
+// A finding may cite its file under another tree (PyPI pins release findings to
+// the artifact filename); its alias names the same file as the reviewer reads it.
+function evidencePathCandidates(rawPath: string, aliases: Map<string, string>): string[] {
+  const alias = aliases.get(rawPath);
+  const direct = candidatePackagePaths(rawPath);
+  return alias ? [...candidatePackagePaths(alias), ...direct] : direct;
 }
 
 function candidatePackagePaths(rawPath: string): string[] {
@@ -715,7 +731,7 @@ function fileSignals(path: string, index: EvidenceIndex): string[] {
   if (index.requiredPaths.includes(path)) signals.add("required-evidence");
 
   for (const finding of index.ruleFindings) {
-    if (candidatePackagePaths(finding.file).includes(path)) {
+    if (evidencePathCandidates(finding.file, index.aliases).includes(path)) {
       signals.add(`finding:${finding.severity}`);
     }
   }

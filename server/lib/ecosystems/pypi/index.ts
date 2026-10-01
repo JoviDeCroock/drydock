@@ -11,6 +11,7 @@ import {
   acquireStagedPyPi,
   baselineFromPreviousArtifacts,
   pickPackageIdentity,
+  pyPiFindingDiffPath,
   stagedSampleRetention,
 } from "./acquire";
 import { createPyPiBroker, type PyPiBroker } from "./broker";
@@ -54,6 +55,18 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
       }),
       ...pyPiReleaseFindings(details.manifest, details.preparedArtifacts, args.fileDiff),
     ];
+  },
+
+  // Release findings stay pinned to the artifact filename (that is what the
+  // scan reports); the reviewer reads the same file under its diff-tree path.
+  evidencePathAliases(findings, details) {
+    const { preparedArtifacts } = details as PyPiAdapterDetails;
+    const aliases: Record<string, string> = {};
+    for (const finding of findings) {
+      const path = pyPiFindingDiffPath(finding.file, preparedArtifacts);
+      if (path && path !== finding.file) aliases[finding.file] = path;
+    }
+    return aliases;
   },
 
   describe({ details, previous }) {

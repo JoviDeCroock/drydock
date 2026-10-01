@@ -118,6 +118,8 @@ export interface DeterministicFindings {
   redactedDetails: Record<string, unknown> | null;
   annotatedFindings: Array<Finding & FindingDiffAnnotation>;
   releaseRuleFindings: Finding[];
+  /** Finding file -> reviewer-readable path, where an adapter's findings cite another tree. */
+  evidencePathAliases: Record<string, string>;
 }
 
 // Acquire the staged artifact, then resolve + fetch the baseline it diffs
@@ -188,6 +190,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
   });
   const releaseRuleFindings = projectReleaseRuleFindings(annotatedFindings);
+  const evidencePathAliases = adapter.evidencePathAliases?.(ruleFindings, staged.details) ?? {};
 
   return {
     ruleFindings,
@@ -198,6 +201,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     redactedDetails,
     annotatedFindings,
     releaseRuleFindings,
+    evidencePathAliases,
   };
 }
 

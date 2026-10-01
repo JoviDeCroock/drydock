@@ -1460,7 +1460,7 @@ describe("finding anchors and deterministic assessments (reviewer 1.8.0)", () =>
     );
 
     expect(ai.status).toBe("complete");
-    expect(ai.reviewerVersion).toBe("1.8.0");
+    expect(ai.reviewerVersion).toBe(AI_REVIEWER_VERSION);
     expect(ai.findings[0]).toMatchObject({ category: "network-access", line: 7 });
     expect(ai.deterministicAssessments).toEqual([assessment]);
     expect(displayedAiResult(ai)).toMatchObject({ deterministicAssessments: [assessment] });

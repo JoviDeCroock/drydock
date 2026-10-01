@@ -233,6 +233,65 @@ describe("PyPI artifact summaries and review", () => {
     );
   });
 
+  test("aliases artifact-pinned release findings to the files the AI reviewer reads", async () => {
+    const input = pypiAdapter.parseInput({
+      manifest: {
+        schema: "drydock.release-artifacts.v1",
+        ecosystem: "pypi",
+        package: "demo-package",
+        version: "1.2.0",
+        artifacts: [
+          { path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+          { path: "dist/demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) },
+        ],
+      },
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [...wheelArtifactFiles("1.2.0"), file("inject.pth", "import os\n")],
+        },
+        {
+          path: "dist/demo_package-1.2.0.tar.gz",
+          files: [
+            file(
+              "demo_package-1.2.0/PKG-INFO",
+              "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+            ),
+            file(
+              "demo_package-1.2.0/setup.py",
+              "from setuptools.command.install import install\nsetup(cmdclass={'install': install})\n",
+            ),
+          ],
+        },
+      ],
+    });
+    const staged = await pypiAdapter.acquireStaged(adapterCtx, input, stubBroker().broker);
+    const fileDiff = createPackageDiff([], staged.artifact.files);
+    const findings = pypiAdapter.runFindings({
+      staged: staged.artifact,
+      baseline: null,
+      details: staged.details,
+      fileDiff,
+      manifestDiff: null,
+      stagedManifestText: null,
+    });
+    const aliases = pypiAdapter.evidencePathAliases(findings, staged.details);
+
+    const pinned = findings.filter((finding) => finding.file.startsWith("dist/"));
+    expect(pinned.length).toBeGreaterThan(0);
+    const stagedPaths = new Set(staged.artifact.files.map((entry) => entry.path));
+    for (const finding of pinned) {
+      expect(stagedPaths.has(aliases[finding.file])).toBe(true);
+    }
+    expect(aliases["dist/demo_package-1.2.0-py3-none-any.whl/inject.pth"]).toBe(
+      "wheel/py3-none-any/inject.pth",
+    );
+    // Findings already on the diff tree need no alias.
+    for (const finding of findings.filter((entry) => !entry.file.startsWith("dist/"))) {
+      expect(aliases).not.toHaveProperty(finding.file);
+    }
+  });
+
   test("summarizeDetails surfaces reviewed wheel/sdist digests as a provenance block", async () => {
     const input = pypiAdapter.parseInput({
       manifest: {
