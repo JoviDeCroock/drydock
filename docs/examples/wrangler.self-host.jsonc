@@ -37,6 +37,14 @@
 			"enabled": true,
 			"head_sampling_rate": 1,
 			"persist": true
+		},
+		// Issues groups the exceptions, 5xx responses, and error logs the
+		// settings above already record. An automation destination added in the
+		// dashboard receives each issue's surrounding logs and traces, and
+		// invocation logs keep share-link URLs (/reports/:token) unredacted, so
+		// only route issues somewhere private.
+		"issues": {
+			"enabled": true
 		}
 	},
 	"assets": {
