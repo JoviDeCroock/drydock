@@ -218,9 +218,11 @@ After deploying:
    `head_sampling_rate` once your traffic makes span volume matter, or remove
    the `observability.traces` block if you do not want persisted traces at all.
    The template also enables Workers Issues, which groups exceptions, 5xx
-   responses, and error logs; set `observability.issues.enabled` to `false` to
-   opt out. Any automation destination you add in the dashboard receives those
-   logs and traces, including share-link URLs, so keep it private.
+   responses, and error logs. It records request details on its own, so
+   removing the logs or traces blocks does not turn it off; set
+   `observability.issues.enabled` to `false` to opt out. Any automation
+   destination you add receives that data, including token-bearing URLs, so
+   keep it private.
 
 ## GitHub workflow gates
 
