@@ -130,6 +130,13 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
 
   /**
+   * Map finding files to the artifact path the AI reviewer can read, for
+   * adapters whose findings cite files outside the reviewed file tree. Without
+   * it such a finding's file is unreadable and never required evidence.
+   */
+  evidencePathAliases?(findings: Finding[], details: StagedDetails): Record<string, string>;
+
+  /**
    * Ask the registry what became of a staged release whose bytes could not be
    * acquired, so the failure is not blamed on the credential when the release
    * itself moved on. Advisory: `null` leaves the classification untouched.

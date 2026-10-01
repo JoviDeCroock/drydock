@@ -189,6 +189,8 @@ function buildPyPiLiveCase(record) {
       previousFiles,
       "python",
     ),
+    // Production hands the reviewer the same aliases from the findings phase.
+    findingPathAliases: pypiAdapter.evidencePathAliases(review.ruleFindings, staged.details),
     previousVersionAvailable: baseline.artifact !== null,
   });
 }

@@ -105,6 +105,14 @@ payload or an empty post-budget read satisfies it) or when a continuation
 returned text; `offset` is only accepted with a single path, so a batch cannot
 satisfy the gate with empty windows.
 
+An adapter whose findings cite files outside the reviewed tree supplies
+`evidencePathAliases`. PyPI release findings are pinned to
+`<artifact filename>/<path>`, while the reviewed tree names the same file
+`sdist/...` or `wheel/<tags>/...`; before 1.8.1 those files were neither
+readable nor required, so a PyPI release's finding files never reached the
+coverage gate. Findings keep their reported path, so deterministic assessments
+still cite it; only evidence lookup goes through the alias.
+
 The changed-file manifest, `list_files`, and `search_files` all walk paths in
 evidence-priority order rather than alphabetically, so the 300-entry manifest
 cap on a large dist rebuild drops chunks rather than the lifecycle script, and

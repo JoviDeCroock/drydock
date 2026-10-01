@@ -290,6 +290,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
       diff: args.diff.fileDiff,
       packageJsonDiff: args.diff.manifestDiff,
       ruleFindings: args.findings.releaseRuleFindings,
+      findingPathAliases: args.findings.evidencePathAliases,
       previousVersionAvailable: args.previousVersionAvailable,
     });
     // A review that returns `invalid`/`unavailable` is handled safely — the

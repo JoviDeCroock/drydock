@@ -72,6 +72,12 @@ export interface SelectiveAiReviewOptions {
    * whole package's.
    */
   ruleFindings: Finding[];
+  /**
+   * Finding file -> readable package path, for ecosystems whose findings cite
+   * a path outside the reviewed tree (PyPI pins them to the artifact filename).
+   * Findings keep their reported path; only evidence lookup uses the alias.
+   */
+  findingPathAliases?: Record<string, string>;
   previousVersionAvailable: boolean;
 }
 

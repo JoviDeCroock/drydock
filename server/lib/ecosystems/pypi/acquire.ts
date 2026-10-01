@@ -464,8 +464,20 @@ function sortedUnique(values: string[]): string[] {
 // Maps an artifact-relative file path to the namespaced path used by
 // flattenPyPiArtifactFiles, so findings that reference files by artifact path
 // can be re-pinned onto the flattened diff tree.
-export function pyPiArtifactDiffPath(artifact: PyPiPreparedArtifact, filePath: string): string {
+function pyPiArtifactDiffPath(artifact: PyPiPreparedArtifact, filePath: string): string {
   return namespacedPath(artifactDiffNamespace(artifact), normalizePyPiDiffFilePath(filePath));
+}
+
+// PyPI release findings pin evidence to `<artifact filename>/<path>`, while the
+// flattened diff tree namespaces the same file as `sdist/...` or
+// `wheel/<tags>/...`. Null when no prepared artifact owns the finding's path.
+export function pyPiFindingDiffPath(
+  findingFile: string,
+  prepared: PyPiPreparedArtifact[],
+): string | null {
+  const artifact = prepared.find((candidate) => findingFile.startsWith(`${candidate.path}/`));
+  if (!artifact) return null;
+  return pyPiArtifactDiffPath(artifact, findingFile.slice(artifact.path.length + 1));
 }
 
 // Derived from the artifact FILENAME, never from the parsed WHEEL `Tag:`

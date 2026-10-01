@@ -5,7 +5,7 @@ import {
   newestUploadTimestamp,
   packageJsonSummaryFor,
   preparePyPiArtifact,
-  pyPiArtifactDiffPath,
+  pyPiFindingDiffPath,
   selectPyPiReleaseArtifacts,
 } from "./acquire";
 import { pyPiReleaseFindings } from "./findings";
@@ -614,16 +614,11 @@ function pyPiDiffSide(
   };
 }
 
-// PyPI release findings pin evidence to `<artifact filename>/<path>` while the
-// flattened diff tree namespaces files as `sdist/...` or `wheel/<tags>/...`.
-// Re-pin the findings onto the diff tree so the UI can attach them to files.
+// Re-pin artifact-pinned release findings onto the diff tree so the UI can
+// attach them to files.
 function remapPyPiFindingPaths(findings: Finding[], prepared: PyPiPreparedArtifact[]): Finding[] {
   return findings.map((finding) => {
-    const artifact = prepared.find((candidate) => finding.file.startsWith(`${candidate.path}/`));
-    if (!artifact) return finding;
-    return {
-      ...finding,
-      file: pyPiArtifactDiffPath(artifact, finding.file.slice(artifact.path.length + 1)),
-    };
+    const file = pyPiFindingDiffPath(finding.file, prepared);
+    return file ? { ...finding, file } : finding;
   });
 }
