@@ -35,12 +35,11 @@ export default function GithubAppCallbackPage() {
       if (cancelled) return;
       if (!data) {
         // Preserve return path so the user lands back here after login.
-        const returnTo = `${SETTINGS_PATH}/github-app/callback${window.location.search}`;
-        location.route(`/login?returnTo=${encodeURIComponent(returnTo)}`, true);
+        location.route(`/login?returnTo=${encodeURIComponent(location.url)}`, true);
         return;
       }
 
-      const parsed = parseCallbackQuery(window.location.search);
+      const parsed = parseCallbackQuery(new URL(location.url, window.location.origin).search);
       if (typeof parsed === "string") {
         queryError.value = parsed;
         phase.value = "error";

@@ -18,7 +18,7 @@ const footerHrefs = [...footerGroups.matchAll(/href: (?:"([^"]+)"|([A-Z_]+))/g)]
   (match) => match[1] ?? match[2],
 );
 const routerPaths = new Set(
-  [...routerSource.matchAll(/<Route path="([^"]+)"/g)].map((match) => match[1]),
+  [...routerSource.matchAll(/<ScopedRoute path="([^"]+)"/g)].map((match) => match[1]),
 );
 
 describe("site footer links", () => {
