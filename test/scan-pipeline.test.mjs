@@ -7,6 +7,7 @@ vi.mock("cloudflare:workers", () => ({
 
 const dbMock = vi.hoisted(() => ({
   backfillScanRegistryReleaseIdentity: vi.fn(async () => undefined),
+  recordScanBaseline: vi.fn(async () => undefined),
   persistScan: vi.fn(async () => ({ persisted: true })),
   recordScanEvent: vi.fn(async () => undefined),
   getNpmConnection: vi.fn(),
@@ -140,6 +141,8 @@ describe("scan pipeline baseline selection", () => {
 
   afterEach(() => {
     dbMock.backfillScanRegistryReleaseIdentity.mockClear();
+    dbMock.recordScanBaseline.mockReset();
+    dbMock.recordScanBaseline.mockImplementation(async () => undefined);
     dbMock.persistScan.mockClear();
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
@@ -343,6 +346,42 @@ describe("scan pipeline baseline selection", () => {
         },
       },
     });
+  });
+
+  test("records the resolved baseline on the scan before the AI review runs", async () => {
+    const getBooleanValue = vi.fn(async (_flag, defaultValue) => defaultValue);
+    aiReviewMock.runSelectiveAiReview.mockResolvedValue({ review: null, usage: null });
+    const context = { ...baseContext, env: { ...baseContext.env, FLAGS: { getBooleanValue } } };
+
+    await runScanPipeline(context, npmAdapter, {
+      scanId: "scan_baseline_early",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(dbMock.recordScanBaseline).toHaveBeenCalledWith(baseContext.db, {
+      scanId: "scan_baseline_early",
+      organizationId: "org_1",
+      previousPackageJson: { name: "@scope/pkg", version: "2.0.0-beta.2" },
+    });
+    const recordedAt = dbMock.recordScanBaseline.mock.invocationCallOrder[0];
+    expect(recordedAt).toBeLessThan(aiReviewMock.runSelectiveAiReview.mock.invocationCallOrder[0]);
+    expect(recordedAt).toBeLessThan(dbMock.persistScan.mock.invocationCallOrder[0]);
+    expect(dbMock.persistScan.mock.calls[0]?.[1]).toMatchObject({
+      previousPackageJson: { name: "@scope/pkg", version: "2.0.0-beta.2" },
+    });
+  });
+
+  test("still completes the scan when recording the baseline early fails", async () => {
+    dbMock.recordScanBaseline.mockRejectedValue(new Error("D1 unavailable"));
+
+    await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_baseline_record_fails",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    expect(dbMock.persistScan).toHaveBeenCalledTimes(1);
   });
 
   test("computes a declared intent envelope from the staged manifest repository", async () => {

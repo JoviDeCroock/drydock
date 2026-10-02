@@ -20,6 +20,16 @@ import {
 } from "./scan-risk";
 import { scans } from "./schema";
 
+// The baseline a scan row names: the version in the baseline artifact's own
+// manifest, not the version the adapter selected, and null when no baseline
+// artifact was kept. The mid-run record and final persist both derive it here
+// so the value the page prefetches against is the one the report keeps.
+export function recordedPreviousVersion(
+  previousPackageJson: PackageJsonSummary | null | undefined,
+): string | null {
+  return previousPackageJson?.version || null;
+}
+
 export interface PersistedScanInput {
   id: string;
   stageId: string;
@@ -86,7 +96,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     ownerUserId: input.ownerUserId,
     packageName: input.packageJson?.name || null,
     stagedVersion: input.packageJson?.version || null,
-    previousVersion: input.previousPackageJson?.version || null,
+    previousVersion: recordedPreviousVersion(input.previousPackageJson),
     risk: input.risk,
     status: input.status,
     summaryJson: input.summary,
