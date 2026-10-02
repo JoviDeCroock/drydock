@@ -293,7 +293,6 @@ function VerdictComparison({ model, view }: SectionProps) {
       noneLabel={model.defaultPreviousVersion.value ? undefined : "no baseline (default)"}
       stagedVersion={versions.stagedVersion}
       onChange={(value) => model.selectVersion(value || null)}
-      disabled={model.compareLoading.value}
     />
   ) : (
     <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />

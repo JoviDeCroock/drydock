@@ -59,9 +59,12 @@ export const ScanDetailModel = createModel((id: string) => {
   // is reported only while its own version is the comparison shown.
   // `compareError` carries the versions and file requests' errors.
   const compareFailures = signal<Record<string, string>>({});
+  // Versions whose compare payload is in flight. Tracked per version so the
+  // reader can change the comparison mid-fetch: a late payload lands in the
+  // cache under its own version and never stands in for the one on screen.
+  const compareInFlight = signal<ReadonlySet<string>>(new Set());
   const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
-  const compareLoading = signal(false);
   const fileLoading = signal(false);
   const compareError = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
@@ -107,6 +110,12 @@ export const ScanDetailModel = createModel((id: string) => {
     const v = comparisonVersion.value;
     return v ? (cache[v] ?? null) : null;
   });
+  // Whether the shown comparison's payload is still being fetched.
+  const compareLoading = computed(() => {
+    const inFlight = compareInFlight.value;
+    const v = comparisonVersion.value;
+    return v ? inFlight.has(v) : false;
+  });
   const compareFailure = computed(() => {
     const failures = compareFailures.value;
     const v = comparisonVersion.value;
@@ -149,8 +158,9 @@ export const ScanDetailModel = createModel((id: string) => {
 
   // Load the shown comparison's compare payload once the scan is complete; the
   // workbench that reads it renders only then. It is not tracked against
-  // `compareFailures`, so a failed version is retried when it is picked again
-  // rather than in a loop.
+  // `compareFailures` or `compareInFlight`, so a failed version is retried when
+  // it is picked again rather than in a loop, and `loadCompare` skips a
+  // version already in flight.
   effect(() => {
     const cache = compareCache.value;
     const version = comparisonVersion.value;
@@ -193,20 +203,34 @@ export const ScanDetailModel = createModel((id: string) => {
   }
 
   async function loadCompare(version: string) {
+    if (compareInFlight.peek().has(version)) return;
     const id = scanId.peek();
-    compareLoading.value = true;
-    compareError.value = null;
-    if (compareFailures.peek()[version]) {
-      const { [version]: _retried, ...rest } = compareFailures.peek();
-      compareFailures.value = rest;
-    }
+    batch(() => {
+      compareInFlight.value = new Set(compareInFlight.peek()).add(version);
+      if (compareFailures.peek()[version]) {
+        const { [version]: _retried, ...rest } = compareFailures.peek();
+        compareFailures.value = rest;
+      }
+    });
+    // The payload or failure lands in the same update that ends the flight,
+    // so the version never reads as neither loading nor settled.
+    const settle = (record: () => void) =>
+      batch(() => {
+        record();
+        const inFlight = new Set(compareInFlight.peek());
+        inFlight.delete(version);
+        compareInFlight.value = inFlight;
+      });
     try {
       const data = await getScanCompare(id, version);
-      compareCache.value = { ...compareCache.peek(), [version]: data };
+      settle(() => {
+        compareCache.value = { ...compareCache.peek(), [version]: data };
+      });
     } catch (err) {
-      compareFailures.value = { ...compareFailures.peek(), [version]: errorMessage(err) };
-    } finally {
-      compareLoading.value = false;
+      const message = errorMessage(err);
+      settle(() => {
+        compareFailures.value = { ...compareFailures.peek(), [version]: message };
+      });
     }
   }
 
@@ -344,9 +368,22 @@ export const ScanDetailModel = createModel((id: string) => {
       void pollDetail();
     },
 
-    // Picking the default follows it rather than pinning it.
+    // Picking the default follows it rather than pinning it. Once versions
+    // have loaded, the shared error line can only hold a file error from the
+    // comparison being left, so it goes with it; a versions error stays.
     selectVersion(version: string | null) {
-      this.selectedVersion.value = version === this.defaultPreviousVersion.peek() ? null : version;
+      batch(() => {
+        this.selectedVersion.value =
+          version === this.defaultPreviousVersion.peek() ? null : version;
+        if (this.versions.peek()) this.compareError.value = null;
+      });
+    },
+
+    // A failed comparison is retried on request: re-choosing the selected
+    // version in the picker fires no change.
+    retryComparison() {
+      const version = this.comparisonVersion.peek();
+      if (version) void loadCompare(version);
     },
 
     async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {
