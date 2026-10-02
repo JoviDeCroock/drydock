@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import type { DiffEntry } from "../../../server/lib/review";
 import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
@@ -81,28 +82,27 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
   const location = useLocation();
   const error = useSignal<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    void getPublicDiffVersions("atpm", spec.packageName).then(
-      (versions) => {
-        if (cancelled) return;
-        if (versions.packageName === spec.packageName) {
-          error.value = "This package did not resolve to a canonical publisher DID.";
-          return;
-        }
-        location.route(
-          packageDiffPath("atpm", versions.packageName, spec.fromVersion, spec.toVersion),
-          true,
-        );
-      },
-      (err) => {
-        if (!cancelled) error.value = errorMessage(err);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [spec.packageName, spec.fromVersion, spec.toVersion]);
+  useCancellableEffect(
+    (isCancelled) => {
+      void getPublicDiffVersions("atpm", spec.packageName).then(
+        (versions) => {
+          if (isCancelled()) return;
+          if (versions.packageName === spec.packageName) {
+            error.value = "This package did not resolve to a canonical publisher DID.";
+            return;
+          }
+          location.route(
+            packageDiffPath("atpm", versions.packageName, spec.fromVersion, spec.toVersion),
+            true,
+          );
+        },
+        (err) => {
+          if (!isCancelled()) error.value = errorMessage(err);
+        },
+      );
+    },
+    [spec.packageName, spec.fromVersion, spec.toVersion],
+  );
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
@@ -140,17 +140,16 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
   const location = useLocation();
   const error = useSignal<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    void resolveSuggestedDiffPath("npm", packageName).then((resolved) => {
-      if (cancelled) return;
-      if ("error" in resolved) error.value = resolved.error;
-      else location.route(resolved.path, true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [packageName]);
+  useCancellableEffect(
+    (isCancelled) => {
+      void resolveSuggestedDiffPath("npm", packageName).then((resolved) => {
+        if (isCancelled()) return;
+        if ("error" in resolved) error.value = resolved.error;
+        else location.route(resolved.path, true);
+      });
+    },
+    [packageName],
+  );
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
