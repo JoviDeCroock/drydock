@@ -6,11 +6,16 @@ This file is only a compact implementation map.
 
 ## Stack
 
-- Preact + `preact-iso` routes under `src/pages/`.
+- Preact 11 + `preact-iso` routes under `src/pages/`.
 - Cross-surface feature code lives in `src/features/`; see "Shared review surface" below.
 - Tailwind CSS v4 via `@tailwindcss/vite`.
 - Tokens live in `src/style.css` under `@theme`; dark mode follows `prefers-color-scheme`.
 - State uses `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
+- Async work whose result must be dropped on unmount (a session check, resolver,
+  or accept call that may `route()`) runs through `useCancellableEffect` in
+  `src/lib/use-cancellable-effect.ts`. Preact 11 defers `useEffect` cleanup on
+  unmount past the next paint, so a `cancelled` flag set there lets a late
+  response route away from the page the user just opened.
 - Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` (plus
   `rel="noreferrer"`) or `download`. `preact-iso` intercepts same-origin anchor
   clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
