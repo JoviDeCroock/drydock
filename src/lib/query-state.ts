@@ -115,7 +115,14 @@ export function useQuerySignal<T>(signal: Signal<T>, options: QuerySignalOptions
       write();
       return;
     }
-    const timer = window.setTimeout(write, debounceMs);
+    // A route change can land before this effect is torn down (the old route
+    // stays mounted while the next chunk loads, and Preact 11 defers unmount
+    // cleanup past the next paint), so a pending write for another path is
+    // dropped rather than stamped onto the new page's URL.
+    const pathname = window.location.pathname;
+    const timer = window.setTimeout(() => {
+      if (window.location.pathname === pathname) write();
+    }, debounceMs);
     return () => window.clearTimeout(timer);
   });
 }
