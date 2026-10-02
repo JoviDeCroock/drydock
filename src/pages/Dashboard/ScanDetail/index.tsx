@@ -318,19 +318,34 @@ function VerdictDecision({ model, view }: SectionProps) {
 }
 
 function CompareStatus({ model, view }: SectionProps) {
-  // While the release tree stands in for a loading or failed comparison, its
-  // notice already names the version and the reason.
-  if (view.treeNotice.value) return null;
+  const notice = view.treeNotice.value;
+  const version = model.comparisonVersion.value;
   const compareLoading = model.compareLoading.value;
-  const compareError = model.compareFailure.value ?? model.compareError.value;
+  const failure = model.compareFailure.value;
+  const requestError = model.compareError.value;
+  // While the release tree stands in for a loading or failed comparison, its
+  // notice already names the version, the reason, and the retry; only another
+  // request's error is still reported here.
+  if (notice) return requestError ? <Alert tone="warn">{requestError}</Alert> : null;
   return (
     <>
       {compareLoading ? (
-        <LoadingLine size="inline">
-          Fetching {model.comparisonVersion.value} via sandbox
-        </LoadingLine>
+        <LoadingLine size="inline">Fetching {version} via sandbox</LoadingLine>
       ) : null}
-      {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+      {failure ? (
+        <Alert tone="warn">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {version} could not be compared: {failure}
+            </span>
+            <Button variant="secondary" size="sm" onClick={() => model.retryComparison()}>
+              Try again
+            </Button>
+          </div>
+        </Alert>
+      ) : requestError ? (
+        <Alert tone="warn">{requestError}</Alert>
+      ) : null}
     </>
   );
 }

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ScanDetailModel, type PersistedScanDetail } from "../src/models/scan";
+import {
+  COMPARE_PICK_SETTLE_MS,
+  ScanDetailModel,
+  type PersistedScanDetail,
+} from "../src/models/scan";
 import { jsonResponse, stubFetchRoutes } from "./helpers/fetch-stub";
 
 type ScanDetailModelInstance = InstanceType<typeof ScanDetailModel>;
@@ -194,42 +198,67 @@ describe("ScanDetailModel comparison default", () => {
   });
 });
 
+// A reader's pick is fetched once it has held for the settle delay.
+function pick(model: ScanDetailModelInstance, version: string) {
+  model.selectVersion(version);
+  vi.advanceTimersByTime(COMPARE_PICK_SETTLE_MS);
+}
+
 describe("ScanDetailModel comparison while a payload loads", () => {
   let model: ScanDetailModelInstance | null = null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
 
   afterEach(() => {
     model?.[Symbol.dispose]();
     model = null;
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   test("a payload that arrives after the reader moved on never stands in for the shown one", async () => {
     const compare = stubHeldCompare();
     model = new ScanDetailModel("scan-1");
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
     expect(model.compareLoading.value).toBe(true);
 
     model.selectVersion(STABLE_BASELINE);
     compare.settle(NEWEST_RC, comparePayload(NEWEST_RC));
-    await vi.waitFor(() => expect(model?.compareLoading.value).toBe(true));
+    await vi.waitFor(() => expect(model?.compareCache.value[NEWEST_RC]).toBeDefined());
 
+    expect(model.compareLoading.value).toBe(true);
     expect(model.compare.value).toBeNull();
     compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
     await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
     expect(model.compareLoading.value).toBe(false);
   });
 
+  test("arrowing through versions fetches only the one the reader settles on", () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+
+    model.selectVersion("11.0.0-rc.1");
+    vi.advanceTimersByTime(COMPARE_PICK_SETTLE_MS / 2);
+    pick(model, NEWEST_RC);
+
+    expect(compare.compareRequests("11.0.0-rc.1")).toBe(0);
+    expect(compare.compareRequests(NEWEST_RC)).toBe(1);
+  });
+
   test("returning to a version still in flight does not fetch it again", async () => {
     const compare = stubHeldCompare();
     model = new ScanDetailModel("scan-1");
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
     model.selectVersion(STABLE_BASELINE);
     compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
     await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
 
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
 
     expect(model.compareLoading.value).toBe(true);
     expect(compare.compareRequests(NEWEST_RC)).toBe(1);
@@ -241,7 +270,7 @@ describe("ScanDetailModel comparison while a payload loads", () => {
     const compare = stubHeldCompare();
     model = new ScanDetailModel("scan-1");
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
     model.selectVersion(STABLE_BASELINE);
 
     // Settled first, so it has landed by the time the shown payload has.
@@ -252,7 +281,7 @@ describe("ScanDetailModel comparison while a payload loads", () => {
     expect(model.compareFailure.value).toBeNull();
     expect(model.compareError.value).toBeNull();
     // Picking it again retries rather than replaying the old failure.
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
     expect(model.compareFailure.value).toBeNull();
     expect(model.compareLoading.value).toBe(true);
     expect(compare.compareRequests(NEWEST_RC)).toBe(2);
@@ -262,7 +291,7 @@ describe("ScanDetailModel comparison while a payload loads", () => {
     const fetchMock = stubVersionsAndCompare(STABLE_BASELINE, NEWEST_RC);
     model = new ScanDetailModel("scan-1");
     model.detail.value = scanDetail("complete", STABLE_BASELINE);
-    model.selectVersion(NEWEST_RC);
+    pick(model, NEWEST_RC);
     await vi.waitFor(() => expect(model?.compareFailure.value).toBe("unknown version"));
 
     model.retryComparison();

@@ -220,6 +220,20 @@ test("a failed comparison can be retried from the tree", async ({ page }) => {
   await expect(tree.getByText("1 / 2")).toBeVisible();
 });
 
+test("a failed baseline comparison can be retried beside the picker", async ({ page }) => {
+  await installWorkflowGateMocks(page, false, undefined, {
+    failure: { status: 429, error: "Too many comparison requests", times: 1 },
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const failure = page.getByText("1.1.0 could not be compared: Too many comparison requests");
+  await expect(failure).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Try again" }).click();
+
+  await expect(failure).toHaveCount(0);
+  await expect(page.locator("#release-workbench aside").getByText("__init__.py")).toBeVisible();
+});
+
 // The public report is the one review surface with no session and no npm
 // credentials, so its diff has to come entirely from the report export plus the
 // share-token file route. Mocked here rather than driven through the seeded
@@ -375,10 +389,13 @@ async function installWorkflowGateMocks(
     // error instead of `files`.
     failure?: { status: number; error: string; times?: number };
   },
+  // Answer the recorded baseline's first `times` compare requests with this error.
+  baseline: { failure?: { status: number; error: string; times?: number } } = {},
 ) {
   let packageDecision: "publish" | "no_publish" | null = null;
   let gateStatus: "pending" | "rejected" = "pending";
   let otherVersionFailures = 0;
+  let baselineFailures = 0;
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -450,6 +467,13 @@ async function installWorkflowGateMocks(
 
     if (path === `/api/v1/scans/${scanId}/compare`) {
       expect(url.searchParams.get("version")).toBe("1.1.0");
+      if (
+        baseline.failure &&
+        baselineFailures++ < (baseline.failure.times ?? Number.POSITIVE_INFINITY)
+      ) {
+        await fulfillJson(route, { error: baseline.failure.error }, baseline.failure.status);
+        return;
+      }
       await fulfillJson(route, {
         version: "1.1.0",
         files: [
