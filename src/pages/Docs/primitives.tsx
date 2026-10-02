@@ -5,7 +5,7 @@
  * rows, code blocks — kept apart from the prose so the page itself reads as
  * documentation rather than as markup.
  */
-import type { ComponentChildren } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useMemo } from "preact/hooks";
 import { type Signal, useComputed } from "@preact/signals";
 import { Badge, type BadgeTone } from "../../components/Badge";
@@ -409,24 +409,28 @@ function CodePre({
   text: string;
   class?: string;
 }) {
+  /* Plain and highlighted text share one shape, newline-separated inline line
+     spans, so the prerendered block and the highlighted one lay out
+     identically. A block-level span per line would collapse blank lines to
+     zero height once shiki returns them as empty token arrays. */
+  const lines: TokenLine[] = tokens ?? text.split("\n").map((line) => [{ content: line }]);
   return (
     <pre
       class={cn("m-0 p-4 overflow-x-auto font-mono text-[12px] leading-[1.55] text-ink", className)}
     >
       <code>
-        {tokens ? (
-          tokens.map((line, lineIndex) => (
-            <span key={lineIndex} class="block whitespace-pre">
+        {lines.map((line, lineIndex) => (
+          <Fragment key={lineIndex}>
+            {lineIndex > 0 ? "\n" : null}
+            <span>
               {line.map((token, tokenIndex) => (
                 <span key={tokenIndex} class={token.className}>
                   {token.content}
                 </span>
               ))}
             </span>
-          ))
-        ) : (
-          <span class="whitespace-pre">{text}</span>
-        )}
+          </Fragment>
+        ))}
       </code>
     </pre>
   );
