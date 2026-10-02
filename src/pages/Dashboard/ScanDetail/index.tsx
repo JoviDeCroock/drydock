@@ -323,7 +323,7 @@ function CompareStatus({ model, view }: SectionProps) {
   // notice already names the version and the reason.
   if (view.treeNotice.value) return null;
   const compareLoading = model.compareLoading.value;
-  const compareError = model.compareError.value;
+  const compareError = model.compareFailure.value ?? model.compareError.value;
   return (
     <>
       {compareLoading ? (

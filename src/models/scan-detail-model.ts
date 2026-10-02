@@ -55,9 +55,9 @@ export const ScanDetailModel = createModel((id: string) => {
   // choice the page made on its own never pins a version into the URL.
   const selectedVersion = signal<string | null>(null);
   const compareCache = signal<Record<string, ScanCompareResponse>>({});
-  // Why a version's compare payload failed to load, by version. The shared
-  // `compareError` line is overwritten by any later versions or file request,
-  // so the release tree cannot tell from it which comparison failed.
+  // Why a version's compare payload failed to load, by version, so a failure
+  // is reported only while its own version is the comparison shown.
+  // `compareError` carries the versions and file requests' errors.
   const compareFailures = signal<Record<string, string>>({});
   const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
@@ -204,11 +204,7 @@ export const ScanDetailModel = createModel((id: string) => {
       const data = await getScanCompare(id, version);
       compareCache.value = { ...compareCache.peek(), [version]: data };
     } catch (err) {
-      const message = errorMessage(err);
-      batch(() => {
-        compareError.value = message;
-        compareFailures.value = { ...compareFailures.peek(), [version]: message };
-      });
+      compareFailures.value = { ...compareFailures.peek(), [version]: errorMessage(err) };
     } finally {
       compareLoading.value = false;
     }
