@@ -158,8 +158,13 @@ test("the reader can return to the baseline while a picked version still loads",
   await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
 
   const picker = page.getByLabel("Compare against");
+  // Wait for the rc's fetch itself, so its payload is still in flight below.
+  const rcRequested = page.waitForRequest((request) =>
+    request.url().includes("/compare?version=1.2.0-rc.1"),
+  );
   await picker.selectOption("1.2.0-rc.1");
   await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
+  await rcRequested;
   await expect(picker).toBeEnabled();
   await picker.selectOption("1.1.0");
   await expect(tree.getByText("__init__.py")).toBeVisible();
@@ -228,8 +233,12 @@ test("a failed baseline comparison can be retried beside the picker", async ({ p
   await page.goto(`/dashboard/scans/${scanId}`);
   const failure = page.getByText("1.1.0 could not be compared: Too many comparison requests");
   await expect(failure).toBeVisible({ timeout: 30_000 });
+  const retried = page.waitForResponse(
+    (response) => response.url().includes("/compare?version=1.1.0") && response.ok(),
+  );
   await page.getByRole("button", { name: "Try again" }).click();
 
+  await retried;
   await expect(failure).toHaveCount(0);
   await expect(page.locator("#release-workbench aside").getByText("__init__.py")).toBeVisible();
 });

@@ -214,15 +214,18 @@ export const ScanDetailModel = createModel((id: string) => {
     }
   }
 
+  function forgetCompareFailure(version: string) {
+    if (!compareFailures.peek()[version]) return;
+    const { [version]: _retried, ...rest } = compareFailures.peek();
+    compareFailures.value = rest;
+  }
+
   async function loadCompare(version: string) {
     if (compareInFlight.peek().has(version)) return;
     const id = scanId.peek();
     batch(() => {
       compareInFlight.value = new Set(compareInFlight.peek()).add(version);
-      if (compareFailures.peek()[version]) {
-        const { [version]: _retried, ...rest } = compareFailures.peek();
-        compareFailures.value = rest;
-      }
+      forgetCompareFailure(version);
     });
     // The payload or failure lands in the same update that ends the flight,
     // so the version never reads as neither loading nor settled.
@@ -383,11 +386,15 @@ export const ScanDetailModel = createModel((id: string) => {
     // Picking the default follows it rather than pinning it. Once versions
     // have loaded, the shared error line can only hold a file error from the
     // comparison being left, so it goes with it; a versions error stays.
+    // Picking a failed version retries it, so its old failure goes now
+    // rather than standing through the settle delay.
     selectVersion(version: string | null) {
       batch(() => {
         this.selectedVersion.value =
           version === this.defaultPreviousVersion.peek() ? null : version;
         if (this.versions.peek()) this.compareError.value = null;
+        const shown = this.comparisonVersion.peek();
+        if (shown) forgetCompareFailure(shown);
       });
     },
 
