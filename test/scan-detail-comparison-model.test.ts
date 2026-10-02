@@ -280,11 +280,26 @@ describe("ScanDetailModel comparison while a payload loads", () => {
 
     expect(model.compareFailure.value).toBeNull();
     expect(model.compareError.value).toBeNull();
-    // Picking it again retries rather than replaying the old failure.
-    pick(model, NEWEST_RC);
+    // Picking it again retries rather than replaying the old failure, which
+    // is gone before the pick has settled.
+    model.selectVersion(NEWEST_RC);
     expect(model.compareFailure.value).toBeNull();
+    vi.advanceTimersByTime(COMPARE_PICK_SETTLE_MS);
     expect(model.compareLoading.value).toBe(true);
     expect(compare.compareRequests(NEWEST_RC)).toBe(2);
+  });
+
+  test("re-picking a failed version drops its old failure before the pick settles", async () => {
+    stubVersionsAndCompare(STABLE_BASELINE, NEWEST_RC);
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    pick(model, NEWEST_RC);
+    await vi.waitFor(() => expect(model?.compareFailure.value).toBe("unknown version"));
+    model.selectVersion(STABLE_BASELINE);
+
+    model.selectVersion(NEWEST_RC);
+
+    expect(model.compareFailure.value).toBeNull();
   });
 
   test("retrying a failed comparison clears the failure and fetches it again", async () => {

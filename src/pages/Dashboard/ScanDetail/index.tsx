@@ -343,9 +343,8 @@ function CompareStatus({ model, view }: SectionProps) {
             </Button>
           </div>
         </Alert>
-      ) : requestError ? (
-        <Alert tone="warn">{requestError}</Alert>
       ) : null}
+      {requestError ? <Alert tone="warn">{requestError}</Alert> : null}
     </>
   );
 }
