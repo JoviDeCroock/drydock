@@ -27,7 +27,7 @@ export function CopyButton({
   // Success is self-evident once the paste lands, so the confirmation clears
   // itself. A failure asks the reader to do something, so it stays until the
   // next attempt.
-  const resetTimer = useRef<ReturnType<typeof setTimeout>>();
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(resetTimer.current), []);
 
   const copy = async () => {
