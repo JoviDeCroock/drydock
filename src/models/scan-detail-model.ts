@@ -68,6 +68,11 @@ export const ScanDetailModel = createModel((id: string) => {
   // reader can change the comparison mid-fetch: a late payload lands in the
   // cache under its own version and never stands in for the one on screen.
   const compareInFlight = signal<ReadonlySet<string>>(new Set());
+  // Versions whose cached payload was fetched while the scan ran. Such a
+  // payload has no finding annotations, which need the completed report, so
+  // once the scan completes any that is not the recorded baseline (whose
+  // annotations are never read from a payload) is dropped and refetched.
+  const fetchedWhileRunning = new Set<string>();
   const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
   const fileLoading = signal(false);
@@ -98,10 +103,10 @@ export const ScanDetailModel = createModel((id: string) => {
   // was computed against, and so the default comparison. Null when the scan
   // recorded none: its report compared against nothing and reads all added.
   // The versions endpoint's own default is deliberately unused. The page asks
-  // for it while the scan may still be running, when it can only guess the
-  // tag-blind semver predecessor: for a stable release cut after release
-  // candidates that is the newest rc, not the dist-tag baseline the pipeline
-  // goes on to diff.
+  // for it while the scan may still be running, and until the pipeline has
+  // recorded the baseline it can only guess the tag-blind semver predecessor:
+  // for a stable release cut after release candidates that is the newest rc,
+  // not the dist-tag baseline the pipeline goes on to diff.
   const defaultPreviousVersion = computed(() => detail.value?.scan.previousVersion ?? null);
   // The comparison the workbench shows: the reader's pick, else the default.
   const comparisonVersion = computed(() => selectedVersion.value ?? defaultPreviousVersion.value);
@@ -161,25 +166,48 @@ export const ScanDetailModel = createModel((id: string) => {
     };
   });
 
-  // Load the shown comparison's compare payload once the scan is complete; the
-  // workbench that reads it renders only then. A reader's pick waits to settle;
-  // the recorded baseline loads at once. It is not tracked against
-  // `compareFailures` or `compareInFlight`, so it does not loop on a failure:
-  // a failed version is retried when it is picked again (or when another
-  // payload lands while it is shown), and `loadCompare` skips a version
-  // already in flight.
+  // Load the compare payload the page needs: the shown comparison's once the
+  // scan is complete, and while it runs the baseline the pipeline has recorded,
+  // so a modified file's previous side is ready when the workbench appears. A
+  // reader's pick waits to settle; the recorded baseline loads at once. It is
+  // not tracked against `compareFailures` or `compareInFlight`, so it does not
+  // loop on a failure: a failed version is retried when it is picked again
+  // (or when the scan completes, or another payload lands while it is shown),
+  // and `loadCompare` skips a version already in flight.
   effect(() => {
     const cache = compareCache.value;
-    const version = comparisonVersion.value;
+    const shown = comparisonVersion.value;
     const recorded = defaultPreviousVersion.value;
-    const complete = status.value === "complete";
-    if (!version || !complete || cache[version]) return;
+    const scanStatus = status.value;
+    const version =
+      scanStatus === "complete"
+        ? shown
+        : scanStatus === "pending" || scanStatus === "running"
+          ? recorded
+          : null;
+    if (!version || cache[version]) return;
     if (version === recorded) {
       void loadCompare(version);
       return;
     }
     const timer = setTimeout(() => void loadCompare(version), COMPARE_PICK_SETTLE_MS);
     return () => clearTimeout(timer);
+  });
+
+  // A retried run can record a different baseline, and final persist can name
+  // none, so drop what was fetched mid-run for a version the completed scan
+  // does not name rather than read its empty annotations as a comparison's.
+  effect(() => {
+    const complete = status.value === "complete";
+    const recorded = defaultPreviousVersion.value;
+    if (!complete || !fetchedWhileRunning.size) return;
+    const cache = compareCache.peek();
+    const stale = [...fetchedWhileRunning].filter((version) => version !== recorded);
+    fetchedWhileRunning.clear();
+    if (!stale.some((version) => cache[version])) return;
+    const next = { ...cache };
+    for (const version of stale) delete next[version];
+    compareCache.value = next;
   });
 
   async function pollDetail(): Promise<boolean> {
@@ -236,11 +264,20 @@ export const ScanDetailModel = createModel((id: string) => {
         inFlight.delete(version);
         compareInFlight.value = inFlight;
       });
+    const requestedWhileRunning = status.peek() !== "complete";
     try {
       const data = await getScanCompare(id, version);
+      const running = status.peek() !== "complete";
+      if (requestedWhileRunning && !running && version !== defaultPreviousVersion.peek()) {
+        // The scan completed under another baseline while this was in flight.
+        settle(() => {});
+        if (comparisonVersion.peek() === version) void loadCompare(version);
+        return;
+      }
       settle(() => {
         compareCache.value = { ...compareCache.peek(), [version]: data };
       });
+      if (requestedWhileRunning && running) fetchedWhileRunning.add(version);
     } catch (err) {
       const message = errorMessage(err);
       settle(() => {

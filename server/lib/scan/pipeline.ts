@@ -7,7 +7,7 @@ import type {
   PackageAdapter,
 } from "../ecosystems/package-adapter";
 import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
-import { backfillScanRegistryReleaseIdentity } from "../../db/scans";
+import { backfillScanRegistryReleaseIdentity, recordScanBaseline } from "../../db/scans";
 import { computeIntentEnvelope, type WorkflowGateIntent } from "../intent-envelope";
 import {
   describeOperationalError,
@@ -17,7 +17,7 @@ import {
 import { recordProductEvent } from "../analytics";
 import { ScanPreconditionError } from "./errors";
 import { releaseFingerprintFindings } from "../release-fingerprint";
-import type { Finding } from "../review";
+import { redactJson, type Finding, type PackageJsonSummary } from "../review";
 import {
   analyzeRelease,
   mergeAiFindings,
@@ -89,6 +89,9 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterInput,
       broker,
       async (resolved) => {
+        if (input.scanId) {
+          await recordResolvedBaseline(db, identity, resolved.baseline.artifact?.manifest ?? null);
+        }
         const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
         if (input.scanId && registryUrl && registryIdentity) {
           const identityResult = await backfillScanRegistryReleaseIdentity(db, {
@@ -243,6 +246,31 @@ async function collectReleaseFingerprintFindings(
       error: describeOperationalError(err),
     });
     return [];
+  }
+}
+
+// The scan page fetches the baseline's file list once the row names it; this
+// lets it start while the AI review runs instead of after completion. Only a
+// hint for the page: final persist writes the same value, so a failed write is
+// logged and the scan goes on.
+async function recordResolvedBaseline(
+  db: AppDb,
+  identity: PipelineIdentity,
+  manifest: PackageJsonSummary | null,
+) {
+  try {
+    await recordScanBaseline(db, {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      previousPackageJson: redactJson(manifest),
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.baseline_record.failed", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      stageId: identity.stageId,
+      error: describeOperationalError(err),
+    });
   }
 }
 
