@@ -78,8 +78,10 @@ What they use lives in `src/features/review/`:
   a surface-wide caveat about that side goes in the optional `diffAside`
   (the File diff label's trailing slot) rather than above every file. A
   surface whose entries are not yet the comparison on screen passes a
-  `treeNotice` (loading or unavailable) in place of the tree rather than a
-  stale or empty one.
+  `treeNotice` (loading or unavailable, with the failure reason as `detail`)
+  in place of the tree rather than a stale or empty one. The notice is the
+  only place that state is reported: the diff panel stays empty and the
+  comparison status line beside the picker stays hidden while it shows.
 - `initial-path.ts` — `findingFirstPath`: every review surface opens the
   workbench on the changed file carrying the most severe finding, falling back
   to its own rule (scan detail and report: first change; `/diff`: the

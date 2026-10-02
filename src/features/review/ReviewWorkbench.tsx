@@ -12,6 +12,7 @@ import { filterDiffEntries, type FindingCount } from "./diff-entries";
 export interface TreeNotice {
   tone: "loading" | "unavailable";
   text: string;
+  detail?: string;
 }
 
 /**
@@ -42,7 +43,9 @@ export function ReviewWorkbench({
   selectedPath: ReadonlySignal<string | null>;
   findingCounts: ReadonlySignal<Map<string, FindingCount>>;
   // Replaces the tree (and its count) when the surface has no entries for the
-  // comparison it shows yet, rather than rendering an empty or stale tree.
+  // comparison it shows yet, rather than rendering an empty or stale tree. The
+  // surface reports that state here only, not again beside the picker or in
+  // the diff panel.
   treeNotice?: ReadonlySignal<TreeNotice | null>;
   onSelect: (path: string) => void;
   // The diff panel for the selected file. Owned by the surface, because what a
@@ -106,7 +109,12 @@ export function ReviewWorkbench({
               <IndeterminateBar />
             </div>
           ) : notice ? (
-            <EmptyLine>{notice.text}</EmptyLine>
+            <div class="flex flex-col gap-1 py-1">
+              <EmptyLine>{notice.text}</EmptyLine>
+              {notice.detail ? (
+                <p class="m-0 font-mono text-[11px] text-ink-subtle break-words">{notice.detail}</p>
+              ) : null}
+            </div>
           ) : (
             <FileTree
               entries={visibleEntries.value}

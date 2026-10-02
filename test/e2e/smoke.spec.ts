@@ -133,11 +133,33 @@ test("the release tree waits for a picked version instead of showing the baselin
   await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
   await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
   await expect(tree.getByText("__init__.py")).toHaveCount(0);
-  await expect(page.getByText("Loading comparison")).toBeVisible();
+  // The tree's notice is the one place the wait is reported.
+  await expect(page.getByText("Fetching 1.2.0-rc.1 via sandbox")).toHaveCount(0);
+  await expect(page.getByText("Loading comparison")).toHaveCount(0);
 
   release();
   await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
   await expect(tree.getByText("0 / 2")).toBeVisible();
+});
+
+test("a picked version that cannot be compared says why, once, in the tree", async ({ page }) => {
+  await installWorkflowGateMocks(page, false, {
+    version: "1.2.0-rc.1",
+    distTags: ["rc"],
+    files: Promise.resolve([]),
+    failure: { status: 429, error: "Too many comparison requests" },
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const tree = page.locator("#release-workbench aside");
+  await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
+  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toBeVisible();
+  await expect(tree.getByText("Too many comparison requests")).toBeVisible();
+  await expect(page.getByText("Too many comparison requests")).toHaveCount(1);
+  await expect(tree.getByText("__init__.py")).toHaveCount(0);
+  await expect(page.getByText("Select a file from the tree to diff.")).toHaveCount(0);
 });
 
 // The public report is the one review surface with no session and no npm
@@ -315,6 +337,8 @@ async function installWorkflowGateMocks(
     version: string;
     distTags: string[];
     files: Promise<Array<{ path: string; size: number; sha256: string; flags: string[] }>>;
+    // Answer its compare request with this error instead of `files`.
+    failure?: { status: number; error: string };
   },
 ) {
   let packageDecision: "publish" | "no_publish" | null = null;
@@ -368,6 +392,14 @@ async function installWorkflowGateMocks(
       otherVersion &&
       url.searchParams.get("version") === otherVersion.version
     ) {
+      if (otherVersion.failure) {
+        await fulfillJson(
+          route,
+          { error: otherVersion.failure.error },
+          otherVersion.failure.status,
+        );
+        return;
+      }
       await fulfillJson(route, {
         version: otherVersion.version,
         files: await otherVersion.files,

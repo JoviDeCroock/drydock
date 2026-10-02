@@ -36,19 +36,9 @@ export function DiffWorkbench({
   findings: DiffFinding[];
   findingTarget?: DiffFinding | null;
 }) {
-  // The tree is empty until the chosen version's comparison arrives, so there
-  // is no file to pick yet; say what the panel is waiting on instead.
-  if (tree === "loading") {
-    return (
-      <DiffProcessing
-        title="Loading comparison"
-        detail="fetching the previous version in the sandbox"
-      />
-    );
-  }
-  if (tree === "failed") {
-    return <DiffPanelMessage>The comparison could not be loaded.</DiffPanelMessage>;
-  }
+  // Until the chosen version's comparison arrives there is no file to pick,
+  // and the release tree's notice already says what is loading or failed.
+  if (tree !== "entries") return null;
 
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
