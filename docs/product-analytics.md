@@ -208,7 +208,10 @@ invocation.
 
 `ai_review.attempted` makes recovered provider failures visible. Its dimensions
 are outcome, action, model, and reviewer version; doubles are duration, attempt,
-steps, input/cache/output/total tokens. Organization is always blank, and no
+steps, input/cache/output/total tokens, then (reviewer 1.9.0+, zero before) the
+attempt's coverage counts: changed files, changed files read to the end,
+required paths, required paths unread at the end, coverage rejections, evidence
+characters returned, and coverage-read characters (`double8`–`double14`). Organization is always blank, and no
 scan, stage, package, prompt, evidence, or Gateway log identifier is retained.
 Use this event—not the final model on `ai_review.finished`—to attribute cost by
 model after fallback. Usage from completed agent steps is retained when a later

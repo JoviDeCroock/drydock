@@ -19,10 +19,12 @@ import {
   aiReviewSubmissionSchema,
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
+  COVERAGE_READ_CHARS,
   MAX_AGENT_STEPS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
   parsePersistedAiReview,
+  SUBMIT_CONTEXT_TOKENS,
 } from "../server/lib/ai-review/contract";
 import { computeScanRisk } from "../server/lib/review/risk";
 
@@ -962,7 +964,8 @@ describe("ai review orchestration", () => {
       "primary-reviewer",
       AI_REVIEWER_VERSION,
     ]);
-    expect(points[0].doubles.slice(1)).toEqual([1, 1, 10, 0, 10, 20]);
+    // Token usage, then coverage counts: zero here because the release is empty.
+    expect(points[0].doubles.slice(1)).toEqual([1, 1, 10, 0, 10, 20, 0, 0, 0, 0, 0, 0, 0]);
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {
@@ -1086,15 +1089,17 @@ describe("ai review orchestration", () => {
     expect(computeScanRisk([], ai)).toBe("high");
   });
 
-  test("an early submit_review is refused until required evidence is read", async () => {
+  test("an early submit_review is refused until required evidence is read to the end", async () => {
     const packageJson = JSON.stringify({
       name: "fixture",
       version: "1.0.1",
       scripts: { postinstall: "node scripts/install.js" },
     });
+    // Longer than the coverage read can show, so the model must finish it.
+    const installScript = "run()\n".repeat(22_000);
     const files = [
       { path: "package.json", size: 1, sha256: "a", flags: [], textSample: packageJson },
-      { path: "scripts/install.js", size: 1, sha256: "b", flags: [], textSample: "run()\n" },
+      { path: "scripts/install.js", size: 1, sha256: "b", flags: [], textSample: installScript },
     ];
     const options = {
       ...BASE_OPTIONS,
@@ -1137,14 +1142,143 @@ describe("ai review orchestration", () => {
     expect(usage.steps).toBe(3);
     expect(ai.status).toBe("complete");
     // The refusal reached the model as a tool result naming the unread paths.
-    const refusal = JSON.stringify(prompts[1]);
+    const refusal = JSON.stringify(prompts[1].at(-1));
     expect(refusal).toContain("unreadRequiredPaths");
     expect(refusal).toContain("scripts/install.js");
   });
 
-  test("the coverage gate lifts when too few steps remain for a read and a re-submit", async () => {
+  test("the app's coverage read opens the conversation as a read tool exchange", async () => {
     const files = [
-      { path: "package.json", size: 1, sha256: "a", flags: [], textSample: "{}" },
+      { path: "lib/a.js", size: 1, sha256: "a", flags: [], textSample: "const a = 'alpha';\n" },
+      { path: "lib/b.js", size: 1, sha256: "b", flags: [], textSample: "const b = 'bravo';\n" },
+    ];
+    const options = {
+      ...BASE_OPTIONS,
+      files,
+      previousFiles: [],
+      diff: files.map((file) => ({ path: file.path, status: "added", flags: [] })),
+    };
+    let firstPrompt = null;
+    const model = mockModel(async ({ prompt }) => {
+      firstPrompt ??= prompt;
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-1",
+            toolName: "submit_review",
+            input: JSON.stringify(VALID_REVIEW),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai, usage } = await analyzeWithAi({}, "mock-reviewer", options, model);
+
+    expect(ai.status).toBe("complete");
+    expect(usage.steps).toBe(1);
+    expect(firstPrompt.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "tool",
+    ]);
+    // Package text arrives only as tool output, never in the top-level task.
+    expect(JSON.stringify(firstPrompt[1])).not.toContain("alpha");
+    const [call] = firstPrompt[2].content;
+    expect(call).toMatchObject({ type: "tool-call", toolName: "read" });
+    // The app's read claims no maxChars: its windows come from the coverage plan.
+    expect(call.input).toEqual({ paths: ["lib/a.js", "lib/b.js"] });
+    const [result] = firstPrompt[3].content;
+    expect(result.toolCallId).toBe(call.toolCallId);
+    expect(result.output.value.source).toBe("coverage-read");
+    const shown = JSON.stringify(result.output.value.results);
+    expect(shown).toContain("alpha");
+    expect(shown).toContain("bravo");
+  });
+
+  test("a step whose input nears the context window forces submit_review", async () => {
+    const files = [{ path: "lib/a.js", size: 1, sha256: "a", flags: [], textSample: "a\n" }];
+    const options = {
+      ...BASE_OPTIONS,
+      files,
+      previousFiles: [],
+      diff: [{ path: "lib/a.js", status: "added", flags: [] }],
+    };
+    const toolChoices = [];
+    const model = mockModel(async (callOptions) => {
+      toolChoices.push(callOptions.toolChoice);
+      const forced = callOptions.toolChoice?.type === "tool";
+      const result = generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: `c-${toolChoices.length}`,
+            toolName: forced ? "submit_review" : "search_files",
+            input: JSON.stringify(forced ? VALID_REVIEW : { queries: ["a"] }),
+          },
+        ],
+        "tool-calls",
+      );
+      result.usage.inputTokens.total = SUBMIT_CONTEXT_TOKENS;
+      return result;
+    });
+
+    const { review: ai, usage } = await analyzeWithAi({}, "mock-reviewer", options, model);
+
+    expect(ai.status).toBe("complete");
+    expect(usage.steps).toBe(2);
+    expect(toolChoices[1]).toEqual({ type: "tool", toolName: "submit_review" });
+  });
+
+  test("the context guard estimates the prompt when the provider reports no usage", async () => {
+    const files = [{ path: "lib/a.js", size: 1, sha256: "a", flags: [], textSample: "a\n" }];
+    const options = {
+      ...BASE_OPTIONS,
+      files,
+      previousFiles: [],
+      diff: [{ path: "lib/a.js", status: "added", flags: [] }],
+    };
+    let steps = 0;
+    const model = mockModel(async (callOptions) => {
+      steps += 1;
+      const forced = callOptions.toolChoice?.type === "tool";
+      const result = generateResult(
+        [
+          // Long visible reasoning grows the prompt the guard must notice.
+          ...(forced ? [] : [{ type: "text", text: "r".repeat(150_000) }]),
+          {
+            type: "tool-call",
+            toolCallId: `c-${steps}`,
+            toolName: forced ? "submit_review" : "search_files",
+            input: JSON.stringify(forced ? VALID_REVIEW : { queries: ["a"] }),
+          },
+        ],
+        "tool-calls",
+      );
+      result.usage.inputTokens.total = 0;
+      return result;
+    });
+
+    const { review: ai, usage } = await analyzeWithAi({}, "mock-reviewer", options, model);
+
+    expect(ai.status).toBe("complete");
+    expect(usage.steps).toBeLessThan(10);
+  });
+
+  test("the coverage gate lifts when too few steps remain for a read and a re-submit", async () => {
+    // The coverage read cuts the required manifest but the budget can finish
+    // it, so the gate owes it; re-reading the fully shown noise.js costs
+    // nothing and never finishes it, so only the step-room valve lifts the gate.
+    const files = [
+      {
+        path: "package.json",
+        size: 1,
+        sha256: "a",
+        flags: [],
+        textSample: "x".repeat(COVERAGE_READ_CHARS + 10_000),
+      },
       { path: "noise.js", size: 1, sha256: "n", flags: [], textSample: "1\n" },
     ];
     const options = {
