@@ -80,8 +80,10 @@ What they use lives in `src/features/review/`:
   surface whose entries are not yet the comparison on screen passes a
   `treeNotice` (loading or unavailable, with the failure reason as `detail`)
   in place of the tree rather than a stale or empty one. The notice is the
-  only place that state is reported: the diff panel stays empty and the
-  comparison status line beside the picker stays hidden while it shows.
+  only place that state is reported: the diff panel only says no file is
+  selected, the comparison status line beside the picker stays hidden while
+  it shows, and a version's compare failure is reported only while that
+  version is the comparison shown.
 - `initial-path.ts` — `findingFirstPath`: every review surface opens the
   workbench on the changed file carrying the most severe finding, falling back
   to its own rule (scan detail and report: first change; `/diff`: the

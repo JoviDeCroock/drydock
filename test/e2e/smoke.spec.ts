@@ -160,6 +160,11 @@ test("a picked version that cannot be compared says why, once, in the tree", asy
   await expect(page.getByText("Too many comparison requests")).toHaveCount(1);
   await expect(tree.getByText("__init__.py")).toHaveCount(0);
   await expect(page.getByText("Select a file from the tree to diff.")).toHaveCount(0);
+
+  // Back on the baseline, the rc's failure is not reported against it.
+  await page.getByLabel("Compare against").selectOption("1.1.0");
+  await expect(tree.getByText("__init__.py")).toBeVisible();
+  await expect(page.getByText("Too many comparison requests")).toHaveCount(0);
 });
 
 // The public report is the one review surface with no session and no npm

@@ -38,7 +38,7 @@ export function DiffWorkbench({
 }) {
   // Until the chosen version's comparison arrives there is no file to pick,
   // and the release tree's notice already says what is loading or failed.
-  if (tree !== "entries") return null;
+  if (tree !== "entries") return <DiffPanelMessage>No file selected.</DiffPanelMessage>;
 
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
