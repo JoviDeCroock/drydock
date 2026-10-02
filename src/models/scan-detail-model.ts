@@ -43,6 +43,11 @@ import {
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+// How long a reader's pick must hold before its compare payload is fetched.
+// Arrowing through the closed picker fires a change per step on most
+// platforms, and every fetch costs sandbox work and the per-user compare rate
+// limit, so only the version the reader settles on is fetched.
+export const COMPARE_PICK_SETTLE_MS = 300;
 
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
@@ -157,17 +162,24 @@ export const ScanDetailModel = createModel((id: string) => {
   });
 
   // Load the shown comparison's compare payload once the scan is complete; the
-  // workbench that reads it renders only then. It is not tracked against
-  // `compareFailures` or `compareInFlight`, so a failed version is retried when
-  // it is picked again rather than in a loop, and `loadCompare` skips a
-  // version already in flight.
+  // workbench that reads it renders only then. A reader's pick waits to settle;
+  // the recorded baseline loads at once. It is not tracked against
+  // `compareFailures` or `compareInFlight`, so it does not loop on a failure:
+  // a failed version is retried when it is picked again (or when another
+  // payload lands while it is shown), and `loadCompare` skips a version
+  // already in flight.
   effect(() => {
     const cache = compareCache.value;
     const version = comparisonVersion.value;
+    const recorded = defaultPreviousVersion.value;
     const complete = status.value === "complete";
-    if (!version || !complete) return;
-    if (cache[version]) return;
-    void loadCompare(version);
+    if (!version || !complete || cache[version]) return;
+    if (version === recorded) {
+      void loadCompare(version);
+      return;
+    }
+    const timer = setTimeout(() => void loadCompare(version), COMPARE_PICK_SETTLE_MS);
+    return () => clearTimeout(timer);
   });
 
   async function pollDetail(): Promise<boolean> {
