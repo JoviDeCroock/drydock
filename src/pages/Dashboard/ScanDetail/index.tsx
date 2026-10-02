@@ -202,7 +202,7 @@ function ScanReport({ model, view }: SectionProps) {
 
           <div class="flex flex-col gap-3">
             {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}
-            <CompareStatus model={model} />
+            <CompareStatus model={model} view={view} />
 
             <ReviewWorkbench
               id="release-workbench"
@@ -318,7 +318,10 @@ function VerdictDecision({ model, view }: SectionProps) {
   );
 }
 
-function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
+function CompareStatus({ model, view }: SectionProps) {
+  // While the release tree stands in for a loading or failed comparison, its
+  // notice already names the version and the reason.
+  if (view.treeNotice.value) return null;
   const compareLoading = model.compareLoading.value;
   const compareError = model.compareError.value;
   return (

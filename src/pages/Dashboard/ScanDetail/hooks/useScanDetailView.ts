@@ -142,7 +142,11 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     if (tree.kind === "loading")
       return { tone: "loading", text: `Comparing against ${tree.version}` };
     if (tree.kind === "failed") {
-      return { tone: "unavailable", text: `${tree.version} could not be compared.` };
+      return {
+        tone: "unavailable",
+        text: `${tree.version} could not be compared.`,
+        detail: tree.message,
+      };
     }
     return null;
   });
@@ -158,6 +162,7 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
   const findingsWithDiffStatus = useFindingsWithDiff(
     model.detail,
     model.compare,
+    stagedRecords,
     reportEntries,
     reportIsPersisted,
   );
