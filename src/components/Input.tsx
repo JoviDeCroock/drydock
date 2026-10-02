@@ -1,7 +1,8 @@
-import type { JSX } from "preact";
+import type { AccessibleInputHTMLAttributes } from "preact";
 import { cn } from "./cn";
+import type { DistributiveOmit } from "./element-props";
 
-type InputProps = Omit<JSX.InputHTMLAttributes<HTMLInputElement>, "class"> & {
+type InputProps = DistributiveOmit<AccessibleInputHTMLAttributes<HTMLInputElement>, "class"> & {
   class?: string;
   // A field holding a machine value — a URL, a token, a digest. The mono face
   // reads a step smaller, so the size moves with it.
