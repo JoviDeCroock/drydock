@@ -56,6 +56,30 @@ function stubVersionsAndCompare(
   });
 }
 
+// Holds each compare request open until the test settles it, by version.
+function stubHeldCompare() {
+  const held = new Map<string, (response: Response) => void>();
+  const fetchMock = stubFetchRoutes({
+    "/compare": (url) => {
+      const version = new URL(url, "http://localhost").searchParams.get("version") ?? "";
+      return new Promise<Response>((resolve) => held.set(version, resolve));
+    },
+  });
+  const compareRequests = (version: string) =>
+    fetchMock.mock.calls.filter(([input]) => String(input).includes(`version=${version}`)).length;
+  const settle = (version: string, response: Response) => {
+    const resolve = held.get(version);
+    if (!resolve) throw new Error(`no compare request held for ${version}`);
+    held.delete(version);
+    resolve(response);
+  };
+  return { compareRequests, settle };
+}
+
+function comparePayload(version: string) {
+  return jsonResponse({ version, files: [], packageJson: null });
+}
+
 describe("ScanDetailModel comparison default", () => {
   let model: ScanDetailModelInstance | null = null;
 
@@ -167,5 +191,104 @@ describe("ScanDetailModel comparison default", () => {
     model.selectVersion(STABLE_BASELINE);
 
     expect(model.compareFailure.value).toBeNull();
+  });
+});
+
+describe("ScanDetailModel comparison while a payload loads", () => {
+  let model: ScanDetailModelInstance | null = null;
+
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  test("a payload that arrives after the reader moved on never stands in for the shown one", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+    expect(model.compareLoading.value).toBe(true);
+
+    model.selectVersion(STABLE_BASELINE);
+    compare.settle(NEWEST_RC, comparePayload(NEWEST_RC));
+    await vi.waitFor(() => expect(model?.compareLoading.value).toBe(true));
+
+    expect(model.compare.value).toBeNull();
+    compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
+    expect(model.compareLoading.value).toBe(false);
+  });
+
+  test("returning to a version still in flight does not fetch it again", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+    model.selectVersion(STABLE_BASELINE);
+    compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
+
+    model.selectVersion(NEWEST_RC);
+
+    expect(model.compareLoading.value).toBe(true);
+    expect(compare.compareRequests(NEWEST_RC)).toBe(1);
+    compare.settle(NEWEST_RC, comparePayload(NEWEST_RC));
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(NEWEST_RC));
+  });
+
+  test("a failure for a version no longer shown is not reported", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+    model.selectVersion(STABLE_BASELINE);
+
+    // Settled first, so it has landed by the time the shown payload has.
+    compare.settle(NEWEST_RC, jsonResponse({ error: "rate limited" }, 429));
+    compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
+
+    expect(model.compareFailure.value).toBeNull();
+    expect(model.compareError.value).toBeNull();
+    // Picking it again retries rather than replaying the old failure.
+    model.selectVersion(NEWEST_RC);
+    expect(model.compareFailure.value).toBeNull();
+    expect(model.compareLoading.value).toBe(true);
+    expect(compare.compareRequests(NEWEST_RC)).toBe(2);
+  });
+
+  test("retrying a failed comparison clears the failure and fetches it again", async () => {
+    const fetchMock = stubVersionsAndCompare(STABLE_BASELINE, NEWEST_RC);
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    model.selectVersion(NEWEST_RC);
+    await vi.waitFor(() => expect(model?.compareFailure.value).toBe("unknown version"));
+
+    model.retryComparison();
+
+    expect(model.compareFailure.value).toBeNull();
+    expect(model.compareLoading.value).toBe(true);
+    const rcRequests = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes(`version=${NEWEST_RC}`),
+    );
+    expect(rcRequests).toHaveLength(2);
+    await vi.waitFor(() => expect(model?.compareFailure.value).toBe("unknown version"));
+  });
+
+  test("loading a comparison does not clear a failed versions request", async () => {
+    stubFetchRoutes({
+      "/versions": () => jsonResponse({ error: "registry unavailable" }, 502),
+      "/compare": () => comparePayload(STABLE_BASELINE),
+    });
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("running", null);
+    await model.loadVersions();
+    expect(model.compareError.value).toBe("registry unavailable");
+
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
+
+    expect(model.compareError.value).toBe("registry unavailable");
   });
 });

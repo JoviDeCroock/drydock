@@ -146,6 +146,7 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
         tone: "unavailable",
         text: `${tree.version} could not be compared.`,
         detail: tree.message,
+        retry: () => model.retryComparison(),
       };
     }
     return null;
