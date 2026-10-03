@@ -32,7 +32,10 @@ un-audited.
 
 Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
-`organization.*`, and notification-delivery events.
+`organization.*` (including `organization.api_key_created` and
+`organization.api_key_revoked`, shown with the key's name and display prefix), and
+notification-delivery events. Individual API-key requests are not recorded; see
+[`api-keys.md`](./api-keys.md).
 
 A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view

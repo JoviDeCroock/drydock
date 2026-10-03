@@ -23,7 +23,9 @@ for the lifecycle behavior behind it.
 
 ## Non-negotiable invariants
 
-- Every non-auth `/api/*` route requires a Better Auth session.
+- Every non-auth `/api/*` route requires a Better Auth session, except the read-only
+  routes in `API_KEY_ROUTES`, which also accept an organization API key
+  ([`api-keys.md`](./api-keys.md)).
 - Client-supplied organization IDs are only selectors; route handlers must verify
   membership through `requireActiveOrganization`.
 - Queue messages carry scan IDs and organization IDs, not npm tokens or decrypted

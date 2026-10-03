@@ -29,6 +29,8 @@ export async function requireActiveOrganizationContext(
   c: AppContext,
   db: AppDb,
 ): Promise<ActiveOrganizationContext> {
+  const apiKey = c.get("apiKey");
+  if (apiKey) return apiKeyOrganizationContext(c, apiKey.organizationId);
   const session = c.get("authSession");
   const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
   if (requested) {
@@ -53,6 +55,25 @@ export async function requireActiveOrganizationContext(
   const organizationId = await ensurePersonalOrganization(db, session);
   if (!organizationId) throw new UnauthorizedError();
   return { organizationId, role: "owner" };
+}
+
+/**
+ * An API key belongs to exactly one organization and reads as a plain member:
+ * every route it reaches is a read a member can make. A selector naming another
+ * organization is refused rather than silently answered from the key's own.
+ */
+function apiKeyOrganizationContext(
+  c: AppContext,
+  organizationId: string,
+): ActiveOrganizationContext {
+  const requested = c.req.header(ACTIVE_ORG_HEADER)?.trim() || null;
+  if (requested && requested !== organizationId) {
+    throw new ForbiddenError(
+      "API key belongs to another organization",
+      "api_key_organization_mismatch",
+    );
+  }
+  return { organizationId, role: "member" };
 }
 
 export async function requireActiveOrganization(c: AppContext, db: AppDb): Promise<string> {
