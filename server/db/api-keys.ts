@@ -1,6 +1,6 @@
-import { and, asc, count, eq, isNull, lt, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { AppDb } from "./client";
-import { organizationApiKeys, user } from "./schema";
+import { organizationApiKeys, organizationMembers, user } from "./schema";
 
 export interface OrganizationApiKey {
   id: string;
@@ -54,11 +54,21 @@ export async function listOrganizationApiKeys(
   }));
 }
 
-export async function countOrganizationApiKeys(db: AppDb, organizationId: string): Promise<number> {
+/** Unexpired keys only: an expired key stays listed until revoked but holds no slot. */
+export async function countActiveOrganizationApiKeys(
+  db: AppDb,
+  organizationId: string,
+  now: Date,
+): Promise<number> {
   const [row] = await db
     .select({ value: count() })
     .from(organizationApiKeys)
-    .where(eq(organizationApiKeys.organizationId, organizationId));
+    .where(
+      and(
+        eq(organizationApiKeys.organizationId, organizationId),
+        gt(organizationApiKeys.expiresAt, now),
+      ),
+    );
   return row?.value ?? 0;
 }
 
@@ -108,6 +118,12 @@ export function deleteApiKeysCreatedByStatement(db: AppDb, organizationId: strin
     );
 }
 
+/**
+ * The key with this hash, only while its creator is still a member of its
+ * organization. Membership is checked on every use rather than trusted to the
+ * removal path: a key created while its creator was being removed, or a
+ * membership deleted by any other route, must not leave a working key behind.
+ */
 export async function findApiKeyByHash(
   db: AppDb,
   keyHash: string,
@@ -120,6 +136,13 @@ export async function findApiKeyByHash(
       lastUsedAt: organizationApiKeys.lastUsedAt,
     })
     .from(organizationApiKeys)
+    .innerJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.organizationId, organizationApiKeys.organizationId),
+        eq(organizationMembers.userId, organizationApiKeys.createdByUserId),
+      ),
+    )
     .where(eq(organizationApiKeys.keyHash, keyHash))
     .limit(1);
   return row ?? null;

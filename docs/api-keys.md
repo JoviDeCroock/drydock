@@ -45,21 +45,21 @@ The check matches the route that will answer the request, not the URL: `server/m
 
 ## Authentication rules
 
-- Only `Authorization: Bearer ddk_…` selects key authentication. Any other `Authorization` value (for example HTTP basic auth in front of a self-hosted staging deployment) is ignored and the request keeps the cookie path.
+- An `Authorization` value that mentions a `ddk_` key selects key authentication, and anything but exactly `Bearer ddk_…` then fails as a malformed key. Any other `Authorization` value (for example HTTP basic auth in front of a self-hosted staging deployment) is ignored and the request keeps the cookie path.
 - A request that presents a key is never authenticated by its cookie. An unknown, malformed, revoked, or expired key is `401 { code: "invalid_api_key" }` with a `WWW-Authenticate: Bearer` header.
 - Every request that presents a key is first charged to a per-IP budget of 240 per minute (`api-key-ip:<ip>`), before the key is looked up, so a flood of random keys cannot turn into anonymous D1 reads beyond that budget.
 - Each key has its own budget of 120 requests per minute (`api-key:<keyId>`, served by the native 120-per-minute tier).
 - Keys are only used on `GET`, so the CSRF origin check is unchanged.
-- `test/api-auth-boundary-invariants.test.mjs` pins that the session guard's only sessionless exit follows `authenticateApiKeyRequest`.
+- `test/api-auth-boundary-invariants.test.mjs` pins that the session guard's only sessionless exit follows `authenticateApiKeyRequest`, and that no path-specific `.all()` handler is registered below the guard (one would answer ahead of the route the key check judges).
 
 ## Storage and lifecycle
 
 - **Format.** `ddk_` followed by 32 random bytes in base64url (47 characters). The prefix lets humans and secret scanners recognize a leaked key.
 - **Storage.** `organization_api_keys` stores the SHA-256 (base64url) of the key, the non-secret display prefix (`ddk_` plus eight characters), name, creator, creation and expiry times, and `last_used_at`. The secret appears in exactly one response, the `201` that creates it (`cache-control: no-store`), and is never logged, persisted, or written to the audit log.
 - **Expiry.** Every key expires after 30, 90 (default), or 365 days. There is no non-expiring key.
-- **Limits.** At most 10 keys per organization; creation is rate limited to 20 per hour per user and requires a verified email where verification is enforced.
+- **Limits.** At most 10 unexpired keys per organization (an expired key stays listed until revoked but holds no slot); creation is rate limited to 20 per hour per user and requires a verified email where verification is enforced.
 - **Revocation.** Revoking deletes the row and takes effect on the next request; nothing caches a key.
-- **Membership.** A key lives no longer than its creator's membership. Removing a member deletes the keys they created in that organization in the same batch (`removeOrganizationMember`), deleting an account deletes every key it created, and deleting an organization deletes its keys.
+- **Membership.** A key lives no longer than its creator's membership. The lookup that authenticates a key joins the creator's membership, so a key stops working the moment its creator is no longer a member, however the membership ended. Removing a member also deletes the keys they created in that organization in the same batch (`removeOrganizationMember`), deleting an account deletes every key it created, and deleting an organization deletes its keys.
 - **Last used.** `last_used_at` is a settings hint, debounced to one write per five minutes per key, not an access log.
 
 ## Audit events
