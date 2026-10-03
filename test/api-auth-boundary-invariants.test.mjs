@@ -4,7 +4,8 @@ import { describe, expect, test } from "vitest";
 import { tokenizeJs } from "../server/lib/platform/js-lexer";
 import { sanitizeJsSource } from "./helpers/sanitized-source.mjs";
 
-// AGENTS.md: "D1/Better Auth are required for every non-auth `/api/*` endpoint."
+// AGENTS.md: "D1/Better Auth are required for every non-auth `/api/*` endpoint" (the
+// read-only API-key routes in `API_KEY_ROUTES` are the one authenticated exception).
 // That is enforced structurally rather than per-handler — a single
 // `app.use("/api/*")` in server/index.ts rejects any request without a session.
 // Hono runs middleware in registration order, so the guarantee is really about
@@ -222,6 +223,25 @@ describe("/api/* auth boundary", () => {
         "review it as auth/bootstrap middleware or a genuinely credential-free rate-limited " +
         "public endpoint and pin it here.",
     ).toEqual(REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD);
+  });
+
+  // The guard's one sessionless exit is an organization API key: the request is
+  // handed on only after `authenticateApiKeyRequest` accepted the key and the
+  // answering route (docs/api-keys.md). Any other `next()` ahead of the session
+  // read would let a request through with neither.
+  test("the guard lets a request past without a session only after the API-key check", () => {
+    const guard = apiRegistrations(structuralIndexSource).find(
+      (registration) => registration.line === guardLine,
+    );
+    const handler = guard?.argumentSources[1] ?? "";
+    const beforeSession = handler.slice(0, handler.search(/\bawait\s+getAuthSession\s*\(/));
+    const exits = beforeSession.match(/\bnext\s*\(/g) ?? [];
+    expect(exits.length).toBeLessThanOrEqual(1);
+    if (exits.length === 1) {
+      expect(beforeSession).toMatch(
+        /const\s+rejected\s*=\s*await\s+authenticateApiKeyRequest\s*\(\s*c\s*,[^)]*\)\s*;\s*if\s*\(\s*rejected\s*\)\s*return\s+rejected\s*;\s*await\s+next\s*\(\s*\)/,
+      );
+    }
   });
 
   test("every registration allowed above the guard is actually present", () => {
