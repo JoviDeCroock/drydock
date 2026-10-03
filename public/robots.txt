@@ -9,6 +9,8 @@ Disallow: /dashboard
 Disallow: /login
 Disallow: /register
 Disallow: /verify-email
+Disallow: /forgot-password
+Disallow: /reset-password
 Disallow: /api/
 # A shared report link is a capability, not a public page. Indexing one would
 # republish it to everyone long after the publisher revoked the share.

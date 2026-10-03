@@ -52,6 +52,34 @@ describe("auth config", () => {
     expect(await offRes.json()).toMatchObject({ emailVerification: false });
   });
 
+  test("offers password reset only where a reset link can be mailed and opened", async () => {
+    const send = { send: async () => undefined };
+    async function config(overrides: Partial<Cloudflare.Env>) {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        new Request(`${ORIGIN}/api/auth/config`),
+        { ...env, ...overrides } as Cloudflare.Env,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return (await res.json()) as { emailVerification: boolean; passwordReset: boolean };
+    }
+
+    expect(await config({ SEND_EMAIL: send })).toMatchObject({ passwordReset: true });
+    expect(await config({})).toMatchObject({ passwordReset: false });
+    // A link to a loopback origin is one the recipient cannot open.
+    expect(
+      await config({ SEND_EMAIL: send, BETTER_AUTH_URL: "http://localhost:5173" }),
+    ).toMatchObject({ passwordReset: false });
+    // The link is built from the configured origin, never the request's Host,
+    // so without one there is nothing safe to mail.
+    expect(await config({ SEND_EMAIL: send, BETTER_AUTH_URL: undefined })).toEqual({
+      githubSignIn: false,
+      emailVerification: true,
+      passwordReset: false,
+    });
+  });
+
   test("GET /api/auth/config reports github sign-in when the credential pair is set", async () => {
     const ctx = createExecutionContext();
     const res = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), githubEnv, ctx);

@@ -3,7 +3,7 @@ import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
-import { AuthError, sessionModel } from "../../models/auth";
+import { AuthError, authConfigModel, sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert } from "../../components/Alert";
 import { Button } from "../../components/Button";
@@ -46,6 +46,10 @@ export default function LoginPage() {
       cancelled = true;
     };
   }, [returnTo]);
+
+  useEffect(() => {
+    void authConfigModel.load();
+  }, []);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
@@ -245,9 +249,14 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <p class="text-[13px] text-ink-muted m-0">
-          New here? <a href={registerHref}>Create an account</a>
-        </p>
+        <div class="flex flex-wrap items-center justify-between gap-2 text-[13px] text-ink-muted">
+          <span>
+            New here? <a href={registerHref}>Create an account</a>
+          </span>
+          <Show when={authConfigModel.passwordReset}>
+            <a href="/forgot-password">Forgot password?</a>
+          </Show>
+        </div>
       </Card>
     </PageShell>
   );

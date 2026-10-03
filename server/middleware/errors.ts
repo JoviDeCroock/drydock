@@ -11,8 +11,15 @@ import type { Bindings, Variables } from "../types";
 // /reports/:token is the browser-facing page that wraps it. Redacting only the
 // former leaves the document request — the one a human actually pastes around,
 // and the one whose asset fallback can throw — logging the capability in full.
+// Better Auth's password-reset callback, /api/auth/reset-password/:token, puts
+// a token that mints a password in the path. Drydock mails a fragment link
+// instead, but the route still answers whoever builds the URL by hand.
+// Email-verification and the reset page carry theirs outside the path (query
+// string, fragment), which `c.req.path` never includes.
 export function redactCapabilityPath(path: string): string {
-  return path.replace(/^(\/public)?\/reports\/[^/]+/, "$1/reports/:token");
+  return path
+    .replace(/^(\/public)?\/reports\/[^/]+/, "$1/reports/:token")
+    .replace(/^\/api\/auth\/reset-password\/[^/]+/, "/api/auth/reset-password/:token");
 }
 
 /**
