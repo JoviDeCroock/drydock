@@ -244,6 +244,28 @@ describe("/api/* auth boundary", () => {
     }
   });
 
+  // The API-key check (server/middleware/api-key-auth.ts) judges a request by
+  // the first method-bound route Hono matched, skipping `ALL` registrations as
+  // middleware. A path-specific `.all()` handler would answer ahead of that
+  // route without being judged, so below the guard `ALL` is wildcard middleware
+  // only, and the route modules register no `.all()` handlers at all.
+  test("no handler below the guard registers for ALL methods on a specific path", () => {
+    const belowGuard = apiRegistrations(structuralIndexSource).filter(
+      (registration) =>
+        registration.line > guardLine &&
+        (registration.method === "all" ||
+          (registration.method === "use" && !registration.path?.endsWith("*"))),
+    );
+    expect(belowGuard).toEqual([]);
+    const routeModules = serverSources("server/routes").filter((file) =>
+      // A route registration names its path first; `Promise.all([...])` does not.
+      /\.all\s*\(\s*["'`]/.test(
+        sanitizeApiSource(readFileSync(new URL(`../${file}`, import.meta.url), "utf8")),
+      ),
+    );
+    expect(routeModules).toEqual([]);
+  });
+
   test("every registration allowed above the guard is actually present", () => {
     const registrations = apiRegistrations(structuralIndexSource).map(({ method, path }) => ({
       method,

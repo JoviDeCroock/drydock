@@ -176,7 +176,7 @@ app.get("/api", (c) =>
       health: "GET /api/health",
     },
     apiKeyAuth: `Authorization: Bearer ddk_… authenticates as an organization API key on these read-only endpoints only: ${[...API_KEY_ROUTES].join("; ")}. Every other endpoint answers an API key with 403.`,
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /public/reports/* (a share token is the capability; the owning organization opted in per scan), and the read-only endpoints an organization API key reaches (apiKeyAuth).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
