@@ -180,6 +180,30 @@ test("a route chunk that fails to load shows the recovery card", async ({ page }
   await expect(page.getByRole("heading", { name: "Privacy Policy" })).toBeVisible();
 });
 
+test("docs code blocks keep one line box per source line once highlighted", async ({ page }) => {
+  await page.goto("/docs");
+  await expect(page.locator("pre .sh-token-keyword").first()).toBeAttached();
+
+  const blocks = await page.locator("pre:visible > code").evaluateAll((codes) =>
+    codes.map((code) => {
+      // A pre renders no line box after a final newline, so a peek ending
+      // on a blank line shows one line fewer in either markup shape.
+      const source = (code.textContent ?? "").replace(/\n+$/, "");
+      const lineHeight = Number.parseFloat(getComputedStyle(code).lineHeight);
+      return {
+        sourceLines: source.split("\n").length,
+        renderedLines: Math.round(code.getBoundingClientRect().height / lineHeight),
+        hasBlankLine: /\n\s*\n/.test(source),
+      };
+    }),
+  );
+
+  expect(blocks).toContainEqual(expect.objectContaining({ hasBlankLine: true }));
+  expect(blocks.map((block) => block.renderedLines)).toEqual(
+    blocks.map((block) => block.sourceLines),
+  );
+});
+
 async function installPublicReportMocks(
   page: Page,
   fileRequests: string[],
