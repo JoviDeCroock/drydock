@@ -60,18 +60,17 @@ export function isWellFormedApiKey(token: string): boolean {
 }
 
 /**
- * The API key a request presents, or null when it presents none. Only
- * `Authorization: Bearer ddk_…` selects key authentication; any other
- * Authorization value (for example HTTP basic auth in front of a self-hosted
- * staging deploy) is left alone and the request keeps its cookie session path.
- * A request that does select a key is never also authenticated by cookie.
+ * The API key a request presents, or null when it presents none. An
+ * Authorization value that mentions a `ddk_` key selects key authentication,
+ * and anything but exactly `Bearer ddk_…` then fails as a malformed key (the
+ * empty string): a request that presents a key is never authenticated by its
+ * cookie. Other Authorization values (for example HTTP basic auth in front of
+ * a self-hosted staging deploy) are left alone and keep the cookie path.
  */
 export function readApiKeyCredential(authorization: string | undefined): string | null {
-  if (!authorization) return null;
-  const match = /^Bearer[ \t]+(\S+)[ \t]*$/i.exec(authorization);
-  if (!match) return null;
-  const credential = match[1];
-  return credential.startsWith(API_KEY_TOKEN_PREFIX) ? credential : null;
+  if (!authorization?.includes(API_KEY_TOKEN_PREFIX)) return null;
+  const match = /^Bearer[ \t]+(ddk_\S+)[ \t]*$/i.exec(authorization);
+  return match ? match[1] : "";
 }
 
 /**

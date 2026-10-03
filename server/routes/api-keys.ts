@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import {
-  countOrganizationApiKeys,
+  countActiveOrganizationApiKeys,
   deleteOrganizationApiKey,
   getApiKeyDescription,
   insertOrganizationApiKey,
@@ -92,15 +92,19 @@ apiKeyRoutes.post("/", async (c) => {
   );
   if (limited) return limited;
 
-  if ((await countOrganizationApiKeys(db, organizationId)) >= MAX_API_KEYS_PER_ORGANIZATION) {
+  const now = new Date();
+  if (
+    (await countActiveOrganizationApiKeys(db, organizationId, now)) >= MAX_API_KEYS_PER_ORGANIZATION
+  ) {
     return c.json(
-      { error: `an organization can hold at most ${MAX_API_KEYS_PER_ORGANIZATION} API keys` },
+      {
+        error: `an organization can hold at most ${MAX_API_KEYS_PER_ORGANIZATION} unexpired API keys`,
+      },
       409,
     );
   }
 
   const generated = await generateApiKey();
-  const now = new Date();
   const id = crypto.randomUUID();
   const expiresAt = new Date(now.getTime() + expiresInDays * DAY_MS);
   await insertOrganizationApiKey(db, {

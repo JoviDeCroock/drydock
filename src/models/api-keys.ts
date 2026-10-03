@@ -98,7 +98,13 @@ export const ApiKeysModel = createModel(() => {
           name,
           expiresInDays: this.draftExpiryDays.value,
         });
-        if (requestId !== loadRequestId) return true;
+        if (requestId !== loadRequestId) {
+          // The key exists in the organization that was active when the request
+          // left, and its secret was in this response only. Say so rather than
+          // showing it under another organization.
+          this.error.value = `"${data.key.name}" was created in the organization you switched away from, and its secret can no longer be shown. Revoke it there.`;
+          return false;
+        }
         this.keys.value = [...this.keys.value, data.key];
         this.revealed.value = { name: data.key.name, token: data.token };
         this.draftName.value = "";
