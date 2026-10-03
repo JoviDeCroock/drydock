@@ -10,7 +10,7 @@ A key is the one authenticated exception to "every non-auth `/api/*` endpoint re
 curl -H "Authorization: Bearer $DRYDOCK_API_KEY" https://drydock.org/api/v1/scans?filter=all
 ```
 
-`GET /api/v1/api-keys/current` returns the key's own name, prefix, expiry, and organization, so a script can check a key before relying on it.
+`GET /api/v1/api-keys/current` returns the key's own name, prefix, expiry, and organization, so a script can check a key before relying on it. The [`drydock` CLI](../cli/README.md) is built on the routes below.
 
 A key belongs to exactly one organization. It ignores the dashboard's active-organization selector; a request whose `x-organization-id` (or report-export `?organizationId=`) names a different organization is refused (`403 api_key_organization_mismatch` or `404`), never answered from the key's own organization.
 
