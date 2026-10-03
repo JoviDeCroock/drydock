@@ -1,6 +1,7 @@
-import type { ComponentChildren, JSX } from "preact";
+import type { AccessibleSelectHTMLAttributes, ComponentChildren } from "preact";
 import type { ReadonlySignal } from "@preact/signals";
 import { cn } from "./cn";
+import type { DistributiveOmit } from "./element-props";
 
 type SelectSize = "sm" | "md";
 
@@ -17,8 +18,8 @@ const arrowStyles: Record<SelectSize, string> = {
 // Rest props (aria-label and friends) forward to the native <select> — the
 // wrapper div is purely presentational, so accessibility attributes must not
 // end up on it.
-type SelectProps = Omit<
-  JSX.SelectHTMLAttributes<HTMLSelectElement>,
+type SelectProps = DistributiveOmit<
+  AccessibleSelectHTMLAttributes<HTMLSelectElement>,
   "class" | "size" | "value" | "disabled" | "onChange"
 > & {
   // ReadonlySignal so narrower signals (union-typed values, computeds) can be

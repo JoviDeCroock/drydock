@@ -1,7 +1,7 @@
-import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { sessionModel } from "../../models/auth";
 import {
   GithubAppModel,
@@ -28,11 +28,10 @@ export default function GithubAppCallbackPage() {
   const phase = useSignal<CallbackPhase>("checking-session");
   const queryError = useSignal<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  useCancellableEffect((isCancelled) => {
     void (async () => {
       const data = await sessionModel.load();
-      if (cancelled) return;
+      if (isCancelled()) return;
       if (!data) {
         // Preserve return path so the user lands back here after login.
         const returnTo = `${SETTINGS_PATH}/github-app/callback${window.location.search}`;
@@ -48,20 +47,17 @@ export default function GithubAppCallbackPage() {
       }
       phase.value = "verifying";
       const installation = await githubApp.completeInstall(parsed);
-      if (cancelled) return;
+      if (isCancelled()) return;
       if (installation) {
         phase.value = "success";
         window.setTimeout(() => {
-          if (cancelled) return;
+          if (isCancelled()) return;
           location.route(SETTINGS_PATH, true);
         }, SUCCESS_REDIRECT_MS);
       } else {
         phase.value = "error";
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const user = sessionModel.user.value;

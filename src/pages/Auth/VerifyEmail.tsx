@@ -1,7 +1,7 @@
-import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
@@ -32,22 +32,21 @@ export default function VerifyEmailPage() {
   const resending = useSignal(false);
   const resent = useSignal(false);
 
-  useEffect(() => {
-    if (errorCode) return;
-    let cancelled = false;
-    void sessionModel.load().then((session) => {
-      if (cancelled) return;
-      // Verification auto-signs the user in, so a live session means success.
-      if (session?.user) {
-        location.route(returnTo, true);
-        return;
-      }
-      state.value = "verified";
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [errorCode, returnTo]);
+  useCancellableEffect(
+    (isCancelled) => {
+      if (errorCode) return;
+      void sessionModel.load().then((session) => {
+        if (isCancelled()) return;
+        // Verification auto-signs the user in, so a live session means success.
+        if (session?.user) {
+          location.route(returnTo, true);
+          return;
+        }
+        state.value = "verified";
+      });
+    },
+    [errorCode, returnTo],
+  );
 
   const onResend = async (event: Event) => {
     event.preventDefault();

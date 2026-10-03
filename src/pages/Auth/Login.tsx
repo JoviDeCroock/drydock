@@ -1,7 +1,7 @@
-import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { AuthError, sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
@@ -36,16 +36,15 @@ export default function LoginPage() {
   const registerHref =
     returnTo === "/dashboard" ? "/register" : `/register?returnTo=${encodeURIComponent(returnTo)}`;
 
-  useEffect(() => {
-    let cancelled = false;
-    void sessionModel.load().then((session) => {
-      if (cancelled) return;
-      if (session?.user) location.route(returnTo, true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [returnTo]);
+  useCancellableEffect(
+    (isCancelled) => {
+      void sessionModel.load().then((session) => {
+        if (isCancelled()) return;
+        if (session?.user) location.route(returnTo, true);
+      });
+    },
+    [returnTo],
+  );
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();

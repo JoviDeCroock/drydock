@@ -1,5 +1,10 @@
-import type { ComponentChildren, JSX } from "preact";
+import type {
+  AccessibleAnchorHTMLAttributes,
+  ButtonHTMLAttributes,
+  ComponentChildren,
+} from "preact";
 import { cn } from "./cn";
+import type { DistributiveOmit } from "./element-props";
 import { readSignalProp, type SignalOrValue } from "./signal-props";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -12,8 +17,9 @@ type ButtonBaseProps = {
   children?: ComponentChildren;
 };
 
-type ButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "class"> & ButtonBaseProps;
-type AnchorProps = Omit<JSX.AnchorHTMLAttributes<HTMLAnchorElement>, "class"> & ButtonBaseProps;
+type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "class"> & ButtonBaseProps;
+type AnchorProps = DistributiveOmit<AccessibleAnchorHTMLAttributes<HTMLAnchorElement>, "class"> &
+  ButtonBaseProps;
 
 const base =
   "inline-flex items-center justify-center gap-1.5 font-medium leading-none rounded-md border border-transparent transition-colors duration-150 ease-out cursor-pointer disabled:cursor-not-allowed disabled:opacity-50";

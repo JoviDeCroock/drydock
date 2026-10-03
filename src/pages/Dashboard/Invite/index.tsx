@@ -1,7 +1,7 @@
-import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../../lib/use-cancellable-effect";
 import { sessionModel } from "../../../models/auth";
 import { ApiError, apiJson, errorMessage } from "../../../models/api";
 import { setActiveOrganizationId } from "../../../models/active-organization";
@@ -20,44 +20,43 @@ export default function InvitePage() {
   const state = useSignal<InviteState>("checking");
   const error = useSignal<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (!token) {
-        if (cancelled) return;
-        error.value = "This invitation link is missing its token.";
-        state.value = "error";
-        return;
-      }
-      const session = await sessionModel.load();
-      if (cancelled) return;
-      if (!session?.user) {
-        redirectToLogin(location, token);
-        return;
-      }
-      state.value = "accepting";
-      try {
-        const data = await apiJson<{ organizationId: string; role: string }>(
-          "/api/v1/organizations/invitations/accept",
-          { token },
-        );
-        if (cancelled) return;
-        setActiveOrganizationId(data.organizationId);
-        location.route("/dashboard", true);
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 401) {
+  useCancellableEffect(
+    (isCancelled) => {
+      void (async () => {
+        if (!token) {
+          if (isCancelled()) return;
+          error.value = "This invitation link is missing its token.";
+          state.value = "error";
+          return;
+        }
+        const session = await sessionModel.load();
+        if (isCancelled()) return;
+        if (!session?.user) {
           redirectToLogin(location, token);
           return;
         }
-        error.value = errorMessage(err);
-        state.value = "error";
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+        state.value = "accepting";
+        try {
+          const data = await apiJson<{ organizationId: string; role: string }>(
+            "/api/v1/organizations/invitations/accept",
+            { token },
+          );
+          if (isCancelled()) return;
+          setActiveOrganizationId(data.organizationId);
+          location.route("/dashboard", true);
+        } catch (err) {
+          if (isCancelled()) return;
+          if (err instanceof ApiError && err.status === 401) {
+            redirectToLogin(location, token);
+            return;
+          }
+          error.value = errorMessage(err);
+          state.value = "error";
+        }
+      })();
+    },
+    [token],
+  );
 
   if (state.value === "error") {
     return (
