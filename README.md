@@ -76,7 +76,9 @@ interactively with password, 2FA, and an OTP.
          - uses: actions/download-artifact@v4
            with: { name: npm-release-candidates, path: dist }
          - run: cd dist && sha256sum --check --strict SHA256SUMS
-         - run: npm publish dist/*.tgz --access public --provenance
+         # Trusted publishing attaches provenance by itself from a public repository;
+         # asking for it explicitly fails the publish from a private one.
+         - run: npm publish dist/*.tgz --access public
    ```
 
 6. Push a release. The publish job pauses, Drydock reviews the uploaded artifacts, and accepting the
