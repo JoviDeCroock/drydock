@@ -193,7 +193,8 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 Scripts and CI read through the same API with a read-only organization API key
 (`Authorization: Bearer ddk_…`, created in `Organization settings → Integrations → API keys`); a key
 reaches only the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) and can never record
-a decision.
+a decision. [`docs/openapi.json`](docs/openapi.json) is the OpenAPI 3.1 description of that surface
+(also served at `GET /api/v1/openapi.json`).
 
 Consult route definitions under `server/routes/` for exact request/response shapes; shared types are imported by the UI from `server/`.
 
