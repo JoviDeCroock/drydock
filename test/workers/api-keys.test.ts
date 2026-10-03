@@ -177,6 +177,47 @@ describe("organization API key management", () => {
     expect((await callWorker("GET", "/api/v1/scans", withKey(key.token))).res.status).toBe(200);
   });
 
+  test("a key stops working once its creator is no longer a member, however the membership ended", async () => {
+    const owner = await signedUpAccount();
+    const admin = await signedUpAccount();
+    const created = await callWorker("POST", "/api/v1/organizations", {
+      jar: owner.jar,
+      body: { name: "membership-checked" },
+    });
+    const organizationId = (created.json as { organization: { id: string } }).organization.id;
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, { organizationId, userId: admin.userId, role: "admin" });
+    const key = await createKey(admin, organizationId, { name: "orphaned" });
+    expect((await callWorker("GET", "/api/v1/scans", withKey(key.token))).res.status).toBe(200);
+
+    // Skips `removeOrganizationMember`, the way a removal racing the key's
+    // creation can: the key row survives, so the lookup itself must refuse it.
+    await db
+      .delete(schema.organizationMembers)
+      .where(eq(schema.organizationMembers.userId, admin.userId));
+    expect((await callWorker("GET", "/api/v1/scans", withKey(key.token))).res.status).toBe(401);
+  });
+
+  test("expired keys stay listed but do not hold a slot", async () => {
+    const owner = await signedUpAccount();
+    for (let index = 0; index < 10; index += 1) {
+      await createKey(owner, owner.organizationId, { name: `key ${index}` });
+    }
+    const db = createDb(env.DB);
+    const [oldest] = await db
+      .select({ id: schema.organizationApiKeys.id })
+      .from(schema.organizationApiKeys)
+      .where(eq(schema.organizationApiKeys.organizationId, owner.organizationId))
+      .limit(1);
+    await db
+      .update(schema.organizationApiKeys)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.organizationApiKeys.id, oldest.id));
+    await createKey(owner, owner.organizationId, { name: "replacement" });
+    const listed = await callWorker("GET", "/api/v1/api-keys", { jar: owner.jar });
+    expect((listed.json as { keys: unknown[] }).keys).toHaveLength(11);
+  });
+
   test("removing a member deletes the keys they created", async () => {
     const owner = await signedUpAccount();
     const admin = await signedUpAccount();
@@ -340,6 +381,22 @@ describe("API key authentication", () => {
       const res = await callWorker("GET", "/api/v1/scans", { jar: owner.jar, ...withKey(token) });
       expect(res.res.status, token.slice(0, 12)).toBe(401);
       expect(res.res.headers.get("www-authenticate")).toContain("Bearer");
+    }
+  });
+
+  test("a header that mentions a key but is not exactly Bearer ddk_… is a malformed key", async () => {
+    const owner = await signedUpAccount();
+    const key = await createKey(owner);
+    for (const authorization of [
+      `Bearer ${key.token} extra`,
+      `Bearer ${key.token}, Basic eA==`,
+      `Token ${key.token}`,
+    ]) {
+      const res = await callWorker("GET", "/api/v1/organizations", {
+        jar: owner.jar,
+        headers: { authorization },
+      });
+      expect(res.res.status, authorization.replace(key.token, "<key>")).toBe(401);
     }
   });
 

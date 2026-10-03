@@ -158,8 +158,9 @@ export const organizationNotificationRecipients = sqliteTable(
 
 // Read-only organization API keys (docs/api-keys.md). Only the SHA-256 of the
 // secret is stored; `prefix` is the non-secret head shown in settings. A key
-// lives no longer than its creator's membership: the user FK cascades, and
-// removing the member deletes their keys (`removeOrganizationMember`).
+// authenticates only while its creator is a member of its organization
+// (`findApiKeyByHash` joins the membership); removing the member or deleting
+// the account also deletes the rows.
 export const organizationApiKeys = sqliteTable(
   "organization_api_keys",
   {
