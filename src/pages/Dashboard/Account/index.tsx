@@ -1,6 +1,6 @@
 import { useComputed } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { sessionModel, signInMethodsModel } from "../../../models/auth";
+import { authConfigModel, sessionModel, signInMethodsModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { LinkButton } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
@@ -14,11 +14,16 @@ import { DeleteAccountSection } from "./DeleteAccountSection";
 export default function AccountPage() {
   const location = useLocation();
   const sessionChecked = useAuthedDashboardSession({
-    onReady: (session) => signInMethodsModel.load(session.user.id),
+    onReady: async (session) => {
+      await Promise.all([signInMethodsModel.load(session.user.id), authConfigModel.load()]);
+    },
   });
-  // The delete section needs to know whether a password is on file, so the
-  // page holds its skeleton until sign-in methods have loaded too.
-  const ready = useComputed(() => sessionChecked.value && signInMethodsModel.loaded.value);
+  // The delete and two-factor sections word themselves around whether a
+  // password is on file and whether this deployment can mail a link to add
+  // one, so the page holds its skeleton until both lookups have answered.
+  const ready = useComputed(
+    () => sessionChecked.value && signInMethodsModel.loaded.value && authConfigModel.settled.value,
+  );
 
   const onSignOut = async () => {
     await sessionModel.signOut();

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import { callWorker, type Jar, PASSWORD, signUp } from "./helpers/auth-http";
+import { callWorker, type Jar, makeGithubOnly, PASSWORD, signUp } from "./helpers/auth-http";
 
 async function currentUserId(jar: Jar): Promise<string> {
   const { json } = await callWorker("GET", "/api/auth/get-session", { jar });
@@ -61,16 +61,10 @@ describe("account deletion", () => {
 
   test("deletes a GitHub-only account through fresh-session reauthentication", async () => {
     const { jar, userId } = await newAccount();
-    const now = Date.now();
 
     // Keep the fresh session created by sign-up, but replace the credential
     // account with the shape Better Auth creates after GitHub OAuth.
-    await env.DB.prepare("DELETE FROM account WHERE user_id = ?").bind(userId).run();
-    await env.DB.prepare(
-      "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) VALUES (?, ?, 'github', ?, ?, ?)",
-    )
-      .bind(`github:${userId}`, `github-${userId}`, userId, now, now)
-      .run();
+    await makeGithubOnly(userId);
 
     const accounts = await callWorker("GET", "/api/auth/list-accounts", { jar });
     expect(accounts.res.status).toBe(200);

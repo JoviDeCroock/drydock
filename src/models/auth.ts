@@ -163,32 +163,53 @@ export const sessionModel = new SessionModel();
 const AuthConfigModel = createModel(() => {
   const githubSignIn = signal(false);
   const emailVerification = signal(false);
+  // Whether a reset / set-a-password link can be mailed. Off until known, so
+  // no page offers a flow that would send nothing.
+  const passwordReset = signal(false);
   const loaded = signal(false);
+  // True once any lookup finished, successful or not: lets a page that words
+  // itself around these flags wait for an answer without blocking on a retry.
+  const settled = signal(false);
+  // Several auth surfaces mount at once and each asks; they share one request.
+  let pending: Promise<void> | null = null;
+
+  async function fetchConfig(): Promise<void> {
+    try {
+      const res = await fetch("/api/auth/config", {
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        githubSignIn?: boolean;
+        emailVerification?: boolean;
+        passwordReset?: boolean;
+      } | null;
+      githubSignIn.value = Boolean(data?.githubSignIn);
+      emailVerification.value = Boolean(data?.emailVerification);
+      passwordReset.value = Boolean(data?.passwordReset);
+      loaded.value = true;
+    } catch {
+      // Offline or misconfigured — leave every optional method hidden and
+      // retry when the auth surface mounts again.
+    } finally {
+      settled.value = true;
+    }
+  }
 
   return {
     githubSignIn,
     emailVerification,
+    passwordReset,
     loaded,
+    settled,
 
-    async load(): Promise<void> {
-      if (this.loaded.peek()) return;
-      try {
-        const res = await fetch("/api/auth/config", {
-          credentials: "same-origin",
-          headers: { accept: "application/json" },
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          githubSignIn?: boolean;
-          emailVerification?: boolean;
-        } | null;
-        this.githubSignIn.value = Boolean(data?.githubSignIn);
-        this.emailVerification.value = Boolean(data?.emailVerification);
-        this.loaded.value = true;
-      } catch {
-        // Offline or misconfigured — leave every optional method hidden and
-        // retry when the auth surface mounts again.
-      }
+    load(): Promise<void> {
+      if (loaded.peek()) return Promise.resolve();
+      pending ??= fetchConfig().finally(() => {
+        pending = null;
+      });
+      return pending;
     },
   };
 });
@@ -199,7 +220,8 @@ export const authConfigModel = new AuthConfigModel();
 // Better Auth files a password under the `credential` provider, and an account
 // created by GitHub sign-in has no such row — which matters because every
 // two-factor endpoint reauthenticates with a password, so a GitHub-only
-// account cannot enrol. The result is keyed by user id so client-side sign-out
+// account cannot enrol until it sets one through the emailed reset link
+// (`password-reset.ts`). The result is keyed by user id so client-side sign-out
 // followed by a different sign-in cannot reuse the previous account's methods.
 // `hasPassword` starts true and stays true on any failure: the password dialog
 // is the long-standing path, so a failed lookup must never take it away from an

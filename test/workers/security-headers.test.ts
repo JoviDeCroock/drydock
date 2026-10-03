@@ -134,6 +134,19 @@ describe("capability path redaction", () => {
     expect(redactCapabilityPath("/reports")).toBe("/reports");
   });
 
+  test("redacts Better Auth's password-reset callback token", () => {
+    const token = "R".repeat(24);
+    // A reset token mints a password; the callback route takes it as a path
+    // segment even though Drydock's own emails carry it in a fragment.
+    expect(redactCapabilityPath(`/api/auth/reset-password/${token}`)).toBe(
+      "/api/auth/reset-password/:token",
+    );
+    expect(redactCapabilityPath(`/api/auth/reset-password/${token}/x`)).not.toContain(token);
+    // The redeeming POST and the page carry no token in the path.
+    expect(redactCapabilityPath("/api/auth/reset-password")).toBe("/api/auth/reset-password");
+    expect(redactCapabilityPath("/reset-password")).toBe("/reset-password");
+  });
+
   test("does not leave a token behind when the prefix is not at the start", () => {
     const token = "B".repeat(43);
     // Only the anchored prefix is a capability path; anything else must not be

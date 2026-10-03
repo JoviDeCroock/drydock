@@ -12,7 +12,14 @@ function authIpLimit(path: string): { bucket: string; max: number; windowMs: num
   if (path.startsWith("/api/auth/sign-up")) {
     return { bucket: "sign-up", max: 5, windowMs: 60 * 60 * 1000 };
   }
-  if (path.startsWith("/api/auth/forget-password") || path.startsWith("/api/auth/reset-password")) {
+  // One budget for mailing a reset link and redeeming it. The installed Better
+  // Auth mails from `/request-password-reset`; `/forget-password` is the older
+  // spelling, kept so a version that restores it is not left unmetered.
+  if (
+    path.startsWith("/api/auth/request-password-reset") ||
+    path.startsWith("/api/auth/forget-password") ||
+    path.startsWith("/api/auth/reset-password")
+  ) {
     return { bucket: "password-reset", max: 5, windowMs: 60 * 60 * 1000 };
   }
   return null;

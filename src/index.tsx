@@ -19,6 +19,8 @@ const PrivacyPage = lazyRoute(() => import("./pages/Privacy"));
 const LoginPage = lazyRoute(() => import("./pages/Auth/Login"));
 const RegisterPage = lazyRoute(() => import("./pages/Auth/Register"));
 const VerifyEmailPage = lazyRoute(() => import("./pages/Auth/VerifyEmail"));
+const ForgotPasswordPage = lazyRoute(() => import("./pages/Auth/ForgotPassword"));
+const ResetPasswordPage = lazyRoute(() => import("./pages/Auth/ResetPassword"));
 const DashboardPage = lazyRoute(() => import("./pages/Dashboard"));
 const ScanDetailPage = lazyRoute(() => import("./pages/Dashboard/ScanDetail"));
 const PackageReleasesPage = lazyRoute(() => import("./pages/Dashboard/PackageReleases"));
@@ -56,6 +58,8 @@ export function App() {
             <ScopedRoute path="/login" component={LoginPage} />
             <ScopedRoute path="/register" component={RegisterPage} />
             <ScopedRoute path="/verify-email" component={VerifyEmailPage} />
+            <ScopedRoute path="/forgot-password" component={ForgotPasswordPage} />
+            <ScopedRoute path="/reset-password" component={ResetPasswordPage} />
             {/*
             Both paths, like /diff above. `:token` is a required segment, so it
             cannot match the prerender URL `/reports` — without the bare route
