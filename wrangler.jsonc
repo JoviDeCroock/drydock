@@ -22,6 +22,13 @@
 			"enabled": true,
 			"head_sampling_rate": 1,
 			"persist": true
+		},
+		// Issues is a separate collector from logs and traces: for each
+		// exception, 5xx response, and error log it keeps request details, and
+		// our request URLs can carry share, invite, and verification tokens.
+		// Read docs/release-safety.md before adding an automation destination.
+		"issues": {
+			"enabled": true
 		}
 	},
 	"assets": {

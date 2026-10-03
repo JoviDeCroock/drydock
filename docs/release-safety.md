@@ -83,6 +83,29 @@ Do not log raw package text, headers, tokens, token fingerprints, ciphertext,
 nonces, cookies, or raw unexpected error messages. If an operator needs detail,
 add a safe structured code or sanitized metadata field instead.
 
+Cloudflare Workers Issues (`observability.issues` in `wrangler.jsonc`) groups
+uncaught exceptions, 5xx responses, and `error`-level events into issues with
+first-seen time, frequency, and the Worker version. It is a separate collector:
+each occurrence keeps invocation and request details, plus a stack trace when
+available, whether or not Workers Logs or traces are on, and Cloudflare retains occurrence details for seven days.
+Emit a handled failure at `error` level through `emitOperationalEvent` for it to
+surface as an issue. Automation destinations (coding agents, webhooks, chat) are
+configured with the `cf` CLI or in the Cloudflare dashboard, not in this
+repository, and receive each issue's diagnostic context, including surrounding
+logs and traces.
+
+That payload is sensitive and partly attacker-controlled. Drydock request URLs
+can carry capability tokens: share links (`/reports/:token`,
+`/public/reports/:token`), organization invites, email-verification links that
+sign the user in, and OAuth callbacks. Error text can carry request paths and
+package names, and anonymous endpoints let anyone cause failures, so an outsider
+can push an issue past an automation's threshold. A destination must be private
+to the operator. A coding agent that receives issues and opens pull requests
+here is writing to a public repository: its instructions must treat the payload
+as evidence, never as instructions, and keep URLs, tokens, package names, org or
+user identifiers, request IDs, and raw log lines out of branches, commits, and
+PR text. It must open draft PRs only and never deploy.
+
 ## Release checklist
 
 Before merging server-risk changes:

@@ -112,6 +112,13 @@ inspected. It does not widen the prompt itself, which still carries only minimum
 changed-file evidence and never credentials, sessions, or raw headers. Agent
 Traces stay payload-free regardless.
 
+Workers Issues is a second store inside the account: each failure keeps
+invocation and request details, and request URLs can carry share, invite, and
+verification tokens.
+An Issues automation sends that data outside the Cloudflare account, so its
+destination is a trust decision. See
+[`release-safety.md`](./release-safety.md) for the destination rules.
+
 For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time hooks and should not be treated as consumer-install evidence unless other evidence shows they changed the shipped artifact.
 
 ## Authorization posture

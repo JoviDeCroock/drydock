@@ -37,6 +37,13 @@
 			"enabled": true,
 			"head_sampling_rate": 1,
 			"persist": true
+		},
+		// Issues is a separate collector from logs and traces: for each
+		// exception, 5xx response, and error log it keeps request details, and
+		// Drydock request URLs can carry share, invite, and verification tokens.
+		// Any automation destination you add receives them; keep it private.
+		"issues": {
+			"enabled": true
 		}
 	},
 	"assets": {
