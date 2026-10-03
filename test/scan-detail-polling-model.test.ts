@@ -15,7 +15,8 @@ function runningDetail(): PersistedScanDetail {
       stageId: "stage-1",
       packageName: "left-pad",
       stagedVersion: "1.0.1",
-      previousVersion: "1.0.0",
+      // No baseline recorded yet, so there is no compare payload to prefetch.
+      previousVersion: null,
       risk: "none",
       status: "running",
       createdAt: "2026-06-09T00:00:00.000Z",

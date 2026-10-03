@@ -91,3 +91,10 @@ export async function loadCompare(
 export function stripTextSamples(files: FileRecord[]): FileRecord[] {
   return files.map(({ textSample: _omitted, ...rest }) => rest);
 }
+
+// A scan's compare payload carries finding annotations that need its completed
+// report, so one served while the scan runs has none and must not be reused by
+// the browser once the scan completes.
+export function scanComparePayloadCacheControl(scanStatus: string): string {
+  return scanStatus === "complete" ? "private, max-age=300" : "no-store";
+}

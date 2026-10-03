@@ -9,6 +9,7 @@ export {
   discardScanAttempt,
   listExistingScanStageIds,
   markScanFailed,
+  recordScanBaseline,
 } from "./scan-jobs";
 export {
   SCAN_DECISION_FILTERS,

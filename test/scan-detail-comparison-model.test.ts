@@ -15,7 +15,7 @@ const STABLE_BASELINE = "10.29.8";
 const NEWEST_RC = "11.0.0-rc.2";
 
 function scanDetail(
-  status: "running" | "complete",
+  status: "running" | "complete" | "failed",
   previousVersion: string | null,
 ): PersistedScanDetail {
   return {
@@ -334,5 +334,76 @@ describe("ScanDetailModel comparison while a payload loads", () => {
     await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
 
     expect(model.compareError.value).toBe("registry unavailable");
+  });
+});
+
+describe("ScanDetailModel baseline prefetch while the scan runs", () => {
+  let model: ScanDetailModelInstance | null = null;
+
+  beforeEach(() => {
+    // Running details start the poll chain; fake timers keep it from firing.
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test("fetches the recorded baseline before the scan completes, and not a linked pick", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.selectedVersion.value = NEWEST_RC;
+    model.detail.value = scanDetail("running", STABLE_BASELINE);
+
+    expect(compare.compareRequests(STABLE_BASELINE)).toBe(1);
+    expect(compare.compareRequests(NEWEST_RC)).toBe(0);
+    compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
+    await vi.waitFor(() => expect(model?.compareCache.value[STABLE_BASELINE]).toBeDefined());
+
+    model.selectedVersion.value = null;
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+
+    expect(model.compare.value?.version).toBe(STABLE_BASELINE);
+    expect(compare.compareRequests(STABLE_BASELINE)).toBe(1);
+  });
+
+  test("drops a payload fetched for a baseline the completed scan no longer names", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    // A first attempt recorded the rc; the retry that completed diffed the stable.
+    model.detail.value = scanDetail("running", NEWEST_RC);
+    compare.settle(NEWEST_RC, comparePayload(NEWEST_RC));
+    await vi.waitFor(() => expect(model?.compareCache.value[NEWEST_RC]).toBeDefined());
+
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+
+    expect(model.compareCache.value[NEWEST_RC]).toBeUndefined();
+    pick(model, NEWEST_RC);
+    expect(compare.compareRequests(NEWEST_RC)).toBe(2);
+  });
+
+  test("does not cache a mid-run payload that lands after the scan completed under another baseline", async () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("running", NEWEST_RC);
+    model.detail.value = scanDetail("complete", STABLE_BASELINE);
+
+    // Settled first, so it has landed by the time the shown payload has.
+    compare.settle(NEWEST_RC, comparePayload(NEWEST_RC));
+    compare.settle(STABLE_BASELINE, comparePayload(STABLE_BASELINE));
+    await vi.waitFor(() => expect(model?.compare.value?.version).toBe(STABLE_BASELINE));
+
+    expect(model.compareCache.value[NEWEST_RC]).toBeUndefined();
+  });
+
+  test("does not fetch for a scan that failed", () => {
+    const compare = stubHeldCompare();
+    model = new ScanDetailModel("scan-1");
+    model.detail.value = scanDetail("failed", STABLE_BASELINE);
+
+    expect(compare.compareRequests(STABLE_BASELINE)).toBe(0);
   });
 });
