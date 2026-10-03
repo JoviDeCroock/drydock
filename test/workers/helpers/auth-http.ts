@@ -32,6 +32,7 @@ export interface WorkerCallOptions {
   jar?: Jar;
   env?: typeof env;
   ip?: string;
+  headers?: Record<string, string>;
 }
 
 export interface WorkerCallResult {
@@ -52,6 +53,7 @@ export async function callWorker(
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
   if (opts.jar?.size) headers.set("cookie", cookieHeader(opts.jar));
   if (opts.ip) headers.set("cf-connecting-ip", opts.ip);
+  for (const [name, value] of Object.entries(opts.headers ?? {})) headers.set(name, value);
   const init: RequestInit = { method, headers };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   const res = await worker.fetch(new Request(`${ORIGIN}${path}`, init), opts.env ?? env, ctx);
