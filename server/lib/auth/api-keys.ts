@@ -83,6 +83,7 @@ export function readApiKeyCredential(authorization: string | undefined): string 
  */
 export const API_KEY_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/api-keys/current",
+  "GET /api/v1/openapi.json",
   "GET /api/v1/scans",
   "GET /api/v1/scans/overview",
   "GET /api/v1/scans/:id",
