@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
 import { recordScanDecision } from "../../server/db/scans";
+import type { ScanSource } from "../../server/db/enums";
 import * as schema from "../../server/db/schema";
 import {
   computeReleaseConsistency,
@@ -28,6 +29,7 @@ async function seedMemoryScan(owner: ScanOwner, options: SeedScanOptions = {}) {
     files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
     diff: [{ path: "index.js", status: "modified", flags: [] }],
     findings: options.findings ?? [spawnFinding("test/spawn.js")],
+    job: options.source ? { source: options.source } : undefined,
   });
   if (options.decision) {
     await recordScanDecision(createDb(env.DB), {
@@ -67,7 +69,15 @@ interface SeedScanOptions {
   findings?: Finding[];
   decision?: "publish" | "no_publish" | null;
   summaryExtra?: Record<string, unknown>;
+  source?: ScanSource;
 }
+
+// The summary fields each non-staged path persists and `scanEcosystemSql`
+// reads back; staged sources (`manual`, `auto_discovery`) are npm by source.
+const gateSummary = (ecosystem: string) => ({ stagedPublish: { provenance: { ecosystem } } });
+const publishedPairSummary = (ecosystem: string) => ({
+  stagedPublish: { mode: "published_pair", ecosystem },
+});
 
 async function setScanCreatedAt(scanId: string, createdAt: Date) {
   const db = createDb(env.DB);
@@ -78,6 +88,7 @@ function consistencyFor(
   owner: SeededUser,
   packageName: string,
   ruleFindings: Finding[],
+  ecosystem = "npm",
 ): Promise<ReleaseConsistency> {
   return resolveReleaseConsistency({
     db: createDb(env.DB),
@@ -88,6 +99,7 @@ function consistencyFor(
       organizationId: owner.organizationId,
     },
     packageName,
+    ecosystem,
     ruleFindings,
   });
 }
@@ -125,6 +137,63 @@ describe("release memory (prior-release consistency)", () => {
 
     expect(out.status).toBe("none");
     expect(out.priorScanId).toBeNull();
+  });
+
+  test("never compares against an approved release of the same name in another ecosystem", async () => {
+    const owner = await seedUser();
+    await seedMemoryScan(owner, {
+      packageName: "acme-sdk",
+      source: "workflow_gate",
+      summaryExtra: gateSummary("pypi"),
+      decision: "publish",
+    });
+
+    const npm = await consistencyFor(owner, "acme-sdk", [spawnFinding("test/spawn.js")], "npm");
+    expect(npm.status).toBe("none");
+    expect(npm.priorScanId).toBeNull();
+
+    const pypi = await consistencyFor(owner, "acme-sdk", [spawnFinding("test/spawn.js")], "pypi");
+    expect(pypi.status).toBe("match");
+  });
+
+  test("skips a newer approval in another ecosystem for the latest one in its own", async () => {
+    const owner = await seedUser();
+    const npmPrior = await seedMemoryScan(owner, {
+      packageName: "acme-sdk",
+      version: "1.0.0",
+      findings: [spawnFinding("test/spawn.js")],
+      decision: "publish",
+    });
+    const pypiPrior = await seedMemoryScan(owner, {
+      packageName: "acme-sdk",
+      version: "2.0.0",
+      source: "published",
+      summaryExtra: publishedPairSummary("pypi"),
+      findings: [spawnFinding("acme_sdk/cli.py")],
+      decision: "publish",
+    });
+    await setScanCreatedAt(npmPrior.scanId, new Date("2026-06-01T00:00:00.000Z"));
+    await setScanCreatedAt(pypiPrior.scanId, new Date("2026-07-01T00:00:00.000Z"));
+
+    const npm = await consistencyFor(owner, "acme-sdk", [spawnFinding("test/spawn.js")], "npm");
+    expect(npm.priorScanId).toBe(npmPrior.scanId);
+    expect(npm.status).toBe("match");
+
+    const pypi = await consistencyFor(owner, "acme-sdk", [spawnFinding("acme_sdk/cli.py")], "pypi");
+    expect(pypi.priorScanId).toBe(pypiPrior.scanId);
+    expect(pypi.status).toBe("match");
+  });
+
+  test("an approved scan with no recorded ecosystem is no prior for any ecosystem", async () => {
+    // A gate summary that predates the provenance snapshot cannot say which
+    // registry it reviewed; `scanEcosystemSql` reads it as null.
+    const owner = await seedUser();
+    await seedMemoryScan(owner, { source: "workflow_gate", decision: "publish" });
+
+    for (const ecosystem of ["npm", "pypi", "vscode"]) {
+      const out = await consistencyFor(owner, "tape", [spawnFinding("test/spawn.js")], ecosystem);
+      expect(out.status).toBe("none");
+    }
   });
 
   test("returns none without an approved prior (undecided or no_publish)", async () => {
@@ -252,6 +321,7 @@ describe("release memory (prior-release consistency)", () => {
     const withoutBucket = await getPriorApprovedScanFindings(db, {
       organizationId: owner.organizationId,
       packageName: "tape",
+      ecosystem: "npm",
       excludeScanId: "scan_current",
     });
     expect(withoutBucket).toBeNull();
@@ -261,6 +331,7 @@ describe("release memory (prior-release consistency)", () => {
       {
         organizationId: owner.organizationId,
         packageName: "tape",
+        ecosystem: "npm",
         excludeScanId: "scan_current",
       },
       env.ARTIFACTS,
@@ -281,6 +352,7 @@ describe("release memory (prior-release consistency)", () => {
       {
         organizationId: owner.organizationId,
         packageName: "tape",
+        ecosystem: "npm",
         excludeScanId: "scan_current",
       },
       env.ARTIFACTS,
@@ -296,6 +368,7 @@ describe("release memory (prior-release consistency)", () => {
       {
         organizationId: owner.organizationId,
         packageName: "tape",
+        ecosystem: "npm",
         excludeScanId: prior.scanId,
       },
       env.ARTIFACTS,

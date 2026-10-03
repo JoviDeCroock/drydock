@@ -138,6 +138,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       env,
       identity,
       packageName: findings.redactedStagedManifest?.name ?? null,
+      ecosystem: adapter.id,
       ruleFindings: findings.ruleFindings,
     });
 

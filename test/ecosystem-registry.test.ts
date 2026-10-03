@@ -15,6 +15,7 @@ import {
 } from "../server/lib/ecosystems";
 import { publicDiffVersionCacheControl } from "../server/routes/public-diff";
 import { ATPM_RECORD_CACHE_SCOPE } from "../server/lib/ecosystems/atpm/public-diff";
+import { scanEcosystem } from "../server/lib/public-feed";
 
 vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
@@ -66,6 +67,32 @@ describe("ecosystem capability registry", () => {
         // Published-pair review acquires through the public-diff capability,
         // so declaring one without the other would have nothing to fetch with.
         expect(eco.publicDiff).toBeDefined();
+      }
+    }
+  });
+
+  test("a scan pipeline adapter's id is the ecosystem its persisted scan reads back as", () => {
+    // Per-package history lookups scope stored rows by `scanEcosystemSql` and
+    // compare them to the running adapter's id, so the two must never drift.
+    for (const eco of ECOSYSTEMS) {
+      if (eco.staged) {
+        expect(scanEcosystem("manual", null)).toBe(eco.staged.id);
+        expect(scanEcosystem("auto_discovery", null)).toBe(eco.staged.id);
+      }
+      if (eco.gate) {
+        const adapter = eco.gate.packageAdapter;
+        const summary = adapter.summarizeDetails({ manifest: { artifacts: [] } });
+        expect(adapter.id).toBe(eco.id);
+        expect(scanEcosystem("workflow_gate", { stagedPublish: summary })).toBe(eco.id);
+      }
+      if (eco.published) {
+        const pair = eco.published.parseInput({
+          packageName: "pkg",
+          version: "1.0.1",
+          baselineVersion: "1.0.0",
+        });
+        const summary = eco.published.summarizeDetails(pair);
+        expect(scanEcosystem("published", { stagedPublish: summary })).toBe(eco.id);
       }
     }
   });

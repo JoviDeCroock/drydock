@@ -810,6 +810,7 @@ describe("resolveReleaseConsistency", () => {
       db: {},
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
       packageName: "pkg",
+      ecosystem: "npm",
       ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
     });
 
@@ -821,6 +822,7 @@ describe("resolveReleaseConsistency", () => {
       db: {},
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
       packageName: null,
+      ecosystem: "npm",
       ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
     });
 
