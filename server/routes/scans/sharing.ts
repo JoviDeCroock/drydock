@@ -223,6 +223,8 @@ async function resolveReportExportOrganization(
 ): Promise<string | null> {
   const requested = c.req.query("organizationId")?.trim() || null;
   if (!requested) return requireActiveOrganization(c, db);
+  const apiKey = c.get("apiKey");
+  if (apiKey) return requested === apiKey.organizationId ? requested : null;
   const session = c.get("authSession");
   return (await getOrganizationRole(db, requested, session.userId)) ? requested : null;
 }

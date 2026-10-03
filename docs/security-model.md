@@ -47,6 +47,8 @@ Implementation requirements:
 - record add/validate/use/rotate/remove audit events;
 - redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 
+Organization API keys are the other stored credential, in the opposite direction: Drydock issues them rather than holding a third party's. Only their SHA-256 is stored, the secret is shown once, every key expires, and a key is deleted with its creator's membership. See [`api-keys.md`](./api-keys.md).
+
 Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
 
 ## Artifact handling and retention
@@ -123,7 +125,7 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 ## Authorization posture
 
-Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
+Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. The one authenticated alternative is an organization API key, which reaches only the read-only routes in `API_KEY_ROUTES`, reads as a plain member of exactly one organization, and is never combined with a cookie session; see [`api-keys.md`](./api-keys.md). Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
 One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only public release data — the public npm registry for `ecosystem=npm` (plus public `pkg.pr.new` preview tarballs), for `ecosystem=pypi` the `pypi.org` JSON API with artifact bytes only from `files.pythonhosted.org`, and for `ecosystem=atpm` the publisher's own AT Protocol identity and PDS (see [`atpm-public-diff.md`](./atpm-public-diff.md)) — never organization resources. They attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin (the PyPI mode included), persist no review data to D1, and never run AI review. With the Rate Limiting bindings configured they reach D1 on no request path at all — locked by a test that hands the routes a D1 binding which throws on use. Their abuse controls are per-IP rate limits enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session. Which mounts are anonymous is not a per-route decision: Hono runs middleware in registration order, so anything mounted above the `/api/*` session guard in `server/index.ts` is served without a session, and `test/api-auth-boundary-invariants.test.mjs` fails when that set changes.
 
@@ -165,7 +167,7 @@ A cached session can outlive its user by up to the cache lifetime, so `ensurePer
 
 The binding's `{limit, period}` pair is static per binding and `period` may only be 10 or 60 seconds. `wrangler.jsonc` therefore declares one `ratelimits` binding per per-minute limit the app enforces (`NATIVE_TIERS` in the module), and:
 
-- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks) are enforced entirely by the binding.
+- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks, organization API-key requests per IP and per key) are enforced entirely by the binding.
 - **Longer budgets** — the 15-minute and hourly limits on human-initiated actions such as sign-in, sign-up, password reset, organization creation, invitations, and connecting npm or Slack — cannot be expressed by the binding, so they keep the D1 `rate_limits` counter. Each one first passes a native per-minute burst guard whose limit is at or above the long-window limit, which can only reject traffic the long window would reject anyway while capping how many D1 writes one key can force per minute per colo.
 
 Semantic differences from the previous D1-only scheme, accepted deliberately:
