@@ -108,3 +108,32 @@ export async function sendPasswordResetEmail(
     html: content.html,
   });
 }
+
+/**
+ * The notice sent after a reset link is redeemed. It carries no link: it only
+ * tells the owner a password was set, so one they did not set is noticed.
+ */
+export function buildPasswordChangedEmail(): AccountEmailContent {
+  const body =
+    "The password for the Drydock account that uses this email address was just set, and every device was signed out.";
+  const action =
+    "If that wasn't you, request a new password reset right away and check who can read this mailbox.";
+  return {
+    subject: "Your Drydock password was set",
+    text: ["Hello,", "", body, "", action, "", "— Drydock"].join("\n"),
+    html: ["<p>Hello,</p>", `<p>${body}</p>`, `<p>${action}</p>`, "<p>— Drydock</p>"].join("\n"),
+  };
+}
+
+export async function sendPasswordChangedEmail(
+  env: Cloudflare.Env,
+  input: { email: string },
+): Promise<EmailSendResult> {
+  const content = buildPasswordChangedEmail();
+  return sendNotificationEmail(env, {
+    to: input.email,
+    subject: content.subject,
+    text: content.text,
+    html: content.html,
+  });
+}

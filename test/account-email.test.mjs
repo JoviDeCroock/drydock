@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-const { buildAccountVerificationEmail, buildPasswordResetEmail } =
+const { buildAccountVerificationEmail, buildPasswordResetEmail, buildPasswordChangedEmail } =
   await import("../server/lib/notify/account-email");
 
 describe("buildAccountVerificationEmail", () => {
@@ -52,5 +52,14 @@ describe("buildPasswordResetEmail", () => {
     expect(content.html).not.toContain('"></a>');
     expect(content.html).toContain("&amp;y=2");
     expect(content.text).toContain(hostile);
+  });
+});
+
+describe("buildPasswordChangedEmail", () => {
+  test("tells the owner a password was set and carries no link", () => {
+    const content = buildPasswordChangedEmail();
+    expect(content.subject).toBe("Your Drydock password was set");
+    expect(content.text).toContain("signed out");
+    expect(`${content.text}${content.html}`).not.toMatch(/https?:\/\/|href=/);
   });
 });
