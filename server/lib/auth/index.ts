@@ -10,7 +10,7 @@ import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizati
 import { recordProductEvent } from "../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import * as schema from "../../db/schema";
-import { sendAccountVerificationEmail } from "../notify/account-email";
+import { sendAccountVerificationEmail, sendPasswordResetEmail } from "../notify/account-email";
 
 export interface AuthSession {
   userId: string;
@@ -26,6 +26,7 @@ export interface AuthSession {
 }
 
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+const PASSWORD_RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour, Better Auth's default made explicit
 
 // Match Better Auth's scrypt parameters and stored format exactly.
 const SCRYPT_N = 16384;
@@ -316,6 +317,60 @@ function isLocalAuthUrl(url: string | undefined): boolean {
   }
 }
 
+/**
+ * Whether this deployment can mail a password-reset link: the same transport
+ * verification needs, plus a configured `BETTER_AUTH_URL`. The link is built
+ * from that origin and never from the request, so a forged `Host` cannot point
+ * a reset link — and the token in it — at another site.
+ */
+export function passwordResetAvailable(env: Cloudflare.Env): boolean {
+  return emailVerificationAvailable(env) && configuredOrigin(env) !== null;
+}
+
+function configuredOrigin(env: Cloudflare.Env): string | null {
+  if (!env.BETTER_AUTH_URL) return null;
+  try {
+    const url = new URL(env.BETTER_AUTH_URL);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The emailed reset link. The token rides in the fragment, which a browser
+ * never sends to a server or copies into a `Referer`, so the page load that
+ * opens the link cannot write the capability into request logs.
+ */
+function passwordResetLink(origin: string, token: string): string {
+  return `${origin}/reset-password#token=${encodeURIComponent(token)}`;
+}
+
+// Never rejects: Better Auth would log the rejection, and a failure that only
+// a registered address can produce must not change the response either.
+async function deliverPasswordResetEmail(
+  env: Cloudflare.Env,
+  email: string,
+  url: string,
+): Promise<void> {
+  try {
+    const result = await sendPasswordResetEmail(env, {
+      email,
+      url,
+      expiresInMinutes: PASSWORD_RESET_TOKEN_TTL_SECONDS / 60,
+    });
+    if (!result.ok) {
+      emitOperationalEvent("error", "auth.password_reset_email_failed", {
+        undeliverable: result.undeliverable === true,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "auth.password_reset_email_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
   const clientId = env.GITHUB_OAUTH_CLIENT_ID;
   return Boolean(
@@ -326,7 +381,16 @@ export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
   );
 }
 
-export function createAuth(env: Cloudflare.Env) {
+export interface CreateAuthOptions {
+  /**
+   * The request's `waitUntil`. Reset mail is handed to it so the response does
+   * not wait on delivery, which only a registered address triggers; without
+   * one the send is awaited.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
+export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {}) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
@@ -334,6 +398,7 @@ export function createAuth(env: Cloudflare.Env) {
   const sessionCache = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = emailVerificationAvailable(env);
+  const resetOrigin = passwordResetAvailable(env) ? configuredOrigin(env) : null;
   const githubSignIn = isGithubSignInEnabled(env);
   return betterAuth({
     appName: "Drydock",
@@ -354,8 +419,16 @@ export function createAuth(env: Cloudflare.Env) {
       },
       ...(sessionCache ? { storeSessionInDatabase: true } : {}),
     },
-    // Keep single-use verification values on D1's transactional path.
-    ...(sessionCache ? { verification: { storeInDatabase: true as const } } : {}),
+    verification: {
+      // Keep single-use verification values on D1's transactional path.
+      ...(sessionCache ? { storeInDatabase: true as const } : {}),
+      // A reset token mints a password, so D1 keeps only its SHA-256: a leaked
+      // row or backup cannot be redeemed. The emailed link holds the raw value.
+      storeIdentifier: {
+        default: "plain" as const,
+        overrides: { "reset-password:": "hashed" as const },
+      },
+    },
     rateLimit: { storage: "memory" as const },
     emailVerification: {
       autoSignInAfterVerification: true,
@@ -384,6 +457,34 @@ export function createAuth(env: Cloudflare.Env) {
       minPasswordLength: 12,
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
+      // A reset is also how a GitHub-only account gains a password: Better
+      // Auth's reset creates the missing `credential` row. The emailed link is
+      // the proof of ownership; there is deliberately no session-only path to a
+      // password, so a stolen session cookie cannot mint one.
+      ...(resetOrigin
+        ? {
+            resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_TTL_SECONDS,
+            sendResetPassword: async ({
+              user,
+              token,
+            }: {
+              user: { email: string };
+              token: string;
+            }) => {
+              const delivery = deliverPasswordResetEmail(
+                env,
+                user.email,
+                passwordResetLink(resetOrigin, token),
+              );
+              if (options.waitUntil) options.waitUntil(delivery);
+              else await delivery;
+            },
+          }
+        : {}),
+      // Whoever held the old password, or a session minted before the reset,
+      // is signed out. A cached session cookie still lives out the bounded
+      // revocation lag described in docs/security-model.md.
+      revokeSessionsOnPasswordReset: true,
     },
     ...(githubSignIn
       ? {

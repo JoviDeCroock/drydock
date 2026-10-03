@@ -97,7 +97,9 @@ logs and traces.
 That payload is sensitive and partly attacker-controlled. Drydock request URLs
 can carry capability tokens: share links (`/reports/:token`,
 `/public/reports/:token`), organization invites, email-verification links that
-sign the user in, and OAuth callbacks. Error text can carry request paths and
+sign the user in, OAuth callbacks, and Better Auth's password-reset callback
+(`/api/auth/reset-password/:token`; Drydock's own reset emails keep the token in
+a fragment no request carries). Error text can carry request paths and
 package names, and anonymous endpoints let anyone cause failures, so an outsider
 can push an issue past an automation's threshold. A destination must be private
 to the operator. A coding agent that receives issues and opens pull requests

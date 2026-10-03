@@ -102,3 +102,38 @@ export async function signUpUserId(jar: Jar, options: SignUpOptions = {}): Promi
   await signUp(jar, options);
   return sessionUserId(jar);
 }
+
+export interface SentEmail {
+  to: string;
+  raw: string;
+}
+
+export interface EmailCapture {
+  env: typeof env;
+  sent: SentEmail[];
+}
+
+// An env whose SEND_EMAIL binding records each message instead of sending it.
+// Miniflare's EmailMessage is a plain object holding `from`, `to`, and the raw
+// MIME string the Worker built, so the raw body is the value carrying headers.
+export function captureEmail(base: typeof env = env): EmailCapture {
+  const sent: SentEmail[] = [];
+  const send = async (message: unknown) => {
+    const fields = Object.values(message as Record<string, unknown>);
+    const raw = fields.find((value) => typeof value === "string" && value.includes("MIME-Version"));
+    sent.push({ to: String((message as { to?: unknown }).to), raw: String(raw ?? "") });
+  };
+  return { env: { ...base, SEND_EMAIL: { send } } as typeof env, sent };
+}
+
+// Swaps the password sign-in for the account shape Better Auth creates after
+// GitHub OAuth: a `github` provider row and no `credential` row.
+export async function makeGithubOnly(userId: string): Promise<void> {
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM account WHERE user_id = ?").bind(userId).run();
+  await env.DB.prepare(
+    "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) VALUES (?, ?, 'github', ?, ?, ?)",
+  )
+    .bind(`github:${userId}`, `github-${userId}`, userId, now, now)
+    .run();
+}

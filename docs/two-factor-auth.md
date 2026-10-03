@@ -45,9 +45,11 @@ TOTP step-up below applies regardless of how the session was created. To keep
 this split safe, all account linking is disabled: a social sign-in can never
 attach to an existing password account, implicitly or through Better Auth's
 link endpoint, so it cannot be used to skip an enrolled TOTP challenge. A
-GitHub-only account cannot enrol in Drydock two-factor at all — see
-[Management](#management) for why, and for what that costs an organization that
-mandates it.
+GitHub-only account has to add a Drydock password by email before it can enrol —
+see [Management](#management) for why, and for the deployments where it cannot.
+Once it has one, the account signs in either way: a password sign-in meets the
+TOTP challenge, a GitHub sign-in does not, and the release-decision step-up
+applies to both.
 
 Email verification is a separate axis and never part of this challenge: it gates
 individual actions rather than sign-in (see
@@ -64,24 +66,36 @@ Enrolled users can regenerate backup codes
 (`POST /api/auth/two-factor/generate-backup-codes`, password-gated) or disable 2FA
 (`POST /api/auth/two-factor/disable`, password-gated) from Account settings.
 
-**A GitHub-only account cannot enrol.** Every two-factor endpoint reauthenticates
-with a password, and Better Auth validates that against the user's `credential`
-account row — which an account created by GitHub sign-in does not have, so
-`enable` fails with `INVALID_PASSWORD` and there is nothing the user can correct.
-Drydock also wires no password-reset email (`emailAndPassword.sendResetPassword`
-is unset), so `forget-password` — the one Better Auth path that would mint a
-missing `credential` row — is not reachable either. `TwoFactorSection` therefore
-asks `GET /api/auth/list-accounts` on mount and, when no `credential` row exists,
-replaces the enrol button with an explanation instead of dead-ending on an
-uncorrectable password error.
+**A GitHub-only account sets a password first.** Every two-factor endpoint
+reauthenticates with a password, and Better Auth validates that against the
+user's `credential` account row — which an account created by GitHub sign-in
+does not have, so `enable` fails with `INVALID_PASSWORD`. `TwoFactorSection` asks
+`GET /api/auth/list-accounts` on mount and, when no `credential` row exists,
+replaces the enrol button with `SetPasswordPrompt`:
 
-The consequence for the org policy below is real and currently unresolved: a
-member who signed up with GitHub is permanently blocked from release decisions in
-an organization that requires two-factor for them, and a GitHub-signup owner can
-never turn that policy on (enabling it requires the owner's own enrollment).
-Offering GitHub sign-in on a deployment that uses the policy needs a way to add a
-password to a social account first — a "set a password" flow, or password-reset
-email wiring. Until then, treat the two as mutually exclusive.
+1. "Email me a link to set a password" posts the session's own address to
+   `POST /api/auth/request-password-reset` — the same password-reset flow the
+   sign-in page offers (see
+   [`security-model.md`](./security-model.md#password-reset)).
+2. The emailed link opens `/reset-password`, where `POST /api/auth/reset-password`
+   saves the password. Better Auth's reset creates the missing `credential` row
+   when there is none and updates it otherwise, then signs out every session the
+   account had.
+3. The user signs back in (with GitHub or the new password) and enrols as above.
+
+The email round-trip is the proof that the person adding a password owns the
+account's address. There is deliberately no route that sets a password from a
+session alone — Better Auth's `setPassword` is server-only and Drydock does not
+expose it — so a stolen session cookie can trigger a link to the owner's inbox
+but cannot mint a password.
+
+This needs a deployment that can mail the link (`GET /api/auth/config` reports
+`passwordReset: true`; see [`self-hosting.md`](./self-hosting.md)). Where it
+cannot, the prompt says so and the old limit stands: a member who signed up with
+GitHub cannot satisfy an organization that requires two-factor for release
+decisions, and a GitHub-signup owner cannot turn that policy on (enabling it
+requires the owner's own enrollment). Do not combine GitHub sign-in with that
+policy on a deployment without email.
 
 ### Step-up: deciding a workflow gate (issue #162)
 
@@ -249,3 +263,7 @@ complete a step-up. See [`security-model.md`](./security-model.md#session-postur
   cannot relax without one (`two_factor_required`) or with a wrong one (`two_factor_invalid`),
   and an owner without 2FA cannot enable (`two_factor_enrollment_required`) — a failed step-up
   never changes the stored policy.
+- `test/workers/password-reset.test.ts` — a GitHub-only account that `enable` refuses gets a
+  mailed link, the reset creates its `credential` row and deletes its sessions, and the new
+  password then signs in and completes enrolment. It also pins that no session-only
+  `/api/auth/set-password` route answers.
