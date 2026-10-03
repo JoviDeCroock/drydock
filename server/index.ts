@@ -108,6 +108,19 @@ app.get("/api/auth/config", (c) =>
   }),
 );
 
+// Drydock's reset links carry the token in the URL fragment and the reset page
+// posts it in the body. Better Auth also accepts it in a URL (its own
+// `GET /reset-password/:token` redirect, and `?token=` on the redeem POST),
+// where request logs and traces would record a live capability; neither form
+// is ever produced here, so both are refused before Better Auth sees them.
+app.get("/api/auth/reset-password/*", (c) => c.json({ error: "not found" }, 404));
+app.post("/api/auth/reset-password", async (c, next) => {
+  if (c.req.query("token") !== undefined) {
+    return c.json({ error: "send the reset token in the request body" }, 400);
+  }
+  await next();
+});
+
 app.all("/api/auth/*", (c) => c.get("auth").handler(c.req.raw));
 
 app.use("/api/*", async (c, next) => {

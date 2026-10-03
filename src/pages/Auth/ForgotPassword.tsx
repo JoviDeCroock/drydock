@@ -44,8 +44,9 @@ export default function ForgotPasswordPage() {
               fallback={
                 <>
                   <Muted class="text-[13px] m-0">
-                    Enter the email you sign in with. We'll send a link to choose a new password —
-                    or to add one, if you signed up with GitHub.
+                    Enter the email you sign in with. We'll send a link to choose a new password. If
+                    you signed up with GitHub, sign in with GitHub and add a password from Account
+                    settings instead.
                   </Muted>
                   <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
                     <Field label="Email" for="forgot-email">

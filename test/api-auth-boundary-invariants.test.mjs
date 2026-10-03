@@ -45,6 +45,10 @@ const REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
   // needs it to render the sign-in page, so it cannot require a session; it
   // reads only env presence and returns no organization data.
   { method: "get", path: "/api/auth/config" },
+  // Refuse the URL-borne forms of a password-reset token (see server/index.ts);
+  // they only ever answer with an error.
+  { method: "get", path: "/api/auth/reset-password/*" },
+  { method: "post", path: "/api/auth/reset-password" },
   { method: "all", path: "/api/auth/*" },
 ];
 
