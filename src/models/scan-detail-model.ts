@@ -43,6 +43,11 @@ import {
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+// How long a reader's pick must hold before its compare payload is fetched.
+// Arrowing through the closed picker fires a change per step on most
+// platforms, and every fetch costs sandbox work and the per-user compare rate
+// limit, so only the version the reader settles on is fetched.
+export const COMPARE_PICK_SETTLE_MS = 300;
 
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
@@ -59,9 +64,12 @@ export const ScanDetailModel = createModel((id: string) => {
   // is reported only while its own version is the comparison shown.
   // `compareError` carries the versions and file requests' errors.
   const compareFailures = signal<Record<string, string>>({});
+  // Versions whose compare payload is in flight. Tracked per version so the
+  // reader can change the comparison mid-fetch: a late payload lands in the
+  // cache under its own version and never stands in for the one on screen.
+  const compareInFlight = signal<ReadonlySet<string>>(new Set());
   const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
-  const compareLoading = signal(false);
   const fileLoading = signal(false);
   const compareError = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
@@ -107,6 +115,12 @@ export const ScanDetailModel = createModel((id: string) => {
     const v = comparisonVersion.value;
     return v ? (cache[v] ?? null) : null;
   });
+  // Whether the shown comparison's payload is still being fetched.
+  const compareLoading = computed(() => {
+    const inFlight = compareInFlight.value;
+    const v = comparisonVersion.value;
+    return v ? inFlight.has(v) : false;
+  });
   const compareFailure = computed(() => {
     const failures = compareFailures.value;
     const v = comparisonVersion.value;
@@ -148,16 +162,24 @@ export const ScanDetailModel = createModel((id: string) => {
   });
 
   // Load the shown comparison's compare payload once the scan is complete; the
-  // workbench that reads it renders only then. It is not tracked against
-  // `compareFailures`, so a failed version is retried when it is picked again
-  // rather than in a loop.
+  // workbench that reads it renders only then. A reader's pick waits to settle;
+  // the recorded baseline loads at once. It is not tracked against
+  // `compareFailures` or `compareInFlight`, so it does not loop on a failure:
+  // a failed version is retried when it is picked again (or when another
+  // payload lands while it is shown), and `loadCompare` skips a version
+  // already in flight.
   effect(() => {
     const cache = compareCache.value;
     const version = comparisonVersion.value;
+    const recorded = defaultPreviousVersion.value;
     const complete = status.value === "complete";
-    if (!version || !complete) return;
-    if (cache[version]) return;
-    void loadCompare(version);
+    if (!version || !complete || cache[version]) return;
+    if (version === recorded) {
+      void loadCompare(version);
+      return;
+    }
+    const timer = setTimeout(() => void loadCompare(version), COMPARE_PICK_SETTLE_MS);
+    return () => clearTimeout(timer);
   });
 
   async function pollDetail(): Promise<boolean> {
@@ -192,21 +214,38 @@ export const ScanDetailModel = createModel((id: string) => {
     }
   }
 
+  function forgetCompareFailure(version: string) {
+    if (!compareFailures.peek()[version]) return;
+    const { [version]: _retried, ...rest } = compareFailures.peek();
+    compareFailures.value = rest;
+  }
+
   async function loadCompare(version: string) {
+    if (compareInFlight.peek().has(version)) return;
     const id = scanId.peek();
-    compareLoading.value = true;
-    compareError.value = null;
-    if (compareFailures.peek()[version]) {
-      const { [version]: _retried, ...rest } = compareFailures.peek();
-      compareFailures.value = rest;
-    }
+    batch(() => {
+      compareInFlight.value = new Set(compareInFlight.peek()).add(version);
+      forgetCompareFailure(version);
+    });
+    // The payload or failure lands in the same update that ends the flight,
+    // so the version never reads as neither loading nor settled.
+    const settle = (record: () => void) =>
+      batch(() => {
+        record();
+        const inFlight = new Set(compareInFlight.peek());
+        inFlight.delete(version);
+        compareInFlight.value = inFlight;
+      });
     try {
       const data = await getScanCompare(id, version);
-      compareCache.value = { ...compareCache.peek(), [version]: data };
+      settle(() => {
+        compareCache.value = { ...compareCache.peek(), [version]: data };
+      });
     } catch (err) {
-      compareFailures.value = { ...compareFailures.peek(), [version]: errorMessage(err) };
-    } finally {
-      compareLoading.value = false;
+      const message = errorMessage(err);
+      settle(() => {
+        compareFailures.value = { ...compareFailures.peek(), [version]: message };
+      });
     }
   }
 
@@ -344,9 +383,26 @@ export const ScanDetailModel = createModel((id: string) => {
       void pollDetail();
     },
 
-    // Picking the default follows it rather than pinning it.
+    // Picking the default follows it rather than pinning it. Once versions
+    // have loaded, the shared error line can only hold a file error from the
+    // comparison being left, so it goes with it; a versions error stays.
+    // Picking a failed version retries it, so its old failure goes now
+    // rather than standing through the settle delay.
     selectVersion(version: string | null) {
-      this.selectedVersion.value = version === this.defaultPreviousVersion.peek() ? null : version;
+      batch(() => {
+        this.selectedVersion.value =
+          version === this.defaultPreviousVersion.peek() ? null : version;
+        if (this.versions.peek()) this.compareError.value = null;
+        const shown = this.comparisonVersion.peek();
+        if (shown) forgetCompareFailure(shown);
+      });
+    },
+
+    // A failed comparison is retried on request: re-choosing the selected
+    // version in the picker fires no change.
+    retryComparison() {
+      const version = this.comparisonVersion.peek();
+      if (version) void loadCompare(version);
     },
 
     async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {

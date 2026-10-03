@@ -24,6 +24,7 @@ export {
 export { ScanListModel } from "./scan-list-model";
 
 export {
+  COMPARE_PICK_SETTLE_MS,
   SCAN_POLL_BASE_DELAY_MS,
   SCAN_POLL_MAX_DELAY_MS,
   SCAN_POLL_STALL_AFTER_MS,

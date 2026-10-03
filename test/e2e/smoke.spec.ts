@@ -142,6 +142,39 @@ test("the release tree waits for a picked version instead of showing the baselin
   await expect(tree.getByText("0 / 2")).toBeVisible();
 });
 
+test("the reader can return to the baseline while a picked version still loads", async ({
+  page,
+}) => {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await installWorkflowGateMocks(page, false, {
+    version: "1.2.0-rc.1",
+    distTags: ["rc"],
+    files: released.then(() => []),
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const tree = page.locator("#release-workbench aside");
+  await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
+
+  const picker = page.getByLabel("Compare against");
+  // Wait for the rc's fetch itself, so its payload is still in flight below.
+  const rcRequested = page.waitForRequest((request) =>
+    request.url().includes("/compare?version=1.2.0-rc.1"),
+  );
+  await picker.selectOption("1.2.0-rc.1");
+  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
+  await rcRequested;
+  await expect(picker).toBeEnabled();
+  await picker.selectOption("1.1.0");
+  await expect(tree.getByText("__init__.py")).toBeVisible();
+
+  release();
+  await expect(picker).toHaveValue("1.1.0");
+  await expect(tree.getByText("__init__.py")).toBeVisible();
+  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
+});
+
 test("a picked version that cannot be compared says why, once, in the tree", async ({ page }) => {
   await installWorkflowGateMocks(page, false, {
     version: "1.2.0-rc.1",
@@ -161,10 +194,53 @@ test("a picked version that cannot be compared says why, once, in the tree", asy
   await expect(tree.getByText("__init__.py")).toHaveCount(0);
   await expect(page.getByText("Select a file from the tree to diff.")).toHaveCount(0);
 
+  await expect(tree.getByRole("button", { name: "Try again" })).toBeVisible();
+
   // Back on the baseline, the rc's failure is not reported against it.
   await page.getByLabel("Compare against").selectOption("1.1.0");
   await expect(tree.getByText("__init__.py")).toBeVisible();
   await expect(page.getByText("Too many comparison requests")).toHaveCount(0);
+});
+
+test("a failed comparison can be retried from the tree", async ({ page }) => {
+  await installWorkflowGateMocks(page, false, {
+    version: "1.2.0-rc.1",
+    distTags: ["rc"],
+    files: Promise.resolve([
+      { path: "src/gate_demo/__init__.py", size: 102, sha256: "b".repeat(64), flags: [] },
+    ]),
+    failure: { status: 429, error: "Too many comparison requests", times: 1 },
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const tree = page.locator("#release-workbench aside");
+  await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
+  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toBeVisible();
+  await tree.getByRole("button", { name: "Try again" }).click();
+
+  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toHaveCount(0);
+  // The rc shipped `__init__.py` byte for byte, so only the binary changed.
+  await expect(tree.getByText("1 / 2")).toBeVisible();
+});
+
+test("a failed baseline comparison can be retried beside the picker", async ({ page }) => {
+  await installWorkflowGateMocks(page, false, undefined, {
+    failure: { status: 429, error: "Too many comparison requests", times: 1 },
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const failure = page.getByText("1.1.0 could not be compared: Too many comparison requests");
+  await expect(failure).toBeVisible({ timeout: 30_000 });
+  const retried = page.waitForResponse(
+    (response) => response.url().includes("/compare?version=1.1.0") && response.ok(),
+  );
+  await page.getByRole("button", { name: "Try again" }).click();
+
+  await retried;
+  await expect(failure).toHaveCount(0);
+  await expect(page.locator("#release-workbench aside").getByText("__init__.py")).toBeVisible();
 });
 
 // The public report is the one review surface with no session and no npm
@@ -342,12 +418,17 @@ async function installWorkflowGateMocks(
     version: string;
     distTags: string[];
     files: Promise<Array<{ path: string; size: number; sha256: string; flags: string[] }>>;
-    // Answer its compare request with this error instead of `files`.
-    failure?: { status: number; error: string };
+    // Answer its first `times` compare requests (all, if unset) with this
+    // error instead of `files`.
+    failure?: { status: number; error: string; times?: number };
   },
+  // Answer the recorded baseline's first `times` compare requests with this error.
+  baseline: { failure?: { status: number; error: string; times?: number } } = {},
 ) {
   let packageDecision: "publish" | "no_publish" | null = null;
   let gateStatus: "pending" | "rejected" = "pending";
+  let otherVersionFailures = 0;
+  let baselineFailures = 0;
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -397,7 +478,10 @@ async function installWorkflowGateMocks(
       otherVersion &&
       url.searchParams.get("version") === otherVersion.version
     ) {
-      if (otherVersion.failure) {
+      if (
+        otherVersion.failure &&
+        otherVersionFailures++ < (otherVersion.failure.times ?? Number.POSITIVE_INFINITY)
+      ) {
         await fulfillJson(
           route,
           { error: otherVersion.failure.error },
@@ -416,6 +500,13 @@ async function installWorkflowGateMocks(
 
     if (path === `/api/v1/scans/${scanId}/compare`) {
       expect(url.searchParams.get("version")).toBe("1.1.0");
+      if (
+        baseline.failure &&
+        baselineFailures++ < (baseline.failure.times ?? Number.POSITIVE_INFINITY)
+      ) {
+        await fulfillJson(route, { error: baseline.failure.error }, baseline.failure.status);
+        return;
+      }
       await fulfillJson(route, {
         version: "1.1.0",
         files: [
