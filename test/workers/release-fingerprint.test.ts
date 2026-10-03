@@ -22,7 +22,15 @@ interface SeedScanOptions {
   status?: ScanStatus;
   source?: ScanSource;
   gateId?: string | null;
+  summaryJson?: unknown;
 }
+
+// The summary fields each non-staged path persists and `scanEcosystemSql`
+// reads back; staged sources (`manual`, `auto_discovery`) are npm by source.
+const gateSummary = (ecosystem: string) => ({ stagedPublish: { provenance: { ecosystem } } });
+const publishedPairSummary = (ecosystem: string) => ({
+  stagedPublish: { mode: "published_pair", ecosystem },
+});
 
 async function seedScan(db: ReturnType<typeof createDb>, options: SeedScanOptions) {
   const id = `scan_${crypto.randomUUID()}`;
@@ -36,6 +44,7 @@ async function seedScan(db: ReturnType<typeof createDb>, options: SeedScanOption
     risk: "low",
     status: options.status ?? "complete",
     source: options.source ?? "manual",
+    summaryJson: options.summaryJson ?? null,
     createdAt: options.createdAt,
     updatedAt: options.createdAt,
   });
@@ -98,8 +107,9 @@ interface FakeInput {
 
 // Minimal credential-free adapter: the release-fingerprint rules only need the
 // staged manifest identity, so the artifact is a single synthetic package.json.
+// Its id stands in for npm's: the pipeline scopes history by adapter id.
 const fakeAdapter: PackageAdapter<FakeInput> = {
-  id: "fake",
+  id: "npm",
   codePatternSet: "javascript",
   parseInput(raw) {
     const input = raw as Partial<FakeInput>;
@@ -158,6 +168,9 @@ async function runFakeScan(args: {
   organizationId: string;
   userId: string;
   packageName: string;
+  ecosystem?: string;
+  source?: ScanSource;
+  gateId?: string;
 }) {
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${crypto.randomUUID()}`;
@@ -166,6 +179,8 @@ async function runFakeScan(args: {
     stageId,
     organizationId: args.organizationId,
     ownerUserId: args.userId,
+    source: args.source,
+    gateId: args.gateId,
   });
   await claimScanForRun(args.db, scanId, args.organizationId);
   const result = await runScanPipeline(
@@ -175,7 +190,7 @@ async function runFakeScan(args: {
       db: args.db,
       session: { userId: args.userId },
     },
-    fakeAdapter,
+    { ...fakeAdapter, id: args.ecosystem ?? fakeAdapter.id },
     {
       scanId,
       stageId,
@@ -229,6 +244,7 @@ describe("release-process fingerprint (workers)", () => {
         packageName: "gated-pkg",
         source: "workflow_gate",
         gateId,
+        summaryJson: gateSummary("npm"),
         createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
       });
     }
@@ -264,6 +280,7 @@ describe("release-process fingerprint (workers)", () => {
         packageName: "mixed-pkg",
         source: "workflow_gate",
         gateId,
+        summaryJson: gateSummary("npm"),
         createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
       });
     }
@@ -298,6 +315,7 @@ describe("release-process fingerprint (workers)", () => {
       packageName: "shared-name",
       source: "workflow_gate",
       gateId,
+      summaryJson: gateSummary("npm"),
       createdAt: new Date(now.getTime() - DAY_MS),
     });
 
@@ -305,8 +323,186 @@ describe("release-process fingerprint (workers)", () => {
       organizationId: orgA.organizationId,
       scanId: "scan_missing",
       packageName: "shared-name",
+      ecosystem: "npm",
     });
     expect(history.packageHistory).toEqual([]);
     expect(history.currentScan).toBeNull();
+  });
+
+  test("a same-name PyPI gate history does not make an npm staged release drift", async () => {
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    const gateId = await seedGateChain(db, organizationId, "acme/sdk-py", "pypi");
+    for (let index = 0; index < 3; index += 1) {
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "acme-sdk",
+        source: "workflow_gate",
+        gateId,
+        summaryJson: gateSummary("pypi"),
+        createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
+      });
+    }
+
+    const { result } = await runFakeScan({ db, organizationId, userId, packageName: "acme-sdk" });
+
+    expect(result.ruleFindings.filter((finding) => finding.ruleId?.startsWith("release."))).toEqual(
+      [],
+    );
+    expect(result.riskSummary.releaseRisk).toBe("low");
+  });
+
+  test("a same-name npm staged history does not make a PyPI gate release drift", async () => {
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    for (let index = 0; index < 3; index += 1) {
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "acme-sdk",
+        source: "manual",
+        createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
+      });
+    }
+    const gateId = await seedGateChain(db, organizationId, "acme/sdk-py", "pypi");
+
+    const { result } = await runFakeScan({
+      db,
+      organizationId,
+      userId,
+      packageName: "acme-sdk",
+      ecosystem: "pypi",
+      source: "workflow_gate",
+      gateId,
+    });
+
+    expect(result.ruleFindings.filter((finding) => finding.ruleId?.startsWith("release."))).toEqual(
+      [],
+    );
+  });
+
+  test("interleaved PyPI releases do not mask npm gate-to-staged drift", async () => {
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    const npmGateId = await seedGateChain(db, organizationId, "acme/sdk-js", "npm");
+    for (let index = 0; index < 3; index += 1) {
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "acme-sdk",
+        source: "workflow_gate",
+        gateId: npmGateId,
+        summaryJson: gateSummary("npm"),
+        createdAt: new Date(now.getTime() - (2 * index + 1) * DAY_MS),
+      });
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "acme-sdk",
+        source: "published",
+        summaryJson: publishedPairSummary("pypi"),
+        createdAt: new Date(now.getTime() - (2 * index + 2) * DAY_MS),
+      });
+    }
+
+    const { result } = await runFakeScan({ db, organizationId, userId, packageName: "acme-sdk" });
+
+    const finding = result.ruleFindings.find((item) => item.ruleId === "release.source-drift");
+    expect(finding).toMatchObject({ severity: "high", file: RELEASE_PROCESS_FINDING_FILE });
+    expect(finding?.evidence).toContain("all 3 prior completed scans");
+    expect(finding?.evidence).toContain("acme/sdk-js");
+  });
+
+  test("completed gate rows without a recorded ecosystem never count as history", async () => {
+    // Legacy gate summaries that predate the provenance snapshot cannot say
+    // which registry they reviewed; `scanEcosystemSql` reads them as null.
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    const gateId = await seedGateChain(db, organizationId, "octo/release-repo", "release");
+    for (let index = 0; index < 3; index += 1) {
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "legacy-pkg",
+        source: "workflow_gate",
+        gateId,
+        createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
+      });
+    }
+
+    const { result } = await runFakeScan({ db, organizationId, userId, packageName: "legacy-pkg" });
+
+    expect(result.ruleFindings.filter((finding) => finding.ruleId?.startsWith("release."))).toEqual(
+      [],
+    );
+  });
+
+  test("history helper keeps only the requested ecosystem across every scan source", async () => {
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    const gateId = await seedGateChain(db, organizationId, "acme/sdk", "release");
+    const at = (days: number) => new Date(now.getTime() - days * DAY_MS);
+    const base = { organizationId, ownerUserId: userId, packageName: "acme-sdk" };
+    const npmManual = await seedScan(db, { ...base, source: "manual", createdAt: at(1) });
+    const npmDiscovery = await seedScan(db, {
+      ...base,
+      source: "auto_discovery",
+      createdAt: at(2),
+    });
+    const npmGate = await seedScan(db, {
+      ...base,
+      source: "workflow_gate",
+      gateId,
+      summaryJson: gateSummary("npm"),
+      createdAt: at(3),
+    });
+    const npmPublished = await seedScan(db, {
+      ...base,
+      source: "published",
+      summaryJson: publishedPairSummary("npm"),
+      createdAt: at(4),
+    });
+    const pypiGate = await seedScan(db, {
+      ...base,
+      source: "workflow_gate",
+      gateId,
+      summaryJson: gateSummary("pypi"),
+      createdAt: at(5),
+    });
+    const pypiPublished = await seedScan(db, {
+      ...base,
+      source: "published",
+      summaryJson: publishedPairSummary("pypi"),
+      createdAt: at(6),
+    });
+    const vscodeGate = await seedScan(db, {
+      ...base,
+      source: "workflow_gate",
+      gateId,
+      summaryJson: gateSummary("vscode"),
+      createdAt: at(7),
+    });
+    await seedScan(db, { ...base, source: "workflow_gate", gateId, createdAt: at(8) });
+    await seedScan(db, {
+      ...base,
+      source: "published",
+      summaryJson: { stagedPublish: { mode: "published_pair" } },
+      createdAt: at(9),
+    });
+
+    const historyIds = async (ecosystem: string) =>
+      (
+        await loadReleaseFingerprintHistory(db, {
+          organizationId,
+          scanId: "scan_current",
+          packageName: "acme-sdk",
+          ecosystem,
+        })
+      ).packageHistory.map((row) => row.id);
+
+    expect(await historyIds("npm")).toEqual([npmManual, npmDiscovery, npmGate, npmPublished]);
+    expect(await historyIds("pypi")).toEqual([pypiGate, pypiPublished]);
+    expect(await historyIds("vscode")).toEqual([vscodeGate]);
   });
 });

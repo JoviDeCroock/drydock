@@ -1,6 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { PackageScanHistoryRow } from "../lib/release-fingerprint";
 import type { AppDb } from "./client";
+import { scanEcosystemSql } from "./scan-query";
 import { githubWorkflowGates, scans } from "./schema";
 
 // History reads for the release-process fingerprint rules. Every query is
@@ -30,6 +31,12 @@ export async function loadReleaseFingerprintHistory(
     organizationId: string;
     scanId: string;
     packageName: string | null;
+    /**
+     * The registry the in-flight scan reviews, from the pipeline's adapter and
+     * never from the package. The same name in another registry is another
+     * package with its own release path.
+     */
+    ecosystem: string;
   },
 ): Promise<ReleaseFingerprintHistory> {
   // The gate join carries its own organization guard so a (never expected)
@@ -67,6 +74,10 @@ export async function loadReleaseFingerprintHistory(
               eq(scans.packageName, args.packageName),
               eq(scans.status, "complete"),
               ne(scans.id, args.scanId),
+              // A completed gate row whose summary predates the provenance
+              // snapshot names no ecosystem, compares as NULL, and drops out:
+              // history that cannot be attributed to a registry counts for none.
+              eq(scanEcosystemSql, args.ecosystem),
             ),
           )
           .orderBy(desc(scans.createdAt), desc(scans.id))
