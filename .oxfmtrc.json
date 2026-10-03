@@ -15,6 +15,7 @@
     ".claude/**",
     ".agents/**",
     "drizzle/**",
+    "docs/openapi.json",
     "node_modules/**",
     "pnpm-lock.yaml",
     "**/*.d.ts"

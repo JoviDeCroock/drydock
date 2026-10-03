@@ -308,6 +308,7 @@ describe("API key authentication", () => {
     const key = await createKey(owner);
     const concrete: Record<string, string> = {
       "GET /api/v1/api-keys/current": "/api/v1/api-keys/current",
+      "GET /api/v1/openapi.json": "/api/v1/openapi.json",
       "GET /api/v1/scans": "/api/v1/scans",
       "GET /api/v1/scans/overview": "/api/v1/scans/overview",
       "GET /api/v1/scans/:id": `/api/v1/scans/${scanId}`,
