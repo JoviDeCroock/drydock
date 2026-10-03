@@ -14,6 +14,7 @@ import { csrfOriginCheck } from "./middleware/csrf-origin";
 import { attachDb } from "./middleware/db";
 import { handleAppError } from "./middleware/errors";
 import { securityHeaders } from "./middleware/security-headers";
+import { openApiDocument } from "./lib/openapi/document";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
@@ -200,6 +201,10 @@ app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 app.route("/api/v1/api-keys", apiKeyRoutes);
+// The automation surface's own description (docs/openapi.json is the same
+// document checked in). Session- or API-key-authenticated like every other
+// /api/v1 read; it carries no organization data.
+app.get("/api/v1/openapi.json", (c) => c.json(openApiDocument()));
 
 app.notFound(staticAssetFallback);
 
