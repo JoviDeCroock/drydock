@@ -213,6 +213,7 @@ describe("AI finding persistence (report artifact)", () => {
       {
         organizationId: owner.organizationId,
         packageName: "alleviate",
+        ecosystem: "npm",
         excludeScanId: "scan_current",
       },
       env.ARTIFACTS,

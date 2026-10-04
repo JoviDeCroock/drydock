@@ -369,17 +369,24 @@ export interface ResolveReleaseConsistencyArgs {
   identity: PipelineIdentity;
   /** The staged manifest name — the same value persistScan records as `scans.packageName`. */
   packageName: string | null;
+  /**
+   * The adapter id, so the package's own manifest has no say in it. It is also
+   * what `scanEcosystemSql` reads back from the row this scan persists: npm by
+   * source for staged scans, else the ecosystem the adapter's summary records.
+   */
+  ecosystem: string;
   /** The current scan's deterministic rule findings (redacted set that gets persisted). */
   ruleFindings: Finding[];
 }
 
 // Side-effecting (db read): release memory. Compare the current deterministic
 // finding profile against the most recent completed scan of the same package,
-// in the same organization, that a maintainer decided "publish". The outcome
-// never edits a finding; its only scoring effect is that already-approved
-// package context stops anchoring the headline risk (see `scoreRisk` and
-// docs/release-memory.md). A lookup failure degrades to "none", which scores
-// exactly as it did before release memory existed, instead of failing the scan.
+// in the same organization and ecosystem, that a maintainer decided "publish".
+// The outcome never edits a finding; its only scoring effect is that
+// already-approved package context stops anchoring the headline risk (see
+// `scoreRisk` and docs/release-memory.md). A lookup failure degrades to "none",
+// which scores exactly as it did before release memory existed, instead of
+// failing the scan.
 export async function resolveReleaseConsistency(
   args: ResolveReleaseConsistencyArgs,
 ): Promise<ReleaseConsistency> {
@@ -390,6 +397,7 @@ export async function resolveReleaseConsistency(
       {
         organizationId: args.identity.organizationId,
         packageName: args.packageName,
+        ecosystem: args.ecosystem,
         excludeScanId: args.identity.scanId,
       },
       args.env ? scanArtifactReadBucket(args.env) : undefined,

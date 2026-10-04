@@ -11,11 +11,26 @@ presents those findings as if they were novel.
 
 During a scan, after deterministic findings are computed and before they are
 scored, the pipeline looks up the most recent scan in the **same organization**, for the
-**same `packageName`**, with `status = 'complete'` and `decision = 'publish'`
-(the in-flight scan id is excluded). Both scans are reduced to a **finding
+**same `packageName`** in the **same ecosystem**, with `status = 'complete'` and
+`decision = 'publish'` (the in-flight scan id is excluded). Both scans are reduced to a **finding
 profile**: the multiset of `(ruleId, severity, file)` over rule findings.
 `line` and `evidence` are ignored — a finding that moved lines is the same
 profile entry — and findings without a `ruleId` participate as `"unknown"`.
+
+The ecosystem is part of the package's identity: an npm package and a PyPI
+project that share a name are different packages, and approving one says
+nothing about the other. The current scan's ecosystem is the pipeline adapter's
+id (`npm`, `pypi`, `vscode`), never a manifest field, so package bytes cannot
+pick which approval they are compared against. A stored scan's ecosystem is
+`scanEcosystemSql` (`server/db/scan-query.ts`), the derivation the package
+release view uses: `npm` for `manual`/`auto_discovery`, otherwise the gate
+provenance or published-pair ecosystem the summary recorded. Each adapter's id
+equals what its own persisted rows read back as
+(`test/ecosystem-registry.test.ts` pins this). A completed workflow-gate scan
+whose summary predates the provenance snapshot has no ecosystem, and is never
+a prior for any ecosystem: an approval that cannot be attributed to a registry
+discounts nothing, which is the same fail-closed `none` as having no approval.
+Names match exactly as recorded; PyPI names are not PEP 503-normalized here.
 
 The profiles are compared as multisets:
 
@@ -24,7 +39,7 @@ The profiles are compared as multisets:
 | `match`    | Identical multisets — the approved release had exactly this finding profile.                                                                                  |
 | `subset`   | Strict multiset subset — every current finding (duplicates included) was in the approved profile, plus more.                                                  |
 | `diverged` | Something is present now that the approved profile lacked; `newFindings` lists the difference (capped at 25 entries; `newFindingCount` keeps the true count). |
-| `none`     | No prior approved scan for this package in this organization (or the lookup was skipped/failed).                                                              |
+| `none`     | No prior approved scan for this package in this organization and ecosystem (or the lookup was skipped/failed).                                                |
 
 The result is persisted as `summary.releaseConsistency` on the scan (no schema
 migration; it lives in `summaryJson`), returned on `ScanResult`, included in
@@ -107,7 +122,9 @@ review, which remain specific to the new release.
 - Old scans lack the field entirely; every reader goes through
   `normalizeReleaseConsistency`, which tolerates absence and malformed blobs.
 - The query is organization-scoped (`scans_org_decision_created_idx` covers
-  it); one organization's review history is never visible to another.
+  it); one organization's review history is never visible to another. The
+  ecosystem predicate is checked on the rows that index already narrowed, so
+  it needs no index of its own.
 
 Code: `server/lib/scan/release-memory.ts` (profile building + comparison),
 `server/db/release-memory.ts` (prior-approved-scan lookup),
