@@ -101,7 +101,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
             throw new ScanPreconditionError("staged_release_identity_changed");
           }
         }
-        return collectReleaseFingerprintFindings(db, identity, resolved);
+        return collectReleaseFingerprintFindings(db, identity, resolved, adapter.id);
       },
     );
     const aiFindings = await maybeRunAiReview({
@@ -205,11 +205,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
  * findings for the in-flight scan. The history lookup must never fail the
  * scan: any error degrades to "no release-process findings" with a structured
  * operational event, because the artifact findings stand on their own.
+ *
+ * `ecosystem` is the adapter id, so the package's own manifest has no say in
+ * it. It is also what `scanEcosystemSql` reads back from the row this scan
+ * persists: npm by source for staged scans, else the ecosystem the adapter's
+ * summary records.
  */
 async function collectReleaseFingerprintFindings(
   db: ScanPipelineContext["db"],
   identity: PipelineIdentity,
   resolved: ResolvedArtifacts,
+  ecosystem: string,
 ): Promise<Finding[]> {
   const packageName = resolved.staged.artifact.manifest?.name || null;
   try {
@@ -217,6 +223,7 @@ async function collectReleaseFingerprintFindings(
       organizationId: identity.organizationId,
       scanId: identity.scanId,
       packageName,
+      ecosystem,
     });
     return releaseFingerprintFindings({
       current: {

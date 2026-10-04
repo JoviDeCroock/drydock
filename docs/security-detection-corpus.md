@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.46.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.47.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -707,6 +707,14 @@ Rebasing onto the GLM/Kimi routing contract advances `AI_REVIEWER_VERSION` to `1
 prompt and routing policy was never exercised by the `1.4.0` controlled outputs, and one of those
 records came from the retired DeepSeek fallback. Those outputs remain historical compatibility
 evidence until controlled `1.6.0` runs can be recorded; they are not relabeled as current coverage.
+
+`1.47.0` scopes `release.source-drift` history to the current scan's ecosystem. It matched on
+organization and package name alone, so an organization gating the PyPI project `acme-sdk` drifted
+when it staged the npm package `acme-sdk` (a high release finding), and interleaved npm and PyPI
+releases of one name read as mixed history and silenced real drift. The ecosystem comes from the
+pipeline's adapter; completed rows whose summary names no ecosystem no longer count. Content rules,
+corpus cases and eval results are unchanged; `test/workers/release-fingerprint.test.ts` pins the
+cross-ecosystem cases.
 
 ### Fixture format
 
