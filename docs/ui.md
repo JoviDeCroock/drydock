@@ -76,7 +76,15 @@ What they use lives in `src/features/review/`:
   detail also renders the per-finding risk index). The diff panel itself is the
   caller's `children`, because what a "previous side" is differs per surface;
   a surface-wide caveat about that side goes in the optional `diffAside`
-  (the File diff label's trailing slot) rather than above every file.
+  (the File diff label's trailing slot) rather than above every file. A
+  surface whose entries are not yet the comparison on screen passes a
+  `treeNotice` (loading or unavailable, with the failure reason as `detail`
+  and an optional `retry` the notice offers as "Try again")
+  in place of the tree rather than a stale or empty one. The notice is the
+  only place that state is reported, in one live region: the diff panel only
+  says no file is selected, the comparison status line beside the picker
+  shows only another request's error while the notice is up, and a version's compare
+  failure is reported only while that version is the comparison shown.
 - `initial-path.ts` — `findingFirstPath`: every review surface opens the
   workbench on the changed file carrying the most severe finding, falling back
   to its own rule (scan detail and report: first change; `/diff`: the
@@ -84,7 +92,8 @@ What they use lives in `src/features/review/`:
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,
-`annotatePersistedFindings`, the `DiffWorkbench` state machine). Pages must not
+`annotatePersistedFindings`, `selectReleaseTree`, the `DiffWorkbench` state
+machine). Pages must not
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
 

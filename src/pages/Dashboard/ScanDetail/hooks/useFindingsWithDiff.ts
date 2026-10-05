@@ -1,7 +1,7 @@
 import { useComputed, type ReadonlySignal } from "@preact/signals";
-import type { DiffEntry } from "../../../../../server/lib/review";
+import type { DiffEntry, FileRecord } from "../../../../../server/lib/review";
 import type { PersistedScanDetail, ScanCompareResponse } from "../../../../models/scan";
-import { annotatePersistedFindings, scanFilesToFileRecords } from "../diff-helpers";
+import { annotatePersistedFindings } from "../diff-helpers";
 import type { FindingWithDiffStatus } from "../../../../features/review/types";
 
 // Annotates persisted findings with their diff status against the active
@@ -9,6 +9,7 @@ import type { FindingWithDiffStatus } from "../../../../features/review/types";
 export function useFindingsWithDiff(
   detail: ReadonlySignal<PersistedScanDetail | null>,
   compare: ReadonlySignal<ScanCompareResponse | null>,
+  stagedFiles: ReadonlySignal<FileRecord[]>,
   diffEntries: ReadonlySignal<DiffEntry[]>,
   isDefault: ReadonlySignal<boolean>,
 ): ReadonlySignal<FindingWithDiffStatus[]> {
@@ -18,7 +19,7 @@ export function useFindingsWithDiff(
       diffEntries.value,
       isDefault.value,
       compare.value?.files ?? [],
-      detail.value ? scanFilesToFileRecords(detail.value.files) : [],
+      stagedFiles.value,
       isDefault.value ? undefined : compare.value?.findingAnnotations,
     ),
   );

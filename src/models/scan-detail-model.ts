@@ -43,6 +43,11 @@ import {
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+// How long a reader's pick must hold before its compare payload is fetched.
+// Arrowing through the closed picker fires a change per step on most
+// platforms, and every fetch costs sandbox work and the per-user compare rate
+// limit, so only the version the reader settles on is fetched.
+export const COMPARE_PICK_SETTLE_MS = 300;
 
 export const ScanDetailModel = createModel((id: string) => {
   const scanId = signal(id);
@@ -51,11 +56,25 @@ export const ScanDetailModel = createModel((id: string) => {
   const error = signal<string | null>(null);
   const pollingStalled = signal(false);
   const versions = signal<ScanVersionsResponse | null>(null);
+  // The version the reader picked. Null follows the default comparison, so a
+  // choice the page made on its own never pins a version into the URL.
   const selectedVersion = signal<string | null>(null);
   const compareCache = signal<Record<string, ScanCompareResponse>>({});
+  // Why a version's compare payload failed to load, by version, so a failure
+  // is reported only while its own version is the comparison shown.
+  // `compareError` carries the versions and file requests' errors.
+  const compareFailures = signal<Record<string, string>>({});
+  // Versions whose compare payload is in flight. Tracked per version so the
+  // reader can change the comparison mid-fetch: a late payload lands in the
+  // cache under its own version and never stands in for the one on screen.
+  const compareInFlight = signal<ReadonlySet<string>>(new Set());
+  // Versions whose cached payload was fetched while the scan ran. Such a
+  // payload has no finding annotations, which need the completed report, so
+  // once the scan completes any that is not the recorded baseline (whose
+  // annotations are never read from a payload) is dropped and refetched.
+  const fetchedWhileRunning = new Set<string>();
   const stagedFileContentCache = signal<Record<string, PersistedScanDetail["files"][number]>>({});
   const fileContentCache = signal<Record<string, FileRecord>>({});
-  const compareLoading = signal(false);
   const fileLoading = signal(false);
   const compareError = signal<string | null>(null);
   const decisionStatus = signal<DecisionStatus>("idle");
@@ -81,32 +100,36 @@ export const ScanDetailModel = createModel((id: string) => {
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
   // The version the persisted report (diff, risk summary, finding annotations)
-  // was computed against. The page asks the versions endpoint as soon as the
-  // scan has a package name, often while it is still running, and until the
-  // scan records a baseline the endpoint can only guess the semver
-  // predecessor: for a stable release cut after release candidates that is
-  // the newest rc, not the dist-tag baseline the pipeline goes on to diff.
-  const defaultPreviousVersion = computed(
-    () => detail.value?.scan.previousVersion ?? versions.value?.defaultPreviousVersion ?? null,
+  // was computed against, and so the default comparison. Null when the scan
+  // recorded none: its report compared against nothing and reads all added.
+  // The versions endpoint's own default is deliberately unused. The page asks
+  // for it while the scan may still be running, and until the pipeline has
+  // recorded the baseline it can only guess the tag-blind semver predecessor:
+  // for a stable release cut after release candidates that is the newest rc,
+  // not the dist-tag baseline the pipeline goes on to diff.
+  const defaultPreviousVersion = computed(() => detail.value?.scan.previousVersion ?? null);
+  // The comparison the workbench shows: the reader's pick, else the default.
+  const comparisonVersion = computed(() => selectedVersion.value ?? defaultPreviousVersion.value);
+  // Whether the persisted report describes the shown comparison. When it does
+  // not, the release tree is rebuilt from that version's compare payload.
+  const isDefaultComparison = computed(
+    () => comparisonVersion.value === defaultPreviousVersion.value,
   );
-  // Whether the persisted report describes the selected comparison. When it
-  // does not, the tree must be rebuilt from the compare payload, or it shows
-  // the baseline's delta beside file bodies fetched from the selected version.
-  const isDefaultComparison = computed(() => {
-    const selected = selectedVersion.value;
-    const baseline = detail.value?.scan.previousVersion;
-    const v = versions.value;
-    const defaultVersion = defaultPreviousVersion.value;
-    // Nothing selected yet, or no default known (the scan has no baseline of
-    // its own and versions metadata has not arrived): keep the persisted risk
-    // summary in view instead of flickering to computed-from-empty-compare values.
-    if (selected === null || (!baseline && !v)) return true;
-    return selected === defaultVersion;
-  });
   const compare = computed(() => {
     const cache = compareCache.value;
-    const v = selectedVersion.value;
+    const v = comparisonVersion.value;
     return v ? (cache[v] ?? null) : null;
+  });
+  // Whether the shown comparison's payload is still being fetched.
+  const compareLoading = computed(() => {
+    const inFlight = compareInFlight.value;
+    const v = comparisonVersion.value;
+    return v ? inFlight.has(v) : false;
+  });
+  const compareFailure = computed(() => {
+    const failures = compareFailures.value;
+    const v = comparisonVersion.value;
+    return v ? (failures[v] ?? null) : null;
   });
 
   // Background polling while the scan is still running. A self-scheduling
@@ -143,30 +166,48 @@ export const ScanDetailModel = createModel((id: string) => {
     };
   });
 
-  // A selection that followed the endpoint's guess moves to the baseline the
-  // scan actually diffed once it is recorded, so the picker, the tree, and
-  // the file bodies all describe the persisted report. The fetched default is
-  // corrected in the same step, so this happens once: a reader who later picks
-  // the old guess keeps it through every later detail refresh.
-  effect(() => {
-    const baseline = detail.value?.scan.previousVersion;
-    const v = versions.value;
-    if (!baseline || !v) return;
-    const guessed = v.defaultPreviousVersion;
-    if (!guessed || guessed === baseline) return;
-    batch(() => {
-      versions.value = { ...v, defaultPreviousVersion: baseline };
-      if (selectedVersion.peek() === guessed) selectedVersion.value = baseline;
-    });
-  });
-
-  // Auto-load comparison data when the user picks a version.
+  // Load the compare payload the page needs: the shown comparison's once the
+  // scan is complete, and while it runs the baseline the pipeline has recorded,
+  // so a modified file's previous side is ready when the workbench appears. A
+  // reader's pick waits to settle; the recorded baseline loads at once. It is
+  // not tracked against `compareFailures` or `compareInFlight`, so it does not
+  // loop on a failure: a failed version is retried when it is picked again
+  // (or when the scan completes, or another payload lands while it is shown),
+  // and `loadCompare` skips a version already in flight.
   effect(() => {
     const cache = compareCache.value;
-    const version = selectedVersion.value;
-    if (!version) return;
-    if (cache[version]) return;
-    void loadCompare(version);
+    const shown = comparisonVersion.value;
+    const recorded = defaultPreviousVersion.value;
+    const scanStatus = status.value;
+    const version =
+      scanStatus === "complete"
+        ? shown
+        : scanStatus === "pending" || scanStatus === "running"
+          ? recorded
+          : null;
+    if (!version || cache[version]) return;
+    if (version === recorded) {
+      void loadCompare(version);
+      return;
+    }
+    const timer = setTimeout(() => void loadCompare(version), COMPARE_PICK_SETTLE_MS);
+    return () => clearTimeout(timer);
+  });
+
+  // A retried run can record a different baseline, and final persist can name
+  // none, so drop what was fetched mid-run for a version the completed scan
+  // does not name rather than read its empty annotations as a comparison's.
+  effect(() => {
+    const complete = status.value === "complete";
+    const recorded = defaultPreviousVersion.value;
+    if (!complete || !fetchedWhileRunning.size) return;
+    const cache = compareCache.peek();
+    const stale = [...fetchedWhileRunning].filter((version) => version !== recorded);
+    fetchedWhileRunning.clear();
+    if (!stale.some((version) => cache[version])) return;
+    const next = { ...cache };
+    for (const version of stale) delete next[version];
+    compareCache.value = next;
   });
 
   async function pollDetail(): Promise<boolean> {
@@ -201,17 +242,47 @@ export const ScanDetailModel = createModel((id: string) => {
     }
   }
 
+  function forgetCompareFailure(version: string) {
+    if (!compareFailures.peek()[version]) return;
+    const { [version]: _retried, ...rest } = compareFailures.peek();
+    compareFailures.value = rest;
+  }
+
   async function loadCompare(version: string) {
+    if (compareInFlight.peek().has(version)) return;
     const id = scanId.peek();
-    compareLoading.value = true;
-    compareError.value = null;
+    batch(() => {
+      compareInFlight.value = new Set(compareInFlight.peek()).add(version);
+      forgetCompareFailure(version);
+    });
+    // The payload or failure lands in the same update that ends the flight,
+    // so the version never reads as neither loading nor settled.
+    const settle = (record: () => void) =>
+      batch(() => {
+        record();
+        const inFlight = new Set(compareInFlight.peek());
+        inFlight.delete(version);
+        compareInFlight.value = inFlight;
+      });
+    const requestedWhileRunning = status.peek() !== "complete";
     try {
       const data = await getScanCompare(id, version);
-      compareCache.value = { ...compareCache.peek(), [version]: data };
+      const running = status.peek() !== "complete";
+      if (requestedWhileRunning && !running && version !== defaultPreviousVersion.peek()) {
+        // The scan completed under another baseline while this was in flight.
+        settle(() => {});
+        if (comparisonVersion.peek() === version) void loadCompare(version);
+        return;
+      }
+      settle(() => {
+        compareCache.value = { ...compareCache.peek(), [version]: data };
+      });
+      if (requestedWhileRunning && running) fetchedWhileRunning.add(version);
     } catch (err) {
-      compareError.value = errorMessage(err);
-    } finally {
-      compareLoading.value = false;
+      const message = errorMessage(err);
+      settle(() => {
+        compareFailures.value = { ...compareFailures.peek(), [version]: message };
+      });
     }
   }
 
@@ -247,8 +318,10 @@ export const ScanDetailModel = createModel((id: string) => {
     status,
     isPolling,
     defaultPreviousVersion,
+    comparisonVersion,
     isDefaultComparison,
     compare,
+    compareFailure,
 
     async load(): Promise<void> {
       const id = this.scanId.peek();
@@ -330,13 +403,7 @@ export const ScanDetailModel = createModel((id: string) => {
       const id = this.scanId.peek();
       this.compareError.value = null;
       try {
-        const data = await getScanVersions(id);
-        batch(() => {
-          this.versions.value = data;
-          if (this.selectedVersion.peek() === null) {
-            this.selectedVersion.value = data.defaultPreviousVersion ?? null;
-          }
-        });
+        this.versions.value = await getScanVersions(id);
       } catch (err) {
         this.compareError.value = errorMessage(err);
       }
@@ -353,8 +420,26 @@ export const ScanDetailModel = createModel((id: string) => {
       void pollDetail();
     },
 
+    // Picking the default follows it rather than pinning it. Once versions
+    // have loaded, the shared error line can only hold a file error from the
+    // comparison being left, so it goes with it; a versions error stays.
+    // Picking a failed version retries it, so its old failure goes now
+    // rather than standing through the settle delay.
     selectVersion(version: string | null) {
-      this.selectedVersion.value = version;
+      batch(() => {
+        this.selectedVersion.value =
+          version === this.defaultPreviousVersion.peek() ? null : version;
+        if (this.versions.peek()) this.compareError.value = null;
+        const shown = this.comparisonVersion.peek();
+        if (shown) forgetCompareFailure(shown);
+      });
+    },
+
+    // A failed comparison is retried on request: re-choosing the selected
+    // version in the picker fires no change.
+    retryComparison() {
+      const version = this.comparisonVersion.peek();
+      if (version) void loadCompare(version);
     },
 
     async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {

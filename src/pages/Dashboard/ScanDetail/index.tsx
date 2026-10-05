@@ -202,7 +202,7 @@ function ScanReport({ model, view }: SectionProps) {
 
           <div class="flex flex-col gap-3">
             {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}
-            <CompareStatus model={model} />
+            <CompareStatus model={model} view={view} />
 
             <ReviewWorkbench
               id="release-workbench"
@@ -211,6 +211,7 @@ function ScanReport({ model, view }: SectionProps) {
               changedFilesOnly={view.changedFilesOnly}
               selectedPath={model.selectedPath}
               findingCounts={view.findingCounts}
+              treeNotice={view.treeNotice}
               onSelect={(path) => {
                 view.findingTarget.value = null;
                 model.selectPath(path);
@@ -285,11 +286,13 @@ function VerdictComparison({ model, view }: SectionProps) {
   return versions ? (
     <VersionPicker
       options={versions.versions}
-      selected={model.selectedVersion.value}
+      selected={model.comparisonVersion.value}
       defaultVersion={model.defaultPreviousVersion.value}
+      // A scan that recorded no baseline compared against nothing, and that
+      // stays its default rather than the endpoint's semver guess.
+      noneLabel={model.defaultPreviousVersion.value ? undefined : "no baseline (default)"}
       stagedVersion={versions.stagedVersion}
-      onChange={(value) => model.selectVersion(value)}
-      disabled={model.compareLoading.value}
+      onChange={(value) => model.selectVersion(value || null)}
     />
   ) : (
     <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
@@ -314,15 +317,34 @@ function VerdictDecision({ model, view }: SectionProps) {
   );
 }
 
-function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
+function CompareStatus({ model, view }: SectionProps) {
+  const notice = view.treeNotice.value;
+  const version = model.comparisonVersion.value;
   const compareLoading = model.compareLoading.value;
-  const compareError = model.compareError.value;
+  const failure = model.compareFailure.value;
+  const requestError = model.compareError.value;
+  // While the release tree stands in for a loading or failed comparison, its
+  // notice already names the version, the reason, and the retry; only another
+  // request's error is still reported here.
+  if (notice) return requestError ? <Alert tone="warn">{requestError}</Alert> : null;
   return (
     <>
       {compareLoading ? (
-        <LoadingLine size="inline">Fetching {model.selectedVersion.value} via sandbox</LoadingLine>
+        <LoadingLine size="inline">Fetching {version} via sandbox</LoadingLine>
       ) : null}
-      {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+      {failure ? (
+        <Alert tone="warn">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {version} could not be compared: {failure}
+            </span>
+            <Button variant="secondary" size="sm" onClick={() => model.retryComparison()}>
+              Try again
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+      {requestError ? <Alert tone="warn">{requestError}</Alert> : null}
     </>
   );
 }
@@ -331,6 +353,7 @@ function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
 function ScanDiffPanel({ model, view }: SectionProps) {
   return (
     <DiffWorkbench
+      tree={view.releaseTree.value.kind}
       entry={view.selectedEntry.value}
       stagedMeta={view.stagedFileMeta.value}
       staged={view.stagedFile.value}
@@ -338,7 +361,8 @@ function ScanDiffPanel({ model, view }: SectionProps) {
       previousContent={view.previousFile.value}
       compareReady={Boolean(model.compare.value)}
       compareLoading={model.compareLoading.value}
-      selectedVersion={model.selectedVersion.value}
+      compareFailed={Boolean(model.compareFailure.value)}
+      selectedVersion={model.comparisonVersion.value}
       stagedVersion={model.detail.value?.scan.stagedVersion ?? null}
       findings={view.selectedFindings.value}
       findingTarget={

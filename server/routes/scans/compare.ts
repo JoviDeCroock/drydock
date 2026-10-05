@@ -10,7 +10,11 @@ import { guardRateLimit } from "../../lib/rate-limit";
 import { getScanCompareData, getScanStatus } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
-import { loadCompare, stripTextSamples } from "../../lib/compare-cache";
+import {
+  loadCompare,
+  scanComparePayloadCacheControl,
+  stripTextSamples,
+} from "../../lib/compare-cache";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import {
   allowInsecureLocalRegistry,
@@ -162,7 +166,7 @@ scanCompareRoutes.get("/:id/compare", async (c) => {
       cachedAt: loaded.cached.cachedAt,
     },
     200,
-    { "cache-control": "private, max-age=300" },
+    { "cache-control": scanComparePayloadCacheControl(ctx.scan.scan.status) },
   );
 });
 

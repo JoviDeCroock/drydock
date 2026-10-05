@@ -1,11 +1,22 @@
 import type { ComponentChildren } from "preact";
 import { useComputed, type ReadonlySignal, type Signal } from "@preact/signals";
 import type { DiffEntry } from "../../../server/lib/review";
+import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { cn } from "../../components/cn";
 import { FileTree } from "../../components/FileTree";
 import { Input } from "../../components/Input";
-import { SectionLabel } from "../../components/Typography";
+import { IndeterminateBar } from "../../components/Loading";
+import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
 import { filterDiffEntries, type FindingCount } from "./diff-entries";
+
+/** Stands in for the tree while its entries are not the comparison on screen. */
+export interface TreeNotice {
+  tone: "loading" | "unavailable";
+  text: string;
+  detail?: string;
+  retry?: () => void;
+}
 
 /**
  * The release tree and the file diff, side by side — the pair every review
@@ -22,6 +33,7 @@ export function ReviewWorkbench({
   changedFilesOnly,
   selectedPath,
   findingCounts,
+  treeNotice,
   onSelect,
   children,
   diffAside,
@@ -33,6 +45,11 @@ export function ReviewWorkbench({
   changedFilesOnly: Signal<boolean>;
   selectedPath: ReadonlySignal<string | null>;
   findingCounts: ReadonlySignal<Map<string, FindingCount>>;
+  // Replaces the tree (and its count) when the surface has no entries for the
+  // comparison it shows yet, rather than rendering an empty or stale tree. The
+  // surface reports that state here only, not again beside the picker or in
+  // the diff panel.
+  treeNotice?: ReadonlySignal<TreeNotice | null>;
   onSelect: (path: string) => void;
   // The diff panel for the selected file. Owned by the surface, because what a
   // "previous side" is differs: the scan detail refetches it through the org's
@@ -46,6 +63,7 @@ export function ReviewWorkbench({
   const visibleEntries = useComputed(() =>
     filterDiffEntries(entries.value, fileFilter.value, changedFilesOnly.value),
   );
+  const notice = treeNotice?.value ?? null;
 
   // The tree caps at 720px rather than fixing that height, and the diff panel
   // is unconstrained (`DiffView` caps its own scroll region at 560px). The grid
@@ -81,17 +99,49 @@ export function ReviewWorkbench({
             />
             Changed files only
           </label>
-          <span class="font-mono text-[11px] text-ink-subtle">
-            {visibleEntries.value.length} / {entries.value.length}
-          </span>
+          {notice ? null : (
+            <span class="font-mono text-[11px] text-ink-subtle">
+              {visibleEntries.value.length} / {entries.value.length}
+            </span>
+          )}
         </div>
         <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
-          <FileTree
-            entries={visibleEntries.value}
-            selectedPath={selectedPath.value}
-            onSelect={onSelect}
-            findingCounts={findingCounts.value}
-          />
+          {notice ? (
+            // One live region across loading and failed, so a retry that fails
+            // again is announced, not only the first load.
+            <div
+              class={cn("flex flex-col py-1", notice.tone === "loading" ? "gap-2" : "gap-1")}
+              aria-live="polite"
+            >
+              {notice.tone === "loading" ? (
+                <>
+                  <LoadingLine size="inline">{notice.text}</LoadingLine>
+                  <IndeterminateBar />
+                </>
+              ) : (
+                <>
+                  <EmptyLine>{notice.text}</EmptyLine>
+                  {notice.detail ? (
+                    <p class="m-0 font-mono text-[11px] text-ink-subtle break-words">
+                      {notice.detail}
+                    </p>
+                  ) : null}
+                  {notice.retry ? (
+                    <Button variant="secondary" size="sm" class="self-start" onClick={notice.retry}>
+                      Try again
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : (
+            <FileTree
+              entries={visibleEntries.value}
+              selectedPath={selectedPath.value}
+              onSelect={onSelect}
+              findingCounts={findingCounts.value}
+            />
+          )}
         </div>
       </Card>
 

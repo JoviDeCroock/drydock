@@ -4,7 +4,19 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
-const { computeCompareCacheKey, readCompareCache } = await import("../server/lib/compare-cache");
+const { computeCompareCacheKey, readCompareCache, scanComparePayloadCacheControl } =
+  await import("../server/lib/compare-cache");
+
+describe("scan compare payload caching", () => {
+  test("a payload served while the scan runs is never stored", () => {
+    expect(scanComparePayloadCacheControl("pending")).toBe("no-store");
+    expect(scanComparePayloadCacheControl("running")).toBe("no-store");
+  });
+
+  test("a completed scan's payload is privately cacheable", () => {
+    expect(scanComparePayloadCacheControl("complete")).toBe("private, max-age=300");
+  });
+});
 
 describe("compare cache key", () => {
   test("differs between registries even for the same package@version", async () => {

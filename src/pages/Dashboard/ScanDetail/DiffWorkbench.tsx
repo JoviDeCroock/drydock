@@ -1,4 +1,5 @@
 import type { DiffEntry, FileRecord } from "../../../../server/lib/review";
+import type { ReleaseTreeState } from "./diff-helpers";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { type DiffFinding, DiffView } from "../../../components/DiffView";
 import { IndeterminateBar } from "../../../components/Loading";
@@ -7,6 +8,7 @@ import { hasNoLoadableBody } from "../../../features/review/diff-entries";
 import { selectDiffWorkbenchState } from "./diff-helpers";
 
 export function DiffWorkbench({
+  tree,
   entry,
   stagedMeta,
   staged,
@@ -14,11 +16,13 @@ export function DiffWorkbench({
   previousContent,
   compareReady,
   compareLoading,
+  compareFailed,
   selectedVersion,
   stagedVersion,
   findings,
   findingTarget,
 }: {
+  tree: ReleaseTreeState["kind"];
   entry: DiffEntry | null;
   stagedMeta: PersistedScanDetail["files"][number] | null;
   staged: PersistedScanDetail["files"][number] | null;
@@ -26,11 +30,16 @@ export function DiffWorkbench({
   previousContent: FileRecord | null;
   compareReady: boolean;
   compareLoading: boolean;
+  compareFailed: boolean;
   selectedVersion: string | null;
   stagedVersion: string | null | undefined;
   findings: DiffFinding[];
   findingTarget?: DiffFinding | null;
 }) {
+  // Until the chosen version's comparison arrives there is no file to pick,
+  // and the release tree's notice already says what is loading or failed.
+  if (tree !== "entries") return <DiffPanelMessage>No file selected.</DiffPanelMessage>;
+
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
   }
@@ -46,6 +55,7 @@ export function DiffWorkbench({
     previousHasNoLoadableBody: hasNoLoadableBody(previousMeta?.flags),
     compareReady,
     compareLoading,
+    compareFailed,
   });
 
   if (state.kind === "empty") {

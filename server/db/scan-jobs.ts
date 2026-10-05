@@ -12,6 +12,8 @@ import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import { getScan } from "./scan-detail";
 import type { ScanSource } from "./enums";
+import type { PackageJsonSummary } from "../lib/review";
+import { recordedPreviousVersion } from "./scan-persist";
 import { NON_TERMINAL_STATUSES, registrySupersessionPatch } from "./scan-status";
 import { npmPackageClaims, scans } from "./schema";
 import {
@@ -280,6 +282,30 @@ export async function claimScanForRun(db: AppDb, scanId: string, organizationId:
   return claimed.length > 0;
 }
 
+// Names the scan's baseline as soon as the pipeline has resolved it, so the
+// scan page can fetch that version's file list while the review still runs.
+// A retry overwrites it, final persist writes it again from the same manifest,
+// and a terminal row is never touched.
+export async function recordScanBaseline(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    previousPackageJson: PackageJsonSummary | null;
+  },
+) {
+  await db
+    .update(scans)
+    .set({ previousVersion: recordedPreviousVersion(input.previousPackageJson) })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    );
+}
+
 export async function markScanFailed(
   db: AppDb,
   scanId: string,
@@ -291,6 +317,9 @@ export async function markScanFailed(
     .set({
       status: "failed",
       risk: "unknown",
+      // A failed scan has no report, so it names no baseline, whatever the
+      // pipeline recorded before it failed.
+      previousVersion: null,
       errorJson: error,
       completedAt: new Date(),
       updatedAt: new Date(),
