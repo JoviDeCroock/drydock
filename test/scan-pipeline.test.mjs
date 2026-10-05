@@ -31,6 +31,9 @@ const npmConnectionMock = vi.hoisted(() => ({
 const aiReviewMock = vi.hoisted(() => ({
   runSelectiveAiReview: vi.fn(),
 }));
+const injectionScreenMock = vi.hoisted(() => ({
+  screenForPromptInjection: vi.fn(),
+}));
 
 vi.mock("../server/db/client.ts", () => dbMock);
 vi.mock("../server/db/events.ts", () => dbMock);
@@ -56,6 +59,10 @@ vi.mock("../server/lib/ecosystems/npm/connection.ts", async () => ({
 vi.mock("../server/lib/ai-review/index.ts", async () => ({
   ...(await vi.importActual("../server/lib/ai-review/index.ts")),
   runSelectiveAiReview: aiReviewMock.runSelectiveAiReview,
+}));
+vi.mock("../server/lib/ai-review/injection-screen.ts", async () => ({
+  ...(await vi.importActual("../server/lib/ai-review/injection-screen.ts")),
+  screenForPromptInjection: injectionScreenMock.screenForPromptInjection,
 }));
 
 const { runScanPipeline } = await import("../server/lib/scan/pipeline");
@@ -152,6 +159,7 @@ describe("scan pipeline baseline selection", () => {
     publishedTarballMock.downloadPublishedTarball.mockReset();
     stagedMock.fetchStagedPublishDetails.mockReset();
     aiReviewMock.runSelectiveAiReview.mockReset();
+    injectionScreenMock.screenForPromptInjection.mockReset();
   });
 
   const baseContext = {
@@ -549,6 +557,215 @@ describe("scan pipeline baseline selection", () => {
     expect(result.aiFindings).toMatchObject({
       status: "unavailable",
       summary: "AI review is disabled.",
+    });
+  });
+
+  describe("Clef prompt-injection screen", () => {
+    const COMPLETE_REVIEW = {
+      review: {
+        status: "complete",
+        risk: "low",
+        releaseAssessment: "nothing_unusual",
+        summary: "Nothing unusual in the staged release.",
+        findings: [],
+        requiresManualReview: false,
+        model: "@cf/moonshotai/kimi-k2.7-code",
+      },
+      usage: null,
+    };
+    const SCREEN_FINDING = {
+      severity: "high",
+      category: "prompt-injection",
+      file: "README.md",
+      evidence:
+        "changed text at lines 4-6 reads as an attempt to steer an automated security review",
+      reason: "this release adds text that addresses the review process itself",
+      recommendation: "Read README.md at lines 4-6.",
+    };
+    const AI_BINDING = { run: vi.fn() };
+
+    function contextWith(getBooleanValue) {
+      const points = [];
+      return {
+        points,
+        context: {
+          ...baseContext,
+          env: {
+            ...baseContext.env,
+            AI: AI_BINDING,
+            FLAGS: { getBooleanValue },
+            PRODUCT_ANALYTICS: { writeDataPoint: (point) => points.push(point) },
+          },
+        },
+      };
+    }
+
+    // `ai-review` is a killswitch that defaults on; the screen is opt-in.
+    const flagsWith = (screen) =>
+      vi.fn(async (flag) => (flag === "clef-injection-screen" ? screen() : true));
+
+    function screenPoints(points) {
+      return points.filter((point) => point.indexes[0] === "injection_screen.finished");
+    }
+
+    test("stays off when Flagship has no explicit rule", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue(COMPLETE_REVIEW);
+      const getBooleanValue = vi.fn(async (_flag, defaultValue) => defaultValue);
+      const { context, points } = contextWith(getBooleanValue);
+
+      const result = await runScanPipeline(context, npmAdapter, {
+        scanId: "scan_screen_default_off",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      });
+
+      expect(getBooleanValue).toHaveBeenCalledWith(
+        "clef-injection-screen",
+        false,
+        expect.objectContaining({ targetingKey: "org_1", organizationId: "org_1" }),
+      );
+      expect(injectionScreenMock.screenForPromptInjection).not.toHaveBeenCalled();
+      expect(screenPoints(points)).toEqual([]);
+      expect(result.aiFindings).toMatchObject({
+        ...COMPLETE_REVIEW.review,
+        findings: [],
+        requiresManualReview: false,
+      });
+    });
+
+    test("merges screen findings into a completed review and escalates to manual review", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue(COMPLETE_REVIEW);
+      injectionScreenMock.screenForPromptInjection.mockResolvedValue({
+        status: "complete",
+        reason: null,
+        findings: [SCREEN_FINDING],
+        model: "@cf/cloudflare/clef",
+        spansScreened: 2,
+        usage: { inputTokens: 900 },
+      });
+      const { context, points } = contextWith(flagsWith(async () => true));
+
+      const result = await runScanPipeline(context, npmAdapter, {
+        scanId: "scan_screen_finding",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      });
+
+      expect(injectionScreenMock.screenForPromptInjection).toHaveBeenCalledWith(
+        AI_BINDING,
+        expect.objectContaining({
+          ecosystem: "npm",
+          excludePaths: [],
+          gatewayMetadata: {
+            operation: "injection-screen",
+            scanId: "scan_screen_finding",
+            organizationId: "org_1",
+            ecosystem: "npm",
+          },
+        }),
+      );
+      expect(result.aiFindings.findings).toContainEqual(SCREEN_FINDING);
+      expect(result.aiFindings.requiresManualReview).toBe(true);
+      // The reviewer's own verdict is left alone: merged rows are scored by the
+      // existing AI-finding path, so moving `risk` here would double-count them.
+      expect(result.aiFindings.risk).toBe("low");
+      expect(result.aiFindings.releaseAssessment).toBe("nothing_unusual");
+      expect(dbMock.persistScan.mock.calls[0]?.[1].ai.findings).toContainEqual(SCREEN_FINDING);
+
+      const [point] = screenPoints(points);
+      expect(point.blobs.slice(4)).toEqual(["complete", "none", "@cf/cloudflare/clef", "1.0.0"]);
+      expect(point.doubles.slice(1)).toEqual([2, 1, 900]);
+    });
+
+    test("leaves the review untouched and records the outcome when the screen finds nothing", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue(COMPLETE_REVIEW);
+      injectionScreenMock.screenForPromptInjection.mockResolvedValue({
+        status: "unavailable",
+        reason: "timeout",
+        findings: [],
+        model: null,
+        spansScreened: 3,
+        usage: null,
+      });
+      const { context, points } = contextWith(flagsWith(async () => true));
+
+      const result = await runScanPipeline(context, npmAdapter, {
+        scanId: "scan_screen_timeout",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      });
+
+      expect(result.aiFindings).toMatchObject({ findings: [], requiresManualReview: false });
+      const [point] = screenPoints(points);
+      expect(point.blobs.slice(4)).toEqual(["unavailable", "timeout", "none", "1.0.0"]);
+      expect(point.doubles.slice(1)).toEqual([3, 0, 0]);
+    });
+
+    test("does not screen a review that did not complete", async () => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue({
+        review: { ...COMPLETE_REVIEW.review, status: "invalid" },
+        usage: null,
+      });
+      const getBooleanValue = flagsWith(async () => true);
+      const { context, points } = contextWith(getBooleanValue);
+
+      await runScanPipeline(context, npmAdapter, {
+        scanId: "scan_screen_invalid",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+      });
+
+      expect(getBooleanValue).not.toHaveBeenCalledWith(
+        "clef-injection-screen",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(injectionScreenMock.screenForPromptInjection).not.toHaveBeenCalled();
+      expect(screenPoints(points)).toEqual([]);
+    });
+
+    test.each([
+      [
+        "the screen throws",
+        () => true,
+        () => injectionScreenMock.screenForPromptInjection.mockRejectedValue(new Error("boom")),
+      ],
+      [
+        "the flag evaluation throws",
+        () => {
+          throw new Error("flagship unavailable");
+        },
+        () => undefined,
+      ],
+    ])("keeps the completed review when %s", async (_label, screenFlag, arrange) => {
+      aiReviewMock.runSelectiveAiReview.mockResolvedValue(COMPLETE_REVIEW);
+      arrange();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { context, points } = contextWith(flagsWith(async () => screenFlag()));
+
+      try {
+        const result = await runScanPipeline(context, npmAdapter, {
+          scanId: "scan_screen_threw",
+          stageId: "stage-beta-123",
+          organizationId: "org_1",
+        });
+
+        expect(result.aiFindings).toMatchObject({
+          status: "complete",
+          summary: "Nothing unusual in the staged release.",
+          findings: [],
+          requiresManualReview: false,
+        });
+        expect(errorSpy).toHaveBeenCalledWith(
+          "scan.injection_screen.failed",
+          expect.objectContaining({ scanId: "scan_screen_threw", organizationId: "org_1" }),
+        );
+        expect(errorSpy).not.toHaveBeenCalledWith("scan.ai_review.failed", expect.anything());
+        expect(screenPoints(points)).toEqual([]);
+        expect(dbMock.persistScan).toHaveBeenCalled();
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
   });
 

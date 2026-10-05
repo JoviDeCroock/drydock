@@ -99,6 +99,19 @@ export type AnalyticsEvent =
       reviewerVersion: string;
     }
   | {
+      name: "injection_screen.finished";
+      organizationId: string;
+      ecosystem: string;
+      status: string;
+      reason: string;
+      model: string;
+      screenVersion: string;
+      durationMs: number;
+      spansScreened: number;
+      findingCount: number;
+      inputTokens: number;
+    }
+  | {
       name: "npm_connection.validated";
       organizationId: string;
       outcome: string;
@@ -180,6 +193,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "ai_review.finished",
   "ai_review.attempted",
   "ai_review.decided",
+  "injection_screen.finished",
   "npm_connection.validated",
   "public_diff.viewed",
   "badge.served",
@@ -309,6 +323,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         event.ecosystem,
         [event.decision, event.status, event.releaseAssessment, event.model, event.reviewerVersion],
         [0],
+      );
+    case "injection_screen.finished":
+      return base(
+        event.organizationId,
+        event.ecosystem,
+        [event.status, event.reason, event.model, event.screenVersion],
+        [event.durationMs, event.spansScreened, event.findingCount, event.inputTokens],
       );
     case "npm_connection.validated":
       return base(event.organizationId, "npm", [event.outcome], [0]);

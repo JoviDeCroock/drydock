@@ -1,7 +1,7 @@
 import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "../review";
 import type { AiFindingCategory, AiReviewEcosystem } from "./contract";
 
-interface AiFinding {
+export interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
   /** Absent on reviews recorded before reviewer 1.8.0. */
   category?: AiFindingCategory;

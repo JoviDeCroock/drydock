@@ -274,6 +274,87 @@ async function recordResolvedBaseline(
   }
 }
 
+/**
+ * Run the Clef prompt-injection screen and fold its rows into the completed
+ * review.
+ *
+ * Opt-in through the `clef-injection-screen` Flagship flag, unlike the
+ * `ai-review` killswitch: its thresholds were measured on a mostly synthetic
+ * corpus, so it widens organization by organization while its fire rate is
+ * read (docs/ai-review-eval.md).
+ *
+ * Only a completed review is screened. One that did not complete already floors
+ * the scan at medium and escalates to manual review, and `displayedAiResult`
+ * refuses to render its findings, so screening it would add rows nobody sees.
+ *
+ * The screen adds findings and sets `requiresManualReview`; it deliberately
+ * leaves `risk` and `releaseAssessment` alone. The reviewer's verdict caps what
+ * its findings add, so a reviewer an injection talked into `nothing_unusual`
+ * would silence the screen's severity — but not the manual-review floor, which
+ * is the point.
+ */
+async function withInjectionScreen(args: AiReviewArgs, review: AiReview): Promise<AiReview> {
+  if (review.status !== "complete") return review;
+  const startedAtMs = Date.now();
+  try {
+    const enabled = args.env.FLAGS
+      ? await args.env.FLAGS.getBooleanValue("clef-injection-screen", false, {
+          targetingKey: args.identity.organizationId,
+          organizationId: args.identity.organizationId,
+        })
+      : false;
+    if (!enabled) return review;
+
+    const { screenForPromptInjection, INJECTION_SCREEN_VERSION } =
+      await import("../ai-review/injection-screen");
+    const result = await screenForPromptInjection(args.env.AI, {
+      ecosystem: args.ecosystem,
+      files: args.findings.redactedStagedFiles,
+      previousFiles: args.findings.redactedPreviousFiles,
+      diff: args.diff.fileDiff,
+      ruleFindings: args.findings.releaseRuleFindings,
+      excludePaths: review.findings.map((finding) => finding.file),
+      gatewayMetadata: {
+        operation: "injection-screen",
+        scanId: args.identity.scanId,
+        organizationId: args.identity.organizationId,
+        ecosystem: args.ecosystem,
+      },
+    });
+
+    recordProductEvent(args.env, {
+      name: "injection_screen.finished",
+      organizationId: args.identity.organizationId,
+      ecosystem: args.ecosystem,
+      status: result.status,
+      reason: result.reason ?? "none",
+      model: result.model ?? "none",
+      screenVersion: INJECTION_SCREEN_VERSION,
+      durationMs: durationMsSince(startedAtMs),
+      spansScreened: result.spansScreened,
+      findingCount: result.findings.length,
+      inputTokens: result.usage?.inputTokens ?? 0,
+    });
+
+    if (result.findings.length === 0) return review;
+    return {
+      ...review,
+      findings: [...review.findings, ...result.findings],
+      requiresManualReview: true,
+    };
+  } catch (err) {
+    // The screen never throws by contract, so this is a defect or a flag
+    // evaluation failure. Either way the scan keeps its completed review.
+    emitOperationalEvent("error", "scan.injection_screen.failed", {
+      scanId: args.identity.scanId,
+      organizationId: args.identity.organizationId,
+      durationMs: durationMsSince(startedAtMs),
+      error: describeOperationalError(err),
+    });
+    return review;
+  }
+}
+
 interface AiReviewArgs {
   env: Cloudflare.Env;
   identity: PipelineIdentity;
@@ -367,7 +448,7 @@ async function maybeRunAiReview(args: AiReviewArgs): Promise<AiReview> {
           }
         : null,
     });
-    return review;
+    return await withInjectionScreen(args, review);
   } catch (err) {
     recordProductEvent(args.env, {
       name: "ai_review.finished",
