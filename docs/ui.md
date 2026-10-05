@@ -12,10 +12,12 @@ This file is only a compact implementation map.
 - Tokens live in `src/style.css` under `@theme`; dark mode follows `prefers-color-scheme`.
 - State uses `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
 - Async work whose result must be dropped on unmount (a session check, resolver,
-  or accept call that may `route()`) runs through `useCancellableEffect` in
+  or accept call) runs through `useCancellableEffect` in
   `src/lib/use-cancellable-effect.ts`. Preact 11 defers `useEffect` cleanup on
-  unmount past the next paint, so a `cancelled` flag set there lets a late
-  response route away from the page the user just opened.
+  unmount past the next paint, so with a `cancelled` flag set there a late
+  response can still write the unmounted page's signals or models, or `route()`
+  from a keyed component that remounted on the same path (a `/diff` resolver),
+  which `ScopedRoute`'s path check lets through.
 - Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` (plus
   `rel="noreferrer"`) or `download`. `preact-iso` intercepts same-origin anchor
   clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
