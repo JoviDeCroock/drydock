@@ -26,6 +26,8 @@ export default function VerifyEmailPage() {
   const location = useLocation();
   const errorCode = typeof location.query.error === "string" ? location.query.error : "";
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
+  const signInHref =
+    returnTo === "/dashboard" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
   const state = useSignal<VerifyState>(errorCode ? "error" : "verifying");
   const email = useSignal("");
   const error = useSignal<string | null>(null);
@@ -81,7 +83,7 @@ export default function VerifyEmailPage() {
         <Card class="flex flex-col gap-4">
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Email verified</h1>
           <Alert tone="ok">Your email is verified. You can sign in now.</Alert>
-          <Button onClick={() => location.route("/login", true)}>Go to sign in</Button>
+          <Button onClick={() => location.route(signInHref, true)}>Go to sign in</Button>
         </Card>
       </PageShell>
     );

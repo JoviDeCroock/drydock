@@ -207,7 +207,7 @@ describe("email verification link", () => {
       const { res } = await callWorker("GET", await verificationPath(email), { jar: inboxOnly });
 
       expect(res.status).toBe(302);
-      expect(inboxOnly.has("better-auth.session_token")).toBe(false);
+      expect(res.headers.get("set-cookie") ?? "").not.toContain("session_token");
       expect(await sessionUser(inboxOnly)).toBeNull();
       const [row] = await db
         .select({ emailVerified: schema.user.emailVerified })
@@ -231,6 +231,45 @@ describe("email verification link", () => {
       expect(res.status).toBe(302);
       // Read through the cookie cache, which would otherwise still say false.
       expect(await sessionUser(jar)).toMatchObject({ email, emailVerified: true });
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "opened in a browser signed in to another account, verifies the link's account only",
+    async () => {
+      withEmailBinding();
+      const linkOwner = await signUp(new Map());
+      const other: Jar = new Map();
+      const otherEmail = await signUp(other);
+
+      const { res } = await callWorker("GET", await verificationPath(linkOwner), { jar: other });
+
+      expect(res.status).toBe(302);
+      expect(await sessionUser(other)).toMatchObject({ email: otherEmail, emailVerified: false });
+      const db = createDb(env.DB);
+      const [row] = await db
+        .select({ emailVerified: schema.user.emailVerified })
+        .from(schema.user)
+        .where(eq(schema.user.email, linkOwner));
+      expect(row?.emailVerified).toBe(true);
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "leaves change-email off, whose verification branches would sign the link's holder in",
+    async () => {
+      const jar: Jar = new Map();
+      await signUp(jar);
+
+      const { res, json } = await callWorker("POST", "/api/auth/change-email", {
+        body: { newEmail: `moved-${crypto.randomUUID()}@example.test` },
+        jar,
+      });
+
+      expect(res.status).toBe(400);
+      expect(json?.code).toBe("CHANGE_EMAIL_DISABLED");
     },
     WORKER_AUTH_TIMEOUT_MS,
   );
