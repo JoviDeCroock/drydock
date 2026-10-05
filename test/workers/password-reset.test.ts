@@ -32,6 +32,22 @@ async function countRows(sql: string, ...binds: string[]): Promise<number> {
   return row?.n ?? 0;
 }
 
+async function emailVerified(userId: string): Promise<boolean> {
+  const row = await env.DB.prepare("SELECT email_verified AS v FROM user WHERE id = ?")
+    .bind(userId)
+    .first<{ v: number }>();
+  return row?.v === 1;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function randomIp(): string {
+  return `203.0.113.${Math.floor(Math.random() * 250) + 1}`;
+}
+
 async function providerIds(userId: string): Promise<string[]> {
   const { results } = await env.DB.prepare(
     "SELECT provider_id FROM account WHERE user_id = ? ORDER BY provider_id",
@@ -146,6 +162,78 @@ describe("password reset request", () => {
   });
 
   test(
+    "mails the stored address when the request spells it in another case",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const email = uniqueEmail();
+      await signUpUserId(new Map(), { email });
+      const mail = captureEmail();
+
+      const res = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email: `R${email.slice(1, email.indexOf("@"))}@Example.TEST` },
+        env: mail.env,
+      });
+      expect(res.res.status).toBe(200);
+      expect(mail.sent).toHaveLength(1);
+      expect(mail.sent[0]?.to).toBe(email);
+    },
+  );
+
+  test(
+    "stops mailing one address after three links an hour, whichever IPs ask, without saying so",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const email = uniqueEmail();
+      await signUpUserId(new Map(), { email });
+      const other = uniqueEmail();
+      await signUpUserId(new Map(), { email: other });
+      const mail = captureEmail();
+
+      const unknown = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email: uniqueEmail() },
+        env: mail.env,
+        ip: randomIp(),
+      });
+      const responses = [];
+      for (let i = 0; i < 5; i++) {
+        responses.push(
+          await callWorker("POST", "/api/auth/request-password-reset", {
+            // A case change must not buy a fresh budget.
+            body: { email: i % 2 ? email.toUpperCase() : email },
+            env: mail.env,
+            ip: `198.18.${i}.${Math.floor(Math.random() * 250) + 1}`,
+          }),
+        );
+      }
+      // Over budget answers exactly like an accepted (or unknown) address.
+      for (const { res, json } of responses) {
+        expect(res.status).toBe(unknown.res.status);
+        expect(json).toEqual(unknown.json);
+      }
+      expect(mail.sent.map((message) => message.to)).toEqual([email, email, email]);
+
+      const unaffected = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email: other },
+        env: mail.env,
+        ip: randomIp(),
+      });
+      expect(unaffected.res.status).toBe(200);
+      expect(mail.sent.at(-1)?.to).toBe(other);
+
+      // The budget's row is keyed on a digest; the address itself is never stored.
+      const { results } = await env.DB.prepare(
+        "SELECT key FROM rate_limits WHERE key LIKE 'auth:password-reset-address:%'",
+      ).all<{ key: string }>();
+      const keys = results.map((row) => row.key);
+      expect(keys.some((key) => key.includes(email) || key.includes(other))).toBe(false);
+      const digest = await sha256Hex(email);
+      expect(keys.some((key) => key.startsWith(`auth:password-reset-address:${digest}:`))).toBe(
+        true,
+      );
+    },
+  );
+
+  test(
     "builds the link from BETTER_AUTH_URL even when the request names another host",
     { timeout: AUTH_TIMEOUT_MS },
     async () => {
@@ -218,6 +306,34 @@ describe("a first password for a GitHub-only account", () => {
       expect(own.json).toEqual(unknown.json);
       expect(mail.sent).toHaveLength(1);
       expect(mail.sent[0]?.to).toBe(email);
+      expect(await providerIds(userId)).toEqual(["github"]);
+    },
+  );
+
+  test(
+    "is not mailed to an address the account never verified, even from its own session",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const email = uniqueEmail();
+      const jar: Jar = new Map();
+      const userId = await signUpUserId(jar, { email });
+      await makeGithubOnly(userId, { emailVerified: false });
+      const mail = captureEmail();
+
+      // GitHub reported the address unverified, so reading that inbox is no
+      // proof of owning the account, and the password would outlive the session.
+      const own = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email },
+        env: mail.env,
+        jar,
+      });
+      const unknown = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email: uniqueEmail() },
+        env: mail.env,
+      });
+      expect(own.res.status).toBe(200);
+      expect(own.json).toEqual(unknown.json);
+      expect(mail.sent).toHaveLength(0);
       expect(await providerIds(userId)).toEqual(["github"]);
     },
   );
@@ -334,6 +450,30 @@ describe("password reset completion", () => {
         body: { email, password: NEW_PASSWORD },
       });
       expect(newPassword.res.status).toBe(200);
+    },
+  );
+
+  test(
+    "marks the address verified once a link is redeemed",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const email = uniqueEmail();
+      const userId = await signUpUserId(new Map(), { email });
+      expect(await emailVerified(userId)).toBe(false);
+      const mail = captureEmail();
+      await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email },
+        env: mail.env,
+      });
+      // Requesting proves nothing; only redeeming the mailed token does.
+      expect(await emailVerified(userId)).toBe(false);
+
+      const reset = await callWorker("POST", "/api/auth/reset-password", {
+        body: { token: resetTokenFrom(mail.sent[0]), newPassword: NEW_PASSWORD },
+        env: mail.env,
+      });
+      expect(reset.res.status).toBe(200);
+      expect(await emailVerified(userId)).toBe(true);
     },
   );
 

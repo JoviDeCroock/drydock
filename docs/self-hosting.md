@@ -166,8 +166,8 @@ Optional integrations:
   Request-level OAuth scope overrides are rejected server-side so callers cannot
   widen the grant beyond `read:user` and `user:email`.
 
-  No sign-in route asks for email verification; a GitHub sign-in simply arrives
-  already verified, which satisfies the per-action verified-email checks (npm
+  No sign-in route asks for email verification; a GitHub sign-in arrives
+  verified when GitHub reports the address verified, which satisfies the per-action verified-email checks (npm
   token, decision, share link, invitation, GitHub install) described in
   [`security-model.md`](./security-model.md#email-verification). Implicit
   account linking is disabled, including Better Auth's explicit link endpoint:
@@ -179,7 +179,8 @@ Optional integrations:
 
   A GitHub-only account has no Drydock password, and every two-factor endpoint
   reauthenticates with one. With email configured, Account settings mails such
-  an account a link to set a password, after which it can enrol. Without email
+  an account a link to set a password once its address is verified, after
+  which it can enrol. Without email
   it cannot enrol at all, so do not offer GitHub sign-in on an email-less
   deployment whose organizations require two-factor for release decisions — see
   [`two-factor-auth.md`](./two-factor-auth.md#management).

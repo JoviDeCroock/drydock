@@ -89,7 +89,9 @@ Adding a first password takes both halves: the request must be signed in as
 the account (an anonymous "Forgot password?" for a GitHub-only address mails
 nothing, so reading the inbox alone cannot add a password and skip the GitHub
 sign-in's own second factor), and the email round-trip proves the person owns
-the account's address. There is deliberately no route that sets a password from
+the account's address. The address must also already be verified: a GitHub
+sign-up whose address GitHub reported unverified is shown a "verify first"
+prompt instead, and the server mails no first-password link to it. There is deliberately no route that sets a password from
 a session alone — Better Auth's `setPassword` is server-only and Drydock does
 not expose it — so a stolen session cookie can trigger a link to the owner's
 inbox but cannot mint a password. Redeeming the link mails the owner a "your
@@ -270,8 +272,10 @@ complete a step-up. See [`security-model.md`](./security-model.md#session-postur
   and an owner without 2FA cannot enable (`two_factor_enrollment_required`) — a failed step-up
   never changes the stored policy.
 - `test/workers/password-reset.test.ts` — a GitHub-only account that `enable` refuses gets a
-  mailed link from its own session (an anonymous or foreign-session request for it mails
-  nothing), the reset creates its `credential` row, deletes its sessions and mails a notice, and
-  the new password then signs in and completes enrolment. It also pins that no session-only
-  `/api/auth/set-password` route answers, that URL-borne tokens are refused, that a reset keeps
-  an enrolled second factor, and that an expired link fails.
+  mailed link from its own session (an anonymous or foreign-session request for it, or one for an
+  unverified address, mails nothing), the reset creates its `credential` row, deletes its
+  sessions and mails a notice, and the new password then signs in and completes enrolment. It
+  also pins that a redeemed link verifies the address, that one address gets at most three mails
+  an hour with an unchanged response, that no session-only `/api/auth/set-password` route
+  answers, that URL-borne tokens are refused, that a reset keeps an enrolled second factor, and
+  that an expired link fails.

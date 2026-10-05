@@ -127,9 +127,17 @@ export function captureEmail(base: typeof env = env): EmailCapture {
 }
 
 // Swaps the password sign-in for the account shape Better Auth creates after
-// GitHub OAuth: a `github` provider row and no `credential` row.
-export async function makeGithubOnly(userId: string): Promise<void> {
+// GitHub OAuth: a `github` provider row and no `credential` row. The address is
+// verified unless `emailVerified: false`, the shape left by a GitHub email that
+// GitHub itself reported unverified.
+export async function makeGithubOnly(
+  userId: string,
+  { emailVerified = true }: { emailVerified?: boolean } = {},
+): Promise<void> {
   const now = Date.now();
+  await env.DB.prepare("UPDATE user SET email_verified = ? WHERE id = ?")
+    .bind(emailVerified ? 1 : 0, userId)
+    .run();
   await env.DB.prepare("DELETE FROM account WHERE user_id = ?").bind(userId).run();
   await env.DB.prepare(
     "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) VALUES (?, ?, 'github', ?, ?, ?)",

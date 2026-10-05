@@ -1,4 +1,4 @@
-import { hexEncode } from "../platform/crypto-utils";
+import { hexEncode, sha256Hex } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -8,6 +8,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../analytics";
+import { enforceRateLimit, RateLimitError } from "../rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import * as schema from "../../db/schema";
 import {
@@ -31,6 +32,9 @@ export interface AuthSession {
 
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24 hours
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour, Better Auth's default made explicit
+// Reset mails one address may receive per window, whichever IPs ask.
+const PASSWORD_RESET_MAILS_PER_ADDRESS = 3;
+const PASSWORD_RESET_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
 
 // Match Better Auth's scrypt parameters and stored format exactly.
 const SCRYPT_N = 16384;
@@ -391,6 +395,42 @@ async function deliverPasswordChangedEmail(env: Cloudflare.Env, email: string): 
   }
 }
 
+/**
+ * Spends one of the address's reset mails; false once the window's budget is
+ * gone. The per-IP bucket cannot stop a distributed sender from flooding one
+ * inbox. The key holds a digest, never the address, since rate-limit rows
+ * outlive the request.
+ */
+async function takePasswordResetMailBudget(env: Cloudflare.Env, email: string): Promise<boolean> {
+  const digest = await sha256Hex(email.trim().toLowerCase());
+  try {
+    await enforceRateLimit(env, {
+      key: `auth:password-reset-address:${digest}`,
+      limit: PASSWORD_RESET_MAILS_PER_ADDRESS,
+      windowMs: PASSWORD_RESET_ADDRESS_WINDOW_MS,
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof RateLimitError) return false;
+    throw err;
+  }
+}
+
+// Never rejects: Better Auth revokes the account's sessions only after this
+// hook returns, and a failed flag write must not leave them alive.
+async function markEmailVerified(db: AppDb, userId: string): Promise<void> {
+  try {
+    await db
+      .update(schema.user)
+      .set({ emailVerified: true, updatedAt: new Date() })
+      .where(and(eq(schema.user.id, userId), eq(schema.user.emailVerified, false)));
+  } catch (err) {
+    emitOperationalEvent("error", "auth.password_reset_verify_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 async function userHasPassword(db: AppDb, userId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: schema.account.id })
@@ -503,27 +543,41 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
       // A reset is also how a GitHub-only account gains its first password:
       // Better Auth's reset creates the missing `credential` row. That first
       // password is only ever mailed to a request signed in as the account
-      // itself (Account settings → "Set a password"). Anyone else asking for a
-      // GitHub-only address gets the same response and no mail; otherwise
-      // whoever reads the inbox could add a password and sign in without the
-      // second factor the GitHub sign-in carries. There is deliberately no
-      // session-only path to a password either: the emailed link is the proof
-      // of ownership, so a stolen session cookie alone cannot mint one.
+      // itself (Account settings → "Set a password"), and only once the
+      // account's address is verified. Anyone else asking for a GitHub-only
+      // address gets the same response and no mail; otherwise whoever reads
+      // the inbox could add a password and sign in without the second factor
+      // the GitHub sign-in carries. An unverified address (GitHub reported it
+      // unverified) is no proof the inbox belongs to the account's owner, so a
+      // password that outlives the session must not be mailed to it. There is
+      // deliberately no session-only path to a password either: the emailed
+      // link is the proof of ownership, so a stolen session cookie alone
+      // cannot mint one.
       ...(resetOrigin
         ? {
             resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_TTL_SECONDS,
             sendResetPassword: async (
-              { user, token }: { user: { id: string; email: string }; token: string },
+              {
+                user,
+                token,
+              }: { user: { id: string; email: string; emailVerified: boolean }; token: string },
               request?: Request,
             ) => {
+              // Every refusal below runs in the background and returns
+              // nothing, so the response stays Better Auth's own "check your
+              // email" whichever branch is taken.
               await inBackground(
                 (async () => {
                   if (!(await userHasPassword(db, user.id))) {
                     const session = request && readSession ? await readSession(request) : null;
-                    if (session?.userId !== user.id) {
+                    if (session?.userId !== user.id || user.emailVerified !== true) {
                       emitOperationalEvent("warn", "auth.first_password_link_refused", {});
                       return;
                     }
+                  }
+                  if (!(await takePasswordResetMailBudget(env, user.email))) {
+                    emitOperationalEvent("warn", "auth.password_reset_address_limited", {});
+                    return;
                   }
                   await deliverPasswordResetEmail(
                     env,
@@ -537,9 +591,12 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
                 }),
               );
             },
-            // Tells the owner a password now exists, so a reset they did not
-            // make is visible beyond being signed out.
-            onPasswordReset: async ({ user }: { user: { email: string } }) => {
+            // Redeeming the link proves the inbox, so the address counts as
+            // verified from here on. The notice tells the owner a password now
+            // exists, so a reset they did not make is visible beyond being
+            // signed out.
+            onPasswordReset: async ({ user }: { user: { id: string; email: string } }) => {
+              await markEmailVerified(db, user.id);
               await inBackground(deliverPasswordChangedEmail(env, user.email));
             },
           }
