@@ -61,7 +61,7 @@ export type ClefUnavailableReason =
   | "failed"
   /** No answer inside the caller's budget. */
   | "timeout"
-  /** A missing, extra, or malformed answer. */
+  /** A missing or malformed answer; answers to questions not asked are ignored. */
   | "malformed";
 
 export interface ClefUsage {

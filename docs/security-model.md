@@ -102,15 +102,30 @@ AI finding (`category: "prompt-injection"`) — advisory everywhere the
 deterministic lane is authoritative, excluded from the deterministic report
 export and release memory, and unable to lower or contradict a rule finding. It
 looks only at files where both the phrase rules and the reviewer found nothing,
-so it can add evidence but never restate it, and it sets `requiresManualReview`
-without touching the reviewer's risk or assessment. The reviewer's verdict caps
-what AI findings add to a score; the manual-review floor still applies, so a
-reviewer an injection talked into `nothing_unusual` cannot silence the screen.
+so it can add evidence but never restate it. Its rows carry
+`source: "injection-screen"` and it forces `requiresManualReview` (keeping the
+reviewer's own flag as `reviewerRequiresManualReview`) without touching the
+reviewer's risk or assessment. Risk scores the reviewer as if the screen never
+ran and adds only the medium manual-review floor: a reviewer an injection
+talked into `nothing_unusual` cannot silence the screen, and the screen cannot
+lift a release past that floor or carry the reviewer's package-context concern
+into the release score.
+
+The screen samples, so it never claims a file is clean. It splits each run of
+added lines (the whole file when new) into windows of at most 2,000 characters
+and keeps, per file, the two windows with the most review- and AI-directed
+words, then fills six spans across files the same way before falling back to
+path order. Leading filler cannot push a payload out of a window, and filler
+files cannot outrank a span that addresses a reviewer; a payload that avoids
+every such word and sits behind enough other cue-bearing text can still go
+unsampled, and the phrase rules, which read every byte, remain the floor.
+Changed lines are found with a linear multiset match rather than an LCS diff,
+so a rewritten bundle costs milliseconds.
 
 Clef runs on the same Workers AI binding and `drydock-gateway` as the reviewer,
 so package text stays inside the Cloudflare account and AI Gateway retains the
 request and response like any reviewer call. What is sent is bounded by
-construction — at most six spans and 12 KiB per scan, taken only from changed
+construction — at most six spans and 12 KiB (UTF-8) per scan, taken only from changed
 text in redacted samples, carrying ecosystem and package-relative paths but no
 package name, version, organization, or credential (Gateway metadata carries
 scan and organization ids for log joining). Answers are re-validated field by
