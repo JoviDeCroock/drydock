@@ -278,6 +278,7 @@ export function projectAiReviewFindings(review: AiReview | null | undefined): Fi
       evidence: finding.evidence,
       reason: finding.reason,
       ...(finding.line !== undefined ? { line: finding.line } : {}),
+      ...(finding.source ? { source: finding.source } : {}),
     })),
   );
 }

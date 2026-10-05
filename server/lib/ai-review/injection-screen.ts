@@ -23,7 +23,6 @@
  * `status`, not an empty `findings` array, to tell "clean" from "did not ask".
  */
 import type { DiffEntry, FileRecord, Finding } from "../review";
-import { changedStagedLines } from "../review/rules/context";
 import { DETERMINISTIC_RULE_IDS } from "../review/rules/rule-ids";
 import {
   askClef,
@@ -44,13 +43,13 @@ import type { AiFinding } from "./types";
 export const INJECTION_SCREEN_VERSION = "1.0.0";
 
 // Spend ceiling for one scan: six spans times three questions is 18 of Clef's
-// 64 questions in one request, and roughly 12 KiB of package-derived text. Clef
-// truncates long text state silently, so the bound is ours: a padded file must
-// not push the span that matters past a cut nobody can see.
+// 64 questions in one request. The total is measured in UTF-8 bytes because
+// that is what tokenizes, and it keeps non-Latin text well inside Clef's
+// context, which truncates long state silently rather than refusing it.
 const MAX_SPANS = 6;
 const MAX_SPAN_CHARS = 2_000;
 const MAX_CHUNKS_PER_FILE = 2;
-const MAX_TOTAL_SPAN_CHARS = 12_000;
+const MAX_TOTAL_SPAN_BYTES = 12 * 1024;
 
 /**
  * Only surface what a maintainer would thank us for. This lane fires precisely
@@ -184,38 +183,46 @@ function selectCandidateSpans(options: InjectionScreenOptions): CandidateSpan[] 
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map(options.files.map((file) => [file.path, file]));
 
-  const candidates: CandidateSpan[] = [];
-  for (const entry of orderedChangedEntries(options.diff)) {
+  const candidates: Array<{ span: CandidateSpan; rank: number; cues: number }> = [];
+  for (const entry of options.diff) {
+    if (entry.status !== "added" && entry.status !== "modified") continue;
     if (flaggedPaths.has(entry.path)) continue;
     const staged = stagedByPath.get(entry.path);
     if (!staged?.textSample || staged.flags.includes("binary")) continue;
     const previous = entry.status === "modified" ? previousByPath.get(entry.path) : undefined;
     const changed = previous?.textSample
-      ? changedStagedLines(previous.textSample, staged.textSample)
+      ? addedLineNumbers(previous.textSample, staged.textSample)
       : null;
-    candidates.push(...fileSpans(entry.path, staged.textSample, changed));
+    const rank = pathRank(entry.path);
+    for (const { span, cues } of fileSpans(entry.path, staged.textSample, changed)) {
+      candidates.push({ span, rank, cues });
+    }
   }
 
+  // Text that talks about reviews or AI first, then prose before code. Path
+  // order alone let filler files sort ahead of a payload and push it out.
+  candidates.sort(
+    (a, b) =>
+      Number(b.cues > 0) - Number(a.cues > 0) ||
+      b.rank - a.rank ||
+      b.cues - a.cues ||
+      a.span.path.localeCompare(b.span.path) ||
+      a.span.startLine - b.span.startLine,
+  );
+
   const selected: CandidateSpan[] = [];
-  let totalChars = 0;
-  for (const span of candidates) {
-    if (selected.length >= MAX_SPANS || totalChars + span.text.length > MAX_TOTAL_SPAN_CHARS) break;
+  let totalBytes = 0;
+  for (const { span } of candidates) {
+    if (selected.length >= MAX_SPANS) break;
+    const bytes = UTF8.encode(span.text).length;
+    if (totalBytes + bytes > MAX_TOTAL_SPAN_BYTES) continue;
     selected.push(span);
-    totalChars += span.text.length;
+    totalBytes += bytes;
   }
   return selected;
 }
 
-// Prose before code, and inside prose the filenames agents read unprompted.
-// The ordering decides what fits in the span budget, so it is where this lane's
-// coverage is actually chosen.
-function orderedChangedEntries(diff: DiffEntry[]): DiffEntry[] {
-  return diff
-    .filter((entry) => entry.status === "added" || entry.status === "modified")
-    .map((entry) => ({ entry, rank: pathRank(entry.path) }))
-    .sort((a, b) => b.rank - a.rank || a.entry.path.localeCompare(b.entry.path))
-    .map(({ entry }) => entry);
-}
+const UTF8 = new TextEncoder();
 
 function pathRank(path: string): number {
   let rank = 0;
@@ -225,32 +232,102 @@ function pathRank(path: string): number {
   return rank;
 }
 
+// Words a manipulation has to use to address a reviewer or an assistant. A
+// cheap way to choose which windows of a long changed region to spend spans
+// on; the classifier, not this list, decides what is an injection.
+const REVIEW_CUE_PATTERN =
+  /\b(?:ai|llms?|gpt|claude|copilot|cursor|assistants?|agents?|models?|prompts?|review(?:s|er|ers|ing)?|scanners?|audit(?:s|ed|or|ors)?|drydock|security|safe(?:ty)?|approv(?:e|ed|al)|verdict|findings?|instructions?|ignore|disregard|system)\b/gi;
+const MAX_CUES_COUNTED = 50;
+
+function reviewCueCount(text: string): number {
+  let count = 0;
+  for (const _match of text.matchAll(REVIEW_CUE_PATTERN)) {
+    count += 1;
+    if (count >= MAX_CUES_COUNTED) break;
+  }
+  return count;
+}
+
 /**
- * Contiguous runs of changed lines, each truncated to the span cap. `changed`
- * is null for an added file or one whose previous text is unavailable, in which
- * case the head of the file is the sample — the one place this lane knowingly
- * looks at less than the whole file, which is why it never claims a file is
- * clean.
+ * Windows of at most MAX_SPAN_CHARS over each run of added lines (the whole
+ * file when it is new or its previous text is unavailable), keeping a file's
+ * MAX_CHUNKS_PER_FILE windows with the most review cues. Choosing by cue rather
+ * than position is what stops leading filler from hiding a payload; the lane
+ * still samples, which is why it never claims a file is clean.
  */
-function fileSpans(path: string, sample: string, changed: Set<number> | null): CandidateSpan[] {
+function fileSpans(
+  path: string,
+  sample: string,
+  changed: Set<number> | null,
+): Array<{ span: CandidateSpan; cues: number }> {
   const lines = sample.split("\n");
   const ranges = changed ? contiguousRanges(changed) : [{ start: 1, end: lines.length }];
-  const spans: CandidateSpan[] = [];
+  const windows: Array<{ span: CandidateSpan; cues: number }> = [];
   for (const range of ranges) {
-    if (spans.length >= MAX_CHUNKS_PER_FILE) break;
-    const text = lines
-      .slice(range.start - 1, range.end)
-      .join("\n")
-      .trim();
-    if (text.length < 40) continue;
-    spans.push({
-      path,
-      startLine: range.start,
-      endLine: range.end,
-      text: text.slice(0, MAX_SPAN_CHARS),
-    });
+    for (const span of rangeWindows(path, lines, range)) {
+      windows.push({ span, cues: reviewCueCount(span.text) });
+    }
   }
+  return windows
+    .sort((a, b) => b.cues - a.cues || a.span.startLine - b.span.startLine)
+    .slice(0, MAX_CHUNKS_PER_FILE);
+}
+
+function rangeWindows(
+  path: string,
+  lines: string[],
+  range: { start: number; end: number },
+): CandidateSpan[] {
+  const spans: CandidateSpan[] = [];
+  let start = range.start;
+  let text = "";
+  const flush = (end: number) => {
+    const trimmed = text.trim();
+    if (trimmed.length >= 40) spans.push({ path, startLine: start, endLine: end, text: trimmed });
+    text = "";
+  };
+  for (let line = range.start; line <= range.end; line += 1) {
+    let content = lines[line - 1] ?? "";
+    // A minified line longer than a window becomes windows of its own.
+    while (content.length > MAX_SPAN_CHARS) {
+      if (text) flush(line - 1);
+      start = line;
+      const piece = withoutDanglingHighSurrogate(content.slice(0, MAX_SPAN_CHARS));
+      text = piece;
+      flush(line);
+      content = content.slice(piece.length);
+    }
+    if (text && text.length + 1 + content.length > MAX_SPAN_CHARS) flush(line - 1);
+    if (!text) start = line;
+    text = text ? `${text}\n${content}` : content;
+  }
+  if (text) flush(range.end);
   return spans;
+}
+
+function withoutDanglingHighSurrogate(text: string): string {
+  const last = text.charCodeAt(text.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
+}
+
+/**
+ * Staged line numbers whose content the previous version did not have, matched
+ * as multisets so a duplicated line still counts. Linear time: an LCS diff of
+ * one rewritten bundle took seconds, and this runs on every modified file of a
+ * scan the user is waiting on. A moved line is not new text, which is the
+ * question this lane asks.
+ */
+function addedLineNumbers(previous: string, staged: string): Set<number> {
+  const key = (line: string) => line.replace(/\r$/, "");
+  const counts = new Map<string, number>();
+  for (const line of previous.split("\n")) counts.set(key(line), (counts.get(key(line)) ?? 0) + 1);
+  const added = new Set<number>();
+  staged.split("\n").forEach((line, index) => {
+    const count = counts.get(key(line)) ?? 0;
+    if (count === 0) added.add(index + 1);
+    else counts.set(key(line), count - 1);
+  });
+  return added;
 }
 
 function contiguousRanges(lines: Set<number>): Array<{ start: number; end: number }> {
@@ -377,6 +454,7 @@ function buildFinding(span: CandidateSpan, coercesReview: boolean, severity: num
   return {
     severity: severity >= HIGH_SEVERITY_SCORE ? "high" : "medium",
     category: "prompt-injection",
+    source: "injection-screen",
     file: span.path,
     evidence: `changed text at ${lines} reads as ${coercesReview ? "an attempt to steer an automated security review" : "instructions addressed to an AI assistant that reads package files"}`,
     reason: coercesReview

@@ -287,11 +287,12 @@ async function recordResolvedBaseline(
  * the scan at medium and escalates to manual review, and `displayedAiResult`
  * refuses to render its findings, so screening it would add rows nobody sees.
  *
- * The screen adds findings and sets `requiresManualReview`; it deliberately
- * leaves `risk` and `releaseAssessment` alone. The reviewer's verdict caps what
- * its findings add, so a reviewer an injection talked into `nothing_unusual`
- * would silence the screen's severity — but not the manual-review floor, which
- * is the point.
+ * The screen adds findings tagged `source: "injection-screen"` and forces
+ * `requiresManualReview`, keeping the reviewer's own flag beside it; it leaves
+ * `risk` and `releaseAssessment` alone. Risk scores the reviewer as if the
+ * screen never ran and adds only the manual-review floor, so a reviewer an
+ * injection talked into `nothing_unusual` still sends the release to a human,
+ * and the screen can never lift a score past that floor.
  */
 async function withInjectionScreen(args: AiReviewArgs, review: AiReview): Promise<AiReview> {
   if (review.status !== "complete") return review;
@@ -341,6 +342,7 @@ async function withInjectionScreen(args: AiReviewArgs, review: AiReview): Promis
       ...review,
       findings: [...review.findings, ...result.findings],
       requiresManualReview: true,
+      reviewerRequiresManualReview: review.requiresManualReview,
     };
   } catch (err) {
     // The screen never throws by contract, so this is a defect or a flag
