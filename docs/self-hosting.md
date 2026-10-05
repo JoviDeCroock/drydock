@@ -94,7 +94,9 @@ account-owned value with a `REPLACE_*` placeholder. Replace at least:
   generated `workers_dev` subdomain instead;
 - the `flagship` app id to wire the `ai-review` killswitch (with Flagship wired,
   the AI reviewer is on by default per organization and can be switched off per
-  org or globally), or remove the `flagship` block to keep AI review disabled;
+  org or globally), or remove the `flagship` block to keep AI review disabled.
+  The same app's `clef-injection-screen` flag (default off) opts an
+  organization into the Clef prompt-injection screen; it needs no extra secret;
 - public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
   `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
   `SLACK_CLIENT_ID`.

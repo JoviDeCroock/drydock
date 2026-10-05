@@ -90,6 +90,40 @@ The reviewer's contribution is also bounded by its own verdict: `nothing_unusual
 
 Injection attempts are also detection targets, not just something to resist: the deterministic rules `file.review-manipulation` (verdict coercion aimed at the automated review — standing danger, never discounted by a prior approval) and `file.prompt-injection` (instruction content aimed at any LLM/agent that reads package bytes, such as a consumer's coding assistant) fire independently of the AI reviewer, so the killswitch and a swayed model cannot suppress them. The reviewer preserves or raises the high/critical assessment but does not repeat an injection already represented by a deterministic finding for the same file and attempt; AI finding rows are reserved for materially distinct injection evidence the phrase-based rules missed.
 
+### Clef prompt-injection screen
+
+The phrase rules match phrases and are evadable by paraphrase. The
+`clef-injection-screen` lane adds a second, advisory judgment over the same
+threat: bounded spans of the release's _changed_ text go to Workers AI's Clef
+classifier, which returns two hazard probabilities and a severity level per span
+rather than free text. A span clears the thresholds only when a hazard
+probability and the severity level agree, and the resulting row is an ordinary
+AI finding (`category: "prompt-injection"`) — advisory everywhere the
+deterministic lane is authoritative, excluded from the deterministic report
+export and release memory, and unable to lower or contradict a rule finding. It
+looks only at files where both the phrase rules and the reviewer found nothing,
+so it can add evidence but never restate it, and it sets `requiresManualReview`
+without touching the reviewer's risk or assessment. The reviewer's verdict caps
+what AI findings add to a score; the manual-review floor still applies, so a
+reviewer an injection talked into `nothing_unusual` cannot silence the screen.
+
+Clef runs on the same Workers AI binding and `drydock-gateway` as the reviewer,
+so package text stays inside the Cloudflare account and AI Gateway retains the
+request and response like any reviewer call. What is sent is bounded by
+construction — at most six spans and 12 KiB per scan, taken only from changed
+text in redacted samples, carrying ecosystem and package-relative paths but no
+package name, version, organization, or credential (Gateway metadata carries
+scan and organization ids for log joining). Answers are re-validated field by
+field and a batch with any malformed or missing answer is discarded whole,
+because a lane that silently lost one question would read a missing hazard
+probability as a confident "no". The lane is opt-in per organization through its
+Flagship flag (default off) and runs only after a completed review, so the
+`ai-review` killswitch also turns it off.
+
+Screen findings describe their span and never quote it. A finding row is
+rendered in the dashboard and travels into exports, so echoing attacker-authored
+text verbatim would carry the injection to its next reader.
+
 Cloudflare Agent Traces are fully sampled for reviewer debugging, with message
 and tool payload persistence explicitly disabled at both the tracing wrapper
 (`storeMessages`/`storeTools`) and the AI SDK call
