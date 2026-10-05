@@ -37,7 +37,8 @@ export default function VerifyEmailPage() {
     let cancelled = false;
     void sessionModel.load().then((session) => {
       if (cancelled) return;
-      // Verification auto-signs the user in, so a live session means success.
+      // The link never signs anyone in: a live session means the reader
+      // verified in a browser that was already signed in.
       if (session?.user) {
         location.route(returnTo, true);
         return;

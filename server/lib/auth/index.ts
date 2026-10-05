@@ -2,7 +2,8 @@ import { hexEncode } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { setSessionCookie } from "better-auth/cookies";
 import { twoFactor } from "better-auth/plugins";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
@@ -358,7 +359,10 @@ export function createAuth(env: Cloudflare.Env) {
     ...(sessionCache ? { verification: { storeInDatabase: true as const } } : {}),
     rateLimit: { storage: "memory" as const },
     emailVerification: {
-      autoSignInAfterVerification: true,
+      // The link proves the inbox, not the account. Signing its holder in
+      // would hand anyone reading the inbox a session past the password and
+      // TOTP, since the two-factor hook only guards the /sign-in/* paths.
+      autoSignInAfterVerification: false,
       // Better Auth only defaults this on when sign-in requires verification,
       // which it no longer does — set it explicitly or sign-up would stop
       // sending a link at all. There is no `sendOnSignIn` counterpart: that
@@ -408,6 +412,21 @@ export function createAuth(env: Cloudflare.Env) {
             message: "OAuth scope overrides are not allowed",
           });
         }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/verify-email") return;
+        // Without auto sign-in, Better Auth leaves the cookie cache of a reader
+        // who verified while signed in saying `emailVerified: false` until it
+        // expires, and verified-only actions refuse them meanwhile. Refresh a
+        // session the request already holds; never mint one.
+        const current = await getSessionFromCtx(ctx);
+        if (!current || current.user.emailVerified) return;
+        const user = await ctx.context.internalAdapter.findUserById(current.user.id);
+        if (!user?.emailVerified) return;
+        await setSessionCookie(ctx, {
+          session: current.session,
+          user: { ...current.user, emailVerified: true },
+        });
       }),
     },
     account: {

@@ -135,6 +135,8 @@ Verification is instead required per action, by `requireVerifiedEmail` (`server/
 
 The guard reads Better Auth's own `emailVerified` session flag and is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL` transport, or a local `BETTER_AUTH_URL` whose link the recipient could not follow); on such a deployment no account could ever clear the flag, so gating on it would lock the product rather than protect it. An absent flag is treated as verified, so a Better Auth payload change can never silently remove access an account already had. `GET /api/auth/config` reports whether verification is enforceable, so the dashboard banner is shown only where clicking it accomplishes something.
 
+A verification link proves the inbox, never the account, so it never signs anyone in (`autoSignInAfterVerification: false`). Better Auth's two-factor hook guards only the `/sign-in/*` paths, so a session minted by `/verify-email` would hand anyone reading the inbox an account past both its password and its TOTP. Opening the link in a browser already signed in to that account refreshes that session's cached `emailVerified` flag (the `hooks.after` on `/verify-email`); it never creates a session.
+
 ## Session posture
 
 Sessions are Better Auth sessions in a cookie signed with `BETTER_AUTH_SECRET`. Two caches sit in front of the session store so a burst of authenticated requests does not turn into a burst of D1 reads and refresh writes (`server/lib/auth/index.ts`):
