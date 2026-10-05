@@ -23,6 +23,12 @@ This file is only a compact implementation map.
   `bug-report.ts`. It drops the query string and hash, and redacts a
   `/reports/:token` share token, because the user sends it verbatim. Nothing is
   sent automatically. Contact addresses live in `src/lib/contact.ts`.
+- Routes are declared with `ScopedRoute` (`src/features/routing/ScopedRoute.tsx`),
+  not preact-iso's `Route`. The Router keeps the page being left mounted until the
+  next route's chunk loads. Inside a `ScopedRoute`, `useLocation()` keeps the URL the
+  page was last current for, and its `route()` (so every `useQuerySignal` write) is
+  dropped once the browser is on another path. Page code that reads the URL after
+  an `await` reads `location.url`, not `window.location`.
 
 ## Primitives
 

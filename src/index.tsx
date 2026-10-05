@@ -1,8 +1,9 @@
 import { hydrate, render } from "preact";
-import { ErrorBoundary, LocationProvider, Route, Router, prerender as ssr } from "preact-iso";
+import { ErrorBoundary, LocationProvider, Router, prerender as ssr } from "preact-iso";
 import { Toaster } from "./components/Toast";
 import { AppErrorBoundary } from "./features/error-report/AppErrorBoundary";
 import { lazyRoute } from "./features/error-report/lazy-route";
+import { ScopedRoute } from "./features/routing/ScopedRoute";
 import { applyActiveOrganizationFromUrl } from "./models/active-organization";
 import { extractPrerenderHead, getPageSeoMetadata } from "./lib/seo";
 import {
@@ -37,24 +38,24 @@ export function App() {
       <ErrorBoundary>
         <AppErrorBoundary>
           <Router>
-            <Route path="/" component={LandingPage} />
-            <Route path="/docs" component={DocsPage} />
-            <Route path="/privacy" component={PrivacyPage} />
-            <Route path="/npm-staged-publishing" component={DiscoveryGuidePage} />
-            <Route path="/github-actions-package-gate" component={DiscoveryGuidePage} />
-            <Route path="/npm-trusted-publishing" component={DiscoveryGuidePage} />
-            <Route path="/pypi-release-security" component={DiscoveryGuidePage} />
-            <Route path="/vscode-extension-security" component={DiscoveryGuidePage} />
-            <Route path="/package-tarball-diff" component={DiscoveryGuidePage} />
-            <Route path="/security" component={DiscoveryGuidePage} />
-            <Route path="/open-source" component={DiscoveryGuidePage} />
-            <Route path="/diff" component={PackageDiffPage} />
-            <Route path="/diff/*" component={PackageDiffPage} />
-            <Route path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
-            <Route path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
-            <Route path="/login" component={LoginPage} />
-            <Route path="/register" component={RegisterPage} />
-            <Route path="/verify-email" component={VerifyEmailPage} />
+            <ScopedRoute path="/" component={LandingPage} />
+            <ScopedRoute path="/docs" component={DocsPage} />
+            <ScopedRoute path="/privacy" component={PrivacyPage} />
+            <ScopedRoute path="/npm-staged-publishing" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/github-actions-package-gate" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/npm-trusted-publishing" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/pypi-release-security" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/vscode-extension-security" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/package-tarball-diff" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/security" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/open-source" component={DiscoveryGuidePage} />
+            <ScopedRoute path="/diff" component={PackageDiffPage} />
+            <ScopedRoute path="/diff/*" component={PackageDiffPage} />
+            <ScopedRoute path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
+            <ScopedRoute path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
+            <ScopedRoute path="/login" component={LoginPage} />
+            <ScopedRoute path="/register" component={RegisterPage} />
+            <ScopedRoute path="/verify-email" component={VerifyEmailPage} />
             {/*
             Both paths, like /diff above. `:token` is a required segment, so it
             cannot match the prerender URL `/reports` — without the bare route
@@ -64,19 +65,19 @@ export function App() {
             token — the correct shell for a real share link — and swaps in the
             "no public index" explainer once mounted on the client.
           */}
-            <Route path="/reports" component={PublicReportPage} />
-            <Route path="/reports/:token" component={PublicReportPage} />
-            <Route path="/dashboard" component={DashboardPage} />
-            <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
-            <Route path="/dashboard/packages/:name+" component={PackageReleasesPage} />
-            <Route path="/dashboard/settings" component={SettingsPage} />
-            <Route path="/dashboard/account" component={AccountPage} />
-            <Route path="/dashboard/invite" component={InvitePage} />
-            <Route
+            <ScopedRoute path="/reports" component={PublicReportPage} />
+            <ScopedRoute path="/reports/:token" component={PublicReportPage} />
+            <ScopedRoute path="/dashboard" component={DashboardPage} />
+            <ScopedRoute path="/dashboard/scans/:id" component={ScanDetailPage} />
+            <ScopedRoute path="/dashboard/packages/:name+" component={PackageReleasesPage} />
+            <ScopedRoute path="/dashboard/settings" component={SettingsPage} />
+            <ScopedRoute path="/dashboard/account" component={AccountPage} />
+            <ScopedRoute path="/dashboard/invite" component={InvitePage} />
+            <ScopedRoute
               path="/dashboard/settings/github-app/callback"
               component={GithubAppCallbackPage}
             />
-            <Route default component={NotFoundPage} />
+            <ScopedRoute default component={NotFoundPage} />
           </Router>
         </AppErrorBoundary>
       </ErrorBoundary>

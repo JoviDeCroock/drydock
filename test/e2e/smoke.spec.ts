@@ -264,6 +264,9 @@ test("a shared public report opens on the diff", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "File diff" })).toBeVisible();
   await expect(page.getByText("urllib.request.urlopen", { exact: false }).first()).toBeVisible();
   expect(fileRequests).toEqual(["src/gate_demo/__init__.py"]);
+  await expect(page).toHaveURL(
+    new RegExp(`/reports/${shareToken}\\?path=src%2Fgate_demo%2F__init__\\.py$`),
+  );
 
   // Deterministic findings ride the hunk, not a separate list.
   await expect(page.getByText("code.network-credential-exfil").first()).toBeVisible();
@@ -340,6 +343,93 @@ test("docs code blocks keep one line box per source line once highlighted", asyn
     blocks.map((block) => block.sourceLines),
   );
 });
+
+// preact-iso keeps the page being left mounted until the next route's chunk
+// arrives. Holding that chunk opens the window deterministically: the old page
+// must neither re-render against the new URL nor write to or route from it.
+test("an invite keeps its own view while the sign-in page it redirected to loads", async ({
+  page,
+}) => {
+  await page.route("**/api/**", (route) => fulfillJson(route, null));
+  const loginChunk = await holdRequests(page, /\/src\/pages\/Auth\/Login\.tsx/);
+
+  await page.goto("/dashboard/invite?token=invite-token");
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fdashboard%2Finvite%3Ftoken%3Dinvite-token$/);
+  await loginChunk.requested;
+
+  await expect(page.getByText("Joining organization")).toBeVisible();
+  await expect(page.getByText("This invitation link is missing its token.")).toHaveCount(0);
+
+  loginChunk.release();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+});
+
+test("a review's file selection stays off the page the reader is leaving for", async ({ page }) => {
+  const fileRequests: string[] = [];
+  await installPublicReportMocks(page, fileRequests, true);
+  const report = await holdRequests(page, `**/public/reports/${shareToken}`);
+  const privacyChunk = await holdRequests(page, "**/src/pages/Privacy/**");
+
+  await page.goto(`/reports/${shareToken}`);
+  await report.requested;
+  await page.getByRole("link", { name: "Privacy", exact: true }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await privacyChunk.requested;
+
+  // The report lands after the click, and the page still opens its first file.
+  report.release();
+  await expect.poll(() => fileRequests).toEqual(["src/gate_demo/__init__.py"]);
+  await expect(page).toHaveURL(/\/privacy$/);
+
+  privacyChunk.release();
+  await expect(page.getByRole("heading", { name: "Privacy Policy" })).toBeVisible();
+  await expect(page).toHaveURL(/\/privacy$/);
+});
+
+test("a session check that settles after the reader left does not redirect them", async ({
+  page,
+}) => {
+  await installWorkflowGateMocks(page);
+  const session = await holdRequests(page, "**/api/auth/get-session", (route) =>
+    fulfillJson(route, null),
+  );
+  const privacyChunk = await holdRequests(page, "**/src/pages/Privacy/**");
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  await session.requested;
+  await page.getByRole("link", { name: "Privacy", exact: true }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await privacyChunk.requested;
+
+  const sessionResponse = page.waitForResponse("**/api/auth/get-session");
+  session.release();
+  await sessionResponse;
+  // Give the signed-out guard a task turn to act before the chunk arrives.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
+  await expect(page).toHaveURL(/\/privacy$/);
+
+  privacyChunk.release();
+  await expect(page.getByRole("heading", { name: "Privacy Policy" })).toBeVisible();
+  await expect(page).toHaveURL(/\/privacy$/);
+});
+
+/** Holds every matching request until `release()`, then answers with `respond`. */
+async function holdRequests(
+  page: Page,
+  url: string | RegExp,
+  respond: (route: Route) => Promise<void> = (route) => route.fallback(),
+) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let markRequested!: () => void;
+  const requested = new Promise<void>((resolve) => (markRequested = resolve));
+  await page.route(url, async (route) => {
+    markRequested();
+    await released;
+    await respond(route);
+  });
+  return { requested, release };
+}
 
 async function installPublicReportMocks(
   page: Page,
