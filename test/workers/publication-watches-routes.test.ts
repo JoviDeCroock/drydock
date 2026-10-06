@@ -16,6 +16,7 @@ import {
   scanEvents,
   scans,
 } from "../../server/db/schema";
+import { reconcileDuePublicationEnrollments } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
@@ -107,7 +108,7 @@ test("watch IDs and organization selectors never grant access to another organiz
   const response = await request(outsider, "GET", "", undefined, owner.organizationId!);
   expect(await response.json()).toMatchObject({
     watches: [],
-    autoEnrollment: { deferred: 0, suggestions: [] },
+    autoEnrollment: { deferred: 0, pending: 0, suggestions: [] },
   });
   expect((await request(owner, "GET", `/${watch.id}`)).status).toBe(200);
 });
@@ -122,7 +123,7 @@ test("rejects URL and malformed package enrollment and preserves enrollment time
   expect(await second.json()).toEqual(await first.json());
 });
 
-test("GET derives historical public publishers, preserves opt-out and permits explicit reenrollment", async () => {
+test("GET only reports historical publishers; the cron enrolls them, preserving opt-out and explicit reenrollment", async () => {
   const owner = await seedOwner();
   await createDb(env.DB).insert(npmPackageClaims).values({
     registryUrl: "https://registry.npmjs.org",
@@ -154,16 +155,23 @@ test("GET derives historical public publishers, preserves opt-out and permits ex
       createdAt: new Date(0),
       updatedAt: now,
     });
-  const listed = await request(owner, "GET");
-  const body = await listed.json<{
+  type Listing = {
     watches: Array<{ id: string; source: string; createdAt: string }>;
-    autoEnrollment: { deferred: number };
-  }>();
+    autoEnrollment: { deferred: number; pending: number };
+  };
+  const before = await (await request(owner, "GET")).json<Listing>();
+  expect(before.watches).toEqual([]);
+  expect(before.autoEnrollment).toMatchObject({ deferred: 0, pending: 1 });
+  expect(await (await request(owner, "GET")).json()).toMatchObject({ watches: [] });
+
+  await reconcileDuePublicationEnrollments(createDb(env.DB), env, { limit: 1_000 });
+  const body = await (await request(owner, "GET")).json<Listing>();
   expect(body.watches).toHaveLength(1);
   expect(body.watches[0]?.source).toBe("published_history");
   expect(Date.parse(body.watches[0]!.createdAt)).toBeGreaterThanOrEqual(now.getTime());
-  expect(body.autoEnrollment.deferred).toBe(0);
+  expect(body.autoEnrollment).toMatchObject({ deferred: 0, pending: 0 });
   await request(owner, "DELETE", `/${body.watches[0]!.id}`);
+  await reconcileDuePublicationEnrollments(createDb(env.DB), env, { limit: 1_000 });
   expect(await (await request(owner, "GET")).json()).toMatchObject({ watches: [] });
   const reenrolled = await request(owner, "POST", "", { packageName: "@scope/history" });
   expect(await reenrolled.json()).toMatchObject({ watch: { source: "manual" } });

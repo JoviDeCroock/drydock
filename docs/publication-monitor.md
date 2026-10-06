@@ -20,14 +20,20 @@ custom registries, and published-pair reviews do not enroll packages. Completed 
 workflow gates supply suggestions that require **Watch package**, because a gate
 alone does not establish public visibility.
 
-Historical enrollment runs in bounded per-organization batches whenever the
-dashboard lists watches, a stage is submitted, or the discovery cron sweeps an
-organization's npm connection, including sweeps that find no stages. Each of those
-records up to 50 historical packages and enrolls up to 50 watches, so a larger
-backlog enrolls over several of them. It starts monitoring at enrollment time, never at the older review date;
+Enrollment is a backend job: listing watches never enrolls anything. Historical
+enrollment runs in bounded per-organization batches whenever a stage is submitted,
+the discovery cron sweeps an organization's npm connection (including sweeps that
+find no stages), or the 15-minute publication cron finds the organization has work
+waiting. That cron reconciles up to 20 such organizations per tick, in random order,
+before it checks watches: those with eligible review history or gate reviews not yet
+recorded, and those with an enrollable candidate and a free slot. It is what reaches
+organizations without an npm connection, turns gate reviews into suggestions, and
+fills a slot freed by a stop. Each reconciliation records up to 50 historical packages
+and enrolls up to 50 watches, so a larger backlog enrolls over several of them. It starts monitoring at enrollment time, never at the older review date;
 older releases are not retrospectively reported as bypasses. The dashboard shows
-where each watch came from and how many eligible packages do not fit under the
-250-watch limit. Deferred packages enroll at the next of those after a slot frees.
+where each watch came from, how many eligible packages are waiting for background
+enrollment, and how many do not fit under the 250-watch limit. Deferred packages
+enroll at the next reconciliation after a slot frees.
 
 Discovery and staged admission run enrollment without computing the dashboard's
 deferred-count and suggestion summary. Dashboard reads still compute that summary.
@@ -255,9 +261,10 @@ ones. See
 
 All endpoints require a Better Auth session and active-organization membership:
 
-- `GET /api/v1/publication-watches` reconciles eligible packages and lists every watch in
-  attention order (described above), with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
-  `coverageGapSince`, plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
+- `GET /api/v1/publication-watches` lists every watch in attention order (described above)
+  without enrolling anything, with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
+  `coverageGapSince`, plus `autoEnrollment.pending` (enrolls at the next reconciliation),
+  `autoEnrollment.deferred` (does not fit under the limit) and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
 - `GET /api/v1/publication-watches/packages/:name` returns one package's watch (or

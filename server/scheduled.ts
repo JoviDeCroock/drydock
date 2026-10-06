@@ -153,6 +153,16 @@ async function runPublicationMonitorCron(env: Cloudflare.Env) {
   for (const ecosystem of ECOSYSTEMS) {
     const monitor = ecosystem.publicationMonitor;
     if (!monitor) continue;
+    // Enrollment first, so a newly enrolled watch is due in this same sweep.
+    // Its failure must not skip checking the watches that already exist.
+    try {
+      await monitor.reconcileEnrollment(db, env);
+    } catch (err) {
+      emitOperationalEvent("error", "publication_monitor.enrollment_cron_failed", {
+        ecosystem: ecosystem.id,
+        error: describeOperationalError(err),
+      });
+    }
     try {
       await monitor.sweepWatches(db, env);
     } catch (err) {
