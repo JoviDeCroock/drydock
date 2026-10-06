@@ -26,7 +26,7 @@ import {
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
-import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
+import { getPublicationAutoEnrollment } from "../lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
 import { isValidLegacyNpmPackageName, isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
 import { readJsonObject } from "../lib/platform/http";
@@ -43,7 +43,9 @@ npmPublicationWatchRoutes.use("*", async (c, next) => {
 npmPublicationWatchRoutes.get("/", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const autoEnrollment = await reconcilePublicationWatches(
+  // Read-only: stage admission, discovery and the cron enroll; opening the
+  // dashboard never does.
+  const autoEnrollment = await getPublicationAutoEnrollment(
     db,
     organizationId,
     npmPublicationRegistry(c.env),

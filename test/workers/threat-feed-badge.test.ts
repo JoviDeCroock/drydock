@@ -7,6 +7,7 @@ import { OBSERVATION_WINDOW } from "../../server/db/badge-publication-evidence";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
+import { reconcilePublicationWatches } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
 import type { RiskLevel } from "../../server/lib/review/types";
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
@@ -2351,8 +2352,9 @@ describe("the badge switch and the publication monitor are independent", () => {
     await setBadgeVisibility(app, toggled, false);
     await setBadgeVisibility(app, offOnly, true);
 
-    // Listing watches reconciles history, which enrolls published public
-    // packages this organization reviewed.
+    // Reconciling history enrolls published public packages this organization
+    // reviewed; the listing only reports them.
+    await reconcilePublicationWatches(createDb(env.DB), owner.organizationId);
     const res = await request(app, "/api/v1/publication-watches");
     expect(res.status).toBe(200);
     const { watches } = (await res.json()) as { watches: Array<{ packageName: string }> };

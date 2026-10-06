@@ -163,6 +163,16 @@ export function PublicationMonitor({
           </div>
         )}
       </Show>
+      <Show<number | undefined> when={() => model.autoEnrollment.value.pending || undefined}>
+        {(pending) => (
+          <div class="px-5 pb-4">
+            <Alert>
+              {pending} {pluralize("package", pending)} will be watched automatically. Enrollment
+              runs in the background every 15 minutes.
+            </Alert>
+          </div>
+        )}
+      </Show>
       <Show<number | undefined> when={() => model.autoEnrollment.value.deferred || undefined}>
         {(deferred) => (
           <div class="px-5 pb-4">

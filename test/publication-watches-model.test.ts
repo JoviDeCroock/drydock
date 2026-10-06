@@ -43,10 +43,12 @@ afterEach(() => {
 test("enrolls a package with no scan history, checks it, and removes its detail", async () => {
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    )
     .mockResolvedValueOnce(json({ watch }))
     .mockResolvedValueOnce(
-      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
     )
     .mockResolvedValueOnce(
       json({
@@ -55,7 +57,9 @@ test("enrolls a package with no scan history, checks it, and removes its detail"
       }),
     )
     .mockResolvedValueOnce(json({ ok: true }))
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    );
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
@@ -75,10 +79,12 @@ test("enrolls a package with no scan history, checks it, and removes its detail"
 test("a personal workspace's watch carries its explicit choice and clears the input", async () => {
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    )
     .mockResolvedValueOnce(json({ watch }, 201))
     .mockResolvedValue(
-      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
     );
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
@@ -101,7 +107,11 @@ test("a pending personal claim asks for the management choice instead of reporti
       .mockResolvedValueOnce(
         json({
           watches: [],
-          autoEnrollment: { deferred: 0, suggestions: [{ packageName: "@scope/package" }] },
+          autoEnrollment: {
+            deferred: 0,
+            pending: 0,
+            suggestions: [{ packageName: "@scope/package" }],
+          },
         }),
       )
       .mockResolvedValueOnce(
@@ -131,11 +141,13 @@ test("a waited retry runs after an in-flight refresh instead of being dropped", 
   const refresh = deferred();
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    )
     .mockReturnValueOnce(refresh.promise)
     .mockResolvedValueOnce(json({ watch }, 201))
     .mockResolvedValue(
-      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
     );
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
@@ -146,7 +158,9 @@ test("a waited retry runs after an in-flight refresh instead of being dropped", 
   const retry = model.enroll("@scope/package", { wait: true });
   await Promise.resolve();
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  refresh.resolve(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+  refresh.resolve(
+    json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+  );
   await listing;
   expect(await retry).toBe("watched");
   expect(fetchMock.mock.calls[2]?.[1].method).toBe("POST");
@@ -157,9 +171,13 @@ test("a waited retry is abandoned when the organization changes first", async ()
   const refresh = deferred();
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    )
     .mockReturnValueOnce(refresh.promise)
-    .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+    .mockResolvedValue(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    );
   vi.stubGlobal("fetch", fetchMock);
   setActiveOrganizationId("org-a");
   model = new PublicationWatchesModel();
@@ -177,7 +195,7 @@ test("keeps enrollment input and reports a failed request", async () => {
     vi
       .fn()
       .mockResolvedValueOnce(
-        json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       )
       .mockResolvedValueOnce(json({ error: "Package name is invalid" }, 400)),
   );
@@ -195,10 +213,12 @@ test("discards pending mutations across A to B to A and clears all organization 
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(
-      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
     )
     .mockReturnValueOnce(response.promise)
-    .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+    .mockResolvedValue(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    );
   vi.stubGlobal("fetch", fetchMock);
   setActiveOrganizationId("org-a");
   model = new PublicationWatchesModel();
@@ -220,7 +240,9 @@ test("serializes duplicate actions and ignores a response after disposal", async
   const response = deferred();
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }))
+    .mockResolvedValueOnce(
+      json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+    )
     .mockReturnValue(response.promise);
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
@@ -243,6 +265,7 @@ test("shows deferred enrollment and gate suggestions, and opts in without cleari
         watches: [],
         autoEnrollment: {
           deferred: 3,
+          pending: 0,
           suggestions: [{ packageName: "@scope/package" }, { packageName: "@scope/other" }],
         },
       }),
@@ -251,7 +274,7 @@ test("shows deferred enrollment and gate suggestions, and opts in without cleari
     .mockResolvedValueOnce(
       json({
         watches: [watch],
-        autoEnrollment: { deferred: 3, suggestions: [{ packageName: "@scope/other" }] },
+        autoEnrollment: { deferred: 3, pending: 0, suggestions: [{ packageName: "@scope/other" }] },
       }),
     );
   vi.stubGlobal("fetch", fetchMock);
@@ -276,27 +299,37 @@ test("clears old organization enrollment metadata and ignores an old list respon
       .mockResolvedValueOnce(
         json({
           watches: [watch],
-          autoEnrollment: { deferred: 2, suggestions: [{ packageName: "private-context" }] },
+          autoEnrollment: {
+            deferred: 2,
+            pending: 0,
+            suggestions: [{ packageName: "private-context" }],
+          },
         }),
       )
       .mockReturnValueOnce(response.promise)
-      .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } })),
+      .mockResolvedValue(
+        json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+      ),
   );
   setActiveOrganizationId("org-a");
   model = new PublicationWatchesModel();
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
   const oldRequest = model.refresh();
   setActiveOrganizationId("org-b");
-  expect(model.autoEnrollment.value).toEqual({ deferred: 0, suggestions: [] });
+  expect(model.autoEnrollment.value).toEqual({ deferred: 0, pending: 0, suggestions: [] });
   response.resolve(
     json({
       watches: [watch],
-      autoEnrollment: { deferred: 99, suggestions: [{ packageName: "private-context" }] },
+      autoEnrollment: {
+        deferred: 99,
+        pending: 0,
+        suggestions: [{ packageName: "private-context" }],
+      },
     }),
   );
   await oldRequest;
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
-  expect(model.autoEnrollment.value).toEqual({ deferred: 0, suggestions: [] });
+  expect(model.autoEnrollment.value).toEqual({ deferred: 0, pending: 0, suggestions: [] });
 });
 
 test("refreshes again when new review history arrives during a pending list request", async () => {
@@ -307,14 +340,16 @@ test("refreshes again when new review history arrives during a pending list requ
     .mockResolvedValueOnce(
       json({
         watches: [{ ...watch, source: "staged_discovery" }],
-        autoEnrollment: { deferred: 0, suggestions: [] },
+        autoEnrollment: { deferred: 0, pending: 0, suggestions: [] },
       }),
     );
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
   await model.refresh();
   await model.refresh();
-  response.resolve(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }));
+  response.resolve(
+    json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+  );
   await vi.waitFor(() => expect(model!.watches.value).toHaveLength(1));
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(model.watches.value[0]?.source).toBe("staged_discovery");
@@ -332,11 +367,11 @@ test("refreshes after stopping a watch so deferred candidates and warnings stay 
     vi
       .fn()
       .mockResolvedValueOnce(
-        json({ watches: [watch], autoEnrollment: { deferred: 1, suggestions: [] } }),
+        json({ watches: [watch], autoEnrollment: { deferred: 1, pending: 0, suggestions: [] } }),
       )
       .mockResolvedValueOnce(json({ deleted: true }))
       .mockResolvedValueOnce(
-        json({ watches: [other], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [other], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       ),
   );
   model = new PublicationWatchesModel();
@@ -364,14 +399,17 @@ test("keeps fresh checked observations through a queued list refresh until that 
     vi
       .fn()
       .mockResolvedValueOnce(
-        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       )
       .mockReturnValueOnce(response.promise)
       .mockResolvedValueOnce(
-        json({ watches: [checkedWatch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({
+          watches: [checkedWatch],
+          autoEnrollment: { deferred: 0, pending: 0, suggestions: [] },
+        }),
       )
       .mockResolvedValueOnce(
-        json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       ),
   );
   model = new PublicationWatchesModel();
@@ -400,13 +438,13 @@ test("acknowledges a release and preserves the updated detail through a queued r
     .mockResolvedValueOnce(
       json({
         watches: [{ ...watch, unresolvedAlertCount: 1 }],
-        autoEnrollment: { deferred: 0, suggestions: [] },
+        autoEnrollment: { deferred: 0, pending: 0, suggestions: [] },
       }),
     )
     .mockResolvedValueOnce(json({ watch, observations: [observation] }))
     .mockReturnValueOnce(response.promise)
     .mockResolvedValueOnce(
-      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
     );
   vi.stubGlobal("fetch", fetchMock);
   model = new PublicationWatchesModel();
@@ -433,7 +471,7 @@ test("a failed acknowledgment keeps the evidence and reports the error", async (
     vi
       .fn()
       .mockResolvedValueOnce(
-        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       )
       .mockResolvedValueOnce(json({ watch, observations: [observation] }))
       .mockResolvedValueOnce(json({ error: "Acknowledgment unavailable" }, 503)),
@@ -454,11 +492,13 @@ test("does not apply an acknowledgment response after an organization switch", a
     vi
       .fn()
       .mockResolvedValueOnce(
-        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+        json({ watches: [watch], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
       )
       .mockResolvedValueOnce(json({ watch, observations: [] }))
       .mockReturnValueOnce(response.promise)
-      .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } })),
+      .mockResolvedValue(
+        json({ watches: [], autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
+      ),
   );
   setActiveOrganizationId("org-a");
   model = new PublicationWatchesModel();
