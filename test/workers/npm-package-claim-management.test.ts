@@ -12,11 +12,14 @@ import {
 import { createScanJob } from "../../server/db/scan-jobs";
 import { getScan } from "../../server/db/scan-detail";
 import * as schema from "../../server/db/schema";
-import { publicationWatchOwnershipConflict } from "../../server/db/publication-watches";
+import {
+  PUBLICATION_WATCH_LIMIT,
+  publicationWatchOwnershipConflict,
+} from "../../server/db/publication-watches";
 import { reconcilePublicationWatches } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPackageClaimRoutes } from "../../server/routes/npm-package-claims";
 import { buildTestApp, call } from "./helpers/app";
-import { seedUser, type SeededUser } from "./helpers/seed";
+import { seedPublicationWatches, seedUser, type SeededUser } from "./helpers/seed";
 
 const registryUrl = "https://registry.npmjs.org";
 async function fixture() {
@@ -317,20 +320,14 @@ describe("personal npm package management", () => {
     });
     expect(forbidden.status).toBe(403);
     const destination = await team(owner);
-    await owner.db.insert(schema.publicationWatches).values(
-      Array.from({ length: 20 }, (_, index) => ({
-        id: crypto.randomUUID(),
-        organizationId: destination,
-        packageName: `occupied-${index}-${crypto.randomUUID()}`,
-        source: "manual" as const,
-        createdAt: new Date(),
-      })),
-    );
+    await seedPublicationWatches(owner.db, destination, PUBLICATION_WATCH_LIMIT);
     const full = await call(app(owner), "POST", path, {
       body: { targetOrganizationId: destination },
     });
     expect(full.status).toBe(409);
-    expect(((await full.json()) as { error: string }).error).toContain("limit of 20");
+    expect(((await full.json()) as { error: string }).error).toContain(
+      `limit of ${PUBLICATION_WATCH_LIMIT}`,
+    );
     expect(await allowed(owner)).toEqual([{ scan: 1, management: 0 }]);
   });
 
@@ -409,15 +406,7 @@ describe("personal npm package management", () => {
   test("capacity failure does not change claim, create audit receipts, or enroll candidates", async () => {
     const owner = await fixture();
     const destination = await team(owner);
-    await owner.db.insert(schema.publicationWatches).values(
-      Array.from({ length: 20 }, (_, i) => ({
-        id: crypto.randomUUID(),
-        organizationId: destination,
-        packageName: `full-${i}`,
-        source: "manual" as const,
-        createdAt: new Date(),
-      })),
-    );
+    await seedPublicationWatches(owner.db, destination, PUBLICATION_WATCH_LIMIT);
     await expect(manageNpmPackageClaim(owner.db, input(owner, destination))).rejects.toBeInstanceOf(
       PackageManagementConflictError,
     );
@@ -438,15 +427,7 @@ describe("personal npm package management", () => {
 
   test("keeping management at a full watch budget confirms the claim and enrolls the watch once a slot frees", async () => {
     const owner = await fixture();
-    await owner.db.insert(schema.publicationWatches).values(
-      Array.from({ length: 20 }, (_, i) => ({
-        id: crypto.randomUUID(),
-        organizationId: owner.organizationId,
-        packageName: `full-${i}`,
-        source: "manual" as const,
-        createdAt: new Date(),
-      })),
-    );
+    await seedPublicationWatches(owner.db, owner.organizationId, PUBLICATION_WATCH_LIMIT);
     // A deliberate stop: Keep is an explicit enrollment, so it clears it.
     await owner.db.insert(schema.publicationWatchCandidates).values({
       id: crypto.randomUUID(),
@@ -477,7 +458,12 @@ describe("personal npm package management", () => {
     ).toEqual([{ source: "manual", stoppedAt: null }]);
     await owner.db
       .delete(schema.publicationWatches)
-      .where(eq(schema.publicationWatches.packageName, "full-0"));
+      .where(
+        and(
+          eq(schema.publicationWatches.organizationId, owner.organizationId),
+          eq(schema.publicationWatches.packageName, "filler-000"),
+        ),
+      );
     await reconcilePublicationWatches(owner.db, owner.organizationId);
     expect(
       await owner.db

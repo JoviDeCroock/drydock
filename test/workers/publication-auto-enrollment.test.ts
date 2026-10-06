@@ -6,13 +6,14 @@ import {
   createPublicationWatch,
   deletePublicationWatch,
   listPublicationWatches,
+  PUBLICATION_WATCH_LIMIT,
 } from "../../server/db/publication-watches";
 import { npmPackageClaims, publicationWatchCandidates, scans } from "../../server/db/schema";
 import {
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
-import { seedUser } from "./helpers/seed";
+import { seedPublicationWatches, seedUser } from "./helpers/seed";
 
 const registry = "https://registry.npmjs.org";
 const seed = () => seedUser({ name: "Monitor" });
@@ -206,8 +207,9 @@ describe("automatic publication enrollment", () => {
     ).toBeNull();
   });
 
-  test("twenty-active cap defers automatic candidates and uses a freed slot without reenrolling the stopped package", async () => {
+  test("the active cap defers automatic candidates and uses a freed slot without reenrolling the stopped package", async () => {
     const { db, organizationId } = await seed();
+    await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 20);
     const items = Array.from({ length: 22 }, (_, i) => ({
       packageName: `candidate-${String(i).padStart(2, "0")}`,
       access: "public",
@@ -220,21 +222,22 @@ describe("automatic publication enrollment", () => {
       (await registerStagedPublicationCandidates(db, organizationId, items, registry)).deferred,
     ).toBe(2);
     const watches = await listPublicationWatches(db, organizationId);
-    expect(watches).toHaveLength(20);
-    await deletePublicationWatch(db, organizationId, watches[0]!.id);
+    expect(watches).toHaveLength(PUBLICATION_WATCH_LIMIT);
+    const stopped = watches.find((item) => item.packageName.startsWith("candidate-"))!;
+    await deletePublicationWatch(db, organizationId, stopped.id);
     expect((await reconcilePublicationWatches(db, organizationId)).deferred).toBe(1);
     const updated = await listPublicationWatches(db, organizationId);
-    expect(updated).toHaveLength(20);
-    expect(updated.some((item) => item.packageName === watches[0]!.packageName)).toBe(false);
+    expect(updated).toHaveLength(PUBLICATION_WATCH_LIMIT);
+    expect(updated.some((item) => item.packageName === stopped.packageName)).toBe(false);
   });
 
   test("a failed manual reenrollment at the cap preserves stop intent", async () => {
     const { db, organizationId } = await seed();
     const initial = await createPublicationWatch(db, organizationId, "stopped-manual");
     await deletePublicationWatch(db, organizationId, initial.id);
-    for (let i = 0; i < 20; i++) await createPublicationWatch(db, organizationId, `manual-${i}`);
+    await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT);
     await expect(createPublicationWatch(db, organizationId, "stopped-manual")).rejects.toThrow(
-      "At most 20",
+      `At most ${PUBLICATION_WATCH_LIMIT}`,
     );
     const [candidate] = await db
       .select()
@@ -265,13 +268,14 @@ describe("automatic publication enrollment", () => {
 
 test("large history batches expose the full deferred count and malformed names cannot stall progress", async () => {
   const { db, organizationId } = await seed();
+  await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 20);
   for (let i = 0; i < 55; i++)
     await historicalScan(organizationId, `old-${String(i).padStart(3, "0")}`);
   for (const name of ["@invalid", "path/traversal", "bad name", "UPPERCASE", "@scope//name"])
     await historicalScan(organizationId, name, { createdAt: new Date(0) });
   const first = await reconcilePublicationWatches(db, organizationId);
   expect(first.deferred).toBe(35);
-  expect(await listPublicationWatches(db, organizationId)).toHaveLength(20);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(PUBLICATION_WATCH_LIMIT);
   expect(
     await db
       .select()
@@ -289,6 +293,7 @@ test("large history batches expose the full deferred count and malformed names c
 
 test("concurrent explicit and automatic enrollment share the atomic active cap", async () => {
   const { db, organizationId } = await seed();
+  await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 20);
   const items = Array.from({ length: 25 }, (_, index) => ({
     packageName: `auto-${index}`,
     access: "public",
@@ -304,7 +309,29 @@ test("concurrent explicit and automatic enrollment share the atomic active cap",
     ),
   ]);
   expect(results[0]!.status).toBe("fulfilled");
-  expect(await listPublicationWatches(db, organizationId)).toHaveLength(20);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(PUBLICATION_WATCH_LIMIT);
+});
+
+test("a backlog beyond one enrollment batch keeps enrolling and only what cannot fit is deferred", async () => {
+  const { db, organizationId } = await seed();
+  await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 55);
+  const items = Array.from({ length: 60 }, (_, index) => ({
+    packageName: `backlog-${String(index).padStart(2, "0")}`,
+    access: "public",
+  }));
+  await claimPackages(
+    organizationId,
+    items.map((item) => item.packageName),
+  );
+  const first = await registerStagedPublicationCandidates(db, organizationId, items, registry);
+  expect(first.deferred).toBe(5);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(
+    PUBLICATION_WATCH_LIMIT - 5,
+  );
+  expect((await reconcilePublicationWatches(db, organizationId)).deferred).toBe(5);
+  const watches = await listPublicationWatches(db, organizationId);
+  expect(watches).toHaveLength(PUBLICATION_WATCH_LIMIT);
+  expect(watches.filter((item) => item.packageName.startsWith("backlog-"))).toHaveLength(55);
 });
 
 test("automatic enrollment skips foreign claims and unaudited legacy history", async () => {

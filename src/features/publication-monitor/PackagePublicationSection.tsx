@@ -1,5 +1,6 @@
 import { useComputed, useModel, useSignal, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { PUBLICATION_WATCH_LIMIT } from "../../../server/db/publication-watch-limit";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -28,7 +29,7 @@ function notWatchedReason(packageName: string, enrollment: PublicationEnrollment
     case "pending":
       return "Not watched yet. It enrolls automatically the next time the monitor reconciles.";
     case "deferred":
-      return "Not watched. Automatic enrollment is waiting for a free slot under the 20-package limit.";
+      return `Not watched. Automatic enrollment is waiting for a free slot under the ${PUBLICATION_WATCH_LIMIT}-package limit.`;
     default:
       return `Not watched. No public npm release of ${packageName} has been reviewed in this organization.`;
   }

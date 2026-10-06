@@ -278,7 +278,7 @@ For npm the page closes with a **publication monitor** section
 (`src/features/publication-monitor/PackagePublicationSection.tsx`, over
 `GET /api/v1/publication-watches/packages/:name`): whether this organization
 watches the package — or why not (never seen public, stopped, a gate
-suggestion, pending, or waiting at the 20-watch limit) — its observed releases
+suggestion, pending, or waiting at the 250-watch limit) — its observed releases
 with the reason behind any unknown verdict or alert, a "not verified" mark and a
 coverage-gap notice for releases it could not verify, acknowledgment, and check,
 start and stop controls. Below the releases it lists ledger alerts the list does not

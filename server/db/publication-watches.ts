@@ -18,6 +18,7 @@ import {
   npmPackageManagementAllowed,
   preClaimRegistryMatches,
 } from "./package-claims";
+import { PUBLICATION_WATCH_LIMIT } from "./publication-watch-limit";
 import type { AppDb } from "./client";
 import {
   npmPackageClaims,
@@ -28,8 +29,7 @@ import {
 } from "./schema";
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
-/** Watches per organization; enrollment SQL enforces the same bound. */
-export const PUBLICATION_WATCH_LIMIT = 20;
+export { PUBLICATION_WATCH_LIMIT };
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 export class PublicationWatchOwnershipError extends Error {}
@@ -114,17 +114,33 @@ export function publicationWatchOwnershipConflict(
 }
 
 /**
- * Whether an organization has a free watch slot. A watch deactivated by
- * another organization's claim can no longer poll, so it holds no slot.
+ * Watches holding a slot. A watch deactivated by another organization's claim
+ * can no longer poll, so it holds no slot.
  */
+function publicationWatchSlotsUsed(registryUrl: string, organizationId: string | SQLWrapper) {
+  return sql<number>`(select count(*) from publication_watches counted
+    where counted.organization_id = ${organizationId}
+      and not ${publicationWatchOwnershipConflict(registryUrl, sql`counted.package_name`, organizationId)})`;
+}
+
+/** Whether an organization has a free watch slot. */
 export function publicationWatchCapacityAvailable(
   registryUrl: string,
   organizationId: string | SQLWrapper,
 ) {
-  return sql<boolean>`((select count(*) from publication_watches counted
-    where counted.organization_id = ${organizationId}
-      and not ${publicationWatchOwnershipConflict(registryUrl, sql`counted.package_name`, organizationId)})
+  return sql<boolean>`(${publicationWatchSlotsUsed(registryUrl, organizationId)}
     < ${PUBLICATION_WATCH_LIMIT})`.mapWith(Boolean);
+}
+
+export async function getPublicationWatchSlotsFree(
+  db: AppDb,
+  organizationId: string,
+  registryUrl = PUBLIC_NPM,
+): Promise<number> {
+  const [result] = await db.all<{ used: number }>(
+    sql`select ${publicationWatchSlotsUsed(registryUrl, organizationId)} as used`,
+  );
+  return Math.max(0, PUBLICATION_WATCH_LIMIT - (result?.used ?? 0));
 }
 
 export async function getPublicationOwnershipConflict(

@@ -22,10 +22,12 @@ alone does not establish public visibility.
 
 Historical enrollment runs in bounded per-organization batches whenever the
 dashboard lists watches, a stage is submitted, or the discovery cron sweeps an
-organization's npm connection, including sweeps that find no stages. It starts monitoring at enrollment time, never at the older review date;
+organization's npm connection, including sweeps that find no stages. Each of those
+records up to 50 historical packages and enrolls up to 50 watches, so a larger
+backlog enrolls over several of them. It starts monitoring at enrollment time, never at the older review date;
 older releases are not retrospectively reported as bypasses. The dashboard shows
-where each watch came from and how many eligible packages await capacity at the
-20-watch limit. Deferred packages enroll at the next of those after a slot frees.
+where each watch came from and how many eligible packages do not fit under the
+250-watch limit. Deferred packages enroll at the next of those after a slot frees.
 
 You can also enter a public npm package name and choose **Watch package** without
 an npm token or existing scan. A subscription never establishes ownership, and another organization's claim never stops it: monitoring a public release needs no authority, and letting the first claimant silence everyone else's alerts would let a stolen stage-read token mute the monitor right before a malicious publish. A claim only deactivates the watch of an organization that competed for or handed over management, that is, one holding its own staged reviews of the package while another organization (or an ownerless reservation) holds the claim, such as a personal workspace after moving the package to a shared organization. That watch retains its observations; enrollment and manual checks return a conflict, cron skips it, and it no longer counts toward the watch limit. Personal enrollment requires an explicit workspace choice, and choosing **Watch package** in the personal workspace is that choice. A provisional personal claim must still be kept or moved before polling starts; the package page offers that choice instead of **Watch package**, and hides it while another organization holds the claim. A package page reports automatic enrollment as pending only for packages the organization manages, because auto-enrollment never enrolls any other package; others show as not enrolled. A package awaiting a personal management choice starts monitoring once it is kept or moved. Duplicate enrollment preserves the original start
@@ -265,11 +267,12 @@ All endpoints require a Better Auth session and active-organization membership:
 - `DELETE /api/v1/publication-watches/:id` (owner/admin only) stops monitoring, removes history,
   and remembers the opt-out.
 
-Responses are private and not cacheable. The organization has a 20-watch limit.
+Responses are private and not cacheable. The organization has a 250-watch limit.
 Each 15-minute tick checks up to 24 due watches (last checked more than five minutes
 ago), taken round-robin across organizations: every organization's oldest due watch
 before any organization's second, so no organization gets more than its share and a
-large one cannot slow the others. No new check starts after the first minute of the
+large one cannot slow the others. An organization with more due watches than one tick
+checks is covered over several ticks; 250 watches alone take about eleven (under three hours). No new check starts after the first minute of the
 sweep. A watch whose check throws is recorded (`check_failed`) and moved to the back of
 the order rather than holding its place, and the sweep continues. One check examines up
 to six pending versions, at most three of which may download a tarball; the rest
