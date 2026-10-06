@@ -1,6 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { setActiveOrganizationId } from "../src/models/active-organization";
-import { PublicationWatchesModel, type PublicationWatch } from "../src/models/publication-watches";
+import {
+  PublicationWatchesModel,
+  WATCH_PAGE_SIZE,
+  type PublicationWatch,
+} from "../src/models/publication-watches";
 
 let model: InstanceType<typeof PublicationWatchesModel> | null = null;
 const watch: PublicationWatch = {
@@ -473,4 +477,31 @@ test("does not apply an acknowledgment response after an organization switch", a
   await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
   expect(model.detail.value).toBeNull();
   expect(model.watches.value).toEqual([]);
+});
+
+test("reveals watches a page at a time in server order and starts over for another organization", async () => {
+  const many = Array.from({ length: WATCH_PAGE_SIZE + 5 }, (_, index) => ({
+    ...watch,
+    id: `watch-${index}`,
+    packageName: `package-${index}`,
+  }));
+  const fetchMock = vi.fn(async () =>
+    json({ watches: many, autoEnrollment: { deferred: 0, suggestions: [] } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  setActiveOrganizationId("org-a");
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(model.visibleWatches.value.map((item) => item.id)).toEqual(
+    many.slice(0, WATCH_PAGE_SIZE).map((item) => item.id),
+  );
+  expect(model.hiddenWatchCount.value).toBe(5);
+  model.showMoreWatches();
+  expect(model.visibleWatches.value.map((item) => item.id)).toEqual(many.map((item) => item.id));
+  expect(model.hiddenWatchCount.value).toBe(0);
+  setActiveOrganizationId("org-b");
+  expect(model.visibleWatches.value).toEqual([]);
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(model.visibleWatches.value).toHaveLength(WATCH_PAGE_SIZE);
+  expect(model.hiddenWatchCount.value).toBe(5);
 });

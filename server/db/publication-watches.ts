@@ -207,6 +207,19 @@ const watchColumns = (registryUrl: string) => ({
   ),
 });
 
+/**
+ * Watches that need attention first, so the dashboard's first page never hides
+ * one: unacknowledged alerts, then a "not verified" badge or a coverage gap
+ * the row shows (the client applies the same threshold).
+ */
+const attentionRank = () =>
+  sql<number>`case when ${unresolvedAlertCount} > 0 then 0
+    when ${unverifiedReleaseCount()} > 0
+      or (publication_watches.coverage_gap is not null
+        and publication_watches.coverage_gap_since <= ${Date.now() - COVERAGE_GAP_AFTER_MS}) then 1
+    else 2 end`;
+
+/** Newest first within each attention rank, so a watch just added stays near the top. */
 export function listPublicationWatches(
   db: AppDb,
   organizationId: string,
@@ -216,7 +229,7 @@ export function listPublicationWatches(
     .select(watchColumns(registryUrl))
     .from(publicationWatches)
     .where(eq(publicationWatches.organizationId, organizationId))
-    .orderBy(asc(publicationWatches.createdAt));
+    .orderBy(attentionRank(), desc(publicationWatches.createdAt), desc(publicationWatches.id));
 }
 export async function getPublicationWatchByPackage(
   db: AppDb,

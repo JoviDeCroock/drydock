@@ -11,7 +11,7 @@ import { PUBLICATION_WATCH_LIMIT } from "../../../server/db/publication-watch-li
 import { isValidNpmPackageName } from "../../../server/lib/ecosystems/npm/registry";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
-import { Button } from "../../components/Button";
+import { Button, LoadMoreButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Menu, MenuItem } from "../../components/Menu";
@@ -64,6 +64,8 @@ export function PublicationMonitor({
 
   const formRef = useRef<HTMLFormElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const shownWatchCount = useComputed(() => model.visibleWatches.value.length);
+  const watchCount = useComputed(() => model.watches.value.length);
 
   async function startWatching(packageName: string, typed: boolean) {
     const outcome = await model.enroll(typed ? undefined : packageName, {
@@ -215,7 +217,7 @@ export function PublicationMonitor({
           </div>
         </Show>
         <ul ref={listRef} class="list-none p-0 m-0">
-          {model.watches.value.map((watch) => {
+          {model.visibleWatches.value.map((watch) => {
             const detail = model.detail.value;
             const expanded = detail?.watch.id === watch.id ? detail : null;
             const checking = checkingId.value === watch.id;
@@ -306,6 +308,18 @@ export function PublicationMonitor({
             );
           })}
         </ul>
+        <Show when={() => model.hiddenWatchCount.value > 0}>
+          <div class="px-5 py-3.5 border-t border-border flex flex-wrap items-center justify-between gap-2">
+            <span class="font-mono text-[11px] text-ink-subtle">
+              Showing {shownWatchCount} of {watchCount} watched packages
+            </span>
+            <LoadMoreButton
+              loading={false}
+              label="Show more"
+              onClick={() => model.showMoreWatches()}
+            />
+          </div>
+        </Show>
       </div>
       <Show when={managing}>
         {(target) => (

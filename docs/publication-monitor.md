@@ -44,7 +44,9 @@ is labelled "added from a staged review"; one enrolled from published review his
 
 The existing 15-minute cron checks watches independently of staged discovery.
 **Check now** runs a bounded check of one watch on demand (distinct from the
-Recent reviews **Check npm**, which runs stage discovery). The dashboard displays the latest
+Recent reviews **Check npm**, which runs stage discovery). The dashboard lists watches 25 at a
+time, those with unacknowledged alerts first, then those with unverified releases or a coverage
+gap, then the rest, newest first within each. It displays the latest
 100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
 last check, how many releases it has recorded and any coverage problem; each package links to its package page,
 which shows the same watch, observations and controls for that package and says
@@ -248,8 +250,8 @@ ones. See
 
 All endpoints require a Better Auth session and active-organization membership:
 
-- `GET /api/v1/publication-watches` reconciles eligible packages and lists watches,
-  with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
+- `GET /api/v1/publication-watches` reconciles eligible packages and lists every watch in
+  attention order (described above), with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
   `coverageGapSince`, plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
