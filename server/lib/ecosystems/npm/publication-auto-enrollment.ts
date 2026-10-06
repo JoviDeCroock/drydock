@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { npmPackageManagementAllowed } from "../../../db/package-claims";
 import {
-  PUBLICATION_WATCH_LIMIT,
+  getPublicationWatchSlotsFree,
   publicationWatchCapacityAvailable,
   publicationWatchOwnershipConflict,
 } from "../../../db/publication-watches";
@@ -15,6 +15,10 @@ import { isValidNpmPackageName } from "./registry";
 
 const PUBLIC_NPM = "https://registry.npmjs.org";
 const HISTORY_BATCH = 50;
+// Watches created per reconciliation, independent of the watch limit: this runs
+// inside dashboard requests and the discovery cron, and each slot is its own
+// capacity-checked statement. A larger backlog enrolls over later reconciliations.
+const ENROLLMENT_BATCH = 50;
 
 type CandidateSource = "staged_discovery" | "published_history" | "workflow_gate";
 export interface PublicationAutoEnrollment {
@@ -121,11 +125,16 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
       ),
     )
     .orderBy(asc(publicationWatchCandidates.createdAt), asc(publicationWatchCandidates.packageName))
-    .limit(PUBLICATION_WATCH_LIMIT);
-  for (const candidate of pending) {
-    // Recheck both suppression and capacity in the insert itself. A concurrent
-    // stop or enrollment can occur after the pending-candidate read.
-    await db
+    .limit(ENROLLMENT_BATCH);
+  // Most reconciliations find nothing pending, so count slots only when needed.
+  const slots = pending.length
+    ? await getPublicationWatchSlotsFree(db, organizationId, registryUrl)
+    : 0;
+  // Recheck both suppression and capacity in each insert. A concurrent stop or
+  // enrollment can occur after the reads above; the batch runs its statements
+  // in order, so each one also sees the slots taken earlier in it.
+  const [first, ...rest] = pending.slice(0, slots).map((candidate) =>
+    db
       .insert(publicationWatches)
       .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null, null, null, null, null
       where ${publicationWatchCapacityAvailable(registryUrl, organizationId)}
@@ -133,8 +142,9 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
       and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history', 'manual'))`)
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
-      });
-  }
+      }),
+  );
+  if (first) await db.batch([first, ...rest]);
 }
 
 async function enrollmentSummary(
@@ -143,8 +153,8 @@ async function enrollmentSummary(
   registryUrl?: string,
 ): Promise<PublicationAutoEnrollment> {
   const missingWatch = sql`not exists(select 1 from publication_watches w where w.organization_id = ${organizationId} and w.package_name = ${publicationWatchCandidates.packageName})`;
-  const [{ deferred }] = await db
-    .select({ deferred: sql<number>`count(*)` })
+  const [{ unwatched }] = await db
+    .select({ unwatched: sql<number>`count(*)` })
     .from(publicationWatchCandidates)
     .where(
       and(
@@ -178,7 +188,13 @@ async function enrollmentSummary(
         sql`select count(distinct s.registry_package_name) as count from scans s where s.organization_id = ${organizationId} and ${historicalEligibility(registryUrl)}`,
       )
     : [];
-  return { deferred: deferred + (unrecorded[0]?.count ?? 0), suggestions };
+  // Only what cannot fit is deferred; the rest of a backlog larger than one
+  // enrollment batch is still pending and enrolls at the next reconciliation.
+  const waiting = unwatched + (unrecorded[0]?.count ?? 0);
+  const slots = waiting
+    ? await getPublicationWatchSlotsFree(db, organizationId, registryUrl ?? PUBLIC_NPM)
+    : 0;
+  return { deferred: Math.max(0, waiting - slots), suggestions };
 }
 
 export async function reconcilePublicationWatches(

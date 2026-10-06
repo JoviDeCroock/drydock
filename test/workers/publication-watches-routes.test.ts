@@ -7,6 +7,7 @@ import { savePublicationObservation } from "../../server/db/publication-alerts";
 import {
   createPublicationWatch,
   deletePublicationWatch,
+  PUBLICATION_WATCH_LIMIT,
 } from "../../server/db/publication-watches";
 import {
   npmPackageClaims,
@@ -18,7 +19,7 @@ import {
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
-import { seedUser } from "./helpers/seed";
+import { seedPublicationWatches, seedUser } from "./helpers/seed";
 import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 
 const seedOwner = () => seedUser({ name: "Publication reviewer" });
@@ -466,9 +467,7 @@ describe("one package's monitoring for the package page", () => {
     // Auto-enrollment only enrolls managed packages; nothing will enroll this one.
     expect(await state("unmanaged-package")).toEqual({ state: "not_enrolled" });
     expect(await state("never-seen")).toEqual({ state: "not_enrolled" });
-    for (let index = 0; index < 20; index++) {
-      await createPublicationWatch(db, owner.organizationId, `filler-${index}`);
-    }
+    await seedPublicationWatches(db, owner.organizationId, PUBLICATION_WATCH_LIMIT);
     expect(await state("discovered-package")).toEqual({ state: "deferred" });
   });
 
@@ -635,8 +634,7 @@ test("watches deactivated by another organization's claim free their capacity", 
   const handedOver = `handed-over-${suffix}`;
   await seedStagedHistory(former, handedOver);
   await createPublicationWatch(db, former.organizationId, handedOver);
-  for (let index = 0; index < 19; index += 1)
-    await createPublicationWatch(db, former.organizationId, `filler-${index}-${suffix}`);
+  await seedPublicationWatches(db, former.organizationId, PUBLICATION_WATCH_LIMIT - 1);
   expect((await request(former, "POST", "", { packageName: `extra-${suffix}` })).status).not.toBe(
     201,
   );

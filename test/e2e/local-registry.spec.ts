@@ -762,13 +762,13 @@ test("publication monitor explains deferred enrollment and offers gate packages 
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
     await expect(
-      monitor.getByText(/Automatic enrollment is deferred for 2 packages/),
+      monitor.getByText(/^2 packages will be watched automatically once a slot frees under/),
     ).toBeVisible();
     await expect(monitor.getByText(/cannot tell whether they are\s+public on npm/)).toBeVisible();
     await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
     await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
     await expect(monitor.getByText(/added by hand/)).toBeVisible();
-    await expect(monitor.getByText(/Automatic enrollment is deferred/)).toHaveCount(0);
+    await expect(monitor.getByText(/will be watched automatically once a slot/)).toHaveCount(0);
     await expect(
       monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }),
     ).toHaveCount(0);

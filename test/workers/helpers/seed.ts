@@ -2,6 +2,7 @@ import { seedLegacyScanJob } from "./seed-scan-job";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { type AppDb, createDb } from "../../../server/db/client";
+import { chunkForD1 } from "../../../server/db/d1-chunk";
 import { type PersistedScanInput } from "../../../server/db/scans";
 import * as schema from "../../../server/db/schema";
 import { ensurePersonalOrganization } from "../../../server/db/organizations";
@@ -122,4 +123,22 @@ export async function seedCompletedScan(
     ...options.persist,
   });
   return scanId;
+}
+
+/**
+ * Fills watch slots directly, far faster than enrolling one at a time. They
+ * count as checked just now so no sweep in a sharing suite picks them up.
+ */
+export async function seedPublicationWatches(db: AppDb, organizationId: string, count: number) {
+  const now = new Date();
+  const rows = Array.from({ length: count }, (_, i) => ({
+    id: crypto.randomUUID(),
+    organizationId,
+    packageName: `filler-${String(i).padStart(3, "0")}`,
+    source: "manual" as const,
+    createdAt: now,
+    lastCheckedAt: now,
+  }));
+  for (const chunk of chunkForD1(rows, 11))
+    await db.insert(schema.publicationWatches).values(chunk);
 }

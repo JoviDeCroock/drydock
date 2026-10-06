@@ -78,8 +78,8 @@ const WATCH_DUE_AFTER_MS = 5 * 60_000;
 // A scheduled invocation shares its D1 query and subrequest allowance with
 // stage discovery and retention. A check costs about a dozen queries and at
 // most one metadata plus three tarball fetches, so 24 checks fit inside both
-// with room to spare while still covering a full 20-watch organization in one
-// tick when it is the only one due.
+// with room to spare. More due watches than that, even within one organization
+// near its watch limit, are covered over later ticks, least recently checked first.
 const SWEEP_WATCH_BUDGET = 24;
 const SWEEP_CONCURRENCY = 4;
 // No new check starts after this; a running one finishes under its own

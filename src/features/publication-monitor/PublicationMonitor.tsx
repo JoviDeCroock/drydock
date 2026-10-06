@@ -7,6 +7,7 @@ import {
 } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useId, useRef } from "preact/hooks";
+import { PUBLICATION_WATCH_LIMIT } from "../../../server/db/publication-watch-limit";
 import { isValidNpmPackageName } from "../../../server/lib/ecosystems/npm/registry";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -15,6 +16,7 @@ import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Menu, MenuItem } from "../../components/Menu";
 import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
+import { pluralize } from "../../lib/format";
 import { packageReleasesPath } from "../../lib/package-releases-path";
 import { PackageManagementDialog } from "../package-claims/PackageManagement";
 import { PublicationWatchesModel } from "../../models/publication-watches";
@@ -159,12 +161,12 @@ export function PublicationMonitor({
           </div>
         )}
       </Show>
-      <Show when={() => model.autoEnrollment.value.deferred || undefined}>
+      <Show<number | undefined> when={() => model.autoEnrollment.value.deferred || undefined}>
         {(deferred) => (
           <div class="px-5 pb-4">
             <Alert tone="warn">
-              Automatic enrollment is deferred for {deferred} packages because this organization has
-              reached its 20-package monitoring limit.
+              {deferred} {pluralize("package", deferred)} will be watched automatically once a slot
+              frees under this organization's {PUBLICATION_WATCH_LIMIT}-package monitoring limit.
             </Alert>
           </div>
         )}

@@ -7,6 +7,7 @@ import {
   deletePublicationWatch,
   getPublicationWatch,
   listPublicationObservations,
+  PUBLICATION_WATCH_LIMIT,
 } from "../../server/db/publication-watches";
 import {
   npmPackageClaims,
@@ -21,7 +22,7 @@ import {
 } from "../../server/lib/ecosystems/npm/publication-monitor";
 import type { ReviewEvidence } from "../../server/lib/ecosystems/npm/publication-verdict";
 import { createHash } from "node:crypto";
-import { seedUser } from "./helpers/seed";
+import { seedPublicationWatches, seedUser } from "./helpers/seed";
 import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 
 const name = "@drydock/publication-test";
@@ -586,11 +587,11 @@ test("a large packument streams into what the verdict reads", async () => {
   });
 });
 
-test("organization enrollment is capped at twenty and duplicate enrollment remains idempotent", async () => {
+test("organization enrollment is capped at the watch limit and duplicate enrollment remains idempotent", async () => {
   const { db, organizationId, watch } = await seed();
-  for (let i = 0; i < 19; i++) await createPublicationWatch(db, organizationId, `package-${i}`);
+  await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 1);
   await expect(createPublicationWatch(db, organizationId, "package-over-limit")).rejects.toThrow(
-    "At most 20",
+    `At most ${PUBLICATION_WATCH_LIMIT}`,
   );
   expect((await createPublicationWatch(db, organizationId, name)).id).toBe(watch.id);
 });
