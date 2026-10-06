@@ -232,6 +232,63 @@ test("acknowledgment is scoped, idempotent, audited and preserves discrepancy ev
   expect(events[0]?.actorUserId).toBe(owner.userId);
 });
 
+test("lists watches needing attention first and newest first within each group", async () => {
+  const owner = await seedOwner();
+  const db = createDb(env.DB);
+  const hour = 60 * 60 * 1000;
+  const now = Date.now();
+  const watch = async (packageName: string, ageHours: number, gapSince?: number) => {
+    const [row] = await db
+      .insert(publicationWatches)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: owner.organizationId,
+        packageName,
+        source: "manual",
+        createdAt: new Date(now - ageHours * hour),
+        coverageGap: gapSince === undefined ? null : "registry_metadata_too_large",
+        coverageGapSince: gapSince === undefined ? null : new Date(gapSince),
+      })
+      .returning();
+    return row!;
+  };
+  const observe = (
+    target: { id: string; packageName: string },
+    status: "artifact_mismatch" | "unknown",
+  ) =>
+    savePublicationObservation(
+      db,
+      {
+        id: crypto.randomUUID(),
+        watchId: target.id,
+        organizationId: owner.organizationId,
+        version: "1.0.0",
+        firstSeenAt: new Date(now - 2 * hour),
+        checkedAt: new Date(now),
+        status,
+        reason: status === "unknown" ? "artifact_too_large" : null,
+      },
+      target.packageName,
+    );
+  await watch("oldest", 6);
+  await observe(await watch("unverified", 5), "unknown");
+  await watch("recent-gap", 4, now - 10 * 60 * 1000);
+  await observe(await watch("alerted", 3), "artifact_mismatch");
+  await watch("lasting-gap", 2, now - 2 * hour);
+  await watch("newest", 1);
+  const body = (await (await request(owner, "GET")).json()) as {
+    watches: { packageName: string }[];
+  };
+  expect(body.watches.map((item) => item.packageName)).toEqual([
+    "alerted",
+    "lasting-gap",
+    "unverified",
+    "newest",
+    "recent-gap",
+    "oldest",
+  ]);
+});
+
 test("only integration managers can stop a watch; enrolling and stopping are audited", async () => {
   const owner = await seedOwner();
   const member = await seedUser({ name: "Member" });

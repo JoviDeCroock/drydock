@@ -1,4 +1,4 @@
-import { createModel, effect, signal } from "@preact/signals";
+import { computed, createModel, effect, signal } from "@preact/signals";
 import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 
@@ -62,6 +62,11 @@ interface WatchDetail {
 }
 
 const endpoint = "/api/v1/publication-watches";
+/**
+ * Watches revealed per step. The list is bounded by the watch limit, so it
+ * arrives whole in the server's attention-first order and pages client-side.
+ */
+export const WATCH_PAGE_SIZE = 25;
 /** The server's code for a personal claim still awaiting its Keep or Move choice. */
 export const MANAGEMENT_REQUIRED = "package_management_required";
 export type EnrollOutcome = "watched" | "management_required" | null;
@@ -74,6 +79,11 @@ export const PublicationWatchesModel = createModel(() => {
   const busy = signal(false);
   const loaded = signal(false);
   const error = signal<string | null>(null);
+  const shownWatchCount = signal(WATCH_PAGE_SIZE);
+  const visibleWatches = computed(() => watches.value.slice(0, shownWatchCount.value));
+  const hiddenWatchCount = computed(() =>
+    Math.max(0, watches.value.length - shownWatchCount.value),
+  );
   let generation = 0;
   let refreshPending = false;
 
@@ -151,6 +161,7 @@ export const PublicationWatchesModel = createModel(() => {
     void activeOrganizationId.value;
     refreshPending = false;
     watches.value = [];
+    shownWatchCount.value = WATCH_PAGE_SIZE;
     autoEnrollment.value = { deferred: 0, suggestions: [] };
     detail.value = null;
     packageName.value = "";
@@ -166,6 +177,8 @@ export const PublicationWatchesModel = createModel(() => {
 
   return {
     watches,
+    visibleWatches,
+    hiddenWatchCount,
     autoEnrollment,
     detail,
     packageName,
@@ -174,6 +187,9 @@ export const PublicationWatchesModel = createModel(() => {
     error,
     refresh,
     show,
+    showMoreWatches() {
+      shownWatchCount.value += WATCH_PAGE_SIZE;
+    },
     /**
      * Watches a package. In a personal workspace the explicit action is the
      * workspace choice the server asks for; a personal claim that still needs
