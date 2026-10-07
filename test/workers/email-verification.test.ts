@@ -1,9 +1,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { createEmailVerificationToken } from "better-auth/api";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
+import { callWorker, type Jar, signUp } from "./helpers/auth-http";
 
 const ORIGIN = "http://example.com";
 const LOCAL_ORIGIN = "http://localhost:5173";
@@ -174,6 +176,100 @@ describe("email verification gating", () => {
       const body = (await res.json()) as { token: string | null };
       // No SEND_EMAIL binding => verification not enforced => auto sign-in.
       expect(typeof body.token).toBe("string");
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+});
+
+describe("email verification link", () => {
+  async function verificationPath(email: string) {
+    const token = await createEmailVerificationToken(env.BETTER_AUTH_SECRET as string, email);
+    return `/api/auth/verify-email?token=${token}&callbackURL=%2Fverify-email`;
+  }
+
+  async function sessionUser(jar: Jar) {
+    const { json } = await callWorker("GET", "/api/auth/get-session", { jar });
+    return (json?.user ?? null) as { email: string; emailVerified: boolean } | null;
+  }
+
+  test(
+    "verifies the address without signing in a browser that holds no session, even past 2FA",
+    async () => {
+      withEmailBinding();
+      const email = await signUp(new Map());
+      const db = createDb(env.DB);
+      await db
+        .update(schema.user)
+        .set({ twoFactorEnabled: true })
+        .where(eq(schema.user.email, email));
+
+      const inboxOnly: Jar = new Map();
+      const { res } = await callWorker("GET", await verificationPath(email), { jar: inboxOnly });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get("set-cookie") ?? "").not.toContain("session_token");
+      expect(await sessionUser(inboxOnly)).toBeNull();
+      const [row] = await db
+        .select({ emailVerified: schema.user.emailVerified })
+        .from(schema.user)
+        .where(eq(schema.user.email, email));
+      expect(row?.emailVerified).toBe(true);
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "refreshes the verified state of the session that opened it",
+    async () => {
+      withEmailBinding();
+      const jar: Jar = new Map();
+      const email = await signUp(jar);
+      expect((await sessionUser(jar))?.emailVerified).toBe(false);
+
+      const { res } = await callWorker("GET", await verificationPath(email), { jar });
+
+      expect(res.status).toBe(302);
+      // Read through the cookie cache, which would otherwise still say false.
+      expect(await sessionUser(jar)).toMatchObject({ email, emailVerified: true });
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "opened in a browser signed in to another account, verifies the link's account only",
+    async () => {
+      withEmailBinding();
+      const linkOwner = await signUp(new Map());
+      const other: Jar = new Map();
+      const otherEmail = await signUp(other);
+
+      const { res } = await callWorker("GET", await verificationPath(linkOwner), { jar: other });
+
+      expect(res.status).toBe(302);
+      expect(await sessionUser(other)).toMatchObject({ email: otherEmail, emailVerified: false });
+      const db = createDb(env.DB);
+      const [row] = await db
+        .select({ emailVerified: schema.user.emailVerified })
+        .from(schema.user)
+        .where(eq(schema.user.email, linkOwner));
+      expect(row?.emailVerified).toBe(true);
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "leaves change-email off, whose verification branches would sign the link's holder in",
+    async () => {
+      const jar: Jar = new Map();
+      await signUp(jar);
+
+      const { res, json } = await callWorker("POST", "/api/auth/change-email", {
+        body: { newEmail: `moved-${crypto.randomUUID()}@example.test` },
+        jar,
+      });
+
+      expect(res.status).toBe(400);
+      expect(json?.code).toBe("CHANGE_EMAIL_DISABLED");
     },
     WORKER_AUTH_TIMEOUT_MS,
   );

@@ -2,7 +2,7 @@ import { hexEncode } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
@@ -358,7 +358,12 @@ export function createAuth(env: Cloudflare.Env) {
     ...(sessionCache ? { verification: { storeInDatabase: true as const } } : {}),
     rateLimit: { storage: "memory" as const },
     emailVerification: {
-      autoSignInAfterVerification: true,
+      // The link proves the inbox, not the account. Signing its holder in
+      // would hand anyone reading the inbox a session past the password and
+      // TOTP, since the two-factor hook only guards the /sign-in/* paths.
+      // `user.changeEmail` must stay off: Better Auth's change-email branches
+      // of /verify-email create a session whatever this flag says.
+      autoSignInAfterVerification: false,
       // Better Auth only defaults this on when sign-in requires verification,
       // which it no longer does — set it explicitly or sign-up would stop
       // sending a link at all. There is no `sendOnSignIn` counterpart: that
@@ -408,6 +413,16 @@ export function createAuth(env: Cloudflare.Env) {
             message: "OAuth scope overrides are not allowed",
           });
         }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/verify-email") return;
+        // Without auto sign-in, Better Auth leaves the cookie cache of a reader
+        // who verified while signed in saying `emailVerified: false` until it
+        // expires, and verified-only actions refuse them meanwhile. Reading the
+        // session past the cache re-signs that cache from the session store,
+        // which the verification already updated; a revoked session reads as
+        // none, and no session is ever created.
+        await getSessionFromCtx(ctx, { disableCookieCache: true });
       }),
     },
     account: {
