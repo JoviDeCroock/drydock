@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { OrganizationRole } from "../lib/auth/roles";
 import type {
   GithubAppInstallationStatus,
@@ -378,6 +379,13 @@ export const scans = sqliteTable(
       table.publicShareToken,
     ),
     publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
+    // Serves the publication cron's "which organizations have gate reviews not
+    // yet recorded as suggestions?" branch, which otherwise walks every scan
+    // every 15 minutes. Partial, so only gate reviews pay for it; the query must
+    // repeat these exact terms for SQLite to choose it.
+    workflowGateEnrollmentIdx: index("scans_workflow_gate_enrollment_idx")
+      .on(table.organizationId, table.packageName)
+      .where(sql`${table.source} = 'workflow_gate' and ${table.status} = 'complete'`),
     // No standalone public_package_key index: the composite above has it as a
     // leading column, so it already serves an equality lookup on the key alone.
   }),

@@ -784,6 +784,36 @@ test("publication monitor explains deferred enrollment and offers gate packages 
   }
 });
 
+test("publication monitor's waiting alert names only what is waiting, in the matching tone", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  let autoEnrollment = { deferred: 0, pending: 1, suggestions: [] };
+  await page.route("**/api/v1/publication-watches", (route) =>
+    route.fulfill({ json: { watches: [], autoEnrollment } }),
+  );
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    await expect(monitor.getByRole("status").filter({ hasText: "queued" })).toHaveText(
+      "1 package queued for monitoring. Background enrollment adds packages in batches every 15 minutes.",
+    );
+    await expect(monitor.getByText(/once a slot frees/)).toHaveCount(0);
+
+    autoEnrollment = { deferred: 2, pending: 0, suggestions: [] };
+    await page.reload();
+    await expect(monitor.getByRole("alert").filter({ hasText: "slot" })).toHaveText(
+      /^2 packages will be watched automatically once a slot frees under this organization's \d+-package monitoring limit\.$/,
+    );
+    await expect(monitor.getByText(/queued for monitoring/)).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("publication monitor pages a long watch list behind Show more", async ({
   browser,
   baseURL,

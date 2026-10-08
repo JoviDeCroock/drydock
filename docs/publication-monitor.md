@@ -28,7 +28,10 @@ waiting. That cron reconciles up to 20 such organizations per tick, in random or
 before it checks watches: those with eligible review history or gate reviews not yet
 recorded, and those with an enrollable candidate and a free slot. It is what reaches
 organizations without an npm connection, turns gate reviews into suggestions, and
-fills a slot freed by a stop. Each reconciliation records up to 50 historical packages
+fills a slot freed by a stop. Finding those organizations still walks every scan for
+review history on each tick, since nothing marks history as already considered; it counts a
+full organization's watches once rather than once per deferred package, and reads gate
+reviews through the partial `scans_workflow_gate_enrollment_idx`. Each reconciliation records up to 50 historical packages
 and enrolls up to 50 watches, so a larger backlog enrolls over several of them. It starts monitoring at enrollment time, never at the older review date;
 older releases are not retrospectively reported as bypasses. The dashboard shows
 where each watch came from, how many eligible packages are waiting for background
