@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { useEffect, useId, useRef } from "preact/hooks";
@@ -69,11 +70,17 @@ function ChoiceForm({
   model,
   includeKeep,
   onChanged,
+  lead,
 }: {
   model: ClaimModel;
   /** A pending claim may stay here; a confirmed one only offers a move. */
   includeKeep: boolean;
   onChanged: (result: ChoiceResult) => void;
+  /**
+   * What the choice is about, set beside the controls as one row that wraps on
+   * a phone. Without it the controls stack under the caller's own heading.
+   */
+  lead?: ComponentChildren;
 }) {
   const destinations = useComputed(() => model.management.value?.destinations ?? []);
   const selection = useComputed(() => {
@@ -95,14 +102,18 @@ function ChoiceForm({
     return target ? `Move to ${target.name}` : "Choose an organization";
   });
   const hasDestinations = useComputed(() => destinations.value.length > 0);
-  return (
-    <div class="flex flex-col gap-3">
+  // Beside a page's own content (a review, a release list) the choice is
+  // housekeeping: secondary and natural width, never the page's primary
+  // action. Stacked, it is what the dialog or the opened move panel is for.
+  const controls = (
+    <div class="flex flex-wrap items-center gap-2">
       {/* With no shared organization to move into, keeping is the only choice
           and the button alone says so. */}
       <Show when={hasDestinations}>
         {() => (
           <Select
             aria-label="Managing organization"
+            size={lead ? "sm" : "md"}
             value={model.selectedOrganizationId}
             disabled={model.busy}
             onChange={(id) => {
@@ -120,6 +131,29 @@ function ChoiceForm({
           </Select>
         )}
       </Show>
+      <Button
+        variant={lead ? "secondary" : "primary"}
+        size={lead ? "sm" : "md"}
+        disabled={disabled}
+        onClick={async () => {
+          const result = await model.choose();
+          if (result) onChanged(result);
+        }}
+      >
+        {actionLabel}
+      </Button>
+    </div>
+  );
+  return (
+    <div class="flex flex-col gap-3">
+      {lead ? (
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex min-w-0 flex-1 basis-[260px] flex-col gap-1">{lead}</div>
+          {controls}
+        </div>
+      ) : (
+        controls
+      )}
       <Show when={permanentMove}>
         {(name) => (
           <Alert tone="warn">
@@ -129,15 +163,6 @@ function ChoiceForm({
           </Alert>
         )}
       </Show>
-      <Button
-        disabled={disabled}
-        onClick={async () => {
-          const result = await model.choose();
-          if (result) onChanged(result);
-        }}
-      >
-        {actionLabel}
-      </Button>
     </div>
   );
 }
@@ -159,12 +184,18 @@ function PendingCard({
   onChanged: (result: ChoiceResult) => void;
 }) {
   return (
-    <Card class="flex flex-col gap-3">
-      <div class="flex flex-col gap-1">
-        <p class="m-0 text-[13px] font-medium">Choose where this package is managed</p>
-        <ChoiceIntro />
-      </div>
-      <ChoiceForm model={model} includeKeep onChanged={onChanged} />
+    <Card padding="tight">
+      <ChoiceForm
+        model={model}
+        includeKeep
+        onChanged={onChanged}
+        lead={
+          <>
+            <p class="m-0 text-[13px] font-medium">Choose where this package is managed</p>
+            <EmptyLine>Monitoring and the public badge stay off until you choose.</EmptyLine>
+          </>
+        }
+      />
     </Card>
   );
 }

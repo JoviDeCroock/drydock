@@ -14,7 +14,7 @@ function row(status: string) {
 describe("scanRowPackageLink", () => {
   test.each(["pending", "running"])("opens the %s review itself", (status) => {
     expect(scanRowPackageLink(row(status))).toEqual({
-      href: "/dashboard/scans/scan%2F1",
+      href: "/dashboard/scans/scan%2F1?org=org-1",
       title: "Open the review in progress for @scope/pkg",
     });
   });

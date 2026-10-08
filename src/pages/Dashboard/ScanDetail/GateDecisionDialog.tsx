@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import type { DecisionStatus } from "../../../models/scan";
+import { scanDetailPath } from "../../../lib/scan-detail-path";
 import type {
   GatePackageDecision,
   GatePackageScan,
@@ -79,10 +80,13 @@ function packageLabel(pkg: GatePackageScan): string {
 export function GatePackagesPanel({
   gate,
   currentScanId,
+  organizationId,
   onDecide,
 }: {
   gate: PublicWorkflowGate;
   currentScanId: string;
+  /** A gate's package reviews all belong to the gate's organization. */
+  organizationId?: string | null;
   /** Opens the decision dialog for the current package; absent until its review resolves. */
   onDecide?: () => void;
 }) {
@@ -143,7 +147,7 @@ export function GatePackagesPanel({
                 ) : (
                   <a
                     class="font-mono text-[11px] underline text-accent"
-                    href={`/dashboard/scans/${encodeURIComponent(pkg.scanId)}`}
+                    href={scanDetailPath(pkg.scanId, organizationId)}
                   >
                     {pending && !pkg.decision ? "review →" : "open →"}
                   </a>

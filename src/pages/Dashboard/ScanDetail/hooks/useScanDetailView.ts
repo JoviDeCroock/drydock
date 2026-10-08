@@ -5,10 +5,12 @@ import { normalizeIntentEnvelope } from "../../../../../server/lib/intent-envelo
 import type { DiffEntry } from "../../../../../server/lib/review";
 import { npmStagedPackagesUrlFor } from "../../../../lib/npm-staged-url";
 import { getDashboardReturnUrl, useQuerySignal } from "../../../../lib/query-state";
+import { scanDetailPath } from "../../../../lib/scan-detail-path";
 import { sessionModel } from "../../../../models/auth";
 import type { WorkflowGateDecision } from "../../../../models/github-app";
 import type { ScanDecision, ScanDetailModelInstance } from "../../../../models/scan";
 import { findingCountsByPath } from "../../../../features/review/diff-entries";
+import { unpinnedFindings } from "../../../../features/review/risk-index";
 import type { TreeNotice } from "../../../../features/review/ReviewWorkbench";
 import type { ReviewFinding } from "../../../../features/review/types";
 import { useSelectedDiffFile } from "../../../../features/review/useSelectedDiffFile";
@@ -212,11 +214,22 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
       Boolean(verdict.value?.hasSignals),
   );
 
-  const inspectFindings = () => focusReportSection("risk-signals");
   // AI findings carry no file anchor, and a finding can name a file the
   // current comparison does not contain; both fall back to the index.
   const canInspectFinding = (finding: ReviewFinding) =>
     finding.source !== "ai" && diffEntries.peek().some((entry) => entry.path === finding.file);
+  // Pinned findings are annotated in the diff and listed in the review notes;
+  // the index holds the rest.
+  const indexedFindings = useComputed(() =>
+    unpinnedFindings(
+      findingsWithDiffStatus.value,
+      new Set(diffEntries.value.map((entry) => entry.path)),
+    ),
+  );
+  // With every signal pinned in the diff there is no index to move to, so
+  // "see the findings" leads to the diff that holds them.
+  const inspectFindings = () =>
+    focusReportSection(indexedFindings.peek().length ? "risk-signals" : "release-workbench");
   const inspectFile = (path: string, finding: ReviewFinding | null = null) => {
     const entry = diffEntries.peek().find((item) => item.path === path);
     if (!entry) {
@@ -305,6 +318,13 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     if (model.gateRetryStatus.peek() === "idle") location.route("/dashboard", true);
   };
 
+  const reviewAgainBusy = useComputed(() => model.reviewAgainStatus.value === "starting");
+  const handleReviewAgain = async () => {
+    const organizationId = model.detail.peek()?.scan.organizationId ?? null;
+    const created = await model.reviewAgain();
+    if (created) location.route(scanDetailPath(created, organizationId));
+  };
+
   const handleDelete = async () => {
     const deleted = await model.deleteFailed();
     if (deleted) location.route(getDashboardReturnUrl(), true);
@@ -331,6 +351,7 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     treeNotice,
     diffEntries,
     findingsWithDiffStatus,
+    indexedFindings,
     selectedEntry: selected.entry,
     selectedFindings: selected.findings,
     findingCounts,
@@ -346,6 +367,8 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     handleDecisionSubmit,
     handleGateDecision,
     handleGateRetry,
+    reviewAgainBusy,
+    handleReviewAgain,
     handleDelete,
   };
 }

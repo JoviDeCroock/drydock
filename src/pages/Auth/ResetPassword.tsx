@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { useLocation } from "preact-iso";
 import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -15,10 +16,14 @@ import { Input } from "../../components/Input";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { Muted } from "../../components/Typography";
+import { authPageHref } from "./auth-links";
 
 type LinkState = "reading" | "missing" | "ready";
 
 export default function ResetPasswordPage() {
+  const location = useLocation();
+  const signInHref = authPageHref("/login", location.query.returnTo);
+  const requestLinkHref = authPageHref("/forgot-password", location.query.returnTo);
   const reset = useModel(PasswordResetModel);
   const linkState = useSignal<LinkState>("reading");
   const token = useSignal("");
@@ -58,7 +63,7 @@ export default function ResetPasswordPage() {
           <Alert tone="critical">
             This page needs the link from your reset email. Open it again, or request a new one.
           </Alert>
-          <LinkButton href="/forgot-password" class="self-start">
+          <LinkButton href={requestLinkHref} class="self-start">
             Request a new link
           </LinkButton>
         </Card>
@@ -118,14 +123,14 @@ export default function ResetPasswordPage() {
               </form>
 
               <p class="text-[13px] text-ink-muted m-0">
-                Link expired? <a href="/forgot-password">Request a new one</a>
+                Link expired? <a href={requestLinkHref}>Request a new one</a>
               </p>
             </>
           }
         >
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Password set</h1>
           <Alert tone="ok">Your new password is saved and every device was signed out.</Alert>
-          <LinkButton href="/login" class="self-start">
+          <LinkButton href={signInHref} class="self-start">
             Go to sign in
           </LinkButton>
         </Show>

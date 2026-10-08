@@ -52,10 +52,11 @@ export function GithubAppSection({
             the section's next step and "Modify installation" is maintenance. */}
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <Muted class="text-[13px] m-0 max-w-[600px]">
-            Install the Drydock GitHub App on your organization so releases gated by a GitHub
-            Actions environment can be approved here. Drydock never asks for publish credentials.
-            Your workflow keeps its own OIDC/Trusted Publishing trust, and Drydock only acts as the
-            deployment-protection approver.
+            <span class="font-medium text-ink">Workflow Gate — enforced.</span> Install the Drydock
+            GitHub App on your organization so releases gated by a GitHub Actions environment can be
+            approved here. Drydock never asks for publish credentials. Your workflow keeps its own
+            OIDC/Trusted Publishing trust, and Drydock only acts as the deployment-protection
+            approver.
           </Muted>
           <Button
             variant={installations.length ? "secondary" : "primary"}

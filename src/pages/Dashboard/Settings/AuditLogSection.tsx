@@ -1,5 +1,6 @@
 import { useModel } from "@preact/signals";
 import { formatTimestamp } from "../../../lib/format";
+import { scanDetailPath } from "../../../lib/scan-detail-path";
 import {
   AuditLogModel,
   type AuditActor,
@@ -26,8 +27,11 @@ function actorLabel(actor: AuditActor): string {
 
 export function AuditLogSection({
   audit,
+  organizationId,
 }: {
   audit: ReturnType<typeof useModel<typeof AuditLogModel.prototype>>;
+  /** The organization the events were read for; their reviews belong to it. */
+  organizationId?: string | null;
 }) {
   const events = audit.events.value;
   const loaded = audit.loaded.value;
@@ -96,7 +100,7 @@ export function AuditLogSection({
                       <a
                         key="scan"
                         class="text-accent hover:underline"
-                        href={`/dashboard/scans/${event.scanId}`}
+                        href={scanDetailPath(event.scanId, organizationId)}
                       >
                         view scan
                       </a>

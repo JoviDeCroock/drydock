@@ -13,6 +13,7 @@ export type ScanDecision = (typeof SCAN_DECISIONS)[number];
 export const SCAN_DECISION_FILTERS = [
   "undecided",
   "published_without_decision",
+  "decided",
   "publish",
   "no_publish",
   "all",

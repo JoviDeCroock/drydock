@@ -46,6 +46,7 @@ export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter =
   | "undecided"
   | "published_without_decision"
+  | "decided"
   | "publish"
   | "no_publish"
   | "all";
@@ -193,6 +194,56 @@ export interface PublishedScanRequest {
 export function createPublishedScan(
   request: PublishedScanRequest,
 ): Promise<{ scan: { id: string } }> {
+  return apiJson<{ scan: { id: string } }>("/api/v1/scans", request);
+}
+
+/** What `POST /api/v1/scans` accepts: a staged publish by its stage id, or a published pair. */
+export type StartScanRequest = { stageId: string } | PublishedScanRequest;
+
+const PUBLISHED_STAGE_ID_PREFIX = "published:";
+
+// Failure codes that mean the staged candidate itself is gone: npm published,
+// deleted, or blocked it, so a fresh review has nothing left to read.
+const CANDIDATE_GONE_CODES = new Set([
+  "staged_release_published",
+  "staged_release_deleted",
+  "staged_release_blocked",
+]);
+
+/**
+ * The request that reviews a failed scan's release again, or null when the
+ * same start path cannot: a workflow-gate review is retried through its gate,
+ * a superseded review already has a newer one, and a staged candidate npm no
+ * longer holds cannot be fetched. A staged review restarts from its stage id
+ * through the normal start route, which re-checks the organization's npm
+ * access; a published-pair review restarts from the coordinates its stage id
+ * names (`published:<ecosystem>:<name>@<version>`). A failed scan records no
+ * baseline, so the server picks the default predecessor again.
+ */
+export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScanRequest | null {
+  if (scan.status !== "failed" || scan.registryStatusSupersededAt != null) return null;
+  if (scan.source === "manual" || scan.source === "auto_discovery") {
+    const code = (scan.errorJson as { code?: unknown } | null | undefined)?.code;
+    if (typeof code === "string" && CANDIDATE_GONE_CODES.has(code)) return null;
+    return { stageId: scan.stageId };
+  }
+  if (scan.source === "published" && scan.stageId.startsWith(PUBLISHED_STAGE_ID_PREFIX)) {
+    const rest = scan.stageId.slice(PUBLISHED_STAGE_ID_PREFIX.length);
+    const colon = rest.indexOf(":");
+    const coordinates = rest.slice(colon + 1);
+    // The last `@` past index 0, so a scoped name keeps its own.
+    const at = coordinates.lastIndexOf("@");
+    if (colon <= 0 || at <= 0 || at === coordinates.length - 1) return null;
+    return {
+      ecosystem: rest.slice(0, colon),
+      packageName: coordinates.slice(0, at),
+      version: coordinates.slice(at + 1),
+    };
+  }
+  return null;
+}
+
+export function startScan(request: StartScanRequest): Promise<{ scan: { id: string } }> {
   return apiJson<{ scan: { id: string } }>("/api/v1/scans", request);
 }
 

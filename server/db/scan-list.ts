@@ -5,7 +5,7 @@
  * reading its risk figures off the denormalized summary so a page of rows
  * never has to load findings.
  */
-import { and, desc, eq, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt, or } from "drizzle-orm";
 import { npmReleaseOutcome, type NpmReleaseOutcome } from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
 import type { ScanDecisionFilter } from "./enums";
@@ -79,7 +79,8 @@ export async function listScans(
     conditions.push(...undecidedQueueConditions());
   } else if (decisionFilter === "published_without_decision") {
     conditions.push(...publishedWithoutDecisionConditions());
-  } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  } else if (decisionFilter === "decided") conditions.push(isNotNull(scans.decision));
+  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
   if (options.cursor) {

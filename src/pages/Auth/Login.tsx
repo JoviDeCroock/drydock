@@ -3,6 +3,7 @@ import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
+import { authPageHref } from "./auth-links";
 import { AuthError, authConfigModel, sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert } from "../../components/Alert";
@@ -33,8 +34,7 @@ export default function LoginPage() {
   const resending = useSignal(false);
   const resent = useSignal(false);
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
-  const registerHref =
-    returnTo === "/dashboard" ? "/register" : `/register?returnTo=${encodeURIComponent(returnTo)}`;
+  const registerHref = authPageHref("/register", returnTo);
 
   useCancellableEffect(
     (isCancelled) => {
@@ -138,7 +138,10 @@ export default function LoginPage() {
           </Button>
 
           <p class="text-[13px] text-ink-muted m-0">
-            <a href="/login" onClick={() => (needsVerificationFor.value = null)}>
+            <a
+              href={authPageHref("/login", returnTo)}
+              onClick={() => (needsVerificationFor.value = null)}
+            >
               Back to sign in
             </a>
           </p>
@@ -253,7 +256,7 @@ export default function LoginPage() {
             New here? <a href={registerHref}>Create an account</a>
           </span>
           <Show when={authConfigModel.passwordReset}>
-            <a href="/forgot-password">Forgot password?</a>
+            <a href={authPageHref("/forgot-password", returnTo)}>Forgot password?</a>
           </Show>
         </div>
       </Card>

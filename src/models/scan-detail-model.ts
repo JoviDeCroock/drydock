@@ -13,11 +13,13 @@ import {
   publicAttestationAvailable,
   publicReportUrl,
   type PublicShareInfo,
+  reviewAgainRequest,
   revokeScanShare,
   type ScanCompareResponse,
   type ScanDecision,
   type ScanVersionsResponse,
   setScanDecision,
+  startScan,
 } from "./scan-api";
 /**
  * One scan's workbench state: the report, file selection, share links, gate
@@ -81,6 +83,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const decisionError = signal<string | null>(null);
   const deleteStatus = signal<DeleteStatus>("idle");
   const deleteError = signal<string | null>(null);
+  const reviewAgainStatus = signal<"idle" | "starting" | "error">("idle");
+  const reviewAgainError = signal<string | null>(null);
   // Public share link state lives in its own signal (not derived from `detail`)
   // so the share dialog's enable/revoke round-trip re-renders only the dialog
   // host — mutating `detail` re-renders the whole page, including the
@@ -97,6 +101,10 @@ export const ScanDetailModel = createModel((id: string) => {
   const gateRetryError = signal<string | null>(null);
 
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
+  const canReviewAgain = computed(() => {
+    const scan = detail.value?.scan;
+    return scan ? reviewAgainRequest(scan) !== null : false;
+  });
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
   // The version the persisted report (diff, risk summary, finding annotations)
@@ -304,6 +312,9 @@ export const ScanDetailModel = createModel((id: string) => {
     decisionError,
     deleteStatus,
     deleteError,
+    reviewAgainStatus,
+    reviewAgainError,
+    canReviewAgain,
     share,
     shareStatus,
     shareError,
@@ -468,6 +479,29 @@ export const ScanDetailModel = createModel((id: string) => {
         this.deleteError.value = errorMessage(err);
         this.deleteStatus.value = "error";
         return false;
+      }
+    },
+
+    /**
+     * Start a fresh review of this failed scan's release through the normal
+     * start route, and hand back the new scan's id. This scan stays as it is:
+     * the new review supersedes it the way any later review of the same
+     * staged version does.
+     */
+    async reviewAgain(): Promise<string | null> {
+      const scan = this.detail.peek()?.scan;
+      const request = scan ? reviewAgainRequest(scan) : null;
+      if (!request || this.reviewAgainStatus.peek() === "starting") return null;
+      this.reviewAgainStatus.value = "starting";
+      this.reviewAgainError.value = null;
+      try {
+        const { scan: created } = await startScan(request);
+        this.reviewAgainStatus.value = "idle";
+        return created.id;
+      } catch (err) {
+        this.reviewAgainError.value = errorMessage(err);
+        this.reviewAgainStatus.value = "error";
+        return null;
       }
     },
 

@@ -35,7 +35,9 @@ const INCIDENT_DIFFS: Array<DiffSpec & { note: string; caseStudyPath?: string }>
 
 /**
  * Live curated incident diffs — the no-account entry point to the product,
- * shared by the marketing landing and the /diff landing.
+ * shared by the marketing landing and the /diff landing. Every card opens the
+ * live diff the section promises; an incident with a write-up keeps it as a
+ * quiet second link rather than as the card's destination.
  */
 export function IncidentDiffCards() {
   return (
@@ -49,15 +51,12 @@ export function IncidentDiffCards() {
           class="flex flex-col gap-2"
         >
           <a
-            href={
-              incident.caseStudyPath ??
-              packageDiffPath(
-                incident.ecosystem,
-                incident.packageName,
-                incident.fromVersion,
-                incident.toVersion,
-              )
-            }
+            href={packageDiffPath(
+              incident.ecosystem,
+              incident.packageName,
+              incident.fromVersion,
+              incident.toVersion,
+            )}
             class="flex flex-col gap-2 no-underline text-inherit"
           >
             <h2 class="text-base font-medium tracking-[-0.005em] m-0 break-all">
@@ -68,6 +67,14 @@ export function IncidentDiffCards() {
             </span>
             <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{incident.note}</p>
           </a>
+          {incident.caseStudyPath ? (
+            <a
+              href={incident.caseStudyPath}
+              class="self-start text-[12px] text-ink-subtle underline hover:text-ink"
+            >
+              Read the write-up
+            </a>
+          ) : null}
         </Card>
       ))}
     </div>

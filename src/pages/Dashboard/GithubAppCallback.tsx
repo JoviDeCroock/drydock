@@ -15,9 +15,11 @@ import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { MonoDetail, Muted, SectionLabel } from "../../components/Typography";
-import { UserMenu } from "../../components/UserMenu";
+import { AppHeaderActions } from "../../features/account/AppHeaderActions";
+import { SETTINGS_SECTION, settingsTabHref } from "./Settings/settings-links";
 
-const SETTINGS_PATH = "/dashboard/settings";
+// Every way back lands on the section the install started from, not General.
+const SETTINGS_PATH = settingsTabHref("integrations", SETTINGS_SECTION.githubApp);
 const SUCCESS_REDIRECT_MS = 1500;
 
 type CallbackPhase = "checking-session" | "verifying" | "success" | "error";
@@ -59,7 +61,7 @@ export default function GithubAppCallbackPage() {
     })();
   }, []);
 
-  const user = sessionModel.user.value;
+  const signedIn = sessionModel.authenticated.value;
   const callbackError = githubApp.callbackError.value;
 
   const heading = useComputed(() =>
@@ -73,17 +75,8 @@ export default function GithubAppCallbackPage() {
     phase.value === "success" ? githubApp.lastLinked.value : null,
   );
 
-  const onSignOut = async () => {
-    await sessionModel.signOut();
-    location.route("/", true);
-  };
-
   return (
-    <PageShell
-      headerActions={
-        user ? <UserMenu email={user.email} name={user.name} onSignOut={onSignOut} /> : undefined
-      }
-    >
+    <PageShell headerActions={signedIn ? <AppHeaderActions current="settings" /> : undefined}>
       <header class="flex flex-col gap-2 max-w-[640px]">
         <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">{heading}</h1>
         <Muted class="text-[14px] leading-[1.55] m-0">
@@ -139,7 +132,7 @@ export default function GithubAppCallbackPage() {
             <div class="flex gap-2 flex-wrap">
               <LinkButton href={SETTINGS_PATH}>Back to settings</LinkButton>
               <LinkButton variant="ghost" href="/dashboard">
-                Go to dashboard
+                Go to reviews
               </LinkButton>
             </div>
           </Card>

@@ -6,13 +6,12 @@ import {
   useSignalEffect,
 } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { useLocation } from "preact-iso";
 import { useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { formatDateTime, formatRelativeTime, pluralize } from "../../lib/format";
+import { scanDetailPath } from "../../lib/scan-detail-path";
 import { useNow } from "../../lib/use-now";
 import { activeOrganizationId } from "../../models/active-organization";
-import { sessionModel } from "../../models/auth";
 import {
   closeGettingStartedPanel,
   gettingStartedDone,
@@ -41,6 +40,7 @@ import { ScanOverviewModel } from "../../models/scan-overview";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
+import { AppHeaderActions } from "../../features/account/AppHeaderActions";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
 import { useAuthedDashboardSession } from "../../features/account/useAuthedDashboardSession";
 import { PublicationMonitor } from "../../features/publication-monitor/PublicationMonitor";
@@ -52,26 +52,26 @@ import { Button, LinkButton, LoadMoreButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
 import { Menu, MenuItem, MenuLink } from "../../components/Menu";
-import { OrgSwitcher } from "../../components/OrgSwitcher";
 import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
 import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
-import { UserMenu } from "../../components/UserMenu";
 import { BatchApprovalDialog } from "./BatchApprovalDialog";
-import { GettingStarted } from "./GettingStarted";
+import { GettingStarted, PublishedReviewForm } from "./GettingStarted";
 import { scanRowPackageLink } from "./scan-row-link";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
 import { DecisionDialog } from "./ScanDetail/DecisionDialog";
 import { StageCommandDialogHost } from "./ScanDetail/StageCommandDialog";
 
 export default function DashboardPage() {
-  const location = useLocation();
   const scans = useModel(ScanListModel);
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const overview = useModel(ScanOverviewModel);
   const personalWorkspace = useComputed(() => organizations.active.value?.isPersonal === true);
+  // The first-run panel carries the same form as its first step; once the
+  // panel closes for good the dashboard still needs a way to start a review.
+  const reviewFormOutsideOnboarding = useComputed(() => !gettingStartedPanelOpen.value);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -123,11 +123,6 @@ export default function DashboardPage() {
     }
   });
 
-  const onSignOut = async () => {
-    await sessionModel.signOut();
-    location.route("/", true);
-  };
-
   if (!sessionChecked.value) {
     return (
       <PageShell>
@@ -137,7 +132,6 @@ export default function DashboardPage() {
     );
   }
 
-  const user = sessionModel.user.value;
   const scansLoaded = scans.loaded.value;
   const npmLoaded = npm.loaded.value;
   const overviewLoaded = overview.loaded.value;
@@ -146,20 +140,12 @@ export default function DashboardPage() {
   return (
     <PageShell
       headerActions={
-        <>
-          <LinkButton variant="ghost" size="sm" href="/dashboard/settings">
-            Settings
-          </LinkButton>
-          <OrgSwitcher
-            organizations={organizations.organizations.value}
-            activeOrganizationId={organizations.activeOrganizationId.value}
-            busy={organizations.busy.value}
-            error={organizations.error.value}
-            onActivate={onSwitchOrganization}
-            onCreate={onCreateOrganization}
-          />
-          <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
-        </>
+        <AppHeaderActions
+          current="reviews"
+          organizations={organizations}
+          onActivate={onSwitchOrganization}
+          onCreate={onCreateOrganization}
+        />
       }
     >
       <DashboardHeader />
@@ -176,6 +162,9 @@ export default function DashboardPage() {
             error={overview.error}
           />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
+          <Show when={reviewFormOutsideOnboarding}>
+            <ReviewPublishedSection npmScope={npmConnectionScope(npm.connection.value)} />
+          </Show>
           <PublicationMonitor
             reviews={scans.scans}
             personalWorkspace={personalWorkspace}
@@ -382,7 +371,7 @@ function RecentReviewsSection({
           ) : (
             <Muted class="text-[13px] m-0">
               Checking npm for staged releases needs a validated npm token.{" "}
-              <a href="/dashboard/settings?tab=integrations" class="underline">
+              <a href="/dashboard/settings?tab=integrations#npm-access" class="underline">
                 Connect one
               </a>
               .
@@ -405,7 +394,7 @@ function RecentReviewsSection({
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
           {showStartedMessage && discovery ? (
             <Muted class="text-[13px] m-0">
-              {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+              {`Found ${discovery.created} staged release${discovery.created === 1 ? "" : "s"} on npm and started ${discovery.created === 1 ? "its review" : "their reviews"}${
                 startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
               }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
             </Muted>
@@ -498,6 +487,7 @@ const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
     value: "published_without_decision",
     label: "Published with no decision in this organization",
   },
+  { value: "decided", label: "Decided" },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
@@ -615,7 +605,7 @@ function NpmConnectionCallout({
               &ldquo;Check npm&rdquo; and scheduled discovery are unavailable. Revalidate it in{" "}
             </>
           )}
-          <a class="underline text-accent" href="/dashboard/settings?tab=integrations">
+          <a class="underline text-accent" href="/dashboard/settings?tab=integrations#npm-access">
             Settings &rarr; Integrations
           </a>
           .
@@ -630,6 +620,28 @@ function formatStartedScanLabel(scan: { packageName: string | null; version: str
   return scan.packageName || scan.version || null;
 }
 
+// Reviewing a release that is already public needs no token and no staged
+// candidate, so it stays available after onboarding: the same persisted review
+// the first-run panel starts, in the same card anatomy as the publication monitor.
+function ReviewPublishedSection({ npmScope }: { npmScope: string | null }) {
+  return (
+    <Card as="section" padding="compact" class="flex flex-col gap-3 md:flex-row md:items-center">
+      <div class="flex-1 min-w-0 flex flex-col gap-1">
+        <SectionLabel as="h2" class="after:hidden">
+          Review a published release
+        </SectionLabel>
+        <p class="m-0 text-[13px] text-ink-muted">
+          Name an npm package to review its latest release against the one before it, or name a
+          version.
+        </p>
+      </div>
+      <div class="shrink-0">
+        <PublishedReviewForm npmScope={npmScope} docsLink={false} />
+      </div>
+    </Card>
+  );
+}
+
 function NpmSetupCallout() {
   return (
     <Card as="section" padding="compact" class="flex flex-wrap items-center justify-between gap-3">
@@ -639,7 +651,11 @@ function NpmSetupCallout() {
           Connect npm in settings so Drydock can fetch staged tarballs and run reviews.
         </Muted>
       </div>
-      <LinkButton variant="primary" size="sm" href="/dashboard/settings?tab=integrations">
+      <LinkButton
+        variant="primary"
+        size="sm"
+        href="/dashboard/settings?tab=integrations#npm-access"
+      >
         Open settings
       </LinkButton>
     </Card>
@@ -685,7 +701,7 @@ function ScanRows({
                     <ScanPackageName scan={scan} packageName={scan.packageName} />
                     {scan.stagedVersion ? (
                       <a
-                        href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                        href={scanDetailPath(scan.id, scan.organizationId)}
                         class="shrink-0 font-mono text-[13px] font-medium"
                       >
                         @{scan.stagedVersion}
@@ -694,7 +710,7 @@ function ScanRows({
                   </span>
                 ) : (
                   <a
-                    href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                    href={scanDetailPath(scan.id, scan.organizationId)}
                     class="min-w-0 truncate text-[14px] font-medium"
                   >
                     {scan.stageId}
@@ -746,9 +762,7 @@ function ScanRows({
                   </span>
                 )}
               >
-                <MenuLink href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                  Open review
-                </MenuLink>
+                <MenuLink href={scanDetailPath(scan.id, scan.organizationId)}>Open review</MenuLink>
                 {scan.status === "failed" ? (
                   <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
                     Delete review

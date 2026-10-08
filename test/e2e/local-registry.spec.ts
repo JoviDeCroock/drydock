@@ -118,13 +118,16 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       0,
     );
     await expect(page.getByText("release risk high").first()).toBeVisible();
-    // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
+    // Every finding here sits on a changed line, so it is pinned in the diff
+    // and listed in the review notes; the risk index does not state it a third
+    // time, and with nothing left to hold it is not rendered at all.
+    const notes = page
+      .getByRole("heading", { name: "Review notes", exact: true })
+      .locator("xpath=ancestor::details[1]");
     await expect(
-      page.locator("#risk-signals").getByText("implicit install: node-gyp rebuild").first(),
+      notes.locator("summary").filter({ hasText: "Install script implicit node gyp" }),
     ).toBeVisible();
-    await expect(
-      page.locator("#risk-signals").getByText("install-script.implicit-node-gyp").first(),
-    ).toBeVisible();
+    await expect(page.locator("#risk-signals")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Artifact verification" })).toBeVisible();
     await expect(page.getByText("verified", { exact: true })).toBeVisible();
     // The file tree carries a severity-toned finding count badge for the flagged
@@ -175,7 +178,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await expect(commandDialog).toBeHidden();
 
     // Now exercise Check npm as the live entry point. The button kicks off
-    // discovery and we wait only for the "Started N new reviews" message —
+    // discovery and we wait only for the "Found N staged releases on npm" message —
     // the resulting background scans are exercised by the scenarios below.
     await page.goto("/dashboard");
     const checkNpm = page
@@ -184,7 +187,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       .getByRole("button", { name: "Check npm", exact: true });
     await expect(checkNpm).toBeEnabled({ timeout: 30_000 });
     await checkNpm.click();
-    await expect(page.getByText(/Started \d+ new reviews? from npm/)).toBeVisible({
+    await expect(page.getByText(/Found \d+ staged releases? on npm and started/)).toBeVisible({
       timeout: 60_000,
     });
   } finally {

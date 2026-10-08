@@ -36,6 +36,10 @@ export interface PublicReport {
     stagedVersion: string | null;
     previousVersion: string | null;
   };
+  // Only what the page reads to link the package's public diff; both are
+  // additive, nullable fields of the export.
+  provenance?: { ecosystem?: string } | null;
+  registryStatus?: { status?: string } | null;
   riskSummary: {
     releaseRisk: string;
     contextRisk: string;

@@ -27,7 +27,10 @@ const base =
 const variantStyles: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-on hover:bg-accent-hover",
   secondary: "bg-surface-2 text-ink border-border hover:border-border-strong",
-  ghost: "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink",
+  // A ghost link marked aria-current="page" is the header nav's current
+  // section: the accent text the settings sidebar uses for its active tab.
+  ghost:
+    "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink aria-[current=page]:text-accent aria-[current=page]:hover:text-accent",
   danger: "bg-danger text-white hover:brightness-95",
 };
 

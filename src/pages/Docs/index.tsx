@@ -1,5 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -868,10 +869,19 @@ jobs:
                 </p>
               </div>
               <div class="flex flex-wrap gap-3 shrink-0">
-                <LinkButton href="/register">Review my next release</LinkButton>
-                <LinkButton href="/login" variant="secondary">
-                  Sign in
-                </LinkButton>
+                <Show
+                  when={authed}
+                  fallback={
+                    <>
+                      <LinkButton href="/register">Review my next release</LinkButton>
+                      <LinkButton href="/login" variant="secondary">
+                        Sign in
+                      </LinkButton>
+                    </>
+                  }
+                >
+                  <LinkButton href="/dashboard">Open reviews</LinkButton>
+                </Show>
               </div>
             </Card>
           </section>

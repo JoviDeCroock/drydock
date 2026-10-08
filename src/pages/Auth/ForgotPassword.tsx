@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { useLocation } from "preact-iso";
 import { authConfigModel } from "../../models/auth";
 import { PasswordResetModel } from "../../models/password-reset";
 import { Alert } from "../../components/Alert";
@@ -10,8 +11,11 @@ import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
 import { Muted } from "../../components/Typography";
+import { authPageHref } from "./auth-links";
 
 export default function ForgotPasswordPage() {
+  const location = useLocation();
+  const signInHref = authPageHref("/login", location.query.returnTo);
   const reset = useModel(PasswordResetModel);
   const email = useSignal("");
   // The form stays usable while the config loads, or if the lookup failed; it
@@ -88,7 +92,7 @@ export default function ForgotPasswordPage() {
         </Show>
 
         <p class="text-[13px] text-ink-muted m-0">
-          <a href="/login">Back to sign in</a>
+          <a href={signInHref}>Back to sign in</a>
         </p>
       </Card>
     </PageShell>

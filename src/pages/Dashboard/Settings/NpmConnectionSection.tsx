@@ -53,7 +53,8 @@ export function NpmConnectionSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Connect npm to review your organization's staged packages.
+          <span class="font-medium text-ink">Stage Watchtower — advisory.</span> Connect npm to
+          review your organization's staged packages.
         </Muted>
 
         <Show when={() => npm.connection.value?.validationStatus === "invalid"}>

@@ -3,6 +3,7 @@ import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
+import { authPageHref } from "./auth-links";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert } from "../../components/Alert";
@@ -31,8 +32,7 @@ export default function RegisterPage() {
   const resending = useSignal(false);
   const resent = useSignal(false);
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
-  const signInHref =
-    returnTo === "/dashboard" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  const signInHref = authPageHref("/login", returnTo);
 
   useCancellableEffect(
     (isCancelled) => {
