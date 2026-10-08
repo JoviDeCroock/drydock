@@ -27,7 +27,8 @@ import {
   getScanStatus,
   listScans,
 } from "../../db/scans";
-import { requireActiveOrganization } from "../../lib/auth/active-organization";
+import { recordApiKeyAction } from "../../db/api-keys";
+import { requestActorUserId, requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
@@ -56,7 +57,8 @@ scanLifecycleRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
 
   const db = c.var.db;
-  const session = c.get("authSession");
+  // A `scan` API key acts as its creator (`requestActorUserId`).
+  const actorUserId = requestActorUserId(c);
   const organizationId = await requireActiveOrganization(c, db);
   const limited = await guardRateLimit(
     c,
@@ -80,7 +82,7 @@ scanLifecycleRoutes.post("/", async (c) => {
     id: scanId,
     stageId: prepared.input.stageId,
     organizationId,
-    ownerUserId: session.userId,
+    ownerUserId: actorUserId,
     source: prepared.source,
     packageName: prepared.packageName,
     stagedVersion: prepared.version,
@@ -117,7 +119,7 @@ scanLifecycleRoutes.post("/", async (c) => {
     ...prepared.input,
     scanId,
     organizationId,
-    actorUserId: session.userId,
+    actorUserId,
     source: prepared.source,
   };
 
@@ -139,6 +141,27 @@ scanLifecycleRoutes.post("/", async (c) => {
         finalAttempt: true,
       }),
     );
+  }
+
+  const apiKey = c.get("apiKey");
+  if (apiKey) {
+    // The review is already queued; a failed audit write must not answer 500
+    // and invite a CI retry that starts a second one.
+    await recordApiKeyAction(db, apiKey, {
+      type: "organization.api_key_review_started",
+      scanId,
+      metadata: {
+        ecosystem: prepared.ecosystem,
+        packageName: prepared.packageName,
+        stagedVersion: prepared.version,
+      },
+    }).catch((err: unknown) => {
+      emitOperationalEvent("error", "api_key.audit_failed", {
+        apiKeyId: apiKey.id,
+        scanId,
+        error: describeOperationalError(err),
+      });
+    });
   }
 
   return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);

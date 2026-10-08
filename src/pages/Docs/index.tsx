@@ -854,14 +854,15 @@ jobs:
 
           <section id="automation" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Automate reads</SectionLabel>
+              <SectionLabel as="p">Automate</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Read reviews from scripts and CI. Decide them in Drydock.
+                Start and read reviews from scripts and CI. Decide them in Drydock.
               </h2>
               <Prose>
                 An organization API key reads the same reviews, report exports, and release receipts
-                the dashboard shows. It is read-only by construction: it cannot approve a gate,
-                record a decision, start a review, or change settings.
+                the dashboard shows. A key created with <strong>Read and start reviews</strong> can
+                also start reviews and check npm for staged publishes. No key can approve a gate,
+                record a decision, or change settings.
               </Prose>
             </div>
 
@@ -870,7 +871,9 @@ jobs:
                 Owners and admins create keys in Organization settings → Integrations → API keys.
                 The key is shown once; Drydock keeps only its hash. Every key expires after 30, 90,
                 or 365 days, and a key stops working when the member who created it leaves the
-                organization.
+                organization. Choose <strong>Read and start reviews</strong> for a key that CI uses
+                to start reviews; reviews it starts belong to the member who created it, and each
+                one is recorded in the audit log.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
                 {`curl -H "Authorization: Bearer $DRYDOCK_API_KEY" \\
@@ -896,6 +899,15 @@ drydock scans list --filter undecided
 drydock scans wait <review-id> --fail-on high   # exit 3 at high risk or above
 drydock receipt <review-id> --output receipt.json
 drydock diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+              </CodeBlock>
+              <Prose>
+                With a review-access key, CI can start the review itself instead of waiting for the
+                next scheduled npm check:
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`drydock check-npm                                            # discover staged publishes now
+drydock scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
+drydock scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI

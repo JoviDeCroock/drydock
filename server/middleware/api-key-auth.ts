@@ -44,7 +44,7 @@ function rejectKey(c: AppContext): Response {
  * Authenticates an `Authorization: Bearer ddk_…` request and, on success,
  * attaches the key as `c.var.apiKey` with no `authSession`. Returns the
  * response to send instead when the key is unknown, expired, used on an
- * endpoint outside `API_KEY_ROUTES`, or over its rate budget. Cookies are never
+ * endpoint outside its access level's allowlist, or over its rate budget. Cookies are never
  * consulted for such a request.
  */
 export async function authenticateApiKeyRequest(
@@ -69,9 +69,19 @@ export async function authenticateApiKeyRequest(
   const nowMs = Date.now();
   if (!key || apiKeyExpired(key.expiresAt, nowMs)) return rejectKey(c);
 
-  if (!apiKeyMayReach(answeringRoute(c))) {
+  const verdict = apiKeyMayReach(answeringRoute(c), key.access);
+  if (verdict === "endpoint_not_allowed") {
     return c.json(
       { error: "this endpoint does not accept API keys", code: "api_key_endpoint_not_allowed" },
+      403,
+    );
+  }
+  if (verdict === "access_insufficient") {
+    return c.json(
+      {
+        error: "this API key is read-only; starting reviews needs a key with scan access",
+        code: "api_key_access_insufficient",
+      },
       403,
     );
   }
@@ -83,7 +93,14 @@ export async function authenticateApiKeyRequest(
   );
   if (limited) return limited;
 
-  c.set("apiKey", { id: key.id, organizationId: key.organizationId });
+  c.set("apiKey", {
+    id: key.id,
+    organizationId: key.organizationId,
+    access: key.access,
+    userId: key.createdByUserId,
+    name: key.name,
+    prefix: key.prefix,
+  });
 
   if (apiKeyUseIsStale(key.lastUsedAt, nowMs)) {
     c.executionCtx.waitUntil(

@@ -1,5 +1,6 @@
 import type { OrganizationRole } from "../lib/auth/roles";
 import type {
+  ApiKeyAccess,
   GithubAppInstallationStatus,
   InvitationStatus,
   NpmConnectionValidationStatus,
@@ -156,7 +157,7 @@ export const organizationNotificationRecipients = sqliteTable(
   }),
 );
 
-// Read-only organization API keys (docs/api-keys.md). Only the SHA-256 of the
+// Organization API keys (docs/api-keys.md). Only the SHA-256 of the
 // secret is stored; `prefix` is the non-secret head shown in settings. A key
 // authenticates only while its creator is a member of its organization
 // (`findApiKeyByHash` joins the membership); removing the member or deleting
@@ -171,6 +172,7 @@ export const organizationApiKeys = sqliteTable(
     name: text("name").notNull(),
     prefix: text("prefix").notNull(),
     keyHash: text("key_hash").notNull(),
+    access: text("access").$type<ApiKeyAccess>().notNull().default("read"),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

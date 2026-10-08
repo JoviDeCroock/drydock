@@ -19,6 +19,13 @@ export const SCAN_DECISION_FILTERS = [
 ] as const;
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
+/**
+ * What an organization API key may do. `read` reaches only `API_KEY_ROUTES`;
+ * `scan` also starts reviews (`API_KEY_SCAN_ROUTES`). Neither decides a release.
+ */
+export const API_KEY_ACCESS_LEVELS = ["read", "scan"] as const;
+export type ApiKeyAccess = (typeof API_KEY_ACCESS_LEVELS)[number];
+
 export type InvitationStatus = "pending" | "accepted" | "revoked";
 
 export type NpmConnectionValidationStatus = "valid" | "invalid" | "unvalidated";

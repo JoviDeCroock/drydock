@@ -11,11 +11,13 @@ const TERMINAL_CONTROL = /[\u001b\u0007\u202e]/;
 
 interface Call {
   url: string;
+  method: string;
   headers: Record<string, string>;
   redirect: string | undefined;
+  body: string | undefined;
 }
 
-type Responder = (url: string) => Response | Promise<Response>;
+type Responder = (url: string, init?: RequestInit) => Response | Promise<Response>;
 
 function harness(responder: Responder, env: Record<string, string | undefined> = {}) {
   const calls: Call[] = [];
@@ -28,10 +30,12 @@ function harness(responder: Responder, env: Record<string, string | undefined> =
     fetch: (async (input: string, init?: RequestInit) => {
       calls.push({
         url: String(input),
+        method: init?.method ?? "GET",
         headers: (init?.headers ?? {}) as Record<string, string>,
         redirect: init?.redirect,
+        body: typeof init?.body === "string" ? init.body : undefined,
       });
-      return responder(String(input));
+      return responder(String(input), init);
     }) as typeof fetch,
     stdout: (text: string) => void out.push(text),
     stderr: (text: string) => void err.push(text),
@@ -224,5 +228,160 @@ describe("drydock CLI", () => {
     );
     expect(await tampered.run("receipt", "scan_1")).toBe(1);
     expect(tampered.stdout).toBe("");
+  });
+
+  test("scans start usage errors exit 2 before any request", async () => {
+    const cli = harness(() => json({}));
+    expect(await cli.run("scans", "start")).toBe(2);
+    expect(await cli.run("scans", "start", "left-pad")).toBe(2);
+    expect(await cli.run("scans", "start", "@acme/cli")).toBe(2);
+    expect(await cli.run("scans", "start", "left-pad@")).toBe(2);
+    expect(await cli.run("scans", "start", "@1.0.0")).toBe(2);
+    expect(await cli.run("scans", "start", "a@1", "b@2")).toBe(2);
+    expect(await cli.run("scans", "start", "a@1", "--ecosystem", "cargo")).toBe(2);
+    expect(await cli.run("scans", "start", "a@1", "--fail-on", "high")).toBe(2);
+    expect(await cli.run("scans", "start", "--stage", "stage-1", "a@1")).toBe(2);
+    expect(await cli.run("scans", "start", "--stage", "stage-1", "--ecosystem", "npm")).toBe(2);
+    expect(await cli.run("check-npm", "extra")).toBe(2);
+    expect(await cli.run("check-npm", "--fail-on", "high")).toBe(2);
+    expect(cli.calls).toEqual([]);
+  });
+
+  test("scans start posts a published version, keeping a scoped name's leading @", async () => {
+    const cli = harness(() =>
+      json(
+        {
+          scan: {
+            id: "scan_9",
+            packageName: "@acme/cli",
+            stagedVersion: "2.0.0",
+            status: "pending",
+          },
+        },
+        { status: 202 },
+      ),
+    );
+    expect(
+      await cli.run(
+        "scans",
+        "start",
+        "@acme/cli@2.0.0",
+        "--ecosystem",
+        "npm",
+        "--baseline",
+        "1.9.0",
+      ),
+    ).toBe(0);
+    expect(cli.calls).toHaveLength(1);
+    const [call] = cli.calls;
+    expect(call.url).toBe("https://drydock.test/api/v1/scans");
+    expect(call.method).toBe("POST");
+    expect(call.redirect).toBe("manual");
+    expect(call.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(call.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(call.body ?? "")).toEqual({
+      ecosystem: "npm",
+      packageName: "@acme/cli",
+      version: "2.0.0",
+      baselineVersion: "1.9.0",
+    });
+    expect(cli.stdout).toContain("started review scan_9");
+    expect(cli.stdout).toContain("@acme/cli@2.0.0");
+
+    const pypi = harness(() => json({ scan: { id: "scan_10" } }, { status: 202 }));
+    expect(await pypi.run("scans", "start", "requests@2.32.0", "--ecosystem", "pypi")).toBe(0);
+    expect(JSON.parse(pypi.calls[0].body ?? "")).toEqual({
+      ecosystem: "pypi",
+      packageName: "requests",
+      version: "2.32.0",
+    });
+
+    const staged = harness(() => json({ scan: { id: "scan_11" } }, { status: 202 }));
+    expect(await staged.run("scans", "start", "--stage", "stage-abc")).toBe(0);
+    expect(JSON.parse(staged.calls[0].body ?? "")).toEqual({ stageId: "stage-abc" });
+  });
+
+  test("a read-only key is told it needs scan access, without echoing the key", async () => {
+    const cli = harness(() =>
+      json(
+        {
+          error: "this API key is read-only; starting reviews needs a key with scan access",
+          code: "api_key_access_insufficient",
+        },
+        { status: 403 },
+      ),
+    );
+    expect(await cli.run("scans", "start", "left-pad@1.3.0")).toBe(1);
+    expect(cli.stderr).toContain("read-only");
+    expect(cli.stderr).toContain("scan access");
+    expect(cli.stderr + cli.stdout).not.toContain(KEY);
+    expect(await cli.run("check-npm")).toBe(1);
+  });
+
+  test("scans start --wait polls the new review and applies --fail-on", async () => {
+    const cli = harness((url) =>
+      url.endsWith("/status")
+        ? json({ scan: { id: "scan_9", status: "complete", risk: "high" } })
+        : json({ scan: { id: "scan_9", status: "pending" } }, { status: 202 }),
+    );
+    expect(await cli.run("scans", "start", "pkg@2.0.0", "--wait", "--fail-on", "high")).toBe(3);
+    expect(cli.calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      "POST https://drydock.test/api/v1/scans",
+      "GET https://drydock.test/api/v1/scans/scan_9/status",
+    ]);
+    expect(cli.calls[1].body).toBeUndefined();
+    expect(cli.stderr).toContain("started review scan_9");
+  });
+
+  test("check-npm starts discovery and waits for every started review", async () => {
+    const discovery = {
+      found: 3,
+      created: 2,
+      skipped: 1,
+      scans: [
+        { id: "scan_a", stageId: "stage-a", packageName: "@org/a\u001b[2J", version: "1.0.0" },
+        { id: "scan_b", stageId: "stage-b", packageName: "@org/b", version: "2.0.0" },
+      ],
+    };
+    const risks: Record<string, { status: string; risk: string }> = {
+      scan_a: { status: "complete", risk: "low" },
+      scan_b: { status: "complete", risk: "critical" },
+    };
+    const responder: Responder = (url) => {
+      const status = /\/scans\/(scan_[ab])\/status$/.exec(url);
+      if (status) return json({ scan: { id: status[1], ...risks[status[1]] } });
+      return json(discovery, { status: 202 });
+    };
+
+    const plain = harness(responder);
+    expect(await plain.run("check-npm")).toBe(0);
+    expect(plain.calls).toHaveLength(1);
+    expect(plain.calls[0]).toMatchObject({
+      url: "https://drydock.test/api/v1/staged-publishes/scan",
+      method: "POST",
+      body: undefined,
+    });
+    expect(plain.calls[0].headers["content-type"]).toBeUndefined();
+    expect(plain.stdout).toContain("2 reviews started, 1 skipped");
+    expect(plain.stdout).toContain("@org/b@2.0.0");
+    expect(plain.stdout).not.toMatch(TERMINAL_CONTROL);
+
+    const gated = harness(responder);
+    expect(await gated.run("check-npm", "--wait", "--fail-on", "high")).toBe(3);
+    expect(gated.calls.map((call) => call.url.replace("https://drydock.test", ""))).toEqual([
+      "/api/v1/staged-publishes/scan",
+      "/api/v1/scans/scan_a/status",
+      "/api/v1/scans/scan_b/status",
+    ]);
+
+    expect(await harness(responder).run("check-npm", "--wait", "--fail-on", "critical")).toBe(3);
+    risks.scan_b = { status: "failed", risk: "pending" };
+    expect(await harness(responder).run("check-npm", "--wait", "--fail-on", "high")).toBe(1);
+
+    const asJson = harness(responder);
+    expect(await asJson.run("check-npm", "--wait", "--json")).toBe(1);
+    const printed = JSON.parse(asJson.stdout) as { created: number; results: unknown[] };
+    expect(printed.created).toBe(2);
+    expect(printed.results).toHaveLength(2);
   });
 });

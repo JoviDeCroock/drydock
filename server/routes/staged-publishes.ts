@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { guardRateLimit } from "../lib/rate-limit";
 import { getNpmConnection } from "../db/npm-connections";
-import { requireActiveOrganization } from "../lib/auth/active-organization";
+import { recordApiKeyAction } from "../db/api-keys";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { requestActorUserId, requireActiveOrganization } from "../lib/auth/active-organization";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "../lib/ecosystems/npm/connection";
 import {
@@ -16,7 +18,7 @@ export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: V
 
 stagedPublishesRoutes.post("/scan", async (c) => {
   const db = c.var.db;
-  const session = c.get("authSession");
+  const actorUserId = requestActorUserId(c);
   const organizationId = await requireActiveOrganization(c, db);
 
   const limited = await guardRateLimit(
@@ -46,7 +48,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       db,
       env: c.env,
       connection: savedConnection,
-      actorUserId: session.userId,
+      actorUserId,
       allowInsecureLocalhost,
     });
     const result = await discoverAndQueueStagedPublishes(
@@ -55,7 +57,7 @@ stagedPublishesRoutes.post("/scan", async (c) => {
         env: c.env,
         executionCtx: workerExecutionContext(c.executionCtx),
         organizationId,
-        actorUserId: session.userId,
+        actorUserId,
         source: "manual",
         eventSource: "staged_publishes.discovery",
         allowInsecureLocalhost,
@@ -65,6 +67,19 @@ stagedPublishesRoutes.post("/scan", async (c) => {
     // Blocked stages are only counted as skipped here: the caller has not
     // proven read access to them, so it learns nothing about their claims.
     const { claimBlocked: _claimBlocked, ...body } = result;
+    const apiKey = c.get("apiKey");
+    if (apiKey) {
+      await recordApiKeyAction(db, apiKey, {
+        type: "organization.api_key_discovery_ran",
+        metadata: { found: body.found, created: body.created, skipped: body.skipped },
+      }).catch((err: unknown) => {
+        // The reviews are already queued; see the matching note in scans/lifecycle.ts.
+        emitOperationalEvent("error", "api_key.audit_failed", {
+          apiKeyId: apiKey.id,
+          error: describeOperationalError(err),
+        });
+      });
+    }
     return c.json(body, 202);
   } catch (err) {
     if (err instanceof InvalidNpmConnectionError) {
