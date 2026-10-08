@@ -19,7 +19,7 @@ import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typograph
 import { pluralize } from "../../lib/format";
 import { packageReleasesPath } from "../../lib/package-releases-path";
 import { PackageManagementDialog } from "../package-claims/PackageManagement";
-import { PublicationWatchesModel } from "../../models/publication-watches";
+import { type AutoEnrollmentInfo, PublicationWatchesModel } from "../../models/publication-watches";
 import { watchMetaLine, watchProblemMessage } from "./copy";
 import { CoverageGap } from "./CoverageGap";
 import { ObservationList } from "./ObservationList";
@@ -163,22 +163,21 @@ export function PublicationMonitor({
           </div>
         )}
       </Show>
-      <Show<number | undefined> when={() => model.autoEnrollment.value.pending || undefined}>
-        {(pending) => (
-          <div class="px-5 pb-4">
-            <Alert>
-              {pending} {pluralize("package", pending)} will be watched automatically. Enrollment
-              runs in the background every 15 minutes.
-            </Alert>
-          </div>
-        )}
-      </Show>
-      <Show<number | undefined> when={() => model.autoEnrollment.value.deferred || undefined}>
-        {(deferred) => (
-          <div class="px-5 pb-4">
-            <Alert tone="warn">
-              {deferred} {pluralize("package", deferred)} will be watched automatically once a slot
-              frees under this organization's {PUBLICATION_WATCH_LIMIT}-package monitoring limit.
+      <Show<AutoEnrollmentInfo | undefined>
+        when={() => {
+          const info = model.autoEnrollment.value;
+          return info.pending || info.deferred ? info : undefined;
+        }}
+      >
+        {({ pending, deferred }) => (
+          // Remount when the tone changes: a live region whose role flips in
+          // place is not reliably announced.
+          <div key={deferred ? "warn" : "info"} class="px-5 pb-4">
+            <Alert tone={deferred ? "warn" : "info"}>
+              {pending > 0 &&
+                `${pending} ${pluralize("package", pending)} queued for monitoring. Background enrollment adds packages in batches every 15 minutes. `}
+              {deferred > 0 &&
+                `${deferred} ${pending > 0 ? "more " : ""}${pluralize("package", deferred)} will be watched automatically once a slot frees under this organization's ${PUBLICATION_WATCH_LIMIT}-package monitoring limit.`}
             </Alert>
           </div>
         )}

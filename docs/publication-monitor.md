@@ -258,7 +258,7 @@ All endpoints require a Better Auth session and active-organization membership:
 
 - `GET /api/v1/publication-watches` lists every watch in attention order (described above)
   without enrolling anything, with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
-  `coverageGapSince`, plus `autoEnrollment.pending` (enrolls at the next reconciliation),
+  `coverageGapSince`, plus `autoEnrollment.pending` (fits under the limit; a later cron reconciliation enrolls it),
   `autoEnrollment.deferred` (does not fit under the limit) and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.

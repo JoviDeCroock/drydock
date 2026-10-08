@@ -526,7 +526,7 @@ test("reveals watches a page at a time in server order and starts over for anoth
     packageName: `package-${index}`,
   }));
   const fetchMock = vi.fn(async () =>
-    json({ watches: many, autoEnrollment: { deferred: 0, suggestions: [] } }),
+    json({ watches: many, autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } }),
   );
   vi.stubGlobal("fetch", fetchMock);
   setActiveOrganizationId("org-a");

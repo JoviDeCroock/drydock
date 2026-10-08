@@ -277,8 +277,8 @@ export async function reconcileDuePublicationEnrollments(
 ): Promise<void> {
   const registryUrl = npmPublicationRegistry(env);
   if (!validMonitoringRegistry(registryUrl)) return;
-  // Random order: an organization that stays due (a history row whose name
-  // `isValidNpmPackageName` rejects) cannot hold the same slot every tick.
+  // Random order: when more organizations are due than one tick reconciles,
+  // none waits behind the same earlier ones every tick.
   const due = await db.all<{ organizationId: string }>(sql`
     select organization_id as organizationId from (
       select s.organization_id from scans s where ${historicalEligibility(registryUrl)}
