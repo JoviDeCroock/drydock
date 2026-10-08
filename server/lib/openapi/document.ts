@@ -149,7 +149,7 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     requestBody: StartScanRequest,
     startsWork: true,
     response: StartedScan,
-    errors: [400, 401, 403, 409, 422, 429, 502, 503],
+    errors: [400, 401, 403, 404, 409, 413, 422, 429, 502, 503],
   },
   {
     method: "post",
@@ -296,6 +296,7 @@ const STATUS_TEXT: Record<number, string> = {
   403: "Not allowed for this credential or organization",
   404: "Not found in this organization",
   409: "The review has not completed, or the package is claimed by another organization",
+  413: "The release archive is larger than Drydock reviews",
   422: "The registry named a package Drydock cannot review",
   429: "Rate limited; honor `retry-after`",
   502: "The registry rejected or could not answer the request",
