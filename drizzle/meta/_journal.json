@@ -260,6 +260,13 @@
       "when": 1790410107547,
       "tag": "0036_colorful_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1791482714483,
+      "tag": "0037_rapid_slayback",
+      "breakpoints": true
     }
   ]
 }

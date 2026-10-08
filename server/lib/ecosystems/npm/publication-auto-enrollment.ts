@@ -59,24 +59,26 @@ function validHistoricalName(name: SQL): SQL {
 }
 
 function historicalEligibility(registryUrl: string): SQL {
-  return sql`${validHistoricalName(sql`s.registry_package_name`)} and s.source in ('manual', 'auto_discovery') and s.status = 'complete'
-    and s.registry_url in (${registryUrl}, ${registryUrl + "/"})
+  return sql`s.source in ('manual', 'auto_discovery') and s.status = 'complete'
     and s.registry_version_status = 'published'
-    and ${npmPackageManagementAllowed(registryUrl, sql`s.registry_package_name`, sql`s.organization_id`)}
+    and s.registry_url in (${registryUrl}, ${registryUrl + "/"})
     and s.registry_package_name is not null and s.registry_version is not null
+    and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.registry_package_name and (c.source != 'workflow_gate' or c.stopped_at is not null))
+    and ${validHistoricalName(sql`s.registry_package_name`)}
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.access') end = 'public'
-    and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.registry_package_name and (c.source != 'workflow_gate' or c.stopped_at is not null))`;
+    and ${npmPackageManagementAllowed(registryUrl, sql`s.registry_package_name`, sql`s.organization_id`)}`;
 }
 
 function gateEligibility(registryUrl: string): SQL {
-  return sql`${validHistoricalName(sql`s.package_name`)} and s.source = 'workflow_gate' and s.status = 'complete' and s.package_name is not null
+  return sql`s.source = 'workflow_gate' and s.status = 'complete'
+    and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.package_name)
+    and ${validHistoricalName(sql`s.package_name`)}
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.mode') end = 'workflow_gate'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.schema') end = 'drydock.release-artifacts.v1'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.ecosystem') end = 'npm'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.package') end = s.package_name
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.version') end = s.staged_version
-    and not ${publicationWatchOwnershipConflict(registryUrl, sql`s.package_name`, sql`s.organization_id`)}
-    and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.package_name)`;
+    and not ${publicationWatchOwnershipConflict(registryUrl, sql`s.package_name`, sql`s.organization_id`)}`;
 }
 
 async function recordCandidates(
@@ -285,12 +287,14 @@ export async function reconcileDuePublicationEnrollments(
       union
       select s.organization_id from scans s where ${gateEligibility(registryUrl)}
       union
-      select c.organization_id from publication_watch_candidates c
-      where c.stopped_at is null
-        and c.source in ('staged_discovery', 'published_history', 'manual')
-        and not exists(select 1 from publication_watches w where w.organization_id = c.organization_id and w.package_name = c.package_name)
-        and ${npmPackageManagementAllowed(registryUrl, sql`c.package_name`, sql`c.organization_id`)}
-        and ${publicationWatchCapacityAvailable(registryUrl, sql`c.organization_id`)}
+      select waiting.organization_id from (
+        select distinct c.organization_id from publication_watch_candidates c
+        where c.stopped_at is null
+          and c.source in ('staged_discovery', 'published_history', 'manual')
+          and not exists(select 1 from publication_watches w where w.organization_id = c.organization_id and w.package_name = c.package_name)
+          and ${npmPackageManagementAllowed(registryUrl, sql`c.package_name`, sql`c.organization_id`)}
+      ) waiting
+      where ${publicationWatchCapacityAvailable(registryUrl, sql`waiting.organization_id`)}
     ) order by random() limit ${options.limit ?? RECONCILE_ORGANIZATIONS_PER_TICK}`);
   let failed = 0;
   await mapWithConcurrency(due, RECONCILE_CONCURRENCY, async ({ organizationId }) => {
