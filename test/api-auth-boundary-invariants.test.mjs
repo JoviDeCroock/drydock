@@ -5,7 +5,8 @@ import { tokenizeJs } from "../server/lib/platform/js-lexer";
 import { sanitizeJsSource } from "./helpers/sanitized-source.mjs";
 
 // AGENTS.md: "D1/Better Auth are required for every non-auth `/api/*` endpoint" (the
-// read-only API-key routes in `API_KEY_ROUTES` are the one authenticated exception).
+// API-key routes in `API_KEY_ROUTES` and `API_KEY_SCAN_ROUTES` are the one authenticated
+// exception).
 // That is enforced structurally rather than per-handler — a single
 // `app.use("/api/*")` in server/index.ts rejects any request without a session.
 // Hono runs middleware in registration order, so the guarantee is really about

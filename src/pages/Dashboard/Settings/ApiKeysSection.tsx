@@ -1,5 +1,5 @@
 import { useModel } from "@preact/signals";
-import { ApiKeysModel, type OrganizationApiKey } from "../../../models/api-keys";
+import { ApiKeysModel, type ApiKeyAccess, type OrganizationApiKey } from "../../../models/api-keys";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -10,6 +10,11 @@ import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
 import { formatDateTime } from "../../../lib/format";
+
+const ACCESS_LABELS: Record<ApiKeyAccess, string> = {
+  read: "Read only",
+  scan: "Read and start reviews",
+};
 
 export function ApiKeysSection({
   apiKeys,
@@ -25,6 +30,7 @@ export function ApiKeysSection({
   const revealed = apiKeys.revealed.value;
   const atLimit = apiKeys.atLimit.value;
   const draftName = apiKeys.draftName.value;
+  const draftAccess = apiKeys.draftAccess.value;
 
   const onCreate = async (event: Event) => {
     event.preventDefault();
@@ -45,10 +51,10 @@ export function ApiKeysSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Read-only keys for scripts and the Drydock CLI. A key reads this organization's reviews,
-          reports, release receipts, and gate status. It cannot record a decision, start a review,
-          or change settings. Keys expire, and a key is deleted when the member who created it
-          leaves the organization.
+          Keys for scripts and the Drydock CLI. A key reads this organization's reviews, reports,
+          release receipts, and gate status; a key with review access can also start reviews and
+          check npm. No key can record a decision or change settings. Keys expire, and a key is
+          deleted when the member who created it leaves the organization.
         </Muted>
 
         {revealed ? (
@@ -90,7 +96,7 @@ export function ApiKeysSection({
         )}
 
         <form
-          class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 items-end"
+          class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-3 items-end"
           onSubmit={onCreate}
         >
           <Field label="Key name" for="apiKeyName">
@@ -119,6 +125,20 @@ export function ApiKeysSection({
               ))}
             </Select>
           </Field>
+          <Field label="Access" for="apiKeyAccess">
+            <Select
+              id="apiKeyAccess"
+              value={draftAccess}
+              onChange={(value) => (apiKeys.draftAccess.value = value as ApiKeyAccess)}
+              disabled={busy || atLimit}
+            >
+              {(Object.keys(ACCESS_LABELS) as ApiKeyAccess[]).map((access) => (
+                <option key={access} value={access}>
+                  {ACCESS_LABELS[access]}
+                </option>
+              ))}
+            </Select>
+          </Field>
           {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
           <Button
             type="submit"
@@ -128,6 +148,12 @@ export function ApiKeysSection({
             {status === "creating" ? "Creating…" : "Create key"}
           </Button>
         </form>
+        {draftAccess === "scan" && !atLimit ? (
+          <Muted class="text-[13px] m-0">
+            This key can also start reviews and check npm, as the member who creates it. It never
+            approves a release.
+          </Muted>
+        ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
             This organization holds the maximum of {apiKeys.limit.value} keys. Revoke one to create
@@ -163,8 +189,8 @@ function ApiKeyRow({
           {expired ? <Badge tone="medium">expired</Badge> : null}
         </div>
         <Muted class="text-[12px] m-0">
-          created by {creator} · {expired ? "expired" : "expires"}{" "}
-          {formatDateTime(apiKey.expiresAt)} ·{" "}
+          {apiKey.access === "scan" ? "can start reviews" : "read only"} · created by {creator} ·{" "}
+          {expired ? "expired" : "expires"} {formatDateTime(apiKey.expiresAt)} ·{" "}
           {apiKey.lastUsedAt ? `last used ${formatDateTime(apiKey.lastUsedAt)}` : "never used"}
         </Muted>
       </div>

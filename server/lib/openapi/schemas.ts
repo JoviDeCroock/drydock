@@ -1,7 +1,12 @@
 import { z } from "zod";
-import { SCAN_DECISION_FILTERS, SCAN_DECISIONS, SCAN_SOURCES } from "../../db/enums";
+import {
+  API_KEY_ACCESS_LEVELS,
+  SCAN_DECISION_FILTERS,
+  SCAN_DECISIONS,
+  SCAN_SOURCES,
+} from "../../db/enums";
 
-// Response contracts for the API-key surface and the anonymous package diff,
+// Request and response contracts for the API-key surface and the anonymous package diff,
 // written once and used twice: `document.ts` renders them into the OpenAPI
 // document, and the worker conformance suite parses real responses with them.
 // Objects are loose on purpose: they pin the fields scripts may rely on, and
@@ -79,9 +84,60 @@ export const ApiKeyIdentity = z
       prefix: z.string().describe("Non-secret head of the key, as shown in settings"),
       expiresAt: isoDateTime,
     }),
-    access: z.literal("read"),
+    access: z
+      .enum(API_KEY_ACCESS_LEVELS)
+      .describe("`read` keys only read; `scan` keys can also start reviews"),
   })
   .meta({ id: "ApiKeyIdentity" });
+
+export const StartScanRequest = z
+  .union([
+    z
+      .object({ stageId: z.string().describe("npm stage id from `npm stage publish`") })
+      .describe("Review a staged npm publish; needs the organization's npm token"),
+    z
+      .object({
+        ecosystem: z.enum(["npm", "pypi", "vscode", "atpm"]),
+        packageName: z.string(),
+        version: z.string(),
+        baselineVersion: z
+          .string()
+          .optional()
+          .describe("Version to diff against; defaults to the previous release"),
+      })
+      .describe("Review an already-published release"),
+  ])
+  .meta({ id: "StartScanRequest" });
+
+export const StartedScan = z
+  .looseObject({
+    scan: z.looseObject({
+      id: z.string(),
+      stageId: z.string(),
+      source: scanSource,
+      packageName: z.string().nullable(),
+      stagedVersion: z.string().nullable(),
+      status: scanStatus,
+    }),
+    queued: z.boolean(),
+  })
+  .meta({ id: "StartedScan" });
+
+export const StagedPublishDiscovery = z
+  .looseObject({
+    found: z.number().int().describe("Staged publishes the npm token can see"),
+    created: z.number().int().describe("Reviews started by this call"),
+    skipped: z.number().int().describe("Stages already reviewed, or not admissible"),
+    scans: z.array(
+      z.looseObject({
+        id: z.string(),
+        stageId: z.string(),
+        packageName: z.string().nullable(),
+        version: z.string().nullable(),
+      }),
+    ),
+  })
+  .meta({ id: "StagedPublishDiscovery" });
 
 export const ScanList = z
   .looseObject({
