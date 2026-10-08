@@ -7,6 +7,30 @@
 - **[@preact/eslint-plugin-signals](https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md)** — loaded via oxlint's `jsPlugins` (alpha) for signal-specific rules.
 - **[@shadcn/lint](https://github.com/shadcn-ui/lint)** — a Tailwind design-system linter, loaded through the same `jsPlugins` hook. Requires oxlint >= 1.80. shadcn/ui is not required and is not used here; the rules read this repo's own components and the `@theme` tokens in `src/style.css`.
 
+## Dependency installations
+
+Use `sh scripts/safe-pnpm.sh install` for local setup and
+`sh scripts/safe-pnpm.sh install --frozen-lockfile` in CI. For dependency changes,
+pass arguments to the same wrapper, such as `add <package>`, `update`, or
+`dlx <tool>`. Existing `pnpm run` and `pnpm exec` commands for installed tools
+continue to work normally.
+
+The wrapper downloads [Aikido Safe Chain](https://github.com/AikidoSec/safe-chain)
+1.5.24 from its versioned GitHub release and checks the platform-specific SHA-256
+published in that release's installer before running it. The binary is cached
+under `.context/safe-chain/` and checked again on every invocation. It invokes
+`safe-chain pnpm` explicitly so interactive shell aliases and CI PATH changes
+are not required. Download, checksum, and scan failures stop the installation.
+CI starts with a fresh pnpm store so downloads pass through Safe Chain; local
+packages already in the pnpm store may be reused without a new download check.
+
+Bootstrap requires macOS or Linux on x64/arm64, `curl`, and `sha256sum` or
+`shasum`, in addition to Node and pnpm. Safe Chain retains its upstream defaults,
+including the 48-hour minimum package age. Resolve a blocked dependency or
+bootstrap failure before retrying; do not bypass the wrapper. To update Safe
+Chain, update the version and all four release digests in `scripts/safe-pnpm.sh`
+together.
+
 ## Scripts
 
 | Command                                           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |

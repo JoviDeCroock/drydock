@@ -42,6 +42,7 @@ Own the requested outcome: inspect, implement, verify, and report. Choose the ap
 
 ## Finish changes
 
+- Use `sh scripts/safe-pnpm.sh` for dependency installations and changes, including `install`, `add`, `update`, and `dlx`. It bootstraps pinned, checksum-verified Safe Chain before invoking pnpm. If bootstrap or scanning fails, resolve the failure rather than retrying with unprotected pnpm. See `docs/tooling.md#dependency-installations`.
 - Add tests at the narrowest layer in `docs/repository-map.md`; follow `docs/release-safety.md` when behavior crosses a trust boundary.
 - Detection changes require security-corpus fixtures with explicit rule ID/severity/risk and relevant eval coverage.
 - Use `pnpm run verify:file <path>` after an edit, `pnpm run verify:quick` while iterating, and `pnpm run verify` before commits when practical. Generate migrations with `pnpm db:generate`.

@@ -20,7 +20,7 @@ integrations.
 ## Local development
 
 ```sh
-pnpm install
+sh scripts/safe-pnpm.sh install
 cp .dev.vars.example .dev.vars
 pnpm run test
 pnpm run dev

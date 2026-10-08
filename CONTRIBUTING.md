@@ -20,7 +20,7 @@ tests.
 ## Development setup
 
 ```sh
-pnpm install
+sh scripts/safe-pnpm.sh install
 cp .dev.vars.example .dev.vars
 pnpm run test
 pnpm run dev
@@ -29,6 +29,10 @@ pnpm run dev
 The local app runs at `http://localhost:5173` through Vite and the Cloudflare
 Worker plugin. The fake-registry E2E harness is documented in
 [`docs/e2e-test-environment.md`](docs/e2e-test-environment.md).
+
+Use `sh scripts/safe-pnpm.sh add <package>` or `sh scripts/safe-pnpm.sh update`
+for dependency changes so Safe Chain checks the downloads. Bootstrap details
+and requirements are in [`docs/tooling.md`](docs/tooling.md#dependency-installations).
 
 ## Pull request expectations
 

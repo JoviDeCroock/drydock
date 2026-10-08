@@ -138,12 +138,17 @@ test/         Vitest, Worker-runtime, security corpus, and fake-registry e2e
 Requirements: Node `22.14.0+` and pnpm `11.1.1` (pinned in `package.json`).
 
 ```sh
-pnpm install
+sh scripts/safe-pnpm.sh install
 cp .dev.vars.example .dev.vars
 pnpm run dev
 ```
 
 The dev server runs the Worker and UI through Vite at `http://localhost:5173`. Edit `.dev.vars` with local Cloudflare, Better Auth, npm, GitHub App, Slack, and optional Workers AI/Flagship values as described in [`docs/self-hosting.md`](docs/self-hosting.md).
+
+Dependency installations use [Safe Chain](https://github.com/AikidoSec/safe-chain)
+by default. The wrapper downloads a pinned, checksum-verified binary into
+`.context/`; use it for dependency changes too, for example
+`sh scripts/safe-pnpm.sh add <package>`. See [`docs/tooling.md`](docs/tooling.md#dependency-installations).
 
 Useful commands:
 
