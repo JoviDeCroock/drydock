@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { guardRateLimit } from "../lib/rate-limit";
 import { getNpmConnection } from "../db/npm-connections";
 import { recordApiKeyAction } from "../db/api-keys";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { requestActorUserId, requireActiveOrganization } from "../lib/auth/active-organization";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "../lib/ecosystems/npm/connection";
@@ -71,6 +72,12 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       await recordApiKeyAction(db, apiKey, {
         type: "organization.api_key_discovery_ran",
         metadata: { found: body.found, created: body.created, skipped: body.skipped },
+      }).catch((err: unknown) => {
+        // The reviews are already queued; see the matching note in scans/lifecycle.ts.
+        emitOperationalEvent("error", "api_key.audit_failed", {
+          apiKeyId: apiKey.id,
+          error: describeOperationalError(err),
+        });
       });
     }
     return c.json(body, 202);

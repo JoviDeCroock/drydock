@@ -706,6 +706,19 @@ describe("API keys with scan access", () => {
     expect(row.decision).toBeNull();
   });
 
+  // Better Auth answers /api/auth/* from cookies ahead of the session guard,
+  // so mentioning a key must not switch off the origin check there.
+  test("a key header does not lift the CSRF check from the auth routes", async () => {
+    const owner = await signedUpAccount();
+    const res = await callWorker("POST", "/api/auth/update-user", {
+      jar: owner.jar,
+      body: { name: "renamed cross-site" },
+      headers: { authorization: "Bearer ddk_x", origin: "https://evil.example" },
+    });
+    expect(res.res.status).toBe(403);
+    expect(res.json).toMatchObject({ error: "request origin not allowed" });
+  });
+
   test("a session request without an Origin is still refused by the CSRF check", async () => {
     const owner = await signedUpAccount();
     const ctx = createExecutionContext();

@@ -249,8 +249,28 @@
               }
             }
           },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "409": {
             "description": "The review has not completed, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The release archive is larger than Drydock reviews",
             "content": {
               "application/json": {
                 "schema": {

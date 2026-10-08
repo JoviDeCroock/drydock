@@ -145,6 +145,8 @@ scanLifecycleRoutes.post("/", async (c) => {
 
   const apiKey = c.get("apiKey");
   if (apiKey) {
+    // The review is already queued; a failed audit write must not answer 500
+    // and invite a CI retry that starts a second one.
     await recordApiKeyAction(db, apiKey, {
       type: "organization.api_key_review_started",
       scanId,
@@ -153,6 +155,12 @@ scanLifecycleRoutes.post("/", async (c) => {
         packageName: prepared.packageName,
         stagedVersion: prepared.version,
       },
+    }).catch((err: unknown) => {
+      emitOperationalEvent("error", "api_key.audit_failed", {
+        apiKeyId: apiKey.id,
+        scanId,
+        error: describeOperationalError(err),
+      });
     });
   }
 

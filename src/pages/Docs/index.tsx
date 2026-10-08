@@ -860,9 +860,9 @@ jobs:
               </h2>
               <Prose>
                 An organization API key reads the same reviews, report exports, and release receipts
-                the dashboard shows. A key created with review access can also start reviews and
-                check npm for staged publishes. No key can approve a gate, record a decision, or
-                change settings.
+                the dashboard shows. A key created with <strong>Read and start reviews</strong> can
+                also start reviews and check npm for staged publishes. No key can approve a gate,
+                record a decision, or change settings.
               </Prose>
             </div>
 
