@@ -16,8 +16,8 @@ This file is only a compact implementation map.
   `src/lib/use-cancellable-effect.ts`. Preact 11 defers `useEffect` cleanup on
   unmount past the next paint, so with a `cancelled` flag set there a late
   response can still write the unmounted page's signals or models, or `route()`
-  from a keyed component that remounted on the same path (a `/diff` resolver),
-  which `ScopedRoute`'s path check lets through.
+  from a keyed component that remounted on the same path (`PackageReleasesView`,
+  keyed on `?org=`), which `ScopedRoute`'s path check lets through.
 - Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` (plus
   `rel="noreferrer"`) or `download`. `preact-iso` intercepts same-origin anchor
   clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
