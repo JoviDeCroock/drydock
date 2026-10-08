@@ -778,6 +778,55 @@ test("publication monitor explains deferred enrollment and offers gate packages 
   }
 });
 
+test("publication monitor pages a long watch list behind Show more", async ({
+  browser,
+  baseURL,
+}) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const watches = Array.from({ length: 30 }, (_, index) => ({
+    id: `paged-watch-${index}`,
+    organizationId: "org-paged",
+    packageName: `@drydock/paged-${String(index).padStart(2, "0")}`,
+    source: "manual",
+    createdAt: "2026-09-13T00:00:00.000Z",
+    lastCheckedAt: null,
+    lastError: null,
+    unresolvedAlertCount: index === 0 ? 1 : 0,
+    releaseCount: 0,
+    unverifiedReleaseCount: 0,
+    coverageGap: null,
+    coverageGapSince: null,
+    distTagsCheckedAt: null,
+  }));
+  await page.route("**/api/v1/publication-watches", async (route) => {
+    await route.fulfill({ json: { watches, autoEnrollment: { deferred: 0, suggestions: [] } } });
+  });
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    const rows = monitor.locator("[data-watch-package]");
+    await expect(rows).toHaveCount(25);
+    await expect(rows.first()).toHaveText("@drydock/paged-00");
+    await expect(monitor.getByText("1 unacknowledged alert")).toBeVisible();
+    await expect(monitor.getByText("Showing 25 of 30 watched packages")).toBeVisible();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor-paged.png"),
+      fullPage: true,
+    });
+    await monitor.getByRole("button", { name: "Show more", exact: true }).click();
+    await expect(rows).toHaveCount(30);
+    await expect(rows.last()).toHaveText("@drydock/paged-29");
+    await expect(monitor.getByRole("button", { name: "Show more", exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("publication monitor checks names inline and asks for a management choice only for a pending personal claim", async ({
   browser,
   baseURL,
