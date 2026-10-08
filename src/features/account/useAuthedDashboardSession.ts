@@ -17,15 +17,14 @@ export function loginRedirectPath(url: string): string {
  * `onReady` receives `isCancelled` because the page's loads usually chain
  * across several awaits; checking it between them keeps a route change from
  * writing a stale response into a model that is about to be disposed.
- * `deps` re-runs the whole guard, which a detail page keys on its route param.
+ * The guard runs once per mount; a detail page keys itself on its route param
+ * so a new param remounts it with a fresh model and a fresh guard.
  */
 export function useAuthedDashboardSession({
   onReady,
-  deps = [],
   rememberReturnUrl = true,
 }: {
   onReady?: (session: AuthSession, isCancelled: () => boolean) => void | Promise<void>;
-  deps?: unknown[];
   // The list surfaces remember themselves as the review's back link; a detail
   // page must not, or its own URL would become the place "back" leads.
   rememberReturnUrl?: boolean;
@@ -53,7 +52,7 @@ export function useAuthedDashboardSession({
     return () => {
       cancelled = true;
     };
-  }, deps);
+  }, []);
 
   return sessionChecked;
 }

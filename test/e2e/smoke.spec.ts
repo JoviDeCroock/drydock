@@ -413,6 +413,69 @@ test("a session check that settles after the reader left does not redirect them"
   await expect(page).toHaveURL(/\/privacy$/);
 });
 
+test("moving from one review to another shows the review the URL names", async ({ page }) => {
+  await installWorkflowGateMocks(page);
+  const sidecarScanId = "gate-smoke-sidecar-000001";
+  const base = scanDetail(null);
+  // Routes registered later take precedence over the gate mocks' catch-all.
+  await page.route(`**/api/v1/scans/${sidecarScanId}**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === `/api/v1/scans/${sidecarScanId}`) {
+      await fulfillJson(route, {
+        ...base,
+        scan: {
+          ...base.scan,
+          id: sidecarScanId,
+          stageId: `workflow-gate:${gateId}:pypi:@drydock/sidecar`,
+          packageName: "@drydock/sidecar",
+          stagedVersion: "0.4.0",
+          previousVersion: "0.3.0",
+          risk: "low",
+          decision: "publish",
+        },
+      });
+      return;
+    }
+    if (path === `/api/v1/scans/${sidecarScanId}/versions`) {
+      await fulfillJson(route, {
+        packageName: "@drydock/sidecar",
+        stagedVersion: "0.4.0",
+        defaultPreviousVersion: "0.3.0",
+        versions: [],
+      });
+      return;
+    }
+    await fulfillJson(route, {
+      version: "0.3.0",
+      files: [],
+      packageJson: null,
+      findingAnnotations: [],
+    });
+  });
+  await page.route(
+    `**/api/v1/github-app/workflow-gates/by-scan/${sidecarScanId}`,
+    async (route) => {
+      await fulfillJson(route, { gate: workflowGate("pending", null) });
+    },
+  );
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  await expect(page.getByRole("heading", { name: "@drydock/gate-demo", level: 1 })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  // The gate's sibling package links to its own review: same route, new id.
+  await page.getByRole("link", { name: "open →" }).click();
+  await expect(page).toHaveURL(new RegExp(`/dashboard/scans/${sidecarScanId}(?:\\?|$)`));
+  await expect(page.getByRole("heading", { name: "@drydock/sidecar", level: 1 })).toBeVisible();
+  await expect(page.getByText("staged 0.4.0", { exact: true })).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/dashboard/scans/${scanId}(?:\\?|$)`));
+  await expect(page.getByRole("heading", { name: "@drydock/gate-demo", level: 1 })).toBeVisible();
+  await expect(page.getByText("staged 1.2.0", { exact: true })).toBeVisible();
+});
+
 /** Holds every matching request until `release()`, then answers with `respond`. */
 async function holdRequests(
   page: Page,

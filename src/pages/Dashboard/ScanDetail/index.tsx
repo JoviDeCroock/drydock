@@ -58,10 +58,16 @@ import {
 export default function ScanDetailPage() {
   const route = useRoute();
   const id = route.params.id;
+  // The router keeps this component mounted from one scan to the next, and the
+  // model is built once per mount, so a new id must remount the review rather
+  // than reuse a model bound to the previous scan.
+  return <ScanDetailView key={id} id={id} />;
+}
+
+function ScanDetailView({ id }: { id: string }) {
   const model = useModel(() => new ScanDetailModel(id));
   const sessionChecked = useAuthedDashboardSession({
     onReady: () => model.load(),
-    deps: [id],
     rememberReturnUrl: false,
   });
   const view = useScanDetailView(model);

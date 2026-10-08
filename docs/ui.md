@@ -111,7 +111,10 @@ move it into `src/features/` instead.
 Every `/dashboard*` page runs `useAuthedDashboardSession` from
 `src/features/account/` on mount: it loads the session, redirects a signed-out
 visitor to `/login?returnTo=<this page>`, remembers the list surfaces as the
-review's back link, and only then runs the page's own loads. The scan detail
+review's back link, and only then runs the page's own loads. The router keeps
+a route component mounted when only its params change, so a page whose model is
+built from a route param (scan detail, package releases) renders its body under
+`key={param}`: a new param remounts it with a fresh model and guard. The scan detail
 page composes its computeds and handlers in `ScanDetail/hooks/useScanDetailView.ts`
 and renders them through sections that each subscribe to what they show.
 `useNow(intervalMs)` in `src/lib/use-now.ts` is the ticking clock behind
