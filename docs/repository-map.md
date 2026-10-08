@@ -22,6 +22,10 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.
 - `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, `scan-registry-status`, `scan-overview`, `scan-package-releases`, and `scan-risk`; `scan-share` (public share and threat-feed reads) is imported directly; `enums.ts`, `scan-status.ts`, and `scan-query.ts` are the leaves those modules share instead of importing each other.
 
+## CLI
+
+- `cli/` is the dependency-free `drydock` CLI over the API-key surface (`cli/README.md`). `cli/src/main.mjs` takes all process access as an injected `io`, so `test/cli.test.ts` drives it with a fake fetch and `test/workers/cli.test.ts` runs it against the real Worker. It is typechecked from JSDoc by `cli/tsconfig.json`.
+
 ## UI, migrations, and tests
 
 - `src/index.tsx` mounts `preact-iso`; `src/models/` reuses server types. Shared page behavior belongs in `src/features/`, including shared review UI in `src/features/review/`.
