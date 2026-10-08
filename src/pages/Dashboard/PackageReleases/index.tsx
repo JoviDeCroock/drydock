@@ -343,7 +343,7 @@ function ReleaseRow({
   return (
     <tr class={`border-b border-border last:border-b-0 ${rowClass}`}>
       <Td class="whitespace-nowrap">
-        <a href={scanDetailPath(release.id, organizationId)} class="font-mono text-xs">
+        <a href={scanDetailPath(release.id, organizationId)} class="font-mono text-[12px]">
           {release.stagedVersion || "—"}
         </a>
         <Caption>
@@ -351,7 +351,7 @@ function ReleaseRow({
           {release.registryStatusSupersededAt != null ? " · superseded" : ""}
         </Caption>
       </Td>
-      <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
+      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
         {describeBaseline(release)}
       </Td>
       <Td>
@@ -376,7 +376,7 @@ function ReleaseRow({
       <Td>
         <RegistryCell release={release} />
       </Td>
-      <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
+      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
         {scanSourceLabel(release.source)}
       </Td>
     </tr>
@@ -404,7 +404,7 @@ function RegistryCell({ release }: { release: PackageRelease }) {
 }
 
 function PlainState({ children }: { children: ComponentChildren }) {
-  return <span class="font-mono text-xs text-ink-muted whitespace-nowrap">{children}</span>;
+  return <span class="font-mono text-[12px] text-ink-muted whitespace-nowrap">{children}</span>;
 }
 
 function Caption({ children }: { children: ComponentChildren }) {

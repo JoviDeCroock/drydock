@@ -344,8 +344,8 @@ export function DiffView({
         <div class="flex flex-wrap items-center gap-2">
           {/* Status is plain text: the release tree already colors the name by
               status, and a colored chip here repeated it one glance away. */}
-          <code class="font-mono text-xs text-ink-muted break-all">{path}</code>
-          <span class="font-mono text-xs text-ink-subtle">· {status}</span>
+          <code class="font-mono text-[12px] text-ink-muted break-all">{path}</code>
+          <span class="font-mono text-[12px] text-ink-subtle">· {status}</span>
           {truncated ? <Badge tone="neutral">truncated</Badge> : null}
           {binary ? <Badge tone="neutral">binary</Badge> : null}
           {contentSkipped ? <Badge tone="neutral">content skipped</Badge> : null}

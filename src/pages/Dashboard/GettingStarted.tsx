@@ -184,7 +184,7 @@ export function PublishedReviewForm({
         <Input
           type="text"
           value={spec}
-          placeholder="package, e.g. react — or react@19.0.0"
+          placeholder={docsLink ? "package, e.g. react — or react@19.0.0" : "react or react@19.0.0"}
           aria-label="npm package name, optionally with a version"
           autoComplete="off"
           spellcheck={false}

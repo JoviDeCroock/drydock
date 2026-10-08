@@ -227,8 +227,8 @@ const SECTION_ANCHOR_CLASS = "scroll-mt-6";
  * tab/hash pair scrolls once, so reloading data (switching organizations)
  * never yanks the page back to the anchor.
  */
-// `url` is preact-iso's location, which keeps the hash on link navigation, so
-// following a section link while already on its tab scrolls too.
+// `url` is preact-iso's location: a section link clicked while already on its
+// tab changes it (the hash rides along on link clicks), so that scrolls too.
 function useScrollToHashSection(contentReady: boolean, tab: SettingsTab, url: string) {
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {

@@ -72,13 +72,15 @@ export default function DashboardPage() {
   // The first-run panel carries the same form as its first step; once the
   // panel closes for good the dashboard still needs a way to start a review.
   // An organization with no reviews that has not finished onboarding is about
-  // to get the panel, so the card waits rather than flashing first. The list
-  // only reports loaded once its probe settles, so an unknown answer here
-  // means the probe failed — the card is the safe fallback, not nothing.
+  // to get the panel, and one whose answer is still pending (first load, or
+  // just switched to) may be, so the card waits rather than flashing first.
+  // A probe that gave up falls back to the card rather than to nothing.
   const reviewFormOutsideOnboarding = useComputed(
     () =>
       !gettingStartedPanelOpen.value &&
-      (scans.hasAnyScan.value !== false || gettingStartedDone.value),
+      (scans.hasAnyScan.value === true ||
+        gettingStartedDone.value ||
+        scans.hasAnyScanProbeFailed.value),
   );
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches

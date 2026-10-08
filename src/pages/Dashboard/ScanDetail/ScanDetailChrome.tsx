@@ -288,7 +288,7 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
           </span>
         ) : null}
         {typeof error?.code === "string" ? (
-          <span class="font-mono text-xs">code: {error.code}</span>
+          <span class="font-mono text-[12px]">code: {error.code}</span>
         ) : null}
       </div>
     </Alert>

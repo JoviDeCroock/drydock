@@ -76,7 +76,7 @@ function InlineMeta({ label, value }: { label: string; value: string }) {
       <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
         {label}
       </span>
-      <code class="text-xs text-ink-muted break-words min-w-0">{value}</code>
+      <code class="text-[12px] text-ink-muted break-words min-w-0">{value}</code>
     </div>
   );
 }

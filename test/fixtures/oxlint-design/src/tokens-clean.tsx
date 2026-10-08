@@ -39,7 +39,7 @@ export function ProseWithHash() {
 export function SmallButAllowed({ active }: { active: boolean }) {
   return (
     <span class={cn("text-[10px] text-ink-subtle", active && "text-[11px]")}>
-      ▸ <span class="text-[12px]">helper</span> <span class="text-xs">also 12px</span>
+      ▸ <span class="text-[12px]">helper</span>
     </span>
   );
 }

@@ -13,15 +13,19 @@
  *   <span class="[font-size:9px]">…</span> // flagged (arbitrary property)
  *   <span class="text-[10px]">▸</span>     // ok (scanning glyph; the role is reviewed, not linted)
  *   <span class="text-[11px]">Label</span> // ok
+ *   <span class="text-xs">…</span>         // flagged: 0.75rem is 10.5px here, not 12px
  *
  * Whether a 10px string is a glyph or a label is a judgement design.md leaves to
- * review; this rule only closes the floor. `em` is converted at 16px, the root
- * size; the design never sets a smaller parent size.
+ * review; this rule only closes the floor. `rem` and `em` are converted at 14px:
+ * `src/style.css` sets the root (and body) to 14px, so Tailwind's rem-based
+ * named sizes run small — `text-xs` is 10.5px, which reads as the 12px helper
+ * size in code and lands under the 11px label floor on screen.
  */
 
 import { classTokens, staticStrings, utilityWithoutVariants } from "./class-tokens.mjs";
 
 const FLOOR_PX = 10;
+const ROOT_PX = 14;
 // `text-[9px]`, `text-[length:9px]`, and the arbitrary property `[font-size:9px]`,
 // each with an optional `/leading` modifier after the bracket.
 const ARBITRARY_TEXT_SIZE =
@@ -29,7 +33,7 @@ const ARBITRARY_TEXT_SIZE =
 
 function pixels(value, unit) {
   const number = Number(value);
-  return unit === "px" ? number : number * 16;
+  return unit === "px" ? number : number * ROOT_PX;
 }
 
 /** @type {import("eslint").Rule.RuleModule} */
@@ -43,6 +47,8 @@ const rule = {
     messages: {
       belowFloor:
         "`{{token}}` sets text below the 10px floor. docs/design.md has no role for it: 10px is scanning-only glyphs, 11px is the floor for anything read as a label — see “Minimum size + contrast rules”.",
+      remNamedSize:
+        "`{{token}}` is 0.75rem, which is 10.5px on Drydock's 14px root — not 12px, and under the 11px label floor. Use `text-[12px]` for compact helper copy or `text-[11px]` for a label.",
     },
     schema: [],
   },
@@ -51,7 +57,12 @@ const rule = {
     function check(node) {
       for (const text of staticStrings(node)) {
         for (const token of classTokens(text)) {
-          const match = utilityWithoutVariants(token).match(ARBITRARY_TEXT_SIZE);
+          const utility = utilityWithoutVariants(token);
+          if (utility === "text-xs" || utility.startsWith("text-xs/")) {
+            context.report({ node, messageId: "remNamedSize", data: { token } });
+            continue;
+          }
+          const match = utility.match(ARBITRARY_TEXT_SIZE);
           if (match && pixels(match[1], match[2]) < FLOOR_PX) {
             context.report({ node, messageId: "belowFloor", data: { token } });
           }
