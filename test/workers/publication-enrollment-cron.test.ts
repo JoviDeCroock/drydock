@@ -1,13 +1,19 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import type { SQL } from "drizzle-orm";
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { afterEach, expect, test, vi } from "vitest";
-import { createDb } from "../../server/db/client";
+import { type AppDb, createDb } from "../../server/db/client";
 import {
   createPublicationWatch,
   listPublicationWatches,
   PUBLICATION_WATCH_LIMIT,
 } from "../../server/db/publication-watches";
 import { npmPackageClaims, scans } from "../../server/db/schema";
-import { reconcileDuePublicationEnrollments } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
+import {
+  getPublicationAutoEnrollment,
+  reconcileDuePublicationEnrollments,
+  reconcilePublicationWatches,
+} from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationMonitor } from "../../server/lib/ecosystems/npm/publication-monitor";
 import worker from "../../server";
 import { seedPublicationWatches, seedUser } from "./helpers/seed";
@@ -153,4 +159,49 @@ test("a tick reconciles at most its limit of organizations; the rest wait for th
     expect.objectContaining({ organizations: 2 }),
     expect.objectContaining({ organizations: 1 }),
   ]);
+});
+
+/** The cron's due query, rendered as it ran, so tests can read D1's plan and cost. */
+async function capturedDueQuery(db: AppDb) {
+  const captured: SQL[] = [];
+  const all = db.all.bind(db);
+  const spy = vi.spyOn(db, "all").mockImplementation(((query: SQL) => {
+    captured.push(query);
+    return all(query);
+  }) as typeof db.all);
+  await reconcileDuePublicationEnrollments(db, env);
+  spy.mockRestore();
+  return new SQLiteSyncDialect().sqlToQuery(captured[0]!);
+}
+
+test("the due query counts a full organization's watches once, not once per deferred package", async () => {
+  const full = await seedUser();
+  await seedPublicationWatches(full.db, full.organizationId, PUBLICATION_WATCH_LIMIT);
+  for (let index = 0; index < 60; index++)
+    await addHistory(full.organizationId, `deferred-${index}`);
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  // Records the history (at most 50 per pass) as deferred candidates.
+  await reconcilePublicationWatches(full.db, full.organizationId);
+  await reconcilePublicationWatches(full.db, full.organizationId);
+  expect(await getPublicationAutoEnrollment(full.db, full.organizationId)).toMatchObject({
+    deferred: 60,
+  });
+
+  const query = await capturedDueQuery(createDb(env.DB));
+  const result = await env.DB.prepare(query.sql)
+    .bind(...query.params)
+    .all();
+  expect(result.results).toEqual([]);
+  // Counting the watch limit per deferred candidate read about 60 × 250 rows.
+  expect(result.meta.rows_read).toBeLessThan(PUBLICATION_WATCH_LIMIT * 8);
+});
+
+test("the due query reads gate reviews through their partial index, not every scan", async () => {
+  const query = await capturedDueQuery(createDb(env.DB));
+  const plan = await env.DB.prepare(`explain query plan ${query.sql}`)
+    .bind(...query.params)
+    .all<{ detail: string }>();
+  expect(plan.results.map((row) => row.detail)).toContain(
+    "SCAN s USING INDEX scans_workflow_gate_enrollment_idx",
+  );
 });

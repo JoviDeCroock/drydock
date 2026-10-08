@@ -267,6 +267,13 @@
       "when": 1791911917842,
       "tag": "0037_supreme_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792050161543,
+      "tag": "0038_pretty_vanisher",
+      "breakpoints": true
     }
   ]
 }
