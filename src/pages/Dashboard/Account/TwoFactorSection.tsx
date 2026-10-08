@@ -9,6 +9,7 @@ import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
+import { SetPasswordPrompt } from "./SetPasswordPrompt";
 
 type DialogMode = "none" | "enroll" | "regenerate" | "disable";
 type EnrollStep = "password" | "verify" | "backup";
@@ -48,8 +49,8 @@ export function TwoFactorSection() {
   const error = tf.error.value;
   const codes = tf.backupCodes.value;
   // Every two-factor endpoint reauthenticates with a password, so an account
-  // that only signs in through GitHub cannot enrol here at all — offering the
-  // button would dead-end on "invalid password" with nothing to correct.
+  // that only signs in through GitHub is offered `SetPasswordPrompt` instead of
+  // a button that would dead-end on "invalid password".
   const close = () => {
     dialog.value = "none";
     enrollStep.value = "password";
@@ -252,17 +253,7 @@ export function TwoFactorSection() {
       <Show
         when={enabled}
         fallback={
-          <Show
-            when={signInMethodsModel.hasPassword}
-            fallback={
-              <Alert tone="info">
-                This account signs in with GitHub, so there is no Drydock password to confirm and
-                two-factor can't be enabled here — the sign-in is protected by whatever 2FA the
-                GitHub account carries. An organization that requires Drydock two-factor for release
-                decisions cannot be satisfied by a GitHub-only account.
-              </Alert>
-            }
-          >
+          <Show when={signInMethodsModel.hasPassword} fallback={<SetPasswordPrompt />}>
             <div>
               <Button onClick={() => open("enroll")}>Enable two-factor</Button>
             </div>

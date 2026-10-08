@@ -1,9 +1,10 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import {
   createAuth,
   emailVerificationAvailable,
   getAuthSession,
   isGithubSignInEnabled,
+  passwordResetAvailable,
 } from "./lib/auth";
 import { describeOperationalError, emitOperationalEvent } from "./lib/platform/observability";
 import { authIpRateLimit } from "./middleware/auth-rate-limit";
@@ -65,9 +66,20 @@ app.route("/og", ogRoutes);
 // mount before the auth middleware too. Rate-limited per IP inside the routes.
 app.route("/public", publicReportsRoutes);
 
+// Hono throws on `executionCtx` when a caller (a Node test) supplied none; the
+// auth config then awaits its background work instead.
+function requestWaitUntil(c: Context): ((promise: Promise<unknown>) => void) | undefined {
+  try {
+    const ctx = c.executionCtx;
+    return (promise) => ctx.waitUntil(promise);
+  } catch {
+    return undefined;
+  }
+}
+
 app.use("/api/*", async (c, next) => {
   try {
-    c.set("auth", createAuth(c.env));
+    c.set("auth", createAuth(c.env, { waitUntil: requestWaitUntil(c) }));
   } catch (err) {
     emitOperationalEvent("error", "auth.initialization_failed", {
       error: describeOperationalError(err),
@@ -90,8 +102,24 @@ app.get("/api/auth/config", (c) =>
     // dashboard would show every account a pending-verification banner it
     // could never clear.
     emailVerification: emailVerificationAvailable(c.env),
+    // Whether a reset (or set-a-password) link can be mailed, so the UI never
+    // offers a flow that would silently send nothing.
+    passwordReset: passwordResetAvailable(c.env),
   }),
 );
+
+// Drydock's reset links carry the token in the URL fragment and the reset page
+// posts it in the body. Better Auth also accepts it in a URL (its own
+// `GET /reset-password/:token` redirect, and `?token=` on the redeem POST),
+// where request logs and traces would record a live capability; neither form
+// is ever produced here, so both are refused before Better Auth sees them.
+app.get("/api/auth/reset-password/*", (c) => c.json({ error: "not found" }, 404));
+app.post("/api/auth/reset-password", async (c, next) => {
+  if (c.req.query("token") !== undefined) {
+    return c.json({ error: "send the reset token in the request body" }, 400);
+  }
+  await next();
+});
 
 app.all("/api/auth/*", (c) => c.get("auth").handler(c.req.raw));
 
@@ -157,7 +185,7 @@ app.get("/api", (c) =>
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       authConfig:
-        "GET /api/auth/config (anonymous; which optional sign-in methods are offered, and whether email verification can be enforced)",
+        "GET /api/auth/config (anonymous; which optional sign-in methods are offered, whether email verification can be enforced, and whether a password-reset link can be mailed)",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",

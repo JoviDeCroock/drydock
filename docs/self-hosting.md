@@ -137,7 +137,14 @@ Required non-secret vars:
 
 Optional integrations:
 
-- Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`
+- Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`.
+  Besides notifications and verification links, it turns on password reset:
+  "Forgot password?" on the login page, and "set a password" for accounts that
+  signed up with GitHub. Reset links are built from `BETTER_AUTH_URL`, so reset
+  stays off when that is unset or a loopback address, as on local dev
+  (`GET /api/auth/config` reports `passwordReset`). Links expire after an hour
+  and work once; using one signs the account out everywhere. See
+  [`security-model.md`](./security-model.md#password-reset).
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
   `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
   and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
@@ -159,8 +166,8 @@ Optional integrations:
   Request-level OAuth scope overrides are rejected server-side so callers cannot
   widen the grant beyond `read:user` and `user:email`.
 
-  No sign-in route asks for email verification; a GitHub sign-in simply arrives
-  already verified, which satisfies the per-action verified-email checks (npm
+  No sign-in route asks for email verification; a GitHub sign-in arrives
+  verified when GitHub reports the address verified, which satisfies the per-action verified-email checks (npm
   token, decision, share link, invitation, GitHub install) described in
   [`security-model.md`](./security-model.md#email-verification). Implicit
   account linking is disabled, including Better Auth's explicit link endpoint:
@@ -170,12 +177,13 @@ Optional integrations:
   bypass it. The TOTP step-up on release decisions is unaffected by sign-in
   method.
 
-  One adoption limit to weigh before enabling this: a GitHub-only account cannot
-  enrol in Drydock two-factor at all, because every two-factor endpoint
-  reauthenticates with a password it does not have and no password-reset email
-  is wired. Do not offer GitHub sign-in on a deployment whose organizations
-  require two-factor for release decisions — see
-  [`two-factor-auth.md`](./two-factor-auth.md).
+  A GitHub-only account has no Drydock password, and every two-factor endpoint
+  reauthenticates with one. With email configured, Account settings mails such
+  an account a link to set a password once its address is verified, after
+  which it can enrol. Without email
+  it cannot enrol at all, so do not offer GitHub sign-in on an email-less
+  deployment whose organizations require two-factor for release decisions — see
+  [`two-factor-auth.md`](./two-factor-auth.md#management).
 
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 

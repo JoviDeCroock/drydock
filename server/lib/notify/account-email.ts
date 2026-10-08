@@ -1,7 +1,7 @@
 import { escapeHtmlAttribute, escapeHtmlText } from "../platform/html-escape";
 import { sendNotificationEmail, type EmailSendResult } from "./email";
 
-export interface AccountVerificationEmailContent {
+export interface AccountEmailContent {
   subject: string;
   text: string;
   html: string;
@@ -14,7 +14,7 @@ export interface AccountVerificationEmailContent {
  * can never break out of the attribute. The token only ever travels inside the
  * link — never log this body.
  */
-export function buildAccountVerificationEmail(url: string): AccountVerificationEmailContent {
+export function buildAccountVerificationEmail(url: string): AccountEmailContent {
   const safeHref = escapeHtmlAttribute(url);
   const safeText = escapeHtmlText(url);
   return {
@@ -50,6 +50,86 @@ export async function sendAccountVerificationEmail(
   input: AccountVerificationEmailInput,
 ): Promise<EmailSendResult> {
   const content = buildAccountVerificationEmail(input.url);
+  return sendNotificationEmail(env, {
+    to: input.email,
+    subject: content.subject,
+    text: content.text,
+    html: content.html,
+  });
+}
+
+/**
+ * Compose the password-reset email. It is also the "set a password" email for
+ * an account that only signs in with GitHub, so the copy fits both. The link
+ * carries a single-use token that mints a password: it is escaped like the
+ * verification link, and this body must never be logged.
+ */
+export function buildPasswordResetEmail(
+  url: string,
+  expiresInMinutes: number,
+): AccountEmailContent {
+  const safeHref = escapeHtmlAttribute(url);
+  const safeText = escapeHtmlText(url);
+  const expiry = `This link expires in ${expiresInMinutes} minutes and works once. Setting a password signs the account out on every device.`;
+  const ignore =
+    "If you didn't ask for this, you can ignore this email. Nothing changes until the link is used.";
+  const intro =
+    "Someone asked to set a new password for the Drydock account that uses this email address. Choose one here:";
+  return {
+    subject: "Set your Drydock password",
+    text: ["Hello,", "", intro, url, "", expiry, "", ignore, "", "— Drydock"].join("\n"),
+    html: [
+      "<p>Hello,</p>",
+      `<p>${intro}</p>`,
+      `<p><a href="${safeHref}">Set a new password</a></p>`,
+      `<p>Or paste this link into your browser:<br>${safeText}</p>`,
+      `<p>${expiry}</p>`,
+      `<p>${ignore}</p>`,
+      "<p>— Drydock</p>",
+    ].join("\n"),
+  };
+}
+
+export interface PasswordResetEmailInput {
+  email: string;
+  url: string;
+  expiresInMinutes: number;
+}
+
+export async function sendPasswordResetEmail(
+  env: Cloudflare.Env,
+  input: PasswordResetEmailInput,
+): Promise<EmailSendResult> {
+  const content = buildPasswordResetEmail(input.url, input.expiresInMinutes);
+  return sendNotificationEmail(env, {
+    to: input.email,
+    subject: content.subject,
+    text: content.text,
+    html: content.html,
+  });
+}
+
+/**
+ * The notice sent after a reset link is redeemed. It carries no link: it only
+ * tells the owner a password was set, so one they did not set is noticed.
+ */
+export function buildPasswordChangedEmail(): AccountEmailContent {
+  const body =
+    "The password for the Drydock account that uses this email address was just set, and every device was signed out.";
+  const action =
+    "If that wasn't you, request a new password reset right away and check who can read this mailbox.";
+  return {
+    subject: "Your Drydock password was set",
+    text: ["Hello,", "", body, "", action, "", "— Drydock"].join("\n"),
+    html: ["<p>Hello,</p>", `<p>${body}</p>`, `<p>${action}</p>`, "<p>— Drydock</p>"].join("\n"),
+  };
+}
+
+export async function sendPasswordChangedEmail(
+  env: Cloudflare.Env,
+  input: { email: string },
+): Promise<EmailSendResult> {
+  const content = buildPasswordChangedEmail();
   return sendNotificationEmail(env, {
     to: input.email,
     subject: content.subject,
