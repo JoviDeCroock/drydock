@@ -48,7 +48,7 @@ export function IncidentDiffCards() {
           as="article"
           padding="compact"
           hover="accent"
-          class="flex flex-col gap-2"
+          class="relative flex flex-col gap-2"
         >
           <a
             href={packageDiffPath(
@@ -57,7 +57,9 @@ export function IncidentDiffCards() {
               incident.fromVersion,
               incident.toVersion,
             )}
-            class="flex flex-col gap-2 no-underline text-inherit"
+            // Stretched over the card, so every highlighted pixel opens the
+            // diff; the write-up link sits above it.
+            class="flex flex-col gap-2 no-underline text-inherit after:absolute after:inset-0 after:content-['']"
           >
             <h2 class="text-base font-medium tracking-[-0.005em] m-0 break-all">
               {incident.packageName}
@@ -70,7 +72,7 @@ export function IncidentDiffCards() {
           {incident.caseStudyPath ? (
             <a
               href={incident.caseStudyPath}
-              class="self-start text-[12px] text-ink-subtle underline hover:text-ink"
+              class="relative z-10 self-start text-[12px] text-ink-subtle underline hover:text-ink"
             >
               Read the write-up
             </a>

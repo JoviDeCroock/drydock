@@ -188,7 +188,9 @@ export function PublishedReviewForm({
           aria-label="npm package name, optionally with a version"
           autoComplete="off"
           spellcheck={false}
-          class="flex-1 min-w-[200px] max-w-[380px]"
+          class={
+            docsLink ? "flex-1 min-w-[200px] max-w-[380px]" : "flex-1 min-w-0 md:flex-none md:w-64"
+          }
           onInput={(event) => (spec.value = (event.target as HTMLInputElement).value)}
         />
         <Button type="submit" size="sm" disabled={review.busy}>

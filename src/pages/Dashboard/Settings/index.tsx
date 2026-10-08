@@ -233,7 +233,10 @@ function useScrollToHashSection(contentReady: boolean, tab: SettingsTab, url: st
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
     const hash = window.location.hash;
-    const key = `${tab}${url}${hash}`;
+    // preact-iso's url carries the hash after some navigations and not after
+    // others; key on the address without it so one tab/section pair scrolls
+    // once however the reader arrived.
+    const key = `${tab}${url.split("#")[0]}${hash}`;
     if (!contentReady || !hash || scrolledFor.current === key) return;
     const frame = window.requestAnimationFrame(() => {
       if (scrollToSettingsSection(hash, document)) scrolledFor.current = key;

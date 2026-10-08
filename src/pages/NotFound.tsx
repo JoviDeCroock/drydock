@@ -1,4 +1,6 @@
 import { useComputed } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
+import { AppHeaderActions } from "../features/account/AppHeaderActions";
 import { LinkButton } from "../components/Button";
 import { Card } from "../components/Card";
 import { PageShell } from "../components/PageShell";
@@ -15,7 +17,14 @@ export default function NotFoundPage() {
   const backHref = useComputed(() => (signedIn.value ? "/dashboard" : "/"));
   const backLabel = useComputed(() => (signedIn.value ? "Back to reviews" : "Back to home"));
   return (
-    <PageShell width="narrow">
+    <PageShell
+      width="narrow"
+      headerActions={
+        <Show when={signedIn}>
+          <AppHeaderActions />
+        </Show>
+      }
+    >
       <Card class="flex flex-col gap-3">
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Page not found</h1>
         <Muted class="text-[13px] m-0">That page isn't available.</Muted>

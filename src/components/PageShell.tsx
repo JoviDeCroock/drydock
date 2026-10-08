@@ -60,9 +60,9 @@ export function PageShell({
             {/* Wraps under the brand at phone width instead of pushing the
                 page into a sideways scroll. */}
             <div class="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              {feedbackPosition === "start" ? <FeedbackButton /> : null}
+              {feedbackPosition === "start" ? <FeedbackButton compact={!!headerActions} /> : null}
               {headerActions}
-              {feedbackPosition === "end" ? <FeedbackButton /> : null}
+              {feedbackPosition === "end" ? <FeedbackButton compact={!!headerActions} /> : null}
             </div>
           </div>
         </header>
@@ -95,12 +95,15 @@ function SkipLink() {
   );
 }
 
-function FeedbackButton() {
+// With page actions beside it, Feedback steps out of the header at phone width
+// so the app header keeps to two rows; the footer's Contact column still has it.
+function FeedbackButton({ compact = false }: { compact?: boolean }) {
   return (
     <LinkButton
       href={FEEDBACK_MAILTO}
       variant="ghost"
       size="sm"
+      class={compact ? "max-sm:hidden" : undefined}
       title={`Email ${CONTACT_EMAIL} with any issues`}
     >
       Feedback

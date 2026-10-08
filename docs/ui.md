@@ -155,7 +155,11 @@ Both review pages lead with the diff:
   the notes. The package-management choice, when pending, is a compact row at
   the end of the page — it gates monitoring and the badge, not this review.
   A failed staged or published-pair review offers `Review again`, which starts
-  a fresh review of the same release through `POST /api/v1/scans`. The notes open
+  a fresh review of the same release through `POST /api/v1/scans` — except
+  where a restart can only fail: npm already published, blocked, or deleted the
+  candidate, or the npm connection is missing or unvalidated (the alert points
+  at settings instead). A published-pair restart compares against the default
+  predecessor, because a failed scan keeps no baseline. The notes open
   themselves when any of those has something to say — findings or manifest
   changes, release memory that diverged, an assistant reading that flags the
   release — and stay shut when the release is clean (source binding, release

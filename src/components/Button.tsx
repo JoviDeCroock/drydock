@@ -41,10 +41,12 @@ const sizeStyles: Record<ButtonSize, string> = {
 
 // White-on-accent (and white-on-danger) requires 13px/500 minimum per
 // docs/design.md's contrast rules, so small primary/danger buttons keep the md
-// text size; the quieter variants may drop to 12px at size sm.
+// text size; the quieter variants may drop to 12px at size sm. Pixel, not
+// `text-xs`: the root is 14px, so 0.75rem would land at 10.5px, under the
+// 11px floor for a label the reader reads.
 function textSize(variant: ButtonVariant, size: ButtonSize): string {
   if (size === "md") return "text-[13px]";
-  return variant === "primary" || variant === "danger" ? "text-[13px]" : "text-xs";
+  return variant === "primary" || variant === "danger" ? "text-[13px]" : "text-[12px]";
 }
 
 export function Button({
