@@ -29,7 +29,8 @@ import {
   readScanRiskBreakdown,
   scanPublicDisclosureAllowed,
 } from "../../db/scans";
-import { requireActiveOrganization } from "../../lib/auth/active-organization";
+import { recordApiKeyAction } from "../../db/api-keys";
+import { requestActorUserId, requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../lib/ecosystems/npm/connection";
@@ -58,7 +59,8 @@ scanLifecycleRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
 
   const db = c.var.db;
-  const session = c.get("authSession");
+  // A `scan` API key acts as its creator (`requestActorUserId`).
+  const actorUserId = requestActorUserId(c);
   const organizationId = await requireActiveOrganization(c, db);
   const limited = await guardRateLimit(
     c,
@@ -81,7 +83,7 @@ scanLifecycleRoutes.post("/", async (c) => {
   const detail = await createPreparedScan(db, {
     scanId,
     organizationId,
-    ownerUserId: session.userId,
+    ownerUserId: actorUserId,
     prepared,
   }).catch((err: unknown) => {
     if (err instanceof PackageClaimConflictError) return err;
@@ -111,9 +113,22 @@ scanLifecycleRoutes.post("/", async (c) => {
   await enqueuePreparedScan(c, db, {
     scanId,
     organizationId,
-    actorUserId: session.userId,
+    actorUserId,
     prepared,
   });
+
+  const apiKey = c.get("apiKey");
+  if (apiKey) {
+    await recordApiKeyAction(db, apiKey, {
+      type: "organization.api_key_review_started",
+      scanId,
+      metadata: {
+        ecosystem: prepared.ecosystem,
+        packageName: prepared.packageName,
+        stagedVersion: prepared.version,
+      },
+    });
+  }
 
   return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
 });

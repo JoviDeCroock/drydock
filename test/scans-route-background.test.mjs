@@ -46,7 +46,10 @@ vi.mock("../server/db/scans.ts", async (importOriginal) => ({
   ...(await importOriginal()),
   ...dbMock,
 }));
-vi.mock("../server/lib/auth/active-organization.ts", () => activeOrgMock);
+vi.mock("../server/lib/auth/active-organization.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...activeOrgMock,
+}));
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => ({
   registerStagedPublicationCandidates: vi.fn(async () => ({ deferred: 0, suggestions: [] })),

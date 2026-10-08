@@ -1,3 +1,4 @@
+import { API_KEY_ACCESS_LEVELS, type ApiKeyAccess } from "../../db/enums";
 import { base64UrlEncode, sha256Base64Url } from "../platform/crypto-utils";
 
 // Organization API keys are bearer credentials for scripts and the CLI. Only the
@@ -38,6 +39,15 @@ export interface GeneratedApiKey {
 export interface ApiKeyPrincipal {
   id: string;
   organizationId: string;
+  access: ApiKeyAccess;
+  /**
+   * The key's creator, still a member of `organizationId` (the lookup joins the
+   * membership). A review a `scan` key starts is owned by this user, the way a
+   * cron-discovered review is owned by whoever connected npm.
+   */
+  userId: string;
+  name: string;
+  prefix: string;
 }
 
 export async function generateApiKey(): Promise<GeneratedApiKey> {
@@ -74,11 +84,11 @@ export function readApiKeyCredential(authorization: string | undefined): string 
 }
 
 /**
- * The only endpoints an API key reaches, as `METHOD path` exactly as Hono
+ * The endpoints every API key reaches, as `METHOD path` exactly as Hono
  * registers the route that answers the request. Matching the answering route
  * rather than the URL keeps `/scans/batch-approval` from passing as
  * `/scans/:id`. Every entry is a read a plain member can already make, so a key
- * never grants more than its creator's membership; adding a write is a security
+ * never grants more than its creator's membership; adding a route is a security
  * decision (docs/api-keys.md).
  */
 export const API_KEY_ROUTES: ReadonlySet<string> = new Set([
@@ -94,8 +104,28 @@ export const API_KEY_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/github-app/workflow-gates/by-scan/:scanId",
 ]);
 
-export function apiKeyMayReach(route: { method: string; path: string } | null): boolean {
-  return route !== null && API_KEY_ROUTES.has(`${route.method} ${route.path}`);
+/**
+ * The writes a `scan` key adds: starting one review, and "Check npm" discovery.
+ * Both are actions any member can take and neither decides a release; they
+ * spend the organization's existing per-organization scan and discovery
+ * budgets. Recording a decision, sharing, and settings stay session-only.
+ */
+export const API_KEY_SCAN_ROUTES: ReadonlySet<string> = new Set([
+  "POST /api/v1/scans",
+  "POST /api/v1/staged-publishes/scan",
+]);
+
+export type ApiKeyRouteVerdict = "allowed" | "endpoint_not_allowed" | "access_insufficient";
+
+export function apiKeyMayReach(
+  route: { method: string; path: string } | null,
+  access: ApiKeyAccess,
+): ApiKeyRouteVerdict {
+  if (route === null) return "endpoint_not_allowed";
+  const signature = `${route.method} ${route.path}`;
+  if (API_KEY_ROUTES.has(signature)) return "allowed";
+  if (!API_KEY_SCAN_ROUTES.has(signature)) return "endpoint_not_allowed";
+  return access === "scan" ? "allowed" : "access_insufficient";
 }
 
 /**
@@ -120,6 +150,12 @@ export function parseApiKeyName(value: unknown): string | null {
   if (!name || name.length > API_KEY_NAME_MAX_LENGTH) return null;
   // Printable text only: the name is echoed in settings and the audit log.
   return /^[^\p{Cc}\p{Cf}]+$/u.test(name) ? name : null;
+}
+
+/** An omitted choice is a read-only key; an unknown one is null. */
+export function parseApiKeyAccess(value: unknown): ApiKeyAccess | null {
+  if (value === undefined) return "read";
+  return API_KEY_ACCESS_LEVELS.find((access) => access === value) ?? null;
 }
 
 const DEFAULT_API_KEY_EXPIRY_DAYS: ApiKeyExpiryDays = 90;

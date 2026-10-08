@@ -59,7 +59,7 @@ export const TOC: Array<{
   },
   {
     id: "automation",
-    label: "Automate reads",
+    label: "Automate",
     children: [
       { id: "api-keys", label: "API keys" },
       { id: "cli", label: "The drydock CLI" },

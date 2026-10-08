@@ -1,11 +1,15 @@
 import { and, asc, count, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { AppDb } from "./client";
+import type { ApiKeyAccess } from "./enums";
+import { recordScanEvent } from "./events";
+import type { ApiKeyPrincipal } from "../lib/auth/api-keys";
 import { organizationApiKeys, organizationMembers, user } from "./schema";
 
 export interface OrganizationApiKey {
   id: string;
   name: string;
   prefix: string;
+  access: ApiKeyAccess;
   createdAt: Date;
   expiresAt: Date;
   lastUsedAt: Date | null;
@@ -15,6 +19,10 @@ export interface OrganizationApiKey {
 export interface ApiKeyAuthRecord {
   id: string;
   organizationId: string;
+  name: string;
+  prefix: string;
+  access: ApiKeyAccess;
+  createdByUserId: string;
   expiresAt: Date;
   lastUsedAt: Date | null;
 }
@@ -28,6 +36,7 @@ export async function listOrganizationApiKeys(
       id: organizationApiKeys.id,
       name: organizationApiKeys.name,
       prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
       createdAt: organizationApiKeys.createdAt,
       expiresAt: organizationApiKeys.expiresAt,
       lastUsedAt: organizationApiKeys.lastUsedAt,
@@ -43,6 +52,7 @@ export async function listOrganizationApiKeys(
     id: row.id,
     name: row.name,
     prefix: row.prefix,
+    access: row.access,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     lastUsedAt: row.lastUsedAt,
@@ -80,6 +90,7 @@ export async function insertOrganizationApiKey(
     name: string;
     prefix: string;
     keyHash: string;
+    access: ApiKeyAccess;
     createdByUserId: string;
     createdAt: Date;
     expiresAt: Date;
@@ -132,6 +143,10 @@ export async function findApiKeyByHash(
     .select({
       id: organizationApiKeys.id,
       organizationId: organizationApiKeys.organizationId,
+      name: organizationApiKeys.name,
+      prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
+      createdByUserId: organizationApiKeys.createdByUserId,
       expiresAt: organizationApiKeys.expiresAt,
       lastUsedAt: organizationApiKeys.lastUsedAt,
     })
@@ -151,11 +166,12 @@ export async function findApiKeyByHash(
 export async function getApiKeyDescription(
   db: AppDb,
   keyId: string,
-): Promise<{ name: string; prefix: string; expiresAt: Date } | null> {
+): Promise<{ name: string; prefix: string; access: ApiKeyAccess; expiresAt: Date } | null> {
   const [row] = await db
     .select({
       name: organizationApiKeys.name,
       prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
       expiresAt: organizationApiKeys.expiresAt,
     })
     .from(organizationApiKeys)
@@ -183,4 +199,27 @@ export async function markApiKeyUsedIfStale(
         or(isNull(organizationApiKeys.lastUsedAt), lt(organizationApiKeys.lastUsedAt, staleBefore)),
       ),
     );
+}
+
+/**
+ * Audits a write an API key made. Key reads are not recorded, but a key that
+ * starts reviews spends the organization's npm token and scan budget, so each
+ * use names the key; the actor is its creator.
+ */
+export async function recordApiKeyAction(
+  db: AppDb,
+  apiKey: ApiKeyPrincipal,
+  input: {
+    type: "organization.api_key_review_started" | "organization.api_key_discovery_ran";
+    scanId?: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<void> {
+  await recordScanEvent(db, {
+    organizationId: apiKey.organizationId,
+    actorUserId: apiKey.userId,
+    scanId: input.scanId,
+    type: input.type,
+    metadata: { ...input.metadata, name: apiKey.name, prefix: apiKey.prefix },
+  });
 }

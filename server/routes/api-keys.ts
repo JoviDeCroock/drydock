@@ -15,11 +15,13 @@ import {
 import { recordScanEvent } from "../db/events";
 import { organizations } from "../db/schema";
 import { requireOrganizationRole } from "../lib/auth/active-organization";
+import { API_KEY_ACCESS_LEVELS } from "../db/enums";
 import {
   API_KEY_EXPIRY_DAYS,
   API_KEY_NAME_MAX_LENGTH,
   MAX_API_KEYS_PER_ORGANIZATION,
   generateApiKey,
+  parseApiKeyAccess,
   parseApiKeyExpiry,
   parseApiKeyName,
 } from "../lib/auth/api-keys";
@@ -54,7 +56,7 @@ apiKeyRoutes.get("/current", async (c) => {
   return c.json({
     organization,
     key: { id: apiKey.id, name: key.name, prefix: key.prefix, expiresAt: key.expiresAt },
-    access: "read",
+    access: key.access,
   });
 });
 
@@ -66,13 +68,18 @@ apiKeyRoutes.get("/", async (c) => {
     keys: keys.map(publicApiKey),
     limit: MAX_API_KEYS_PER_ORGANIZATION,
     expiryDays: API_KEY_EXPIRY_DAYS,
+    accessLevels: API_KEY_ACCESS_LEVELS,
   });
 });
 
 apiKeyRoutes.post("/", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = await readJsonObject<{ name?: unknown; expiresInDays?: unknown }>(c);
+  const body = await readJsonObject<{
+    name?: unknown;
+    expiresInDays?: unknown;
+    access?: unknown;
+  }>(c);
   const name = parseApiKeyName(body.name);
   if (!name) {
     return c.json({ error: `name must be 1-${API_KEY_NAME_MAX_LENGTH} printable characters` }, 400);
@@ -80,6 +87,11 @@ apiKeyRoutes.post("/", async (c) => {
   const expiresInDays = parseApiKeyExpiry(body.expiresInDays);
   if (expiresInDays === null) {
     return c.json({ error: `expiresInDays must be one of ${API_KEY_EXPIRY_DAYS.join(", ")}` }, 400);
+  }
+  // Fixed at creation: widening a key's access means issuing a new secret.
+  const access = parseApiKeyAccess(body.access);
+  if (access === null) {
+    return c.json({ error: `access must be one of ${API_KEY_ACCESS_LEVELS.join(", ")}` }, 400);
   }
 
   const db = c.var.db;
@@ -113,6 +125,7 @@ apiKeyRoutes.post("/", async (c) => {
     name,
     prefix: generated.prefix,
     keyHash: generated.keyHash,
+    access,
     createdByUserId: session.userId,
     createdAt: now,
     expiresAt,
@@ -121,7 +134,7 @@ apiKeyRoutes.post("/", async (c) => {
     organizationId,
     actorUserId: session.userId,
     type: "organization.api_key_created",
-    metadata: { name, prefix: generated.prefix, expiresAt: expiresAt.toISOString() },
+    metadata: { name, prefix: generated.prefix, access, expiresAt: expiresAt.toISOString() },
   });
   // The only response that ever carries the secret; it is not stored.
   return c.json(
@@ -130,6 +143,7 @@ apiKeyRoutes.post("/", async (c) => {
         id,
         name,
         prefix: generated.prefix,
+        access,
         createdAt: now,
         expiresAt,
         lastUsedAt: null,
@@ -166,6 +180,7 @@ function publicApiKey(key: OrganizationApiKey) {
     id: key.id,
     name: key.name,
     prefix: key.prefix,
+    access: key.access,
     createdAt: key.createdAt,
     expiresAt: key.expiresAt,
     lastUsedAt: key.lastUsedAt,
