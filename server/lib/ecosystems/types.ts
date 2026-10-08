@@ -59,6 +59,8 @@ export interface StagedReleaseVisibility {
 export interface PublicationMonitorAdapter {
   /** Cron: check a bounded, per-organization-fair batch of due watches. */
   sweepWatches(db: AppDb, env: Cloudflare.Env): Promise<void>;
+  /** Cron: enroll waiting packages for a bounded batch of organizations. */
+  reconcileEnrollment(db: AppDb, env: Cloudflare.Env): Promise<void>;
   /**
    * A staged release was fetched from `registryUrl` for review. Best-effort:
    * enrollment never throws back into the review that triggered it.

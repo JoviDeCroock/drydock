@@ -751,6 +751,7 @@ test("publication monitor explains deferred enrollment and offers gate packages 
         watches: enrolled ? [watch] : [],
         autoEnrollment: {
           deferred: enrolled ? 0 : 2,
+          pending: enrolled ? 0 : 1,
           suggestions: enrolled ? [] : [{ packageName: watch.packageName }],
         },
       },
@@ -761,14 +762,19 @@ test("publication monitor explains deferred enrollment and offers gate packages 
     const monitor = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    // Waiting packages that fit and those that do not share one alert.
     await expect(
-      monitor.getByText(/^2 packages will be watched automatically once a slot frees under/),
-    ).toBeVisible();
+      monitor.getByRole("alert").filter({ hasText: "queued for monitoring" }),
+    ).toHaveText(
+      /^1 package queued for monitoring\. Background enrollment adds packages in batches every 15 minutes\. 2 more packages will be watched automatically once a slot frees under/,
+    );
     await expect(monitor.getByText(/cannot tell whether they are\s+public on npm/)).toBeVisible();
     await monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }).click();
     await expect(monitor.getByText(watch.packageName, { exact: true })).toBeVisible();
     await expect(monitor.getByText(/added by hand/)).toBeVisible();
-    await expect(monitor.getByText(/will be watched automatically once a slot/)).toHaveCount(0);
+    await expect(
+      monitor.getByText(/queued for monitoring|will be watched automatically/),
+    ).toHaveCount(0);
     await expect(
       monitor.getByRole("button", { name: "Watch @drydock/gate-package", exact: true }),
     ).toHaveCount(0);
@@ -801,7 +807,9 @@ test("publication monitor pages a long watch list behind Show more", async ({
     distTagsCheckedAt: null,
   }));
   await page.route("**/api/v1/publication-watches", async (route) => {
-    await route.fulfill({ json: { watches, autoEnrollment: { deferred: 0, suggestions: [] } } });
+    await route.fulfill({
+      json: { watches, autoEnrollment: { deferred: 0, pending: 0, suggestions: [] } },
+    });
   });
   try {
     await page.goto("/dashboard");
@@ -861,7 +869,10 @@ test("publication monitor checks names inline and asks for a management choice o
       return;
     }
     await route.fulfill({
-      json: { watches: kept ? [watch] : [], autoEnrollment: { deferred: 0, suggestions: [] } },
+      json: {
+        watches: kept ? [watch] : [],
+        autoEnrollment: { deferred: 0, pending: 0, suggestions: [] },
+      },
     });
   });
   await page.route("**/api/v1/npm-package-claims/**", async (route) => {

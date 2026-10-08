@@ -29,7 +29,7 @@ function runScheduled() {
     .then(() => waitOnExecutionContext(ctx));
 }
 
-test("without an npm connection, the scheduled handler checks due watches but enrolls no history", async () => {
+test("without an npm connection, the scheduled handler enrolls eligible history and checks it with the due watches", async () => {
   const { db, organizationId } = await seedUser({ name: "Watcher" });
   await createPublicationWatch(db, organizationId, name);
   await db.insert(npmPackageClaims).values({
@@ -41,8 +41,8 @@ test("without an npm connection, the scheduled handler checks due watches but en
     claimedAt: new Date(),
     managementConfirmedAt: new Date(),
   });
-  // With no npm connection there is no discovery sweep, so this history waits
-  // for the organization to list its watches.
+  // With no npm connection there is no discovery sweep; the publication cron
+  // itself enrolls this history, without anyone listing the watches.
   await db.insert(scans).values({
     id: crypto.randomUUID(),
     stageId: "history-stage",
@@ -67,8 +67,12 @@ test("without an npm connection, the scheduled handler checks due watches but en
   vi.spyOn(console, "log").mockImplementation(() => {});
   await runScheduled();
   const watches = await listPublicationWatches(db, organizationId);
-  expect(watches.map((item) => [item.packageName, item.source])).toEqual([[name, "manual"]]);
+  expect(watches.map((item) => [item.packageName, item.source])).toEqual([
+    ["history-package", "published_history"],
+    [name, "manual"],
+  ]);
   expect(watches.map((item) => [item.lastCheckedAt !== null, item.lastError])).toEqual([
+    [true, null],
     [true, null],
   ]);
   expect(fetcher).toHaveBeenCalledWith(

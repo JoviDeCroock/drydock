@@ -7,7 +7,8 @@ import {
 } from "../../../db/publication-watches";
 import type { AppDb } from "../../../db/client";
 import { publicationWatchCandidates, publicationWatches } from "../../../db/schema";
-import { emitOperationalEvent } from "../../platform/observability";
+import { mapWithConcurrency } from "../../platform/concurrency";
+import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import type { StagedReleaseVisibility } from "../types";
 import { isLoopbackHostname, registryProtocolAllowed } from "./connection";
 import { npmPublicationRegistry } from "./publication-registry";
@@ -16,13 +17,20 @@ import { isValidNpmPackageName } from "./registry";
 const PUBLIC_NPM = "https://registry.npmjs.org";
 const HISTORY_BATCH = 50;
 // Watches created per reconciliation, independent of the watch limit: this runs
-// inside dashboard requests and the discovery cron, and each slot is its own
+// inside stage submissions and the cron, and each slot is its own
 // capacity-checked statement. A larger backlog enrolls over later reconciliations.
 const ENROLLMENT_BATCH = 50;
+// Organizations the cron reconciles per tick. Each costs about ten queries and
+// one batch, and the tick is shared with stage discovery and the watch sweep.
+const RECONCILE_ORGANIZATIONS_PER_TICK = 20;
+const RECONCILE_CONCURRENCY = 4;
 
 type CandidateSource = "staged_discovery" | "published_history" | "workflow_gate";
 export interface PublicationAutoEnrollment {
+  /** Waiting packages that do not fit under the watch limit. */
   deferred: number;
+  /** Waiting packages that fit, enrolled by the next reconciliation. */
+  pending: number;
   suggestions: { packageName: string }[];
 }
 
@@ -147,6 +155,17 @@ async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: 
   if (first) await db.batch([first, ...rest]);
 }
 
+/** What enrollment is waiting on, read without enrolling anything. */
+export async function getPublicationAutoEnrollment(
+  db: AppDb,
+  organizationId: string,
+  registryUrl = PUBLIC_NPM,
+): Promise<PublicationAutoEnrollment> {
+  return validMonitoringRegistry(registryUrl)
+    ? enrollmentSummary(db, organizationId, registryUrl)
+    : enrollmentSummary(db, organizationId);
+}
+
 async function enrollmentSummary(
   db: AppDb,
   organizationId: string,
@@ -194,7 +213,7 @@ async function enrollmentSummary(
   const slots = waiting
     ? await getPublicationWatchSlotsFree(db, organizationId, registryUrl ?? PUBLIC_NPM)
     : 0;
-  return { deferred: Math.max(0, waiting - slots), suggestions };
+  return { deferred: Math.max(0, waiting - slots), pending: Math.min(waiting, slots), suggestions };
 }
 
 export async function reconcilePublicationWatches(
@@ -241,6 +260,54 @@ export async function registerStagedPublicationCandidates(
     "staged_discovery",
   );
   return reconcilePublicationWatches(db, organizationId, registryUrl);
+}
+
+/**
+ * Cron: reconcile organizations whose enrollment has work waiting, so a watch
+ * list request never enrolls. Covers what no stage submission or discovery
+ * sweep reaches: organizations without an npm connection, gate reviews that
+ * became suggestions, and deferred packages once a slot frees. The candidate
+ * conditions mirror `enrollCandidates`, and an organization at its limit is
+ * not due, so a full one does not take a slot every tick.
+ */
+export async function reconcileDuePublicationEnrollments(
+  db: AppDb,
+  env: Cloudflare.Env,
+  options: { limit?: number } = {},
+): Promise<void> {
+  const registryUrl = npmPublicationRegistry(env);
+  if (!validMonitoringRegistry(registryUrl)) return;
+  // Random order: when more organizations are due than one tick reconciles,
+  // none waits behind the same earlier ones every tick.
+  const due = await db.all<{ organizationId: string }>(sql`
+    select organization_id as organizationId from (
+      select s.organization_id from scans s where ${historicalEligibility(registryUrl)}
+      union
+      select s.organization_id from scans s where ${gateEligibility(registryUrl)}
+      union
+      select c.organization_id from publication_watch_candidates c
+      where c.stopped_at is null
+        and c.source in ('staged_discovery', 'published_history', 'manual')
+        and not exists(select 1 from publication_watches w where w.organization_id = c.organization_id and w.package_name = c.package_name)
+        and ${npmPackageManagementAllowed(registryUrl, sql`c.package_name`, sql`c.organization_id`)}
+        and ${publicationWatchCapacityAvailable(registryUrl, sql`c.organization_id`)}
+    ) order by random() limit ${options.limit ?? RECONCILE_ORGANIZATIONS_PER_TICK}`);
+  let failed = 0;
+  await mapWithConcurrency(due, RECONCILE_CONCURRENCY, async ({ organizationId }) => {
+    try {
+      await reconcilePublicationWatches(db, organizationId, registryUrl);
+    } catch (err) {
+      failed++;
+      emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", {
+        organizationId,
+        error: describeOperationalError(err),
+      });
+    }
+  });
+  emitOperationalEvent("info", "npm.publication_monitor.enrollment_reconciled", {
+    organizations: due.length,
+    failed,
+  });
 }
 
 /**

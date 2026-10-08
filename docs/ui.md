@@ -53,7 +53,8 @@ The dashboard also includes `src/features/publication-monitor/PublicationMonitor
 each watched package name links to its package release view.
 Its signal model in `src/models/publication-watches.ts` refreshes automatic enrollment
 after review discovery, supports manual enrollment and gate suggestions, displays
-watch origins, capacity deferrals and unacknowledged alert counts, supports audited
+watch origins, packages queued for scheduled enrollment together with capacity deferrals
+in a single notice, and unacknowledged alert counts, supports audited
 acknowledgment without changing release evidence, shows up to 100 publication observations with unacknowledged alerts first, and
 fences requests across organization changes. Watches arrive whole (the list is bounded by the
 watch limit) and render 25 at a time behind a **Show more** row; the server orders them so the

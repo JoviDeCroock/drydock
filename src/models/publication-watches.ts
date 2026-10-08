@@ -53,6 +53,7 @@ export interface PublicationObservation {
 
 export interface AutoEnrollmentInfo {
   deferred: number;
+  pending: number;
   suggestions: Array<{ packageName: string }>;
 }
 
@@ -73,7 +74,7 @@ export type EnrollOutcome = "watched" | "management_required" | null;
 
 export const PublicationWatchesModel = createModel(() => {
   const watches = signal<PublicationWatch[]>([]);
-  const autoEnrollment = signal<AutoEnrollmentInfo>({ deferred: 0, suggestions: [] });
+  const autoEnrollment = signal<AutoEnrollmentInfo>({ deferred: 0, pending: 0, suggestions: [] });
   const detail = signal<WatchDetail | null>(null);
   const packageName = signal("");
   const busy = signal(false);
@@ -162,7 +163,7 @@ export const PublicationWatchesModel = createModel(() => {
     refreshPending = false;
     watches.value = [];
     shownWatchCount.value = WATCH_PAGE_SIZE;
-    autoEnrollment.value = { deferred: 0, suggestions: [] };
+    autoEnrollment.value = { deferred: 0, pending: 0, suggestions: [] };
     detail.value = null;
     packageName.value = "";
     error.value = null;
