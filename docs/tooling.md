@@ -9,8 +9,7 @@
 
 ## Dependency installations
 
-Use `sh scripts/safe-pnpm.sh install` for local setup and
-`sh scripts/safe-pnpm.sh install --frozen-lockfile` in CI. For dependency changes,
+Use `sh scripts/safe-pnpm.sh install` for local setup. For dependency changes,
 pass arguments to the same wrapper, such as `add <package>`, `update`, or
 `dlx <tool>`. Existing `pnpm run` and `pnpm exec` commands for installed tools
 continue to work normally.
@@ -20,16 +19,23 @@ The wrapper downloads [Aikido Safe Chain](https://github.com/AikidoSec/safe-chai
 published in that release's installer before running it. The binary is cached
 under `.context/safe-chain/` and checked again on every invocation. It invokes
 `safe-chain pnpm` explicitly so interactive shell aliases and CI PATH changes
-are not required. Download, checksum, and scan failures stop the installation.
-CI starts with a fresh pnpm store so downloads pass through Safe Chain; local
-packages already in the pnpm store may be reused without a new download check.
+are not required for local use. Download, checksum, and scan failures stop the
+installation.
+
+CI follows the upstream [GitHub Actions setup](https://github.com/AikidoSec/safe-chain#github-actions-example):
+download the pinned 1.5.24 installer, verify its SHA-256, and run it with `--ci`
+after setting up Node and the package manager. Its PATH shims protect subsequent
+package-manager commands, including `pnpm install --frozen-lockfile`. An
+integration check must pass before installing dependencies. CI starts with a
+fresh pnpm store so downloads pass through Safe Chain; local packages already
+in the pnpm store may be reused without a new download check.
 
 Bootstrap requires macOS or Linux on x64/arm64, `curl`, and `sha256sum` or
 `shasum`, in addition to Node and pnpm. Safe Chain retains its upstream defaults,
 including the 48-hour minimum package age. Resolve a blocked dependency or
 bootstrap failure before retrying; do not bypass the wrapper. To update Safe
-Chain, update the version and all four release digests in `scripts/safe-pnpm.sh`
-together.
+Chain, update the version and all four release digests in `scripts/safe-pnpm.sh`,
+plus the installer version and checksum in both CI jobs, together.
 
 ## Scripts
 
