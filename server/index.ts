@@ -6,12 +6,15 @@ import {
   isGithubSignInEnabled,
 } from "./lib/auth";
 import { describeOperationalError, emitOperationalEvent } from "./lib/platform/observability";
+import { API_KEY_ROUTES, readApiKeyCredential } from "./lib/auth/api-keys";
+import { authenticateApiKeyRequest } from "./middleware/api-key-auth";
 import { authIpRateLimit } from "./middleware/auth-rate-limit";
 import { canonicalHostRedirect, staticAssetFallback } from "./middleware/canonical-host";
 import { csrfOriginCheck } from "./middleware/csrf-origin";
 import { attachDb } from "./middleware/db";
 import { handleAppError } from "./middleware/errors";
 import { securityHeaders } from "./middleware/security-headers";
+import { apiKeyRoutes } from "./routes/api-keys";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
@@ -96,6 +99,16 @@ app.get("/api/auth/config", (c) =>
 app.all("/api/auth/*", (c) => c.get("auth").handler(c.req.raw));
 
 app.use("/api/*", async (c, next) => {
+  // An organization API key authenticates on its own and only reaches the
+  // read-only routes in API_KEY_ROUTES; its request never falls back to a
+  // cookie session (docs/api-keys.md).
+  const apiKey = readApiKeyCredential(c.req.header("authorization"));
+  if (apiKey !== null) {
+    const rejected = await authenticateApiKeyRequest(c, apiKey);
+    if (rejected) return rejected;
+    await next();
+    return;
+  }
   const session = await getAuthSession(c.get("auth"), c.req.raw);
   if (!session) return c.json({ error: "unauthorized" }, 401);
   c.set("authSession", session);
@@ -156,11 +169,14 @@ app.get("/api", (c) =>
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package[?tag=] (shields.io endpoint badge; tag defaults to latest)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
+      apiKeys:
+        "GET/POST /api/v1/api-keys; DELETE /api/v1/api-keys/:keyId (owners and admins manage the active organization's read-only API keys); GET /api/v1/api-keys/current (API key only: the calling key and its organization)",
       authConfig:
         "GET /api/auth/config (anonymous; which optional sign-in methods are offered, and whether email verification can be enforced)",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    apiKeyAuth: `Authorization: Bearer ddk_… authenticates as an organization API key on these read-only endpoints only: ${[...API_KEY_ROUTES].join("; ")}. Every other endpoint answers an API key with 403.`,
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /public/reports/* (a share token is the capability; the owning organization opted in per scan), and the read-only endpoints an organization API key reaches (apiKeyAuth).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
@@ -183,6 +199,7 @@ app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
+app.route("/api/v1/api-keys", apiKeyRoutes);
 
 app.notFound(staticAssetFallback);
 

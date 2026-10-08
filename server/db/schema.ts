@@ -156,6 +156,37 @@ export const organizationNotificationRecipients = sqliteTable(
   }),
 );
 
+// Read-only organization API keys (docs/api-keys.md). Only the SHA-256 of the
+// secret is stored; `prefix` is the non-secret head shown in settings. A key
+// authenticates only while its creator is a member of its organization
+// (`findApiKeyByHash` joins the membership); removing the member or deleting
+// the account also deletes the rows.
+export const organizationApiKeys = sqliteTable(
+  "organization_api_keys",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  },
+  (table) => ({
+    keyHashUniqueIdx: uniqueIndex("organization_api_keys_key_hash_unique_idx").on(table.keyHash),
+    creatorIdx: index("organization_api_keys_creator_idx").on(
+      table.organizationId,
+      table.createdByUserId,
+    ),
+  }),
+);
+
 export const scans = sqliteTable(
   "scans",
   {

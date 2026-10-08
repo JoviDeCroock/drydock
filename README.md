@@ -190,6 +190,11 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 - release targets and workflow gates: map GitHub repositories/environments, review queued gate artifacts, and post accept/reject decisions;
 - auth/org/settings helpers for Better Auth-backed sessions and organization membership.
 
+Scripts and CI read through the same API with a read-only organization API key
+(`Authorization: Bearer ddk_…`, created in `Organization settings → Integrations → API keys`); a key
+reaches only the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) and can never record
+a decision.
+
 Consult route definitions under `server/routes/` for exact request/response shapes; shared types are imported by the UI from `server/`.
 
 ## Security posture
