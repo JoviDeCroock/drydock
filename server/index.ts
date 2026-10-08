@@ -6,7 +6,7 @@ import {
   isGithubSignInEnabled,
 } from "./lib/auth";
 import { describeOperationalError, emitOperationalEvent } from "./lib/platform/observability";
-import { API_KEY_ROUTES, readApiKeyCredential } from "./lib/auth/api-keys";
+import { API_KEY_ROUTES, API_KEY_SCAN_ROUTES, readApiKeyCredential } from "./lib/auth/api-keys";
 import { authenticateApiKeyRequest } from "./middleware/api-key-auth";
 import { authIpRateLimit } from "./middleware/auth-rate-limit";
 import { canonicalHostRedirect, staticAssetFallback } from "./middleware/canonical-host";
@@ -101,8 +101,8 @@ app.all("/api/auth/*", (c) => c.get("auth").handler(c.req.raw));
 
 app.use("/api/*", async (c, next) => {
   // An organization API key authenticates on its own and only reaches the
-  // read-only routes in API_KEY_ROUTES; its request never falls back to a
-  // cookie session (docs/api-keys.md).
+  // routes in API_KEY_ROUTES (plus API_KEY_SCAN_ROUTES for a `scan` key); its
+  // request never falls back to a cookie session (docs/api-keys.md).
   const apiKey = readApiKeyCredential(c.req.header("authorization"));
   if (apiKey !== null) {
     const rejected = await authenticateApiKeyRequest(c, apiKey);
@@ -171,13 +171,13 @@ app.get("/api", (c) =>
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       apiKeys:
-        "GET/POST /api/v1/api-keys; DELETE /api/v1/api-keys/:keyId (owners and admins manage the active organization's read-only API keys); GET /api/v1/api-keys/current (API key only: the calling key and its organization)",
+        "GET/POST /api/v1/api-keys; DELETE /api/v1/api-keys/:keyId (owners and admins manage the active organization's API keys; `access` is `read` or `scan`); GET /api/v1/api-keys/current (API key only: the calling key and its organization)",
       authConfig:
         "GET /api/auth/config (anonymous; which optional sign-in methods are offered, and whether email verification can be enforced)",
       health: "GET /api/health",
     },
-    apiKeyAuth: `Authorization: Bearer ddk_… authenticates as an organization API key on these read-only endpoints only: ${[...API_KEY_ROUTES].join("; ")}. Every other endpoint answers an API key with 403.`,
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /public/reports/* (a share token is the capability; the owning organization opted in per scan), and the read-only endpoints an organization API key reaches (apiKeyAuth).",
+    apiKeyAuth: `Authorization: Bearer ddk_… authenticates as an organization API key on these read-only endpoints only: ${[...API_KEY_ROUTES].join("; ")}. A key created with scan access also reaches: ${[...API_KEY_SCAN_ROUTES].join("; ")}. Every other endpoint answers an API key with 403.`,
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /public/reports/* (a share token is the capability; the owning organization opted in per scan), and the endpoints an organization API key reaches (apiKeyAuth).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );

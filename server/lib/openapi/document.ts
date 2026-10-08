@@ -12,16 +12,20 @@ import {
   ScanList,
   ScanOverview,
   ScanStatus,
+  StagedPublishDiscovery,
+  StartScanRequest,
+  StartedScan,
   WorkflowGate,
 } from "./schemas";
 
 // The OpenAPI 3.1 description of Drydock's automation surface: every route an
-// organization API key reaches (exactly `API_KEY_ROUTES`) plus the anonymous
+// organization API key reaches (exactly `API_KEY_ROUTES` and
+// `API_KEY_SCAN_ROUTES`) plus the anonymous
 // package-diff endpoints. Built from the zod contracts in `schemas.ts`;
 // `docs/openapi.json` is this document checked in, kept current by
 // `test/openapi-document.test.ts`.
 
-const OPENAPI_API_VERSION = "1.0.0";
+const OPENAPI_API_VERSION = "1.1.0";
 
 type ZodSchema = z.ZodType;
 
@@ -34,6 +38,8 @@ interface ParameterSpec {
 }
 
 interface OperationSpec {
+  /** Defaults to `get`. */
+  method?: "get" | "post";
   /** Hono route path, e.g. `/api/v1/scans/:id`; rendered with `{id}` params. */
   route: string;
   operationId: string;
@@ -41,6 +47,9 @@ interface OperationSpec {
   description?: string;
   tag: "API keys" | "Reviews" | "Packages" | "Workflow gates" | "Public diff" | "Meta";
   parameters?: ParameterSpec[];
+  requestBody?: ZodSchema;
+  /** Starts work and answers 202; reachable only by a key with `scan` access. */
+  startsWork?: boolean;
   response: ZodSchema;
   /** Media type of the success response, when it is not plain JSON. */
   download?: boolean;
@@ -120,6 +129,31 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     ],
     response: ScanList,
     errors: [401, 403],
+  },
+  {
+    method: "post",
+    route: "/api/v1/scans",
+    operationId: "startScan",
+    summary: "Start a review",
+    description:
+      "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. Starting a review never records a release decision.",
+    tag: "Reviews",
+    requestBody: StartScanRequest,
+    startsWork: true,
+    response: StartedScan,
+    errors: [400, 401, 403, 409, 422, 429, 502, 503],
+  },
+  {
+    method: "post",
+    route: "/api/v1/staged-publishes/scan",
+    operationId: "checkNpmForStagedPublishes",
+    summary: "Check npm for staged publishes",
+    description:
+      "The dashboard's \"Check npm\": lists the organization's staged npm publishes with its npm token and starts a review of each one not reviewed yet. Needs a key with `scan` access.",
+    tag: "Reviews",
+    startsWork: true,
+    response: StagedPublishDiscovery,
+    errors: [400, 401, 403, 429, 502],
   },
   {
     route: "/api/v1/scans/overview",
@@ -239,8 +273,11 @@ const STATUS_TEXT: Record<number, string> = {
   401: "Missing, unknown, or expired credential",
   403: "Not allowed for this credential or organization",
   404: "Not found in this organization",
-  409: "The review has not completed",
+  409: "The review has not completed, or the package is claimed by another organization",
+  422: "The registry named a package Drydock cannot review",
   429: "Rate limited; honor `retry-after`",
+  502: "The registry rejected or could not answer the request",
+  503: "The registry could not be verified; retry later",
 };
 
 let cachedDocument: Record<string, unknown> | null = null;
@@ -259,8 +296,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     const name = componentName(operation.response);
     schemas[name] = jsonSchema(operation.response);
     const responses: Record<string, unknown> = {
-      "200": {
-        description: operation.download ? "Download" : "OK",
+      [operation.startsWork ? "202" : "200"]: {
+        description: operation.download ? "Download" : operation.startsWork ? "Accepted" : "OK",
         content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } },
       },
     };
@@ -270,14 +307,28 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       };
     }
+    let requestBody: Record<string, unknown> | undefined;
+    if (operation.requestBody) {
+      const bodyName = componentName(operation.requestBody);
+      schemas[bodyName] = jsonSchema(operation.requestBody);
+      requestBody = {
+        required: true,
+        content: {
+          "application/json": { schema: { $ref: `#/components/schemas/${bodyName}` } },
+        },
+      };
+    }
     paths[openApiPath(operation.route)] = {
-      get: {
+      ...paths[openApiPath(operation.route)],
+      [operation.method ?? "get"]: {
         operationId: operation.operationId,
         summary: operation.summary,
         ...(operation.description ? { description: operation.description } : {}),
         tags: [operation.tag],
         ...(operation.anonymous ? { security: [] } : {}),
+        ...(operation.startsWork ? { "x-drydock-api-key-access": "scan" } : {}),
         ...(operation.parameters?.length ? { parameters: operation.parameters } : {}),
+        ...(requestBody ? { requestBody } : {}),
         responses,
       },
     };
@@ -289,7 +340,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       title: "Drydock API",
       version: OPENAPI_API_VERSION,
       description:
-        "Read-only automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Package-diff endpoints are anonymous.",
+        "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`). No key records a release decision. Package-diff endpoints are anonymous.",
       license: { name: "Apache-2.0", identifier: "Apache-2.0" },
     },
     servers: [{ url: "https://drydock.org", description: "Hosted Drydock" }],
@@ -313,8 +364,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
 }
 
 /** The routes this document marks as needing a key, in `API_KEY_ROUTES` form. */
-export function documentedApiKeyRoutes(): string[] {
-  return OPENAPI_OPERATIONS.filter((operation) => !operation.anonymous).map(
-    (operation) => `GET ${operation.route}`,
-  );
+export function documentedApiKeyRoutes(access: "read" | "scan"): string[] {
+  return OPENAPI_OPERATIONS.filter(
+    (operation) => !operation.anonymous && Boolean(operation.startsWork) === (access === "scan"),
+  ).map((operation) => `${(operation.method ?? "get").toUpperCase()} ${operation.route}`);
 }

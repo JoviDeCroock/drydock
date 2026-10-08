@@ -267,6 +267,13 @@
       "when": 1791039954958,
       "tag": "0037_loose_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1791479663264,
+      "tag": "0038_ancient_texas_twister",
+      "breakpoints": true
     }
   ]
 }

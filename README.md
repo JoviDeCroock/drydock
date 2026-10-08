@@ -191,7 +191,7 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 - auth/org/settings helpers for Better Auth-backed sessions and organization membership.
 
 Scripts and CI read through the same API — directly or with the dependency-free
-[`drydock` CLI](cli/README.md) (`pnpm run drydock --help`) — using a read-only organization API key
+[`drydock` CLI](cli/README.md) (`pnpm run drydock --help`) — using an organization API key
 (`Authorization: Bearer ddk_…`, created in `Organization settings → Integrations → API keys`); a key
 reaches only the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) and can never record
 a decision. [`docs/openapi.json`](docs/openapi.json) is the OpenAPI 3.1 description of that surface

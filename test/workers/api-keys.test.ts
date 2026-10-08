@@ -1,10 +1,17 @@
-import { env } from "cloudflare:test";
-import { eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { and, eq } from "drizzle-orm";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import { addOrganizationMember } from "../../server/db/invitations";
+import {
+  updateNpmConnectionValidation,
+  upsertNpmConnection,
+} from "../../server/db/npm-connections";
 import * as schema from "../../server/db/schema";
-import { API_KEY_ROUTES, hashApiKey } from "../../server/lib/auth/api-keys";
+import { API_KEY_ROUTES, API_KEY_SCAN_ROUTES, hashApiKey } from "../../server/lib/auth/api-keys";
+import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import type { QueueMessage } from "../../server/lib/scan/job";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
 import { seedCompletedScan, seedUser } from "./helpers/seed";
@@ -353,7 +360,6 @@ describe("API key authentication", () => {
       // Matches `/scans/:id` by shape but is answered by the batch-approval route.
       ["GET", "/api/v1/scans/batch-approval"],
       ["POST", "/api/v1/scans/batch-approval", { scanIds: [scanId] }],
-      ["POST", "/api/v1/scans", { stageId: "stage-api-key-000001" }],
       ["POST", `/api/v1/scans/${scanId}/decision`, { decision: "publish" }],
       ["POST", `/api/v1/scans/${scanId}/share`, {}],
       ["GET", `/api/v1/scans/${scanId}/file?path=package.json`],
@@ -475,5 +481,246 @@ describe("API key authentication", () => {
     expect(first).toBeInstanceOf(Date);
     await callWorker("GET", "/api/v1/scans", withKey(key.token));
     expect((await read())?.getTime()).toBe(first?.getTime());
+  });
+});
+
+const REGISTRY = "https://registry.npmjs.org";
+
+async function connectNpm(account: Account): Promise<void> {
+  const db = createDb(env.DB);
+  await upsertNpmConnection(db, {
+    organizationId: account.organizationId,
+    registryUrl: REGISTRY,
+    label: "npm registry",
+    createdByUserId: account.userId,
+    ...(await encryptNpmToken(env, "npm_api_key_scan_0123456789")),
+  });
+  await updateNpmConnectionValidation(db, {
+    organizationId: account.organizationId,
+    validationStatus: "valid",
+    validatedAt: new Date(),
+  });
+}
+
+/** npm answers for one staged publish: the listing, the stage record, and the access probe. */
+function stubStagedRegistry(stageId: string, packageName: string, version: string): void {
+  const stage = {
+    id: stageId,
+    packageName,
+    version,
+    access: "public",
+    tag: "latest",
+    createdAt: "2026-10-01T12:00:00.000Z",
+    shasum: "c".repeat(40),
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === `${REGISTRY}/-/stage?perPage=50`) {
+        return Response.json({ items: [stage], total: 1, perPage: 50, page: 1 });
+      }
+      if (url === `${REGISTRY}/-/stage/${stageId}/tarball`)
+        return new Response("", { status: 206 });
+      if (url === `${REGISTRY}/-/stage/${stageId}`) return Response.json(stage);
+      return new Response("not found", { status: 404 });
+    }),
+  );
+}
+
+// A script sends no Origin header; the CSRF origin check must not stand in its way.
+async function postWithoutOrigin(
+  path: string,
+  token: string,
+  body?: unknown,
+): Promise<{ status: number; json: Record<string, unknown> | null; queue: QueueMessage[] }> {
+  const queue: QueueMessage[] = [];
+  const ctx = createExecutionContext();
+  const headers = new Headers({ authorization: `Bearer ${token}` });
+  if (body !== undefined) headers.set("content-type", "application/json");
+  const res = await worker.fetch(
+    new Request(`http://example.com${path}`, {
+      method: "POST",
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+    { ...env, SCAN_QUEUE: { send: async (message: QueueMessage) => void queue.push(message) } },
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  const text = await res.text();
+  return { status: res.status, json: text ? JSON.parse(text) : null, queue };
+}
+
+async function auditEvents(organizationId: string, type: string) {
+  return createDb(env.DB)
+    .select()
+    .from(schema.scanEvents)
+    .where(
+      and(eq(schema.scanEvents.organizationId, organizationId), eq(schema.scanEvents.type, type)),
+    );
+}
+
+describe("API keys with scan access", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("access is chosen at creation, listed, reported to the key, and audited", async () => {
+    const owner = await signedUpAccount();
+    const readKey = await createKey(owner);
+    const scanKey = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+
+    const listed = await callWorker("GET", "/api/v1/api-keys", { jar: owner.jar });
+    const keys = listed.json?.keys as Array<{ id: string; access: string }>;
+    expect(keys.find((key) => key.id === readKey.id)?.access).toBe("read");
+    expect(keys.find((key) => key.id === scanKey.id)?.access).toBe("scan");
+    expect(listed.json?.accessLevels).toEqual(["read", "scan"]);
+
+    const whoami = await callWorker("GET", "/api/v1/api-keys/current", withKey(scanKey.token));
+    expect(whoami.json?.access).toBe("scan");
+
+    const created = await auditEvents(owner.organizationId, "organization.api_key_created");
+    expect(
+      created.map((event) => (event.metadataJson as { access?: string }).access).sort(),
+    ).toEqual(["read", "scan"]);
+
+    const invalid = await callWorker("POST", "/api/v1/api-keys", {
+      jar: owner.jar,
+      body: { name: "admin", access: "write" },
+    });
+    expect(invalid.res.status).toBe(400);
+  });
+
+  test("a read-only key is refused every route that starts a review", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner);
+    stubStagedRegistry("stage-read-only-000001", "@acme/read-only", "1.0.0");
+
+    for (const route of API_KEY_SCAN_ROUTES) {
+      const [, path] = route.split(" ");
+      const res = await postWithoutOrigin(
+        path,
+        key.token,
+        path.endsWith("/scans")
+          ? {
+              stageId: "stage-read-only-000001",
+            }
+          : undefined,
+      );
+      expect(res.status, route).toBe(403);
+      expect(res.json, route).toMatchObject({ code: "api_key_access_insufficient" });
+      expect(res.queue, route).toEqual([]);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test("a scan key starts a review of one stage as its creator, and the start is audited", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, {
+      name: "release-ci",
+      access: "scan",
+    });
+    stubStagedRegistry("stage-scan-key-000001", "@acme/scanned", "2.1.0");
+
+    const res = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-scan-key-000001",
+    });
+    expect(res.status, JSON.stringify(res.json)).toBe(202);
+    const scan = res.json?.scan as { id: string; packageName: string; stagedVersion: string };
+    expect(scan).toMatchObject({ packageName: "@acme/scanned", stagedVersion: "2.1.0" });
+    expect(res.queue).toHaveLength(1);
+    expect(res.queue[0]).toMatchObject({ scanId: scan.id, actorUserId: owner.userId });
+    expect(JSON.stringify(res.queue[0])).not.toContain(key.token);
+
+    const db = createDb(env.DB);
+    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scan.id));
+    expect(row).toMatchObject({ organizationId: owner.organizationId, ownerUserId: owner.userId });
+
+    const [event] = await auditEvents(owner.organizationId, "organization.api_key_review_started");
+    expect(event).toMatchObject({ actorUserId: owner.userId, scanId: scan.id });
+    expect(event.metadataJson).toMatchObject({
+      name: "release-ci",
+      prefix: key.prefix,
+      packageName: "@acme/scanned",
+      stagedVersion: "2.1.0",
+    });
+    expect(JSON.stringify(event.metadataJson)).not.toContain(key.token);
+
+    // The review reads back through the same key.
+    const status = await callWorker("GET", `/api/v1/scans/${scan.id}/status`, withKey(key.token));
+    expect(status.res.status).toBe(200);
+  });
+
+  test("a scan key checks npm for staged publishes, and the check is audited", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "nightly", access: "scan" });
+    stubStagedRegistry("stage-discovered-000001", "@acme/discovered", "3.0.0");
+
+    const res = await postWithoutOrigin("/api/v1/staged-publishes/scan", key.token);
+    expect(res.status, JSON.stringify(res.json)).toBe(202);
+    expect(res.json).toMatchObject({
+      found: 1,
+      created: 1,
+      skipped: 0,
+      scans: [{ stageId: "stage-discovered-000001", packageName: "@acme/discovered" }],
+    });
+    expect(res.queue[0]).toMatchObject({ actorUserId: owner.userId });
+
+    const [event] = await auditEvents(owner.organizationId, "organization.api_key_discovery_ran");
+    expect(event).toMatchObject({ actorUserId: owner.userId });
+    expect(event.metadataJson).toMatchObject({ name: "nightly", found: 1, created: 1, skipped: 0 });
+
+    // A second check finds the same stage already under review.
+    const again = await postWithoutOrigin("/api/v1/staged-publishes/scan", key.token);
+    expect(again.json).toMatchObject({ found: 1, created: 0, skipped: 1 });
+  });
+
+  test("scan access adds nothing beyond starting reviews", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    const denied: Array<[string, unknown?]> = [
+      [`/api/v1/scans/${scanId}/decision`, { decision: "publish" }],
+      ["/api/v1/scans/batch-approval", { scanIds: [scanId] }],
+      [`/api/v1/scans/${scanId}/share`, {}],
+      ["/api/v1/api-keys", { name: "escalate", access: "scan" }],
+      ["/api/v1/npm-connection/validate", {}],
+      ["/api/v1/publication-watches", { packageName: "@acme/watched" }],
+    ];
+    for (const [path, body] of denied) {
+      const res = await postWithoutOrigin(path, key.token, body);
+      expect(res.status, path).toBe(403);
+      expect(res.json, path).toMatchObject({ code: "api_key_endpoint_not_allowed" });
+    }
+    const [row] = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    expect(row.decision).toBeNull();
+  });
+
+  test("a session request without an Origin is still refused by the CSRF check", async () => {
+    const owner = await signedUpAccount();
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request("http://example.com/api/v1/staged-publishes/scan", {
+        method: "POST",
+        headers: {
+          cookie: [...owner.jar.entries()].map(([name, value]) => `${name}=${value}`).join("; "),
+        },
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "request origin not allowed" });
   });
 });

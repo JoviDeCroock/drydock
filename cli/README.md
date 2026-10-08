@@ -1,6 +1,6 @@
 # drydock CLI
 
-Read an organization's Drydock reviews, report exports, and release receipts from scripts and CI. Every command is read-only: approving a gate or recording a decision stays with signed-in maintainers in Drydock.
+Read an organization's Drydock reviews, report exports, and release receipts from scripts and CI, and start new reviews with a key that has scan access. Approving a gate or recording a decision stays with signed-in maintainers in Drydock.
 
 The CLI has no dependencies and runs on Node 22.14 or later. From a checkout of this repository:
 
@@ -15,7 +15,7 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
 
 | Command                                       | What it does                                                                                      |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `whoami`                                      | The key's organization, name, and expiry                                                          |
+| `whoami`                                      | The key's organization, name, expiry, and access (`read` or `scan`)                               |
 | `scans list [--filter F] [--limit N]`         | Reviews, newest first (`undecided` by default; `all`, `publish`, `no_publish`, …)                 |
 | `scans get <review-id>`                       | One review and its findings                                                                       |
 | `scans wait <review-id> [--fail-on RISK]`     | Poll until the review completes (`--timeout`, `--interval` in seconds)                            |
@@ -25,7 +25,19 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
 | `gate <review-id>`                            | The GitHub workflow gate a review belongs to                                                      |
 | `diff <package> <from> <to> [--fail-on RISK]` | Diff two published releases through the anonymous public diff; needs no key                       |
 
-`--json` prints the API response instead of a table. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk).
+### Starting reviews
+
+These need a key created with **scan access**; a read-only key gets a clear error and exit `1`. A review started with a key is owned by the key's creator and audited with the key's name.
+
+| Command                                           | What it does                                                                       |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `scans start <package>@<version> [--ecosystem E]` | Review a published version against the release before it, or `--baseline VERSION`  |
+| `scans start --stage <stage-id>`                  | Review one npm staged publish                                                      |
+| `check-npm`                                       | The dashboard's "Check npm": discover new staged publishes and start their reviews |
+
+Each takes `--wait` to poll the started reviews until they finish (`--timeout`, `--interval`, `--fail-on` as for `scans wait`). Scoped names keep their leading `@`: `scans start @acme/cli@2.0.0`. With `check-npm --wait`, any review at the `--fail-on` threshold exits `3`, even if another failed; otherwise a failed review exits `1`.
+
+`--json` prints the API response instead of a table (with `--wait`, the start response plus a `results` array of final statuses). Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk).
 
 ## In CI
 
@@ -37,6 +49,17 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
     node cli/bin/drydock.mjs scans wait "$REVIEW_ID" --fail-on high
     node cli/bin/drydock.mjs receipt "$REVIEW_ID" --output release-receipt.json
 ```
+
+After `npm stage publish`, a key with scan access can review the stage without waiting for the 15-minute discovery cron. Gate on the stage id `npm stage publish` printed:
+
+```yaml
+- name: Review the staged publish
+  env:
+    DRYDOCK_API_KEY: ${{ secrets.DRYDOCK_SCAN_KEY }}
+  run: node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high
+```
+
+`scans start --stage` always starts a review of that stage, so the step gates on it even if discovery reviewed it first. `check-npm --wait` waits only for reviews it started itself: if the cron already picked the stage up, it starts nothing and exits `0`, so it is not a gate.
 
 ## Output safety
 
