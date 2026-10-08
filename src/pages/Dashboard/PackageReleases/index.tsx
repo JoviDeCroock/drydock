@@ -210,7 +210,9 @@ function PackageReleasesView({
             <Show when={() => !hasReleases.value}>
               <Card>
                 <EmptyLine>
-                  No reviews of {packageName} in {organizationLabel}.
+                  No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
+                  {organizationLabel} yet. Reviews start from the dashboard once a staged publish or
+                  a gated release reaches Drydock.
                 </EmptyLine>
               </Card>
             </Show>

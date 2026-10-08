@@ -204,8 +204,9 @@ status is unknown, `staged`, or `validating`, with the age of the oldest),
 **npm still scanning** (`validating`, with how many already have a finished
 Drydock review), **Published, no decision · 30d** (the list's
 `published_without_decision` semantics, limited to scans created in the last 30
-days), and **Decided · 30d** (approved vs rejected plus the median
-completion-to-decision time). The first three count only npm staged-publish
+days), and **Decided · 30d** (approved vs blocked plus the median
+completion-to-decision time; it opens the `decided` filter, which lists the
+decisions recorded in the same 30-day window). The first three count only npm staged-publish
 sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans
 carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
 `GET /api/v1/scans/overview`, one aggregate D1 statement in

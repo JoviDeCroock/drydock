@@ -110,11 +110,11 @@ export default function SettingsPage() {
 
   const workspaceLoaded =
     githubApp.loaded.value && targets.releaseTargetsLoaded.value && npm.loaded.value;
-  useScrollToHashSection(workspaceLoaded, activeTab.value);
+  useScrollToHashSection(workspaceLoaded, activeTab.value, location.url);
 
   if (!sessionChecked.value) {
     return (
-      <PageShell>
+      <PageShell headerActions={<AppHeaderActions current="settings" />}>
         <SettingsHeader />
         <LoadingState title="Opening settings" detail="confirming session" />
       </PageShell>
@@ -227,17 +227,19 @@ const SECTION_ANCHOR_CLASS = "scroll-mt-6";
  * tab/hash pair scrolls once, so reloading data (switching organizations)
  * never yanks the page back to the anchor.
  */
-function useScrollToHashSection(contentReady: boolean, tab: SettingsTab) {
+// `url` is preact-iso's location, which keeps the hash on link navigation, so
+// following a section link while already on its tab scrolls too.
+function useScrollToHashSection(contentReady: boolean, tab: SettingsTab, url: string) {
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
     const hash = window.location.hash;
-    const key = `${tab}${hash}`;
+    const key = `${tab}${url}${hash}`;
     if (!contentReady || !hash || scrolledFor.current === key) return;
     const frame = window.requestAnimationFrame(() => {
       if (scrollToSettingsSection(hash, document)) scrolledFor.current = key;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [contentReady, tab]);
+  }, [contentReady, tab, url]);
 }
 
 function activeRole(

@@ -71,7 +71,13 @@ export default function DashboardPage() {
   const personalWorkspace = useComputed(() => organizations.active.value?.isPersonal === true);
   // The first-run panel carries the same form as its first step; once the
   // panel closes for good the dashboard still needs a way to start a review.
-  const reviewFormOutsideOnboarding = useComputed(() => !gettingStartedPanelOpen.value);
+  // An organization with no reviews that has not finished onboarding is about
+  // to get the panel, so the card waits rather than flashing first.
+  const reviewFormOutsideOnboarding = useComputed(
+    () =>
+      !gettingStartedPanelOpen.value &&
+      (scans.hasAnyScan.value === true || gettingStartedDone.value),
+  );
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -125,7 +131,7 @@ export default function DashboardPage() {
 
   if (!sessionChecked.value) {
     return (
-      <PageShell>
+      <PageShell headerActions={<AppHeaderActions current="reviews" />}>
         <DashboardHeader />
         <LoadingState title="Opening workspace" detail="checking session · loading reviews" />
       </PageShell>
@@ -487,7 +493,7 @@ const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
     value: "published_without_decision",
     label: "Published with no decision in this organization",
   },
-  { value: "decided", label: "Decided" },
+  { value: "decided", label: "Decided in the last 30 days" },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
@@ -554,6 +560,8 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
       return "Nothing waiting on you. Switch to All to see earlier reviews.";
     case "published_without_decision":
       return "No npm releases were published without a decision in this organization.";
+    case "decided":
+      return "No decisions recorded in the last 30 days.";
     case "publish":
       return "No approved reviews yet.";
     case "no_publish":
@@ -606,7 +614,7 @@ function NpmConnectionCallout({
             </>
           )}
           <a class="underline text-accent" href="/dashboard/settings?tab=integrations#npm-access">
-            Settings &rarr; Integrations
+            Settings &rarr; npm access
           </a>
           .
         </Alert>

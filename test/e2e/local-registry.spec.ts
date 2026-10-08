@@ -618,9 +618,10 @@ test("an observed release opens what was published: its public diff and its revi
         name: "Open the public diff of 1.1.0 against 1.0.0 in a new tab",
       }),
     ).toHaveAttribute("href", "/diff/@drydock/e2e-diffed/1.0.0/1.1.0");
+    // The review belongs to the watching organization, so its link names it.
     await expect(monitor.getByRole("link", { name: "Open review" })).toHaveAttribute(
       "href",
-      "/dashboard/scans/scan-in-flight",
+      /^\/dashboard\/scans\/scan-in-flight\?org=[^&]+$/,
     );
   } finally {
     await context.close();
@@ -929,7 +930,7 @@ test("a personal connection awaiting its workspace choice is called out on the d
     await expect(callout).toBeVisible({ timeout: 30_000 });
     // One notice per connection state, pointing at the card that records the choice.
     await expect(page.getByText(/Check npm is paused|npm discovery is paused/)).toHaveCount(0);
-    await callout.getByRole("link", { name: "Settings → Integrations" }).click();
+    await callout.getByRole("link", { name: "Settings → npm access" }).click();
     await expect(page.getByText("automatic scans off", { exact: true })).toBeVisible({
       timeout: 30_000,
     });

@@ -5,7 +5,7 @@
  * reading its risk figures off the denormalized summary so a page of rows
  * never has to load findings.
  */
-import { and, desc, eq, isNotNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, lt, or } from "drizzle-orm";
 import { npmReleaseOutcome, type NpmReleaseOutcome } from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
 import type { ScanDecisionFilter } from "./enums";
@@ -18,12 +18,15 @@ import {
   undecidedQueueConditions,
 } from "./scan-query";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
+import { SCAN_OVERVIEW_WINDOW_MS } from "./scan-overview";
 import { scans } from "./schema";
 
 export interface ListScansOptions {
   cursor?: { createdAtMs: number; id: string } | null;
   limit?: number;
   decisionFilter?: ScanDecisionFilter;
+  /** Clock for the `decided` window; tests pin it. */
+  now?: Date;
 }
 
 export interface ListScansResult {
@@ -79,8 +82,12 @@ export async function listScans(
     conditions.push(...undecidedQueueConditions());
   } else if (decisionFilter === "published_without_decision") {
     conditions.push(...publishedWithoutDecisionConditions());
-  } else if (decisionFilter === "decided") conditions.push(isNotNull(scans.decision));
-  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  } else if (decisionFilter === "decided") {
+    // The overview's Decided tile links here, so the list covers the same
+    // window it counts: decisions recorded in the last 30 days.
+    const windowStart = new Date((options.now ?? new Date()).getTime() - SCAN_OVERVIEW_WINDOW_MS);
+    conditions.push(isNotNull(scans.decision), gte(scans.decidedAt, windowStart));
+  } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
   if (options.cursor) {

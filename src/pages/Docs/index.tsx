@@ -394,8 +394,8 @@ export default function DocsPage() {
                 ]}
               />
               <div class="flex flex-wrap gap-2 pt-1">
-                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                  Open Organization settings
+                <LinkButton href="/dashboard/settings?tab=integrations#npm-access" size="sm">
+                  Connect npm in settings
                 </LinkButton>
               </div>
             </Subsection>
@@ -526,8 +526,8 @@ export default function DocsPage() {
                 ]}
               />
               <div class="flex flex-wrap gap-2 pt-1">
-                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                  Open Organization settings
+                <LinkButton href="/dashboard/settings?tab=integrations#github-app" size="sm">
+                  Set up a workflow gate
                 </LinkButton>
               </div>
             </Subsection>

@@ -26,7 +26,7 @@ export default function AccountPage() {
 
   if (!ready.value) {
     return (
-      <PageShell width="doc">
+      <PageShell width="doc" headerActions={<AppHeaderActions />}>
         <AccountHeader />
         <LoadingState title="Opening account" detail="confirming session" />
       </PageShell>

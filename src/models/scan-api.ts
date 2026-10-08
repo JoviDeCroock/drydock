@@ -202,12 +202,16 @@ export type StartScanRequest = { stageId: string } | PublishedScanRequest;
 
 const PUBLISHED_STAGE_ID_PREFIX = "published:";
 
-// Failure codes that mean the staged candidate itself is gone: npm published,
-// deleted, or blocked it, so a fresh review has nothing left to read.
-const CANDIDATE_GONE_CODES = new Set([
+// Failure codes a fresh start cannot get past: npm published, deleted, or
+// blocked the staged candidate, so there is nothing left to read; or the
+// organization's npm connection is missing or unvalidated, which the failure
+// alert sends the reader to settings to fix first.
+const NOT_RETRYABLE_CODES = new Set([
   "staged_release_published",
   "staged_release_deleted",
   "staged_release_blocked",
+  "npm_connection_missing",
+  "npm_connection_unvalidated",
 ]);
 
 /**
@@ -217,14 +221,17 @@ const CANDIDATE_GONE_CODES = new Set([
  * longer holds cannot be fetched. A staged review restarts from its stage id
  * through the normal start route, which re-checks the organization's npm
  * access; a published-pair review restarts from the coordinates its stage id
- * names (`published:<ecosystem>:<name>@<version>`). A failed scan records no
- * baseline, so the server picks the default predecessor again.
+ * names (`published:<ecosystem>:<name>@<version>`), against the baseline it
+ * recorded when the pipeline resolved one.
  */
 export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScanRequest | null {
   if (scan.status !== "failed" || scan.registryStatusSupersededAt != null) return null;
   if (scan.source === "manual" || scan.source === "auto_discovery") {
     const code = (scan.errorJson as { code?: unknown } | null | undefined)?.code;
-    if (typeof code === "string" && CANDIDATE_GONE_CODES.has(code)) return null;
+    if (typeof code === "string" && NOT_RETRYABLE_CODES.has(code)) return null;
+    // npm may have settled the version after the review failed; the start
+    // route would then refuse a stage that no longer holds a candidate.
+    if (settledRegistryStatus(scan.registryVersionStatus) !== null) return null;
     return { stageId: scan.stageId };
   }
   if (scan.source === "published" && scan.stageId.startsWith(PUBLISHED_STAGE_ID_PREFIX)) {
@@ -238,6 +245,9 @@ export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScan
       ecosystem: rest.slice(0, colon),
       packageName: coordinates.slice(0, at),
       version: coordinates.slice(at + 1),
+      // Keep the comparison the review was saved with (a /diff save can name
+      // a baseline other than the default predecessor).
+      ...(scan.previousVersion ? { baselineVersion: scan.previousVersion } : {}),
     };
   }
   return null;
@@ -356,6 +366,9 @@ export function scanMatchesDecisionFilter(
   filter: ScanDecisionFilter,
 ): boolean {
   if (filter === "all") return true;
+  // The server bounds this list to the overview window; a row already in it
+  // stays while it carries a decision.
+  if (filter === "decided") return scan.decision != null;
   const releaseOutcome =
     scan.registryReleaseOutcome ?? settledRegistryStatus(scan.registryVersionStatus);
   if (filter === "published_without_decision") {

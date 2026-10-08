@@ -9,6 +9,8 @@ import { Dialog } from "../../components/Dialog";
 import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { Muted } from "../../components/Typography";
+import { scanDetailPath } from "../../lib/scan-detail-path";
+import { activeOrganizationId } from "../../models/active-organization";
 
 const count = (n: number, word: string) => `${n} ${pluralize(word, n)}`;
 
@@ -132,7 +134,7 @@ export function BatchApprovalDialog({
               />
               {/* Wraps rather than truncates: the version is what is being approved. */}
               <a
-                href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                href={scanDetailPath(scan.id, activeOrganizationId.value)}
                 target="_blank"
                 rel="noopener"
                 class="font-mono text-[13px] text-ink underline-offset-2 hover:underline min-w-0 break-all"
