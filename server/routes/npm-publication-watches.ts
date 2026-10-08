@@ -56,10 +56,10 @@ npmPublicationWatchRoutes.get("/", async (c) => {
   });
 });
 
-// One package's monitoring state for the package page. Read-only: unlike the
-// list, it never reconciles enrollment, and the package name is a filter over
-// this organization's rows, never an authority. Legacy mixed-case names are
-// accepted because managing a claim such as `JSONStream` creates their watch.
+// One package's monitoring state for the package page. Read-only like the
+// list, and the package name is a filter over this organization's rows, never
+// an authority. Legacy mixed-case names are accepted because managing a claim
+// such as `JSONStream` creates their watch.
 // `{.+}` keeps a scoped name's `/`.
 npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
   const packageName = c.req.param("name").trim();
