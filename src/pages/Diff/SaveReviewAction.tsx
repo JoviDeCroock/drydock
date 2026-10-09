@@ -7,6 +7,7 @@ import { Button } from "../../components/Button";
 import { OrganizationModel } from "../../models/organization";
 import { PublishedReviewModel } from "../../models/published-review";
 import type { DiffSpec } from "../../lib/package-diff-path";
+import { scanDetailPath } from "../../lib/scan-detail-path";
 
 /**
  * Keep an anonymous diff as an organization's own review.
@@ -42,7 +43,7 @@ export function SaveReviewAction({ spec }: { spec: DiffSpec }) {
       version: spec.toVersion,
       baselineVersion: spec.fromVersion,
     });
-    if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
+    if (scanId) location.route(scanDetailPath(scanId, organizations.active.peek()?.id));
   };
 
   return (

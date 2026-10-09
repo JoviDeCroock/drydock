@@ -1,4 +1,4 @@
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { buildQueryUrl, useQuerySignal } from "../../../lib/query-state";
@@ -19,11 +19,10 @@ import {
   type OrganizationRole,
 } from "../../../../server/lib/auth/roles";
 import { LoadingState } from "../../../components/Loading";
-import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import { PageShell } from "../../../components/PageShell";
+import { AppHeaderActions } from "../../../features/account/AppHeaderActions";
 import { EmailVerificationBanner } from "../../../features/account/EmailVerificationBanner";
 import { Muted } from "../../../components/Typography";
-import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection, OrganizationDangerZone } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
@@ -32,7 +31,14 @@ import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { AuditLogSection } from "./AuditLogSection";
-import { SETTINGS_TABS, SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
+import { SettingsNav } from "./SettingsNav";
+import {
+  SETTINGS_SECTION,
+  SETTINGS_TABS,
+  isSettingsTab,
+  scrollToSettingsSection,
+  type SettingsTab,
+} from "./settings-links";
 
 export default function SettingsPage() {
   const location = useLocation();
@@ -102,14 +108,13 @@ export default function SettingsPage() {
     }
   };
 
-  const onSignOut = async () => {
-    await sessionModel.signOut();
-    location.route("/", true);
-  };
+  const workspaceLoaded =
+    githubApp.loaded.value && targets.releaseTargetsLoaded.value && npm.loaded.value;
+  useScrollToHashSection(workspaceLoaded, activeTab.value, location.url);
 
   if (!sessionChecked.value) {
     return (
-      <PageShell>
+      <PageShell headerActions={<AppHeaderActions current="settings" />}>
         <SettingsHeader />
         <LoadingState title="Opening settings" detail="confirming session" />
       </PageShell>
@@ -119,7 +124,6 @@ export default function SettingsPage() {
   const user = sessionModel.user.value;
   const githubAppLoaded = githubApp.loaded.value && targets.releaseTargetsLoaded.value;
   const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = githubAppLoaded && npmLoaded;
   // The audit log is owner/admin-only: hide the tab from members and fall back
   // to General if a member deep-links to ?tab=audit (the endpoint 403s anyway).
   const canViewAudit = canManageMembers(organizations);
@@ -130,17 +134,12 @@ export default function SettingsPage() {
   return (
     <PageShell
       headerActions={
-        <>
-          <OrgSwitcher
-            organizations={organizations.organizations.value}
-            activeOrganizationId={organizations.activeOrganizationId.value}
-            busy={organizations.busy.value}
-            error={organizations.error.value}
-            onActivate={onSwitchOrganization}
-            onCreate={onCreateOrganization}
-          />
-          <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
-        </>
+        <AppHeaderActions
+          current="settings"
+          organizations={organizations}
+          onActivate={onSwitchOrganization}
+          onCreate={onCreateOrganization}
+        />
       }
     >
       <SettingsHeader />
@@ -149,11 +148,7 @@ export default function SettingsPage() {
 
       {workspaceLoaded ? (
         <div class="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-6 md:gap-8">
-          <SettingsNav
-            active={tab}
-            tabs={visibleTabs}
-            onSelect={(next) => (activeTab.value = next)}
-          />
+          <SettingsNav active={tab} tabs={visibleTabs} />
 
           <div class="min-w-0 flex flex-col gap-6">
             {tab === "general" ? (
@@ -198,17 +193,23 @@ export default function SettingsPage() {
             ) : null}
             {tab === "integrations" ? (
               <>
-                <NpmConnectionSection
-                  key={organizations.active.value?.id}
-                  npm={npm}
-                  organizations={organizations}
-                  onSwitchOrganization={onSwitchOrganization}
-                  defaultOpen
-                />
-                <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
+                <div id={SETTINGS_SECTION.npmAccess} class={SECTION_ANCHOR_CLASS}>
+                  <NpmConnectionSection
+                    key={organizations.active.value?.id}
+                    npm={npm}
+                    organizations={organizations}
+                    onSwitchOrganization={onSwitchOrganization}
+                    defaultOpen
+                  />
+                </div>
+                <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
+                  <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
+                </div>
               </>
             ) : null}
-            {tab === "audit" && canViewAudit ? <AuditLogSection audit={audit} /> : null}
+            {tab === "audit" && canViewAudit ? (
+              <AuditLogSection audit={audit} organizationId={organizations.active.value?.id} />
+            ) : null}
           </div>
         </div>
       ) : (
@@ -216,6 +217,32 @@ export default function SettingsPage() {
       )}
     </PageShell>
   );
+}
+
+// Leaves breathing room above a section scrolled to from a link.
+const SECTION_ANCHOR_CLASS = "scroll-mt-6";
+
+/**
+ * Land a `#section` deep link once the tab holding it has rendered. Each
+ * tab/hash pair scrolls once, so reloading data (switching organizations)
+ * never yanks the page back to the anchor.
+ */
+// `url` is preact-iso's location: a section link clicked while already on its
+// tab changes it (the hash rides along on link clicks), so that scrolls too.
+function useScrollToHashSection(contentReady: boolean, tab: SettingsTab, url: string) {
+  const scrolledFor = useRef<string | null>(null);
+  useEffect(() => {
+    const hash = window.location.hash;
+    // preact-iso's url carries the hash after some navigations and not after
+    // others; key on the address without it so one tab/section pair scrolls
+    // once however the reader arrived.
+    const key = `${tab}${url.split("#")[0]}${hash}`;
+    if (!contentReady || !hash || scrolledFor.current === key) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollToSettingsSection(hash, document)) scrolledFor.current = key;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [contentReady, tab, url]);
 }
 
 function activeRole(

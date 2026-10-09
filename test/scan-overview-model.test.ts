@@ -136,7 +136,7 @@ describe("overviewTiles", () => {
       ["waiting", "Waiting on you", "3", "oldest 5h", "undecided"],
       ["validating", "npm still scanning", "2", "1 of 2 Drydock reviews ready first", "undecided"],
       ["published", "Published, no decision · 30d", "1", null, "published_without_decision"],
-      ["decided", "Decided · 30d", "6", "5 approved · 1 rejected · median 42m", "all"],
+      ["decided", "Decided · 30d", "6", "5 approved · 1 blocked · median 42m", "decided"],
     ]);
   });
 
@@ -190,7 +190,7 @@ describe("overviewTiles", () => {
       overview({ decided: { count: 2, approved: 2, rejected: 0, medianDecisionMs: null } }),
       NOW,
     );
-    expect(decided?.detail).toBe("2 approved · 0 rejected");
+    expect(decided?.detail).toBe("2 approved · 0 blocked");
   });
 
   test("formats durations compactly and never negative", () => {

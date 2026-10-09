@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { locationStub } from "preact-iso/prerender";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import { packageDiffIndexPath } from "../src/lib/package-diff-path";
+import { ADDITIONAL_PRERENDER_ROUTES } from "../src/lib/prerender-routes";
 import { CURATED_DIFF_PACKAGES } from "../src/lib/public-content-routes";
 import {
   DISCOVERY_GUIDE_PATHS,
@@ -58,6 +59,7 @@ describe("isPrerenderedRoute", () => {
 
   it.each([
     ["package-only", "/diff/react"],
+    ["PyPI package-only", "/diff/pypi/requests"],
     ["atpm handle", "/diff/atpm/@ebey.dev/counter/0.0.14/0.0.15"],
   ])("keeps public diff context visible while resolving a %s route", async (_, url) => {
     locationStub(url);
@@ -65,6 +67,62 @@ describe("isPrerenderedRoute", () => {
 
     expect(result.html).toContain("public package diff");
   });
+});
+
+// The route table in src/index.tsx is the one list nothing else derives from.
+// A public page listed for prerendering, metadata, and the sitemap but missing
+// there renders "Page not found" under a 200 — /maintainer-pledge shipped that
+// way. Reading the source keeps this check free of a router render per path.
+const ROUTE_PATTERNS = [
+  ...readFileSync(new URL("../src/index.tsx", import.meta.url), "utf8").matchAll(
+    /<ScopedRoute\s+path="([^"]+)"/g,
+  ),
+].map(([, path]) => path);
+
+function hasRoute(pathname: string) {
+  return ROUTE_PATTERNS.some((pattern) => {
+    if (pattern === pathname) return true;
+    if (pattern.endsWith("/*")) return pathname.startsWith(pattern.slice(0, -1));
+    const segments = pattern.split("/");
+    const actual = pathname.split("/");
+    return (
+      segments.length === actual.length &&
+      segments.every((segment, index) => segment.startsWith(":") || segment === actual[index])
+    );
+  });
+}
+
+const SITEMAP_PATHS = [
+  ...readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8").matchAll(
+    /<loc>([^<]+)<\/loc>/g,
+  ),
+].map(([, loc]) => new URL(loc).pathname);
+
+describe("public route parity", () => {
+  it("routes every prerendered and sitemap path to a page", () => {
+    const publicPaths = new Set([
+      ...ADDITIONAL_PRERENDER_ROUTES,
+      ...DISCOVERY_GUIDE_PATHS,
+      ...INCIDENT_CASE_PATHS,
+      ...SITEMAP_PATHS,
+    ]);
+    const unrouted = [...publicPaths].filter((path) => !hasRoute(path));
+
+    expect(unrouted).toEqual([]);
+  });
+
+  it.each([...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS])(
+    "prerenders %s under its own title",
+    async (path) => {
+      locationStub(path);
+      const result = await prerender({ url: path });
+
+      const head = "head" in result ? result.head : undefined;
+
+      expect(head?.title).toBe(getPageSeoMetadata(path)?.title);
+      expect(result.html).not.toContain("Page not found");
+    },
+  );
 });
 
 describe("page SEO metadata", () => {

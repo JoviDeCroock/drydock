@@ -3,6 +3,7 @@ import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
+import { authPageHref } from "./auth-links";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
 import { Alert } from "../../components/Alert";
@@ -26,8 +27,7 @@ export default function VerifyEmailPage() {
   const location = useLocation();
   const errorCode = typeof location.query.error === "string" ? location.query.error : "";
   const returnTo = normalizeAuthReturnTo(location.query.returnTo);
-  const signInHref =
-    returnTo === "/dashboard" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  const signInHref = authPageHref("/login", returnTo);
   const state = useSignal<VerifyState>(errorCode ? "error" : "verifying");
   const email = useSignal("");
   const error = useSignal<string | null>(null);
@@ -122,7 +122,7 @@ export default function VerifyEmailPage() {
         </form>
 
         <p class="text-[13px] text-ink-muted m-0">
-          <a href="/login">Back to sign in</a>
+          <a href={signInHref}>Back to sign in</a>
         </p>
       </Card>
     </PageShell>

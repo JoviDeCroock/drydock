@@ -2,12 +2,11 @@ import { useComputed } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { authConfigModel, sessionModel, signInMethodsModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
-import { LinkButton } from "../../../components/Button";
+import { AppHeaderActions } from "../../../features/account/AppHeaderActions";
 import { SettingsCard } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
 import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
-import { UserMenu } from "../../../components/UserMenu";
 import { TwoFactorSection } from "./TwoFactorSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
 
@@ -25,14 +24,9 @@ export default function AccountPage() {
     () => sessionChecked.value && signInMethodsModel.loaded.value && authConfigModel.settled.value,
   );
 
-  const onSignOut = async () => {
-    await sessionModel.signOut();
-    location.route("/", true);
-  };
-
   if (!ready.value) {
     return (
-      <PageShell width="doc">
+      <PageShell width="doc" headerActions={<AppHeaderActions />}>
         <AccountHeader />
         <LoadingState title="Opening account" detail="confirming session" />
       </PageShell>
@@ -42,17 +36,7 @@ export default function AccountPage() {
   const user = sessionModel.user.value;
 
   return (
-    <PageShell
-      width="doc"
-      headerActions={
-        <>
-          <LinkButton variant="ghost" size="sm" href="/dashboard">
-            Dashboard
-          </LinkButton>
-          <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
-        </>
-      }
-    >
+    <PageShell width="doc" headerActions={<AppHeaderActions />}>
       <AccountHeader />
 
       <div class="flex flex-col gap-6">

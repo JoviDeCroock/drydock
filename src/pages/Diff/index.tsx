@@ -68,12 +68,20 @@ export default function DiffPage() {
       />
     );
   }
-  // Package-only form (/diff/<name>): the target of added-dependency links,
-  // where there is no version pair to link directly. Resolve the latest
-  // published pair and redirect. npm-only — dependency links are suppressed
-  // for ecosystems whose dependencies are not npm packages.
-  const packageName = parseDiffPackage(location.path);
-  if (packageName) return <DiffPackageResolver key={packageName} packageName={packageName} />;
+  // Package-only form (/diff/<name>, /diff/pypi/<name>): the target of
+  // added-dependency links and of the sitemap's package pages, where there is
+  // no version pair to link directly. Resolve the latest published pair and
+  // redirect.
+  const index = parseDiffPackage(location.path);
+  if (index) {
+    return (
+      <DiffPackageResolver
+        key={`${index.ecosystem}:${index.packageName}`}
+        ecosystem={index.ecosystem}
+        packageName={index.packageName}
+      />
+    );
+  }
   return <DiffLanding />;
 }
 
@@ -135,20 +143,26 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
   );
 }
 
-function DiffPackageResolver({ packageName }: { packageName: string }) {
+function DiffPackageResolver({
+  ecosystem,
+  packageName,
+}: {
+  ecosystem: DiffEcosystem;
+  packageName: string;
+}) {
   const authed = useAuthedSession();
   const location = useLocation();
   const error = useSignal<string | null>(null);
 
   useCancellableEffect(
     (isCancelled) => {
-      void resolveSuggestedDiffPath("npm", packageName).then((resolved) => {
+      void resolveSuggestedDiffPath(ecosystem, packageName).then((resolved) => {
         if (isCancelled()) return;
         if ("error" in resolved) error.value = resolved.error;
         else location.route(resolved.path, true);
       });
     },
-    [packageName],
+    [ecosystem, packageName],
   );
 
   return (
@@ -156,7 +170,7 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
       {/* Its own canonical, not `/diff`. This page redirects to the latest
           pair, but it is the stable URL a sitemap or an inbound link can name,
           so it has to describe this package rather than the diff tool. */}
-      <PageSeo metadata={packageDiffIndexSeo("npm", packageName)} />
+      <PageSeo metadata={packageDiffIndexSeo(ecosystem, packageName)} />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {packageName}
@@ -551,7 +565,14 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                   : NEXT_RELEASE_ASK[ecosystem].body}
             </Muted>
             <div class="flex gap-3 mt-1">
-              <LinkButton href="/register">Review my next release</LinkButton>
+              {/* A signed-in reader already has the next step in the header
+                  (save this review); an anonymous one comes back to this diff
+                  after creating an account instead of an empty dashboard. */}
+              <Show when={() => !authed.value}>
+                <LinkButton href={`/register?returnTo=${encodeURIComponent(location.url)}`}>
+                  Review my next release
+                </LinkButton>
+              </Show>
               <LinkButton href={NEXT_RELEASE_ASK[ecosystem].guide.href} variant="secondary">
                 {NEXT_RELEASE_ASK[ecosystem].guide.label}
               </LinkButton>

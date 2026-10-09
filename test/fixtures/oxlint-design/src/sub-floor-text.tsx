@@ -1,4 +1,4 @@
-// Every size here is below the docs/design.md 10px floor.
+// Every size here is under the docs/design.md floor (`text-xs` is 10.5px on the 14px root).
 // Line numbers are asserted in test/oxlint-design-tokens.test.mjs.
 
 export function NinePx() {
@@ -28,4 +28,8 @@ export function LengthHint() {
 
 export function ArbitraryProperty() {
   return <span class="[font-size:9px]">tiny</span>;
+}
+
+export function NamedExtraSmall() {
+  return <span class="text-xs">tiny</span>;
 }

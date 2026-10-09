@@ -26,6 +26,7 @@ import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
+import { reportDiffHref } from "./diff-link";
 import { REPORT_DIFF_ASIDE, ReportDiffPanel } from "./ReportDiffPanel";
 
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
@@ -121,9 +122,6 @@ export default function PublicReportPage() {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <header class="flex flex-col gap-2">
-          <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
-            Public release review
-          </p>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">This page needs a link</h1>
           <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
             A Drydock public report is a single release review that the package's owner chose to
@@ -190,6 +188,8 @@ export default function PublicReportPage() {
   const decision = data.scan.decision;
   const decided = decision === "publish" || decision === "no_publish";
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
+  const packageDiff = reportDiffHref(data);
+  const packageDiffLabel = packageDiff.specific ? "Diff this package" : "Diff a package";
   const changedCount = model.diffEntries.value.filter(
     (entry) => entry.status !== "unchanged",
   ).length;
@@ -201,15 +201,13 @@ export default function PublicReportPage() {
           The maintainer's decision closes the metadata line as plain text — it
           is settled state, not an alert. */}
       <header class="flex flex-col gap-2 min-w-0">
-        <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
-          Public release review
-        </p>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
           {data.package.name || "Release review"}
         </h1>
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <MonoDetail
             parts={[
+              <span key="kind">public release review</span>,
               <span key="version">
                 {data.package.previousVersion || "—"} → {data.package.stagedVersion || "—"}
               </span>,
@@ -234,6 +232,10 @@ export default function PublicReportPage() {
         </div>
       </header>
 
+      {/* The risk grade, not the scan detail's recommendation: "block manual
+          approval" is an instruction to the person who approves the release,
+          and a public reader is not that person. Their answer is the grade
+          plus the decision the maintainer recorded in the header. */}
       <Card class="flex flex-col gap-3">
         <SectionLabel as="h2">Verdict</SectionLabel>
         <p
@@ -333,18 +335,25 @@ export default function PublicReportPage() {
           decision. You can also diff any published npm, PyPI, or atpm package without an account.
         </Muted>
         <div class="flex flex-wrap gap-3 mt-1">
+          {/* Sign-up returns to the dashboard, never here: the share token is a
+              capability and must not be copied into an auth URL. A signed-in
+              reader is usually the owner, who has no in-page way back to the
+              review they shared — the token does not say which scan it is. */}
           <Show
             when={authed}
             fallback={
               <>
                 <LinkButton href="/register">Review my next release</LinkButton>
-                <LinkButton href="/diff" variant="secondary">
-                  Diff a package
+                <LinkButton href={packageDiff.href} variant="secondary">
+                  {packageDiffLabel}
                 </LinkButton>
               </>
             }
           >
-            <LinkButton href="/diff">Diff a package</LinkButton>
+            <LinkButton href={packageDiff.href}>{packageDiffLabel}</LinkButton>
+            <LinkButton href="/dashboard" variant="ghost">
+              Back to reviews
+            </LinkButton>
           </Show>
         </div>
       </section>

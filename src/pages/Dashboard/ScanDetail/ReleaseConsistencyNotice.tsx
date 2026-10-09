@@ -3,6 +3,7 @@ import {
   type ReleaseConsistency,
 } from "../../../../server/lib/scan/release-memory";
 import { formatDateTime, pluralize } from "../../../lib/format";
+import { scanDetailPath } from "../../../lib/scan-detail-path";
 import { Alert } from "../../../components/Alert";
 
 const QUIET_LINE = "m-0 text-[13px] leading-[1.55] text-ink-muted";
@@ -26,9 +27,12 @@ export function releaseConsistencyDiverged(value: unknown): boolean {
 export function ReleaseConsistencyNotice({
   value,
   approvedContextCount = 0,
+  organizationId,
 }: {
   value: unknown;
   approvedContextCount?: number;
+  /** The review's organization; release memory never crosses organizations. */
+  organizationId?: string | null;
 }) {
   const consistency = normalizeReleaseConsistency(value);
   if (!consistency) return null;
@@ -55,7 +59,7 @@ export function ReleaseConsistencyNotice({
         {count} {pluralize("finding", count)} {count === 1 ? "is" : "are"} new since the last
         approved release
         {consistency.priorVersion || consistency.priorScanId ? (
-          <> ({priorScanLink(consistency)})</>
+          <> ({priorScanLink(consistency, organizationId)})</>
         ) : null}
         .{scoringNote}
       </Alert>
@@ -71,11 +75,12 @@ export function ReleaseConsistencyNotice({
         No deterministic findings —{" "}
         {consistency.priorFindingCount === 0 ? (
           <>
-            none in {priorScanLink(consistency)} either{approvedOn}
+            none in {priorScanLink(consistency, organizationId)} either{approvedOn}
           </>
         ) : (
           <>
-            down from {consistency.priorFindingCount} in {priorScanLink(consistency)}
+            down from {consistency.priorFindingCount} in{" "}
+            {priorScanLink(consistency, organizationId)}
             {approvedOn}
           </>
         )}
@@ -88,12 +93,12 @@ export function ReleaseConsistencyNotice({
     <p class={QUIET_LINE}>
       {variant === "match" ? (
         <>
-          Finding profile matches {priorScanLink(consistency)}
+          Finding profile matches {priorScanLink(consistency, organizationId)}
           {approvedOn}. The same deterministic findings were already reviewed and published.
         </>
       ) : (
         <>
-          No new findings since {priorScanLink(consistency)}
+          No new findings since {priorScanLink(consistency, organizationId)}
           {approvedOn}. Every current finding was already reviewed and published.
         </>
       )}
@@ -102,13 +107,13 @@ export function ReleaseConsistencyNotice({
   );
 }
 
-function priorScanLink(consistency: ReleaseConsistency) {
+function priorScanLink(consistency: ReleaseConsistency, organizationId?: string | null) {
   const label = consistency.priorVersion
     ? `v${consistency.priorVersion}`
     : "the last approved release";
   if (!consistency.priorScanId) return <>{label}</>;
   return (
-    <a href={`/dashboard/scans/${encodeURIComponent(consistency.priorScanId)}`} class="underline">
+    <a href={scanDetailPath(consistency.priorScanId, organizationId)} class="underline">
       {label}
     </a>
   );

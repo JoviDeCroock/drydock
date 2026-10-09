@@ -64,13 +64,13 @@ export function overviewTiles(overview: ScanOverview, now: number): OverviewTile
       detail:
         decided.count === 0
           ? null
-          : `${decided.approved} approved · ${decided.rejected} rejected${
+          : `${decided.approved} approved · ${decided.rejected} blocked${
               decided.medianDecisionMs === null
                 ? ""
                 : ` · median ${formatCompactDuration(decided.medianDecisionMs)}`
             }`,
       tone: null,
-      filter: "all",
+      filter: "decided",
     },
   ];
 }

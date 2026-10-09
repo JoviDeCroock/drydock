@@ -57,6 +57,29 @@ describe("ScanListModel onboarding progress", () => {
     expect(asked).toEqual(["undecided", "all"]);
   });
 
+  test("a probe that gives up says so, and an organization switch clears it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const filter = new URL(String(input), "https://drydock.test").searchParams.get("filter");
+        if (filter === "all") return Promise.resolve(new Response("down", { status: 503 }));
+        return Promise.resolve(jsonResponse({ scans: [], nextCursor: null, filter }));
+      }),
+    );
+    setActiveOrganizationId("org-a");
+    const model = new ScanListModel();
+
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBeNull();
+    expect(model.hasAnyScanProbeFailed.value).toBe(true);
+
+    setActiveOrganizationId("org-b");
+    // Pending for the new organization, not failed: the dashboard waits.
+    expect(model.hasAnyScan.value).toBeNull();
+    expect(model.hasAnyScanProbeFailed.value).toBe(false);
+  });
+
   test("a page of undecided reviews settles the answer without a probe", async () => {
     const asked = stubScanList({ undecided: [scan()] });
     const model = new ScanListModel();

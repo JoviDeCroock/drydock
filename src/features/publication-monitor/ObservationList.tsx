@@ -4,6 +4,7 @@ import { Button } from "../../components/Button";
 import { EmptyLine } from "../../components/Typography";
 import { formatDateTime } from "../../lib/format";
 import { packageDiffPath } from "../../lib/package-diff-path";
+import { scanDetailPath } from "../../lib/scan-detail-path";
 import type { PublicationObservation, PublicationWatch } from "../../models/publication-watches";
 import {
   emptyObservationsMessage,
@@ -26,6 +27,7 @@ export function ObservationList({
   watch: Pick<
     PublicationWatch,
     | "packageName"
+    | "organizationId"
     | "createdAt"
     | "lastCheckedAt"
     | "lastError"
@@ -98,7 +100,7 @@ export function ObservationList({
             ) : null}
             {observation.scanId ? (
               <a
-                href={`/dashboard/scans/${encodeURIComponent(observation.scanId)}`}
+                href={scanDetailPath(observation.scanId, watch.organizationId)}
                 class="text-[13px]"
               >
                 Open review

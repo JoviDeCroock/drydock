@@ -11,12 +11,12 @@ import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { formatDateTime, pluralize } from "../../../lib/format";
-import { sessionModel } from "../../../models/auth";
+import { AppHeaderActions } from "../../../features/account/AppHeaderActions";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
 import { packageReleasesPath } from "../../../lib/package-releases-path";
+import { scanDetailPath } from "../../../lib/scan-detail-path";
 import { OrganizationModel } from "../../../models/organization";
-import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import {
   PackageReleasesModel,
   type PackageRelease,
@@ -24,12 +24,11 @@ import {
 } from "../../../models/package-releases";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
-import { LinkButton, LoadMoreButton } from "../../../components/Button";
+import { LoadMoreButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
 import { EmptyLine, MonoDetail, SectionLabel } from "../../../components/Typography";
-import { UserMenu } from "../../../components/UserMenu";
 import {
   channelLabel,
   describeAttentionCounts,
@@ -129,29 +128,20 @@ function PackageReleasesView({
     if (created) location.route(packageReleasesPath(packageName, ecosystem, created.id));
   };
 
-  const onSignOut = async () => {
-    await sessionModel.signOut();
-    location.route("/", true);
-  };
-  const user = sessionModel.user.value;
-
+  // The releases slot only; a package with no reviews here leads the page
+  // with its empty state instead, so the sections below cannot read as
+  // describing some history this organization has.
   const releases = (
-    <Show
-      when={hasReleases}
-      fallback={
-        <Card>
-          <EmptyLine>
-            No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
-            {organizationLabel} yet. Reviews start from the dashboard once a staged publish or a
-            gated release reaches Drydock.
-          </EmptyLine>
-        </Card>
-      }
-    >
+    <Show when={hasReleases}>
       {() => (
         <div class="flex flex-col gap-6">
           {channels.value.map((channel) => (
-            <ChannelSection key={channel.tag ?? ""} tag={channel.tag} releases={channel.releases} />
+            <ChannelSection
+              key={channel.tag ?? ""}
+              tag={channel.tag}
+              releases={channel.releases}
+              organizationId={organizationId}
+            />
           ))}
           <Show when={model.nextCursor}>
             {() => (
@@ -172,20 +162,12 @@ function PackageReleasesView({
   return (
     <PageShell
       headerActions={
-        <>
-          <LinkButton variant="ghost" size="sm" href="/dashboard/settings">
-            Settings
-          </LinkButton>
-          <OrgSwitcher
-            organizations={organizations.organizations.value}
-            activeOrganizationId={organizationId}
-            busy={organizations.busy.value}
-            error={organizations.error.value}
-            onActivate={openInOrganization}
-            onCreate={onCreateOrganization}
-          />
-          <UserMenu email={user?.email} name={user?.name} onSignOut={onSignOut} />
-        </>
+        <AppHeaderActions
+          current="reviews"
+          organizations={organizations}
+          onActivate={openInOrganization}
+          onCreate={onCreateOrganization}
+        />
       }
     >
       <header class="flex flex-col gap-2 min-w-0">
@@ -225,6 +207,15 @@ function PackageReleasesView({
         {() => (
           <>
             <Show when={model.summary}>{(summary) => <AttentionAlert summary={summary} />}</Show>
+            <Show when={() => !hasReleases.value}>
+              <Card>
+                <EmptyLine>
+                  No {ecosystemLabel(ecosystem)} releases of {packageName} have been reviewed in{" "}
+                  {organizationLabel} yet. Reviews start from the dashboard once a staged publish or
+                  a gated release reaches Drydock.
+                </EmptyLine>
+              </Card>
+            </Show>
             {ecosystem === "npm" ? (
               <NpmPackageSections
                 packageName={packageName}
@@ -267,7 +258,9 @@ function PackageDetailLine({
   const parts = useComputed(() => {
     const summary = model.summary.value;
     const organization = organizationName.value;
-    if (!summary) return [ecosystemLabel(ecosystem), organization];
+    // With nothing reviewed, "0 reviews · 0 channels" would only restate the
+    // empty state below it.
+    if (!summary?.totalReviews) return [ecosystemLabel(ecosystem), organization];
     const { totalReviews, channels, lastRelease } = summary;
     return [
       ecosystemLabel(ecosystem),
@@ -289,7 +282,15 @@ function AttentionAlert({ summary }: { summary: PackageReleasesResponse["summary
   return attention ? <Alert tone={attention.tone}>{attention.text}</Alert> : null;
 }
 
-function ChannelSection({ tag, releases }: { tag: string | null; releases: PackageRelease[] }) {
+function ChannelSection({
+  tag,
+  releases,
+  organizationId,
+}: {
+  tag: string | null;
+  releases: PackageRelease[];
+  organizationId: string | null;
+}) {
   return (
     <section class="flex flex-col gap-3">
       <SectionLabel as="h2">
@@ -315,7 +316,7 @@ function ChannelSection({ tag, releases }: { tag: string | null; releases: Packa
           </thead>
           <tbody>
             {releases.map((release) => (
-              <ReleaseRow key={release.id} release={release} />
+              <ReleaseRow key={release.id} release={release} organizationId={organizationId} />
             ))}
           </tbody>
         </table>
@@ -324,7 +325,13 @@ function ChannelSection({ tag, releases }: { tag: string | null; releases: Packa
   );
 }
 
-function ReleaseRow({ release }: { release: PackageRelease }) {
+function ReleaseRow({
+  release,
+  organizationId,
+}: {
+  release: PackageRelease;
+  organizationId: string | null;
+}) {
   const attention = releaseAttention(release);
   const rowClass = attention
     ? attention === "published_despite_block"
@@ -336,7 +343,7 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
   return (
     <tr class={`border-b border-border last:border-b-0 ${rowClass}`}>
       <Td class="whitespace-nowrap">
-        <a href={`/dashboard/scans/${encodeURIComponent(release.id)}`} class="font-mono text-xs">
+        <a href={scanDetailPath(release.id, organizationId)} class="font-mono text-[12px]">
           {release.stagedVersion || "—"}
         </a>
         <Caption>
@@ -344,7 +351,7 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
           {release.registryStatusSupersededAt != null ? " · superseded" : ""}
         </Caption>
       </Td>
-      <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
+      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
         {describeBaseline(release)}
       </Td>
       <Td>
@@ -369,7 +376,7 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
       <Td>
         <RegistryCell release={release} />
       </Td>
-      <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
+      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
         {scanSourceLabel(release.source)}
       </Td>
     </tr>
@@ -397,7 +404,7 @@ function RegistryCell({ release }: { release: PackageRelease }) {
 }
 
 function PlainState({ children }: { children: ComponentChildren }) {
-  return <span class="font-mono text-xs text-ink-muted whitespace-nowrap">{children}</span>;
+  return <span class="font-mono text-[12px] text-ink-muted whitespace-nowrap">{children}</span>;
 }
 
 function Caption({ children }: { children: ComponentChildren }) {
@@ -445,16 +452,11 @@ function NpmPackageSections({
     const pending = claim.pending.value;
     return loading || !management ? null : pending;
   });
+  // The management choice sits under the release list, beside the monitor it
+  // gates: it is housekeeping about the package, and the releases are what
+  // the page is for.
   return (
     <>
-      <PackageManagement
-        model={claim}
-        packageName={packageName}
-        onChanged={() => {
-          revision.value++;
-          onManagementChanged();
-        }}
-      />
       <RemountOn revision={revision}>
         <PublicBadgeSection
           packageName={packageName}
@@ -463,6 +465,14 @@ function NpmPackageSections({
         />
       </RemountOn>
       {children}
+      <PackageManagement
+        model={claim}
+        packageName={packageName}
+        onChanged={() => {
+          revision.value++;
+          onManagementChanged();
+        }}
+      />
       <RemountOn revision={revision}>
         <PackagePublicationSection
           packageName={packageName}

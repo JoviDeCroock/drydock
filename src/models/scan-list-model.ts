@@ -44,6 +44,11 @@ export const ScanListModel = createModel(() => {
   // review looks identical to one who has never run a scan — and only the
   // second should be shown the getting-started panel.
   const hasAnyScan = signal<boolean | null>(null);
+  // Whether the probe behind a null `hasAnyScan` gave up, as opposed to not
+  // having answered yet: the dashboard falls back to its review form only in
+  // the first case, so a fresh organization never sees it flash before the
+  // onboarding panel opens.
+  const hasAnyScanProbeFailed = signal(false);
   let onboardingOrganizationId = activeOrganizationId.peek();
   // `Check npm` resolves registry outcomes under Worker `waitUntil`, after the
   // discovery response returns. Incrementing this signal starts a bounded
@@ -132,6 +137,7 @@ export const ScanListModel = createModel(() => {
     organizationId: string | null;
   }): Promise<void> {
     if (hasAnyScan.peek() !== null) return;
+    hasAnyScanProbeFailed.value = false;
     try {
       const data = await listScans({ filter: "all", limit: 1 });
       if (
@@ -146,7 +152,18 @@ export const ScanListModel = createModel(() => {
       }
       hasAnyScan.value = data.scans.length > 0;
     } catch {
-      // Leave unknown.
+      // Leave unknown, and say so.
+      if (
+        refreshContext &&
+        !isCurrentRefresh(
+          refreshContext.requestId,
+          refreshContext.mutationId,
+          refreshContext.organizationId,
+        )
+      ) {
+        return;
+      }
+      hasAnyScanProbeFailed.value = true;
     }
   }
 
@@ -164,6 +181,7 @@ export const ScanListModel = createModel(() => {
     if (organizationId === onboardingOrganizationId) return;
     onboardingOrganizationId = organizationId;
     hasAnyScan.value = null;
+    hasAnyScanProbeFailed.value = false;
   });
 
   effect(() => {
@@ -205,6 +223,7 @@ export const ScanListModel = createModel(() => {
     deleteStatus,
     deleteError,
     hasAnyScan,
+    hasAnyScanProbeFailed,
     refresh,
 
     async refreshAfterDiscovery(createdScanCount: number): Promise<void> {

@@ -9,6 +9,7 @@ const DEFAULT_DESCRIPTION =
   "package context.";
 // Said only when an assistant finding is on the page: explaining a badge the
 // reader cannot see is noise.
+const DEFAULT_CHANGED_EMPTY = "No deterministic risk signals point at this release delta.";
 const ASSISTANT_NOTE =
   " Assistant-labeled signals are advisory additions from the AI reviewer and never replace " +
   "deterministic rules.";
@@ -17,19 +18,25 @@ export function RiskSignalsSection({
   findings,
   onSelect,
   description = DEFAULT_DESCRIPTION,
+  changedEmpty = DEFAULT_CHANGED_EMPTY,
   id,
 }: {
   id?: string;
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
   description?: string;
+  /**
+   * Said when no signal sits on a changed file; null says nothing, for a page
+   * that hands this section only what its diff could not pin.
+   */
+  changedEmpty?: string | null;
 }) {
   const changedFindings = sortFindingItemsBySeverity(findings.filter((item) => item.releaseDelta));
   const contextualFindings = sortFindingItemsBySeverity(
     findings.filter((item) => !item.releaseDelta),
   );
   const counts = [
-    changedFindings.length ? `${changedFindings.length} changed-file` : null,
+    changedFindings.length ? `${changedFindings.length} on changed files` : null,
     contextualFindings.length ? `${contextualFindings.length} package context` : null,
   ]
     .filter(Boolean)
@@ -48,9 +55,9 @@ export function RiskSignalsSection({
 
       {changedFindings.length ? (
         <FindingGrid findings={changedFindings} onSelect={onSelect} />
-      ) : (
-        <EmptyLine>No deterministic risk signals point at this release delta.</EmptyLine>
-      )}
+      ) : changedEmpty ? (
+        <EmptyLine>{changedEmpty}</EmptyLine>
+      ) : null}
 
       {contextualFindings.length ? (
         <div>

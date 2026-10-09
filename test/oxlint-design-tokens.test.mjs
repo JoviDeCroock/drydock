@@ -76,16 +76,17 @@ describe("design-local/no-sub-floor-text", () => {
       .sort((a, b) => a - b);
     // px (5), rem (9), behind a variant (13), in a class map (17), with a
     // line-height shorthand (22), a length hint (26), and as an arbitrary
-    // property (30).
+    // property (30), and the rem-based `text-xs` (34), which is 10.5px on the
+    // 14px root.
     assert.deepEqual(
       lines,
-      [5, 9, 13, 17, 22, 26, 30],
+      [5, 9, 13, 17, 22, 26, 30, 34],
       `got:\n${JSON.stringify(flagged, null, 2)}`,
     );
     assert.match(flagged.find((d) => d.line === 9)?.message ?? "", /`text-\[0\.5rem\]`/);
   });
 
-  it("allows 10px and up, including the named sizes, and ignores non-src files", () => {
+  it("allows 10px and up, including the named sizes from text-sm, and ignores non-src files", () => {
     const other = flagged.filter((d) => d.filename !== "src/sub-floor-text.tsx");
     assert.deepEqual(other, [], `unexpected violations:\n${JSON.stringify(other, null, 2)}`);
   });

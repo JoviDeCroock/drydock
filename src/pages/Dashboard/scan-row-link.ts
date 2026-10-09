@@ -1,4 +1,5 @@
 import { packageReleasesPath } from "../../lib/package-releases-path";
+import { scanDetailPath } from "../../lib/scan-detail-path";
 import type { ScanListItem } from "../../models/scan-api";
 
 /**
@@ -15,7 +16,7 @@ export function scanRowPackageLink(
 ): { href: string; title: string } {
   if (scan.status === "pending" || scan.status === "running") {
     return {
-      href: `/dashboard/scans/${encodeURIComponent(scan.id)}`,
+      href: scanDetailPath(scan.id, scan.organizationId),
       title: `Open the review in progress for ${scan.packageName}`,
     };
   }

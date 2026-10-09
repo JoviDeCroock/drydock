@@ -27,7 +27,10 @@ const base =
 const variantStyles: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-on hover:bg-accent-hover",
   secondary: "bg-surface-2 text-ink border-border hover:border-border-strong",
-  ghost: "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink",
+  // A ghost link marked aria-current="page" is the header nav's current
+  // section: the accent text the settings sidebar uses for its active tab.
+  ghost:
+    "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink aria-[current=page]:text-accent aria-[current=page]:hover:text-accent",
   danger: "bg-danger text-white hover:brightness-95",
 };
 
@@ -38,10 +41,12 @@ const sizeStyles: Record<ButtonSize, string> = {
 
 // White-on-accent (and white-on-danger) requires 13px/500 minimum per
 // docs/design.md's contrast rules, so small primary/danger buttons keep the md
-// text size; the quieter variants may drop to 12px at size sm.
+// text size; the quieter variants may drop to 12px at size sm. Pixel, not
+// `text-xs`: the root is 14px, so 0.75rem would land at 10.5px, under the
+// 11px floor for a label the reader reads.
 function textSize(variant: ButtonVariant, size: ButtonSize): string {
   if (size === "md") return "text-[13px]";
-  return variant === "primary" || variant === "danger" ? "text-[13px]" : "text-xs";
+  return variant === "primary" || variant === "danger" ? "text-[13px]" : "text-[12px]";
 }
 
 export function Button({

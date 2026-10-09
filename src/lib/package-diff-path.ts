@@ -109,12 +109,19 @@ function parsePrefixedDiffSpec(segments: string[]): DiffSpec | null {
   return null;
 }
 
-export function parseDiffPackage(path: string): string | null {
+/** The version-less form `packageDiffIndexPath` builds, for every ecosystem. */
+export function parseDiffPackage(
+  path: string,
+): { ecosystem: DiffEcosystem; packageName: string } | null {
   const segments = diffPathSegments(path);
   if (!segments || !segments.length) return null;
+  const prefixed = NAME_SEGMENTS[segments[0] as DiffEcosystem];
+  if (prefixed && segments.length === prefixed + 1) {
+    return { ecosystem: segments[0] as DiffEcosystem, packageName: segments.slice(1).join("/") };
+  }
   const nameSegmentCount = segments[0].startsWith("@") ? 2 : 1;
   if (segments.length !== nameSegmentCount) return null;
-  return segments.join("/");
+  return { ecosystem: "npm", packageName: segments.join("/") };
 }
 
 export type DependencyDiffRow = PackageJsonDiffEntry;

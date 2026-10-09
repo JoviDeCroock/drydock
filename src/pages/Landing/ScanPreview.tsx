@@ -239,7 +239,7 @@ function PreviewPane({ selected }: { selected: Signal<PreviewFileKey> }) {
       <div class="px-4 py-2 bg-surface-2 flex flex-wrap items-center justify-between gap-2 border-b border-border">
         <div class="flex items-center gap-2 min-w-0">
           <Badge tone={file.status}>{file.status}</Badge>
-          <code class="font-mono text-xs text-ink-muted truncate">{file.path}</code>
+          <code class="font-mono text-[12px] text-ink-muted truncate">{file.path}</code>
         </div>
         <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           4.2.0 → 4.3.0

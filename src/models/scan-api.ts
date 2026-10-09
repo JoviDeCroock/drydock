@@ -46,6 +46,7 @@ export type ScanDecision = "publish" | "no_publish";
 export type ScanDecisionFilter =
   | "undecided"
   | "published_without_decision"
+  | "decided"
   | "publish"
   | "no_publish"
   | "all";
@@ -196,6 +197,64 @@ export function createPublishedScan(
   return apiJson<{ scan: { id: string } }>("/api/v1/scans", request);
 }
 
+/** What `POST /api/v1/scans` accepts: a staged publish by its stage id, or a published pair. */
+export type StartScanRequest = { stageId: string } | PublishedScanRequest;
+
+const PUBLISHED_STAGE_ID_PREFIX = "published:";
+
+// Failure codes a fresh start cannot get past: npm published, deleted, or
+// blocked the staged candidate, so there is nothing left to read; or the
+// organization's npm connection is missing or unvalidated, which the failure
+// alert sends the reader to settings to fix first.
+const NOT_RETRYABLE_CODES = new Set([
+  "staged_release_published",
+  "staged_release_deleted",
+  "staged_release_blocked",
+  "npm_connection_missing",
+  "npm_connection_unvalidated",
+]);
+
+/**
+ * The request that reviews a failed scan's release again, or null when the
+ * same start path cannot: a workflow-gate review is retried through its gate,
+ * a superseded review already has a newer one, and a staged candidate npm no
+ * longer holds cannot be fetched. A staged review restarts from its stage id
+ * through the normal start route, which re-checks the organization's npm
+ * access; a published-pair review restarts from the coordinates its stage id
+ * names (`published:<ecosystem>:<name>@<version>`). A failed scan keeps no
+ * baseline (`markScanFailed` clears it), so the restart compares against the
+ * default predecessor even when the original save named another one.
+ */
+export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScanRequest | null {
+  if (scan.status !== "failed" || scan.registryStatusSupersededAt != null) return null;
+  if (scan.source === "manual" || scan.source === "auto_discovery") {
+    const code = (scan.errorJson as { code?: unknown } | null | undefined)?.code;
+    if (typeof code === "string" && NOT_RETRYABLE_CODES.has(code)) return null;
+    // npm may have settled the version after the review failed; the start
+    // route would then refuse a stage that no longer holds a candidate.
+    if (settledRegistryStatus(scan.registryVersionStatus) !== null) return null;
+    return { stageId: scan.stageId };
+  }
+  if (scan.source === "published" && scan.stageId.startsWith(PUBLISHED_STAGE_ID_PREFIX)) {
+    const rest = scan.stageId.slice(PUBLISHED_STAGE_ID_PREFIX.length);
+    const colon = rest.indexOf(":");
+    const coordinates = rest.slice(colon + 1);
+    // The last `@` past index 0, so a scoped name keeps its own.
+    const at = coordinates.lastIndexOf("@");
+    if (colon <= 0 || at <= 0 || at === coordinates.length - 1) return null;
+    return {
+      ecosystem: rest.slice(0, colon),
+      packageName: coordinates.slice(0, at),
+      version: coordinates.slice(at + 1),
+    };
+  }
+  return null;
+}
+
+export function startScan(request: StartScanRequest): Promise<{ scan: { id: string } }> {
+  return apiJson<{ scan: { id: string } }>("/api/v1/scans", request);
+}
+
 export function setScanDecision(
   id: string,
   decision: ScanDecision,
@@ -305,6 +364,9 @@ export function scanMatchesDecisionFilter(
   filter: ScanDecisionFilter,
 ): boolean {
   if (filter === "all") return true;
+  // The server bounds this list to the overview window; a row already in it
+  // stays while it carries a decision.
+  if (filter === "decided") return scan.decision != null;
   const releaseOutcome =
     scan.registryReleaseOutcome ?? settledRegistryStatus(scan.registryVersionStatus);
   if (filter === "published_without_decision") {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   dependencyDiffHref,
   packageDiffCardPath,
+  packageDiffIndexPath,
   packageDiffPath,
   packageOnlyDiffPath,
   parseDiffPackage,
@@ -182,8 +183,28 @@ describe("parseDiffSpec", () => {
 
 describe("parseDiffPackage", () => {
   test("round-trips unscoped and scoped package-only paths", () => {
-    expect(parseDiffPackage(packageOnlyDiffPath("react"))).toBe("react");
-    expect(parseDiffPackage(packageOnlyDiffPath("@preact/signals"))).toBe("@preact/signals");
+    expect(parseDiffPackage(packageOnlyDiffPath("react"))).toEqual({
+      ecosystem: "npm",
+      packageName: "react",
+    });
+    expect(parseDiffPackage(packageOnlyDiffPath("@preact/signals"))).toEqual({
+      ecosystem: "npm",
+      packageName: "@preact/signals",
+    });
+  });
+
+  // The sitemap lists /diff/pypi/<name>; read as an npm name it matched
+  // nothing and rendered the generic /diff landing under that URL.
+  test("round-trips the prefixed index paths the sitemap lists", () => {
+    expect(parseDiffPackage(packageDiffIndexPath("pypi", "requests"))).toEqual({
+      ecosystem: "pypi",
+      packageName: "requests",
+    });
+    expect(parseDiffPackage(packageDiffIndexPath("atpm", "@ebey.dev/counter"))).toEqual({
+      ecosystem: "atpm",
+      packageName: "@ebey.dev/counter",
+    });
+    expect(parseDiffPackage("/diff/pypi/requests/2.31.0")).toBeNull();
   });
 
   test("returns null for the landing form, full specs, and other routes", () => {

@@ -70,7 +70,7 @@ export default function InvitePage() {
             Ask the person who invited you to send a fresh invitation, then open the new link.
           </Muted>
           <LinkButton href="/dashboard" class="self-start">
-            Go to dashboard
+            Go to reviews
           </LinkButton>
         </Card>
       </PageShell>

@@ -212,6 +212,9 @@ describe("scanMatchesDecisionFilter", () => {
     expect(scanMatchesDecisionFilter({ decision: "publish" }, "publish")).toBe(true);
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "publish")).toBe(false);
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "all")).toBe(true);
+    expect(scanMatchesDecisionFilter({ decision: "publish" }, "decided")).toBe(true);
+    expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "decided")).toBe(true);
+    expect(scanMatchesDecisionFilter({ decision: null }, "decided")).toBe(false);
   });
 
   test.each(["published", "blocked", "deleted"])(

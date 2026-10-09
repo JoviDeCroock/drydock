@@ -6,7 +6,7 @@ import type { DistributiveOmit } from "./element-props";
 type SelectSize = "sm" | "md";
 
 const sizeStyles: Record<SelectSize, string> = {
-  sm: "text-xs leading-none pl-2.5 pr-8 py-1.5",
+  sm: "text-[12px] leading-none pl-2.5 pr-8 py-1.5",
   md: "text-[13px] pl-3 pr-9 py-2",
 };
 

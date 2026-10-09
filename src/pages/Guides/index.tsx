@@ -68,7 +68,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       detail: ["read-only npm access", "you keep the final approval"],
     },
     primary: { href: "/docs#staged-publishing", label: "Set up npm staging" },
-    secondary: { href: "/diff", label: "Read a public diff" },
+    secondary: { href: "/diff", label: "Diff a package" },
   },
   "/github-actions-package-gate": {
     relatedTitle: "Workflow Gate — enforced",
@@ -248,8 +248,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     ],
     close: {
       heading: "Check the boundary yourself.",
-      body: "The sandbox, the credential separation, and the fail-closed tests are all in the open repository. Read a public diff to see the same review boundary applied without an account.",
-      action: { href: "/diff", label: "Read a public diff" },
+      body: "The sandbox, the credential separation, and the fail-closed tests are all in the open repository. Diff a package to see the same review boundary applied without an account.",
+      action: { href: "/diff", label: "Diff a package" },
     },
     primary: { href: "/docs#safety-model", label: "Read the safety guide" },
     secondary: {
@@ -318,9 +318,9 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     close: {
       heading: "Start by reading a diff.",
       body: "The fastest way to judge whether this is worth wiring into your release is to read the diff of a package you already publish, and decide whether you had seen those bytes before.",
-      action: { href: "/diff", label: "Read a diff" },
+      action: { href: "/diff", label: "Diff a package" },
     },
-    primary: { href: "/diff", label: "Read a diff" },
+    primary: { href: "/diff", label: "Diff a package" },
     secondary: {
       href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/self-hosting.md",
       label: "Read self-hosting setup",

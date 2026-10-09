@@ -1,6 +1,8 @@
 import { useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { scanDetailPath } from "../../lib/scan-detail-path";
+import { activeOrganizationId } from "../../models/active-organization";
 import { parsePackageSpec, PublishedReviewModel } from "../../models/published-review";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -103,8 +105,8 @@ export function GettingStarted({
               <strong class="font-medium text-ink">Packages and scopes: Read-only</strong> and{" "}
               <strong class="font-medium text-ink">Organizations: No access</strong> — then run{" "}
               <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory.{" "}
-              <a href="/dashboard/settings?tab=integrations" class="underline">
-                Open settings
+              <a href="/dashboard/settings?tab=integrations#npm-access" class="underline">
+                Connect npm in settings
               </a>
               .
             </>
@@ -134,7 +136,11 @@ function CiPublisherTrack() {
           the same decision.
         </Muted>
       </div>
-      <LinkButton variant="secondary" size="sm" href="/dashboard/settings?tab=integrations">
+      <LinkButton
+        variant="secondary"
+        size="sm"
+        href="/dashboard/settings?tab=integrations#github-app"
+      >
         Set up a workflow gate
       </LinkButton>
     </div>
@@ -144,8 +150,15 @@ function CiPublisherTrack() {
 // First value before any credential: the full authenticated review — the same
 // rules, AI review, report, and decision — over a release that is already
 // public. Nothing here needs an npm connection or a staged candidate, which is
-// the whole point of putting it first.
-function PublishedReviewForm({ npmScope }: { npmScope: string | null }) {
+// the whole point of putting it first. The dashboard keeps the same form once
+// onboarding closes, without the docs link the first-run panel needs.
+export function PublishedReviewForm({
+  npmScope,
+  docsLink = true,
+}: {
+  npmScope: string | null;
+  docsLink?: boolean;
+}) {
   const location = useLocation();
   // A connected organization's own npm scope is the likeliest prefix of the
   // package it wants to review; without one the placeholder does the teaching.
@@ -156,7 +169,7 @@ function PublishedReviewForm({ npmScope }: { npmScope: string | null }) {
     const parsed = parsePackageSpec(spec.peek());
     if (!parsed) return;
     const scanId = await review.start("npm", parsed);
-    if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
+    if (scanId) location.route(scanDetailPath(scanId, activeOrganizationId.peek()));
   };
 
   return (
@@ -171,11 +184,13 @@ function PublishedReviewForm({ npmScope }: { npmScope: string | null }) {
         <Input
           type="text"
           value={spec}
-          placeholder="package, e.g. react — or react@19.0.0"
+          placeholder={docsLink ? "package, e.g. react — or react@19.0.0" : "react or react@19.0.0"}
           aria-label="npm package name, optionally with a version"
           autoComplete="off"
           spellcheck={false}
-          class="flex-1 min-w-[200px] max-w-[380px]"
+          class={
+            docsLink ? "flex-1 min-w-[200px] max-w-[380px]" : "flex-1 min-w-0 md:flex-none md:w-64"
+          }
           onInput={(event) => (spec.value = (event.target as HTMLInputElement).value)}
         />
         <Button type="submit" size="sm" disabled={review.busy}>
@@ -183,9 +198,11 @@ function PublishedReviewForm({ npmScope }: { npmScope: string | null }) {
             Starting…
           </Show>
         </Button>
-        <LinkButton variant="ghost" size="sm" href="/docs">
-          Read the docs
-        </LinkButton>
+        {docsLink ? (
+          <LinkButton variant="ghost" size="sm" href="/docs">
+            Read the docs
+          </LinkButton>
+        ) : null}
       </form>
       <Show when={review.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
     </div>

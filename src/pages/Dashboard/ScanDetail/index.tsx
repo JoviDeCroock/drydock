@@ -1,6 +1,6 @@
 import { StandalonePackageManagement } from "../../../features/package-claims/PackageManagement";
 import { useModel } from "@preact/signals";
-import { useRoute } from "preact-iso";
+import { useLocation, useRoute } from "preact-iso";
 import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
 import {
   badgeEcosystem,
@@ -9,7 +9,11 @@ import {
   scanPublicPackageName,
 } from "../../../../server/lib/public-feed";
 import { npmBadgeAuthorityNote } from "../../../lib/badge-markdown";
+import { AppHeaderActions } from "../../../features/account/AppHeaderActions";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
+import { buildQueryUrl } from "../../../lib/query-state";
+import { OrganizationModel } from "../../../models/organization";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { Alert } from "../../../components/Alert";
@@ -56,25 +60,60 @@ import {
  * is read by a narrower component or by the dialog itself.
  */
 export default function ScanDetailPage() {
+  const location = useLocation();
   const route = useRoute();
   const id = route.params.id;
+  // A review belongs to one organization, and its address names it: pinning
+  // `?org=` makes every request on the page read that organization's review,
+  // so a link opened after switching organizations elsewhere still resolves.
+  const organizationId = location.query.org || null;
+  usePinnedOrganization(organizationId);
   // The router keeps this component mounted from one scan to the next, and the
   // model is built once per mount, so a new id must remount the review rather
   // than reuse a model bound to the previous scan.
-  return <ScanDetailView key={id} id={id} />;
+  return <ScanDetailView key={id} id={id} organizationId={organizationId} />;
 }
 
-function ScanDetailView({ id }: { id: string }) {
+function ScanDetailView({ id, organizationId }: { id: string; organizationId: string | null }) {
+  const location = useLocation();
   const model = useModel(() => new ScanDetailModel(id));
+  const organizations = useModel(OrganizationModel);
   const sessionChecked = useAuthedDashboardSession({
-    onReady: () => model.load(),
+    onReady: async (_session, isCancelled) => {
+      void organizations.load();
+      await model.load();
+      const scanOrganization = model.detail.peek()?.scan.organizationId;
+      // An address without its organization (an older link, a bookmark) read
+      // the remembered one; name the review's own in the URL so a copied
+      // link keeps working after an organization switch.
+      if (!isCancelled() && !organizationId && scanOrganization) {
+        location.route(buildQueryUrl({ org: scanOrganization }), true);
+      }
+    },
     rememberReturnUrl: false,
   });
   const view = useScanDetailView(model);
 
+  // A review belongs to the organization it was made in, so switching (or
+  // creating) an organization here leaves for that organization's reviews
+  // rather than re-reading this one under an organization it is not in.
+  const headerActions = (
+    <AppHeaderActions
+      current="reviews"
+      organizations={organizations}
+      onActivate={(next) => {
+        if (next === (organizationId ?? model.detail.peek()?.scan.organizationId)) return;
+        if (organizations.activate(next)) location.route("/dashboard");
+      }}
+      onCreate={async (name) => {
+        if (await organizations.create(name)) location.route("/dashboard");
+      }}
+    />
+  );
+
   if (!sessionChecked.value) {
     return (
-      <PageShell>
+      <PageShell headerActions={headerActions}>
         <ScanDetailHeader />
         <LoadingState title="Opening review" detail="confirming session · fetching report" />
       </PageShell>
@@ -82,7 +121,7 @@ function ScanDetailView({ id }: { id: string }) {
   }
 
   return (
-    <PageShell>
+    <PageShell headerActions={headerActions}>
       <ScanHeader model={model} view={view} />
       <ScanNotices model={model} view={view} />
       <ScanReport model={model} view={view} />
@@ -90,6 +129,12 @@ function ScanDetailView({ id }: { id: string }) {
     </PageShell>
   );
 }
+
+// Changed-line signals are annotated in the diff and listed in the review
+// notes, so this page's index keeps only what neither can place on a line.
+const RISK_INDEX_DESCRIPTION =
+  "Signals on changed lines are pinned in the diff above and listed in the review notes; " +
+  "these have no changed line to sit on — package context, and release signals outside the diff.";
 
 type SectionProps = { model: ScanDetailModelInstance; view: ScanDetailView };
 
@@ -110,6 +155,11 @@ function ScanHeader({ model, view }: SectionProps) {
       onDeleteClick={view.deleteAction.value}
       onShareClick={view.shareAction.value}
       shareSignal={model.share}
+      reviewAgain={
+        model.canReviewAgain.value
+          ? { onClick: view.handleReviewAgain, busy: view.reviewAgainBusy }
+          : undefined
+      }
     />
   );
 }
@@ -149,11 +199,15 @@ function ScanNotices({ model, view }: SectionProps) {
         <GatePackagesPanel
           gate={gate}
           currentScanId={detail.scan.id}
+          organizationId={detail.scan.organizationId}
           onDecide={view.decideAction.value}
         />
       ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
+      ) : null}
+      {model.reviewAgainError.value ? (
+        <Alert tone="critical">{model.reviewAgainError.value}</Alert>
       ) : null}
 
       {/* Above the verdict on purpose: npm blocking a version, or still
@@ -161,16 +215,6 @@ function ScanNotices({ model, view }: SectionProps) {
           report has to say about it. Rendered for failed scans too — a review
           that could not read the tarball is exactly when npm's own state is
           the only useful thing on the page. */}
-      {/* Only a staged review's registry identity carries a package claim. */}
-      {detail?.scan.registryPackageName &&
-      (REGISTRY_VERIFIED_SCAN_SOURCES as readonly string[]).includes(detail.scan.source ?? "") ? (
-        <StandalonePackageManagement
-          key={`${detail.scan.organizationId}:${detail.scan.registryUrl}:${detail.scan.registryPackageName}`}
-          packageName={detail.scan.registryPackageName}
-          registryUrl={detail.scan.registryUrl ?? undefined}
-          onChanged={() => void model.load()}
-        />
-      ) : null}
       {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
 
       {!detail && !error ? (
@@ -186,10 +230,9 @@ function ScanReport({ model, view }: SectionProps) {
   const summary = view.summary.value;
   const ai = view.ai.value;
   const envelope = view.intentEnvelope.value;
-  const findingsWithDiffStatus = view.findingsWithDiffStatus.value;
+  const indexedFindings = view.indexedFindings.value;
   const pollingStalled = model.pollingStalled.value;
   if (!detail) return null;
-  const hasRuleFindings = Boolean(detail.findings.length);
 
   return (
     <>
@@ -238,6 +281,7 @@ function ScanReport({ model, view }: SectionProps) {
                   <ReleaseConsistencyNotice
                     value={summary.releaseConsistency}
                     approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
+                    organizationId={detail.scan.organizationId}
                   />
                 }
               />
@@ -254,11 +298,13 @@ function ScanReport({ model, view }: SectionProps) {
             </div>
           </CollapsibleCard>
 
-          {hasRuleFindings ? (
+          {indexedFindings.length ? (
             <RiskSignalsSection
               id="risk-signals"
-              findings={findingsWithDiffStatus}
+              findings={indexedFindings}
               onSelect={(file) => view.inspectFile(file)}
+              description={RISK_INDEX_DESCRIPTION}
+              changedEmpty={null}
             />
           ) : null}
 
@@ -279,6 +325,20 @@ function ScanReport({ model, view }: SectionProps) {
           not the verdict. Rendered for every status so a failed or queued
           review still shows how far the release got. */}
       <ReleaseTimeline scan={detail.scan} summary={summary} />
+
+      {/* Last on purpose: where the package is managed is housekeeping about
+          the package, not about this release, so it never outranks the
+          verdict or the diff. Only a staged review's registry identity
+          carries a package claim. */}
+      {detail.scan.registryPackageName &&
+      (REGISTRY_VERIFIED_SCAN_SOURCES as readonly string[]).includes(detail.scan.source ?? "") ? (
+        <StandalonePackageManagement
+          key={`${detail.scan.organizationId}:${detail.scan.registryUrl}:${detail.scan.registryPackageName}`}
+          packageName={detail.scan.registryPackageName}
+          registryUrl={detail.scan.registryUrl ?? undefined}
+          onChanged={() => void model.load()}
+        />
+      ) : null}
     </>
   );
 }

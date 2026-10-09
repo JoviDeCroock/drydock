@@ -1,27 +1,15 @@
 import { useEffect, useRef } from "preact/hooks";
 import { cn } from "../../../components/cn";
+import { SETTINGS_TABS, settingsTabHref, type SettingsTab } from "./settings-links";
 
-export type SettingsTab = "general" | "members" | "notifications" | "integrations" | "audit";
-
-export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
-  { id: "general", label: "General" },
-  { id: "members", label: "Members" },
-  { id: "notifications", label: "Notifications" },
-  { id: "integrations", label: "Integrations" },
-  { id: "audit", label: "Audit log" },
-];
-
-export function isSettingsTab(value: unknown): value is SettingsTab {
-  return SETTINGS_TABS.some((tab) => tab.id === value);
-}
-
+// Tabs are plain links so each one can be opened in a new tab or copied. The
+// router intercepts a plain click and the page reads ?tab= back from the URL,
+// so switching stays client-side without a click handler here.
 export function SettingsNav({
   active,
-  onSelect,
   tabs = SETTINGS_TABS,
 }: {
   active: SettingsTab;
-  onSelect: (tab: SettingsTab) => void;
   tabs?: ReadonlyArray<{ id: SettingsTab; label: string }>;
 }) {
   const navRef = useRef<HTMLElement>(null);
@@ -49,20 +37,19 @@ export function SettingsNav({
       {tabs.map((tab) => {
         const isActive = tab.id === active;
         return (
-          <button
+          <a
             key={tab.id}
-            type="button"
+            href={settingsTabHref(tab.id)}
             aria-current={isActive ? "page" : undefined}
-            onClick={() => onSelect(tab.id)}
             class={cn(
-              "shrink-0 text-left rounded-md px-3 py-2 text-[13px] font-medium transition-colors duration-150 ease-out",
+              "shrink-0 text-left no-underline rounded-md px-3 py-2 text-[13px] font-medium transition-colors duration-150 ease-out",
               isActive
                 ? "bg-accent-soft text-accent"
                 : "text-ink-muted hover:bg-surface-2 hover:text-ink",
             )}
           >
             {tab.label}
-          </button>
+          </a>
         );
       })}
     </nav>

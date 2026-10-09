@@ -56,7 +56,7 @@ export default function LandingPage() {
               </>
             }
           >
-            <LinkButton href="/dashboard">Open dashboard</LinkButton>
+            <LinkButton href="/dashboard">Open reviews</LinkButton>
           </Show>
         </div>
       </section>
@@ -71,7 +71,7 @@ export default function LandingPage() {
         </p>
         <IncidentDiffCards />
         <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
-          Diff any npm, PyPI, or atpm package →
+          Diff a package →
         </LinkButton>
       </section>
 
@@ -211,7 +211,7 @@ export default function LandingPage() {
               </>
             }
           >
-            <LinkButton href="/dashboard">Open dashboard</LinkButton>
+            <LinkButton href="/dashboard">Open reviews</LinkButton>
           </Show>
         </div>
         <MonoDetail parts={["read-only tokens", "you keep the final approval"]} />

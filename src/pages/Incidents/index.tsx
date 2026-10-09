@@ -112,7 +112,7 @@ export default function IncidentCasePage() {
     })),
     {
       href: "/diff",
-      title: "Diff any package",
+      title: "Diff a package",
       description:
         "Compare two published npm, PyPI, or atpm releases file by file. No account, no installation.",
     },

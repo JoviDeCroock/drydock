@@ -35,7 +35,9 @@ const INCIDENT_DIFFS: Array<DiffSpec & { note: string; caseStudyPath?: string }>
 
 /**
  * Live curated incident diffs — the no-account entry point to the product,
- * shared by the marketing landing and the /diff landing.
+ * shared by the marketing landing and the /diff landing. Every card opens the
+ * live diff the section promises; an incident with a write-up keeps it as a
+ * quiet second link rather than as the card's destination.
  */
 export function IncidentDiffCards() {
   return (
@@ -46,19 +48,18 @@ export function IncidentDiffCards() {
           as="article"
           padding="compact"
           hover="accent"
-          class="flex flex-col gap-2"
+          class="relative flex flex-col gap-2"
         >
           <a
-            href={
-              incident.caseStudyPath ??
-              packageDiffPath(
-                incident.ecosystem,
-                incident.packageName,
-                incident.fromVersion,
-                incident.toVersion,
-              )
-            }
-            class="flex flex-col gap-2 no-underline text-inherit"
+            href={packageDiffPath(
+              incident.ecosystem,
+              incident.packageName,
+              incident.fromVersion,
+              incident.toVersion,
+            )}
+            // Stretched over the card, so every highlighted pixel opens the
+            // diff; the write-up link sits above it.
+            class="flex flex-col gap-2 no-underline text-inherit after:absolute after:inset-0 after:content-['']"
           >
             <h2 class="text-base font-medium tracking-[-0.005em] m-0 break-all">
               {incident.packageName}
@@ -68,6 +69,14 @@ export function IncidentDiffCards() {
             </span>
             <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{incident.note}</p>
           </a>
+          {incident.caseStudyPath ? (
+            <a
+              href={incident.caseStudyPath}
+              class="relative z-10 self-start text-[12px] text-ink-subtle underline hover:text-ink"
+            >
+              Read the write-up
+            </a>
+          ) : null}
         </Card>
       ))}
     </div>

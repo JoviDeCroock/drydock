@@ -13,7 +13,8 @@ import type { AppDb } from "./client";
 import { scans } from "./schema";
 
 const SCAN_OVERVIEW_WINDOW_DAYS = 30;
-const WINDOW_MS = SCAN_OVERVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+export const SCAN_OVERVIEW_WINDOW_MS = SCAN_OVERVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+const WINDOW_MS = SCAN_OVERVIEW_WINDOW_MS;
 
 const NPM_STAGED_SOURCES = ["manual", "auto_discovery"] as const;
 

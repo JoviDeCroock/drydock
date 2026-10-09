@@ -115,6 +115,17 @@ move it into `src/features/` instead.
 
 ## Authenticated dashboard pages
 
+Every signed-in page uses one header, `AppHeaderActions` in
+`src/features/account/`: the `Reviews` and `Settings` section links (the current
+one marked `aria-current="page"`, rendered as accent text), the organization
+switcher where the page is organization-scoped, and the user menu. Pages differ
+only in which section is current and what switching organizations means for
+them; a review belongs to one organization, so switching on scan detail leaves
+for the new organization's reviews. `/dashboard` is called "Reviews" in every
+link to it. Links into a review go through `scanDetailPath` in
+`src/lib/scan-detail-path.ts`, which carries the review's `?org=`; scan detail
+pins it the way the package page does.
+
 Every `/dashboard*` page runs `useAuthedDashboardSession` from
 `src/features/account/` on mount: it loads the session, redirects a signed-out
 visitor to `/login?returnTo=<this page>`, remembers the list surfaces as the
@@ -137,7 +148,18 @@ Both review pages lead with the diff:
   the button that changes it), then the version picker directly above the
   workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
   verdict reads that way, release memory, release changes, the advisory AI
-  assessment, source binding), then the risk index and the manifest sections. The notes open
+  assessment, source binding), then the risk index and the manifest sections.
+  The risk index here holds only the signals the diff cannot pin to a changed
+  line (`unpinnedFindings` in `src/features/review/risk-index.ts`) and is
+  hidden when there are none: a pinned finding is already stated inline and in
+  the notes. The package-management choice, when pending, is a compact row at
+  the end of the page — it gates monitoring and the badge, not this review.
+  A failed staged or published-pair review offers `Review again`, which starts
+  a fresh review of the same release through `POST /api/v1/scans` — except
+  where a restart can only fail: npm already published, blocked, or deleted the
+  candidate, or the npm connection is missing or unvalidated (the alert points
+  at settings instead). A published-pair restart compares against the default
+  predecessor, because a failed scan keeps no baseline. The notes open
   themselves when any of those has something to say — findings or manifest
   changes, release memory that diverged, an assistant reading that flags the
   release — and stay shut when the release is clean (source binding, release
@@ -151,9 +173,11 @@ Both review pages lead with the diff:
   (published, removed) get no separate notice row. The decision and its button
   live in the strip on a completed review and in the page header otherwise,
   since a failed gate review renders no strip.
-- **Public report** — an identity-only header (package, the compared pair,
-  review time, changed-file count, and the decision as plain `DecisionState`
-  text), the verdict card, then the same workbench, then the risk index. Its diff is single-sided: a share token buys the staged artifact's
+- **Public report** — an identity-only header (a `public release review`
+  MonoDetail lead, package, the compared pair, review time, changed-file count,
+  and the decision as plain `DecisionState` text), the verdict card — risk
+  grade, not the approver-facing recommendation, because a public reader is not
+  the one deciding — then the same workbench, then the risk index. Its diff is single-sided: a share token buys the staged artifact's
   redacted samples (`GET /public/reports/:token/file`) and never a baseline,
   which would cost the organization's npm credentials. `singleSidedTone` in
   `DiffView` keeps a `modified` file rendered from one side neutral instead of
@@ -184,8 +208,9 @@ status is unknown, `staged`, or `validating`, with the age of the oldest),
 **npm still scanning** (`validating`, with how many already have a finished
 Drydock review), **Published, no decision · 30d** (the list's
 `published_without_decision` semantics, limited to scans created in the last 30
-days), and **Decided · 30d** (approved vs rejected plus the median
-completion-to-decision time). The first three count only npm staged-publish
+days), and **Decided · 30d** (approved vs blocked plus the median
+completion-to-decision time; it opens the `decided` filter, which lists the
+decisions recorded in the same 30-day window). The first three count only npm staged-publish
 sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans
 carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
 `GET /api/v1/scans/overview`, one aggregate D1 statement in
@@ -243,6 +268,11 @@ surface appears on a guess. Switching organizations immediately resets
 `hasAnyScan` to `null`, so the new organization cannot inherit a panel latch
 from the previous one while its list request is in flight. Deleting an
 organization's only (failed) scan re-probes and can bring the panel back.
+Once the panel is closed the dashboard renders the same published-release form
+(`PublishedReviewForm`) in its own "Review a published release" card, so
+starting a review never depends on onboarding still being open. Settings links
+name the section they are for: npm setup goes to
+`?tab=integrations#npm-access`, workflow-gate setup to `#github-app`.
 
 ## Package release view
 

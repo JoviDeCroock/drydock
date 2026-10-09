@@ -175,7 +175,7 @@ low-volume one out of the dataset.
 | `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                    |
 
 The scan-lifecycle events carry `source` — `manual` (a staged publish someone
-started by hand), `auto_discovery` (the discovery cron), `workflow_gate`, or
+started in Drydock, including the ones "Check npm" finds), `auto_discovery` (the discovery cron), `workflow_gate`, or
 `published` (a review of two already-public releases, started from onboarding
 or from `/diff`). That field is what makes the activation question answerable:
 `published` scans need no npm token and no staged release, so their share of

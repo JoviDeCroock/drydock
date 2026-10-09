@@ -1,6 +1,8 @@
 const SCAN_SOURCE_LABELS: Readonly<Record<string, string>> = {
-  manual: "started by hand",
-  auto_discovery: "found on npm",
+  // "manual" covers every review a person started here, including the staged
+  // releases "Check npm" finds; the scheduled sweep is the one that runs alone.
+  manual: "started in Drydock",
+  auto_discovery: "found by scheduled npm check",
   workflow_gate: "workflow gate",
   published: "published release",
 };

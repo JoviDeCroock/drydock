@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import type { ReadonlySignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import type { ScanErrorCode } from "../../../../server/lib/scan/errors";
 import { dashboardReturnLabel, getDashboardReturnUrl } from "../../../lib/query-state";
 import { packageReleasesPath } from "../../../lib/package-releases-path";
@@ -42,12 +43,15 @@ export function ScanDetailHeader({
   onDeleteClick,
   onShareClick,
   shareSignal,
+  reviewAgain,
 }: {
   detail?: PersistedScanDetail | null;
   decision?: ComponentChildren;
   onDeleteClick?: () => void;
   onShareClick?: () => void;
   shareSignal?: ReadonlySignal<PublicShareInfo | null>;
+  /** A failed review's way forward: a fresh review of the same release. */
+  reviewAgain?: { onClick: () => void; busy: ReadonlySignal<boolean> };
 } = {}) {
   const isComplete = detail?.scan.status === "complete";
   // Labelled "npm …" so nobody reads "npm blocked" as Drydock's finding, or a
@@ -96,7 +100,7 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDeleteClick || (detail && isComplete) ? (
+      {decision || onDeleteClick || reviewAgain || (detail && isComplete) ? (
         <div class="flex flex-wrap items-center gap-3 sm:self-end">
           {detail && isComplete ? (
             <div
@@ -122,6 +126,7 @@ export function ScanDetailHeader({
             </div>
           ) : null}
           {decision}
+          {reviewAgain ? <ReviewAgainAction {...reviewAgain} /> : null}
           {onDeleteClick ? (
             // Secondary here: this only opens the confirmation, whose own
             // button carries the danger treatment for the destructive step.
@@ -132,6 +137,23 @@ export function ScanDetailHeader({
         </div>
       ) : null}
     </header>
+  );
+}
+
+// Its own component so the start round-trip re-renders this button only.
+function ReviewAgainAction({
+  busy,
+  onClick,
+}: {
+  busy: ReadonlySignal<boolean>;
+  onClick: () => void;
+}) {
+  return (
+    <Button onClick={onClick} disabled={busy}>
+      <Show when={busy} fallback="Review again">
+        Starting…
+      </Show>
+    </Button>
   );
 }
 
@@ -216,13 +238,30 @@ export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string
   );
 }
 
-// Token-scope failures are an onboarding dead end without a pointer to the fix:
-// connect-time validation only checks whoami + stage listing, so a granular token
-// can validate fine and still 403 on a specific package's tarball.
-const FAILURE_GUIDANCE: Partial<Record<ScanErrorCode, { hint: string; action: string }>> = {
+// A failure is a dead end without a pointer to the way out. Credential
+// failures point at the npm settings: connect-time validation only checks
+// whoami + stage listing, so a granular token can validate fine and still 403
+// on a specific package's tarball. Transient failures point at trying again,
+// never at settings, since nothing there is wrong.
+const SETTINGS_ACTION = "Validate or rotate the token under Settings → npm access.";
+const TRY_AGAIN_HINT =
+  "This is usually temporary: reviewing the release again starts a fresh download.";
+const FAILURE_GUIDANCE: Partial<Record<ScanErrorCode, { hint: string; settings?: string }>> = {
   staged_tarball_unavailable: {
     hint: "The npm token may have expired, or its scope may not cover this package.",
-    action: "Validate or rotate the token under Settings → npm access.",
+    settings: SETTINGS_ACTION,
+  },
+  npm_connection_missing: {
+    hint: "This organization has no npm token connected.",
+    settings: "Connect one under Settings → npm access.",
+  },
+  npm_connection_unvalidated: {
+    hint: "This organization's npm token has not been validated.",
+    settings: SETTINGS_ACTION,
+  },
+  sandbox_download_transient: { hint: TRY_AGAIN_HINT },
+  published_registry_unavailable: {
+    hint: "The public registry did not answer. This is usually temporary: try the review again.",
   },
 };
 
@@ -239,11 +278,17 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
         <strong>{typeof error?.message === "string" ? error.message : "Review failed."}</strong>
         {guidance ? (
           <span>
-            {guidance.hint} <a href="/dashboard/settings?tab=integrations">{guidance.action}</a>
+            {guidance.hint}
+            {guidance.settings ? (
+              <>
+                {" "}
+                <a href="/dashboard/settings?tab=integrations#npm-access">{guidance.settings}</a>
+              </>
+            ) : null}
           </span>
         ) : null}
         {typeof error?.code === "string" ? (
-          <span class="font-mono text-xs">code: {error.code}</span>
+          <span class="font-mono text-[12px]">code: {error.code}</span>
         ) : null}
       </div>
     </Alert>

@@ -218,8 +218,8 @@ export function ReleaseVerdictEvidence({
         </ul>
       ) : null}
       {/* A lone finding is already stated by its inline annotation and its
-          risk-signal card; a one-segment bar plus its legend and total would
-          state it three more times. */}
+          row above; a one-segment bar plus its legend and total would state
+          it three more times. */}
       {findingTotal > 1 ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
       {consistencyNote ? <div class="max-w-[680px]">{consistencyNote}</div> : null}
     </section>

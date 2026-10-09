@@ -53,7 +53,8 @@ export function NpmConnectionSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Connect npm to review your organization's staged packages.
+          <span class="font-medium text-ink">Stage Watchtower — advisory.</span> Connect npm to
+          review your organization's staged packages.
         </Muted>
 
         <Show when={() => npm.connection.value?.validationStatus === "invalid"}>
@@ -285,7 +286,7 @@ function NpmTokenForm({ npm, onSubmit }: { npm: NpmModel; onSubmit: (event: Even
         </Button>
       </form>
 
-      <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
+      <Muted class="text-[12px]">Tokens are encrypted and validated before use.</Muted>
     </>
   );
 }
@@ -312,7 +313,7 @@ function MetadataField({ label, value }: { label: string; value: string }) {
   return (
     <div class="flex flex-col gap-1 min-w-0">
       <dt class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">{label}</dt>
-      <dd class="font-mono text-xs text-ink-muted break-words m-0">{value}</dd>
+      <dd class="font-mono text-[12px] text-ink-muted break-words m-0">{value}</dd>
     </div>
   );
 }

@@ -137,6 +137,33 @@ test("a valid personal connection awaiting its workspace choice does not read as
   await expect(page.getByText("valid", { exact: true })).toBeVisible();
 });
 
+// The GitHub App install callback and the dashboard's setup steps link to a
+// section of the integrations tab; the tab renders only after the workspace
+// loads, so the browser's own anchor jump would miss it.
+test("a settings deep link lands on its section and tabs are real links", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await installSettingsMocks(page);
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+
+  await expect(page.locator("#github-app")).toBeInViewport();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(
+    page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Settings" }),
+  ).toHaveAttribute("aria-current", "page");
+
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(sections.getByRole("link", { name: "General" })).toHaveAttribute(
+    "href",
+    "/dashboard/settings",
+  );
+  await sections.getByRole("link", { name: "Members" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=members$/);
+  await expect(sections.getByRole("link", { name: "Members" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
 async function installSettingsMocks(
   page: Page,
   personal = false,

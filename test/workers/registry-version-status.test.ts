@@ -438,6 +438,10 @@ describe("registry version status resolution", () => {
       expect(publishedWithoutDecision.scans.map((scan) => scan.id)).toEqual(
         status === "published" || status === "deleted" ? [scanId] : [],
       );
+      const decidedBefore = await listScans(db, org.organizationId, {
+        decisionFilter: "decided",
+      });
+      expect(decidedBefore.scans.map((scan) => scan.id)).not.toContain(scanId);
       await expect(
         recordScanDecision(db, {
           scanId,
@@ -451,6 +455,14 @@ describe("registry version status resolution", () => {
         decisionFilter: "published_without_decision",
       });
       expect(afterDecision.scans.map((scan) => scan.id)).not.toContain(scanId);
+      const decided = await listScans(db, org.organizationId, { decisionFilter: "decided" });
+      expect(decided.scans.map((scan) => scan.id)).toEqual([scanId]);
+      // The Decided tile counts the last 30 days, and the list it opens matches.
+      const monthLater = await listScans(db, org.organizationId, {
+        decisionFilter: "decided",
+        now: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
+      });
+      expect(monthLater.scans).toEqual([]);
     },
   );
 

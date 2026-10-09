@@ -23,7 +23,9 @@ describe("dashboard onboarding contracts", () => {
   });
 
   test("opens the settings integrations tab for workflow-gate setup", () => {
-    expect(gettingStartedSource).toContain('href="/dashboard/settings?tab=integrations"');
+    expect(gettingStartedSource).toContain(
+      'href="/dashboard/settings?tab=integrations#github-app"',
+    );
     expect(gettingStartedSource).not.toContain('href="/dashboard/settings#gate-setup"');
   });
 
@@ -50,7 +52,7 @@ describe("dashboard onboarding contracts", () => {
 
   test("starts a persisted review rather than an anonymous diff", () => {
     expect(gettingStartedSource).toContain("PublishedReviewModel");
-    expect(gettingStartedSource).toContain("/dashboard/scans/");
+    expect(gettingStartedSource).toContain("scanDetailPath(scanId");
     expect(gettingStartedSource).not.toContain("resolveSuggestedDiffPath");
   });
 
@@ -60,6 +62,21 @@ describe("dashboard onboarding contracts", () => {
     );
     expect(dashboardSource).not.toContain(
       "Connect a validated npm token in Settings → Integrations first",
+    );
+  });
+
+  test("keeps a way to start a published review once onboarding closes", () => {
+    expect(dashboardSource).toContain("!gettingStartedPanelOpen.value");
+    expect(dashboardSource).toContain(
+      "<PublishedReviewForm npmScope={npmScope} docsLink={false} />",
+    );
+  });
+
+  test("sends npm and workflow-gate setup to their own settings sections", () => {
+    expect(dashboardSource).not.toContain('href="/dashboard/settings?tab=integrations"');
+    expect(dashboardSource).toContain('href="/dashboard/settings?tab=integrations#npm-access"');
+    expect(gettingStartedSource).toContain(
+      'href="/dashboard/settings?tab=integrations#npm-access"',
     );
   });
 

@@ -79,9 +79,16 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
       timeout: 60_000,
     });
+    // A changed-line finding is pinned in the diff and listed in the review
+    // notes, never repeated in the risk index.
     await expect(
-      page.locator("#risk-signals").getByText("install-script.implicit-node-gyp").first(),
+      page
+        .getByRole("heading", { name: "Review notes", exact: true })
+        .locator("xpath=ancestor::details[1]")
+        .locator("summary")
+        .filter({ hasText: "Install script implicit node gyp" }),
     ).toBeVisible();
+    await expect(page.locator("#risk-signals")).toHaveCount(0);
     await tour.capture(page, "scan-report", "Completed report with recommendation and diff tree.");
 
     await page.getByPlaceholder("Filter files").fill("binding");
@@ -95,9 +102,6 @@ test("agent tour: local Drydock release review walkthrough", async ({
       "diff-workbench",
       "File-level diff with the finding pinned to evidence.",
     );
-
-    await page.getByText("Risk signals").scrollIntoViewIfNeeded();
-    await tour.capture(page, "risk-signals", "Risk signal index below the diff workbench.");
 
     const download = await Promise.all([
       page.waitForEvent("download"),
@@ -139,7 +143,9 @@ test("agent tour: local Drydock release review walkthrough", async ({
       })
       .click();
     await expect(
-      page.getByText(/Started \d+ new reviews? from npm|No open staged publishes found/),
+      page.getByText(
+        /Found \d+ staged releases? on npm and started|No open staged publishes found/,
+      ),
     ).toBeVisible({ timeout: 60_000 });
     await tour.capture(page, "dashboard-discovery", "Manual npm discovery from the dashboard.");
 

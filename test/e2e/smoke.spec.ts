@@ -600,6 +600,26 @@ async function installWorkflowGateMocks(
       return;
     }
 
+    // The signed-in header's organization switcher.
+    if (path === "/api/v1/organizations") {
+      await fulfillJson(route, {
+        organizations: [
+          {
+            id: "org-smoke",
+            name: "Smoke org",
+            ownerUserId: "user-smoke",
+            role: "owner",
+            isPersonal: false,
+            npmConnectionConfigured: true,
+            requireTwoFactorForReleaseDecisions: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
+      return;
+    }
+
     if (path === `/api/v1/scans/${scanId}`) {
       await fulfillJson(
         route,
