@@ -1,3 +1,4 @@
+import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
