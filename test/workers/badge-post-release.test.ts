@@ -27,7 +27,10 @@ describe("the public badge counts a publisher's decision after release", () => {
     const packageName = newPackage();
     await seedStagedRelease(owner, app, packageName, "1.0.0");
     await seedAlert(owner, packageName, "1.0.1");
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 published without approval",
+      color: "orange",
+    });
     return { owner, app, packageName };
   }
 
@@ -53,6 +56,26 @@ describe("the public badge counts a publisher's decision after release", () => {
     });
   });
 
+  test("a rejection npm published over reads blocked until the publisher approves it after release", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    await seedStagedRelease(owner, app, packageName, "1.0.0");
+    await seedAlert(owner, packageName, "1.0.1", { status: "published_despite_rejection" });
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 blocked",
+      color: "red",
+    });
+
+    const scanId = await seedPublishedReview(owner, packageName, "1.0.1");
+    await linkReview(owner, packageName, "1.0.1", scanId);
+    await decide(app, scanId, "publish");
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 approved",
+      color: "brightgreen",
+    });
+  });
+
   test("bytes the review read that differ from the published ones never reach the badge", async () => {
     const { owner, app, packageName } = await publisherWithDirectRelease();
     const scanId = await seedPublishedReview(owner, packageName, "1.0.1", { digests: OTHER });
@@ -64,9 +87,9 @@ describe("the public badge counts a publisher's decision after release", () => {
       resolution: "approved_after_release",
       resolutionBadge: "digests_differ",
     });
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
     await decide(app, scanId, "no_publish");
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
   });
 
   test("a digest in only one algorithm on each side is no match", async () => {
@@ -82,7 +105,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     expect((await decide(app, scanId, "publish")).postRelease).toMatchObject({
       resolutionBadge: "digests_unavailable",
     });
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
   });
 
   test("a review read from anywhere but public npm never reaches the badge", async () => {
@@ -94,7 +117,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     expect((await decide(app, scanId, "publish")).postRelease).toMatchObject({
       resolutionBadge: "not_public_npm",
     });
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
   });
 
   test("an organization only watching someone else's package cannot move its badge", async () => {
@@ -110,9 +133,9 @@ describe("the public badge counts a publisher's decision after release", () => {
       resolution: "approved_after_release",
       resolutionBadge: "not_a_verified_publisher",
     });
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
     await decide(watcherApp, scanId, "no_publish");
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
 
     // Nor on a package with nothing else on its badge, even with a row that
     // claims the guard passed: the publisher rule is enforced again on read.
@@ -137,7 +160,7 @@ describe("the public badge counts a publisher's decision after release", () => {
       .update(schema.scans)
       .set({ decision: "no_publish" })
       .where(eq(schema.scans.id, scanId));
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 published without approval");
   });
 
   test("the quoted version's published bytes, decided after release, settle its own discrepancy", async () => {
@@ -150,7 +173,7 @@ describe("the public badge counts a publisher's decision after release", () => {
       status: "artifact_mismatch",
       previousVersion: "0.9.0",
     });
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.0 not reviewed");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.0 published without approval");
     const scanId = await seedPublishedReview(owner, packageName, "1.0.0");
     await linkReview(owner, packageName, "1.0.0", scanId);
 
@@ -209,7 +232,9 @@ describe("the public badge counts a publisher's decision after release", () => {
       previousVersion: "4.0.0-rc.1",
       distTags: null,
     });
-    expect((await fetchBadge(app, packageName, "next")).message).toBe("4.0.0-rc.2 not reviewed");
+    expect((await fetchBadge(app, packageName, "next")).message).toBe(
+      "4.0.0-rc.2 published without approval",
+    );
     const scanId = await seedPublishedReview(owner, packageName, "4.0.0-rc.2");
     await linkReview(owner, packageName, "4.0.0-rc.2", scanId);
 

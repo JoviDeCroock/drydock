@@ -25,6 +25,7 @@ import { watchMetaLine, watchProblemMessage } from "./copy";
 import { CoverageGap } from "./CoverageGap";
 import { ObservationList } from "./ObservationList";
 import { StopWatchingDialog } from "./StopWatchingDialog";
+import { UnapprovedPublishLog } from "./UnapprovedPublishLog";
 
 // Same header/row anatomy as the dashboard's Recent reviews card, so the two
 // lists read as one surface rather than a second feature bolted underneath.
@@ -57,6 +58,16 @@ export function PublicationMonitor({
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
+  // A check, an acknowledgment, an enrollment or a stop may have changed the
+  // ledger, and each changes one of these fields. A string, so expanding a row
+  // (which replaces the list with equal watches) does not reload the log.
+  const logRefreshKey = useComputed(() =>
+    model.loaded.value
+      ? model.watches.value
+          .map((watch) => `${watch.id}:${watch.lastCheckedAt}:${watch.unresolvedAlertCount}`)
+          .join(",")
+      : undefined,
+  );
   const confirmStop = async () => {
     const target = stopTarget.peek();
     if (!target) return;
@@ -330,6 +341,7 @@ export function PublicationMonitor({
           </div>
         </Show>
       </div>
+      <UnapprovedPublishLog refreshKey={logRefreshKey} />
       <Show when={managing}>
         {(target) => (
           <PackageManagementDialog
