@@ -221,9 +221,9 @@ const NOT_RETRYABLE_CODES = new Set([
  * longer holds cannot be fetched. A staged review restarts from its stage id
  * through the normal start route, which re-checks the organization's npm
  * access; a published-pair review restarts from the coordinates its stage id
- * names (`published:<ecosystem>:<name>@<version>`). A failed scan keeps no
- * baseline (`markScanFailed` clears it), so the restart compares against the
- * default predecessor even when the original save named another one.
+ * names (`published:<ecosystem>:<name>@<version>`), against the baseline its
+ * row was created with, which a failed published pair keeps. The start route
+ * confirms that baseline against the registry again, as it did the first time.
  */
 export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScanRequest | null {
   if (scan.status !== "failed" || scan.registryStatusSupersededAt != null) return null;
@@ -246,6 +246,9 @@ export function reviewAgainRequest(scan: PersistedScanDetail["scan"]): StartScan
       ecosystem: rest.slice(0, colon),
       packageName: coordinates.slice(0, at),
       version: coordinates.slice(at + 1),
+      // Rows failed before the pair kept its baseline name none; the start
+      // route then picks the default predecessor.
+      ...(scan.previousVersion ? { baselineVersion: scan.previousVersion } : {}),
     };
   }
   return null;

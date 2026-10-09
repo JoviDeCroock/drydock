@@ -88,6 +88,7 @@ scanLifecycleRoutes.post("/", async (c) => {
     stagedDeclaredSha1: prepared.stagedDeclaredSha1,
     registryUrl: prepared.registryUrl,
     stageAccessStatus: prepared.stageAccessStatus,
+    baselineVersion: prepared.baselineVersion,
   }).catch((err: unknown) => {
     if (err instanceof PackageClaimConflictError) return err;
     throw err;
@@ -166,6 +167,8 @@ interface PreparedScan {
    */
   registryUrl: string | null;
   stageAccessStatus?: number | null;
+  /** The registry-confirmed baseline of a published pair. */
+  baselineVersion?: string | null;
   staged?: NonNullable<Awaited<ReturnType<typeof fetchStagedPublishDetails>>>;
 }
 
@@ -297,6 +300,7 @@ async function preparePublishedScan(
     stagedCreatedAt: null,
     stagedDeclaredSha1: null,
     registryUrl: null,
+    baselineVersion: pair.baselineVersion,
   };
 }
 
