@@ -267,7 +267,9 @@ open again". An unresolved (`null`) answer opens nothing — neither onboarding
 surface appears on a guess. Switching organizations immediately resets
 `hasAnyScan` to `null`, so the new organization cannot inherit a panel latch
 from the previous one while its list request is in flight. Deleting an
-organization's only (failed) scan re-probes and can bring the panel back.
+organization's only (failed) scan re-probes and can bring the panel back; a
+delete or decision that lands after a switch leaves the new organization's
+list and answer alone.
 Once the panel is closed the dashboard renders the same published-release form
 (`PublishedReviewForm`) in its own "Review a published release" card, so
 starting a review never depends on onboarding still being open. Settings links
