@@ -39,7 +39,13 @@ export { listScans } from "./scan-list";
 export { getScanOverview, type ScanOverview } from "./scan-overview";
 export { listPackageReleases } from "./scan-package-releases";
 
-export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
+export {
+  findMemberScanOrganization,
+  getScan,
+  getScanCompareData,
+  getScanFile,
+  getScanStatus,
+} from "./scan-detail";
 
 export {
   BATCH_APPROVAL_LIMIT,

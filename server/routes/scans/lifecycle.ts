@@ -22,6 +22,7 @@ import {
   type ScanSource,
   createScanJob,
   deleteFailedScan,
+  findMemberScanOrganization,
   getScan,
   getScanFile,
   getScanStatus,
@@ -382,6 +383,21 @@ scanLifecycleRoutes.get("/:id/status", async (c) => {
   const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
   return c.json({ scan });
+});
+
+// The one scan read that does not resolve the active organization: a link
+// without `?org=` (the workflow gate's GitHub comment has no room for it) asks
+// which of the caller's own organizations holds the scan, so the page can pin
+// that one. Not found and not a member are the same 404 as `GET /:id`.
+scanLifecycleRoutes.get("/:id/organization", async (c) => {
+  const session = c.get("authSession");
+  const organizationId = await findMemberScanOrganization(
+    c.var.db,
+    c.req.param("id"),
+    session.userId,
+  );
+  if (!organizationId) return c.json({ error: "not found" }, 404);
+  return c.json({ organizationId });
 });
 
 scanLifecycleRoutes.get("/:id/file", async (c) => {

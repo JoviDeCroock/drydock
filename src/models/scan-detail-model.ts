@@ -3,6 +3,7 @@ import {
   deleteScan,
   type DeleteStatus,
   enableScanShare,
+  findScanOrganization,
   getScan,
   getScanCompare,
   getScanCompareFile,
@@ -355,6 +356,19 @@ export const ScanDetailModel = createModel((id: string) => {
         });
       } catch (err) {
         this.error.value = errorMessage(err);
+      }
+    },
+
+    /**
+     * Which of the reader's organizations holds this review, for an address
+     * that names none. Null when none of theirs does or the lookup failed;
+     * the page then reads the remembered organization, as it did before.
+     */
+    async findOrganization(): Promise<string | null> {
+      try {
+        return await findScanOrganization(this.scanId.peek());
+      } catch {
+        return null;
       }
     },
 

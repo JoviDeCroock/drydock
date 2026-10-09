@@ -124,7 +124,14 @@ them; a review belongs to one organization, so switching on scan detail leaves
 for the new organization's reviews. `/dashboard` is called "Reviews" in every
 link to it. Links into a review go through `scanDetailPath` in
 `src/lib/scan-detail-path.ts`, which carries the review's `?org=`; scan detail
-pins it the way the package page does.
+pins it the way the package page does. A link that cannot carry it (the
+workflow gate's GitHub comment is capped at 140 characters) or predates it is
+resolved before the review loads: `GET /api/v1/scans/:id/organization` names
+which of the reader's own organizations holds the review, and the page pins
+that one and writes it into the URL. When none of theirs does, or the lookup
+fails, the page reads the remembered organization as before: a review it holds
+gets its `?org=` from the loaded detail, and anything else is the same
+not-found.
 
 Every `/dashboard*` page runs `useAuthedDashboardSession` from
 `src/features/account/` on mount: it loads the session, redirects a signed-out

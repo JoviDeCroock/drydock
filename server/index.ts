@@ -158,6 +158,8 @@ app.get("/api", (c) =>
       scanOverview: "GET /api/v1/scans/overview",
       scanBatchApproval: "GET/POST /api/v1/scans/batch-approval",
       scanDetail: "GET /api/v1/scans/:id",
+      scanOrganization:
+        "GET /api/v1/scans/:id/organization (which of the caller's own organizations holds the scan; 404 otherwise)",
       packageReleases:
         "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",

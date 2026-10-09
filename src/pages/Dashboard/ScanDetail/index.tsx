@@ -13,6 +13,7 @@ import { AppHeaderActions } from "../../../features/account/AppHeaderActions";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
 import { buildQueryUrl } from "../../../lib/query-state";
+import { pinOrganization } from "../../../models/active-organization";
 import { OrganizationModel } from "../../../models/organization";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
@@ -81,12 +82,25 @@ function ScanDetailView({ id, organizationId }: { id: string; organizationId: st
   const sessionChecked = useAuthedDashboardSession({
     onReady: async (_session, isCancelled) => {
       void organizations.load();
+      // An address without its organization (the workflow gate's GitHub
+      // comment, which has no room for one, an older link, a bookmark) would
+      // read whichever organization this browser remembers. Pin the one of the
+      // reader's own that holds the review before loading it, and name it in
+      // the URL so a copied link keeps working after an organization switch.
+      let named = Boolean(organizationId);
+      if (!named) {
+        const owner = await model.findOrganization();
+        if (isCancelled()) return;
+        if (owner) {
+          pinOrganization(owner);
+          location.route(buildQueryUrl({ org: owner }), true);
+          named = true;
+        }
+      }
       await model.load();
       const scanOrganization = model.detail.peek()?.scan.organizationId;
-      // An address without its organization (an older link, a bookmark) read
-      // the remembered one; name the review's own in the URL so a copied
-      // link keeps working after an organization switch.
-      if (!isCancelled() && !organizationId && scanOrganization) {
+      // The lookup failed but the remembered organization held the review.
+      if (!isCancelled() && !named && scanOrganization) {
         location.route(buildQueryUrl({ org: scanOrganization }), true);
       }
     },
