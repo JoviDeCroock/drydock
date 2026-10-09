@@ -65,6 +65,29 @@ describe("PasswordResetModel", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ email: "someone@example.test" });
   });
 
+  test("asks for a link that returns to where the visitor was headed", async () => {
+    const { model, fetchMock } = await freshModel(async () => json({ status: true }));
+    vi.stubGlobal("window", { location: { origin: "https://drydock.example" } });
+
+    await model.requestLink("someone@example.test", "/diff/react/19.0.0?path=src");
+    await model.requestLink("someone@example.test", "https://drydock.example/dashboard/scans/s1");
+    await model.requestLink("someone@example.test", "/dashboard/invite?token=invite-secret");
+    await model.requestLink("someone@example.test", "https://evil.example/dashboard");
+
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      {
+        email: "someone@example.test",
+        redirectTo: "/reset-password?returnTo=%2Fdiff%2Freact%2F19.0.0%3Fpath%3Dsrc",
+      },
+      {
+        email: "someone@example.test",
+        redirectTo: "/reset-password?returnTo=%2Fdashboard%2Fscans%2Fs1",
+      },
+      { email: "someone@example.test" },
+      { email: "someone@example.test" },
+    ]);
+  });
+
   test("refuses a mismatched or short password without spending the link", async () => {
     const { model, fetchMock } = await freshModel(async () => json({ status: true }));
 

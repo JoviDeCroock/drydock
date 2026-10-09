@@ -32,7 +32,7 @@ export default function ForgotPasswordPage() {
     event.preventDefault();
     const target = email.value.trim();
     if (!target) return;
-    await reset.requestLink(target);
+    await reset.requestLink(target, location.query.returnTo);
   };
 
   return (

@@ -1,4 +1,5 @@
 import { createModel, signal } from "@preact/signals";
+import { passwordResetPagePath, RESET_PASSWORD_PATH } from "../lib/auth-return";
 import { errorMessage } from "./api";
 import { AuthError, authPost, sessionModel } from "./auth";
 
@@ -58,12 +59,19 @@ export const PasswordResetModel = createModel(() => {
     sentTo,
     done,
 
-    async requestLink(email: string): Promise<boolean> {
+    // `returnTo` rides the emailed link back to the reset page, so signing in
+    // afterwards still lands where the visitor was headed. The server checks
+    // it again before mailing; this only keeps the request well-formed.
+    async requestLink(email: string, returnTo?: unknown): Promise<boolean> {
       this.busy.value = true;
       this.error.value = null;
       this.sentTo.value = null;
+      const redirectTo = passwordResetPagePath(returnTo);
       try {
-        await authPost("/api/auth/request-password-reset", { email });
+        await authPost(
+          "/api/auth/request-password-reset",
+          redirectTo === RESET_PASSWORD_PATH ? { email } : { email, redirectTo },
+        );
         this.sentTo.value = email;
         return true;
       } catch (err) {
