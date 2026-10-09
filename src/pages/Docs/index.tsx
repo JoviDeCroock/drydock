@@ -84,11 +84,7 @@ export default function DocsPage() {
   }, []);
 
   return (
-    <PageShell
-      class="gap-10 md:gap-14"
-      headerActions={<MarketingHeaderActions authed={authed} />}
-      feedbackPosition="end"
-    >
+    <PageShell class="gap-10 md:gap-14" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={docsPageSeo} />
       {/* The hero rides the same two-track grid as the body, on the article
           track, so the h1 starts on the column every h2 below it starts on.

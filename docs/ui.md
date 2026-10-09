@@ -117,8 +117,14 @@ move it into `src/features/` instead.
 
 Every signed-in page uses one header, `AppHeaderActions` in
 `src/features/account/`: the `Reviews` and `Settings` section links (the current
-one marked `aria-current="page"`, rendered as accent text), the organization
-switcher where the page is organization-scoped, and the user menu. Pages differ
+one marked `aria-current="page"`, rendered as accent text), `Feedback`, the
+organization switcher where the page is organization-scoped, and the user menu.
+Feedback has the same place in the marketing header (`Package diff` · `Docs` ·
+`Feedback` · `Sign in`): after the navigation, before account controls. The
+header actions render `HeaderFeedback` from `PageShell` themselves so DOM and tab
+order match what is drawn; a page without header actions shows Feedback alone.
+Beside header actions it is hidden at phone width, keeping the header to at most
+two rows, and the footer's Contact column carries it there. Pages differ
 only in which section is current and what switching organizations means for
 them; a review belongs to one organization, so switching on scan detail leaves
 for the new organization's reviews. `/dashboard` is called "Reviews" in every

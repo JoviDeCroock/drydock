@@ -1,5 +1,6 @@
 import { useLocation } from "preact-iso";
 import { LinkButton } from "../../components/Button";
+import { HeaderFeedback } from "../../components/PageShell";
 import { OrgSwitcher } from "../../components/OrgSwitcher";
 import { UserMenu } from "../../components/UserMenu";
 import { sessionModel } from "../../models/auth";
@@ -45,6 +46,7 @@ export function AppHeaderActions({
           Settings
         </SectionLink>
       </nav>
+      <HeaderFeedback hideOnPhone />
       {organizations && onActivate && onCreate ? (
         <OrgSwitcher
           organizations={organizations.organizations.value}

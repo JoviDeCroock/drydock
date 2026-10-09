@@ -17,11 +17,7 @@ export default function LandingPage() {
   const authed = useAuthedSession();
 
   return (
-    <PageShell
-      class="gap-12"
-      headerActions={<MarketingHeaderActions authed={authed} />}
-      feedbackPosition="end"
-    >
+    <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={homePageSeo} />
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
