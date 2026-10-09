@@ -1,4 +1,4 @@
-import type { ComponentChildren, JSX } from "preact";
+import type { ButtonHTMLAttributes, ComponentChildren } from "preact";
 import { useId, useRef } from "preact/hooks";
 import { useComputed, useSignal, useSignalEffect } from "@preact/signals";
 import { useLiveSignal } from "@preact/signals/utils";
@@ -242,7 +242,7 @@ export function Menu({
   );
 }
 
-type MenuItemProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "class" | "onClick"> & {
+type MenuItemProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "class" | "onClick"> & {
   onSelect?: () => void;
   tone?: "default" | "accent" | "danger";
   active?: boolean;

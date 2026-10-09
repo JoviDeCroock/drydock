@@ -1,19 +1,15 @@
 import { useSignal } from "@preact/signals";
-import { useEffect } from "preact/hooks";
+import { useCancellableEffect } from "../lib/use-cancellable-effect";
 import { sessionModel } from "../models/auth";
 
 export function useAuthedSession() {
   const authed = useSignal(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  useCancellableEffect((isCancelled) => {
     void sessionModel.load().then((session) => {
-      if (cancelled) return;
+      if (isCancelled()) return;
       authed.value = Boolean(session?.user);
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   return authed;

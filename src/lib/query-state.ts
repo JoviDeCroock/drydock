@@ -115,7 +115,13 @@ export function useQuerySignal<T>(signal: Signal<T>, options: QuerySignalOptions
       write();
       return;
     }
-    const timer = window.setTimeout(write, debounceMs);
+    // Defense in depth beside ScopedRoute's route() guard: a write still
+    // pending when the browser leaves this path, before the deferred unmount
+    // cleanup clears the timer, never lands on another page's URL.
+    const pathname = window.location.pathname;
+    const timer = window.setTimeout(() => {
+      if (window.location.pathname === pathname) write();
+    }, debounceMs);
     return () => window.clearTimeout(timer);
   });
 }

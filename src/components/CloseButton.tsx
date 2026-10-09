@@ -1,7 +1,7 @@
-import type { JSX } from "preact";
+import type { ButtonHTMLAttributes } from "preact";
 import { cn } from "./cn";
 
-type CloseButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "class" | "children"> & {
+type CloseButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "class" | "children"> & {
   class?: string;
   ariaLabel?: string;
   // `icon` is the square target that sits in a corner of a surface and tints on

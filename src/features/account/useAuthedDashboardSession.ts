@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useSignal, type ReadonlySignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
+import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { rememberDashboardReturnUrl } from "../../lib/query-state";
 import { sessionModel, type AuthSession } from "../../models/auth";
 
@@ -36,12 +37,10 @@ export function useAuthedDashboardSession({
     if (rememberReturnUrl) rememberDashboardReturnUrl(location.url);
   }, [location.url, rememberReturnUrl]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const isCancelled = () => cancelled;
+  useCancellableEffect((isCancelled) => {
     void (async () => {
       const session = await sessionModel.load();
-      if (cancelled) return;
+      if (isCancelled()) return;
       if (!session) {
         location.route(loginRedirectPath(location.url), true);
         return;
@@ -49,9 +48,6 @@ export function useAuthedDashboardSession({
       sessionChecked.value = true;
       await onReady?.(session, isCancelled);
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   return sessionChecked;
