@@ -247,9 +247,12 @@ anywhere in the value of a color-carrying style property (`bg-[#fafafa]`, `shado
 saturated severity token used as a text color (`text-warn`, `text-ok/80`), pointing at the
 `-text` variant. `var(--color-…)` inside an arbitrary value, `white`/`black`, and prose
 containing `#123` are not reported. `no-sub-floor-text` reports an arbitrary `text-[…]`,
-`text-[length:…]`, or `[font-size:…]` size below 10px in `px`, `rem`, or `em`, with or without a
-`/leading` modifier; whether a 10px string is a glyph or a label stays a
-review judgement. Fixtures and test: `test/fixtures/oxlint-design/src/off-system-color.tsx`,
+`text-[length:…]`, or `[font-size:…]` size under 11px other than exactly 10px (the scanning
+size), with or without a `/leading` modifier or important marker. Units are case-insensitive;
+`rem`, `em`, and `%` convert at the 14px root and absolute units (`pt`, `in`, …) at 96px/in.
+`text-xs` is reported too (10.5px on the 14px root). `calc()`, `var()`, viewport units, and
+keywords are not evaluated, and whether a 10px string is a glyph or a label stays a review
+judgement. Fixtures and test: `test/fixtures/oxlint-design/src/off-system-color.tsx`,
 `test/fixtures/oxlint-design/src/sub-floor-text.tsx`, `test/fixtures/oxlint-design/src/tokens-clean.tsx`,
 `test/fixtures/oxlint-design/server/card.ts` (must stay unreported: the fixture config uses the
 same `src/**` override as the repo config), and `test/oxlint-design-tokens.test.mjs`. Both ship as `error` with no existing violations.
