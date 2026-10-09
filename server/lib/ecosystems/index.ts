@@ -1,7 +1,7 @@
 import { atpmPublicDiff } from "./atpm/public-diff";
 import { npmAdapter } from "./npm";
 import { npmPublicDiff } from "./npm/public-diff";
-import { npmPublicationMonitor } from "./npm/publication-monitor";
+import { npmPublicationMonitor } from "./npm/publication";
 import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
 import { pypiPublicDiff } from "./pypi/public-diff";
 import { pypiWorkflowGateAdapter } from "./pypi/workflow-gate";

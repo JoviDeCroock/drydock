@@ -94,9 +94,41 @@ for (const name of scenarioNames) {
   });
 }
 
-const publicPackageDir = path.join(repoRoot, "test/e2e-fixtures/publication-monitor");
-const publicManifest = await readJson(path.join(publicPackageDir, "package.json"));
-const publicPack = packPackage(publicPackageDir, tarballRoot);
+// Public packages served without a token: releases the publication monitor
+// observes on public npm. A version with no `publishedAt` gets its registry
+// timestamp on the first packument lookup, so a test can publish it after it
+// enrolls the watch; a fixed one is history from before any watch existed.
+const publicPackageFixtures = [
+  [{ directory: "publication-monitor", publishedAt: null }],
+  [
+    { directory: "post-release-review/1.0.0", publishedAt: "2020-01-01T00:00:00.000Z" },
+    { directory: "post-release-review/1.1.0", publishedAt: null },
+  ],
+];
+
+const publicPackages = [];
+for (const releases of publicPackageFixtures) {
+  const versions = [];
+  for (const release of releases) {
+    const packageDir = path.join(repoRoot, "test/e2e-fixtures", release.directory);
+    const manifest = await readJson(path.join(packageDir, "package.json"));
+    const packed = await assertPortableTarball(
+      packPackage(packageDir, tarballRoot),
+      `public ${release.directory}`,
+    );
+    versions.push({
+      version: manifest.version,
+      manifest,
+      tarballFile: packed.filename,
+      shasum: packed.shasum,
+      integrity: packed.integrity,
+      publishedAt: release.publishedAt,
+    });
+  }
+  const name = versions[0].manifest.name;
+  for (const entry of versions) assertEqual(name, entry.manifest.name, `${name} public version`);
+  publicPackages.push({ name, versions });
+}
 
 await writeFile(
   path.join(outputRoot, "registry.json"),
@@ -104,13 +136,7 @@ await writeFile(
     {
       generatedAt: new Date().toISOString(),
       scenarios,
-      publicPublication: {
-        manifest: publicManifest,
-        version: publicManifest.version,
-        tarballFile: publicPack.filename,
-        shasum: publicPack.shasum,
-        integrity: publicPack.integrity,
-      },
+      publicPackages,
     },
     null,
     2,
