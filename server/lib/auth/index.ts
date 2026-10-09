@@ -10,6 +10,7 @@ import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizati
 import { recordProductEvent } from "../analytics";
 import { enforceRateLimit, RateLimitError } from "../rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
+import { passwordResetPagePath, passwordResetPageReturnTo } from "../../../src/lib/auth-return";
 import * as schema from "../../db/schema";
 import {
   sendAccountVerificationEmail,
@@ -349,9 +350,22 @@ function configuredOrigin(env: Cloudflare.Env): string | null {
  * The emailed reset link. The token rides in the fragment, which a browser
  * never sends to a server or copies into a `Referer`, so the page load that
  * opens the link cannot write the capability into request logs.
+ *
+ * `betterAuthUrl` is the link Better Auth built for the same request
+ * (`/api/auth/reset-password/<token>?callbackURL=<redirectTo>`). Only its
+ * `callbackURL` is read, for the `returnTo` the requester asked to come back
+ * to; Better Auth only checked that it is same-origin, so it is sanitized
+ * again here. That URL holds the token, so it is never logged.
  */
-function passwordResetLink(origin: string, token: string): string {
-  return `${origin}/reset-password#token=${encodeURIComponent(token)}`;
+function passwordResetLink(origin: string, token: string, betterAuthUrl?: string): string {
+  let requestedPage: string | null = null;
+  try {
+    requestedPage = betterAuthUrl ? new URL(betterAuthUrl).searchParams.get("callbackURL") : null;
+  } catch {
+    requestedPage = null;
+  }
+  const returnTo = passwordResetPageReturnTo(requestedPage, origin);
+  return `${origin}${passwordResetPagePath(returnTo, origin)}#token=${encodeURIComponent(token)}`;
 }
 
 // Never rejects: Better Auth would log the rejection, and a failure that only
@@ -559,8 +573,13 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
             sendResetPassword: async (
               {
                 user,
+                url,
                 token,
-              }: { user: { id: string; email: string; emailVerified: boolean }; token: string },
+              }: {
+                user: { id: string; email: string; emailVerified: boolean };
+                url: string;
+                token: string;
+              },
               request?: Request,
             ) => {
               // Every refusal below runs in the background and returns
@@ -582,7 +601,7 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
                   await deliverPasswordResetEmail(
                     env,
                     user.email,
-                    passwordResetLink(resetOrigin, token),
+                    passwordResetLink(resetOrigin, token, url),
                   );
                 })().catch((err: unknown) => {
                   emitOperationalEvent("error", "auth.password_reset_email_failed", {

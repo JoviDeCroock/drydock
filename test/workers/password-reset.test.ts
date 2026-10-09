@@ -91,6 +91,76 @@ describe("password reset request", () => {
     },
   );
 
+  test(
+    "carries a sanitized returnTo through the mailed link",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const mail = captureEmail();
+      // A fresh address each time keeps the per-address mail budget out of it.
+      const request = async (redirectTo: string) => {
+        const email = uniqueEmail();
+        await signUpUserId(new Map(), { email });
+        return callWorker("POST", "/api/auth/request-password-reset", {
+          body: { email, redirectTo },
+          env: mail.env,
+          ip: randomIp(),
+        });
+      };
+
+      expect(
+        (await request("/reset-password?returnTo=%2Fdiff%2Freact%2F19.0.0%3Fpath%3Dsrc")).res
+          .status,
+      ).toBe(200);
+      // Same-origin pages Better Auth accepts, but whose destination the server
+      // will not mail: a capability, another page's returnTo, a non-app path.
+      for (const redirectTo of [
+        `/reset-password?returnTo=${encodeURIComponent("/dashboard/invite?token=invite-secret")}`,
+        "/login?returnTo=%2Fdiff%2Freact",
+        "/reset-password?returnTo=%2Freports%2Fshare-token",
+        `${env.BETTER_AUTH_URL}/reset-password?returnTo=%2F%2Fevil.example%2Fdiff`,
+      ]) {
+        expect((await request(redirectTo)).res.status, redirectTo).toBe(200);
+      }
+
+      const links = mail.sent.map(
+        (message) => /\/reset-password(\?[^\s"<#]*)?#token=/.exec(message.raw)?.[1] ?? "",
+      );
+      expect(links).toEqual(["?returnTo=%2Fdiff%2Freact%2F19.0.0%3Fpath%3Dsrc", "", "", "", ""]);
+      for (const message of mail.sent) {
+        expect(message.raw).not.toContain("invite-secret");
+        expect(message.raw).not.toContain("share-token");
+        expect(message.raw).not.toContain("evil.example");
+      }
+    },
+  );
+
+  test(
+    "refuses an off-origin redirect before looking the address up",
+    { timeout: AUTH_TIMEOUT_MS },
+    async () => {
+      const email = uniqueEmail();
+      await signUpUserId(new Map(), { email });
+      const mail = captureEmail();
+      const redirectTo = "https://evil.example/reset-password?returnTo=%2Fdiff%2Freact";
+
+      const known = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email, redirectTo },
+        env: mail.env,
+        ip: randomIp(),
+      });
+      const unknown = await callWorker("POST", "/api/auth/request-password-reset", {
+        body: { email: uniqueEmail(), redirectTo },
+        env: mail.env,
+        ip: randomIp(),
+      });
+
+      expect(known.res.status).toBe(403);
+      expect(unknown.res.status).toBe(403);
+      expect(known.json).toEqual(unknown.json);
+      expect(mail.sent).toHaveLength(0);
+    },
+  );
+
   test("stores only a digest of the reset token", { timeout: AUTH_TIMEOUT_MS }, async () => {
     const email = uniqueEmail();
     const userId = await signUpUserId(new Map(), { email });
