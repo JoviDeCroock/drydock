@@ -69,24 +69,42 @@ describe("design-local/no-off-system-color", () => {
 describe("design-local/no-sub-floor-text", () => {
   const flagged = runRule("design-local(no-sub-floor-text)");
 
+  const inFixture = flagged.filter((d) => d.filename === "src/sub-floor-text.tsx");
+  const messagesAt = (line) => inFixture.filter((d) => d.line === line).map((d) => d.message);
+
   it("flags arbitrary text sizes below 10px in px and rem, behind variants, and in maps", () => {
-    const lines = flagged
-      .filter((d) => d.filename === "src/sub-floor-text.tsx")
-      .map((d) => d.line)
-      .sort((a, b) => a - b);
+    const lines = inFixture.map((d) => d.line).filter((line) => line <= 34);
     // px (5), rem (9), behind a variant (13), in a class map (17), with a
     // line-height shorthand (22), a length hint (26), and as an arbitrary
     // property (30), and the rem-based `text-xs` (34), which is 10.5px on the
     // 14px root.
     assert.deepEqual(
-      lines,
+      lines.sort((a, b) => a - b),
       [5, 9, 13, 17, 22, 26, 30, 34],
       `got:\n${JSON.stringify(flagged, null, 2)}`,
     );
-    assert.match(flagged.find((d) => d.line === 9)?.message ?? "", /`text-\[0\.5rem\]`/);
+    assert.match(messagesAt(9)[0] ?? "", /`text-\[0\.5rem\]` sets text at 7px/);
   });
 
-  it("allows 10px and up, including the named sizes from text-sm, and ignores non-src files", () => {
+  it("flags sizes between the 10px scanning size and the 11px label floor in every spelling", () => {
+    const lines = inFixture.map((d) => d.line).filter((line) => line > 34);
+    // 10.5px (38), 0.75rem (42), 0.75em (46), .75rem (50), an uppercase unit in
+    // an arbitrary property (54), important markers before a variant and after
+    // the bracket (58, 58), points and percent (62, 62), and a signed value and
+    // an exponent (66, 66).
+    assert.deepEqual(
+      lines.sort((a, b) => a - b),
+      [38, 42, 46, 50, 54, 58, 58, 62, 62, 66, 66],
+      `got:\n${JSON.stringify(flagged, null, 2)}`,
+    );
+    assert.match(messagesAt(42)[0] ?? "", /`text-\[0\.75rem\]` sets text at 10\.5px/);
+    assert.match(messagesAt(46)[0] ?? "", /`text-\[0\.75em\]` sets text at 10\.5px/);
+    assert.ok(
+      messagesAt(62).some((message) => /`text-\[7pt\]` sets text at 9\.33px/.test(message)),
+    );
+  });
+
+  it("allows exactly 10px and 11px and up, including the named sizes from text-sm, and ignores non-src files", () => {
     const other = flagged.filter((d) => d.filename !== "src/sub-floor-text.tsx");
     assert.deepEqual(other, [], `unexpected violations:\n${JSON.stringify(other, null, 2)}`);
   });

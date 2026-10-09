@@ -33,3 +33,35 @@ export function ArbitraryProperty() {
 export function NamedExtraSmall() {
   return <span class="text-xs">tiny</span>;
 }
+
+export function BetweenScanningAndLabel() {
+  return <span class="text-[10.5px]">tiny</span>;
+}
+
+export function ThreeQuarterRem() {
+  return <span class="text-[0.75rem]">tiny</span>;
+}
+
+export function ThreeQuarterEm() {
+  return <span class="text-[0.75em]">tiny</span>;
+}
+
+export function LeadingDotRem() {
+  return <span class="text-[.75rem]">tiny</span>;
+}
+
+export function UppercaseUnitProperty() {
+  return <span class="[font-size:10.5PX]">tiny</span>;
+}
+
+export function ImportantBehindVariant() {
+  return <span class="sm:!text-[10.9px] text-[10.5px]!">tiny</span>;
+}
+
+export function PointsAndPercent() {
+  return <span class="text-[7pt] text-[75%]">tiny</span>;
+}
+
+export function SignedAndExponent() {
+  return <span class="text-[+9px] text-[1.05e1px]">tiny</span>;
+}

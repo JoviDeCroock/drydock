@@ -48,6 +48,15 @@ export function ShorthandAboveFloor() {
   return <span class="text-[13px]/5 text-[length:11px] [font-size:12px]">fine</span>;
 }
 
+export function ScaleBoundaries() {
+  // 10px is the scanning size and 11px the label floor, in every spelling.
+  return (
+    <span class="sm:text-[10px] !text-[10px] [font-size:10PX] text-[7.5pt] text-[11px] text-[0.7857rem] text-[11.5px] text-[0.875rem] text-sm">
+      fine
+    </span>
+  );
+}
+
 export function PropertyValueWithoutColor() {
   const meta = { href: "#section-1", label: "Issue #1234" };
   return <a href={meta.href}>{meta.label}</a>;
