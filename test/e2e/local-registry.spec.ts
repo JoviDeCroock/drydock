@@ -492,7 +492,7 @@ test("publication monitor observes an unreviewed public release", async ({ brows
   }
 });
 
-test("a package link names its organization, whatever this browser had active", async ({
+test("package and review links open in their organization, whatever this browser had active", async ({
   browser,
   baseURL,
 }) => {
@@ -546,6 +546,16 @@ test("a package link names its organization, whatever this browser had active", 
       page.getByText(/You are not a member of the organization this link names/),
     ).toBeVisible();
     await expect(page.getByText("1 review", { exact: true })).toHaveCount(0);
+
+    // The workflow gate's GitHub comment links a review with no `?org=`; it
+    // opens in the reader's organization that holds it, not the remembered one.
+    await page.evaluate(
+      (id) => localStorage.setItem("drydock:active-organization-id", id),
+      orgs.b.id,
+    );
+    await page.goto(`/dashboard/scans/${reviewedScanId}`);
+    await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.get("org")).toBe(orgs.a.id);
     expect(errors).toEqual([]);
   } finally {
     await context.close();

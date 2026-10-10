@@ -620,6 +620,13 @@ async function installWorkflowGateMocks(
       return;
     }
 
+    // Scan detail opened without ?org= asks which of the reader's organizations
+    // holds the review before loading it.
+    if (/^\/api\/v1\/scans\/[^/]+\/organization$/.test(path)) {
+      await fulfillJson(route, { organizationId: "org-smoke" });
+      return;
+    }
+
     if (path === `/api/v1/scans/${scanId}`) {
       await fulfillJson(
         route,

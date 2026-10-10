@@ -12,7 +12,7 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
-import { apiFetch, apiJson } from "./api";
+import { ApiError, apiFetch, apiJson } from "./api";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
@@ -278,6 +278,23 @@ export function getScan(
 ): Promise<PersistedScanDetail> {
   const suffix = options.poll ? "?poll=1" : "";
   return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}${suffix}`);
+}
+
+/**
+ * Which of the signed-in user's organizations holds a review, for a link that
+ * does not name one. Null when none of theirs does, which the server does not
+ * distinguish from a review that does not exist.
+ */
+export async function findScanOrganization(id: string): Promise<string | null> {
+  try {
+    const { organizationId } = await apiFetch<{ organizationId: string }>(
+      `/api/v1/scans/${encodeURIComponent(id)}/organization`,
+    );
+    return organizationId;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
 }
 
 export function getScanStatus(id: string): Promise<ScanStatusResponse> {

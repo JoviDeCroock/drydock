@@ -9,7 +9,7 @@ import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-c
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
-import { scanEvents, scans, user } from "./schema";
+import { organizationMembers, scanEvents, scans, user } from "./schema";
 
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
@@ -166,6 +166,32 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
     .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
     .limit(1);
   return scan ?? null;
+}
+
+/**
+ * The organization holding a scan, only when the user is a member of it. One
+ * join answers both "no such scan" and "a scan in an organization you are not
+ * in" with the same null, so the lookup cannot confirm another organization's
+ * scan exists.
+ */
+export async function findMemberScanOrganization(
+  db: AppDb,
+  id: string,
+  userId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ organizationId: scans.organizationId })
+    .from(scans)
+    .innerJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.organizationId, scans.organizationId),
+        eq(organizationMembers.userId, userId),
+      ),
+    )
+    .where(eq(scans.id, id))
+    .limit(1);
+  return row?.organizationId ?? null;
 }
 
 export async function getScanCompareData(

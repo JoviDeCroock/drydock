@@ -38,6 +38,7 @@ const protectedRoutes: RouteCase[] = [
   { method: "POST", path: "/api/v1/publication-watches/watch_test/check", body: {} },
   { method: "POST", path: "/api/v1/scans", body: { stageId: "stage-auth-route-000001" } },
   { method: "GET", path: "/api/v1/scans/scan_auth_route" },
+  { method: "GET", path: "/api/v1/scans/scan_auth_route/organization" },
   { method: "DELETE", path: "/api/v1/scans/scan_auth_route" },
   { method: "GET", path: "/api/v1/scans/scan_auth_route/versions" },
   { method: "GET", path: "/api/v1/scans/scan_auth_route/compare?version=1.0.0" },

@@ -6,7 +6,7 @@ import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
-import { buildTestApp, type TestApp } from "./helpers/app";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
@@ -527,6 +527,72 @@ describe("scans routes enforce organization boundaries", () => {
       `/api/v1/scans/${scanId}/compare/file?version=1.0.0&path=package.json`,
     );
     expect(fileRes.status).toBe(404);
+  });
+
+  test("GET /scans/:id/organization names the member's organization that holds the scan, whichever is active", async () => {
+    const owner = await seedUser();
+    const teammate = await seedUser();
+    const scanId = await seedPackageScan(owner, "@org/team-package");
+    const membershipId = `member_${crypto.randomUUID()}`;
+    await owner.db.insert(schema.organizationMembers).values({
+      id: membershipId,
+      organizationId: owner.organizationId,
+      userId: teammate.userId,
+      role: "member",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const app = buildTestApp(mountScans, teammate);
+
+    // The teammate's personal organization is active, so the scan itself is
+    // out of reach until the page pins the organization the lookup names.
+    const detailRes = await call(app, "GET", `/api/v1/scans/${scanId}`, {
+      activeOrganizationId: teammate.organizationId,
+    });
+    expect(detailRes.status).toBe(404);
+    const res = await call(app, "GET", `/api/v1/scans/${scanId}/organization`, {
+      activeOrganizationId: teammate.organizationId,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ organizationId: owner.organizationId });
+
+    await owner.db
+      .delete(schema.organizationMembers)
+      .where(eq(schema.organizationMembers.id, membershipId));
+    const revokedRes = await call(app, "GET", `/api/v1/scans/${scanId}/organization`);
+    expect(revokedRes.status).toBe(404);
+  });
+
+  test("GET /scans/:id/organization answers a non-member exactly as a scan that does not exist", async () => {
+    const owner = await seedUser();
+    const intruder = await seedUser();
+    const scanId = await seedPackageScan(owner, "@org/private-package");
+    const app = buildTestApp(mountScans, intruder);
+
+    const foreign = await call(app, "GET", `/api/v1/scans/${scanId}/organization`);
+    // Naming the holding organization as active is only a selector, never proof.
+    const selected = await call(app, "GET", `/api/v1/scans/${scanId}/organization`, {
+      activeOrganizationId: owner.organizationId,
+    });
+    const missing = await call(
+      app,
+      "GET",
+      `/api/v1/scans/scan_${crypto.randomUUID()}/organization`,
+    );
+    const answers = await Promise.all(
+      [foreign, selected, missing].map(async (res) => ({
+        status: res.status,
+        type: res.headers.get("content-type"),
+        body: await res.text(),
+      })),
+    );
+    expect(answers[0]).toEqual({
+      status: 404,
+      type: "application/json",
+      body: JSON.stringify({ error: "not found" }),
+    });
+    expect(answers[1]).toEqual(answers[0]);
+    expect(answers[2]).toEqual(answers[0]);
   });
 
   test("scan_files and scan_findings are isolated by organization", async () => {
