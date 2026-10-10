@@ -58,6 +58,9 @@ export const ScanListModel = createModel(() => {
   // Refresh and pagination replace or extend the same cursor snapshot. The
   // operation that starts later owns the next list mutation.
   let listMutationId = 0;
+  // Counts organization switches. A decision or delete that spans one must not
+  // touch the list, and comparing organization IDs alone misses A→B→A.
+  let organizationGeneration = 0;
 
   async function refresh(options: ScanListRefreshOptions = {}): Promise<void> {
     const requestId = ++refreshRequestId;
@@ -102,7 +105,7 @@ export const ScanListModel = createModel(() => {
         hasAnyScan.value = false;
       } else {
         hasAnyScan.value = null;
-        await resolveHasAnyScan({ requestId, mutationId, organizationId });
+        await resolveHasAnyScan(() => isCurrentRefresh(requestId, mutationId, organizationId));
       }
     } catch (err) {
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
@@ -130,39 +133,18 @@ export const ScanListModel = createModel(() => {
   // One-row probe for the case the filtered list cannot answer: this filter is
   // empty, but the organization may still have decided reviews. Failure leaves
   // `hasAnyScan` null, which renders nothing — an onboarding panel is never
-  // worth showing on a guess.
-  async function resolveHasAnyScan(refreshContext?: {
-    requestId: number;
-    mutationId: number;
-    organizationId: string | null;
-  }): Promise<void> {
+  // worth showing on a guess. `isCurrent` says whether the operation that
+  // asked still owns the answer; once it does not, the answer is dropped.
+  async function resolveHasAnyScan(isCurrent: () => boolean): Promise<void> {
     if (hasAnyScan.peek() !== null) return;
     hasAnyScanProbeFailed.value = false;
     try {
       const data = await listScans({ filter: "all", limit: 1 });
-      if (
-        refreshContext &&
-        !isCurrentRefresh(
-          refreshContext.requestId,
-          refreshContext.mutationId,
-          refreshContext.organizationId,
-        )
-      ) {
-        return;
-      }
+      if (!isCurrent()) return;
       hasAnyScan.value = data.scans.length > 0;
     } catch {
       // Leave unknown, and say so.
-      if (
-        refreshContext &&
-        !isCurrentRefresh(
-          refreshContext.requestId,
-          refreshContext.mutationId,
-          refreshContext.organizationId,
-        )
-      ) {
-        return;
-      }
+      if (!isCurrent()) return;
       hasAnyScanProbeFailed.value = true;
     }
   }
@@ -180,6 +162,7 @@ export const ScanListModel = createModel(() => {
     const organizationId = activeOrganizationId.value;
     if (organizationId === onboardingOrganizationId) return;
     onboardingOrganizationId = organizationId;
+    organizationGeneration += 1;
     hasAnyScan.value = null;
     hasAnyScanProbeFailed.value = false;
   });
@@ -269,8 +252,15 @@ export const ScanListModel = createModel(() => {
     async setDecision(id: string, decision: ScanDecision, reason: string | null): Promise<void> {
       this.decisionStatus.value = "saving";
       this.decisionError.value = null;
+      const generation = organizationGeneration;
       try {
         const updated = await setScanDecision(id, decision, reason);
+        // The list now belongs to another organization: the decided row is not
+        // in it, and fencing would drop that organization's in-flight refresh.
+        if (generation !== organizationGeneration) {
+          this.decisionStatus.value = "idle";
+          return;
+        }
         // Fence out a refresh that started before this authoritative write.
         ++listMutationId;
         const activeFilter = this.filter.peek();
@@ -295,8 +285,15 @@ export const ScanListModel = createModel(() => {
     async deleteFailed(id: string): Promise<boolean> {
       this.deleteStatus.value = "deleting";
       this.deleteError.value = null;
+      const generation = organizationGeneration;
       try {
         await deleteScan(id);
+        // As for a decision; the other organization's onboarding answer is not
+        // this delete's to re-probe either.
+        if (generation !== organizationGeneration) {
+          this.deleteStatus.value = "idle";
+          return true;
+        }
         // Do not let an older list response resurrect the deleted row.
         ++listMutationId;
         this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
@@ -307,7 +304,12 @@ export const ScanListModel = createModel(() => {
         // leaves the list alone.
         if (this.scans.value.length === 0) {
           this.hasAnyScan.value = null;
-          await resolveHasAnyScan();
+          // A later refresh resolves the answer itself; a Load more, which
+          // only a settled refresh allows, does not change it.
+          const requestId = refreshRequestId;
+          await resolveHasAnyScan(
+            () => requestId === refreshRequestId && generation === organizationGeneration,
+          );
         }
         this.deleteStatus.value = "idle";
         return true;

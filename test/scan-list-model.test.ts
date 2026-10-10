@@ -426,6 +426,188 @@ describe("ScanListModel hasAnyScan after deletion", () => {
   });
 });
 
+describe("ScanListModel actions that outlive an organization switch", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    setActiveOrganizationId(null);
+    vi.unstubAllGlobals();
+  });
+
+  /** Routes each request by method, path, and organization header; records them as `org:METHOD path?filter`. */
+  function stubRoutes(route: (request: string) => Promise<Response> | undefined) {
+    const asked: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "https://drydock.test");
+      const organizationId =
+        (init?.headers as Record<string, string> | undefined)?.[ACTIVE_ORG_HEADER] ?? "none";
+      const filter = url.searchParams.get("filter");
+      const request = `${organizationId}:${init?.method ?? "GET"} ${url.pathname}${filter ? `?${filter}` : ""}`;
+      asked.push(request);
+      return route(request) ?? Promise.reject(new Error(`unexpected request ${request}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return asked;
+  }
+
+  const scanB = { ...scanDetail(null).scan, id: "scan-b" };
+
+  test.each([
+    ["an empty answer", () => jsonResponse({ scans: [], nextCursor: null })],
+    ["a failure", () => new Response("down", { status: 503 })],
+  ])(
+    "the post-delete probe of the previous organization cannot settle the new one with %s",
+    async (_label, staleAnswer) => {
+      const strandedProbe = deferred<Response>();
+      const asked = stubRoutes((request) => {
+        if (request === "org-a:DELETE /api/v1/scans/scan-1") {
+          return Promise.resolve(jsonResponse({ ok: true, id: "scan-1" }));
+        }
+        if (request === "org-a:GET /api/v1/scans?all") return strandedProbe.promise;
+        if (request === "org-b:GET /api/v1/scans?undecided") {
+          return Promise.resolve(jsonResponse({ scans: [scanB], nextCursor: null }));
+        }
+        return undefined;
+      });
+      setActiveOrganizationId("org-a");
+      model = new ScanListModel();
+      model.hasAnyScan.value = true;
+      model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }];
+
+      const deleting = model.deleteFailed("scan-1");
+      await vi.waitFor(() => expect(asked).toContain("org-a:GET /api/v1/scans?all"));
+      setActiveOrganizationId("org-b");
+      await model.refresh();
+      expect(model.hasAnyScan.value).toBe(true);
+
+      strandedProbe.resolve(staleAnswer());
+      await expect(deleting).resolves.toBe(true);
+
+      expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-b"]);
+      expect(model.hasAnyScan.value).toBe(true);
+      expect(model.hasAnyScanProbeFailed.value).toBe(false);
+      expect(model.deleteStatus.value).toBe("idle");
+    },
+  );
+
+  test("a Load more in the same organization does not strand the post-delete probe", async () => {
+    const probe = deferred<Response>();
+    const nextPage = { ...scanDetail(null).scan, id: "scan-2" };
+    stubRoutes((request) => {
+      if (request === "org-a:DELETE /api/v1/scans/scan-1") {
+        return Promise.resolve(jsonResponse({ ok: true, id: "scan-1" }));
+      }
+      if (request === "org-a:GET /api/v1/scans?all") return probe.promise;
+      if (request === "org-a:GET /api/v1/scans?undecided") {
+        return Promise.resolve(jsonResponse({ scans: [nextPage], nextCursor: null }));
+      }
+      return undefined;
+    });
+    setActiveOrganizationId("org-a");
+    model = new ScanListModel();
+    model.hasAnyScan.value = true;
+    // Every other loaded row was decided out of the undecided filter, so the
+    // delete empties the list while another page remains.
+    model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }];
+    model.nextCursor.value = "page-2";
+
+    const deleting = model.deleteFailed("scan-1");
+    await vi.waitFor(() => expect(model?.hasAnyScan.value).toBeNull());
+    await model.loadMore();
+    probe.resolve(jsonResponse({ scans: [nextPage], nextCursor: null }));
+    await deleting;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
+    expect(model.hasAnyScan.value).toBe(true);
+  });
+
+  test("a delete that lands after the switch neither drops the new organization's list nor probes", async () => {
+    const deleteResponse = deferred<Response>();
+    const refreshB = deferred<Response>();
+    const asked = stubRoutes((request) => {
+      if (request === "org-a:DELETE /api/v1/scans/scan-1") return deleteResponse.promise;
+      if (request === "org-b:GET /api/v1/scans?undecided") return refreshB.promise;
+      return undefined;
+    });
+    setActiveOrganizationId("org-a");
+    model = new ScanListModel();
+    model.hasAnyScan.value = true;
+    model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }];
+
+    const deleting = model.deleteFailed("scan-1");
+    setActiveOrganizationId("org-b");
+    const refreshing = model.refresh();
+    deleteResponse.resolve(jsonResponse({ ok: true, id: "scan-1" }));
+    await expect(deleting).resolves.toBe(true);
+    refreshB.resolve(jsonResponse({ scans: [scanB], nextCursor: null }));
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-b"]);
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(model.deleteStatus.value).toBe("idle");
+    expect(asked).toEqual([
+      "org-a:DELETE /api/v1/scans/scan-1",
+      "org-b:GET /api/v1/scans?undecided",
+    ]);
+  });
+
+  test("a delete that spans a switch away and back does not keep the other organization's list", async () => {
+    const deleteResponse = deferred<Response>();
+    const refreshAgain = deferred<Response>();
+    const remaining = { ...scanDetail(null).scan, id: "scan-2" };
+    let refreshesOfA = 0;
+    stubRoutes((request) => {
+      if (request === "org-a:DELETE /api/v1/scans/scan-1") return deleteResponse.promise;
+      if (request === "org-b:GET /api/v1/scans?undecided") {
+        return Promise.resolve(jsonResponse({ scans: [scanB], nextCursor: null }));
+      }
+      if (request === "org-a:GET /api/v1/scans?undecided" && ++refreshesOfA === 1) {
+        return refreshAgain.promise;
+      }
+      return undefined;
+    });
+    setActiveOrganizationId("org-a");
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, status: "failed" }, remaining];
+
+    const deleting = model.deleteFailed("scan-1");
+    setActiveOrganizationId("org-b");
+    await model.refresh();
+    setActiveOrganizationId("org-a");
+    const refreshing = model.refresh();
+    deleteResponse.resolve(jsonResponse({ ok: true, id: "scan-1" }));
+    await expect(deleting).resolves.toBe(true);
+    refreshAgain.resolve(jsonResponse({ scans: [remaining], nextCursor: null }));
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
+  });
+
+  test("a decision that lands after the switch does not drop the new organization's list", async () => {
+    const decisionResponse = deferred<Response>();
+    const refreshB = deferred<Response>();
+    stubRoutes((request) => {
+      if (request === "org-a:POST /api/v1/scans/scan-1/decision") return decisionResponse.promise;
+      if (request === "org-b:GET /api/v1/scans?undecided") return refreshB.promise;
+      return undefined;
+    });
+    setActiveOrganizationId("org-a");
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+
+    const deciding = model.setDecision("scan-1", "publish", "reviewed");
+    setActiveOrganizationId("org-b");
+    const refreshing = model.refresh();
+    decisionResponse.resolve(jsonResponse(scanDetail("publish")));
+    await deciding;
+    refreshB.resolve(jsonResponse({ scans: [scanB], nextCursor: null }));
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-b"]);
+    expect(model.decisionStatus.value).toBe("idle");
+  });
+});
+
 describe("ScanListModel registry status refreshes", () => {
   afterEach(() => {
     model?.[Symbol.dispose]();
