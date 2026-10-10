@@ -154,25 +154,26 @@ low-volume one out of the dataset.
 
 ## Events
 
-| event                      | emitted from                  | answers                                              |
-| -------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source   |
-| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts            |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                           |
-| `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran            |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade           |
-| `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
-| `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
-| `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
-| `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
-| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
-| `badge.served`             | `GET /public/badge/*`         | badge distribution breadth, and the green/grey mix   |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
-| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
-| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                      |
-| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                          |
-| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency                   |
-| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                    |
+| event                       | emitted from                  | answers                                              |
+| --------------------------- | ----------------------------- | ---------------------------------------------------- |
+| `scan.queued`               | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source   |
+| `scan.completed`            | `recordCompletion`            | volume, latency, risk mix, finding counts            |
+| `scan.failed`               | `executeScanJob`, gate runner | failure rate by error code                           |
+| `scan.discarded`            | `executeScanJob`              | queued scans retired before they ever ran            |
+| `scan.decided`              | both decision paths           | time-to-decision; agreement with the grade           |
+| `ai_review.finished`        | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
+| `ai_review.attempted`       | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
+| `ai_review.decided`         | both decision paths           | feedback by assessment and reviewer version          |
+| `injection_screen.finished` | `withInjectionScreen`         | screen availability, spans per scan, fire rate, cost |
+| `npm_connection.validated`  | npm connection validation     | onboarding funnel                                    |
+| `public_diff.viewed`        | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
+| `badge.served`              | `GET /public/badge/*`         | badge distribution breadth, and the green/grey mix   |
+| `user.signed_up`            | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
+| `organization.created`      | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
+| `integration.connected`     | npm / GitHub / Slack connect  | activation, by integration kind                      |
+| `workflow_gate.opened`      | `deployment_protection_rule`  | gate volume                                          |
+| `workflow_gate.reviewed`    | gate runner                   | recommendation mix; review latency                   |
+| `workflow_gate.decided`     | human route + auto-block path | approval rate, human vs automatic                    |
 
 The scan-lifecycle events carry `source` — `manual` (a staged publish someone
 started in Drydock, including the ones "Check npm" finds), `auto_discovery` (the discovery cron), `workflow_gate`, or
@@ -240,6 +241,13 @@ curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_eng
 Sampling: Analytics Engine samples under load and exposes `_sample_interval`.
 Multiply by it (`SUM(_sample_interval)`) for counts, rather than using
 `count()`, once volume is high enough for sampling to engage.
+
+For `injection_screen.finished`, `blob5` is status, `blob6` reason (`none`,
+`no_candidates`, or why Clef gave no answer), `blob7` model, and `blob8` screen
+version; `double1` is duration, `double2` spans screened, `double3` findings,
+and `double4` input tokens. Its fire rate is `SUM(double3 > 0)` over completed
+screens with `double2 > 0`, per screen version — read it per organization before
+widening the `clef-injection-screen` flag.
 
 For `ai_review.attempted`, `blob5` is outcome, `blob6` action, `blob7` model,
 and `blob8` reviewer version. Alert over a rolling five-minute window when any

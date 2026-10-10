@@ -26,6 +26,7 @@ type RiskFinding = Finding & {
  * it (see mergeAiFindings). Its release attribution is file-level.
  */
 interface AiRiskFinding {
+  source?: string | null;
   severity?: string | null;
   diffStatus?: string | null;
   releaseDelta?: boolean | null;
@@ -62,7 +63,29 @@ export function aiVerdictRiskCap(releaseAssessment: AiReleaseAssessment): RiskLe
 }
 
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
-  return combineRisk(computeRisk(ruleFindings), aiArtifactRisk(aiReview));
+  const { reviewer, screenFloor } = splitInjectionScreen(aiReview);
+  return combineRisk(computeRisk(ruleFindings), aiArtifactRisk(reviewer), screenFloor);
+}
+
+// The injection screen writes its rows and a forced manual-review flag into the
+// completed review, but it is a different judge: the reviewer is scored as if
+// the screen never ran, and the screen contributes only the manual-review
+// floor. Otherwise a screen row on a changed file would carry the reviewer's
+// package-context concern into the release score, and the forced flag would
+// unlock a review-level risk the reviewer itself never backed.
+function splitInjectionScreen(aiReview: AiReview): { reviewer: AiReview; screenFloor: RiskLevel } {
+  const screened = aiReview.findings.some((finding) => finding.source === "injection-screen");
+  if (!screened && aiReview.reviewerRequiresManualReview === undefined) {
+    return { reviewer: aiReview, screenFloor: "low" };
+  }
+  return {
+    reviewer: {
+      ...aiReview,
+      findings: aiReview.findings.filter((finding) => finding.source !== "injection-screen"),
+      requiresManualReview: aiReview.reviewerRequiresManualReview ?? aiReview.requiresManualReview,
+    },
+    screenFloor: screened && displayedAiResult(aiReview)?.kind === "complete" ? "medium" : "low",
+  };
 }
 
 export function computeScanRiskBreakdown(
@@ -87,15 +110,23 @@ export function computeScanRiskBreakdown(
     approvedCount === 0 ? ruleFindings : [...releaseFindings, ...scoredContextFindings];
   const aiRecords = options.aiFindings ?? [];
   const aiContextRecords = aiRecords.filter((finding) => finding.releaseDelta !== true);
+  const { reviewer, screenFloor } = splitInjectionScreen(aiFindings);
+  const reviewerRecords = options.aiFindings?.filter(
+    (finding) => finding.source !== "injection-screen",
+  );
   return {
     artifactRisk: computeScanRisk(scoredFindings, aiFindings),
     releaseRisk: combineRisk(
       computeRisk(scoredReleaseFindings),
-      aiReleaseRisk(aiFindings, options.aiFindings),
+      aiReleaseRisk(reviewer, reviewerRecords),
+      screenFloor,
     ),
     contextRisk: combineRisk(
       computeRisk(scoredContextFindings),
-      aiFindingSeverityRisk(aiFindings, aiContextRecords),
+      aiFindingSeverityRisk(
+        reviewer,
+        aiContextRecords.filter((finding) => finding.source !== "injection-screen"),
+      ),
     ),
     releaseFindingCount: releaseFindings.length + aiRecords.length - aiContextRecords.length,
     contextFindingCount: contextFindings.length + aiContextRecords.length,

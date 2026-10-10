@@ -734,3 +734,75 @@ describe("AI review never lowers deterministic risk", () => {
     );
   });
 });
+
+describe("injection screen rows", () => {
+  const screenRow = {
+    severity: "high",
+    category: "prompt-injection",
+    source: "injection-screen",
+    file: "README.md",
+    evidence: "e",
+    reason: "r",
+    recommendation: "x",
+  };
+  const screenRecord = { ...screenRow, diffStatus: "added", releaseDelta: true };
+
+  function screened(review) {
+    return {
+      ...review,
+      findings: [...review.findings, screenRow],
+      requiresManualReview: true,
+      reviewerRequiresManualReview: review.requiresManualReview,
+    };
+  }
+
+  test("add only the manual-review floor when the reviewer's concern is package context", () => {
+    const contextRow = { ...screenRow, source: undefined, file: "lib/old.js" };
+    const reviewer = makeAiReview({
+      status: "complete",
+      releaseAssessment: "suspicious",
+      risk: "high",
+      findings: [contextRow],
+    });
+    const records = [{ ...contextRow, diffStatus: "unchanged", releaseDelta: false }];
+    expect(computeScanRiskBreakdown([], reviewer, null, { aiFindings: records }).releaseRisk).toBe(
+      "low",
+    );
+    const result = computeScanRiskBreakdown([], screened(reviewer), null, {
+      aiFindings: [...records, screenRecord],
+    });
+    expect(result.releaseRisk).toBe("medium");
+  });
+
+  test("the forced manual-review flag does not unlock a review-level risk the reviewer never backed", () => {
+    for (const [assessment, risk] of [
+      ["suspicious", "medium"],
+      ["blocked", "critical"],
+    ]) {
+      const reviewer = makeAiReview({ status: "complete", releaseAssessment: assessment, risk });
+      const result = computeScanRiskBreakdown([], screened(reviewer), null, {
+        aiFindings: [screenRecord],
+      });
+      expect(result.releaseRisk).toBe("medium");
+      expect(result.artifactRisk).toBe("medium");
+    }
+  });
+
+  test("keep the reviewer's own manual-review escalation", () => {
+    const reviewer = makeAiReview({
+      status: "complete",
+      releaseAssessment: "blocked",
+      risk: "critical",
+      requiresManualReview: true,
+    });
+    const result = computeScanRiskBreakdown([], screened(reviewer), null, {
+      aiFindings: [screenRecord],
+    });
+    expect(result.releaseRisk).toBe("critical");
+  });
+
+  test("raise a nothing-unusual review to the manual-review floor", () => {
+    const reviewer = makeAiReview({ status: "complete", releaseAssessment: "nothing_unusual" });
+    expect(computeScanRisk([], screened(reviewer))).toBe("medium");
+  });
+});
