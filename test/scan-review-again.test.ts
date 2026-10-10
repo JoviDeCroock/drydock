@@ -42,6 +42,18 @@ describe("reviewAgainRequest", () => {
     ).toBeNull();
   });
 
+  test("a failed published-pair review restarts against the baseline its row kept", () => {
+    expect(
+      reviewAgainRequest(
+        failedScan({
+          source: "published",
+          stageId: "published:npm:pkg@3.0.0",
+          previousVersion: "2.4.0",
+        }),
+      ),
+    ).toEqual({ ecosystem: "npm", packageName: "pkg", version: "3.0.0", baselineVersion: "2.4.0" });
+  });
+
   test("only a current failed review outside a gate is offered again", () => {
     expect(reviewAgainRequest(failedScan({ status: "complete" }))).toBeNull();
     expect(reviewAgainRequest(failedScan({ source: "workflow_gate" }))).toBeNull();

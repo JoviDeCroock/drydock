@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { getNpmConnection } from "../../server/db/npm-connections";
+import { getScan, markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { ScanQueueMessage } from "../../server/lib/scan/job";
@@ -153,6 +154,49 @@ describe("published-pair scans", () => {
     expect(res.status).toBe(202);
     const message = queue.send.mock.calls[0]?.[0];
     expect(message?.published?.baselineVersion).toBe("1.0.0");
+  });
+
+  test("a failed pair keeps its requested baseline, and restarting from it queues the same pair", async () => {
+    const owner = await seedUser();
+    const packageName = `pkg-${crypto.randomUUID()}`;
+    stubPackument(packageName, ["1.0.0", "1.1.0", "2.0.0"]);
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
+    const app = buildTestApp(mountScans, { userId: owner.userId, emailVerified: true });
+    const db = createDb(env.DB);
+
+    const first = await postScan(app, queue, {
+      ecosystem: "npm",
+      packageName,
+      version: "2.0.0",
+      baselineVersion: "1.0.0",
+    });
+    expect(first.status).toBe(202);
+    const { scan } = (await first.json()) as { scan: { id: string } };
+    await markScanFailed(db, scan.id, owner.organizationId, { message: "sandbox failed" });
+    const failed = await getScan(db, scan.id, owner.organizationId);
+    expect(failed?.scan.status).toBe("failed");
+    expect(failed?.scan.previousVersion).toBe("1.0.0");
+
+    const again = await postScan(app, queue, {
+      ecosystem: "npm",
+      packageName,
+      version: "2.0.0",
+      baselineVersion: failed?.scan.previousVersion,
+    });
+    expect(again.status).toBe(202);
+    expect(queue.send.mock.calls[1]?.[0]?.published).toEqual(
+      queue.send.mock.calls[0]?.[0]?.published,
+    );
+
+    // The restart's baseline is confirmed against the registry like any request's.
+    const unpublishedBaseline = await postScan(app, queue, {
+      ecosystem: "npm",
+      packageName,
+      version: "2.0.0",
+      baselineVersion: "0.9.0",
+    });
+    expect(unpublishedBaseline.status).toBe(404);
+    expect(queue.send).toHaveBeenCalledTimes(2);
   });
 
   test("rejects unpublished versions and malformed coordinates", async () => {

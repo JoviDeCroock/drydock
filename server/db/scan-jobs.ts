@@ -57,6 +57,13 @@ export interface CreateScanJobInput {
   registryUrl?: string | null;
   /** Fresh authenticated stage-tarball response; only a positive response can claim a package. */
   stageAccessStatus?: number | null;
+  /**
+   * A published pair's baseline, already confirmed against the registry. It is
+   * a request input rather than something the pipeline discovers, so the row
+   * names it from creation and keeps it through a failure (see
+   * `markScanFailed`): Review again restarts the same pair from it.
+   */
+  baselineVersion?: string | null;
 }
 
 // `published` is a manual review of an already-public release: no registry
@@ -110,6 +117,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     stagedVersion: input.stagedVersion ?? null,
     stagedCreatedAt: registryTimestampOrNull(input.stagedCreatedAt),
     stagedDeclaredSha1: sha1OrNull(input.stagedDeclaredSha1),
+    previousVersion: source === "published" ? (input.baselineVersion ?? null) : null,
     registryUrl,
     registryPackageName: isStaged ? (input.packageName ?? null) : null,
     registryVersion: isStaged ? (input.stagedVersion ?? null) : null,
@@ -285,7 +293,9 @@ export async function claimScanForRun(db: AppDb, scanId: string, organizationId:
 // Names the scan's baseline as soon as the pipeline has resolved it, so the
 // scan page can fetch that version's file list while the review still runs.
 // A retry overwrites it, final persist writes it again from the same manifest,
-// and a terminal row is never touched.
+// and a terminal row is never touched. A published pair is skipped: its row
+// already names the registry-confirmed baseline it was created with, and the
+// baseline manifest is reviewed bytes that must not replace it.
 export async function recordScanBaseline(
   db: AppDb,
   input: {
@@ -302,6 +312,7 @@ export async function recordScanBaseline(
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+        ne(scans.source, "published"),
       ),
     );
 }
@@ -318,8 +329,10 @@ export async function markScanFailed(
       status: "failed",
       risk: "unknown",
       // A failed scan has no report, so it names no baseline, whatever the
-      // pipeline recorded before it failed.
-      previousVersion: null,
+      // pipeline recorded before it failed. A published pair keeps the one it
+      // was requested with: that is an input, not a pipeline result, and
+      // Review again restarts the same pair from it.
+      previousVersion: sql`case when ${scans.source} = 'published' then ${scans.previousVersion} else null end`,
       errorJson: error,
       completedAt: new Date(),
       updatedAt: new Date(),
