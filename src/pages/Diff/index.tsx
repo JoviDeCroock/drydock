@@ -113,7 +113,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
   );
 
   return (
-    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo
         metadata={packageDiffSeo(
           spec.packageName,
@@ -166,7 +166,7 @@ function DiffPackageResolver({
   );
 
   return (
-    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       {/* Its own canonical, not `/diff`. This page redirects to the latest
           pair, but it is the stable URL a sitemap or an inbound link can name,
           so it has to describe this package rather than the diff tool. */}
@@ -289,7 +289,7 @@ function DiffLanding() {
   };
 
   return (
-    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={packageDiffSeo()} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
@@ -416,7 +416,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
     : null;
 
   return (
-    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo
         metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
       />

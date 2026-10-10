@@ -123,7 +123,6 @@ export default function IncidentCasePage() {
       width="doc"
       class="gap-12"
       headerActions={<MarketingHeaderActions authed={authed} />}
-      feedbackPosition="end"
     >
       <PageSeo metadata={metadata} />
       <ContentArticleHero

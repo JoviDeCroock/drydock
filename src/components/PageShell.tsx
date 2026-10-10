@@ -32,14 +32,17 @@ export function PageShell({
   width = "wide",
   brand = true,
   headerActions,
-  feedbackPosition = "start",
 }: {
   class?: string;
   children: ComponentChildren;
   width?: "narrow" | "doc" | "wide";
   brand?: boolean;
+  /**
+   * The header's right side. It places Feedback itself, with `HeaderFeedback`
+   * after its navigation and before any account control; without it the
+   * header shows Feedback alone.
+   */
   headerActions?: ComponentChildren;
-  feedbackPosition?: "start" | "end";
 }) {
   const maxWidth = WIDTH_CLASS[width];
   // Narrow pages are single short cards (auth, 404, invite). Center them in the
@@ -60,9 +63,7 @@ export function PageShell({
             {/* Wraps under the brand at phone width instead of pushing the
                 page into a sideways scroll. */}
             <div class="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              {feedbackPosition === "start" ? <FeedbackButton compact={!!headerActions} /> : null}
-              {headerActions}
-              {feedbackPosition === "end" ? <FeedbackButton compact={!!headerActions} /> : null}
+              {headerActions ?? <HeaderFeedback />}
             </div>
           </div>
         </header>
@@ -95,15 +96,18 @@ function SkipLink() {
   );
 }
 
-// With page actions beside it, Feedback steps out of the header at phone width
-// so the app header keeps to two rows; the footer's Contact column still has it.
-function FeedbackButton({ compact = false }: { compact?: boolean }) {
+// The header actions render this themselves because DOM order is tab order: a
+// slot the shell filled on one side of them could only put Feedback before the
+// navigation or after the account controls. Beside page actions it steps out of
+// the header at phone width so the header keeps to at most two rows; the footer's
+// Contact column still has it.
+export function HeaderFeedback({ hideOnPhone = false }: { hideOnPhone?: boolean }) {
   return (
     <LinkButton
       href={FEEDBACK_MAILTO}
       variant="ghost"
       size="sm"
-      class={compact ? "max-sm:hidden" : undefined}
+      class={hideOnPhone ? "max-sm:hidden" : undefined}
       title={`Email ${CONTACT_EMAIL} with any issues`}
     >
       Feedback

@@ -3,7 +3,7 @@ import { Show } from "@preact/signals/utils";
 import { AppHeaderActions } from "../features/account/AppHeaderActions";
 import { LinkButton } from "../components/Button";
 import { Card } from "../components/Card";
-import { PageShell } from "../components/PageShell";
+import { HeaderFeedback, PageShell } from "../components/PageShell";
 import { Muted } from "../components/Typography";
 import { sessionModel } from "../models/auth";
 import { useAuthedSession } from "./useAuthedSession";
@@ -20,7 +20,7 @@ export default function NotFoundPage() {
     <PageShell
       width="narrow"
       headerActions={
-        <Show when={signedIn}>
+        <Show when={signedIn} fallback={<HeaderFeedback />}>
           <AppHeaderActions />
         </Show>
       }

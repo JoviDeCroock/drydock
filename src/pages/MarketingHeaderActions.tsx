@@ -2,6 +2,7 @@ import type { Signal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { LinkButton } from "../components/Button";
+import { HeaderFeedback } from "../components/PageShell";
 import { authPageHref } from "./Auth/auth-links";
 
 export function MarketingHeaderActions({ authed }: { authed: Signal<boolean> }) {
@@ -23,6 +24,7 @@ export function MarketingHeaderActions({ authed }: { authed: Signal<boolean> }) 
       <LinkButton href="/docs" variant="ghost" size="sm">
         Docs
       </LinkButton>
+      <HeaderFeedback hideOnPhone />
       <Show when={() => !authed.value}>
         <LinkButton href={signInHref} variant="ghost" size="sm">
           Sign in
