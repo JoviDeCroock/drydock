@@ -20,6 +20,18 @@ export interface PackageJsonSummary {
 
 export type DependencySection = "dependencies" | "optionalDependencies" | "peerDependencies";
 
+export interface DependencyIntelVerdict {
+  provider: "aikido";
+  status: "known_malware" | "no_known_malware" | "not_checked" | "unavailable";
+  packageName: string;
+  checkedAt?: string;
+  // A range match means the declaration admits a listed version, not that
+  // this version was resolved or installed. Exact specs retain build metadata.
+  matchKind?: "exact" | "range";
+  matchedVersions?: string[];
+  matchedVersionCount?: number;
+}
+
 export interface PackageJsonDiffEntry {
   key: string;
   status: "added" | "removed" | "modified";
@@ -35,6 +47,7 @@ export interface PackageJsonDiffEntry {
   previousDeclaredSpecs?: string[];
   previousPeerOptional?: true;
   stagedPeerOptional?: true;
+  intel?: DependencyIntelVerdict;
 }
 
 export interface PackageJsonDiff {

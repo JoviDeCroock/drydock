@@ -17,6 +17,7 @@ import {
   isPublishedTarballUrlAllowed,
 } from "./published-tarball";
 import { compareSemver, isValidNpmPackageName } from "./registry";
+import { enrichNpmDependencyIntel } from "./dependency-intel";
 
 export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
@@ -33,6 +34,7 @@ const NPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
  */
 export const npmPublicDiff: PublicDiffAdapter = {
   ecosystem: "npm",
+  enrichDependencyIntel: enrichNpmDependencyIntel,
   registryUrl: PUBLIC_NPM_REGISTRY,
   rulesVersionSegment: DETERMINISTIC_RULES_VERSION,
   // v4: two-tier sandbox entry cap — big archives now parse with hash-only

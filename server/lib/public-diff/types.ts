@@ -85,6 +85,7 @@ export interface PublicDiffAdapter {
    * published-pair scan capability reuses it before anything is acquired.
    */
   readonly codePatternSet?: CodePatternSet;
+  enrichDependencyIntel?(diff: PackageJsonDiff, ctx: ExecutionContext): Promise<PackageJsonDiff>;
 
   // Bump these when deterministic output or cached payload shape changes.
   readonly rulesVersionSegment: string;

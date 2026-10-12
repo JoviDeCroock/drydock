@@ -34,6 +34,11 @@ const aiReviewMock = vi.hoisted(() => ({
 const injectionScreenMock = vi.hoisted(() => ({
   screenForPromptInjection: vi.fn(),
 }));
+const dependencyIntelMock = vi.hoisted(() => ({
+  enrichNpmDependencyIntel: vi.fn(async (diff) => diff),
+}));
+
+vi.mock("../server/lib/ecosystems/npm/dependency-intel.ts", () => dependencyIntelMock);
 
 vi.mock("../server/db/client.ts", () => dbMock);
 vi.mock("../server/db/events.ts", () => dbMock);
@@ -83,6 +88,7 @@ describe("npm adapter pattern set", () => {
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
+    dependencyIntelMock.enrichNpmDependencyIntel.mockImplementation(async (diff) => diff);
     dbMock.getNpmConnection.mockResolvedValue({
       registryUrl: "https://registry.npmjs.org",
       tokenCiphertext: "ct",
@@ -172,6 +178,40 @@ describe("scan pipeline baseline selection", () => {
     db: {},
     session: { userId: "user_1" },
   };
+
+  test("persists the advisory Intel snapshot without changing findings or risk", async () => {
+    const bucket = createMemoryArtifactBucket();
+    const input = { stageId: "stage-beta-123", organizationId: "org_1" };
+    const baseline = await runScanPipeline(baseContext, npmAdapter, input);
+    const verdict = {
+      provider: "aikido",
+      status: "known_malware",
+      packageName: "listed-dependency",
+      checkedAt: "2026-10-11T10:00:00.000Z",
+      matchKind: "exact",
+      matchedVersions: ["1.0.0"],
+      matchedVersionCount: 1,
+    };
+    dependencyIntelMock.enrichNpmDependencyIntel.mockImplementation(async (diff) => ({
+      ...diff,
+      dependencies: [
+        { key: "listed-dependency", status: "added", staged: "1.0.0", intel: verdict },
+      ],
+    }));
+    const result = await runScanPipeline(
+      { ...baseContext, env: { ...baseContext.env, ARTIFACTS: bucket } },
+      npmAdapter,
+      input,
+    );
+    expect(result.riskSummary).toEqual(baseline.riskSummary);
+    expect(result.ruleFindings).toEqual(baseline.ruleFindings);
+    expect(result.packageJsonDiff.dependencies[0].intel).toEqual(verdict);
+    expect(
+      dbMock.persistScan.mock.calls.at(-1)[1].summary.packageJsonDiff.dependencies[0].intel,
+    ).toEqual(verdict);
+    const report = [...bucket.objects.entries()].find(([key]) => key.endsWith("report.json"));
+    expect(JSON.parse(report[1]).packageJsonDiff.dependencies[0].intel).toEqual(verdict);
+  });
 
   test("refuses to decrypt a rotated unvalidated npm connection", async () => {
     dbMock.getNpmConnection.mockResolvedValue({

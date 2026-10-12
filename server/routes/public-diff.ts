@@ -9,6 +9,7 @@ import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
 import { recordProductEvent } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
+  enrichPublicDiffDependencies,
   loadPublicPackageDiff,
   PublicDiffError,
   readPublicDiffCache,
@@ -162,7 +163,12 @@ async function loadRequestedDiff(
       if (cached) {
         await adapter.validateCachedPair?.(c.env, workerExecutionContext(c.executionCtx), input);
         if (options.countView) recordPublicDiffView(c, cached, true, startedAtMs);
-        return { payload: cached };
+        return {
+          payload: await enrichPublicDiffDependencies(
+            cached,
+            workerExecutionContext(c.executionCtx),
+          ),
+        };
       }
 
       const limited = await enforcePublicRateLimit(c, "fetch", 10);
