@@ -155,6 +155,12 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       aiFindings: mergedAiFindings.annotatedRecords,
     });
 
+    // Vendor intelligence is a dated advisory snapshot. Enrich only after AI
+    // review and scoring so it cannot influence findings or gate decisions.
+    if (adapter.enrichDependencyIntel) {
+      diff.manifestDiff = await adapter.enrichDependencyIntel(diff.manifestDiff, executionCtx);
+    }
+
     // Advisory source-binding classification. Computed from the gate context
     // (when the workflow-gate job placed this scan) and the staged manifest's
     // repository declaration; it never influences risk or findings.

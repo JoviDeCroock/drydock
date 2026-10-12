@@ -86,6 +86,7 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
   return {
     id: diff.ecosystem,
     codePatternSet: diff.codePatternSet,
+    enrichDependencyIntel: diff.enrichDependencyIntel,
 
     parseInput(raw: unknown): PublishedPairRef {
       const value = (raw ?? {}) as Record<string, unknown>;

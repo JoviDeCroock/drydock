@@ -16,6 +16,7 @@ import {
   type NpmReleaseManifest,
 } from "./manifest";
 import { isRecord } from "../../platform/guards";
+import { enrichNpmDependencyIntel } from "./dependency-intel";
 
 /**
  * One npm tarball that the shared workflow-gate router already downloaded,
@@ -66,6 +67,7 @@ export interface NpmGateDetails {
  */
 export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
   id: "npm",
+  enrichDependencyIntel: enrichNpmDependencyIntel,
   // Same reason as `npmAdapter`: annotation must use the set detection used.
   codePatternSet: "javascript",
 

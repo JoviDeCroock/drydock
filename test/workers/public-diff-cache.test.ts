@@ -1,7 +1,8 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { computeCompareMetadataCacheKey } from "../../server/lib/compare-cache";
 import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
+import { npmPublicDiff } from "../../server/lib/ecosystems/npm/public-diff";
 import {
   computePublicDiffCacheKey,
   jsonStringByteLength,
@@ -56,6 +57,38 @@ function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
 describe("public diff cache", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test("cold diffs enrich responses while keeping mutable Intel out of the artifact cache", async () => {
+    const packageName = `intel-cold-${crypto.randomUUID()}`;
+    vi.spyOn(npmPublicDiff, "acquire").mockResolvedValue({
+      from: { files: [], packageJson: { name: packageName, version: "1.0.0" } },
+      to: {
+        files: [],
+        packageJson: { name: packageName, version: "1.0.1", dependencies: { dep: "1.0.0" } },
+      },
+      buildFindings: () => [],
+    });
+    vi.spyOn(npmPublicDiff, "enrichDependencyIntel").mockImplementation(async (diff) => ({
+      ...diff,
+      dependencies: diff.dependencies.map((row) => ({
+        ...row,
+        intel: { provider: "aikido", status: "no_known_malware", packageName: row.key },
+      })),
+    }));
+    const input = {
+      ecosystem: "npm",
+      registryUrl: npmPublicDiff.registryUrl,
+      packageName,
+      fromVersion: "1.0.0",
+      toVersion: "1.0.1",
+    };
+    const ctx = createExecutionContext();
+    const result = await loadPublicPackageDiff(env, ctx, input);
+    await waitOnExecutionContext(ctx);
+    expect(result.packageJsonDiff.dependencies[0].intel?.status).toBe("no_known_malware");
+    const cached = await readPublicDiffCache(env, await computePublicDiffCacheKey(input));
+    expect(cached?.packageJsonDiff.dependencies[0].intel).toBeUndefined();
   });
 
   test("versions computed results by deterministic rules and risk schema", async () => {

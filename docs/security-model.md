@@ -51,6 +51,8 @@ Custom npm registries are supported for organization npm connections, but token 
 
 ## Artifact handling and retention
 
+Added and changed npm dependency declarations carry advisory [Aikido Intel snapshots](./dependency-intel.md). The parent Worker downloads the complete public malware feed from a fixed HTTPS endpoint and matches locally, without disclosing dependency identities or attaching npm credentials. Results are enriched after AI review and risk scoring and cannot change findings or workflow-gate decisions. A missing or failed lookup never claims safety; saved reports preserve the dated snapshot, while anonymous diffs refresh it through a separate short cache.
+
 Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
 
 - package identity/version, file path/size/hash/status/flags;

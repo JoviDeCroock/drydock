@@ -2,7 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
 import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
-import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
+import { npmPublicDiff, PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
 import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
 import {
   computePublicDiffCacheKey,
@@ -42,6 +42,58 @@ function cachedPayload(packageName: string): PublicPackageDiff {
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
 }
+
+test("cached public diffs refresh advisory Intel while preserving cached findings and risk", async () => {
+  const packageName = `intel-cache-${crypto.randomUUID()}`;
+  const payload = cachedPayload(packageName);
+  payload.packageJsonDiff.dependencies = [
+    { key: "listed-dependency", status: "added", staged: "1.0.0" },
+  ];
+  const cacheKey = await computePublicDiffCacheKey({
+    ecosystem: "npm",
+    registryUrl: PUBLIC_NPM_REGISTRY,
+    packageName,
+    fromVersion: "1.0.0",
+    toVersion: "1.0.1",
+  });
+  await writePublicDiffCache(env, cacheKey, payload);
+  const enrich = vi.spyOn(npmPublicDiff, "enrichDependencyIntel");
+  enrich.mockImplementation(async (diff) => ({
+    ...diff,
+    dependencies: diff.dependencies.map((row) => ({
+      ...row,
+      intel: {
+        provider: "aikido",
+        status: "known_malware",
+        packageName: row.key,
+        checkedAt: new Date().toISOString(),
+        matchedVersions: ["1.0.0"],
+      },
+    })),
+  }));
+  try {
+    const query = new URLSearchParams({ package: packageName, from: "1.0.0", to: "1.0.1" });
+    const response = await publicDiffFetch(`/api/public/v1/package-diff?${query}`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PublicPackageDiff;
+    expect(body.packageJsonDiff.dependencies[0].intel?.status).toBe("known_malware");
+    expect(body.findings).toEqual(payload.findings);
+    expect(body.risk).toEqual(payload.risk);
+    expect(enrich).toHaveBeenCalledOnce();
+    enrich.mockImplementation(async (diff) => ({
+      ...diff,
+      dependencies: diff.dependencies.map((row) => ({
+        ...row,
+        intel: { provider: "aikido", status: "unavailable", packageName: row.key },
+      })),
+    }));
+    const unavailable = await publicDiffFetch(`/api/public/v1/package-diff?${query}`);
+    const refreshed = (await unavailable.json()) as PublicPackageDiff;
+    expect(refreshed.packageJsonDiff.dependencies[0].intel?.status).toBe("unavailable");
+  } finally {
+    enrich.mockRestore();
+  }
+});
 
 // The public package-diff endpoints are deliberately anonymous: they must be
 // reachable without a session (mounted before the auth middleware), validate
