@@ -1,6 +1,8 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
+import { createDb } from "../../server/db/client";
+import * as schema from "../../server/db/schema";
 import { createAuth } from "../../server/lib/auth";
 
 const ORIGIN = "http://example.com";
@@ -147,6 +149,17 @@ describe("auth config", () => {
     expect(url.searchParams.get("scope")).toBe("read:user user:email");
     // The callback operators must whitelist on the OAuth app.
     expect(url.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/api/auth/callback/github`);
+
+    const state = url.searchParams.get("state");
+    expect(state).toBeTruthy();
+    const verifications = await createDb(env.DB)
+      .select({ identifier: schema.verification.identifier })
+      .from(schema.verification);
+    expect(verifications).toContainEqual({ identifier: `auth-state:${state}` });
+    expect(verifications).not.toContainEqual({ identifier: state });
+
+    const cached = await env.AUTH_SESSIONS!.list();
+    expect(cached.keys.map((key) => key.name).filter((name) => name.includes(":"))).toEqual([]);
   });
 
   test("rejects caller-supplied GitHub scopes", async () => {

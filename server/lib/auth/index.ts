@@ -93,6 +93,8 @@ interface ActiveSessionCacheEntry {
 interface SessionSecondaryStorage {
   storage: {
     get(key: string): Promise<string | null>;
+    getAndDelete(key: string): Promise<unknown>;
+    increment(key: string, ttl: number): Promise<number>;
     set(key: string, value: string, ttl?: number): Promise<void>;
     delete(key: string): Promise<void>;
   };
@@ -259,6 +261,14 @@ function createSessionSecondaryStorage(
 
   return {
     storage: {
+      // KV cannot provide these atomic operations. Verification stays in D1 and
+      // rate limits use memory; reject a future configuration that routes either here.
+      getAndDelete: async () => {
+        throw new Error("Session KV does not support atomic verification consumption");
+      },
+      increment: async () => {
+        throw new Error("Session KV does not support atomic rate-limit counters");
+      },
       get: async (key: string) => {
         if (!isSessionStoreKeyAllowed(key)) return null;
         if (key.startsWith("active-sessions-") && key.length > "active-sessions-".length) {
