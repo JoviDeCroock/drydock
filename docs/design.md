@@ -198,6 +198,12 @@ The "Why review a publish" section grounds the pitch in real, named supply-chain
 - **Evidence:** `ContentArticleEvidence` — a document-shaped `Card padding="none"` of mono label/value rows, for pages that rest on specific artifact facts. Values stay on the ink scale with **no** `Badge`: these are properties of the compared releases, not risk states. The first row carries no `border-t` — the header `SectionLabel`'s rule is already that divider.
 - **Onward:** every page ends on a next step. `ContentArticleCta` reuses the landing's `Get started` shape; `ContentArticleLinks` is a peer-link grid with a `→` and an accent hover border. It is deliberately not the docs page's `JourneyCard` — a number on a peer link invents a sequence the reader will look for.
 
+### Sponsor recommendation on package diffs
+
+Successful published npm and PyPI diff results end with a compact `InstallProtection` card after the review evidence and Drydock's own release CTA. It reuses the Aikido sponsor identity, explains Safe Chain's installation-time checks, and offers a secondary `Set up Safe Chain →` link to the official setup instructions. The recommendation appears regardless of findings or risk; it does not imply a compromise or change the review verdict. npm preview builds and atpm results keep the generic sponsor strip, as do the landing and empty diff pages.
+
+The setup destination is constant, opens with `noopener noreferrer`, and carries no package, version, scan, share token, or attribution parameters. Install commands remain in Aikido's maintained documentation. The card introduces no browser tracking; outbound clicks and setup conversion remain outside Drydock's aggregate product analytics.
+
 ### The closing CTA (landing)
 
 The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, a `Create account` / `Read the docs` primary/secondary pair, and a `MonoDetail` trust line (`read-only tokens · you keep the final approval`). The hero carries a different trio — `Read a diff` (primary, the no-account front door), `Create account` (secondary), `Sign in` (ghost) — because the top of the page proves value before asking for signup; the closing section may lead with signup because by then the case has been made. No banner treatment, no background fill, no extra `border-t` — the `SectionLabel` rule is the divider, like every other section.
