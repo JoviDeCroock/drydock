@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
+import { createAuth } from "../../server/lib/auth";
 import { callWorker, type Jar, PASSWORD, signUp } from "./helpers/auth-http";
 
 async function signUpJar(requestEnv: typeof env = env): Promise<Jar> {
@@ -246,6 +247,20 @@ describe("session secondary storage", () => {
 });
 
 describe("session secondary storage contents", () => {
+  test("keeps atomic verification consumption and rate-limit counters out of session KV", async () => {
+    const auth = createAuth(envWithFailingSessionStore());
+    expect(auth.options.verification?.storeInDatabase).toBe(true);
+    expect(auth.options.rateLimit?.storage).toBe("memory");
+
+    const storage = auth.options.secondaryStorage!;
+    await expect(storage.getAndDelete("verification:test")).rejects.toThrow(
+      "Session KV does not support atomic verification consumption",
+    );
+    await expect(storage.increment("rate-limit:test", 60)).rejects.toThrow(
+      "Session KV does not support atomic rate-limit counters",
+    );
+  });
+
   test(
     "no verification record reaches the session KV namespace, and the 2FA challenge still resolves",
     { timeout: 30_000 },

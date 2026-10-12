@@ -51,7 +51,7 @@
     "@resvg/resvg-wasm": "^2.6.2",
     "agents": "^0.20.1",
     "ai": "^7.0.66",
-    "better-auth": "^1.6.29",
+    "better-auth": "^1.7.7",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",
