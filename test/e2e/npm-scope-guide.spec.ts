@@ -80,7 +80,12 @@ test("an existing personal connection stays rotatable while its workspace choice
     updatedAt: "2026-07-12T00:00:00.000Z",
   });
   await page.goto("/dashboard/settings?tab=integrations");
-  await expect(page.getByText(/Rotate the token below to resume/)).toBeVisible();
+  await expect(
+    page.getByText(
+      "Drydock cannot access npm staging with this token; rotate it below to resume staged-release reviews.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await expect(page.getByLabel("New npm token", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Disconnect npm" })).toBeVisible();
   await expect(page.getByLabel("npm connection organization")).toHaveValue("org-team");
