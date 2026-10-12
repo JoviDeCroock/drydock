@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import incidentBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1.json" with { type: "json" };
+import historicalBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json" with { type: "json" };
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 test("benchmark report downloads bypass client routing and retain the measured evidence", async ({
@@ -10,17 +11,29 @@ test("benchmark report downloads bypass client routing and retain the measured e
   await expect(
     page.getByRole("heading", { name: "Shai-Hulud and Nx: a reproducible detection benchmark." }),
   ).toBeVisible();
-  for (const name of ["Download JSON", "Download the versioned JSON report"]) {
+  for (const [name, expectedReport, filename] of [
+    ["Download JSON", incidentBenchmarkReport, "drydock-shai-hulud-nx-v1.json"],
+    [
+      "Download the versioned JSON report",
+      incidentBenchmarkReport,
+      "drydock-shai-hulud-nx-v1.json",
+    ],
+    [
+      "Earlier rules 1.47.0 results",
+      historicalBenchmarkReport,
+      "drydock-shai-hulud-nx-v1-rules-1.47.0.json",
+    ],
+  ] as const) {
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("link", { name, exact: true }).click(),
     ]);
-    expect(download.suggestedFilename()).toBe("drydock-shai-hulud-nx-v1.json");
+    expect(download.suggestedFilename()).toBe(filename);
     const savedPath = testInfo.outputPath(
       name === "Download JSON" ? "hero-report.json" : "reproduction-report.json",
     );
     await download.saveAs(savedPath);
-    expect(JSON.parse(await readFile(savedPath, "utf8"))).toEqual(incidentBenchmarkReport);
+    expect(JSON.parse(await readFile(savedPath, "utf8"))).toEqual(expectedReport);
     await expect(page).toHaveURL(/\/benchmarks\/shai-hulud-nx$/);
   }
   await page.getByRole("link", { name: "Cite this benchmark", exact: true }).click();

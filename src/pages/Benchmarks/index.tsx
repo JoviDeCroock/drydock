@@ -172,7 +172,7 @@ export default function IncidentBenchmarkPage() {
           {
             label: "Reading the results",
             heading: "Release risk separates changes from existing package context.",
-            body: "A malicious model counts as caught when its release risk reaches high and the required credential-access and process-execution rules match the release change. The models retain existing install hooks in their baselines. In these compact, one-line manifests, a version change currently puts the unchanged hook finding on the release change. A benign control counts as a false positive when its release risk reaches medium. Artifact risk describes the whole package, including unchanged capabilities. Higher risk asks a human to review the release; it does not classify the package as malicious or prove an actual workflow rejection.",
+            body: "A malicious model counts as caught when its release risk reaches high and the required credential-access and process-execution rules match the release change. The models retain existing install hooks in their baselines. Parsed command comparison keeps unchanged hooks as package context. Payload changes and newly install-reachable code still contribute to release risk. A benign control counts as a false positive when its release risk reaches medium. Artifact risk describes the whole package, including unchanged capabilities. Higher risk asks a human to review the release; it does not classify the package as malicious or prove an actual workflow rejection.",
           },
         ]}
       />
@@ -224,6 +224,13 @@ export default function IncidentBenchmarkPage() {
           {" · "}
           <a href={REPORT_PATH} download="drydock-shai-hulud-nx-v1.json">
             Download the versioned JSON report
+          </a>
+          {" · "}
+          <a
+            href="/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json"
+            download="drydock-shai-hulud-nx-v1-rules-1.47.0.json"
+          >
+            Earlier rules 1.47.0 results
           </a>
         </p>
       </section>

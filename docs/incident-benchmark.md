@@ -45,7 +45,7 @@ public download. This keeps dev module requests out of the Worker-owned
 After public release, preserve the v1 fixture inputs. A changed input suite needs
 a new version/directory and report. When intentionally updating a result for a
 new detector, update the engine revision and evaluation date, regenerate the
-snapshot, and retain the prior report in repository history. Cite the suite,
+snapshot, and retain the prior report at a versioned download path as well as in repository history. Cite the suite,
 rules version, engine commit, and corpus digest to identify a result precisely.
 To reproduce an older result, use its benchmark fixture bytes with the recorded
 engine source. Running against current main measures the current engine.
@@ -58,15 +58,22 @@ belong to the release delta. A lifecycle warning alone cannot pass. A benign
 control counts as a false positive when release risk reaches at least `medium`.
 Every declared fixture stays in the denominator, including a miss.
 
-Version 1.0.0 with deterministic rules 1.47.0 catches **2/2 malicious models**
-and raises high release risk for **2/2 benign controls**. The controls keep the
-same install hook in both versions and change ordinary setup/build code. The
-compact, one-line manifests put the unchanged hook on the same changed line as
-the version field, so current attribution marks the hook as a release change. This
-is a false positive under the benchmark's declared risk threshold; risk is a
-human-review signal, not a malicious-package classification. The public page
-discloses this alongside the caught count. Do not tune controls or omit cases
-to improve a headline.
+Version 1.0.0 with deterministic rules 1.48.0 catches **2/2 malicious models**
+and keeps **both benign controls at low release risk**, with **0/2 false positives**.
+The attack and control fixture bytes are identical to the first report. The
+[archived rules 1.47.0 report](../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json)
+retains the original **2/2 caught models and 2/2 benign false positives**.
+
+The earlier attribution used changed display lines: compact package manifests
+put the unchanged hook on the same line as the changed version field. Rules
+1.48.0 compare effective parsed commands, keeping unchanged hooks as existing
+package context. Payload findings still contribute to release risk, including
+unchanged files newly activated by the install script's static import graph.
+Artifact findings and severities are retained: the controls still have high
+artifact risk from their existing install hooks. This fixes release attribution
+rather than declaring install hooks harmless. Do not tune controls or omit cases
+to improve a headline. The corpus digest changes with report metadata; per-fixture
+SHA-256 values establish the identical source inputs across the two results.
 
 Artifact risk and release risk are both reported. Artifact risk includes existing
 capabilities; release risk scores attributed changes. Neither score replays an

@@ -26,6 +26,30 @@ describe("public incident behavior benchmark", () => {
     expect(readFileSync(uiReportPath, "utf8")).toBe(published);
   });
 
+  test("preserves attack detection while both benign release controls stay low", () => {
+    expect(report.summary.malicious).toEqual({ total: 2, caught: 2, missed: 0 });
+    expect(report.summary.benign).toEqual({ total: 2, falsePositives: 0 });
+    const historical = JSON.parse(
+      readFileSync(
+        new URL("../../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(historical.rulesVersion).toBe("1.47.0");
+    expect(historical.summary.benign.falsePositives).toBe(2);
+    expect(
+      report.cases.map((entry: { id: string; fixtureSha256: string }) => [
+        entry.id,
+        entry.fixtureSha256,
+      ]),
+    ).toEqual(
+      historical.cases.map((entry: { id: string; fixtureSha256: string }) => [
+        entry.id,
+        entry.fixtureSha256,
+      ]),
+    );
+  });
+
   test("keeps the declared incident and control roster, including misses", () => {
     expect(report.cases.map((entry: { id: string }) => entry.id)).toEqual([
       "shai-hulud-harvest",
