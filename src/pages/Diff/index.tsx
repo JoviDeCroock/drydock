@@ -207,23 +207,23 @@ const NEXT_RELEASE_ASK: Record<
 > = {
   npm: {
     body:
-      "Both of these versions are already public. Drydock runs this same review on the release " +
-      "candidate — an npm staged publish, or a GitHub-gated release that holds the publish job — " +
-      "while there is still time to say no. The maintainer keeps the final decision.",
+      "Both versions are already public. For your next release, review a private npm stage or " +
+      "add a GitHub workflow gate to your publish job. Staging decisions are advisory; the gate " +
+      "controls only the configured protected job.",
     guide: { href: "/npm-staged-publishing", label: "Set up npm staging" },
   },
   pypi: {
     body:
-      "Both of these versions are already public. PyPI holds no staged artifact to inspect, so a " +
-      "GitHub Environment gate is the only place a wheel or sdist can be reviewed before upload. " +
-      "Drydock reviews the artifact the workflow built and holds that job until you decide.",
+      "Both versions are already public. To review your next PyPI release before publication, " +
+      "add a GitHub workflow gate. It holds the configured publish job while you inspect the " +
+      "built wheels and source distributions.",
     guide: { href: "/pypi-release-security", label: "Protect a PyPI workflow" },
   },
   atpm: {
     body:
-      "Both of these versions are already public. An atpm release candidate can be read the same " +
-      "way before it is approved, from the publisher's own record — Drydock reviews that " +
-      "candidate and nothing else: it does not approve, withdraw, or watch an atpm release.",
+      "Both versions are already public. For your next atpm release, open the candidate's " +
+      "Drydock review link from the atpm dashboard before approving it. Approval and publication " +
+      "stay with atpm.",
     guide: { href: "/package-tarball-diff", label: "Read how the diff works" },
   },
 };
@@ -293,13 +293,12 @@ function DiffLanding() {
       <PageSeo metadata={packageDiffSeo()} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Diff any npm, PyPI, or atpm package.
+          Compare npm, PyPI, or atpm releases.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          See exactly what changed between two published versions — every file, line by line, with
-          the same deterministic supply-chain checks Drydock runs on staged releases. Paste a{" "}
-          <span class="font-mono text-[15px]">pkg.pr.new</span> URL to review a pull-request preview
-          build before it ships. No account needed.
+          Compare published versions file by file and inspect supply-chain findings in the diff. You
+          can also paste a <span class="font-mono text-[15px]">pkg.pr.new</span> URL to review a
+          pull-request preview build. No account needed.
         </p>
         <form
           class="flex flex-wrap gap-3 items-center max-w-[620px]"
@@ -348,15 +347,14 @@ function DiffLanding() {
       <section class="flex flex-col gap-3">
         <SectionLabel as="h2">Why diff the artifact</SectionLabel>
         <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-          Registry tarballs can differ from the repository: build output, install scripts, and files
-          that never saw a pull request all ship in the artifact. Diffing the published bytes is how
-          compromised releases like axios and node-ipc were spotted — after they shipped. Drydock
-          runs the same review before a release goes live.
+          A package archive can include generated code, bundled dependencies, and install scripts
+          that were absent from the pull request. Comparing registry artifacts shows what changed in
+          the files users receive.
         </Muted>
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
-          Every finding on this page comes from Drydock's deterministic rules — the package code is
-          never executed and no AI reviews this surface, so the same versions always produce the
-          same report.
+          This public tool uses deterministic rules to flag changes that need attention. Drydock
+          reads the package files without executing their code; AI review is available only on
+          authenticated reviews.
         </Muted>
       </section>
 

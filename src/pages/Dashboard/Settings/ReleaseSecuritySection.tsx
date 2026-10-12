@@ -60,11 +60,10 @@ export function ReleaseSecuritySection({
       </SectionLabel>
 
       <Muted class="text-[13px] m-0 max-w-[760px]">
-        Require two-factor authentication to approve or block a release gate. Approving a gate
-        releases the held GitHub Actions job and publishing proceeds over Trusted Publishing/OIDC,
-        which cannot be undone — so when this is on, every member must confirm with a fresh
-        authenticator code, and a member who has not enabled 2FA cannot decide a release until they
-        do.
+        Require a fresh authenticator code for every release-gate decision. Members must enable
+        two-factor authentication before they can approve or reject a gate. Approval lets the
+        configured protected GitHub Actions job continue with its own publishing credentials; the
+        gate decision is final.
       </Muted>
 
       {active ? (

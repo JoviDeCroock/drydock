@@ -101,19 +101,19 @@ export function DecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Publish decision"
-      description={`Record whether this staged publish is safe to approve.${
+      title="Review decision"
+      description={`Record an advisory review decision.${
         // Published-pair reviews are not release records the monitor reads.
         scan.source === "manual" || scan.source === "auto_discovery"
-          ? " Decide before you approve on npm: the publication monitor counts a release as approved only when the approval here came first."
+          ? " Confirm the staged-release decision separately in npm with 2FA. Record approval here before publication so the publication monitor can compare released bytes with your earlier decision."
           : ""
-      } Nothing is published or cancelled here; you still confirm on npm with 2FA.`}
+      }`}
     >
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
             <Badge tone={decision === "publish" ? "ok" : "critical"}>
-              {decision === "publish" ? "currently approved" : "currently blocked"}
+              {decision === "publish" ? "approval recorded" : "rejection recorded"}
             </Badge>
             {decidedAt ? (
               <span class="font-mono text-[11px] text-ink-subtle">{formatDateTime(decidedAt)}</span>
@@ -130,7 +130,7 @@ export function DecisionDialog({
           id="decisionReason"
           type="text"
           value={reasonDraft.value}
-          placeholder="e.g. minor patch, no risk signals"
+          placeholder="e.g. reviewed the changed files and install scripts"
           onInput={(e) => (reasonDraft.value = (e.target as HTMLInputElement).value)}
           disabled={saving}
           maxLength={500}
@@ -159,10 +159,10 @@ export function DecisionDialog({
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>
-          {saving ? "Saving…" : "Approve publish"}
+          {saving ? "Saving…" : "Record approval"}
         </Button>
         <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-          {saving ? "Saving…" : "Block publish"}
+          {saving ? "Saving…" : "Record rejection"}
         </Button>
       </div>
       {message ? <Alert tone="critical">{message}</Alert> : null}

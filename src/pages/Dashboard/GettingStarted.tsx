@@ -59,8 +59,8 @@ export function GettingStarted({
           Get your first review
         </SectionLabel>
         <Muted class="text-[13px] m-0">
-          Start with a package you already publish: the first review needs no token and nothing to
-          wait for. Staged and gated releases land here the same way afterwards.
+          Review a published npm package first, without connecting a token. Add staged-release
+          reviews or a workflow gate when you're ready.
         </Muted>
       </div>
 
@@ -70,9 +70,8 @@ export function GettingStarted({
           title="Review one of your published packages"
           action={<PublishedReviewForm npmScope={npmScope} />}
         >
-          Name a package you publish. Drydock reviews its latest release against the one before it —
-          the full report, kept in this organization, with nothing to install and no token to
-          create.
+          Enter an npm package name. Drydock compares its latest release with the previous version
+          and saves the report in this organization.
         </Step>
         <Step
           index={2}
@@ -94,16 +93,16 @@ export function GettingStarted({
         >
           {npmConnected ? (
             <>
-              A read-only token is stored for this organization. Run{" "}
-              <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory and Drydock finds
-              the candidate, or use <strong class="font-medium text-ink">Check npm</strong> below.
+              This organization has a stored read-only token. Run{" "}
+              <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory to stage a
+              release, then use <strong class="font-medium text-ink">Check npm</strong> below to
+              start its review.
             </>
           ) : (
             <>
-              Optional, and only for reviewing a release <em>before</em> it is public. Store an npm
-              token — a granular one with{" "}
+              To review private npm staged releases, connect a granular token with{" "}
               <strong class="font-medium text-ink">Packages and scopes: Read-only</strong> and{" "}
-              <strong class="font-medium text-ink">Organizations: No access</strong> — then run{" "}
+              <strong class="font-medium text-ink">Organizations: No access</strong>. Then run{" "}
               <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory.{" "}
               <a href="/dashboard/settings?tab=integrations#npm-access" class="underline">
                 Connect npm in settings
@@ -113,7 +112,8 @@ export function GettingStarted({
           )}
         </Step>
         <Step index={3} title="Review and decide">
-          Read the diff, then approve the publish in npm with your own 2FA. Drydock never publishes.
+          Read the diff and record your decision in Drydock. Approve or reject the staged release
+          separately in npm with your own 2FA.
         </Step>
       </ol>
 
@@ -132,8 +132,8 @@ function CiPublisherTrack() {
       <div class="flex flex-col gap-1 min-w-0">
         <h3 class="text-[14px] font-medium tracking-[-0.005em] m-0">Publishing from CI?</h3>
         <Muted class="text-[13px] m-0 leading-[1.6]">
-          A workflow gate holds the release in the workflow run instead, with the same review and
-          the same decision.
+          A workflow gate pauses the configured GitHub Actions publish job for review. Approve it
+          here to continue that job, or reject it to block the job.
         </Muted>
       </div>
       <LinkButton

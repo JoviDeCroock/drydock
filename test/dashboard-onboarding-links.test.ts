@@ -31,7 +31,7 @@ describe("dashboard onboarding contracts", () => {
 
   test("does not treat a recorded decision as proof that npm published the release", () => {
     expect(gettingStartedSource).not.toContain("published on your terms");
-    expect(gettingStartedSource).toContain("approve the publish in npm with your own 2FA");
+    expect(gettingStartedSource).toContain("separately in npm with your own 2FA");
   });
 
   test("closes on the first review and never waits for a decision", () => {
@@ -47,7 +47,7 @@ describe("dashboard onboarding contracts", () => {
     expect(firstStep).toBeGreaterThan(-1);
     expect(tokenStep).toBeGreaterThan(firstStep);
     // The token step is an option, not a gate on reaching a first review.
-    expect(gettingStartedSource).toContain("Optional, and only for reviewing a release");
+    expect(gettingStartedSource).toContain("without connecting a token");
   });
 
   test("starts a persisted review rather than an anonymous diff", () => {
@@ -57,9 +57,7 @@ describe("dashboard onboarding contracts", () => {
   });
 
   test("says what is missing instead of only disabling Check npm", () => {
-    expect(dashboardSource).toContain(
-      "Checking npm for staged releases needs a validated npm token.",
-    );
+    expect(dashboardSource).toContain("Check npm requires a validated read-only npm token.");
     expect(dashboardSource).not.toContain(
       "Connect a validated npm token in Settings → Integrations first",
     );

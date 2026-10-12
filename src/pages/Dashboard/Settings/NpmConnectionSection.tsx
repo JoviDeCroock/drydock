@@ -59,8 +59,8 @@ export function NpmConnectionSection({
 
         <Show when={() => npm.connection.value?.validationStatus === "invalid"}>
           <Alert tone="critical">
-            Drydock can no longer reach the staging registry with this token, so staged-release
-            reviews are paused. Rotate the token below to resume.
+            Drydock cannot access npm staging with this token; rotate it below to resume
+            staged-release reviews.
           </Alert>
         </Show>
 
@@ -178,12 +178,12 @@ function WorkspaceChoice({
     <div class="flex flex-col gap-3">
       <Alert tone="info">
         {hasDestinations
-          ? "Choose where npm packages will be managed before enabling automatic scans."
-          : "Confirm that this personal workspace manages your npm packages before enabling automatic scans."}
+          ? "Choose where to review your npm packages before enabling automatic scans."
+          : "Confirm this personal workspace as the place to review your npm packages before enabling automatic scans."}
         <Show when={npm.connection}>
           {" "}
-          Automatic scans are waiting for this choice; you can still review stages manually and
-          rotate or disconnect the token below.
+          Automatic scans are waiting for this choice; you can still review staged releases manually
+          and rotate or disconnect the token below.
         </Show>
         {hasDestinations ? " Existing reviews and credentials stay in this workspace." : null}
       </Alert>

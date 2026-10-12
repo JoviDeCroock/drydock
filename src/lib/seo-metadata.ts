@@ -15,13 +15,13 @@ export const PRODUCT_NAME = "Drydock Package Review";
 export const SITE_URL = "https://drydock.org";
 export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 export const OG_IMAGE_ALT =
-  "Drydock Package Review — pre-publish package security for npm, PyPI, and VS Code maintainers";
+  "Drydock Package Review: release review for npm, PyPI, and VS Code maintainers";
 
 // Describes the entity, for the schema.org graph. The page meta description is
 // written to be read in a search result and addresses the reader directly, which
 // is the wrong voice for an Organization or SoftwareApplication description.
 export const PRODUCT_DESCRIPTION =
-  "Drydock reviews the built npm, PyPI, or VS Code release artifact before publication, diffing it against the last published version and pinning deterministic supply-chain findings to changed lines.";
+  "Drydock compares built npm, PyPI, and VS Code packages with published releases and shows supply-chain findings alongside the relevant evidence for human review.";
 
 // Standard 1.91:1 share-card ratio, matching server/lib/og-card.ts. The static
 // site-wide card is 1200x800; per-diff cards are generated at 1200x630.
@@ -44,13 +44,13 @@ export const discoveryGuideSeoByPath = {
   "/github-actions-package-gate": {
     title: "GitHub Actions package release gate | Drydock",
     description:
-      "Hold npm, PyPI, or VS Code publication in a GitHub Environment until the exact built artifacts pass human review.",
+      "Hold a configured npm, PyPI, or VS Code publish job in a GitHub Environment while you review the built artifacts.",
     path: "/github-actions-package-gate",
   },
   "/npm-trusted-publishing": {
-    title: "Lock npm publishing to a reviewed workflow | Drydock",
+    title: "Gate an npm trusted-publishing workflow | Drydock",
     description:
-      "Pin npm trusted publishing to a gated GitHub Environment and disallow tokens, so publish credentials only exist after a human review.",
+      "Pin npm trusted publishing to a gated GitHub Environment and disallow token-based publication. Interactive npm publication remains possible.",
     path: "/npm-trusted-publishing",
   },
   "/pypi-release-security": {
@@ -86,7 +86,7 @@ export const discoveryGuideSeoByPath = {
   "/maintainer-pledge": {
     title: "Drydock will not charge open-source maintainers | Drydock",
     description:
-      "Reviewing a public package release on Drydock is free for the maintainer who publishes it, and is intended to stay that way. What this commits to, and what it does not.",
+      "Drydock's commitment to keep reviews of maintainers' own public releases free, including the scope and limits of that pledge.",
     path: "/maintainer-pledge",
   },
 } as const satisfies Record<DiscoveryGuidePath, PageSeoMetadata>;
@@ -127,9 +127,9 @@ export function packageDiffOgImageAlt(
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock Package Review: read the artifact before you publish",
+  title: "Drydock Package Review: review your package before you publish",
   description:
-    "Your pull request got reviewed; the published tarball did not. Drydock diffs the exact npm, PyPI, or VS Code artifact and pins supply-chain findings to changed lines.",
+    "Compare built npm, PyPI, or VS Code packages with published releases. Inspect changed files and supply-chain findings before you publish.",
   path: "/",
 };
 
@@ -159,9 +159,9 @@ export function packageDiffSeo(
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
     return {
-      title: "Diff any npm, PyPI, or atpm package | Drydock",
+      title: "Compare npm, PyPI, or atpm releases | Drydock",
       description:
-        "Compare two published versions of any npm package, PyPI project, or atpm package file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
+        "Compare published npm, PyPI, or atpm versions file by file and inspect supply-chain findings in the diff. No account required.",
       path: "/diff",
     };
   }
@@ -172,7 +172,7 @@ export function packageDiffSeo(
   const shownName = displayName || packageName;
   return {
     title: `${shownName} ${fromLabel} → ${toLabel} | Drydock package diff`,
-    description: `File-by-file diff of ${shownName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
+    description: `Compare ${shownName} ${fromLabel} and ${toLabel} file by file, with supply-chain findings tied to the relevant package evidence.`,
     path: packageDiffPath(ecosystem, packageName, fromVersion, toVersion),
   };
 }
@@ -198,7 +198,7 @@ export function packageDiffIndexSeo(
   const shownName = displayName || packageName;
   return {
     title: `${shownName} release diffs | Drydock`,
-    description: `Compare any two published versions of the ${ECOSYSTEM_NOUN[ecosystem]} ${shownName} file by file, with deterministic supply-chain findings pinned to changed lines. No account required.`,
+    description: `Compare published versions of the ${ECOSYSTEM_NOUN[ecosystem]} ${shownName} file by file and inspect supply-chain findings in the diff. No account required.`,
     path: packageDiffIndexPath(ecosystem, packageName),
   };
 }

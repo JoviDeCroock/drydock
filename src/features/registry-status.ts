@@ -115,7 +115,8 @@ export function registryStatusBadge(
   const state = `npm ${REGISTRY_STATUS_PHRASE[outcome]}`;
   if (scan.decision === "no_publish") {
     return {
-      label: outcome === "published" ? `${state} over a block` : `${state}, published over a block`,
+      label:
+        outcome === "published" ? `${state}, rejected here` : `${state}, published, rejected here`,
       tone: "critical",
     };
   }

@@ -222,7 +222,7 @@ status is unknown, `staged`, or `validating`, with the age of the oldest),
 **npm still scanning** (`validating`, with how many already have a finished
 Drydock review), **Published, no decision · 30d** (the list's
 `published_without_decision` semantics, limited to scans created in the last 30
-days), and **Decided · 30d** (approved vs blocked plus the median
+days), and **Decided · 30d** (approved vs rejected plus the median
 completion-to-decision time; it opens the `decided` filter, which lists the
 decisions recorded in the same 30-day window). The first three count only npm staged-publish
 sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans
@@ -240,7 +240,7 @@ is omitted. Only the Published value takes a tone — `warn` text when above 0.
 Review rows lead with one chip: the release risk, or the lifecycle status while
 there is none. A second chip appears only when npm's state asks something of
 the reader (`registryStatusBadge` returns a tone: blocked, awaiting approval
-after an approval here, published with no decision or over a block); quieter npm
+after an approval here, published with no decision or a rejection recorded here); quieter npm
 states end the mono meta line as plain text. There is no "undecided" chip — the
 row's Decide button says it; a gate or superseded row, which offers no button
 there, says `undecided` / `superseded` in plain text — and a recorded decision renders as plain
@@ -250,12 +250,12 @@ A row's package name opens the package release view once the review has an
 outcome; while the review is queued or running it opens that review instead
 (`scanRowPackageLink`), since the in-flight review is what the reader is after.
 
-When the **Undecided** list holds two or more reviews that read likely safe, the
-header offers a secondary `Approve N low-risk` beside the filter, so a release
+When the **Undecided** list holds two or more reviews with low assessed release risk, the
+header offers a secondary `Record N approvals` beside the filter, so a release
 that staged many packages at once is not one dialog per package. Its dialog
 (`src/pages/Dashboard/BatchApprovalDialog.tsx`) lists each candidate as a ticked
 row linking to its review, with its release-finding count in mono, one optional
-reason, and one primary `Approve N releases`. The server decides which reviews
+reason, and one primary `Record N approvals`. The server decides which reviews
 qualify (`listBatchApprovableScans`: release and artifact risk both low, a
 compared baseline, no findings new since the last approved release, no AI flag,
 still undecided and actionable on npm; a clean diff over a risky package is
@@ -324,11 +324,11 @@ otherwise — and the scan source (`scanSourceLabel`, shared with the dashboard)
 The version is the link to its review, captioned with the review's created
 date; there is no separate review column. `releaseAttention` marks the two
 disagreements the page exists to surface — npm published a version nobody here
-decided on (warn fill), and npm published a version Drydock blocked (danger
+decided on (warn fill), and npm published a version rejected in Drydock (danger
 fill). The header's mono line carries the ecosystem, review and channel counts,
 and the last release; the two disagreement counts appear only when above zero,
 as one Alert (`describeAttentionCounts`) — critical once anything was published
-over a block, warn otherwise. Package names in the dashboard list, the
+with a rejection recorded here, warn otherwise. Package names in the dashboard list, the
 publication monitor card and publication alert emails, and the `all releases →`
 link in the scan header open it; the scan header's back link returns to whichever
 list surface the review was opened from (`getDashboardReturnUrl`).

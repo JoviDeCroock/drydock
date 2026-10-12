@@ -562,7 +562,7 @@ describe("shields badge endpoint", () => {
     });
     expect(decide.status).toBe(200);
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.0 blocked",
+      message: "3.0.0 rejected",
       color: "red",
     });
   });
@@ -606,7 +606,7 @@ describe("shields badge endpoint", () => {
     });
     expect(reverse.status).toBe(200);
     expect((await fetchBadge(app, "npm", packageName, { cached: true })).body).toMatchObject({
-      message: "4.0.0 blocked",
+      message: "4.0.0 rejected",
       color: "red",
     });
   });
@@ -857,7 +857,7 @@ describe("shields badge endpoint", () => {
       method: "POST",
       body: JSON.stringify({ decision: "no_publish", reason: "malicious" }),
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 blocked");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 rejected");
 
     const ip = `10.1.0.${Math.floor(Math.random() * 200) + 1}`;
     const headers = { "cf-connecting-ip": ip };
@@ -1820,7 +1820,7 @@ describe("an OSS package needs no opt-in", () => {
 
     // Listing it is how a maintainer publishes that verdict deliberately.
     await share(app, scanId, { threatFeed: true });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 blocked");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 rejected");
   });
 
   test("a scoped package published publicly answers too", async () => {
@@ -2858,7 +2858,7 @@ describe("the badge reads the organization's publication monitor", () => {
       "published_despite_rejection",
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.0 blocked",
+      message: "3.0.0 rejected",
       color: "red",
     });
   });

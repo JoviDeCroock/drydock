@@ -13,11 +13,11 @@ export function DependencyPrIntegrations() {
           id="dependency-pr-integrations"
           class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]"
         >
-          Put an artifact diff in every dependency PR.
+          Read the package diff from your dependency PR.
         </h2>
         <p class="m-0 text-[14px] leading-[1.65] text-ink-muted max-w-[680px]">
-          Renovate and Dependabot already know the exact versions a pull request changes. Drydock
-          turns that pair into a public, deterministic package diff with no account or token.
+          Add Drydock links to npm and PyPI updates from Renovate or Dependabot. Reviewers can
+          compare the published files for each version pair without a Drydock account.
         </p>
       </div>
 
@@ -43,8 +43,8 @@ export function DependencyPrIntegrations() {
         <Card as="article" padding="compact" class="min-w-0 flex flex-col gap-3">
           <h3 class="m-0 text-base font-medium">Dependabot workflow</h3>
           <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
-            Copy a workflow that verifies Dependabot&apos;s signed commit, then upserts one
-            diff-link comment for single or grouped updates without checking out PR code.
+            Add a workflow that verifies Dependabot&apos;s signed commit and posts package diff
+            links. When Dependabot revises a grouped update, the workflow updates the same comment.
           </p>
           <MonoDetail parts={["npm + PyPI", "grouped PRs supported"]} />
           <LinkButton

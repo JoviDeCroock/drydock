@@ -208,8 +208,8 @@ export function GateContextPanel({
       )}
       {gate?.failureReason ? (
         <Alert tone="critical">
-          Drydock blocked this release automatically because the published artifacts could not be
-          verified against the reviewed manifest ({gate.failureReason}).
+          Drydock could not prepare the gate review ({gate.failureReason}); the configured protected
+          job cannot continue.
         </Alert>
       ) : null}
       {canRetry && onRetry ? (
@@ -310,8 +310,8 @@ export function GateDecisionDialog({
       title={multi ? "Package decision" : "Release decision"}
       description={
         multi
-          ? "Decide this package. The held GitHub Actions job releases only after every package is approved; rejecting any one blocks the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
-          : "Approve to release the held GitHub Actions job. Reject to block it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
+          ? "Decide this package. The configured protected GitHub Actions publish job continues only after every package is approved; rejecting any package blocks that job. Your workflow publishes with its own registry credentials."
+          : "Approve to continue the configured protected GitHub Actions publish job, or reject to block that job. Your workflow publishes with its own registry credentials."
       }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
@@ -334,8 +334,8 @@ export function GateDecisionDialog({
 
       {multi && !gateDecided ? (
         <Muted class="m-0 text-[13px]">
-          {approvedCount} of {packages.length} packages approved. All must be approved before the
-          held deployment releases.
+          {approvedCount} of {packages.length} packages approved; all must be approved before the
+          protected publish job can continue.
         </Muted>
       ) : null}
 
@@ -348,8 +348,8 @@ export function GateDecisionDialog({
 
       {mustEnroll ? (
         <Alert tone="warn">
-          Your organization requires two-factor authentication to approve or block releases. Enable
-          it in{" "}
+          Your organization requires two-factor authentication to approve or reject this gate.
+          Enable it in{" "}
           <a class="underline text-accent" href="/dashboard/account">
             Account
           </a>
@@ -362,7 +362,7 @@ export function GateDecisionDialog({
           id="gateComment"
           type="text"
           value={commentDraft.value}
-          placeholder="e.g. reviewed changed files, no risk signals"
+          placeholder="e.g. reviewed the changed files and install scripts"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
           disabled={saving || gateDecided || packageAlreadyDecided || mustEnroll}
           maxLength={500}
@@ -386,19 +386,19 @@ export function GateDecisionDialog({
             onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
           />
           <Muted class="m-0 mt-1 text-[12px]">
-            Confirm with the code from your authenticator app to release or block this deployment.
+            Enter your authenticator code to approve or reject this protected publish job.
           </Muted>
         </Field>
       ) : null}
 
       {gateDecided ? (
         <Muted class="m-0 text-[13px]">
-          This gate has already been decided. The decision is final, and GitHub has been notified.
+          GitHub has been notified of this gate's final decision.
         </Muted>
       ) : packageAlreadyDecided ? (
         <Muted class="m-0 text-[13px]">
-          This package decision has been recorded. The held deployment stays pending until the
-          remaining packages are decided.
+          This package decision is recorded; the protected publish job stays pending while the
+          remaining packages await decisions.
         </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
@@ -412,10 +412,10 @@ export function GateDecisionDialog({
                 : reviewFailed
                   ? multi
                     ? "Approve package anyway"
-                    : "Approve anyway & release"
+                    : "Approve anyway & continue job"
                   : multi
                     ? "Approve package"
-                    : "Approve & release"}
+                    : "Approve & continue job"}
             </Button>
           ) : null}
           <Button
@@ -423,7 +423,7 @@ export function GateDecisionDialog({
             onClick={() => submit("rejected")}
             disabled={saving || blockedOnCode || mustEnroll}
           >
-            {saving ? "Submitting…" : "Reject & block release"}
+            {saving ? "Submitting…" : "Reject & block job"}
           </Button>
         </div>
       )}

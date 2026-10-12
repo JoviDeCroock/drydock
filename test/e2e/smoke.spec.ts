@@ -45,7 +45,7 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await page.getByRole("button", { name: "Decide", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Package decision" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve package" })).toBeVisible();
-  await page.getByRole("button", { name: "Reject & block release" }).click();
+  await page.getByRole("button", { name: "Reject & block job" }).click();
 
   await expect(page.getByText("rejected · job blocked").first()).toBeVisible();
   await expect(page.getByText("blocked").first()).toBeVisible();
@@ -301,7 +301,7 @@ test("a legacy public report stays evidence-only", async ({ page }) => {
 test("a route chunk that fails to load shows the recovery card", async ({ page }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Read the release before the registry does." }),
+    page.getByRole("heading", { name: "Review your package before you publish." }),
   ).toBeVisible({ timeout: 30_000 });
 
   const privacyChunk = "**/src/pages/Privacy/**";

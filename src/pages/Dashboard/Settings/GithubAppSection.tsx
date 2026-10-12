@@ -53,10 +53,8 @@ export function GithubAppSection({
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <Muted class="text-[13px] m-0 max-w-[600px]">
             <span class="font-medium text-ink">Workflow Gate — enforced.</span> Install the Drydock
-            GitHub App on your organization so releases gated by a GitHub Actions environment can be
-            approved here. Drydock never asks for publish credentials. Your workflow keeps its own
-            OIDC/Trusted Publishing trust, and Drydock only acts as the deployment-protection
-            approver.
+            GitHub App to approve or reject the publish job protected by your configured GitHub
+            environment. Your workflow keeps its publishing credentials and publishes the package.
           </Muted>
           <Button
             variant={installations.length ? "secondary" : "primary"}
@@ -74,11 +72,11 @@ export function GithubAppSection({
 
         {!configured ? (
           <Alert tone="warn">
-            The GitHub App is not configured yet. Ask the operator to add the GitHub App secrets (
-            <code class="font-mono text-[12px]">GITHUB_APP_ID</code>,{" "}
+            The GitHub App is not configured; ask your Drydock operator to add the GitHub App
+            secrets (<code class="font-mono text-[12px]">GITHUB_APP_ID</code>,{" "}
             <code class="font-mono text-[12px]">GITHUB_APP_SLUG</code>,{" "}
             <code class="font-mono text-[12px]">GITHUB_APP_PRIVATE_KEY</code>, and the OAuth client
-            + webhook secrets) on the Drydock Worker.
+            and webhook secrets) on the Drydock Worker.
           </Alert>
         ) : null}
 
@@ -101,7 +99,9 @@ export function GithubAppSection({
           <InstallationList installations={installations} />
         ) : (
           <SettingsCardBody inset="belowHeader" gap="none">
-            <Muted class="text-[13px] m-0">No installations linked to this organization yet.</Muted>
+            <Muted class="text-[13px] m-0">
+              No GitHub App installations are linked to this organization.
+            </Muted>
           </SettingsCardBody>
         )}
       </div>
@@ -118,8 +118,8 @@ export function GithubAppSection({
         ) : (
           <SettingsCardBody inset="belowHeader" gap="none">
             <Muted class="text-[13px] m-0">
-              Install the GitHub App on an organization with the repo you want to gate before
-              mapping a release target.
+              Release targets require an active GitHub App installation with access to the
+              repository.
             </Muted>
           </SettingsCardBody>
         )}
@@ -187,8 +187,8 @@ const INACTIVE_INSTALLATION: Record<
   Exclude<InstallationStatus, "active">,
   { tone: BadgeTone; hint: string }
 > = {
-  suspended: { tone: "medium", hint: "re-enable on github to use" },
-  uninstalled: { tone: "critical", hint: "re-install to reconnect" },
+  suspended: { tone: "medium", hint: "re-enable on GitHub to reconnect" },
+  uninstalled: { tone: "critical", hint: "reinstall to reconnect" },
 };
 
 function InstallationList({ installations }: { installations: PublicGithubAppInstallation[] }) {

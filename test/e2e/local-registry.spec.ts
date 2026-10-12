@@ -71,7 +71,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   try {
     await page.goto("/dashboard");
-    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible({
       timeout: 30_000,
     });
 
@@ -158,13 +158,13 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     // to finish the publish on npm, so the follow-up hands them the exact CLI
     // command for this stage instead of leaving them to look it up.
     await page.getByRole("button", { name: "Decide" }).click();
-    const decisionDialog = page.getByRole("dialog").filter({ hasText: "Publish decision" });
+    const decisionDialog = page.getByRole("dialog").filter({ hasText: "Review decision" });
     await expect(decisionDialog).toBeVisible();
     // The fake registry is custom, so npmjs.com cannot complete this release.
     // The web hand-off is omitted and the follow-up command stays pinned to the
     // registry that supplied the stage.
     await expect(decisionDialog.getByRole("checkbox")).toHaveCount(0);
-    await decisionDialog.getByRole("button", { name: "Approve publish" }).click();
+    await decisionDialog.getByRole("button", { name: "Record approval" }).click();
 
     const commandDialog = page.getByRole("dialog").filter({ hasText: "Finish the publish on npm" });
     await expect(commandDialog).toBeVisible({ timeout: 30_000 });
@@ -315,7 +315,7 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
     try {
       if (scenario.expected.admissionStatus) await registerAndConnect(page);
       await page.goto("/dashboard");
-      await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+      await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible({
         timeout: 30_000,
       });
 
@@ -936,7 +936,7 @@ test("a personal connection awaiting its workspace choice is called out on the d
   try {
     await registerAndConnect(page, { confirmPersonalOrganization: false });
     await page.reload();
-    const callout = page.getByRole("alert").filter({ hasText: "Automatic scans are off." });
+    const callout = page.getByRole("alert").filter({ hasText: "Automatic scans are off" });
     await expect(callout).toBeVisible({ timeout: 30_000 });
     // One notice per connection state, pointing at the card that records the choice.
     await expect(page.getByText(/Check npm is paused|npm discovery is paused/)).toHaveCount(0);
@@ -949,10 +949,10 @@ test("a personal connection awaiting its workspace choice is called out on the d
       .click();
     await expect(page.getByText("valid", { exact: true })).toBeVisible();
     await page.goto("/dashboard");
-    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText("Automatic scans are off.")).toHaveCount(0);
+    await expect(page.getByText("Automatic scans are off")).toHaveCount(0);
   } finally {
     await context.close();
   }
@@ -1084,7 +1084,7 @@ test("undecided low-risk reviews can be approved together, leaving an unticked o
     const reviews = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) });
-    const offer = reviews.getByRole("button", { name: /^Approve \d+\+? low-risk$/ });
+    const offer = reviews.getByRole("button", { name: /^Record \d+\+? approvals?$/ });
     await expect(offer).toBeVisible({ timeout: 30_000 });
     const candidates = await evaluateOnStablePage(
       page,
@@ -1102,18 +1102,23 @@ test("undecided low-risk reviews can be approved together, leaving an unticked o
     const [kept, ...approved] = candidates;
 
     await offer.click();
-    const dialog = page.getByRole("dialog", { name: "Approve low-risk releases" });
+    const dialog = page.getByRole("dialog", { name: "Record approvals for low-risk reviews" });
     await dialog
       .getByRole("checkbox", { name: `Approve ${kept!.packageName}@${kept!.stagedVersion}` })
       .uncheck();
     const release = approved.length === 1 ? "release" : "releases";
     await page.screenshot({ path: path.join(artifactsDir, "batch-approval.png"), fullPage: true });
     await dialog
-      .getByRole("button", { name: `Approve ${approved.length} ${release}`, exact: true })
+      .getByRole("button", {
+        name: `Record ${approved.length} ${approved.length === 1 ? "approval" : "approvals"}`,
+        exact: true,
+      })
       .click();
-    const done = page.getByRole("dialog", { name: "Releases approved" });
+    const done = page.getByRole("dialog", { name: "Approvals recorded" });
     await expect(
-      done.getByText(`Approved ${approved.length} ${release} in Drydock`, { exact: false }),
+      done.getByText(`Recorded approval for ${approved.length} ${release} in Drydock`, {
+        exact: false,
+      }),
     ).toBeVisible();
     await done.getByRole("button", { name: "Done", exact: true }).click();
 
@@ -1146,7 +1151,7 @@ async function registerAndConnect(page: Page, { confirmPersonalOrganization = tr
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL(/\/dashboard$/, { timeout: 30_000 });
 
-  await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible({
     timeout: 30_000,
   });
 

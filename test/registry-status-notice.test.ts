@@ -88,7 +88,7 @@ describe("registry status badge", () => {
     });
     expect(
       registryStatusBadge({ registryVersionStatus: "published", decision: "no_publish" }),
-    ).toEqual({ label: "npm published over a block", tone: "critical" });
+    ).toEqual({ label: "npm published, rejected here", tone: "critical" });
   });
 
   test("describes deleted versions as removed rather than pre-publication withdrawals", () => {
@@ -101,7 +101,7 @@ describe("registry status badge", () => {
     });
     expect(
       registryStatusBadge({ registryVersionStatus: "deleted", decision: "no_publish" }),
-    ).toEqual({ label: "npm removed, published over a block", tone: "critical" });
+    ).toEqual({ label: "npm removed, published, rejected here", tone: "critical" });
   });
 
   test("reads an outcome a failed review proved, not only npm's reported status", () => {

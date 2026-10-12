@@ -38,28 +38,28 @@ test("agent tour: local Drydock release review walkthrough", async ({
   try {
     await page.goto("/");
     await expect(
-      page.getByRole("heading", { name: "Read the release before the registry does." }),
+      page.getByRole("heading", { name: "Review your package before you publish." }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Put an artifact diff in every dependency PR." }),
+      page.getByRole("heading", { name: "Read the package diff from your dependency PR." }),
     ).toBeVisible();
     await tour.capture(page, "landing", "Marketing entry point and product promise.");
 
     await page.goto("/docs");
     await expect(
-      page.getByRole("heading", { name: "Review what ships, not just what changed." }),
+      page.getByRole("heading", { name: "Set up package review before publication." }),
     ).toBeVisible();
     await tour.capture(page, "docs", "Learning guide and setup paths for artifact review.");
 
     await register(page);
-    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible();
     await tour.capture(page, "dashboard-no-npm", "Fresh workspace before npm access is connected.");
 
     await connectNpmThroughSettings(page);
     await tour.capture(page, "settings-npm-connected", "Organization npm access saved and valid.");
 
     await page.goto("/dashboard");
-    await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Release reviews" })).toBeVisible();
     const reviewScan = await createScan(page, "stage-implicit-node-gyp-000001");
     tour.note(`Started targeted review scan ${reviewScan.scan.id}.`);
     await tour.capture(
@@ -111,11 +111,13 @@ test("agent tour: local Drydock release review walkthrough", async ({
     tour.note(`Exported canonical report JSON to ${relative(exportedReportPath)}.`);
 
     await page.getByRole("button", { name: "Decide" }).click();
-    await expect(page.getByRole("heading", { name: "Publish decision" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Review decision" })).toBeVisible();
     await page.getByLabel("Reason (optional)").fill("Agent tour: high-risk implicit node-gyp.");
     await tour.capture(page, "decision-dialog", "Maintainer decision dialog before blocking.");
-    await page.getByRole("button", { name: "Block publish" }).click();
-    await expect(page.getByText("blocked").first()).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Record rejection" }).click();
+    await expect(page.getByText("rejected", { exact: true }).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await tour.capture(page, "decision-recorded", "Audit decision recorded on the report.");
 
     const failedScan = await createScan(page, "stage-registry-failure-000001");

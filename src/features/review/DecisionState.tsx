@@ -17,9 +17,9 @@ export function DecisionState({
   if (decision !== "publish" && decision !== "no_publish") return null;
   return (
     <p class="m-0 font-mono text-[11px] text-ink-subtle whitespace-nowrap">
-      <span class="sr-only">Decision: </span>
+      <span class="sr-only">Review decision: </span>
       <span class={decision === "publish" ? "text-ok-text" : "text-danger-text"}>
-        {decision === "publish" ? "approved" : "blocked"}
+        {decision === "publish" ? "approved" : "rejected"}
       </span>
       {decidedAt ? ` ${formatDateTime(decidedAt)}` : null}
     </p>

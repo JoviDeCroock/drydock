@@ -35,9 +35,9 @@ a shields.io badge per package and an opt-in public threat feed.
   documented 300-second cache window, but their report link returns `404`
   immediately and the superseded scan cannot be shared again.
 - That button only appears once the release is decided `publish` — a public
-  report is the organization vouching for a release, and an undecided or blocked
+  report is the organization vouching for a release, and an undecided or rejected
   one has nothing to vouch for yet. A release that already has a link keeps the
-  button whatever it is decided afterwards, so flipping approved → blocked never
+  button whatever it is decided afterwards, so flipping approved → rejected never
   strands a live link out of reach of revoke. The API itself is unchanged and
   still accepts any completed scan; the rule is a product default, not a
   security boundary.
@@ -153,7 +153,8 @@ registry's version — never by which scan finished last.
 - Listed and undecided → `<version> reviewed · <release risk> risk`, colored
   green / yellow / red by risk. Only via the listing route; a default-on badge
   never speaks for a review nobody acted on.
-- Listed and rejected (`no_publish`) → `<version> blocked` (red). Listing route
+- Listed and rejected (`no_publish`) → `<version> rejected` (red). This records
+  the review decision; it does not claim that npm publication was blocked. Listing route
   only, for the same reason.
 
 The version rendered is npm's own `registry_version` wherever there is one, and
@@ -244,7 +245,7 @@ Two further conditions apply to the _release_ rather than the package, and
   rejection are both simply absent — indistinguishable from a package nobody
   scanned. This is the one place the badge is deliberately quieter than the
   truth, and the remedy is in the maintainer's hands: listing a review
-  publishes it with the full vocabulary, `blocked` included.
+  publishes it with the full vocabulary, `rejected` included.
 - **Published by the registry.** A staged version is not public until npm
   publishes it, so the badge keys on npm's own version status. Without it, an
   approved release would appear on the badge before it shipped, leaking both

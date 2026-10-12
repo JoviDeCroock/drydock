@@ -128,9 +128,9 @@ describe("public route parity", () => {
 describe("page SEO metadata", () => {
   it("names the product and the artifact promise in the home result", () => {
     expect(homePageSeo).toMatchObject({
-      title: "Drydock Package Review: read the artifact before you publish",
+      title: "Drydock Package Review: review your package before you publish",
     });
-    expect(homePageSeo.description).toContain("exact npm, PyPI, or VS Code artifact");
+    expect(homePageSeo.description).toContain("built npm, PyPI, or VS Code packages");
   });
 
   it("gives each incident analysis distinct canonical metadata", () => {

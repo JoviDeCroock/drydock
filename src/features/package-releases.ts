@@ -58,8 +58,8 @@ export function describeAttentionCounts({
   const undecided = publishedWithoutDecision > 0;
   if (!blocked && !undecided) return null;
   const clauses: string[] = [];
-  if (blocked) clauses.push(`${releaseCount(publishedDespiteBlock)} over a block`);
-  // "…2 releases over a block and 1 with no decision here": the noun is said once.
+  if (blocked) clauses.push(`${releaseCount(publishedDespiteBlock)} rejected here`);
+  // The mixed case says "releases" once, then gives the undecided count.
   if (undecided) {
     const count = blocked
       ? String(publishedWithoutDecision)

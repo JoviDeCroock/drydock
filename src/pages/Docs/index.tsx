@@ -93,15 +93,15 @@ export default function DocsPage() {
       <header class={cn("border-t border-border", DOCS_GRID)}>
         <div class="lg:col-start-2 py-8 md:py-14 flex flex-col gap-5">
           <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-            Review what ships, not just what changed.
+            Set up package review before publication.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            Drydock is a release checkpoint for package maintainers. It opens the package that is
-            about to be published, compares it with the last release, points to risky changes, and
-            gives a human the final decision.
+            Compare your built release with its published baseline and inspect the changes before
+            users install them. Choose a GitHub workflow gate or npm staging, then follow the setup
+            steps below.
           </p>
           <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-            About 5 minutes · No security background required · npm, PyPI, and VS Code
+            npm, PyPI, and VS Code · Setup steps and workflow examples
           </p>
           <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
             <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -150,12 +150,12 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Start here</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                A second pair of eyes at the last responsible moment.
+                Review the files your users will install.
               </h2>
               <Prose>
-                Pull requests show source changes. Registries deliver built archives. Drydock sits
-                between those two moments and reviews the exact release candidate before it becomes
-                public.
+                Packaging can add generated files, bundled dependencies, or install scripts that
+                were absent from a pull request. Drydock compares the finished package with a
+                published version so you can inspect those changes before release.
               </Prose>
             </div>
 
@@ -172,8 +172,8 @@ export default function DocsPage() {
                     The code your team reviewed
                   </p>
                   <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
-                    Tests, configuration, and source files before packaging. Useful context, but not
-                    necessarily the bytes a registry will serve.
+                    Source files, tests, and configuration before packaging. The build can change
+                    what goes into the release.
                   </p>
                 </Card>
                 <Card as="article" padding="compact" emphasis="strong" class="flex flex-col gap-3">
@@ -193,8 +193,7 @@ export default function DocsPage() {
                 </Card>
               </div>
               <Callout label="The question Drydock answers">
-                Does this release candidate contain anything the maintainer should understand before
-                it ships?
+                Which package changes need your attention before publication?
               </Callout>
             </Subsection>
 
@@ -213,7 +212,7 @@ export default function DocsPage() {
                     npm or GitHub pauses a built release candidate.
                   </ReviewStep>
                   <ReviewStep number="02" label="Review">
-                    Drydock compares the artifact, explains findings, and records provenance.
+                    Drydock compares the package and shows findings alongside available provenance.
                   </ReviewStep>
                   <ReviewStep number="03" label="Decide">
                     A maintainer approves or rejects. Drydock never publishes the package.
@@ -263,7 +262,7 @@ export default function DocsPage() {
                     Findings are pinned to the changed files and lines that introduced them.
                   </ReportRow>
                   <ReportRow label="Artifact context" value="1 existing finding">
-                    Pre-existing package risk stays visible without drowning out this release.
+                    Findings in unchanged code remain available alongside the new release findings.
                   </ReportRow>
                   <ReportRow label="Provenance" value="4 artifacts verified" tone="info">
                     Names, versions, baselines, and SHA-256 digests show exactly what was reviewed.
@@ -271,9 +270,9 @@ export default function DocsPage() {
                 </div>
               </Card>
               <Prose>
-                A finding is evidence, not a verdict. Open the file, read the highlighted diff,
-                check whether the behavior is intended, and record the reason for your decision.
-                Clean reports still wait for a human when the release path is gated.
+                Open each finding, read the highlighted diff, and check whether the behavior is
+                intended. Record the reason for your decision. A gated job still needs human
+                approval when the report has no findings.
               </Prose>
             </Subsection>
 
@@ -288,13 +287,12 @@ export default function DocsPage() {
                   credential in GitHub Actions. Drydock never needs it.
                 </SafetyItem>
                 <SafetyItem title="Deterministic checks stay authoritative">
-                  The AI reviewer is advisory and on by default behind a per-organization
-                  killswitch. Its findings can raise concern but never downgrade a deterministic
-                  finding.
+                  AI review is advisory and enabled by default. Your organization can turn it off.
+                  AI findings can raise risk, but they cannot downgrade a deterministic finding.
                 </SafetyItem>
-                <SafetyItem title="Failures do not become approvals">
-                  Missing, malformed, ambiguous, or unverifiable evidence keeps a gated release
-                  blocked instead of silently passing it.
+                <SafetyItem title="Review failures stay visible">
+                  A failed package review needs a retry or explicit human approval; incomplete
+                  artifact batches cannot be approved.
                 </SafetyItem>
               </div>
             </Subsection>
@@ -304,14 +302,13 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Choose a release path</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Put the checkpoint where your release already pauses.
+                Choose npm staging or a GitHub workflow gate.
               </h2>
               <Prose>
-                Every path creates the same kind of Drydock report. The difference is who holds the
-                candidate while you review it and where the final decision happens. Before setting
-                either up, you can review a package you already publish: name it on the dashboard
-                and Drydock reviews its latest release against the one before it — the same report,
-                kept in your organization, with no token and nothing to wait for.
+                Both paths produce the same kind of report. npm holds a private staged package;
+                GitHub holds the configured publish job. To try the review first, enter a public
+                package on the dashboard. Drydock compares its latest releases and saves the report
+                in your organization without a registry token.
               </Prose>
             </div>
 
@@ -350,10 +347,9 @@ export default function DocsPage() {
                 npm holds the candidate; you keep the approval.
               </h2>
               <Prose>
-                This is the shortest route for npm. Stage the package, let Drydock review the
-                private tarball, then return to npm to publish or discard it. The Drydock decision
-                is a record only: npm maintainers decide independently, and manual publication
-                remains possible.
+                Stage the package, review the private tarball in Drydock, then return to npm to
+                publish or discard it. Drydock records an advisory decision. npm approval is
+                independent, and an account holder can still publish outside staging.
               </Prose>
             </div>
 
@@ -414,7 +410,7 @@ export default function DocsPage() {
                   </>,
                   <>
                     Record your decision and reason in Drydock. Then finish on npm with your normal
-                    2FA — either on npm's staged-packages page, or with the{" "}
+                    2FA on npm's staged-packages page, or with the{" "}
                     <InlineCode>npm stage approve</InlineCode> /{" "}
                     <InlineCode>npm stage reject</InlineCode> command Drydock shows you after
                     saving.
@@ -430,20 +426,18 @@ export default function DocsPage() {
 
             <Subsection id="staged-enforcement" title="Narrow CI to staging">
               <Prose>
-                Everything above is a review you choose to run. Nothing yet stops the same workflow
-                &mdash; or anyone holding a token &mdash; from calling{" "}
-                <InlineCode>npm publish</InlineCode> and skipping the stage. npm can narrow the CI
-                identity: a trusted publisher can grant <InlineCode>npm stage publish</InlineCode>{" "}
-                without granting <InlineCode>npm publish</InlineCode>, so CI can prepare a candidate
-                but can never make one public. This does not change Stage Watchtower's advisory
-                role, and npm still permits an account holder to publish interactively with
+                To make CI stage releases, configure a trusted publisher that grants{" "}
+                <InlineCode>npm stage publish</InlineCode> without granting{" "}
+                <InlineCode>npm publish</InlineCode>, then disallow token-based publication. That CI
+                identity can prepare a candidate but cannot publish it directly. Stage Watchtower
+                remains advisory: npm still permits an account holder to publish interactively with
                 password, 2FA, and an OTP.
               </Prose>
               <Steps
                 items={[
                   <>
                     Grant the package a stage-only trusted publisher. Omitting{" "}
-                    <InlineCode>--allow-publish</InlineCode> is the entire point: at least one
+                    <InlineCode>--allow-publish</InlineCode> restricts CI to staging: at least one
                     permission flag is required, so passing only the staging one produces a
                     publisher that cannot publish. Needs npm CLI 11.15.0 or newer, and the package
                     must already exist.
@@ -457,7 +451,7 @@ export default function DocsPage() {
                   <>
                     Give the release job <InlineCode>id-token: write</InlineCode> and have it run{" "}
                     <InlineCode>npm stage publish</InlineCode>. No npm token belongs anywhere in the
-                    workflow after this.
+                    workflow with this setup.
                   </>,
                 ]}
               />
@@ -483,12 +477,12 @@ export default function DocsPage() {
                 Path 2 · Workflow Gate — enforced <Badge tone="info">Preview</Badge>
               </SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                When the registry can't pause, the workflow can.
+                Hold the publish job until you finish the review.
               </h2>
               <Prose>
                 CI uploads built files and reaches a protected publish job. GitHub asks Drydock for
                 a decision before that configured job continues. The enforcement boundary is the
-                protected GitHub path, not every registry publication route.
+                configured protected job. Other publication paths remain outside the gate.
               </Prose>
             </div>
 
@@ -539,8 +533,8 @@ export default function DocsPage() {
               <Prose>
                 Generate <InlineCode>SHA256SUMS</InlineCode> beside the artifacts during the build,
                 upload it with them, and verify it in the publish job. The digests in the Drydock
-                report should match. Most importantly: download and publish the uploaded files—never
-                rebuild after approval.
+                report should match. Publish the downloaded files so the reviewed and published
+                bytes stay the same; rebuilding after approval creates a different candidate.
               </Prose>
               <Prose>
                 Large compiled PyPI releases can upload one bounded artifact per wheel or sdist.
@@ -552,7 +546,7 @@ export default function DocsPage() {
               <Callout label="Monorepos work as one gate">
                 Drydock groups uploaded files by package and opens a separate report for each one.
                 The held job continues only after every package is approved; rejecting one blocks
-                the release set.
+                that configured protected job.
               </Callout>
             </Subsection>
 
@@ -649,9 +643,9 @@ export default function DocsPage() {
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
               </WorkflowExample>
               <Callout label="Authentication stays in the publish job">
-                Add the registry authentication your release already uses—for example PyPI Trusted
+                Add the registry authentication your release already uses, such as PyPI Trusted
                 Publishing, npm trusted publishing or a scoped token, or a VS Code Marketplace
-                token—to the protected publish job. Drydock does not receive those credentials.
+                token, to the protected publish job. Drydock does not receive those credentials.
               </Callout>
             </Subsection>
 
@@ -678,8 +672,9 @@ export default function DocsPage() {
                 ]}
               />
               <Callout label="Fail closed">
-                If Drydock cannot verify the webhook, resolve the artifact set, parse a package,
-                finish a scan, or return a safe decision, the workflow does not get a silent pass.
+                Drydock never turns missing or failed evidence into an automatic approval. A failed
+                package review needs a retry or an explicit human decision; incomplete artifact
+                batches cannot be approved.
               </Callout>
             </Subsection>
           </section>
@@ -688,13 +683,12 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Diffs in dependency PRs</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Review the bumps you merge, not just the releases you ship.
+                Add package diffs to dependency update PRs.
               </h2>
               <Prose>
-                The same public diff pages work from the consumer side. A Renovate or Dependabot PR
-                names an exact version pair, so the published-package diff has a predictable URL —
-                no account, token, or API call. Set it up once and every dependency bump links its
-                own diff.
+                A Renovate or Dependabot PR names the versions you are upgrading between. For npm
+                and PyPI updates with two published versions, these integrations add a link to their
+                package diff. Reviewers can open it without a Drydock account.
               </Prose>
             </div>
 
@@ -713,9 +707,9 @@ export default function DocsPage() {
               </CodeBlock>
               <Prose>
                 List the preset after your base presets so its column layout wins. Updates without
-                two distinct published versions of one package — pins, digests, replacements, and
-                some lockfile-only changes — omit the link, and columns that end up empty are
-                dropped from the table.
+                two distinct published versions of one package (pins, digests, replacements, and
+                some lockfile-only changes) omit the link, and columns that end up empty are dropped
+                from the table.
               </Prose>
             </Subsection>
 
@@ -842,10 +836,9 @@ jobs:
               </WorkflowExample>
             </Subsection>
 
-            <Callout label="Links, not lookups">
-              Both integrations add plain markdown links. Nothing contacts Drydock when a PR renders
-              — only when a reviewer clicks — and the linked pages serve public-registry data
-              anonymously.
+            <Callout label="Public diff links">
+              Both integrations add markdown links to public-registry diffs. Reviewers contact
+              Drydock when they open a link; rendering the PR does not send a request to Drydock.
             </Callout>
           </section>
 

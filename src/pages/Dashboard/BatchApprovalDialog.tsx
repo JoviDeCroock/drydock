@@ -89,9 +89,9 @@ export function BatchApprovalDialog({
       submitted.value.filter((scan) => approved.has(scan.id)),
     );
     return (
-      <Dialog open={open} onClose={handleClose} title="Releases approved">
+      <Dialog open={open} onClose={handleClose} title="Approvals recorded">
         <p class="m-0 text-[13px] leading-[1.6] text-ink">
-          {`Approved ${count(done.approved.length, "release")} in Drydock. Nothing is published yet: approve ${done.approved.length === 1 ? "its stage" : "the stages"} on npm, with 2FA, to release ${done.approved.length === 1 ? "it" : "them"}.`}
+          {`Recorded approval for ${count(done.approved.length, "release")} in Drydock. To publish, approve ${done.approved.length === 1 ? "its stage" : "the stages"} separately on npm with 2FA.`}
         </p>
         {done.skipped.length ? (
           <Alert tone="warn">
@@ -117,8 +117,8 @@ export function BatchApprovalDialog({
       open={open}
       onClose={handleClose}
       size="md"
-      title="Approve low-risk releases"
-      description="These reviews read likely safe. Approving records one decision for each and publishes nothing. Approve here before you approve on npm: the publication monitor counts only an approval that came first."
+      title="Record approvals for low-risk reviews"
+      description="These reviews have low assessed release risk. Check the changes before recording approval for each selected review. npm approval is separate; the publication monitor compares published bytes with approvals recorded before publication."
     >
       <ul class="list-none m-0 p-0 flex flex-col border border-border rounded-md divide-y divide-border max-h-[320px] overflow-y-auto">
         {candidates.map((scan) => {
@@ -170,7 +170,7 @@ export function BatchApprovalDialog({
       </Field>
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => void submit()} disabled={busy || !selected.length}>
-          {busy ? "Saving…" : `Approve ${count(selected.length, "release")}`}
+          {busy ? "Saving…" : `Record ${count(selected.length, "approval")}`}
         </Button>
         <Button variant="secondary" onClick={handleClose} disabled={busy}>
           Cancel

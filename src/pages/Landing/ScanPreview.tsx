@@ -54,10 +54,9 @@ const PREVIEW_FILES = {
       caption: "lifecycle script added · line 7",
       body: (
         <>
-          <code class="font-mono text-[12px] text-ink-muted">postinstall</code> now executes during
-          every <code class="font-mono text-[12px] text-ink-muted">npm install</code>, invoking{" "}
-          <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>, a file new in
-          this release. Select it in the tree to see why this release is blocked.
+          This release adds a <code class="font-mono text-[12px] text-ink-muted">postinstall</code>{" "}
+          hook that invokes <code class="font-mono text-[12px] text-ink-muted">lib/install.js</code>{" "}
+          during installation. Select that file to inspect what the new script does.
         </>
       ),
     },
@@ -87,11 +86,9 @@ const PREVIEW_FILES = {
       caption: "environment sent to network sink · line 5",
       body: (
         <>
-          The full environment — npm tokens, CI secrets — is serialized and posted to{" "}
-          <code class="font-mono text-[12px] text-ink-muted">cdn-metrics.dev</code>, a host this
-          package has never contacted. Combined with the new{" "}
-          <code class="font-mono text-[12px] text-ink-muted">postinstall</code> hook, it runs on
-          every install.
+          The script sends the hostname and environment variables to{" "}
+          <code class="font-mono text-[12px] text-ink-muted">cdn-metrics.dev</code>. Those variables
+          may contain npm tokens or CI secrets. The new install hook invokes this script.
         </>
       ),
     },
@@ -126,8 +123,8 @@ const PREVIEW_FILES = {
       body: (
         <>
           <code class="font-mono text-[12px] text-ink-muted">api.acme-usage.dev</code> is an
-          outbound host the previous version never contacted. Not malicious on its face — the kind
-          of change worth thirty seconds before it reaches every install.
+          outbound host introduced in this release. Check whether the new usage-reporting request is
+          intended before approving the change.
         </>
       ),
     },
@@ -152,7 +149,7 @@ export function ScanPreview() {
     <section class="flex flex-col gap-3" aria-label="Sample review">
       <SectionLabel as="h2">What a review looks like</SectionLabel>
       <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">
-        A condensed report. Select a file in the release tree to walk the diff.
+        Select a file to inspect its diff and findings in this example report.
       </p>
       <Card padding="none" class="overflow-hidden">
         <header class="px-5 pt-5 pb-4 border-b border-border flex flex-col gap-3">
@@ -262,7 +259,7 @@ function PreviewPane({ selected }: { selected: Signal<PreviewFileKey> }) {
         </FindingAnnotation>
       ) : (
         <p class="m-0 border-t border-border px-4 py-3 text-[13px] leading-[1.55] text-ink-muted">
-          No findings — most of a release reads like this file.
+          No findings for this file.
         </p>
       )}
     </div>

@@ -253,9 +253,9 @@ function DashboardOnboarding({
 function DashboardHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
-      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Release reviews</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Review held npm, PyPI, and VS Code candidates before maintainers let them go live.
+        Read the changes in release candidates and published packages before recording a decision.
       </Muted>
     </header>
   );
@@ -360,9 +360,9 @@ function RecentReviewsSection({
                   more: batch.more.peek(),
                 };
               }}
-              title="Approve the undecided reviews that read likely safe"
+              title="Record approvals for undecided reviews with low release risk"
             >
-              {`Approve ${batchCount}${batch.more.value ? "+" : ""} low-risk`}
+              {`Record ${batchCount}${batch.more.value ? "+" : ""} ${pluralize("approval", batchCount)}`}
             </Button>
           ) : null}
           {/* A disabled control with the reason only in a tooltip is a dead
@@ -380,7 +380,7 @@ function RecentReviewsSection({
             </Button>
           ) : (
             <Muted class="text-[13px] m-0">
-              Checking npm for staged releases needs a validated npm token.{" "}
+              Check npm requires a validated read-only npm token.{" "}
               <a href="/dashboard/settings?tab=integrations#npm-access" class="underline">
                 Connect one
               </a>
@@ -499,7 +499,7 @@ const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   },
   { value: "decided", label: "Decided in the last 30 days" },
   { value: "publish", label: "Approved" },
-  { value: "no_publish", label: "Blocked" },
+  { value: "no_publish", label: "Rejected" },
   { value: "all", label: "All" },
 ];
 
@@ -547,21 +547,16 @@ function ScanStateSelect({
   );
 }
 
-// `hasAnyScan` is what keeps this honest. The list defaults to the "undecided"
-// filter, so an organization with no scans at all used to read "Nothing waiting
-// on you. Switch to All to see earlier reviews." — copy that points a brand-new
-// user at a filter which is also empty, and implies a review history they do
-// not have. That sentence is right for an organization that *has* history, so
-// it stays for that case and only the never-scanned case gets its own wording.
-// Per docs/design.md the empty state is one muted sentence with no CTA inside it —
-// the getting-started panel above carries the affordances.
+// An empty filter does not prove that the organization has no review history.
+// `hasAnyScan` distinguishes a first visit from a queue with no pending decisions.
+// Actions stay in onboarding and the section controls, outside the empty state.
 function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | null): string {
   if (hasAnyScan === false) {
-    return "No reviews yet — stage a release, or check npm for one already waiting.";
+    return "No reviews yet.";
   }
   switch (filter) {
     case "undecided":
-      return "Nothing waiting on you. Switch to All to see earlier reviews.";
+      return "No reviews are awaiting a decision.";
     case "published_without_decision":
       return "No npm releases were published without a decision in this organization.";
     case "decided":
@@ -569,9 +564,9 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
     case "publish":
       return "No approved reviews yet.";
     case "no_publish":
-      return "No blocked reviews yet.";
+      return "No rejected reviews yet.";
     default:
-      return "No reviews yet. Check npm or wait for auto-discovery to find a staged release.";
+      return "No reviews yet.";
   }
 }
 
@@ -594,27 +589,23 @@ function NpmConnectionCallout({
         <Alert tone="warn">
           {notice === "unvalidated" ? (
             <>
-              <strong>Check npm is paused.</strong> The stored npm token has not validated, so
-              on-demand discovery is unavailable. Scheduled discovery will retry validation
-              automatically, or revalidate it now in{" "}
+              <strong>Check npm is paused:</strong> the stored token has not passed validation;
+              Drydock will retry automatically, or you can revalidate it in{" "}
             </>
           ) : notice === "unvalidated_choice" ? (
             <>
-              <strong>npm reviews are paused.</strong> The stored npm token has not validated, so
-              on-demand discovery is unavailable, and this personal workspace has not confirmed
-              where its npm packages are managed, so scheduled discovery starts no new reviews.
-              Revalidate the token and make the choice in{" "}
+              <strong>npm discovery is paused</strong> until you revalidate the stored token and
+              confirm this personal workspace for automatic reviews in{" "}
             </>
           ) : notice === "choice" ? (
             <>
-              <strong>Automatic scans are off.</strong> This personal workspace has not confirmed
-              where its npm packages are managed, so scheduled discovery starts no new reviews. Make
-              the choice in{" "}
+              <strong>Automatic scans are off</strong> until you confirm this personal workspace for
+              npm reviews in{" "}
             </>
           ) : (
             <>
-              <strong>npm discovery is paused.</strong> The stored npm token is invalid, so
-              &ldquo;Check npm&rdquo; and scheduled discovery are unavailable. Revalidate it in{" "}
+              <strong>npm discovery is paused</strong> because the stored token is invalid;
+              revalidate it in{" "}
             </>
           )}
           <a class="underline text-accent" href="/dashboard/settings?tab=integrations#npm-access">
@@ -643,8 +634,8 @@ function ReviewPublishedSection({ npmScope }: { npmScope: string | null }) {
           Review a published release
         </SectionLabel>
         <p class="m-0 text-[13px] text-ink-muted">
-          Name an npm package to review its latest release against the one before it, or name a
-          version.
+          Enter an npm package name to compare its latest release with the previous version, or
+          enter a specific version.
         </p>
       </div>
       <div class="shrink-0">

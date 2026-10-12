@@ -59,12 +59,12 @@ describe("describeAttentionCounts", () => {
   test("escalates to critical once npm published over a block, naming both counts", () => {
     expect(
       describeAttentionCounts({ publishedWithoutDecision: 0, publishedDespiteBlock: 2 }),
-    ).toEqual({ tone: "critical", text: "npm published 2 releases over a block." });
+    ).toEqual({ tone: "critical", text: "npm published 2 releases rejected here." });
     expect(
       describeAttentionCounts({ publishedWithoutDecision: 3, publishedDespiteBlock: 1 }),
     ).toEqual({
       tone: "critical",
-      text: "npm published 1 release over a block and 3 with no decision here.",
+      text: "npm published 1 release rejected here and 3 with no decision here.",
     });
   });
 });

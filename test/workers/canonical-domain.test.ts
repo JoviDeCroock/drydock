@@ -159,7 +159,7 @@ describe("canonical domain routing", () => {
     expect(html).toContain("<title>@preact/signals 1.0.0 → 2.0.0 | Drydock package diff</title>");
     expect(html).toContain('content="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
     expect(html).toContain('href="https://drydock.org/diff/@preact/signals/1.0.0/2.0.0"');
-    expect(html).toContain("File-by-file diff of @preact/signals between 1.0.0 and 2.0.0");
+    expect(html).toContain("Compare @preact/signals 1.0.0 and 2.0.0 file by file");
     expect(cacheReads).toBe(0);
   });
 
@@ -187,7 +187,9 @@ describe("canonical domain routing", () => {
     expect(html).toContain(
       `<title>@ebey.dev/counter ${fromVersion} → ${toVersion} | Drydock package diff</title>`,
     );
-    expect(html).toContain(`File-by-file diff of @ebey.dev/counter between ${fromVersion}`);
+    expect(html).toContain(
+      `Compare @ebey.dev/counter ${fromVersion} and ${toVersion} file by file`,
+    );
     expect(html).toContain(`Drydock package diff card for @ebey.dev/counter ${fromVersion}`);
     expect(html).toContain(`/diff/atpm/${didName}/${fromVersion}/${toVersion}`);
     expect(metadataKey).toMatch(/:display-metadata$/);

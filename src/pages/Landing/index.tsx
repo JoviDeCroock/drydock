@@ -22,13 +22,12 @@ export default function LandingPage() {
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Read the release before the registry does.
+          Review your package before you publish.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Your pull request got reviewed. The tarball the registry serves — build output, lifecycle
-          hooks, files that never lived in the repository — did not. Drydock diffs the exact
-          artifact against the last published version and pins every supply-chain finding to the
-          changed line.
+          Compare your built npm, PyPI, or VS Code release with the previous version. Drydock shows
+          changed files and supply-chain findings so you can inspect unexpected behavior before
+          publication.
         </p>
         <MonoDetail
           parts={[
@@ -62,8 +61,8 @@ export default function LandingPage() {
       <section aria-label="Live incident diffs" class="flex flex-col gap-3">
         <SectionLabel as="h2">Open a live diff</SectionLabel>
         <p class="m-0 text-[13px] text-ink-muted leading-[1.55] max-w-[680px]">
-          The report above is hand-authored. These are live reports from the same deterministic
-          review — two real supply-chain incidents and one demo package. No account needed.
+          Try the review on two real supply-chain incidents or a demo package. These reports run
+          Drydock's checks on the published artifacts; the preview above uses example data.
         </p>
         <IncidentDiffCards />
         <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
@@ -75,18 +74,15 @@ export default function LandingPage() {
 
       <AikidoPartnerStrip />
 
-      <section aria-label="Why review a publish" class="flex flex-col gap-4">
-        <SectionLabel as="p">Why review a publish</SectionLabel>
+      <section aria-label="Why review the package" class="flex flex-col gap-4">
+        <SectionLabel as="p">Why review the package</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-          The attacks that matter ship in the artifact.
+          Packaging can introduce changes a pull request never showed.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          A pull request review checks the source tree. The registry serves something else: a built
-          artifact that can carry install hooks, minified bundles, and files that never lived in
-          git, published with a credential that may not belong to the person you think. Once a
-          version is live it is immutable and installed within minutes. The last useful checkpoint
-          sits between the finished artifact and the registry — and that is the one almost nobody
-          looks at.
+          Build output, bundled dependencies, and install scripts determine what users receive.
+          Reviewing the finished package lets you inspect those changes before publication. These
+          incidents show why the published files deserve their own review.
         </p>
         <IncidentLog />
       </section>
@@ -94,16 +90,12 @@ export default function LandingPage() {
       <section aria-label="Provenance and review" class="flex flex-col gap-4">
         <SectionLabel as="p">Provenance and review</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-          Provenance attests the pipeline. It does not read the bytes.
+          Check where the release came from and what it contains.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          npm provenance, trusted publishing, and Sigstore bundles establish which workflow in which
-          repository produced an artifact. Drydock checks that evidence where a release carries it
-          and shows the result on the diff, signature and resolution kept apart rather than
-          collapsed into one verdict. What an attestation cannot say is whether the artifact that
-          workflow produced should be published: a compromised build dependency, an install hook
-          added upstream, and a stolen account driving the genuine workflow all yield a correctly
-          attested release. Attestation answers where it came from. The diff answers what is in it.
+          Provenance can identify the repository and workflow that built a release. Drydock checks
+          available provenance evidence alongside the package diff. A compromised build dependency
+          can still produce an attested release, so reviewers need to inspect the contents too.
         </p>
         <LinkButton href="/npm-trusted-publishing" variant="ghost" size="sm" class="self-start">
           Pin publishing to a reviewed workflow →
@@ -115,33 +107,32 @@ export default function LandingPage() {
         <HowSteps
           items={[
             {
-              title: "Pause the publish, or watch the stage",
+              title: "Choose where to review",
               body: (
                 <>
-                  Workflow Gate uses a GitHub Environment to pause the configured protected publish
-                  job after CI uploads built artifacts. Stage Watchtower observes a private npm
-                  staged artifact without controlling it.
+                  Workflow Gate pauses a configured GitHub publish job while you review its uploaded
+                  artifacts. Stage Watchtower reviews a private npm staged package; npm controls
+                  approval and publication.
                 </>
               ),
             },
             {
-              title: "Review the artifact, not the branch",
+              title: "Inspect the package diff",
               body: (
                 <>
-                  Drydock compares the candidate with the last published version, flags risky deltas
-                  like install scripts, process execution, network access, credential reads, and new
-                  binaries, then anchors each finding to the diff. Package contents are never
-                  executed.
+                  Compare the candidate with its published baseline and inspect findings such as new
+                  install scripts or credential reads. Findings point to the relevant files and
+                  lines when available. Drydock reads package contents without executing them.
                 </>
               ),
             },
             {
-              title: "Decide — the publish credential stays yours",
+              title: "Record your decision",
               body: (
                 <>
-                  Approve or reject the gated GitHub job from the workbench, or finish the npm
-                  publish yourself with 2FA. Drydock hands you the review and nothing else: it never
-                  publishes, and it never holds a credential that could.
+                  Approve or reject the protected GitHub job in Drydock. For npm staging, record
+                  your review here and approve or reject separately in npm with 2FA. Publish
+                  credentials stay in your release process.
                 </>
               ),
             },
@@ -149,19 +140,19 @@ export default function LandingPage() {
         />
       </section>
 
-      <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
-        <SectionLabel as="h2">How it hooks in</SectionLabel>
+      <section aria-label="Release integrations" class="flex flex-col gap-4">
+        <SectionLabel as="h2">Release integrations</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <RegistryCard title="Workflow Gate — enforced: npm, PyPI & VS Code">
-            A GitHub Environment pauses your publish job the moment CI uploads the release artifact.
-            Drydock reviews that upload; you approve or reject. Approved, the job continues with its
-            own credential. Rejected, nothing reaches the registry.
+            Configure a GitHub Environment to hold your publish job after CI builds and uploads the
+            artifacts. Approval lets that job continue with its own credentials; rejection blocks
+            it. Other publication paths remain outside this gate.
           </RegistryCard>
           <RegistryCard title="Stage Watchtower — advisory: npm">
             A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
-            and the registry parks a private candidate. Drydock reviews that tarball and pins risk
-            signals to the diff. You approve or reject in npm with 2FA — Drydock is advisory here
-            and cannot stop a separate manual publish.
+            to upload a private candidate. Drydock reviews the tarball and records your decision.
+            You approve or reject independently in npm with 2FA, which also permits manual
+            publication outside staging.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
@@ -173,8 +164,8 @@ export default function LandingPage() {
         <SectionLabel as="h2">Safeguards</SectionLabel>
         <StatusStrip>
           <StatusStripItem label="credentials" status="scoped" tone="ok">
-            Scoped tokens only fetch release evidence. Publish credentials stay in npm or GitHub
-            Actions, not in Drydock.
+            Drydock uses scoped tokens to fetch release evidence. Publish credentials stay in npm or
+            GitHub Actions.
           </StatusStripItem>
           <StatusStripItem label="retention" status="redacted" tone="ok">
             Reports keep redacted review evidence instead of raw release archives.
@@ -189,11 +180,11 @@ export default function LandingPage() {
       <section aria-label="Get started" class="flex flex-col gap-4">
         <SectionLabel as="p">Get started</SectionLabel>
         <h2 class="text-[32px] font-semibold tracking-[-0.02em] leading-[1.15] m-0 max-w-[680px]">
-          Put your next release in the dock.
+          Add a review to your next release.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[620px]">
-          Add a workflow gate to the environment your publish job already uses, or point Drydock at
-          an npm stage. It is configuration, not code — and your publish credential never moves.
+          Set up a GitHub workflow gate or connect npm staging to review your next candidate.
+          Drydock never holds the credential that publishes it.
         </p>
         <div class="flex gap-3 mt-1">
           <Show

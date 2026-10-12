@@ -592,7 +592,7 @@ export function buildBadgePayload(
     return {
       schemaVersion: 1,
       label: badgeLabel(row, tag),
-      message: `${version} blocked`,
+      message: `${version} rejected`,
       color: "red",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
