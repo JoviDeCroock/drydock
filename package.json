@@ -27,6 +27,7 @@
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",
     "eval": "vitest run --project node test/eval/detection-eval.test.mjs",
+    "benchmark:incidents": "UPDATE_INCIDENT_BENCHMARK=1 vitest run --project node test/eval/incident-benchmark.test.ts && oxfmt public/benchmarks/shai-hulud-nx/v1.json src/features/public-content/incident-benchmark-v1.json",
     "eval:ai": "vitest run --project node test/eval/ai-review-eval.test.mjs",
     "eval:ai:live": "AI_REVIEW_LIVE_EVAL=1 vitest run --project node test/eval/ai-review-live.test.mjs",
     "fuzz": "FUZZ_RUNS=20000 vitest run --project node --testTimeout=600000 test/archive-parser.fuzz.test.mjs",

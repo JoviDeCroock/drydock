@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { locationStub } from "preact-iso/prerender";
+import incidentBenchmarkReport from "../public/benchmarks/shai-hulud-nx/v1.json";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import { packageDiffIndexPath } from "../src/lib/package-diff-path";
 import { ADDITIONAL_PRERENDER_ROUTES } from "../src/lib/prerender-routes";
@@ -13,12 +14,19 @@ import {
   getPageSeoMetadata,
   homePageSeo,
   INCIDENT_CASE_PATHS,
+  incidentBenchmarkSeo,
   incidentCaseSeoByPath,
   packageDiffIndexSeo,
   packageDiffSeo,
   privacyPageSeo,
 } from "../src/lib/seo";
 import { SITE_URL } from "../src/lib/seo-metadata";
+
+const PUBLIC_ARTICLE_PATHS = [
+  ...DISCOVERY_GUIDE_PATHS,
+  ...INCIDENT_CASE_PATHS,
+  incidentBenchmarkSeo.path,
+];
 
 describe("isPrerenderedRoute", () => {
   it("matches generated public prerender pages with or without canonical trailing slashes", () => {
@@ -33,7 +41,7 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/agents/")).toBe(true);
     expect(isPrerenderedRoute("/privacy")).toBe(true);
     expect(isPrerenderedRoute("/privacy/")).toBe(true);
-    for (const path of [...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS]) {
+    for (const path of PUBLIC_ARTICLE_PATHS) {
       expect(isPrerenderedRoute(path)).toBe(true);
       expect(isPrerenderedRoute(`${path}/`)).toBe(true);
     }
@@ -165,18 +173,50 @@ describe("public route parity", () => {
     }
   });
 
-  it.each([...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS])(
-    "prerenders %s under its own title",
-    async (path) => {
-      locationStub(path);
-      const result = await prerender({ url: path });
+  it.each(PUBLIC_ARTICLE_PATHS)("prerenders %s under its own title", async (path) => {
+    locationStub(path);
+    const result = await prerender({ url: path });
 
-      const head = "head" in result ? result.head : undefined;
+    const head = "head" in result ? result.head : undefined;
 
-      expect(head?.title).toBe(getPageSeoMetadata(path)?.title);
-      expect(result.html).not.toContain("Page not found");
-    },
-  );
+    expect(head?.title).toBe(getPageSeoMetadata(path)?.title);
+    expect(result.html).not.toContain("Page not found");
+  });
+
+  it("prerenders benchmark measurements, evidence, source citations, and reproduction links", async () => {
+    locationStub(incidentBenchmarkSeo.path);
+    const { html } = await prerender({ url: incidentBenchmarkSeo.path });
+
+    expect(html).toContain("sanitized behavior reconstructions");
+    expect(html).toContain("not the original compromised tarballs");
+    expect(html).toContain('id="citation"');
+    expect(html).toContain(incidentBenchmarkReport.suiteVersion);
+    expect(html).toContain(incidentBenchmarkReport.rulesVersion);
+    expect(html).toContain(incidentBenchmarkReport.corpusSha256);
+    expect(html).toContain(
+      `${incidentBenchmarkReport.summary.malicious.caught}/${incidentBenchmarkReport.summary.malicious.total} caught at high release risk or above with required rule evidence`,
+    );
+    expect(html).toContain(
+      `${incidentBenchmarkReport.summary.benign.falsePositives}/${incidentBenchmarkReport.summary.benign.total} false positives`,
+    );
+    expect(html).toContain(
+      `${incidentBenchmarkReport.summary.benign.falsePositives} of ${incidentBenchmarkReport.summary.benign.total} benign controls also reached medium release risk or above`,
+    );
+    expect(html).toContain("pnpm run benchmark:incidents");
+    expect(html).toContain('href="/benchmarks/shai-hulud-nx/v1.json"');
+    expect(html.match(/download="drydock-shai-hulud-nx-v1.json"/g)).toHaveLength(2);
+    expect(html).toContain(`/tree/${incidentBenchmarkReport.engineRevision}/server/lib/review`);
+    for (const testCase of incidentBenchmarkReport.cases) {
+      expect(html).toContain(testCase.title);
+      expect(html).toContain(`/blob/main/${testCase.fixturePath}`);
+      for (const finding of testCase.findings) {
+        expect(html).toContain(finding.ruleId);
+      }
+    }
+    for (const source of incidentBenchmarkReport.sources) {
+      expect(html).toContain(source.url);
+    }
+  });
 });
 
 describe("page SEO metadata", () => {
@@ -197,6 +237,12 @@ describe("page SEO metadata", () => {
       titles.add(metadata.title);
     }
     expect(titles.size).toBe(INCIDENT_CASE_PATHS.length);
+  });
+
+  it("gives the benchmark its own canonical metadata with an explicit reconstruction scope", () => {
+    expect(getPageSeoMetadata(incidentBenchmarkSeo.path)).toBe(incidentBenchmarkSeo);
+    expect(getPageSeoMetadata(`${incidentBenchmarkSeo.path}/`)).toBe(incidentBenchmarkSeo);
+    expect(incidentBenchmarkSeo.description).toContain("behavior reconstructions");
   });
 
   it("is defined only for the public landing, docs, and privacy pages", () => {
@@ -267,8 +313,8 @@ describe("sitemap", () => {
   // A public page nobody can discover is the failure this catches: adding a
   // route to DISCOVERY_GUIDE_PATHS is the step that gets remembered, and
   // listing it for crawlers is the one that does not.
-  it("lists every prerendered guide and incident page", () => {
-    for (const path of [...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS]) {
+  it("lists every prerendered guide, incident page, and benchmark", () => {
+    for (const path of PUBLIC_ARTICLE_PATHS) {
       expect(paths).toContain(path);
     }
   });

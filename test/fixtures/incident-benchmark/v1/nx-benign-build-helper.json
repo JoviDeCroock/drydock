@@ -1,0 +1,56 @@
+{
+  "id": "nx-benign-build-helper",
+  "title": "Control: build helper adds a version check",
+  "incident": "nx",
+  "verdict": "benign",
+  "source": "synthetic-control",
+  "provenance": "Synthetic benign matched control with the same manifest, lifecycle hook, script path, and version bump as the Nx reconstruction. Legitimate subprocess use and NODE_ENV access without credentials or exfiltration. This is not a sampled authentic clean Nx release.",
+  "expectedMinRisk": "low",
+  "requiredRuleIds": [],
+  "previousPackageJson": {
+    "name": "benchmark-build-cli",
+    "version": "1.0.0",
+    "scripts": {
+      "postinstall": "node telemetry.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "benchmark-build-cli",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "node telemetry.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "d4e0f359004a74df87c28f5d9a463ad8676b0af5d2645eeb570060069b5be4a4",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-build-cli\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node telemetry.js\"}}"
+    },
+    {
+      "path": "telemetry.js",
+      "size": 31,
+      "sha256": "178e141ab53da8393b9fc03b971f90ee972a6c8a2f1d9f70ad1a45591ef69f8d",
+      "flags": [],
+      "textSample": "console.log('setup complete');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "115a23991230e0a8f32851b89e548fd5076b7090cb160bbaa248038e4f9a5a36",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-build-cli\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"node telemetry.js\"}}"
+    },
+    {
+      "path": "telemetry.js",
+      "size": 160,
+      "sha256": "9e1ddb948dd3ccdb3f1592c7246eb936d16eb71957d145a94f9369044730b51f",
+      "flags": [],
+      "textSample": "const { execFileSync } = require('child_process');\nconst mode = process.env.NODE_ENV;\nexecFileSync('node', ['--version']);\nconsole.log('setup complete', mode);\n"
+    }
+  ]
+}

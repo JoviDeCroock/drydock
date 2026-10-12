@@ -26,6 +26,11 @@
     <priority>0.3</priority>
   </url>
   <url>
+    <loc>https://drydock.org/benchmarks/shai-hulud-nx</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://drydock.org/npm-staged-publishing</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

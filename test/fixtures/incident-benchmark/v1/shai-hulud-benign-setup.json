@@ -1,0 +1,56 @@
+{
+  "id": "shai-hulud-benign-setup",
+  "title": "Control: ordinary setup message changes",
+  "incident": "shai-hulud",
+  "verdict": "benign",
+  "source": "synthetic-control",
+  "provenance": "Synthetic benign matched control with the same manifest, lifecycle hook, script path, and version bump as the Shai-Hulud reconstruction. Only the setup message changes; no secret collection or exfiltration.",
+  "expectedMinRisk": "low",
+  "requiredRuleIds": [],
+  "previousPackageJson": {
+    "name": "benchmark-color-utility",
+    "version": "1.0.0",
+    "scripts": {
+      "postinstall": "node bundle.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "benchmark-color-utility",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "node bundle.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 95,
+      "sha256": "8c1a90af0a438780b42b245fd14c3f7ec2c07019026256de7ce129575c5afcff",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-color-utility\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node bundle.js\"}}"
+    },
+    {
+      "path": "bundle.js",
+      "size": 31,
+      "sha256": "178e141ab53da8393b9fc03b971f90ee972a6c8a2f1d9f70ad1a45591ef69f8d",
+      "flags": [],
+      "textSample": "console.log('setup complete');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 95,
+      "sha256": "202461d1f54a67c7bb864fe95722aa056a5cdd12355cb96646d02fac7141da33",
+      "flags": [],
+      "textSample": "{\"name\":\"benchmark-color-utility\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"node bundle.js\"}}"
+    },
+    {
+      "path": "bundle.js",
+      "size": 52,
+      "sha256": "9ecbfbf0b9c8cc892f4ee6a23f92425d381af51f767ff56a7d3da76283a00302",
+      "flags": [],
+      "textSample": "console.log('setup complete: color utility ready');\n"
+    }
+  ]
+}

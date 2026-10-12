@@ -162,6 +162,13 @@ function detect(record, fxOverride) {
     });
     return { risk: review.risk, findings: review.ruleFindings };
   }
+  const { artifactRisk: risk, findings } = evaluateNpmFixture(fx);
+  return { risk, findings };
+}
+
+// Public incident benchmarks and the aggregate eval share the same npm path.
+// Release risk uses diff attribution, matching the score consumed by gates.
+export function evaluateNpmFixture(fx) {
   const previousFiles = fx.previousFiles ?? [];
   const stagedFiles = fx.stagedFiles ?? [];
   const diff = createPackageDiff(previousFiles, stagedFiles);
@@ -173,7 +180,12 @@ function detect(record, fxOverride) {
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
   ];
-  return { risk: computeRisk(findings), findings };
+  const annotated = annotateFindingsWithDiffStatus(findings, diff, { previousFiles, stagedFiles });
+  return {
+    artifactRisk: computeRisk(findings),
+    releaseRisk: computeScanRiskBreakdown(annotated, AI_REVIEW_OFF).releaseRisk,
+    findings: annotated,
+  };
 }
 
 // --- Release injection. The regression corpus mostly models payloads in added
@@ -239,22 +251,10 @@ function injectIntoCarrier(fx, mode) {
 }
 
 function releaseRiskOf(fx) {
-  const previousFiles = fx.previousFiles ?? [];
-  const stagedFiles = fx.stagedFiles ?? [];
-  const diff = createPackageDiff(previousFiles, stagedFiles);
-  const findings = [
-    ...deterministicFindings(stagedFiles, diff, fx.stagedPackageJson, {
-      entrypointResolution: "npm",
-      previousFiles,
-    }),
-    ...packageJsonDiffFindings(
-      summarizePackageJsonDiff(fx.previousPackageJson, fx.stagedPackageJson),
-    ),
-  ];
-  const annotated = annotateFindingsWithDiffStatus(findings, diff, { previousFiles, stagedFiles });
+  const { releaseRisk, findings } = evaluateNpmFixture(fx);
   return {
-    releaseRisk: computeScanRiskBreakdown(annotated, AI_REVIEW_OFF).releaseRisk,
-    codePayload: annotated.some((f) => f.releaseDelta && f.ruleId?.startsWith("code.")),
+    releaseRisk,
+    codePayload: findings.some((f) => f.releaseDelta && f.ruleId?.startsWith("code.")),
   };
 }
 

@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "shai-hulud-nx",
+  "suiteVersion": "1.0.0",
+  "evaluatedOn": "2026-10-11",
+  "engineRevision": "bf898aadce7c86176b27daf88129e3291d7832d8",
+  "methodology": "Four fixed, independently authored JSON fixtures: two sanitized incident behavior reconstructions and two synthetic benign controls. Both baselines contain the same install hook. The compact, one-line package.json samples currently put unchanged hook findings on the release delta when the version field changes. Production npm deterministic rules, diff attribution, and risk scoring run statically with AI off. A malicious case is caught only with release risk at least high and all required credential/process rule IDs attributed to the release delta; a benign false positive means release risk at least medium. The denominator includes every declared case, including misses. Corpus SHA-256 hashes the ordered JSON array of {path, sha256} entries for the manifest followed by fixtures, using each file's exact bytes.",
+  "limitations": [
+    "These are hand-authored behavior reconstructions, not the original compromised tarballs or verified historical baselines. Sanitization and simplification change the detectable features.",
+    "Two malicious models and two synthetic controls cannot estimate campaign-wide recall or real-world false-positive rates. This is an authored regression benchmark, not an independent blind evaluation or a comparison with other scanners.",
+    "The Shai-Hulud model covers credential harvesting only. It omits worm propagation and workflow injection. The Nx model omits the upstream workflow exploit, actual AI CLI behavior, repository creation, and shell shutdown modification.",
+    "This bypasses artifact downloading, archive parsing, and production file limits. It evaluates static review and release-risk attribution only; it does not replay an actual publish gate or establish historical prevention.",
+    "AI review is disabled for reproducibility. High release risk is a signal for review, not proof that every deployment configuration would block the incident.",
+    "Both benign controls currently reach high release risk: the unchanged hook shares a package.json line with the changed version field and is attributed to the release delta. This is counted as a false positive by the stated metric, not as a malicious-package verdict."
+  ],
+  "sources": [
+    {
+      "id": "shai-hulud-socket",
+      "title": "Socket: tinycolor compromise and Shai-Hulud analysis",
+      "url": "https://socket.dev/blog/tinycolor-supply-chain-attack-affects-40-packages",
+      "publishedOn": "2025-09-15"
+    },
+    {
+      "id": "shai-hulud-stepsecurity",
+      "title": "StepSecurity: ctrl/tinycolor compromise analysis",
+      "url": "https://www.stepsecurity.io/blog/ctrl-tinycolor-and-40-npm-packages-compromised",
+      "publishedOn": "2025-09-15"
+    },
+    {
+      "id": "nx-advisory",
+      "title": "Nx maintainer advisory: GHSA-cxm3-wv7p-598c",
+      "url": "https://github.com/nrwl/nx/security/advisories/GHSA-cxm3-wv7p-598c",
+      "publishedOn": "2025-08-27"
+    },
+    {
+      "id": "nx-postmortem",
+      "title": "Nx: s1ngularity postmortem",
+      "url": "https://nx.dev/blog/s1ngularity-postmortem",
+      "publishedOn": "2025-09-05"
+    },
+    {
+      "id": "nx-stepsecurity",
+      "title": "StepSecurity: Nx payload analysis",
+      "url": "https://www.stepsecurity.io/blog/supply-chain-security-alert-popular-nx-build-system-package-compromised-with-data-stealing-malware",
+      "publishedOn": "2025-08-27"
+    }
+  ],
+  "fixtures": [
+    "shai-hulud-harvest.json",
+    "nx-s1ngularity-harvest.json",
+    "shai-hulud-benign-setup.json",
+    "nx-benign-build-helper.json"
+  ]
+}

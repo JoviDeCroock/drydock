@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "shai-hulud-nx",
+  "suiteVersion": "1.0.0",
+  "evaluatedOn": "2026-10-11",
+  "engineRevision": "bf898aadce7c86176b27daf88129e3291d7832d8",
+  "methodology": "Four fixed, independently authored JSON fixtures: two sanitized incident behavior reconstructions and two synthetic benign controls. Both baselines contain the same install hook. The compact, one-line package.json samples currently put unchanged hook findings on the release delta when the version field changes. Production npm deterministic rules, diff attribution, and risk scoring run statically with AI off. A malicious case is caught only with release risk at least high and all required credential/process rule IDs attributed to the release delta; a benign false positive means release risk at least medium. The denominator includes every declared case, including misses. Corpus SHA-256 hashes the ordered JSON array of {path, sha256} entries for the manifest followed by fixtures, using each file's exact bytes.",
+  "limitations": [
+    "These are hand-authored behavior reconstructions, not the original compromised tarballs or verified historical baselines. Sanitization and simplification change the detectable features.",
+    "Two malicious models and two synthetic controls cannot estimate campaign-wide recall or real-world false-positive rates. This is an authored regression benchmark, not an independent blind evaluation or a comparison with other scanners.",
+    "The Shai-Hulud model covers credential harvesting only. It omits worm propagation and workflow injection. The Nx model omits the upstream workflow exploit, actual AI CLI behavior, repository creation, and shell shutdown modification.",
+    "This bypasses artifact downloading, archive parsing, and production file limits. It evaluates static review and release-risk attribution only; it does not replay an actual publish gate or establish historical prevention.",
+    "AI review is disabled for reproducibility. High release risk is a signal for review, not proof that every deployment configuration would block the incident.",
+    "Both benign controls currently reach high release risk: the unchanged hook shares a package.json line with the changed version field and is attributed to the release delta. This is counted as a false positive by the stated metric, not as a malicious-package verdict."
+  ],
+  "sources": [
+    {
+      "id": "shai-hulud-socket",
+      "title": "Socket: tinycolor compromise and Shai-Hulud analysis",
+      "url": "https://socket.dev/blog/tinycolor-supply-chain-attack-affects-40-packages",
+      "publishedOn": "2025-09-15"
+    },
+    {
+      "id": "shai-hulud-stepsecurity",
+      "title": "StepSecurity: ctrl/tinycolor compromise analysis",
+      "url": "https://www.stepsecurity.io/blog/ctrl-tinycolor-and-40-npm-packages-compromised",
+      "publishedOn": "2025-09-15"
+    },
+    {
+      "id": "nx-advisory",
+      "title": "Nx maintainer advisory: GHSA-cxm3-wv7p-598c",
+      "url": "https://github.com/nrwl/nx/security/advisories/GHSA-cxm3-wv7p-598c",
+      "publishedOn": "2025-08-27"
+    },
+    {
+      "id": "nx-postmortem",
+      "title": "Nx: s1ngularity postmortem",
+      "url": "https://nx.dev/blog/s1ngularity-postmortem",
+      "publishedOn": "2025-09-05"
+    },
+    {
+      "id": "nx-stepsecurity",
+      "title": "StepSecurity: Nx payload analysis",
+      "url": "https://www.stepsecurity.io/blog/supply-chain-security-alert-popular-nx-build-system-package-compromised-with-data-stealing-malware",
+      "publishedOn": "2025-08-27"
+    }
+  ],
+  "rulesVersion": "1.47.0",
+  "corpusSha256": "e795b02eba82e558561b8d33c724fcbe7404313743bee1accf1ed48c229fbdd1",
+  "summary": {
+    "malicious": {
+      "total": 2,
+      "caught": 2,
+      "missed": 0
+    },
+    "benign": {
+      "total": 2,
+      "falsePositives": 2
+    }
+  },
+  "cases": [
+    {
+      "id": "shai-hulud-harvest",
+      "title": "Shai-Hulud: install-time credential harvesting",
+      "incident": "shai-hulud",
+      "verdict": "malicious",
+      "fixturePath": "test/fixtures/incident-benchmark/v1/shai-hulud-harvest.json",
+      "fixtureSha256": "1eee820e19210269aa1262af455fbba8abfa4e4afeb86bdffb023b2b9f4fccdf",
+      "provenance": "Independently authored from Socket (2025-09-15) and StepSecurity (2025-09-15), not original package bytes. Models environment token collection, scanner invocation, and exfiltration. Scanner replaced by echo and egress by example.invalid; no token values. Baseline and versions are synthetic; the install hook exists in both versions so the comparison tests edits to existing install code. Omits worm replication, workflows, full bundle, and archive parsing.",
+      "expectedMinRisk": "high",
+      "requiredRuleIds": ["code.credential-access", "code.process-execution"],
+      "artifactRisk": "high",
+      "releaseRisk": "high",
+      "caught": true,
+      "falsePositive": null,
+      "findings": [
+        {
+          "ruleId": "code.credential-access",
+          "severity": "high",
+          "filePath": "bundle.js",
+          "releaseDelta": true,
+          "message": "package reads credentials and has a network egress path in the same file: the collect-and-exfiltrate shape used to steal install-time and cloud secrets"
+        },
+        {
+          "ruleId": "code.network-access",
+          "severity": "medium",
+          "filePath": "bundle.js",
+          "releaseDelta": true,
+          "message": "unexpected network access in package code can be used for exfiltration or staged payload retrieval"
+        },
+        {
+          "ruleId": "code.process-execution",
+          "severity": "high",
+          "filePath": "bundle.js",
+          "releaseDelta": true,
+          "message": "package may execute arbitrary commands"
+        },
+        {
+          "ruleId": "install-script.lifecycle",
+          "severity": "high",
+          "filePath": "package.json",
+          "releaseDelta": true,
+          "message": "consumer install lifecycle hooks execute on consumer machines"
+        }
+      ]
+    },
+    {
+      "id": "nx-s1ngularity-harvest",
+      "title": "Nx / s1ngularity: install-time credential collection and CLI upload",
+      "incident": "nx",
+      "verdict": "malicious",
+      "fixturePath": "test/fixtures/incident-benchmark/v1/nx-s1ngularity-harvest.json",
+      "fixtureSha256": "fe0725966e3c2839afa2a576fb7e795caf49fd4da865cc923b4b8fb2cecbd3cd",
+      "provenance": "Independently authored from Nx postmortem (2025-09-05) and StepSecurity payload analysis (2025-08-27), not nx@21.5.0 bytes. Models environment/.npmrc credential reads, subprocess use, base64 serialization, and GitHub CLI upload. Local AI CLI is replaced by echo; credential path is nonexistent /defanged/.npmrc; GitHub hostname is example.invalid. No secrets or shutdown behavior. Baseline and versions are synthetic; the install hook exists in both versions so the comparison tests edits to existing install code. Omits workflow exploit, genuine AI prompt/permission bypass, repository creation, shutdown, and archive parsing.",
+      "expectedMinRisk": "high",
+      "requiredRuleIds": ["code.credential-access", "code.process-execution"],
+      "artifactRisk": "high",
+      "releaseRisk": "high",
+      "caught": true,
+      "falsePositive": null,
+      "findings": [
+        {
+          "ruleId": "code.credential-access",
+          "severity": "medium",
+          "filePath": "telemetry.js",
+          "releaseDelta": true,
+          "message": "package may read credentials from the install environment"
+        },
+        {
+          "ruleId": "code.process-execution",
+          "severity": "high",
+          "filePath": "telemetry.js",
+          "releaseDelta": true,
+          "message": "package may execute arbitrary commands"
+        },
+        {
+          "ruleId": "install-script.lifecycle",
+          "severity": "high",
+          "filePath": "package.json",
+          "releaseDelta": true,
+          "message": "consumer install lifecycle hooks execute on consumer machines"
+        }
+      ]
+    },
+    {
+      "id": "shai-hulud-benign-setup",
+      "title": "Control: ordinary setup message changes",
+      "incident": "shai-hulud",
+      "verdict": "benign",
+      "fixturePath": "test/fixtures/incident-benchmark/v1/shai-hulud-benign-setup.json",
+      "fixtureSha256": "8995b07501035ab7b05e8f2b90fe62f43dc251ff37202f57c05587c8dcbba63b",
+      "provenance": "Synthetic benign matched control with the same manifest, lifecycle hook, script path, and version bump as the Shai-Hulud reconstruction. Only the setup message changes; no secret collection or exfiltration.",
+      "expectedMinRisk": "low",
+      "requiredRuleIds": [],
+      "artifactRisk": "high",
+      "releaseRisk": "high",
+      "caught": null,
+      "falsePositive": true,
+      "findings": [
+        {
+          "ruleId": "install-script.lifecycle",
+          "severity": "high",
+          "filePath": "package.json",
+          "releaseDelta": true,
+          "message": "consumer install lifecycle hooks execute on consumer machines"
+        }
+      ]
+    },
+    {
+      "id": "nx-benign-build-helper",
+      "title": "Control: build helper adds a version check",
+      "incident": "nx",
+      "verdict": "benign",
+      "fixturePath": "test/fixtures/incident-benchmark/v1/nx-benign-build-helper.json",
+      "fixtureSha256": "7ab28dd7a335fcdecd5999804b0ff4d4fc642e5d0081c72593418cf932d35a4b",
+      "provenance": "Synthetic benign matched control with the same manifest, lifecycle hook, script path, and version bump as the Nx reconstruction. Legitimate subprocess use and NODE_ENV access without credentials or exfiltration. This is not a sampled authentic clean Nx release.",
+      "expectedMinRisk": "low",
+      "requiredRuleIds": [],
+      "artifactRisk": "high",
+      "releaseRisk": "high",
+      "caught": null,
+      "falsePositive": true,
+      "findings": [
+        {
+          "ruleId": "code.process-execution",
+          "severity": "high",
+          "filePath": "telemetry.js",
+          "releaseDelta": true,
+          "message": "package may execute arbitrary commands"
+        },
+        {
+          "ruleId": "install-script.lifecycle",
+          "severity": "high",
+          "filePath": "package.json",
+          "releaseDelta": true,
+          "message": "consumer install lifecycle hooks execute on consumer machines"
+        }
+      ]
+    }
+  ]
+}
