@@ -48,6 +48,7 @@ Optional fields:
 - `previousFiles` — previous-version `FileRecord[]`; defaults to empty.
 - `previousPackageJson` / `stagedPackageJson` — summaries for package-json diff assertions and deterministic manifest review.
 - `expectedPackageJsonDiff` — assertions for diff-only signals.
+- `expectedReleaseRisk` / `expectedReleaseFindings` — optional exact release-attribution assertions after diff annotation; artifact risk/findings remain asserted separately.
 - `coverageGaps` — signals represented in the fixture but not yet promoted to deterministic findings.
 
 The test intentionally compares exact rule IDs, severities, files, and risk. If a rule change is intentional, update the fixture expectation in the same PR and explain why.
@@ -177,7 +178,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.47.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.48.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -715,6 +716,32 @@ releases of one name read as mixed history and silenced real drift. The ecosyste
 pipeline's adapter; completed rows whose summary names no ecosystem no longer count. Content rules,
 corpus cases and eval results are unchanged; `test/workers/release-fingerprint.test.ts` pins the
 cross-ecosystem cases.
+
+`1.48.0` attributes explicit npm install lifecycle hooks by their effective parsed
+commands, rather than changed display lines. A version bump or JSON reformat no
+longer puts an unchanged hook on the release delta; added/changed commands still
+carry their existing high/critical severity. Hook identity is recovered from
+rule evidence so `install` and `postinstall` remain independent even though they
+share a rule ID, and final duplicate JSON keys control the effective command.
+Unreadable, malformed, structurally invalid, or redacted command comparisons
+remain conservative. Persisted annotations and explicitly skipped comparisons
+keep their existing precedence.
+
+An unchanged hook can still activate new behavior: code and propagation findings
+in files newly reached by its static import graph are release-scoped even when
+those file bytes are unchanged. The existing install-reachability resolver is
+used for both versions; no package code is executed. Dynamic imports with
+computed specifiers remain outside that resolver's static coverage. Artifact
+findings, severities, risk roles, and standing-danger policy are unchanged.
+
+`test/lifecycle-release-attribution.test.ts` covers compact/pretty/escaped and
+duplicate JSON, per-hook changes, uncertain baselines, redaction, persisted/skipped
+comparisons, newly activated dormant payloads, and legitimate build/setup changes.
+The `existing-hook-*` npm corpus fixtures pin exact artifact findings and risk
+alongside exact release findings and risk. These assertions separate persistent
+artifact capabilities from new release behavior; the aggregate eval's existing
+artifact-risk metrics retain their meanings. The public incident benchmark uses
+the identical attack/control fixture bytes before and after this change.
 
 ### Fixture format
 
