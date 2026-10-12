@@ -232,6 +232,44 @@ describe("canonical domain routing", () => {
     expect(diffAssetRequests).toEqual(["/diff/"]);
   });
 
+  test.each([
+    ["/diff/react", "react", "npm package"],
+    ["/diff/@preact/signals", "@preact/signals", "npm package"],
+    ["/diff/pypi/requests", "requests", "PyPI project"],
+  ])("serves self-canonical package metadata before JavaScript on %s", async (path, name, kind) => {
+    diffAssetRequests.length = 0;
+    let cacheReads = 0;
+    const requestEnv = {
+      ...diffAssetEnv,
+      COMPARE_CACHE: {
+        get: async () => {
+          cacheReads++;
+          return null;
+        },
+      } as unknown as KVNamespace,
+    } satisfies Cloudflare.Env;
+    const res = await fetchWorker(`https://drydock.org${path}?utm_source=search`, requestEnv);
+    const html = await res.text();
+    const title = `${name} release diffs | Drydock`;
+    const description = `Compare published versions of the ${kind} ${name} file by file and inspect supply-chain findings in the diff. No account required.`;
+
+    expect(res.status).toBe(200);
+    expect(diffAssetRequests).toEqual(["/diff/"]);
+    expect(html).toContain(`<title>${title}</title>`);
+    expect(html).toContain(`name="description" content="${description}"`);
+    expect(html).toContain(`property="og:title" content="${title}"`);
+    expect(html).toContain(`property="og:description" content="${description}"`);
+    expect(html).toContain(`property="og:url" content="https://drydock.org${path}"`);
+    expect(html).toContain(`name="twitter:title" content="${title}"`);
+    expect(html).toContain(`name="twitter:description" content="${description}"`);
+    expect(html).toContain(`rel="canonical" href="https://drydock.org${path}"`);
+    expect(html).toContain('property="og:image" content="https://drydock.org/og-image.png"');
+    expect(html).toContain('property="og:image:height" content="800"');
+    expect(html).toContain('name="twitter:image" content="https://drydock.org/og-image.png"');
+    expect(html).toContain('<div id="app">diff shell</div>');
+    expect(cacheReads).toBe(0);
+  });
+
   test("keeps server-owned misses as JSON 404s", async () => {
     const res = await fetchWorker("https://drydock.org/webhooks/not-found", assetEnv);
 

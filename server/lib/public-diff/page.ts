@@ -5,6 +5,7 @@ import { readPublicDiffDisplayName } from "./display-metadata";
 import {
   OG_CARD_IMAGE_HEIGHT,
   OG_CARD_IMAGE_WIDTH,
+  packageDiffIndexSeo,
   packageDiffOgImageAlt,
   packageDiffOgImageUrl,
   packageDiffSeo,
@@ -24,37 +25,51 @@ export async function rewritePackageDiffMetadata(
   env: Cloudflare.Env,
 ): Promise<Response> {
   const spec = parseDiffSpec(pathname);
-  if (!spec || !response.headers.get("content-type")?.includes("text/html")) return response;
+  const index = spec ? null : parseDiffPackage(pathname);
+  if (!response.headers.get("content-type")?.includes("text/html")) {
+    return response;
+  }
 
-  const displayName = await readCachedDisplayName(env, spec);
+  const displayName = spec ? await readCachedDisplayName(env, spec) : undefined;
 
-  const metadata = packageDiffSeo(
-    spec.packageName,
-    spec.fromVersion,
-    spec.toVersion,
-    spec.ecosystem,
-    displayName,
-  );
+  const metadata = spec
+    ? packageDiffSeo(
+        spec.packageName,
+        spec.fromVersion,
+        spec.toVersion,
+        spec.ecosystem,
+        displayName,
+      )
+    : index
+      ? packageDiffIndexSeo(index.ecosystem, index.packageName)
+      : null;
+  if (!metadata) return response;
   const canonicalUrl = `${SITE_URL}${metadata.path}`;
-  const cardUrl = packageDiffOgImageUrl(
-    spec.packageName,
-    spec.fromVersion,
-    spec.toVersion,
-    spec.ecosystem,
-  );
-  const cardAlt = packageDiffOgImageAlt(
-    displayName ?? spec.packageName,
-    spec.fromVersion,
-    spec.toVersion,
-  );
 
-  return (
-    new HTMLRewriter()
-      .on("title", contentHandler(metadata.title))
-      .on('meta[name="description"]', attributeHandler("content", metadata.description))
-      .on('meta[property="og:title"]', attributeHandler("content", metadata.title))
-      .on('meta[property="og:description"]', attributeHandler("content", metadata.description))
-      .on('meta[property="og:url"]', attributeHandler("content", canonicalUrl))
+  const rewriter = new HTMLRewriter()
+    .on("title", contentHandler(metadata.title))
+    .on('meta[name="description"]', attributeHandler("content", metadata.description))
+    .on('meta[property="og:title"]', attributeHandler("content", metadata.title))
+    .on('meta[property="og:description"]', attributeHandler("content", metadata.description))
+    .on('meta[property="og:url"]', attributeHandler("content", canonicalUrl))
+    .on('meta[name="twitter:title"]', attributeHandler("content", metadata.title))
+    .on('meta[name="twitter:description"]', attributeHandler("content", metadata.description))
+    .on('link[rel="canonical"]', attributeHandler("href", canonicalUrl));
+
+  if (spec) {
+    const cardUrl = packageDiffOgImageUrl(
+      spec.packageName,
+      spec.fromVersion,
+      spec.toVersion,
+      spec.ecosystem,
+    );
+    const cardAlt = packageDiffOgImageAlt(
+      displayName ?? spec.packageName,
+      spec.fromVersion,
+      spec.toVersion,
+    );
+
+    rewriter
       // The prerendered shell carries the site-wide card; swap in the per-diff one
       // along with its dimensions, or clients size the preview from stale values.
       .on('meta[property="og:image"]', attributeHandler("content", cardUrl))
@@ -67,13 +82,11 @@ export async function rewritePackageDiffMetadata(
         'meta[property="og:image:height"]',
         attributeHandler("content", String(OG_CARD_IMAGE_HEIGHT)),
       )
-      .on('meta[name="twitter:title"]', attributeHandler("content", metadata.title))
-      .on('meta[name="twitter:description"]', attributeHandler("content", metadata.description))
       .on('meta[name="twitter:image"]', attributeHandler("content", cardUrl))
-      .on('meta[name="twitter:image:alt"]', attributeHandler("content", cardAlt))
-      .on('link[rel="canonical"]', attributeHandler("href", canonicalUrl))
-      .transform(response)
-  );
+      .on('meta[name="twitter:image:alt"]', attributeHandler("content", cardAlt));
+  }
+
+  return rewriter.transform(response);
 }
 
 async function readCachedDisplayName(
