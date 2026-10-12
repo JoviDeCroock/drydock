@@ -727,11 +727,18 @@ Unreadable, malformed, structurally invalid, or redacted command comparisons
 remain conservative. Persisted annotations and explicitly skipped comparisons
 keep their existing precedence.
 
-An unchanged hook can still activate new behavior: code and propagation findings
+An unchanged hook can still activate new behavior: code, propagation, and native-artifact findings
 in files newly reached by its static import graph are release-scoped even when
-those file bytes are unchanged. The existing install-reachability resolver is
-used for both versions; no package code is executed. Dynamic imports with
-computed specifiers remain outside that resolver's static coverage. Artifact
+those file bytes are unchanged. Dangerous descendants of modified install code
+also remain release-scoped after meaningful code-token changes (excluding
+harmless comments and spacing, while preserving potentially significant
+line-break changes): prior graph membership cannot prove a dormant
+function actually ran. Literal execution roots and lexer-filtered import edges
+avoid crediting output arguments or comment/string examples as prior execution.
+The broader staged graph still conservatively identifies changed install code. The existing install-reachability resolver is
+used for both versions, including literal imports assembled from string pieces
+through the same JavaScript normalizer as detection; no package code is executed.
+Imports requiring runtime values remain outside that resolver's static coverage. Artifact
 findings, severities, risk roles, and standing-danger policy are unchanged.
 
 `test/lifecycle-release-attribution.test.ts` covers compact/pretty/escaped and
