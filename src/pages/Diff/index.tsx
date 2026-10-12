@@ -45,6 +45,7 @@ import { supportsPublishedReview } from "../../lib/published-review-ecosystems";
 import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-ref";
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
+import { InstallProtection } from "../../features/aikido-partner/InstallProtection";
 import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { findingCountsByPath } from "../../features/review/diff-entries";
 import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
@@ -577,7 +578,11 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             </div>
           </section>
 
-          <AikidoPartnerStrip />
+          {(ecosystem === "npm" || ecosystem === "pypi") && !hasPreview ? (
+            <InstallProtection />
+          ) : (
+            <AikidoPartnerStrip />
+          )}
         </>
       ) : null}
     </PageShell>
