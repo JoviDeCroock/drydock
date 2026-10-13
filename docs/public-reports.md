@@ -633,11 +633,13 @@ own entry and resolves to "not reviewed", and the origin must be the _canonical_
 one on both the write and the purge, or a second bound hostname builds entries
 the purge never visits.
 
-Badge **misses** are deliberately not written to the colo cache. The "not
-reviewed" body is identical for every package, so a per-name entry buys nothing
-the downstream `max-age` doesn't already absorb, while every invented name would
-add an entry to the namespace that also holds published-tarball bytes. Cursored
-feed pages (`?after=`) are uncached too, since the key ignores the query.
+Badge **misses** (including switched-off badges) are cached under the same
+package-and-tag key for 300s. Repeated "not reviewed" requests therefore avoid
+the candidate and opt-out database queries, even when a client does not cache
+the response. Listing a review or turning a badge back on purges that entry in
+the local colo; other regions can keep the negative answer until the TTL
+expires. Invalid requests and throttled `unavailable` responses are not cached.
+Cursored feed pages (`?after=`) are uncached too, since the key ignores the query.
 
 Revoking a share, unlisting a report, or recording a release decision on a
 listed scan purges both entries — a publish → no_publish flip must not leave a
