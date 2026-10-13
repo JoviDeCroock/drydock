@@ -5,6 +5,13 @@
 import { emitOperationalEvent } from "./platform/observability";
 
 export type AnalyticsEvent =
+  | {
+      name: "acquisition.milestone";
+      experiment: string;
+      variant: string;
+      channel: string;
+      milestone: string;
+    }
   | { name: "publication.discrepancy"; organizationId: string; ecosystem: string; status: string }
   | {
       name: "scan.queued";
@@ -171,6 +178,7 @@ export type AnalyticsEvent =
     };
 
 export const ANALYTICS_EVENT_NAMES = [
+  "acquisition.milestone",
   "publication.discrepancy",
   "scan.queued",
   "scan.completed",
@@ -234,6 +242,8 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
   });
 
   switch (event.name) {
+    case "acquisition.milestone":
+      return base("", "", [event.experiment, event.variant, event.channel, event.milestone], [0]);
     case "publication.discrepancy":
       return base(event.organizationId, event.ecosystem, [event.status], [0]);
     case "scan.queued":

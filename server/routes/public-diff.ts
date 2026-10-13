@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { guardRateLimit } from "../lib/rate-limit";
+import { recordAcquiredDiffRead } from "../lib/acquisition";
 import { escapeHtmlText } from "../lib/platform/html-escape";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
@@ -340,6 +341,7 @@ publicDiffRoutes.get("/", async (c) => {
   const loaded = await loadRequestedDiff(c, { countView: true });
   if ("error" in loaded) return loaded.error;
   const { payload } = loaded;
+  const attributed = await recordAcquiredDiffRead(c);
 
   return c.json(
     {
@@ -361,7 +363,10 @@ publicDiffRoutes.get("/", async (c) => {
       cachedAt: payload.cachedAt,
     },
     200,
-    analyzedPairHeaders(payload.ecosystem, payload.packageName),
+    {
+      ...analyzedPairHeaders(payload.ecosystem, payload.packageName),
+      ...(attributed ? { "cache-control": "private, no-store" } : {}),
+    },
   );
 });
 

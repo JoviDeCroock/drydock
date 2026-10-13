@@ -109,6 +109,13 @@ describe("recordProductEvent", () => {
     const { points, env } = fakeDataset();
     const events = [
       {
+        name: "acquisition.milestone",
+        experiment: "landing-package-diff-v1",
+        variant: "challenger",
+        channel: "github",
+        milestone: "signed_up",
+      },
+      {
         name: "publication.discrepancy",
         organizationId: "org",
         ecosystem: "npm",

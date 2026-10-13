@@ -5,10 +5,11 @@ scans run, how long they take, how often they fail, whether the AI reviewer is
 healthy, whether maintainers agree with the risk grade, and how many package
 diffs get read.
 
-Scope is deliberately narrow: it counts work done across the review funnel and
-successful public diff reads. Marketing page views and channel attribution were
-removed — they measured traffic rather than work done, and every event they
-produced sat in the hot path of serving a static document.
+Scope counts work done across the review funnel and successful public diff reads.
+Optional, flag-controlled homepage experiments also count coarse acquisition
+milestones. General page views, campaign parameters, and full referral URLs are
+not collected. See [homepage experiments](#homepage-experiments) for the counting
+unit, attribution window, and limitations.
 
 Implementation: `server/lib/analytics.ts`. Binding: `PRODUCT_ANALYTICS`
 (Cloudflare Analytics Engine, dataset `drydock_product_events`).
@@ -41,12 +42,15 @@ Matching [`security-model.md`](./security-model.md):
 - **Public-diff analysis events record only the package name**, which is already
   public in the request URL, the response cache key, and the page's own Open
   Graph metadata.
-- **No traffic data.** Referrers, campaign parameters, and page views of the
-  landing and docs surfaces are not classified, counted, or stored anywhere.
-- **Nothing is written from the browser.** No client script, no beacon
-  endpoint, no cookie — and therefore no new anonymous surface to rate-limit or
-  document. Every event is emitted by the Worker while it is already handling
-  the request that caused it.
+- **Only coarse acquisition categories.** An enabled homepage experiment
+  classifies a referral as direct, search, GitHub, or other. Full referral URLs,
+  campaign parameters, IPs, user agents, and unique visitor identifiers never
+  enter analytics. Every new acquisition event has a blank organization field.
+- **Server milestones.** The Worker emits events for assignment, a successful
+  diff response, account creation, and first persisted workspace review. A SPA
+  homepage visit requests its variant from one rate-limited endpoint; it sends
+  only a broad source category derived from the original document referral.
+  There is no general-purpose browser beacon or third-party tracking script.
 
 `test/analytics.test.mjs` asserts the no-PII property against every event in the
 union, and fails if an arm is added without being exercised — so a new event
@@ -85,12 +89,10 @@ request volume on an anonymous surface. Serving the image from our own origin
 shields hop and one cache layer, and give control of the image, but Camo would
 still sit in front of every GitHub reader.
 
-**No client instrumentation.** In-page interactions are invisible. `/diff`
-view-through is counted; a click on its "Create account" call-to-action is not.
-So the diff → signup conversion **rate** cannot be computed from this data —
-only its numerator (signups) and a view count. Closing that needs a client
-beacon and the public-endpoint review the security model requires for one. Do
-not add one casually.
+**Clicks remain invisible.** Homepage experiment outcomes measure successful
+server milestones, not button clicks. Outside an assigned homepage cohort,
+public diff reads and signups remain unattributed aggregate counts. The
+experiment does not establish a general diff → signup conversion rate.
 
 **`ai_review.finished` counts attempted reviews, not scans.** A scan whose
 organization has the `ai-review` killswitch off — or any deployment without a
@@ -273,3 +275,73 @@ block in `docs/examples/wrangler.self-host.jsonc` behave exactly as they did bef
 payload is organization, ecosystem, discrepancy status, and zero duration; it contains
 no package name, tarball content, or credentials. Rechecks and acknowledgments do not
 increment it.
+
+## Homepage experiments
+
+`landing-hero-experiment` is a global Flagship switch, default **false**. It
+requires `FLAGS`, `BETTER_AUTH_SECRET`, and `PRODUCT_ANALYTICS`; without any of
+these, the control homepage remains available and no cohort is created. Enable
+it only after deploying the generated `user_acquisition` migration. Signed-in
+requests, recognized crawlers, prefetches, and HEAD requests are not enrolled.
+Disabling the flag stops new assignments and cookie-based diff/signup tracking;
+previously attributed accounts can still complete their bounded activation window.
+
+Experiment `landing-package-diff-v1` assigns control/challenger 50/50. A signed,
+HttpOnly, SameSite=Lax first-party `drydock_landing` cookie holds only experiment,
+variant, coarse channel, UTC expiry day, and a diff-delivered bit. It has no
+unique browser ID and expires within 30 days of assignment; milestone updates
+never extend that deadline. The production homepage rewrites the marked hero
+and search/share metadata before hydration, and carries the variant on `#app`.
+A client-side visit uses `GET /api/public/v1/landing-experiment` instead (30
+requests/minute/IP, cross-site fetches refused, private/no-store responses).
+
+`acquisition.milestone` uses these fixed columns, leaving `blob3` (organization)
+and `blob4` (ecosystem) blank: `blob5` experiment, `blob6` variant, `blob7` channel,
+`blob8` milestone. The milestones are:
+
+- `assigned`: a cohort cookie was issued for a homepage request or SPA assignment.
+  This is an opportunity to see the hero, **not a visible impression**.
+- `diff_read`: that cookie's first successful version-pair JSON response. Errors,
+  version lists, individual files, and later pair reads do not increment it.
+  Cookie-bearing pair responses become private/no-store; the shared artifact
+  cache remains independent of visitor state.
+- `signed_up`: an account was created through Better Auth's shared create-user
+  hook, covering email and GitHub. Existing accounts signing in are not counted.
+- `first_review`: the first persisted completed review in a workspace owned by
+  that newly acquired account, within the original cookie's expiry window. It
+  may be submitted by another organization member. Queue and gate completions
+  share the same hook. A conditional D1 update deduplicates concurrent reviews
+  and retries; failed or nonpersisted reviews cannot activate the cohort.
+
+`user_acquisition` stores only these coarse cohort fields, expiry, and the first
+review timestamp against the existing account ID. This carries signup attribution
+through email/OAuth and later queue jobs without writing user IDs to analytics.
+The row is deleted with the account by its cascading foreign key. It never
+changes organization ownership, scan risk, or approval authority.
+
+Channels are deliberately coarse. Known google.com, bing.com, duckduckgo.com,
+and search.brave.com referrals are `search`; github.com is `github`; missing or
+same-origin referrals are `direct`; other external hosts are `other`. Raw URL
+queries and paths are discarded. This does not distinguish Renovate,
+Dependabot, agents, and human GitHub reviewers.
+
+Read the milestones with a common experiment/date window:
+
+```sql
+SELECT blob6 AS variant, blob7 AS channel, blob8 AS milestone,
+       SUM(_sample_interval) AS n
+FROM drydock_product_events
+WHERE blob2 = 'acquisition.milestone'
+  AND blob5 = 'landing-package-diff-v1'
+  AND timestamp >= '2026-10-13 00:00:00'
+GROUP BY variant, channel, milestone;
+```
+
+Compare diff-delivered, signup, and activation counts per assignment, alongside
+raw counts and channel mix. Wait for the same conversion window in both arms.
+These are **cookie cohorts, not unique people**: cleared/blocked cookies,
+cross-device use, shared browsers, and simultaneous tabs affect counts. Anonymous
+milestones deduplicate approximately through the cookie; account signup and
+workspace activation deduplicate in D1. Events lost to an unavailable analytics
+sink are not retried. Do not present a short-term fluctuation as a proven winner
+or a precise person-level conversion rate.

@@ -8,6 +8,8 @@ import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../analytics";
+import type { Acquisition } from "../acquisition";
+import { recordSignupAcquisition } from "../../db/acquisition";
 import { enforceRateLimit, RateLimitError } from "../rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { passwordResetPagePath, passwordResetPageReturnTo } from "../../../src/lib/auth-return";
@@ -475,6 +477,7 @@ export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
 }
 
 export interface CreateAuthOptions {
+  acquisition?: Acquisition | null;
   /**
    * The request's `waitUntil`. Reset mail is handed to it so the response does
    * not wait on delivery, which only a registered address triggers; without
@@ -681,6 +684,8 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
       user: {
         create: {
           after: async (createdUser) => {
+            if (options.acquisition)
+              await recordSignupAcquisition(db, env, createdUser.id, options.acquisition);
             const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
               name: "user.signed_up",

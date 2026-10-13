@@ -36,6 +36,9 @@ const REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
   { method: "use", path: "*" },
   { method: "route", path: "/webhooks" },
   { method: "route", path: "/api/public/v1/package-diff" },
+  // Copy assignment only: no organization access or arbitrary event ingestion;
+  // flag-controlled and rate-limited, with signed non-authoritative cohorts.
+  { method: "route", path: "/api/public/v1/landing-experiment" },
   { method: "route", path: "/og" },
   { method: "route", path: "/public" },
   { method: "use", path: "/api/*" },

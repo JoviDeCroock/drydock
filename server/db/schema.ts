@@ -30,6 +30,17 @@ export const user = sqliteTable("user", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const userAcquisition = sqliteTable("user_acquisition", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  experiment: text("experiment").$type<"landing-package-diff-v1">().notNull(),
+  variant: text("variant").$type<"control" | "challenger">().notNull(),
+  channel: text("channel").$type<"direct" | "search" | "github" | "other">().notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  firstReviewAt: integer("first_review_at", { mode: "timestamp_ms" }),
+});
+
 export const organizations = sqliteTable(
   "organizations",
   {

@@ -238,3 +238,23 @@ Every response goes through the Worker (`run_worker_first`), and `server/middlew
 - Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.
 
 Personal package reservations can move once into a shared organization through the authenticated package-management route. The mutation rechecks the caller's actual personal ownership and current destination owner/admin membership, and atomically records the claim, enrollment, and audit outcome. It transfers no scans, reports, observations, or credentials. Shared claims and ownerless reservations have no self-service transfer path. See `package-claims.md`. A claim governs badges, enrollment, and management only: it never deactivates another organization's public-release monitoring unless that organization holds competing staged reviews of the package, so a first claimant cannot silence other watchers ahead of a publish. Pre-claim history with no recorded registry, and the ownerless `*` reservation left when its last scan is deleted, block only public npm claims, so a registry an organization runs cannot probe for other organizations' reviewed names. Pre-claim history blocks only unrelated organizations: the organization that made it, or a shared organization with its own history whose member made it in a personal workspace, claims the package with its next npm-verified staged scan, which is the same evidence a first claim of a new package needs.
+
+## Anonymous homepage experiment assignment
+
+`GET /api/public/v1/landing-experiment` is an anonymous exception to the session
+rule. It returns only a control/challenger homepage copy variant, touches no
+organization resources, and never accepts an arbitrary event, package evidence,
+or visitor identifier. The native/D1 limiter allows 30 requests/minute/IP;
+cross-site fetches are refused and responses are private/no-store. The global
+Flagship `landing-hero-experiment` switch defaults off.
+
+An enabled homepage experiment signs a small, fixed-schema cohort cookie with a
+domain-separated key derived from the auth secret. The cookie is HttpOnly,
+SameSite=Lax, Secure on HTTPS, has no unique browser ID, and expires within 30
+days. Invalid signatures, unknown variants/channels, oversized values, and
+expired cohorts are ignored. No cookie can confer account, organization,
+registry, or release authority. Cookie-bearing public pair responses are never
+shared-cacheable. Full referral URLs and arbitrary query strings are not stored
+in the acquisition dataset. Account creation persists coarse attribution to
+support delayed workspace activation, with account-deletion cascade; details
+and measurement limits are in [product analytics](product-analytics.md#homepage-experiments).

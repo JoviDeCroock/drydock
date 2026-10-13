@@ -4,7 +4,7 @@ import { PageShell } from "../../components/PageShell";
 import { Prose, SectionLabel } from "../../components/Typography";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
-const EFFECTIVE_DATE = "2026-07-28";
+const EFFECTIVE_DATE = "2026-10-13";
 
 const PRIVACY_MAILTO =
   "mailto:privacy@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
@@ -64,7 +64,11 @@ export default function PrivacyPage() {
                 identifier attached, so we can see how many organizations are active without
                 identifying a person. The one exception is our public diff tool, which is anonymous
                 and records the public registry package being compared, with no account attached.
-                There is no third-party analytics service and no tracking script in the app.
+                Optional homepage experiments count a few additional milestones by copy variant and
+                a broad source category (direct, search, GitHub, or other). Analytics receives no
+                visitor identifier or full referral URL. If you register during an experiment, we
+                save that category and variant with your account so a later first workspace review
+                can be attributed after sign-in. There is no third-party analytics service.
               </>,
             ]}
           />
@@ -132,6 +136,13 @@ export default function PrivacyPage() {
           <Prose>
             We use first-party cookies that are strictly necessary to sign you in and keep your
             session. We do not use advertising cookies or third-party tracking cookies.
+          </Prose>
+          <Prose>
+            When a homepage experiment is enabled, an additional first-party cookie keeps your copy
+            variant consistent for up to 30 days. It stores a variant, a broad source category, an
+            expiry day, and whether a public diff was delivered; it contains no unique visitor
+            identifier. You can remove or block this cookie in your browser. The experiment does not
+            affect package findings or release decisions.
           </Prose>
         </Section>
 
