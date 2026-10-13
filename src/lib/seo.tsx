@@ -10,6 +10,7 @@ import {
 } from "./seo-metadata";
 
 export {
+  agentsPageSeo,
   discoveryGuideSeoByPath,
   DISCOVERY_GUIDE_PATHS,
   docsPageSeo,

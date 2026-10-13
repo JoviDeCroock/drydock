@@ -52,6 +52,11 @@ export const TOC: Array<{
       { id: "dependabot-diff-links", label: "Dependabot" },
     ],
   },
+  {
+    id: "agent-package-review",
+    label: "Coding agents",
+    children: [],
+  },
 ];
 
 export const TOC_IDS = TOC.flatMap((section) => [section.id, ...section.children.map((c) => c.id)]);

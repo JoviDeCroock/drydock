@@ -53,6 +53,7 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
   other `Typography` exports, `StatusStrip`;
 - controls: `Button`, `LinkButton`, `LoadMoreButton`, `CopyButton`, `CloseButton`, `Input`,
   `Field`, `Select`, `VersionPicker`/`VersionPairPicker`, `Menu`, `Dialog`, `ConfirmDialog`;
+- docs/code: `CodeBlock` (highlighting, copying, and folding shared by Docs and the agent guide);
 - feedback/status: `Badge`, `Alert`, `Toast`, `LoadingState`/`LoadingLine`/`IndeterminateBar`,
   `SeverityBar`;
 - data/review: `FileTree`, `DiffView`, `DiffOverview`, `FindingCard`, `PackageJsonDiffView`.
