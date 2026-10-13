@@ -5,6 +5,7 @@ const HYDRATED_PRERENDER_ROUTES = [
   "/login",
   "/register",
   "/docs",
+  "/agents",
   "/privacy",
   "/diff",
   "/reports",
@@ -24,6 +25,7 @@ export const ADDITIONAL_PRERENDER_ROUTES = [
   "/login",
   "/register",
   "/docs",
+  "/agents",
   "/privacy",
   "/diff",
   // Shell for /reports/:token. Without it the SPA fallback serves the

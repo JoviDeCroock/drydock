@@ -78,6 +78,23 @@ describe("canonical domain routing", () => {
     expect(await res.text()).toBe("asset:/docs/?from=search");
   });
 
+  test("serves the agent guide at its self-canonical no-slash URL", async () => {
+    const res = await fetchWorker("https://drydock.org/agents?from=docs", assetEnv);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset:/agents/?from=docs");
+  });
+
+  test("canonicalizes agent guide trailing slashes without rewriting the plain-text document", async () => {
+    const guide = await fetchWorker("https://drydock.org/agents/?from=bookmark");
+    expect(guide.status).toBe(308);
+    expect(guide.headers.get("Location")).toBe("https://drydock.org/agents?from=bookmark");
+
+    const instruction = await fetchWorker("https://drydock.org/agents/package-review.md", assetEnv);
+    expect(instruction.status).toBe(200);
+    expect(await instruction.text()).toBe("asset:/agents/package-review.md");
+  });
+
   test("permanently redirects non-canonical trailing-slash public routes", async () => {
     const res = await fetchWorker("https://drydock.org/diff/?package=preact");
 

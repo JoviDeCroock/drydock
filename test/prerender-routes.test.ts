@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { locationStub } from "preact-iso/prerender";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
@@ -6,6 +6,7 @@ import { packageDiffIndexPath } from "../src/lib/package-diff-path";
 import { ADDITIONAL_PRERENDER_ROUTES } from "../src/lib/prerender-routes";
 import { CURATED_DIFF_PACKAGES } from "../src/lib/public-content-routes";
 import {
+  agentsPageSeo,
   DISCOVERY_GUIDE_PATHS,
   discoveryGuideSeoByPath,
   docsPageSeo,
@@ -28,6 +29,8 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/register/")).toBe(true);
     expect(isPrerenderedRoute("/docs")).toBe(true);
     expect(isPrerenderedRoute("/docs/")).toBe(true);
+    expect(isPrerenderedRoute("/agents")).toBe(true);
+    expect(isPrerenderedRoute("/agents/")).toBe(true);
     expect(isPrerenderedRoute("/privacy")).toBe(true);
     expect(isPrerenderedRoute("/privacy/")).toBe(true);
     for (const path of [...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS]) {
@@ -111,6 +114,57 @@ describe("public route parity", () => {
     expect(unrouted).toEqual([]);
   });
 
+  it("makes the agent guide readable and linkable before JavaScript runs", async () => {
+    locationStub("/agents");
+    const result = await prerender({ url: "/agents" });
+    const head = "head" in result ? result.head : undefined;
+
+    expect(head?.title).toBe(agentsPageSeo.title);
+    expect(result.html).toContain("Review dependency upgrades with your coding agent.");
+    expect(result.html).toContain('href="/agents/package-review.md"');
+    expect(result.html).toContain('href="/diff/react/18.2.0/18.3.1"');
+    expect(result.html).toContain('href="/diff/pypi/requests/2.31.0/2.32.3"');
+    expect(result.html).toContain("textSamplesOmitted");
+    expect(result.html).not.toContain("Page not found");
+  });
+
+  it("connects the Docs jump list and instruction to the public agent guide", async () => {
+    locationStub("/docs");
+    const result = await prerender({ url: "/docs" });
+
+    expect(result.html).toContain('href="#agent-package-review"');
+    expect(result.html).toContain('id="agent-package-review"');
+    expect(result.html).toContain('href="/agents"');
+    expect(result.html).toContain("AGENTS.md · package review");
+  });
+
+  it("keeps the project instruction and its public download identical", () => {
+    const source = readFileSync(
+      new URL("../src/features/agent-quickstart/package-review.md", import.meta.url),
+      "utf8",
+    );
+    const download = readFileSync(
+      new URL("../public/agents/package-review.md", import.meta.url),
+      "utf8",
+    );
+
+    expect(download).toBe(source);
+  });
+
+  it("resolves every machine-readable discovery link to a public page or static document", () => {
+    const discovery = readFileSync(new URL("../public/llms.txt", import.meta.url), "utf8");
+    const paths = [...discovery.matchAll(/\]\(https:\/\/drydock\.org([^)]*)\)/g)].map(
+      ([, path]) => path,
+    );
+
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      expect(
+        isPrerenderedRoute(path) || existsSync(new URL("../public" + path, import.meta.url)),
+      ).toBe(true);
+    }
+  });
+
   it.each([...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS])(
     "prerenders %s under its own title",
     async (path) => {
@@ -149,6 +203,8 @@ describe("page SEO metadata", () => {
     expect(getPageSeoMetadata("/")).toBe(homePageSeo);
     expect(getPageSeoMetadata("/docs")).toBe(docsPageSeo);
     expect(getPageSeoMetadata("/docs/")).toBe(docsPageSeo);
+    expect(getPageSeoMetadata("/agents")).toBe(agentsPageSeo);
+    expect(getPageSeoMetadata("/agents/")).toBe(agentsPageSeo);
     expect(getPageSeoMetadata("/privacy")).toBe(privacyPageSeo);
     expect(getPageSeoMetadata("/privacy/")).toBe(privacyPageSeo);
     expect(getPageSeoMetadata("/diff")).toEqual(packageDiffSeo());

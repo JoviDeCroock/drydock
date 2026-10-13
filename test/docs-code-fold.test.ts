@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { FOLD_MIN_LINES, PEEK_LINES, codeFold } from "../src/pages/Docs/code-fold";
+import { FOLD_MIN_LINES, PEEK_LINES, codeFold } from "../src/components/code-fold";
 
 const lines = (count: number) =>
   Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n");

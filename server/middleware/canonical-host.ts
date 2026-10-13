@@ -11,6 +11,7 @@ const WWW_HOSTNAME = "www.drydock.org";
 const CANONICAL_STATIC_PATHS = new Set<string>([
   "/diff",
   "/docs",
+  "/agents",
   "/privacy",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,

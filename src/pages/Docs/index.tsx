@@ -4,15 +4,16 @@ import { Show } from "@preact/signals/utils";
 import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { CodeBlock } from "../../components/CodeBlock";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
+import { ProjectInstruction } from "../../features/agent-quickstart/ProjectInstruction";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import {
   Callout,
-  CodeBlock,
   JourneyCard,
   PathCard,
   Requirement,
@@ -840,6 +841,17 @@ jobs:
               Both integrations add markdown links to public-registry diffs. Reviewers contact
               Drydock when they open a link; rendering the PR does not send a request to Drydock.
             </Callout>
+          </section>
+
+          <section id="agent-package-review" class="flex flex-col gap-4 scroll-mt-6">
+            <SectionLabel as="p">Package review for coding agents</SectionLabel>
+            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+              Ask your agent to read the published upgrade.
+            </h2>
+            <ProjectInstruction />
+            <LinkButton href="/agents" variant="secondary" size="sm" class="self-start">
+              Read the agent quickstart
+            </LinkButton>
           </section>
 
           <section class="border-t border-border pt-10">

@@ -24,6 +24,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 ## UI, migrations, and tests
 
+- `src/pages/Agents/` owns the public coding-agent quickstart; `src/features/agent-quickstart/` shares its copyable project instruction with Docs. Static agent discovery lives in `public/llms.txt` and `public/agents/package-review.md`.
 - `src/index.tsx` mounts `preact-iso`; `src/models/` reuses server types. Shared page behavior belongs in `src/features/`, including shared review UI in `src/features/review/`.
 - `drizzle/` contains migrations generated from `server/db/schema.ts`.
 - `test/` contains Vitest logic/Worker suites and Playwright fake-registry fixtures.
