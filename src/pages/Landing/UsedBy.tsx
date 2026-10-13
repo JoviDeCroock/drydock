@@ -1,6 +1,6 @@
 import keyvLogo from "../../assets/keyv-logo.svg";
 import cacheableLogo from "../../assets/cacheable-logo.svg";
-import { MonoLabel } from "../../components/Typography";
+import { SectionLabel } from "../../components/Typography";
 
 const projects = [
   {
@@ -23,12 +23,9 @@ const projects = [
 
 export function UsedBy() {
   return (
-    <section
-      aria-label="Projects using Drydock"
-      class="flex flex-wrap items-center gap-x-8 gap-y-4"
-    >
-      <MonoLabel as="p">Used by</MonoLabel>
-      <ul class="list-none m-0 p-0 flex items-center gap-8 md:gap-12">
+    <section aria-label="Projects using Drydock" class="flex flex-col gap-4">
+      <SectionLabel as="p">Used by</SectionLabel>
+      <ul class="list-none m-0 p-0 self-center flex flex-wrap items-center justify-center gap-8 md:gap-12">
         {projects.map((project) => (
           <li key={project.name}>
             <a

@@ -57,6 +57,10 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <AikidoPartnerStrip />
+
+      <UsedBy />
+
       <ScanPreview />
 
       <section aria-label="Live incident diffs" class="flex flex-col gap-3">
@@ -72,10 +76,6 @@ export default function LandingPage() {
       </section>
 
       <DependencyPrIntegrations />
-
-      <AikidoPartnerStrip />
-
-      <UsedBy />
 
       <section aria-label="Why review the package" class="flex flex-col gap-4">
         <SectionLabel as="p">Why review the package</SectionLabel>

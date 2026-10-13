@@ -179,11 +179,11 @@ This pattern is used both on the dashboard (above the scan form) _and_ as the he
 
 ### Project logos (landing)
 
-A compact `Used by` row for Keyv and Cacheable sits directly below the `Sponsored by` Aikido section, kept separate from it. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
+Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv and Cacheable. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
 
 ### The interactive review preview (landing)
 
-The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero. The diff is the first product demonstration under the headline. Rules:
+The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero and the sponsor and `Used by` sections. The diff is the first product demonstration under the headline. Rules:
 
 - The release-tree rows for changed files are real `<button>`s (`aria-current` on the selected file) that swap the diff pane and its pinned finding. Interaction mirrors the workbench exactly; no behavior is invented for marketing.
 - Content stays truthful to the report model: findings use the same left-bar annotation as `DiffView` (soft fill at `~60%` opacity, saturated `border-l-2`), severity Badges carry counts in the tree, and one selectable file has **no** finding so the preview demonstrates signal-vs-noise instead of theater.
