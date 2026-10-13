@@ -73,9 +73,9 @@ export default function LandingPage() {
 
       <DependencyPrIntegrations />
 
-      <UsedBy />
-
       <AikidoPartnerStrip />
+
+      <UsedBy />
 
       <section aria-label="Why review the package" class="flex flex-col gap-4">
         <SectionLabel as="p">Why review the package</SectionLabel>

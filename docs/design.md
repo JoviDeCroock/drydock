@@ -179,16 +179,7 @@ This pattern is used both on the dashboard (above the scan form) _and_ as the he
 
 ### Project logos (landing)
 
-The landing shows a compact `Used by` row for Keyv and Cacheable directly above
-the `Sponsored by` Aikido section. Each official logo is bundled locally and links to its
-project website. Display the marks in monochrome, with an inverted treatment in
-dark mode, to preserve the marketing palette. Keep adoption separate from the
-`Sponsored by` Aikido section.
-
-Logo sources: [Keyv](https://github.com/jaredwray/keyv/blob/main/media/keyv-logos/black-white/svg/keyv-logo-horizontal-black.svg)
-and [Cacheable](https://github.com/jaredwray/cacheable/blob/main/packages/website/site/logo.svg).
-
-[Layout preview](./images/keyv-cacheable-logos.png).
+A compact `Used by` row for Keyv and Cacheable sits directly below the `Sponsored by` Aikido section, kept separate from it. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
 
 ### The interactive review preview (landing)
 
