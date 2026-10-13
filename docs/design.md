@@ -177,9 +177,23 @@ Three short Card panels in a row, each containing:
 
 This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
 
+### Dependency-PR block (landing)
+
+Directly below the hero, the landing uses the compact variant of
+`DependencyPrIntegrations`: a 24px heading, a short explanation, and secondary
+`Add to Renovate` / `Add to Dependabot` links to the existing docs anchors. Beside
+it, a document-shaped Card shows a labeled Renovate PR example with Package,
+Change, and Drydock columns. Its `Read the diff` link opens the existing public
+demo version pair. The closing note distinguishes Dependabot's PR comment from
+Renovate's table. The columns stack on mobile and the table scrolls locally when
+needed; text and table headers stay on the ink scale.
+
+This block replaces the landing's lower full integration section. `/diff` keeps
+the full integration cards with preset and workflow details.
+
 ### Project logos (landing)
 
-Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv and Cacheable. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
+After the dependency-PR block and before the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv and Cacheable. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
 
 ### The interactive review preview (landing)
 

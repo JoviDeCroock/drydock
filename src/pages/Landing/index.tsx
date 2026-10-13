@@ -57,6 +57,8 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <DependencyPrIntegrations compact />
+
       <AikidoPartnerStrip />
 
       <UsedBy />
@@ -74,8 +76,6 @@ export default function LandingPage() {
           Diff a package →
         </LinkButton>
       </section>
-
-      <DependencyPrIntegrations />
 
       <section aria-label="Why review the package" class="flex flex-col gap-4">
         <SectionLabel as="p">Why review the package</SectionLabel>
