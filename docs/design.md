@@ -197,10 +197,13 @@ the full integration cards with preset and workflow details.
 A compact `LandingTrustStrip` sits immediately below the dependency-PR Card,
 inside the same section group. It reuses `AikidoFootnote` for the visible
 `Sponsored by` label and co-brand, followed by a separately labeled `Used by`
-list for Keyv and Cacheable. The locally bundled project logos link to each
-project's site and render monochrome (inverted in dark mode). Sponsor and project
-links share one restrained row on desktop and two centered rows on mobile;
-there are no separate full-width divider sections before the review preview.
+list for Keyv, Cacheable, and Preact. The locally bundled project logos link to
+each project's site and render monochrome (inverted in dark mode). Sponsor and
+project links share one restrained row on desktop and two centered rows on
+mobile; there are no separate full-width divider sections before the review
+preview. Preact's wordmark comes from the [official site](https://preactjs.com/);
+its orbit and nucleus are transparent cutouts so the mark remains legible with
+the shared monochrome treatment.
 
 ### The interactive review preview (landing)
 

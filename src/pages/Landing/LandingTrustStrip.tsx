@@ -1,5 +1,6 @@
 import keyvLogo from "../../assets/keyv-logo.svg";
 import cacheableLogo from "../../assets/cacheable-logo.svg";
+import preactLogo from "../../assets/preact-logo.svg";
 import { AikidoFootnote } from "../../components/AikidoPartner";
 
 const projects = [
@@ -19,6 +20,14 @@ const projects = [
     height: 730,
     size: "h-7",
   },
+  {
+    name: "Preact",
+    href: "https://preactjs.com",
+    logo: preactLogo,
+    width: 1800,
+    height: 512,
+    size: "h-5",
+  },
 ];
 
 export function LandingTrustStrip() {
@@ -32,7 +41,7 @@ export function LandingTrustStrip() {
         <span id="landing-used-by" class="text-[13px] text-ink-muted">
           Used by
         </span>
-        <ul aria-labelledby="landing-used-by" class="list-none m-0 p-0 flex items-center gap-5">
+        <ul aria-labelledby="landing-used-by" class="list-none m-0 p-0 flex items-center gap-4">
           {projects.map((project) => (
             <li key={project.name}>
               <a
