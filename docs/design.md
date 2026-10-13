@@ -179,7 +179,7 @@ This pattern is used both on the dashboard (above the scan form) _and_ as the he
 
 ### Dependency-PR block (landing)
 
-Directly below the hero, the landing uses the compact variant of
+Below “Open a live diff”, the landing uses the compact variant of
 `DependencyPrIntegrations` in one split Card: a 24px heading, short setup copy, and
 secondary `Add to Renovate` / `Add to Dependabot` links on one side; a restrained
 `--surface-2` PR excerpt on the other. The example names the demo package above a
@@ -194,20 +194,11 @@ the full integration cards with preset and workflow details.
 
 ### Project logos (landing)
 
-A compact `LandingTrustStrip` sits immediately below the dependency-PR Card,
-inside the same section group. It reuses `AikidoFootnote` for the visible
-`Sponsored by` label and co-brand, followed by a separately labeled `Used by`
-list for Keyv, Cacheable, and Preact. The locally bundled project logos link to
-each project's site and render monochrome (inverted in dark mode). Sponsor and
-project links share one restrained row on desktop and two centered rows on
-mobile; there are no separate full-width divider sections before the review
-preview. Preact's wordmark comes from the [official site](https://preactjs.com/);
-its orbit and nucleus are transparent cutouts so the mark remains legible with
-the shared monochrome treatment.
+Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, and Preact. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment.
 
 ### The interactive review preview (landing)
 
-The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero, compact dependency-PR block, and trust strip. The diff is the first product demonstration under the headline. Rules:
+The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero and the sponsor and `Used by` sections. The diff is the first product demonstration under the headline. Rules:
 
 - The release-tree rows for changed files are real `<button>`s (`aria-current` on the selected file) that swap the diff pane and its pinned finding. Interaction mirrors the workbench exactly; no behavior is invented for marketing.
 - Content stays truthful to the report model: findings use the same left-bar annotation as `DiffView` (soft fill at `~60%` opacity, saturated `border-l-2`), severity Badges carry counts in the tree, and one selectable file has **no** finding so the preview demonstrates signal-vs-noise instead of theater.
@@ -228,7 +219,7 @@ The "Why review a publish" section grounds the pitch in real, named supply-chain
 
 ### Sponsor recommendation on package diffs
 
-Successful published npm and PyPI diff results end with a compact `InstallProtection` card after the review evidence and Drydock's own release CTA. It reuses the Aikido sponsor identity, explains Safe Chain's installation-time checks, and offers a secondary `Set up Safe Chain →` link to the official setup instructions. The recommendation appears regardless of findings or risk; it does not imply a compromise or change the review verdict. npm preview builds and atpm results keep the generic sponsor strip, as do empty diff pages. The landing uses the compact sponsor footnote in its trust strip.
+Successful published npm and PyPI diff results end with a compact `InstallProtection` card after the review evidence and Drydock's own release CTA. It reuses the Aikido sponsor identity, explains Safe Chain's installation-time checks, and offers a secondary `Set up Safe Chain →` link to the official setup instructions. The recommendation appears regardless of findings or risk; it does not imply a compromise or change the review verdict. npm preview builds and atpm results keep the generic sponsor strip, as do the landing and empty diff pages.
 
 The setup destination is constant, opens with `noopener noreferrer`, and carries no package, version, scan, share token, or attribution parameters. Install commands remain in Aikido's maintained documentation. The card introduces no browser tracking; outbound clicks and setup conversion remain outside Drydock's aggregate product analytics.
 

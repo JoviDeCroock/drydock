@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
+import { AikidoPartnerStrip } from "../../components/AikidoPartner";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { PageShell } from "../../components/PageShell";
@@ -11,7 +12,7 @@ import { DependencyPrIntegrations } from "../../features/dependency-pr-integrati
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ScanPreview } from "./ScanPreview";
-import { LandingTrustStrip } from "./LandingTrustStrip";
+import { UsedBy } from "./UsedBy";
 
 export default function LandingPage() {
   const authed = useAuthedSession();
@@ -56,10 +57,9 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <div class="flex flex-col gap-5">
-        <DependencyPrIntegrations compact />
-        <LandingTrustStrip />
-      </div>
+      <AikidoPartnerStrip />
+
+      <UsedBy />
 
       <ScanPreview />
 
@@ -74,6 +74,8 @@ export default function LandingPage() {
           Diff a package →
         </LinkButton>
       </section>
+
+      <DependencyPrIntegrations compact />
 
       <section aria-label="Why review the package" class="flex flex-col gap-4">
         <SectionLabel as="p">Why review the package</SectionLabel>
