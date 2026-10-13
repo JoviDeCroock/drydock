@@ -179,7 +179,7 @@ This pattern is used both on the dashboard (above the scan form) _and_ as the he
 
 ### Project logos (landing)
 
-Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv and Cacheable. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode).
+Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, and Preact. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment.
 
 ### The interactive review preview (landing)
 

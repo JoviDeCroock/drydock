@@ -1,5 +1,6 @@
 import keyvLogo from "../../assets/keyv-logo.svg";
 import cacheableLogo from "../../assets/cacheable-logo.svg";
+import preactLogo from "../../assets/preact-logo.svg";
 import { SectionLabel } from "../../components/Typography";
 
 const projects = [
@@ -18,6 +19,14 @@ const projects = [
     width: 1330,
     height: 730,
     size: "h-14",
+  },
+  {
+    name: "Preact",
+    href: "https://preactjs.com",
+    logo: preactLogo,
+    width: 1800,
+    height: 512,
+    size: "h-10",
   },
 ];
 
