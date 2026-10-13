@@ -188,6 +188,8 @@ dark mode, to preserve the marketing palette. Keep adoption separate from the
 Logo sources: [Keyv](https://github.com/jaredwray/keyv/blob/main/media/keyv-logos/black-white/svg/keyv-logo-horizontal-black.svg)
 and [Cacheable](https://github.com/jaredwray/cacheable/blob/main/packages/website/site/logo.svg).
 
+[Layout preview](./images/keyv-cacheable-logos.png).
+
 ### The interactive review preview (landing)
 
 The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero. The diff is the first product demonstration under the headline. Rules:
