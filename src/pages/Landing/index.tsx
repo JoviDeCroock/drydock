@@ -1,5 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useComputed } from "@preact/signals";
+import { landingHeroCopy } from "../../lib/landing-experiment";
+import { useLandingExperiment } from "../../features/landing-experiment/use-landing-experiment";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
@@ -14,8 +16,6 @@ import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ScanPreview } from "./ScanPreview";
 import { UsedBy } from "./UsedBy";
-import { landingHeroCopy } from "../../lib/landing-experiment";
-import { useLandingExperiment } from "../../features/landing-experiment/use-landing-experiment";
 
 export default function LandingPage() {
   const authed = useAuthedSession();
