@@ -46,6 +46,9 @@ import {
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;
 export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+const GATE_LOOKUP_MAX_ATTEMPTS = 6;
+const GATE_LOOKUP_BASE_DELAY_MS = 2_500;
+const GATE_LOOKUP_MAX_DELAY_MS = 30_000;
 // How long a reader's pick must hold before its compare payload is fetched.
 // Arrowing through the closed picker fires a change per step on most
 // platforms, and every fetch costs sandbox work and the per-user compare rate
@@ -96,6 +99,7 @@ export const ScanDetailModel = createModel((id: string) => {
   const attestationAvailable = signal<boolean | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
   const gateLoaded = signal(false);
+  const gateLookupStalled = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
   const gateDecisionError = signal<string | null>(null);
   const gateRetryStatus = signal<DecisionStatus>("idle");
@@ -108,6 +112,9 @@ export const ScanDetailModel = createModel((id: string) => {
   });
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
+  const gateLookupReady = computed(
+    () => isWorkflowGate.value && (status.value === "complete" || status.value === "failed"),
+  );
   // The version the persisted report (diff, risk summary, finding annotations)
   // was computed against, and so the default comparison. Null when the scan
   // recorded none: its report compared against nothing and reads all added.
@@ -172,6 +179,69 @@ export const ScanDetailModel = createModel((id: string) => {
     return () => {
       disposed = true;
       clearTimeout(timer);
+    };
+  });
+
+  // The scan can finish before its gate link is readable. Retry that gap for
+  // about a minute, rather than keeping a missing gate's tab querying forever.
+  effect(() => {
+    const ready = gateLookupReady.value;
+    const loaded = gateLoaded.value;
+    const stalled = gateLookupStalled.value;
+    if (!ready || loaded || stalled) return;
+
+    const page = typeof document === "undefined" ? null : document;
+    let disposed = false;
+    let inFlight = false;
+    let attempts = 0;
+    let retryAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = () => {
+      if (disposed || inFlight || attempts >= GATE_LOOKUP_MAX_ATTEMPTS || page?.hidden) return;
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => void tick(), Math.max(0, retryAt - Date.now()));
+    };
+    const tick = async () => {
+      timer = null;
+      if (disposed || inFlight || attempts >= GATE_LOOKUP_MAX_ATTEMPTS || page?.hidden) return;
+      inFlight = true;
+      attempts += 1;
+      try {
+        const loadedGate = await getWorkflowGateByScan(scanId.peek());
+        if (disposed) return;
+        batch(() => {
+          gate.value = loadedGate;
+          gateLoaded.value = loadedGate !== null;
+          if (loadedGate) gateDecisionError.value = null;
+        });
+      } catch (err) {
+        if (!disposed) gateDecisionError.value = errorMessage(err);
+      } finally {
+        inFlight = false;
+        if (!disposed && !gateLoaded.peek() && attempts >= GATE_LOOKUP_MAX_ATTEMPTS) {
+          gateLookupStalled.value = true;
+        }
+        retryAt =
+          Date.now() +
+          Math.min(GATE_LOOKUP_BASE_DELAY_MS * 2 ** (attempts - 1), GATE_LOOKUP_MAX_DELAY_MS);
+        schedule();
+      }
+    };
+    const visibilityChanged = () => {
+      if (page?.hidden) {
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+      } else {
+        schedule();
+      }
+    };
+    page?.addEventListener("visibilitychange", visibilityChanged);
+    schedule();
+    return () => {
+      disposed = true;
+      if (timer !== null) clearTimeout(timer);
+      page?.removeEventListener("visibilitychange", visibilityChanged);
     };
   });
 
@@ -322,6 +392,7 @@ export const ScanDetailModel = createModel((id: string) => {
     attestationAvailable,
     gate,
     gateLoaded,
+    gateLookupStalled,
     gateDecisionStatus,
     gateDecisionError,
     gateRetryStatus,
@@ -519,21 +590,10 @@ export const ScanDetailModel = createModel((id: string) => {
       }
     },
 
-    async loadGate(): Promise<void> {
-      const current = this.detail.peek();
-      if (current && current.scan.source !== "workflow_gate") {
-        this.gateLoaded.value = true;
-        return;
-      }
-      const id = this.scanId.peek();
-      try {
-        const gate = await getWorkflowGateByScan(id);
-        this.gate.value = gate;
-        this.gateLoaded.value = gate !== null;
-      } catch (err) {
-        this.gateDecisionError.value = errorMessage(err);
-        this.gateLoaded.value = false;
-      }
+    retryGateLookup(): void {
+      if (!gateLookupStalled.peek()) return;
+      gateDecisionError.value = null;
+      gateLookupStalled.value = false;
     },
 
     // Decides the package this detail page is reviewing (its own scanId). The

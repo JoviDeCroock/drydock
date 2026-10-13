@@ -168,6 +168,8 @@ export function GateContextPanel({
   retryStatus,
   retryError,
   onRetry,
+  lookupStalled,
+  onRetryLookup,
 }: {
   gate: PublicWorkflowGate | null;
   packageName: string | null;
@@ -175,6 +177,8 @@ export function GateContextPanel({
   retryStatus?: DecisionStatus;
   retryError?: string | null;
   onRetry?: () => void;
+  lookupStalled?: boolean;
+  onRetryLookup?: () => void;
 }) {
   const retrying = retryStatus === "saving";
   return (
@@ -203,6 +207,15 @@ export function GateContextPanel({
             <span key="run">run #{gate.runId}</span>,
           ]}
         />
+      ) : lookupStalled ? (
+        <Alert tone="warn">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span>Gate context could not be loaded. Automatic lookup has stopped.</span>
+            <Button variant="secondary" size="sm" onClick={onRetryLookup}>
+              Retry lookup
+            </Button>
+          </div>
+        </Alert>
       ) : (
         <LoadingLine size="inline">Loading gate context</LoadingLine>
       )}

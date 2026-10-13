@@ -197,12 +197,25 @@ async function enrollmentSummary(
   return { deferred: Math.max(0, waiting - slots), suggestions };
 }
 
+export function reconcilePublicationWatches(
+  db: AppDb,
+  organizationId: string,
+  registryUrl?: string,
+): Promise<PublicationAutoEnrollment>;
+export function reconcilePublicationWatches(
+  db: AppDb,
+  organizationId: string,
+  registryUrl: string,
+  options: { includeSummary: false },
+): Promise<void>;
 export async function reconcilePublicationWatches(
   db: AppDb,
   organizationId: string,
   registryUrl = PUBLIC_NPM,
-): Promise<PublicationAutoEnrollment> {
-  if (!validMonitoringRegistry(registryUrl)) return enrollmentSummary(db, organizationId);
+  options?: { includeSummary: false },
+): Promise<PublicationAutoEnrollment | void> {
+  if (!validMonitoringRegistry(registryUrl))
+    return options?.includeSummary === false ? undefined : enrollmentSummary(db, organizationId);
   const history = await db.all<{ packageName: string }>(
     sql`select s.registry_package_name as packageName from scans s where s.organization_id = ${organizationId} and ${historicalEligibility(registryUrl)} group by s.registry_package_name order by min(s.created_at), s.registry_package_name limit ${HISTORY_BATCH}`,
   );
@@ -222,16 +235,31 @@ export async function reconcilePublicationWatches(
     "workflow_gate",
   );
   await enrollCandidates(db, organizationId, registryUrl);
-  return enrollmentSummary(db, organizationId, registryUrl);
+  if (options?.includeSummary !== false) return enrollmentSummary(db, organizationId, registryUrl);
 }
 
+export function registerStagedPublicationCandidates(
+  db: AppDb,
+  organizationId: string,
+  items: readonly { packageName: string | null; access: string | null }[],
+  registryUrl: string,
+): Promise<PublicationAutoEnrollment>;
+export function registerStagedPublicationCandidates(
+  db: AppDb,
+  organizationId: string,
+  items: readonly { packageName: string | null; access: string | null }[],
+  registryUrl: string,
+  options: { includeSummary: false },
+): Promise<void>;
 export async function registerStagedPublicationCandidates(
   db: AppDb,
   organizationId: string,
   items: readonly { packageName: string | null; access: string | null }[],
   registryUrl: string,
-): Promise<PublicationAutoEnrollment> {
-  if (!validMonitoringRegistry(registryUrl)) return enrollmentSummary(db, organizationId);
+  options?: { includeSummary: false },
+): Promise<PublicationAutoEnrollment | void> {
+  if (!validMonitoringRegistry(registryUrl))
+    return options?.includeSummary === false ? undefined : enrollmentSummary(db, organizationId);
   await recordCandidates(
     db,
     organizationId,
@@ -240,6 +268,8 @@ export async function registerStagedPublicationCandidates(
       .map((item) => item.packageName!),
     "staged_discovery",
   );
+  if (options?.includeSummary === false)
+    return reconcilePublicationWatches(db, organizationId, registryUrl, options);
   return reconcilePublicationWatches(db, organizationId, registryUrl);
 }
 
@@ -265,6 +295,9 @@ export async function enrollStagedReleases(
       input.organizationId,
       input.releases,
       publicationRegistry,
+      // Discovery and scan callers only need enrollment, not the dashboard's
+      // deferred count and gate suggestions (including another history scan).
+      { includeSummary: false },
     );
   } catch {
     emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", {

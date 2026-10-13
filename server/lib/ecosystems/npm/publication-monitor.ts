@@ -3,7 +3,6 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-
 import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
-  getPublicationWatch,
   getPublicationWatchBlocked,
   publicationWatchBlocked,
   recordWatchCoverageGap,
@@ -274,7 +273,7 @@ export async function checkNpmPublicationWatch(
   env: Cloudflare.Env,
   watch: PublicationWatch,
   options: { monitoringEnabled?: boolean; meter?: ByteMeter } = {},
-) {
+): Promise<void> {
   const now = new Date();
   const registry = npmPublicationRegistry(env);
   // Claim first, before anything that can return early or throw. The lease
@@ -297,13 +296,13 @@ export async function checkNpmPublicationWatch(
       ),
     )
     .returning({ id: publicationWatches.id });
-  if (!claimed.length) return getPublicationWatch(db, watch.organizationId, watch.id, registry);
+  if (!claimed.length) return;
   try {
     const enabled =
       options.monitoringEnabled ?? (await publicationMonitoringEnabled(env, watch.organizationId));
     if (!enabled) {
       await setLastError(db, watch, "monitoring_disabled");
-      return getPublicationWatch(db, watch.organizationId, watch.id, registry);
+      return;
     }
     const { lastError, attempted, watchGap } = await examineReleases(
       db,
@@ -313,7 +312,7 @@ export async function checkNpmPublicationWatch(
       options.meter ?? { bytes: 0 },
     );
     if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
-      return getPublicationWatch(db, watch.organizationId, watch.id, registry);
+      return;
     await redeliverPendingAlerts(env, db, watch, attempted, now);
     // A read that got past the package document clears a package-wide gap; a
     // failed read records one only when none is recorded, so an outage never
@@ -323,7 +322,6 @@ export async function checkNpmPublicationWatch(
     });
     await notifyCoverageGaps(env, db, watch, now);
     await setLastError(db, watch, lastError);
-    return getPublicationWatch(db, watch.organizationId, watch.id, registry);
   } catch (err) {
     // The claim already moved the watch; record why, so neither the dashboard
     // nor the package page reads a coverage claim from a check that failed.

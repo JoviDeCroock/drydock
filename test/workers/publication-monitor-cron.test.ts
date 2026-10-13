@@ -1,11 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createPublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
 import { npmPackageClaims, publicationWatches, scans } from "../../server/db/schema";
+import * as schema from "../../server/db/schema";
 import { sweepNpmPublicationWatches } from "../../server/lib/ecosystems/npm/publication-monitor";
 import worker from "../../server";
 import { seedUser } from "./helpers/seed";
@@ -124,6 +126,43 @@ function flagsSwitchedOffFor(organizationId: string, behavior: "off" | "throws" 
 }
 
 describe("the sweep", () => {
+  test("a settled watch checks registry freshness without reading dashboard aggregates", async () => {
+    const organization = await organizationWithWatches(1, null);
+    const watchId = organization.watchIds[0]!;
+    const now = new Date();
+    await organization.db.insert(schema.publicationObservations).values({
+      id: crypto.randomUUID(),
+      watchId,
+      organizationId: organization.organizationId,
+      version: "1.0.0",
+      firstSeenAt: now,
+      checkedAt: now,
+      status: "approved_match",
+      distTags: [],
+    });
+    const queries: string[] = [];
+    const db = drizzle(env.DB, {
+      schema,
+      logger: { logQuery: (query) => queries.push(query) },
+    });
+    const fetcher = emptyRegistry();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await sweepNpmPublicationWatches(db, env);
+
+    expect(queries).toHaveLength(11);
+    expect(
+      queries.some((query) => query.includes("select count(*) from publication_observations")),
+    ).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [watch] = await watchesOf(organization);
+    expect(watch).toMatchObject({
+      lastCheckedAt: expect.any(Date),
+      distTagsCheckedAt: expect.any(Date),
+      lastError: null,
+      releaseCount: 1,
+    });
+  });
+
   test("a switched-off organization with many due watches cannot starve another", async () => {
     // The switched-off organization holds the oldest watches, which is what
     // used to pin every slot of every tick.

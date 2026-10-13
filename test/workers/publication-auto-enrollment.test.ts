@@ -1,7 +1,9 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 import { eq, inArray } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { drizzle } from "drizzle-orm/d1";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { upsertNpmConnection } from "../../server/db/npm-connections";
 import {
   createPublicationWatch,
   deletePublicationWatch,
@@ -9,10 +11,12 @@ import {
   PUBLICATION_WATCH_LIMIT,
 } from "../../server/db/publication-watches";
 import { npmPackageClaims, publicationWatchCandidates, scans } from "../../server/db/schema";
+import * as schema from "../../server/db/schema";
 import {
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
+import { discoverAndQueueStagedPublishes } from "../../server/lib/ecosystems/npm/staged-publishes-discovery";
 import { seedPublicationWatches, seedUser } from "./helpers/seed";
 
 const registry = "https://registry.npmjs.org";
@@ -71,6 +75,133 @@ const gateSummary = (name: string) => ({
       artifacts: [{ path: "pkg.tgz", sha256: "a".repeat(64) }],
     },
   },
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+async function discover(
+  db: ReturnType<typeof createDb>,
+  organizationId: string,
+  actorUserId: string,
+  releases: { id: string; packageName: string; access: string }[] = [],
+  lastUsedAt: Date | null = null,
+) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ items: releases })),
+  );
+  return discoverAndQueueStagedPublishes(
+    {
+      db,
+      env,
+      executionCtx: createExecutionContext(),
+      organizationId,
+      actorUserId,
+      source: "auto_discovery",
+      eventSource: "staged_publishes.cron",
+      awaitReleaseOutcomes: true,
+      admitNewScans: false,
+    },
+    { token: "npm_discovery_test_token", registryUrl: registry, lastUsedAt },
+  );
+}
+
+test("idle cron discovery omits three unused summary reads while dashboard reconciliation retains them", async () => {
+  const { db, organizationId, userId } = await seed();
+  await upsertNpmConnection(db, {
+    organizationId,
+    registryUrl: registry,
+    label: "npm registry",
+    tokenCiphertext: "unused",
+    tokenNonce: "unused",
+    tokenFingerprint: "unused",
+    createdByUserId: userId,
+  });
+  const queries: string[] = [];
+  const countedDb = drizzle(env.DB, {
+    schema,
+    logger: { logQuery: (query) => queries.push(query) },
+  });
+
+  expect(await discover(countedDb, organizationId, userId)).toMatchObject({
+    found: 0,
+    created: 0,
+  });
+  // The organization-owner read lives outside discovery: together these are
+  // six statements per idle org, down from nine with the discarded summary.
+  expect(queries).toHaveLength(5);
+  expect(queries.filter((query) => query.startsWith("select"))).toHaveLength(4);
+  expect(queries.some((query) => query.includes("count(distinct"))).toBe(false);
+
+  queries.length = 0;
+  expect(await reconcilePublicationWatches(countedDb, organizationId)).toEqual({
+    deferred: 0,
+    suggestions: [],
+  });
+  expect(queries).toHaveLength(6);
+  expect(queries.some((query) => query.includes("count(distinct"))).toBe(true);
+
+  queries.length = 0;
+  await discover(countedDb, organizationId, userId, [], new Date());
+  expect(queries).toHaveLength(4);
+  expect(queries.some((query) => query.startsWith("update"))).toBe(false);
+});
+
+test("empty cron stages still discover new published history and drain later enrollment batches", async () => {
+  const { db, organizationId, userId } = await seed();
+  for (let index = 0; index < 55; index++)
+    await historicalScan(organizationId, `cron-history-${String(index).padStart(2, "0")}`);
+
+  await discover(db, organizationId, userId);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(50);
+  await discover(db, organizationId, userId);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(55);
+
+  await historicalScan(organizationId, "cron-history-new");
+  await discover(db, organizationId, userId);
+  expect(
+    (await listPublicationWatches(db, organizationId)).map((watch) => watch.packageName),
+  ).toContain("cron-history-new");
+});
+
+test("cron enrollment keeps capacity, public stage admission, ownership and stop intent without a summary", async () => {
+  const own = await seed();
+  const other = await seed();
+  const { db, organizationId, userId } = own;
+  await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT);
+  await historicalScan(organizationId, "cron-history");
+  await historicalScan(other.organizationId, "foreign-claim");
+  await claimPackages(organizationId, ["cron-stage", "cron-private"]);
+  await discover(db, organizationId, userId, [
+    { id: "public-stage", packageName: "cron-stage", access: "public" },
+    { id: "private-stage", packageName: "cron-private", access: "restricted" },
+    { id: "foreign-stage", packageName: "foreign-claim", access: "public" },
+  ]);
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(PUBLICATION_WATCH_LIMIT);
+
+  const [filler] = await listPublicationWatches(db, organizationId);
+  await deletePublicationWatch(db, organizationId, filler!.id);
+  await discover(db, organizationId, userId);
+  const staged = (await listPublicationWatches(db, organizationId)).find(
+    (watch) => watch.packageName === "cron-stage",
+  );
+  expect(staged?.source).toBe("staged_discovery");
+  expect(await listPublicationWatches(db, organizationId)).toHaveLength(PUBLICATION_WATCH_LIMIT);
+
+  await deletePublicationWatch(db, organizationId, staged!.id);
+  await discover(db, organizationId, userId, [
+    { id: "public-stage", packageName: "cron-stage", access: "public" },
+  ]);
+  const watches = await listPublicationWatches(db, organizationId);
+  expect(watches).toHaveLength(PUBLICATION_WATCH_LIMIT);
+  expect(watches.find((watch) => watch.packageName === "cron-history")?.source).toBe(
+    "published_history",
+  );
+  expect(
+    watches.some((watch) =>
+      ["cron-stage", "cron-private", "foreign-claim"].includes(watch.packageName),
+    ),
+  ).toBe(false);
 });
 
 describe("automatic publication enrollment", () => {

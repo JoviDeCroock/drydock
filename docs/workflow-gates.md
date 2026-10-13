@@ -180,6 +180,13 @@ VS Code publication outcomes.
 
 The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
 
+Once a workflow-gate scan completes or fails, the page looks up its gate with
+exponential retry delays capped at 30 seconds and at most six attempts. Requests
+run one at a time, pause while the tab is hidden, and stop when the gate loads or
+the page is closed. After the retry budget is exhausted, the panel explains that
+lookup stopped and offers **Retry lookup** to start a fresh bounded attempt. A
+missing gate therefore cannot keep an idle tab querying the database indefinitely.
+
 ## Adding a new ecosystem
 
 1. Add or extend a package adapter under `server/lib/ecosystems/<ecosystem>/`.

@@ -1,4 +1,4 @@
-import { batch, useComputed, useSignal, useSignalEffect } from "@preact/signals";
+import { batch, useComputed, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { displayedAiResult, type AiReview } from "../../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../../server/lib/intent-envelope";
@@ -81,20 +81,6 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
   });
 
   const versions = useScanVersions(model);
-
-  // Load the workflow gate once the review reaches a terminal state. Completed
-  // and failed scans may both be linked to the pending gate so the workbench can
-  // show the held GitHub job context.
-  useSignalEffect(() => {
-    if (!model.isWorkflowGate.value) return;
-    if (model.status.value !== "complete" && model.status.value !== "failed") return;
-    if (model.gateLoaded.value) return;
-    void model.loadGate();
-    const retryTimer = window.setInterval(() => {
-      if (!model.gateLoaded.peek()) void model.loadGate();
-    }, 2500);
-    return () => window.clearInterval(retryTimer);
-  });
 
   const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
   const ai = useComputed(() => displayedAiResult(asAiReview(model.detail.value?.scan.aiJson)));

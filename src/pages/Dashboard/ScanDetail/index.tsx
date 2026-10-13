@@ -201,6 +201,8 @@ function ScanNotices({ model, view }: SectionProps) {
         <GateContextPanel
           gate={gate}
           packageName={detail.scan.packageName}
+          lookupStalled={model.gateLookupStalled.value}
+          onRetryLookup={() => model.retryGateLookup()}
           canRetry={
             gate?.status === "pending" && view.gateReviewFailed.value && !detail.scan.decision
           }
