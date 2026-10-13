@@ -12,6 +12,7 @@ import { DependencyPrIntegrations } from "../../features/dependency-pr-integrati
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ScanPreview } from "./ScanPreview";
+import { UsedBy } from "./UsedBy";
 
 export default function LandingPage() {
   const authed = useAuthedSession();
@@ -71,6 +72,8 @@ export default function LandingPage() {
       </section>
 
       <DependencyPrIntegrations />
+
+      <UsedBy />
 
       <AikidoPartnerStrip />
 
