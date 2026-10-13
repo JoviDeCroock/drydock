@@ -70,19 +70,22 @@ function DependencyPrPromotion() {
   return (
     <section aria-labelledby="dependency-pr-integrations" class="flex flex-col gap-4">
       <SectionLabel as="p">Dependency update reviews</SectionLabel>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        <div class="flex flex-col gap-3">
+      <Card
+        padding="none"
+        class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)] overflow-hidden"
+      >
+        <div class="p-5 md:p-6 flex flex-col gap-3">
           <h2
             id="dependency-pr-integrations"
-            class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]"
+            class="text-2xl font-semibold tracking-[-0.015em] m-0"
           >
             Put package diffs in your dependency PRs.
           </h2>
-          <p class="m-0 text-[14px] leading-[1.65] text-ink-muted max-w-[680px]">
-            Add Drydock links to npm and PyPI updates from Renovate or Dependabot. Reviewers can
-            inspect the published files before merging, without a Drydock account.
+          <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
+            Add a Renovate preset or Dependabot workflow. Every linked npm or PyPI update opens the
+            published package diff, without a Drydock account.
           </p>
-          <div class="flex flex-wrap gap-3">
+          <div class="flex flex-wrap gap-3 mt-1">
             <LinkButton href={RENOVATE_GUIDE} variant="secondary" size="sm">
               Add to Renovate
             </LinkButton>
@@ -91,10 +94,13 @@ function DependencyPrPromotion() {
             </LinkButton>
           </div>
         </div>
-        <Card padding="none" class="min-w-0">
-          <p id="dependency-pr-example" class="m-0 px-4 py-3 text-[12px] text-ink-muted">
-            Renovate PR example · demo package
+        <div class="min-w-0 bg-surface-2 border-t lg:border-t-0 lg:border-l border-border p-5 md:p-6 flex flex-col gap-3">
+          <p id="dependency-pr-example" class="m-0 font-mono text-[11px] text-ink-subtle">
+            Renovate PR excerpt · demo package
           </p>
+          <h3 class="m-0 text-[14px] font-medium">
+            Update <span class="font-mono">semversyphus</span> to 1.0.6
+          </h3>
           <div
             role="region"
             aria-labelledby="dependency-pr-example"
@@ -104,38 +110,34 @@ function DependencyPrPromotion() {
             <table class="w-full border-collapse text-left whitespace-nowrap">
               <thead class="border-y border-border text-[11px] text-ink-subtle">
                 <tr>
-                  <th scope="col" class="px-4 py-2 font-medium">
-                    Package
-                  </th>
-                  <th scope="col" class="px-4 py-2 font-medium">
+                  <th scope="col" class="py-2 pr-4 font-medium">
                     Change
                   </th>
-                  <th scope="col" class="px-4 py-2 font-medium">
+                  <th scope="col" class="py-2 font-medium">
                     Drydock
                   </th>
                 </tr>
               </thead>
-              <tbody class="text-[12px]">
+              <tbody class="text-[13px]">
                 <tr>
-                  <td class="px-4 py-3 font-mono">semversyphus</td>
-                  <td class="px-4 py-3 font-mono text-ink-muted">1.0.5 → 1.0.6</td>
-                  <td class="px-4 py-3">
+                  <td class="py-3 pr-4 font-mono text-ink-muted">1.0.5 → 1.0.6</td>
+                  <td class="py-3">
                     <a
                       href={packageDiffPath("npm", "semversyphus", "1.0.5", "1.0.6")}
                       class="text-accent underline hover:text-ink"
                     >
-                      Read the diff
+                      Read the diff →
                     </a>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <p class="m-0 px-4 py-3 border-t border-border text-[12px] text-ink-muted leading-[1.55]">
-            Dependabot adds the same diff links in a PR comment.
+          <p class="m-0 text-[12px] text-ink-muted leading-[1.55]">
+            Dependabot puts these links in a PR comment.
           </p>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </section>
   );
 }

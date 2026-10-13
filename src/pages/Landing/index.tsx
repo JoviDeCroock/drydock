@@ -1,7 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
-import { AikidoPartnerStrip } from "../../components/AikidoPartner";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { PageShell } from "../../components/PageShell";
@@ -12,7 +11,7 @@ import { DependencyPrIntegrations } from "../../features/dependency-pr-integrati
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ScanPreview } from "./ScanPreview";
-import { UsedBy } from "./UsedBy";
+import { LandingTrustStrip } from "./LandingTrustStrip";
 
 export default function LandingPage() {
   const authed = useAuthedSession();
@@ -57,11 +56,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <DependencyPrIntegrations compact />
-
-      <AikidoPartnerStrip />
-
-      <UsedBy />
+      <div class="flex flex-col gap-5">
+        <DependencyPrIntegrations compact />
+        <LandingTrustStrip />
+      </div>
 
       <ScanPreview />
 
