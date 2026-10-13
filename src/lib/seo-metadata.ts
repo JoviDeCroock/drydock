@@ -140,6 +140,13 @@ export const docsPageSeo: PageSeoMetadata = {
   path: "/docs",
 };
 
+export const agentsPageSeo: PageSeoMetadata = {
+  title: "Package review for coding agents: npm and PyPI upgrades | Drydock",
+  description:
+    "Give your coding agent a copyable instruction to compare exact npm or PyPI dependency versions, inspect artifact findings, and link the evidence for human review.",
+  path: "/agents",
+};
+
 export const privacyPageSeo: PageSeoMetadata = {
   title: "Drydock privacy policy",
   description:
@@ -209,6 +216,7 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
 
   if (canonicalPathname === "/") return homePageSeo;
   if (canonicalPathname === "/docs") return docsPageSeo;
+  if (canonicalPathname === "/agents") return agentsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
   if (canonicalPathname === "/diff") return packageDiffSeo();
   if (canonicalPathname in discoveryGuideSeoByPath) {

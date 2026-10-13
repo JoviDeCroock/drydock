@@ -15,6 +15,7 @@ import "./style.css";
 
 const LandingPage = lazyRoute(() => import("./pages/Landing"));
 const DocsPage = lazyRoute(() => import("./pages/Docs"));
+const AgentsPage = lazyRoute(() => import("./pages/Agents"));
 const PrivacyPage = lazyRoute(() => import("./pages/Privacy"));
 const LoginPage = lazyRoute(() => import("./pages/Auth/Login"));
 const RegisterPage = lazyRoute(() => import("./pages/Auth/Register"));
@@ -42,6 +43,7 @@ export function App() {
           <Router>
             <ScopedRoute path="/" component={LandingPage} />
             <ScopedRoute path="/docs" component={DocsPage} />
+            <ScopedRoute path="/agents" component={AgentsPage} />
             <ScopedRoute path="/privacy" component={PrivacyPage} />
             <ScopedRoute path="/npm-staged-publishing" component={DiscoveryGuidePage} />
             <ScopedRoute path="/github-actions-package-gate" component={DiscoveryGuidePage} />

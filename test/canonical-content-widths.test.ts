@@ -15,6 +15,7 @@ const SELF_SIZING = new Set(["SeverityBar"]);
 // Every surface that renders public long-form content on the marketing shell.
 const SURFACES = [
   "src/pages/Docs",
+  "src/pages/Agents",
   "src/pages/Landing",
   "src/pages/Privacy",
   "src/pages/Diff",
@@ -22,6 +23,7 @@ const SURFACES = [
   "src/pages/Incidents",
   "src/pages/PublicReport",
   "src/features/public-content",
+  "src/features/agent-quickstart",
   "src/features/dependency-pr-integrations",
 ];
 
