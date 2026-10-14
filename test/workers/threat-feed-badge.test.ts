@@ -702,7 +702,7 @@ describe("shields badge endpoint", () => {
       message: "not reviewed",
       color: "lightgrey",
     });
-    // Listing gave it no badge key at all, so no cached entry can exist either.
+    // Listing gives the review no badge key or authority over the package's badge.
     const db = createDb(env.DB);
     const [row] = await db
       .select({
@@ -875,6 +875,11 @@ describe("shields badge endpoint", () => {
       expect(res.status).toBe(200);
       if (res.headers.has("retry-after")) {
         expect(res.headers.get("cache-control")).toBe("no-store");
+        expect(
+          await (caches as unknown as { default: Cache }).default.match(
+            coloCacheKey(`/public/badge/npm/miss-${i}`),
+          ),
+        ).toBeUndefined();
         throttled = (await res.json()) as BadgeBody;
         break;
       }
@@ -1095,19 +1100,66 @@ describe("shields badge endpoint", () => {
     }
   });
 
-  test("badge misses are not written to the colo cache", async () => {
-    const app = publicApp(null);
-    // Every invented name would otherwise add an entry to the same
-    // caches.default namespace that holds published-tarball bytes.
-    const missName = `never-scanned-${crypto.randomUUID().slice(0, 8)}`;
-    const res = await request(app, `/public/badge/npm/${missName}`);
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as BadgeBody).message).toBe("not reviewed");
-    // The internal opt-out marker must not leak to clients.
-    expect(res.headers.get("x-drydock-colo-cache-skip")).toBeNull();
+  test.each(["npm", "pypi", "vscode"])(
+    "%s badge misses are served without repeat D1 reads",
+    async (ecosystem) => {
+      const app = publicApp(null);
+      const missName = `never-scanned-${crypto.randomUUID().slice(0, 8)}`;
+      const path = `/public/badge/${ecosystem}/${missName}`;
+      const res = await request(app, path);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as BadgeBody;
+      expect(body.message).toBe("not reviewed");
 
-    const cache = (caches as unknown as { default: Cache }).default;
-    expect(await cache.match(coloCacheKey(`/public/badge/npm/${missName}`))).toBeUndefined();
+      const cache = (caches as unknown as { default: Cache }).default;
+      const cached = await cache.match(coloCacheKey(path));
+      expect(cached?.headers.get("cache-control")).toBe("public, max-age=300");
+      expect(await cached?.json()).toEqual(body);
+
+      const noD1Env = {
+        ...env,
+        DB: {
+          prepare() {
+            throw new Error("a cached badge must not query D1");
+          },
+        } as unknown as D1Database,
+      } satisfies Cloudflare.Env;
+      const ctx = createExecutionContext();
+      const repeated = await app.fetch(
+        new Request(`http://test.local${path}?tag=latest&bust=1`, {
+          headers: { "cf-connecting-ip": "10.99.4.1" },
+        }),
+        noD1Env,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toEqual(body);
+    },
+  );
+
+  test("listing a review purges the cached miss for its tag", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `negative-cache-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "2.0.0-beta.1",
+      tag: "beta",
+    });
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", packageName, { tag: "beta" })).body.message).toBe(
+      "not reviewed",
+    );
+    await share(app, scanId, { threatFeed: true });
+
+    expect(
+      (await fetchBadge(app, "npm", packageName, { tag: "beta", cached: true })).body.message,
+    ).toBe("2.0.0-beta.1 reviewed · low risk");
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body.message).toBe(
+      "not reviewed",
+    );
   });
 });
 
@@ -2175,13 +2227,15 @@ describe("turning a package's badge off", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
 
     expect((await setBadgeVisibility(app, packageName, true)).status).toBe(200);
-    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body).toMatchObject({
       message: "not reviewed",
       color: "lightgrey",
     });
 
     expect((await setBadgeVisibility(app, packageName, false)).status).toBe(200);
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    expect((await fetchBadge(app, "npm", packageName, { cached: true })).body.message).toBe(
+      "3.0.1 approved",
+    );
   });
 
   test("also silences a review that was deliberately listed", async () => {

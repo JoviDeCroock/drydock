@@ -78,8 +78,6 @@ publicReportsRoutes.use("*", async (c, next) => {
 
 const COLO_CACHED_PATHS = [/^\/badge\//, /^\/threat-feed\.json$/];
 
-const COLO_CACHE_SKIP_HEADER = "x-drydock-colo-cache-skip";
-
 publicReportsRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET") return next();
   const url = new URL(c.req.url);
@@ -94,11 +92,9 @@ publicReportsRoutes.use("*", async (c, next) => {
   const cached = await coloCacheMatch(cacheKey);
   if (cached) return cached;
   await next();
-  const skip = c.res?.headers.has(COLO_CACHE_SKIP_HEADER);
-  if (c.res?.status === 200 && !skip && !c.res.headers.get("cache-control")?.includes("no-store")) {
+  if (c.res?.status === 200 && !c.res.headers.get("cache-control")?.includes("no-store")) {
     coloCachePut(optionalWorkerExecutionContext(c), cacheKey, c.res.clone());
   }
-  if (skip) c.res.headers.delete(COLO_CACHE_SKIP_HEADER);
 });
 
 publicReportsRoutes.use("*", async (c, next) => {
@@ -249,7 +245,6 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
-    ...(match ? {} : { [COLO_CACHE_SKIP_HEADER]: "1" }),
   });
 });
 
