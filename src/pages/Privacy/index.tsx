@@ -66,9 +66,10 @@ export default function PrivacyPage() {
                 and records the public registry package being compared, with no account attached.
                 Optional homepage experiments count a few additional milestones by copy variant and
                 a broad source category (direct, search, GitHub, or other). Analytics receives no
-                visitor identifier or full referral URL. If you register during an experiment, we
-                save that category and variant with your account so a later first workspace review
-                can be attributed after sign-in. There is no third-party analytics service.
+                visitor identifier or full referral URL. If you register during an experiment, its
+                cookie supplies the variant and category for the aggregate signup count. We do not
+                save an acquisition record with your account or attribute later workspace reviews to
+                that experiment. There is no third-party analytics service.
               </>,
             ]}
           />

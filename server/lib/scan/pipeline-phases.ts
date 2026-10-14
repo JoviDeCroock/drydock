@@ -1,5 +1,4 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
-import { recordFirstReviewAcquisition } from "../../db/acquisition";
 import { getPriorApprovedScanFindings } from "../../db/release-memory";
 import { persistScan } from "../../db/scans";
 import type { AiReview } from "../ai-review";
@@ -603,8 +602,6 @@ export interface RecordCompletionArgs {
 // after the log has aged out.
 export async function recordCompletion(args: RecordCompletionArgs): Promise<void> {
   const { result, identity } = args;
-  if (args.persisted)
-    await recordFirstReviewAcquisition(args.db, args.env, identity.organizationId);
   const riskSummary = result.riskSummary;
   const risk = result.risk;
 

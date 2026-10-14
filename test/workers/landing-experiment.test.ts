@@ -1,13 +1,8 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { setSignedCookie } from "hono/cookie";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
-import { recordFirstReviewAcquisition, recordSignupAcquisition } from "../../server/db/acquisition";
-import { createDb } from "../../server/db/client";
-import { deleteUserAccount } from "../../server/db/organizations";
-import { user, userAcquisition } from "../../server/db/schema";
 import type { Acquisition } from "../../server/lib/acquisition";
 import type { PublicPackageDiff } from "../../server/lib/public-diff";
 import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
@@ -15,7 +10,6 @@ import { LANDING_EXPERIMENT, landingHeroCopy } from "../../src/lib/landing-exper
 import { homePageSeo } from "../../src/lib/seo-metadata";
 import { jsonResponse, stubFetchRoutes } from "../helpers/fetch-stub";
 import { callWorker, PASSWORD, signUpUserId, type Jar } from "./helpers/auth-http";
-import { seedUser } from "./helpers/seed";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 
 const ORIGIN = "http://example.com";
@@ -359,64 +353,30 @@ describe("homepage and public diff attribution", () => {
   });
 });
 
-describe("signup and workspace activation attribution", () => {
-  test.each(["disabled", "expired"])(
+describe("signup attribution without account persistence", () => {
+  test.each(["disabled", "expired", "tampered", "missing"])(
     "does not attribute signup when the cohort is %s",
     async (state) => {
       const { requestEnv, written } = experimentEnv(state !== "disabled");
-      const cookie = await signedCookie(
+      let cookie = await signedCookie(
         acquisition(state === "expired" ? { expiresDay: Math.floor(Date.now() / DAY_MS) } : {}),
       );
-      const jar: Jar = new Map([[COOKIE_NAME, cookie.slice(cookie.indexOf("=") + 1)]]);
-      const userId = await signUpUserId(jar, { env: requestEnv });
-      expect(
-        await createDb(env.DB)
-          .select()
-          .from(userAcquisition)
-          .where(eq(userAcquisition.userId, userId)),
-      ).toEqual([]);
+      if (state === "tampered") cookie = cookie.replace("github", "search");
+      const jar: Jar =
+        state === "missing"
+          ? new Map()
+          : new Map([[COOKIE_NAME, cookie.slice(cookie.indexOf("=") + 1)]]);
+      await signUpUserId(jar, { env: requestEnv });
       expect(milestones(written, "signed_up")).toHaveLength(0);
     },
   );
 
-  test("duplicate signup attribution preserves the original cohort and emits once", async () => {
+  test("email creation emits a coarse cohort once; sign-in and rejected duplicate signup emit no creation", async () => {
     const { requestEnv, written } = experimentEnv();
-    const owner = await seedUser();
-    await recordSignupAcquisition(owner.db, requestEnv, owner.userId, acquisition());
-    await recordSignupAcquisition(
-      owner.db,
-      requestEnv,
-      owner.userId,
-      acquisition({ variant: "control", channel: "other" }),
-    );
-    const [saved] = await owner.db
-      .select()
-      .from(userAcquisition)
-      .where(eq(userAcquisition.userId, owner.userId));
-    expect(saved).toMatchObject({ variant: "challenger", channel: "github" });
-    expect(milestones(written, "signed_up")).toHaveLength(1);
-  });
-
-  test("the email signup hook persists the cohort and sign-in cannot overwrite it", async () => {
-    const { requestEnv, written } = experimentEnv();
-    const original = acquisition({ channel: "search" });
-    const cookie = await signedCookie(original);
+    const cookie = await signedCookie(acquisition({ channel: "search" }));
     const jar: Jar = new Map([[COOKIE_NAME, cookie.slice(cookie.indexOf("=") + 1)]]);
     const email = `landing-email-${crypto.randomUUID()}@example.test`;
     const userId = await signUpUserId(jar, { email, env: requestEnv });
-    const db = createDb(env.DB);
-    const [saved] = await db
-      .select()
-      .from(userAcquisition)
-      .where(eq(userAcquisition.userId, userId));
-    expect(saved).toMatchObject({
-      userId,
-      experiment: LANDING_EXPERIMENT,
-      variant: "challenger",
-      channel: "search",
-      firstReviewAt: null,
-    });
-    expect(saved.expiresAt.getTime()).toBe(original.expiresDay * DAY_MS);
     const replacement = await signedCookie(acquisition({ variant: "control", channel: "github" }));
     const signInJar: Jar = new Map([
       [COOKIE_NAME, replacement.slice(replacement.indexOf("=") + 1)],
@@ -427,21 +387,44 @@ describe("signup and workspace activation attribution", () => {
       body: { email, password: PASSWORD },
     });
     expect(signIn.res.status).toBe(200);
-    expect(
-      await db.select().from(userAcquisition).where(eq(userAcquisition.userId, userId)),
-    ).toEqual([saved]);
-    expect(milestones(written, "signed_up")).toHaveLength(1);
-    expect(JSON.stringify(written)).not.toContain(userId);
-    expect(JSON.stringify(written)).not.toContain(email);
-    const deleted = await callWorker("POST", "/api/auth/delete-user", {
+    const duplicate = await callWorker("POST", "/api/auth/sign-up/email", {
       env: requestEnv,
       jar: signInJar,
-      body: { password: PASSWORD },
+      body: { name: "Duplicate", email, password: PASSWORD },
     });
-    expect(deleted.res.status).toBe(200);
-    expect(
-      await db.select().from(userAcquisition).where(eq(userAcquisition.userId, userId)),
-    ).toEqual([]);
+    expect(duplicate.res.status).toBe(422);
+    expect(milestones(written, "signed_up")).toHaveLength(1);
+    expect(milestones(written, "signed_up")[0].blobs).toEqual([
+      "1",
+      "acquisition.milestone",
+      "",
+      "",
+      LANDING_EXPERIMENT,
+      "challenger",
+      "search",
+      "signed_up",
+    ]);
+    expect(JSON.stringify(written)).not.toContain(userId);
+    expect(JSON.stringify(written)).not.toContain(email);
+    expect(written.filter((point) => point.blobs[1] === "user.signed_up")).toHaveLength(1);
+  });
+
+  test("a failing analytics sink does not block account creation", async () => {
+    const { requestEnv } = experimentEnv();
+    const attempted: CapturedPoint[] = [];
+    requestEnv.PRODUCT_ANALYTICS = {
+      writeDataPoint: (point: CapturedPoint) => {
+        attempted.push(point);
+        throw new Error("dataset unavailable");
+      },
+    } as unknown as Cloudflare.Env["PRODUCT_ANALYTICS"];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const cookie = await signedCookie(acquisition());
+    const jar: Jar = new Map([[COOKIE_NAME, cookie.slice(cookie.indexOf("=") + 1)]]);
+    const userId = await signUpUserId(jar, { env: requestEnv });
+    expect(userId).toBeTruthy();
+    expect(milestones(attempted, "signed_up")).toHaveLength(1);
+    expect(JSON.stringify(attempted)).not.toContain(userId);
   });
 
   test.each([true, false])(
@@ -490,67 +473,19 @@ describe("signup and workspace activation attribution", () => {
       const session = await callWorker("GET", "/api/auth/get-session", { env: requestEnv, jar });
       const userId = (session.json?.user as { id?: string } | undefined)?.id;
       expect(userId).toBeDefined();
-      const [saved] = await createDb(env.DB)
-        .select()
-        .from(userAcquisition)
-        .where(eq(userAcquisition.userId, userId!));
-      expect(saved).toMatchObject({
-        userId,
-        experiment: LANDING_EXPERIMENT,
-        variant: "challenger",
-        channel: "github",
-      });
       expect(milestones(written, "signed_up")).toHaveLength(1);
+      expect(milestones(written, "signed_up")[0].blobs).toEqual([
+        "1",
+        "acquisition.milestone",
+        "",
+        "",
+        LANDING_EXPERIMENT,
+        "challenger",
+        "github",
+        "signed_up",
+      ]);
       expect(JSON.stringify(written)).not.toContain(userId);
       expect(JSON.stringify(written)).not.toContain(email);
     },
   );
-
-  test("concurrent reviews activate the workspace owner once and account deletion removes its attribution", async () => {
-    const { requestEnv, written } = experimentEnv();
-    const owner = await seedUser();
-    const member = await seedUser();
-    await recordSignupAcquisition(owner.db, requestEnv, owner.userId, acquisition());
-    await recordSignupAcquisition(
-      member.db,
-      requestEnv,
-      member.userId,
-      acquisition({ variant: "control" }),
-    );
-    await Promise.all(
-      Array.from({ length: 3 }, () =>
-        recordFirstReviewAcquisition(owner.db, requestEnv, owner.organizationId),
-      ),
-    );
-    const rows = await owner.db.select().from(userAcquisition);
-    expect(rows.find((row) => row.userId === owner.userId)?.firstReviewAt).toBeInstanceOf(Date);
-    expect(rows.find((row) => row.userId === member.userId)?.firstReviewAt).toBeNull();
-    expect(milestones(written, "first_review")).toHaveLength(1);
-    expect(milestones(written, "first_review")[0].blobs[5]).toBe("challenger");
-    // Better Auth performs the user-row deletion after its beforeDelete cleanup hook.
-    await deleteUserAccount(owner.db, owner.userId);
-    await owner.db.delete(user).where(eq(user.id, owner.userId));
-    expect(
-      await owner.db.select().from(userAcquisition).where(eq(userAcquisition.userId, owner.userId)),
-    ).toEqual([]);
-  });
-
-  test("expired cohorts and missing organizations do not activate", async () => {
-    const { requestEnv, written } = experimentEnv();
-    const owner = await seedUser();
-    await recordSignupAcquisition(
-      owner.db,
-      requestEnv,
-      owner.userId,
-      acquisition({ expiresDay: Math.floor(Date.now() / DAY_MS) }),
-    );
-    await recordFirstReviewAcquisition(owner.db, requestEnv, owner.organizationId);
-    await recordFirstReviewAcquisition(owner.db, requestEnv, "missing-workspace");
-    const [saved] = await owner.db
-      .select()
-      .from(userAcquisition)
-      .where(eq(userAcquisition.userId, owner.userId));
-    expect(saved.firstReviewAt).toBeNull();
-    expect(milestones(written, "first_review")).toHaveLength(0);
-  });
 });

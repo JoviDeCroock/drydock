@@ -260,13 +260,6 @@
       "when": 1790410107547,
       "tag": "0036_colorful_morlun",
       "breakpoints": true
-    },
-    {
-      "idx": 37,
-      "version": "6",
-      "when": 1791873113641,
-      "tag": "0037_unusual_gamma_corps",
-      "breakpoints": true
     }
   ]
 }

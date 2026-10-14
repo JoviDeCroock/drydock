@@ -255,6 +255,7 @@ days. Invalid signatures, unknown variants/channels, oversized values, and
 expired cohorts are ignored. No cookie can confer account, organization,
 registry, or release authority. Cookie-bearing public pair responses are never
 shared-cacheable. Full referral URLs and arbitrary query strings are not stored
-in the acquisition dataset. Account creation persists coarse attribution to
-support delayed workspace activation, with account-deletion cascade; details
+in the acquisition dataset. Account creation emits only the coarse cookie
+cohort to aggregate analytics; it adds no account-linked attribution or database
+records. Later workspace reviews are not attributed to the experiment; details
 and measurement limits are in [product analytics](product-analytics.md#homepage-experiments).

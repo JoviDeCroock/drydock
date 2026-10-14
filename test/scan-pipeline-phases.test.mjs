@@ -5,10 +5,6 @@ const dbMock = vi.hoisted(() => ({
   persistScan: vi.fn(async () => ({ persisted: true })),
   recordScanEvent: vi.fn(async () => undefined),
 }));
-const acquisitionMock = vi.hoisted(() => ({
-  recordFirstReviewAcquisition: vi.fn(async () => undefined),
-}));
-vi.mock("../server/db/acquisition.ts", () => acquisitionMock);
 
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
@@ -979,30 +975,6 @@ describe("recordCompletion", () => {
     riskSummary: { releaseRisk: "low", contextRisk: "high", artifactRisk: "high" },
   };
   const identity = { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" };
-
-  test.each([true, false])(
-    "attributes activation only for a persisted completion (%s)",
-    async (persisted) => {
-      acquisitionMock.recordFirstReviewAcquisition.mockClear();
-      await recordCompletion({
-        db: {},
-        session: { userId: "user-1" },
-        identity,
-        adapterId: "fake",
-        result: completedResult,
-        baseline: baselineInfo,
-        persisted,
-        pipelineStartedAtMs: Date.now(),
-      });
-      expect(acquisitionMock.recordFirstReviewAcquisition).toHaveBeenCalledTimes(persisted ? 1 : 0);
-      if (persisted)
-        expect(acquisitionMock.recordFirstReviewAcquisition).toHaveBeenCalledWith(
-          {},
-          undefined,
-          "org-1",
-        );
-    },
-  );
 
   test("completes without writing a scan audit event", async () => {
     await recordCompletion({

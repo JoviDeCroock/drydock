@@ -8,8 +8,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../analytics";
-import type { Acquisition } from "../acquisition";
-import { recordSignupAcquisition } from "../../db/acquisition";
+import { type Acquisition, recordAcquisitionMilestone } from "../acquisition";
 import { enforceRateLimit, RateLimitError } from "../rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { passwordResetPagePath, passwordResetPageReturnTo } from "../../../src/lib/auth-return";
@@ -685,7 +684,7 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
         create: {
           after: async (createdUser) => {
             if (options.acquisition)
-              await recordSignupAcquisition(db, env, createdUser.id, options.acquisition);
+              recordAcquisitionMilestone(env, options.acquisition, "signed_up");
             const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
               name: "user.signed_up",

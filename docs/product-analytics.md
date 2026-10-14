@@ -280,11 +280,10 @@ increment it.
 
 `landing-hero-experiment` is a global Flagship switch, default **false**. It
 requires `FLAGS`, `BETTER_AUTH_SECRET`, and `PRODUCT_ANALYTICS`; without any of
-these, the control homepage remains available and no cohort is created. Enable
-it only after deploying the generated `user_acquisition` migration. Signed-in
-requests, recognized crawlers, prefetches, and HEAD requests are not enrolled.
-Disabling the flag stops new assignments and cookie-based diff/signup tracking;
-previously attributed accounts can still complete their bounded activation window.
+these, the control homepage remains available and no cohort is created. Deploy
+the application, then enable the flag; no database migration is required.
+Signed-in requests, recognized crawlers, prefetches, and HEAD requests are not
+enrolled. Disabling the flag stops assignments and diff/signup attribution.
 
 Experiment `landing-package-diff-v1` assigns control/challenger 50/50. A signed,
 HttpOnly, SameSite=Lax first-party `drydock_landing` cookie holds only experiment,
@@ -307,17 +306,13 @@ and `blob4` (ecosystem) blank: `blob5` experiment, `blob6` variant, `blob7` chan
   cache remains independent of visitor state.
 - `signed_up`: an account was created through Better Auth's shared create-user
   hook, covering email and GitHub. Existing accounts signing in are not counted.
-- `first_review`: the first persisted completed review in a workspace owned by
-  that newly acquired account, within the original cookie's expiry window. It
-  may be submitted by another organization member. Queue and gate completions
-  share the same hook. A conditional D1 update deduplicates concurrent reviews
-  and retries; failed or nonpersisted reviews cannot activate the cohort.
+  The creation request, including the GitHub OAuth callback, must carry a valid,
+  unexpired cohort cookie while the experiment is enabled.
 
-`user_acquisition` stores only these coarse cohort fields, expiry, and the first
-review timestamp against the existing account ID. This carries signup attribution
-through email/OAuth and later queue jobs without writing user IDs to analytics.
-The row is deleted with the account by its cascading foreign key. It never
-changes organization ownership, scan risk, or approval authority.
+Cohort state stays in the cookie; no acquisition table, account fields, or
+database writes are added. Signup emits its coarse milestone directly from the
+user-create hook. Later workspace reviews still emit the existing aggregate
+`scan.completed` event, but cannot be attributed to the homepage variant.
 
 Channels are deliberately coarse. Known google.com, bing.com, duckduckgo.com,
 and search.brave.com referrals are `search`; github.com is `github`; missing or
@@ -337,11 +332,12 @@ WHERE blob2 = 'acquisition.milestone'
 GROUP BY variant, channel, milestone;
 ```
 
-Compare diff-delivered, signup, and activation counts per assignment, alongside
+Compare diff-delivered and signup counts per assignment, alongside
 raw counts and channel mix. Wait for the same conversion window in both arms.
 These are **cookie cohorts, not unique people**: cleared/blocked cookies,
-cross-device use, shared browsers, and simultaneous tabs affect counts. Anonymous
-milestones deduplicate approximately through the cookie; account signup and
-workspace activation deduplicate in D1. Events lost to an unavailable analytics
-sink are not retried. Do not present a short-term fluctuation as a proven winner
-or a precise person-level conversion rate.
+cross-device use, shared browsers, and simultaneous tabs affect counts. Diff
+milestones deduplicate approximately through the cookie; signup counts new
+account creations rather than sign-ins. Events lost to an unavailable analytics
+sink are not retried. There is no account-level funnel or delayed review
+attribution. Do not present a short-term fluctuation as a proven winner or a
+precise person-level conversion rate.

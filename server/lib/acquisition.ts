@@ -117,7 +117,7 @@ export async function assignLandingExperiment(
 export function recordAcquisitionMilestone(
   env: Pick<Bindings, "PRODUCT_ANALYTICS"> | undefined,
   acquisition: Pick<Acquisition, "experiment" | "variant" | "channel">,
-  milestone: "assigned" | "diff_read" | "signed_up" | "first_review",
+  milestone: "assigned" | "diff_read" | "signed_up",
 ): void {
   recordProductEvent(env, {
     name: "acquisition.milestone",
