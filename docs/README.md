@@ -50,6 +50,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`api-keys.md`](./api-keys.md) — read-only organization API keys: the route allowlist, authentication rules, storage, and lifecycle, plus the [`openapi.json`](./openapi.json) contract for that surface and the anonymous package diff.
+- [`agent-integrations.md`](./agent-integrations.md) — account-free CLI package evidence and the hosted, read-only public MCP endpoint.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, and machine-readable discovery.
