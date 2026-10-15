@@ -271,7 +271,12 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } },
       },
     };
-    for (const status of operation.errors) {
+    // Every key request is charged to a per-IP and a per-key budget before its
+    // route runs, so each key operation can answer 429.
+    const errors = operation.anonymous
+      ? operation.errors
+      : [...new Set([...operation.errors, 429])];
+    for (const status of errors) {
       responses[String(status)] = {
         description: STATUS_TEXT[status],
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },

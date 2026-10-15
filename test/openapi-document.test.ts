@@ -46,6 +46,39 @@ describe("OpenAPI document", () => {
     }
   });
 
+  type Operation = { security?: unknown[]; responses: Record<string, unknown> };
+  const operations = (document: Record<string, unknown>) =>
+    Object.entries(document.paths as Record<string, Record<string, Operation>>).flatMap(
+      ([path, methods]) =>
+        Object.entries(methods).map(([method, operation]) => ({
+          name: `${method.toUpperCase()} ${path}`,
+          operation,
+        })),
+    );
+
+  test("every API-key operation documents its rate-limit response", () => {
+    for (const { name, operation } of operations(buildOpenApiDocument())) {
+      if (operation.security?.length === 0) continue;
+      expect(operation.responses["429"], name).toBeTruthy();
+    }
+  });
+
+  test("response objects stay open to fields outside the contract", () => {
+    const document = buildOpenApiDocument();
+    const schemas = (document.components as { schemas: Record<string, unknown> }).schemas;
+    const responseSchemas = new Set(
+      operations(document).flatMap(({ operation }) =>
+        [...JSON.stringify(operation.responses).matchAll(/"#\/components\/schemas\/(\w+)"/g)].map(
+          (match) => match[1],
+        ),
+      ),
+    );
+    expect(responseSchemas.size).toBeGreaterThan(1);
+    for (const name of responseSchemas) {
+      expect(JSON.stringify(schemas[name]), name).not.toContain('"additionalProperties":false');
+    }
+  });
+
   test("operation ids are unique", () => {
     const ids = OPENAPI_OPERATIONS.map((operation) => operation.operationId);
     expect(new Set(ids).size).toBe(ids.length);

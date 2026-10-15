@@ -48,7 +48,7 @@ The check matches the route that will answer the request, not the URL: `server/m
 - An `Authorization` value that mentions a `ddk_` key selects key authentication, and anything but exactly `Bearer ddk_…` then fails as a malformed key. Any other `Authorization` value (for example HTTP basic auth in front of a self-hosted staging deployment) is ignored and the request keeps the cookie path.
 - A request that presents a key is never authenticated by its cookie. An unknown, malformed, revoked, or expired key is `401 { code: "invalid_api_key" }` with a `WWW-Authenticate: Bearer` header.
 - Every request that presents a key is first charged to a per-IP budget of 240 per minute (`api-key-ip:<ip>`), before the key is looked up, so a flood of random keys cannot turn into anonymous D1 reads beyond that budget.
-- Each key has its own budget of 120 requests per minute (`api-key:<keyId>`, served by the native 120-per-minute tier).
+- Each key has its own budget of 120 requests per minute (`api-key:<keyId>`, served by the native 120-per-minute tier). Either budget answers `429` with `retry-after`; the OpenAPI document lists the 429 on every key operation.
 - Keys are only used on `GET`, so the CSRF origin check is unchanged.
 - `test/api-auth-boundary-invariants.test.mjs` pins that the session guard's only sessionless exit follows `authenticateApiKeyRequest`, and that no path-specific `.all()` handler is registered below the guard (one would answer ahead of the route the key check judges).
 
