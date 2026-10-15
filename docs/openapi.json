@@ -3181,7 +3181,7 @@
           "after",
           "textSamplesOmitted"
         ],
-        "additionalProperties": false
+        "additionalProperties": {}
       },
       "PublicPackageVersions": {
         "type": "object",
