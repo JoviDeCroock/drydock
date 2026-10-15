@@ -51,8 +51,8 @@ API. They send no API key, cookies, or repository files, even when
 the project must permit sending that public package/version pair to Drydock.
 
 ```sh
-pnpm run drydock diff react 18.2.0 18.3.1 --json
-pnpm run drydock file react 18.2.0 18.3.1 index.js --json
+node cli/bin/drydock.mjs diff react 18.2.0 18.3.1 --json
+node cli/bin/drydock.mjs file react 18.2.0 18.3.1 index.js --json
 ```
 
 Select a file path from the returned diff. The OpenAPI document describes the
