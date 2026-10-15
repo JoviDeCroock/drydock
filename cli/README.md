@@ -35,7 +35,7 @@ These need a key created with **scan access**; a read-only key gets a clear erro
 | `scans start --stage <stage-id>`                  | Review one npm staged publish                                                      |
 | `check-npm`                                       | The dashboard's "Check npm": discover new staged publishes and start their reviews |
 
-Each takes `--wait` to poll the started reviews until they finish (`--timeout`, `--interval`, `--fail-on` as for `scans wait`). Scoped names keep their leading `@`: `scans start @acme/cli@2.0.0`. With `check-npm --wait`, any review at the `--fail-on` threshold exits `3`, even if another failed; otherwise a failed review exits `1`.
+Each takes `--wait` to poll the started reviews until they finish (`--timeout`, `--interval` as for `scans wait`); `scans start --wait` also takes `--fail-on`. Scoped names keep their leading `@`: `scans start @acme/cli@2.0.0`. `check-npm` refuses `--fail-on` with a usage error, because it is not a gate (below); `check-npm --wait` exits `1` when a review it started failed.
 
 `--json` prints the API response instead of a table (with `--wait`, the start response plus a `results` array of final statuses). A flag the command does not take is a usage error.
 
