@@ -272,7 +272,7 @@ const publicFileRecord = z.looseObject({
 });
 
 export const PublicPackageFile = z
-  .object({
+  .looseObject({
     path: z.string(),
     before: publicFileRecord.nullable(),
     after: publicFileRecord.nullable(),
