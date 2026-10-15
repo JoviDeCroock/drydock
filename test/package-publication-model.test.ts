@@ -43,6 +43,7 @@ const alert = {
   resolution: null,
   resolvedAt: null,
   resolutionBadge: null,
+  reviewedBytes: null,
 };
 const watched: PackagePublication = {
   packageName: "@scope/package",

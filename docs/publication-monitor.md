@@ -227,11 +227,18 @@ only digests the observation never recorded; the decision tries once more if tha
 not landed. The observation's status and reason are never touched.
 
 The decision happens on the review page's Decide dialog, diff first, which reads
-"Decision after release" for a linked review. Deciding it resolves the alert, audited
-as `publication.review_resolved`, and re-deciding updates it:
+"Decision after release" for a linked review. Deciding it records the outcome on the
+alert, audited as `publication.review_resolved`, and re-deciding updates it. Every
+decision also compares the reviewed tarball's digests with the ones the monitor recorded
+for the release (`reviewed_bytes`: `match`, `differ`, or `unavailable`), whoever decides
+it and whatever the badge rule below says. Only a decision on the published bytes
+speaks for them:
 
-- **Approve after release** resolves the alert as approved after release. It no longer
-  counts as unacknowledged, is not re-sent, and needs no acknowledgment.
+- **Approve after release** of a `match` resolves the alert as approved after release.
+  It no longer counts as unacknowledged, sorts with the settled releases, is not
+  re-sent, and needs no acknowledgment. Approving bytes that differ from the published
+  ones, or that could not be compared with them, is recorded but leaves the alert open
+  (counted, sorted first, emailed, and acknowledgeable), and the page says why.
 - **Decline after release** keeps the alert open, labelled declined after release,
   with next steps: deprecate or unpublish the version on npm, rotate the tokens that
   can publish it, and check its trusted publishers and who holds publish rights.
@@ -254,7 +261,7 @@ recorded for the release (every algorithm both carry must agree, and at least on
 be shared). The alert records the outcome of that check (`resolution_badge`:
 `applied`, or `not_a_verified_publisher`, `not_public_npm`, `digests_unavailable`,
 `digests_differ`), and the page says whether the badge counts the decision. Otherwise
-the decision resolves the alert for the organization and never changes the badge. See
+the decision speaks for the organization alone and never changes the badge. See
 [`public-reports.md`](./public-reports.md#decided-after-release).
 
 The organization `out-of-band-watch` flag disables acquisition and new alerts when
@@ -338,8 +345,8 @@ All endpoints require a Better Auth session and active-organization membership:
   alert's post-release review and returns `{ scanId, started: true }` (202), or the
   linked one as `{ scanId, started: false }` (200). Observations carry the linked
   review (`reviewScanId`, `reviewStatus`, `reviewDecision`) and the outcome
-  (`resolution`, `resolvedAt`, `resolutionBadge`); ledger alerts carry `reviewScanId`,
-  `resolution` and `resolvedAt`; a linked scan's detail and decision responses carry
+  (`resolution`, `resolvedAt`, `resolutionBadge`, `reviewedBytes`); ledger alerts carry
+  `reviewScanId`, `resolution`, `resolvedAt` and `reviewedBytes`; a linked scan's detail and decision responses carry
   `postRelease`. Deciding goes through `POST /api/v1/scans/:id/decision`.
 - `DELETE /api/v1/publication-watches/:id` (owner/admin only) stops monitoring, removes history,
   and remembers the opt-out.

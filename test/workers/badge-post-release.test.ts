@@ -7,6 +7,7 @@ import { call } from "./helpers/app";
 import {
   OTHER,
   PUBLISHED,
+  alertRow,
   appFor,
   decide,
   fetchBadge,
@@ -59,11 +60,16 @@ describe("the public badge counts a publisher's decision after release", () => {
     await linkReview(owner, packageName, "1.0.1", scanId);
 
     const approved = await decide(app, scanId, "publish");
-    // The alert still resolves for the organization; the badge does not move.
+    // Approving bytes npm did not publish settles nothing: the alert stays
+    // open for the organization, and the badge does not move.
     expect(approved.postRelease).toMatchObject({
       resolution: "approved_after_release",
       resolutionBadge: "digests_differ",
+      reviewedBytes: "differ",
     });
+    expect((await alertRow(owner.organizationId, packageName, "1.0.1"))?.reviewedBytes).toBe(
+      "differ",
+    );
     expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");
     await decide(app, scanId, "no_publish");
     expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 not reviewed");

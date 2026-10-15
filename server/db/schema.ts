@@ -888,6 +888,13 @@ export const publicationAlerts = sqliteTable(
         "digests_differ",
       ],
     }),
+    /**
+     * Whether the reviewed tarball's digests equal the ones the monitor
+     * recorded for the release, compared whatever the badge decides. Only an
+     * approval of a `match` settles the alert: approving other bytes, or bytes
+     * that could not be compared, says nothing about what npm published.
+     */
+    reviewedBytes: text("reviewed_bytes", { enum: ["match", "differ", "unavailable"] }),
   },
   (table) => [
     uniqueIndex("publication_alerts_org_release").on(
@@ -896,5 +903,9 @@ export const publicationAlerts = sqliteTable(
       table.version,
     ),
     index("publication_alerts_review_scan").on(table.reviewScanId),
+    // The anonymous badge reads post-release decisions by package name alone.
+    index("publication_alerts_package_badge").on(table.packageName, table.resolutionBadge),
+    index("publication_alerts_review_requested_by").on(table.reviewRequestedBy),
+    index("publication_alerts_resolved_by").on(table.resolvedBy),
   ],
 );

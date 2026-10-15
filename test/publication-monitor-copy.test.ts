@@ -9,6 +9,7 @@ import {
   postReleaseReviewState,
   resolutionBadgeMessage,
   resolutionLabels,
+  resolutionTone,
   watchMetaLine,
   watchProblemMessage,
 } from "../src/features/publication-monitor/copy";
@@ -184,16 +185,51 @@ describe("post-release review copy", () => {
     ).toBeNull();
   });
 
-  test("approval resolves the alert; a decline keeps it open with next steps", () => {
+  test("approval of the published bytes resolves the alert; a decline keeps it open with next steps", () => {
     expect(resolutionLabels.approved_after_release).toBe("Approved after release");
     expect(resolutionLabels.declined_after_release).toBe("Declined after release");
-    expect(isAlertResolved({ resolution: "approved_after_release" })).toBe(true);
-    expect(isAlertResolved({ resolution: "declined_after_release" })).toBe(false);
-    expect(isAlertResolved({ resolution: null })).toBe(false);
+    expect(isAlertResolved({ resolution: "approved_after_release", reviewedBytes: "match" })).toBe(
+      true,
+    );
+    expect(resolutionTone({ resolution: "approved_after_release", reviewedBytes: "match" })).toBe(
+      "ok",
+    );
+    expect(isAlertResolved({ resolution: "declined_after_release", reviewedBytes: "match" })).toBe(
+      false,
+    );
+    expect(isAlertResolved({ resolution: null, reviewedBytes: null })).toBe(false);
     const steps = declinedRemediation("@scope/package", "1.1.0");
     expect(steps).toContain("deprecate or unpublish @scope/package@1.1.0 on npm");
     expect(steps).toContain("rotate the npm tokens");
     expect(steps).toContain("trusted publishers and who has publish rights");
+  });
+
+  test("approving bytes that differ or were never compared leaves the alert open", () => {
+    for (const reviewedBytes of ["differ", "unavailable", null] as const) {
+      const outcome = { resolution: "approved_after_release" as const, reviewedBytes };
+      expect(isAlertResolved(outcome)).toBe(false);
+      expect(resolutionTone(outcome)).toBe("medium");
+    }
+    expect(
+      resolutionBadgeMessage({
+        version: "1.1.0",
+        resolution: "approved_after_release",
+        resolutionBadge: "digests_differ",
+        reviewedBytes: "differ",
+      }),
+    ).toBe(
+      "This approval leaves the alert open: the reviewed bytes differ from the published ones. The public badge is unchanged.",
+    );
+    expect(
+      resolutionBadgeMessage({
+        version: "1.1.0",
+        resolution: "approved_after_release",
+        resolutionBadge: "not_a_verified_publisher",
+        reviewedBytes: "unavailable",
+      }),
+    ).toBe(
+      "This approval leaves the alert open: the reviewed bytes could not be compared with the published ones. The public badge is unchanged: this organization has no registry-verified staged review of the package.",
+    );
   });
 
   test("says whether the public badge counts the decision, and why not", () => {
@@ -202,6 +238,7 @@ describe("post-release review copy", () => {
         version: "1.1.0",
         resolution: "approved_after_release",
         resolutionBadge: "applied",
+        reviewedBytes: "match",
       }),
     ).toBe("The public badge counts this decision as 1.1.0 approved.");
     expect(
@@ -209,6 +246,7 @@ describe("post-release review copy", () => {
         version: "1.1.0",
         resolution: "declined_after_release",
         resolutionBadge: "applied",
+        reviewedBytes: "match",
       }),
     ).toBe("The public badge counts this decision as 1.1.0 rejected.");
     for (const effect of [
@@ -220,13 +258,19 @@ describe("post-release review copy", () => {
       expect(
         resolutionBadgeMessage({
           version: "1.1.0",
-          resolution: "approved_after_release",
+          resolution: "declined_after_release",
           resolutionBadge: effect,
+          reviewedBytes: "match",
         }),
       ).toMatch(/^The public badge is unchanged: .+\.$/);
     }
     expect(
-      resolutionBadgeMessage({ version: "1.1.0", resolution: null, resolutionBadge: null }),
+      resolutionBadgeMessage({
+        version: "1.1.0",
+        resolution: null,
+        resolutionBadge: null,
+        reviewedBytes: null,
+      }),
     ).toBeNull();
   });
 });

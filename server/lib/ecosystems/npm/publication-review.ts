@@ -4,7 +4,10 @@
  * An alert says npm published a version this organization never approved.
  * The organization can review the published bytes after the fact (a
  * published-pair review started from the alert) and approve or decline them.
- * That decision resolves the alert for the organization. Whether it may also
+ * The decision is recorded on the alert, but only an approval of the published
+ * bytes themselves (the reviewed tarball's digests equal the ones the monitor
+ * recorded) settles it; a decline, or approving bytes that differ or could not
+ * be compared, leaves it open. Whether the decision may also
  * speak on the public README badge is a separate, stricter question, because
  * a published-pair review needs no credential and anyone can run one against
  * any public package: it may only when the organization is a registry-verified
@@ -23,6 +26,7 @@ import {
   resolvePublicationAlertReview,
   type PublicationAlertResolution,
   type PublicationAlertResolutionBadge,
+  type PublicationAlertReviewedBytes,
 } from "../../../db/publication-alerts";
 import { publicationObservations, publicationWatches, scans } from "../../../db/schema";
 import {
@@ -92,10 +96,11 @@ async function observedDigests(
 }
 
 /**
- * Whether the decision may speak on the public badge, or why not. Every
- * check fails closed, and the order only decides which reason is reported.
+ * Whether the reviewed tarball is the one the monitor saw npm publish. Asked
+ * of every decided review, whoever decides it: it is what lets an approval
+ * settle the alert at all, not only what lets it reach the badge.
  */
-async function badgeEvidence(
+async function compareReviewedBytes(
   db: AppDb,
   env: Cloudflare.Env,
   input: {
@@ -104,14 +109,45 @@ async function badgeEvidence(
     version: string;
     summaryJson: unknown;
   },
-): Promise<{ badge: PublicationAlertResolutionBadge; distTags: string[] | null }> {
+): Promise<{ bytes: PublicationAlertReviewedBytes; distTags: string[] | null }> {
+  let observed = await observedDigests(db, input);
+  // A release with no Drydock record was decided without its bytes; the Scan
+  // action asked the monitor to hash them, and this is the last chance.
+  if (observed && !observed.digests) {
+    await recordPublishedReleaseDigests(db, env, input);
+    observed = await observedDigests(db, input);
+  }
+  const comparison = compareArchiveDigests(
+    publishedPairArtifactDigest(input.summaryJson),
+    observed?.digests ?? null,
+  );
+  return {
+    bytes: comparison === "incomparable" ? "unavailable" : comparison,
+    distTags: observed?.distTags ?? null,
+  };
+}
+
+/**
+ * Whether the decision may speak on the public badge, or why not. Every
+ * check fails closed, and the order only decides which reason is reported.
+ */
+async function badgeEffect(
+  db: AppDb,
+  env: Cloudflare.Env,
+  input: {
+    organizationId: string;
+    packageName: string;
+    summaryJson: unknown;
+    bytes: PublicationAlertReviewedBytes;
+  },
+): Promise<PublicationAlertResolutionBadge> {
   // The badge speaks for the public npm registry only: both the monitor that
   // saw the release and the review that read it must have read it there.
   if (
     npmPublicationRegistry(env) !== PUBLIC_NPM_REGISTRY ||
     reviewedRegistryUrl(input.summaryJson) !== PUBLIC_NPM_REGISTRY
   ) {
-    return { badge: "not_public_npm", distTags: null };
+    return "not_public_npm";
   }
   // The same credential-backed tie the off switch requires: a completed staged
   // review of a public-npm stage of this exact name that the organization's
@@ -123,26 +159,13 @@ async function badgeEvidence(
       badgePackage("npm", input.packageName),
     ))
   ) {
-    return { badge: "not_a_verified_publisher", distTags: null };
+    return "not_a_verified_publisher";
   }
-  let observed = await observedDigests(db, input);
-  // A release with no Drydock record was decided without its bytes; the Scan
-  // action asked the monitor to hash them, and this is the last chance.
-  if (observed && !observed.digests) {
-    await recordPublishedReleaseDigests(db, env, input);
-    observed = await observedDigests(db, input);
-  }
-  const reviewed = publishedPairArtifactDigest(input.summaryJson);
-  const comparison = compareArchiveDigests(reviewed, observed?.digests ?? null);
-  return {
-    badge:
-      comparison === "match"
-        ? "applied"
-        : comparison === "differ"
-          ? "digests_differ"
-          : "digests_unavailable",
-    distTags: observed?.distTags ?? null,
-  };
+  return input.bytes === "match"
+    ? "applied"
+    : input.bytes === "differ"
+      ? "digests_differ"
+      : "digests_unavailable";
 }
 
 /**
@@ -192,11 +215,17 @@ export async function resolvePostReleaseReview(
   }
   const resolution: PublicationAlertResolution =
     scan.decision === "publish" ? "approved_after_release" : "declined_after_release";
-  const evidence = await badgeEvidence(db, env, {
+  const reviewed = await compareReviewedBytes(db, env, {
     organizationId: input.organizationId,
     packageName: alert.packageName,
     version: alert.version,
     summaryJson: scan.summaryJson,
+  });
+  const resolutionBadge = await badgeEffect(db, env, {
+    organizationId: input.organizationId,
+    packageName: alert.packageName,
+    summaryJson: scan.summaryJson,
+    bytes: reviewed.bytes,
   });
   const resolved = await resolvePublicationAlertReview(db, {
     alertId: alert.id,
@@ -206,21 +235,23 @@ export async function resolvePostReleaseReview(
     packageName: alert.packageName,
     version: alert.version,
     resolution,
-    resolutionBadge: evidence.badge,
+    resolutionBadge,
+    reviewedBytes: reviewed.bytes,
   });
   if (!resolved) return null;
   // Every line this could have changed, including one it changed back.
   const target = badgePackage("npm", alert.packageName);
   const badgeTags = new Set([
     DEFAULT_BADGE_TAG,
-    ...(evidence.distTags ?? []),
+    ...(reviewed.distTags ?? []),
     ...(await listPackageBadgeTags(db, target)),
   ]);
   return {
     packageName: alert.packageName,
     version: alert.version,
     resolution,
-    resolutionBadge: evidence.badge,
+    resolutionBadge,
+    reviewedBytes: reviewed.bytes,
     badgeKey: target.packageKey,
     badgeTags: [...badgeTags],
   };

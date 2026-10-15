@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { publicationWatchBlocked } from "./publication-watches";
+import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { publicationAlertSettled, publicationWatchBlocked } from "./publication-watches";
 import type { AppDb } from "./client";
 import {
   publicationAlerts,
@@ -15,13 +15,13 @@ export type PublicationAlertResolution = NonNullable<
 export type PublicationAlertResolutionBadge = NonNullable<
   typeof publicationAlerts.$inferSelect.resolutionBadge
 >;
+export type PublicationAlertReviewedBytes = NonNullable<
+  typeof publicationAlerts.$inferSelect.reviewedBytes
+>;
 
-// An alert the organization approved after release needs no further notice:
-// it is resolved. A decline leaves it open.
-const notApprovedAfterRelease = or(
-  isNull(publicationAlerts.resolution),
-  ne(publicationAlerts.resolution, "approved_after_release"),
-);
+// An alert settled by an approval of the published bytes needs no further
+// notice. Qualified by the table name: these run inside plain selects and updates.
+const notSettledByReview = sql`not ${publicationAlertSettled("publication_alerts")}`;
 
 export function isPublicationAlert(status: string): status is PublicationAlertStatus {
   return (
@@ -79,8 +79,8 @@ export async function savePublicationObservation(
       .select(
         // The creating check holds the delivery claim: it delivers right after.
         // Positional over every column, so the trailing nulls are the review
-        // and resolution columns (migration 0039), in declaration order.
-        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()}, null, null, null, null, null, null, null where ${stillAuthorized} and exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
+        // and resolution columns, in declaration order.
+        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null, ${now.getTime()}, null, null, null, null, null, null, null, null where ${stillAuthorized} and exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
       )
       .onConflictDoNothing({
         target: [
@@ -131,7 +131,7 @@ export async function listUnnotifiedPublicationAlerts(
         eq(publicationAlerts.packageName, input.packageName),
         isNull(publicationAlerts.notifiedAt),
         isNull(publicationAlerts.acknowledgedAt),
-        notApprovedAfterRelease,
+        notSettledByReview,
         sql`exists(select 1 from publication_observations o where o.watch_id = ${input.watchId} and o.organization_id = ${publicationAlerts.organizationId} and o.version = ${publicationAlerts.version})`,
       ),
     )
@@ -170,7 +170,7 @@ export async function claimPublicationAlertDelivery(
         alertKey(input),
         isNull(publicationAlerts.notifiedAt),
         isNull(publicationAlerts.acknowledgedAt),
-        notApprovedAfterRelease,
+        notSettledByReview,
         or(
           isNull(publicationAlerts.deliveryClaimedAt),
           lt(publicationAlerts.deliveryClaimedAt, new Date(now.getTime() - leaseMs)),
@@ -212,6 +212,7 @@ export async function listPublicationAlertsForPackage(
       reviewScanId: publicationAlerts.reviewScanId,
       resolution: publicationAlerts.resolution,
       resolvedAt: publicationAlerts.resolvedAt,
+      reviewedBytes: publicationAlerts.reviewedBytes,
       inCurrentWatch: currentWatchId
         ? // Qualified by hand: see listUnnotifiedPublicationAlerts.
           sql<boolean>`exists(select 1 from publication_observations o where o.watch_id = ${currentWatchId} and o.organization_id = publication_alerts.organization_id and o.version = publication_alerts.version)`.mapWith(
@@ -416,6 +417,7 @@ export async function getPublicationAlertReview(db: AppDb, organizationId: strin
       resolution: publicationAlerts.resolution,
       resolvedAt: publicationAlerts.resolvedAt,
       resolutionBadge: publicationAlerts.resolutionBadge,
+      reviewedBytes: publicationAlerts.reviewedBytes,
     })
     .from(publicationAlerts)
     .where(
@@ -444,6 +446,7 @@ export async function resolvePublicationAlertReview(
     version: string;
     resolution: PublicationAlertResolution;
     resolutionBadge: PublicationAlertResolutionBadge;
+    reviewedBytes: PublicationAlertReviewedBytes;
   },
 ) {
   const now = new Date();
@@ -455,6 +458,7 @@ export async function resolvePublicationAlertReview(
         resolvedAt: now,
         resolvedBy: input.actorUserId,
         resolutionBadge: input.resolutionBadge,
+        reviewedBytes: input.reviewedBytes,
       })
       .where(
         and(
@@ -471,7 +475,7 @@ export async function resolvePublicationAlertReview(
     db
       .insert(scanEvents)
       .select(
-        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, ${input.scanId}, 'publication.review_resolved', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, resolution: input.resolution, badge: input.resolutionBadge })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId} and resolution = ${input.resolution} and resolved_at = ${now.getTime()})`,
+        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, ${input.scanId}, 'publication.review_resolved', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, resolution: input.resolution, badge: input.resolutionBadge, reviewedBytes: input.reviewedBytes })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId} and resolution = ${input.resolution} and resolved_at = ${now.getTime()})`,
       ),
   ]);
   return resolved.length > 0;
@@ -496,5 +500,6 @@ export async function postReleaseLink(
     resolution: alert.resolution,
     resolvedAt: alert.resolvedAt,
     resolutionBadge: alert.resolutionBadge,
+    reviewedBytes: alert.reviewedBytes,
   };
 }

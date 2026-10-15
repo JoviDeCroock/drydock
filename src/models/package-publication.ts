@@ -13,6 +13,7 @@ import {
   publicationReviewApiPath,
   type EnrollOutcome,
   type PostReleaseResolution,
+  type PostReleaseReviewedBytes,
   type PublicationObservation,
   type PublicationWatch,
 } from "./publication-watches";
@@ -37,6 +38,7 @@ export interface PublicationAlertRecord {
   reviewScanId: string | null;
   resolution: PostReleaseResolution | null;
   resolvedAt: string | null;
+  reviewedBytes: PostReleaseReviewedBytes | null;
 }
 
 export interface PackagePublication {

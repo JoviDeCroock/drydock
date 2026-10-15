@@ -81,7 +81,10 @@ const REGISTRY: Record<string, AuditEventDef> = {
       const release = summarizePackageVersion(m);
       const outcome =
         m.resolution === "approved_after_release"
-          ? "approved after release"
+          ? // Only an approval of the published bytes settles the alert.
+            m.reviewedBytes === "match"
+            ? "approved after release"
+            : "approved after release, alert left open"
           : m.resolution === "declined_after_release"
             ? "declined after release"
             : null;

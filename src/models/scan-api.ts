@@ -13,7 +13,11 @@ import type {
 } from "../../server/lib/review";
 import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
 import { ApiError, apiFetch, apiJson } from "./api";
-import type { PostReleaseBadgeEffect, PostReleaseResolution } from "./publication-watches";
+import type {
+  PostReleaseBadgeEffect,
+  PostReleaseResolution,
+  PostReleaseReviewedBytes,
+} from "./publication-watches";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
@@ -178,6 +182,7 @@ export interface PostReleaseReviewLink {
   resolution: PostReleaseResolution | null;
   resolvedAt: string | null;
   resolutionBadge: PostReleaseBadgeEffect | null;
+  reviewedBytes: PostReleaseReviewedBytes | null;
 }
 
 export interface ListScansResponse {

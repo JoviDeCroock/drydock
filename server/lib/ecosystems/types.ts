@@ -68,6 +68,8 @@ export interface PostReleaseResolution {
     | "not_a_verified_publisher"
     | "digests_unavailable"
     | "digests_differ";
+  /** Whether the reviewed bytes are the published ones; only an approved `match` settles the alert. */
+  reviewedBytes: "match" | "differ" | "unavailable";
   /** The badge key the decision may have changed, and every line to purge under it. */
   badgeKey: string;
   badgeTags: string[];

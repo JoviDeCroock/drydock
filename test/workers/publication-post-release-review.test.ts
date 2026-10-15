@@ -2,7 +2,12 @@ import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { resolvePublicationAlertReview } from "../../server/db/publication-alerts";
+import {
+  claimPublicationAlertDelivery,
+  listUnnotifiedPublicationAlerts,
+  resolvePublicationAlertReview,
+  savePublicationObservation,
+} from "../../server/db/publication-alerts";
 import {
   createPublicationWatch,
   listPublicationObservations,
@@ -57,6 +62,39 @@ function stubRegistry(packageName: string, versions: string[]) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+// Past the claim the creating check holds on a new alert, so a claim here
+// says only whether the alert is still deliverable.
+const afterLease = new Date(Date.now() + 10 * 60_000);
+
+// A newer release of the watch whose bytes matched an approval: no alert.
+async function seedSettledRelease(
+  owner: { organizationId: string },
+  target: { watchId: string; packageName: string },
+  version: string,
+) {
+  const later = new Date(Date.now() + 60_000);
+  await savePublicationObservation(
+    createDb(env.DB),
+    {
+      id: crypto.randomUUID(),
+      watchId: target.watchId,
+      organizationId: owner.organizationId,
+      version,
+      publishedAt: later,
+      firstSeenAt: later,
+      checkedAt: later,
+      status: "approved_match",
+      reason: null,
+      sha1: null,
+      sha256: null,
+      scanId: null,
+      previousVersion: null,
+      distTags: null,
+    },
+    target.packageName,
+  );
 }
 
 function startReview(
@@ -248,12 +286,15 @@ describe("deciding a post-release review resolves its alert", () => {
       packageName,
       version: "1.1.0",
       resolution: "approved_after_release",
-      // Only watching the package is no tie to its name.
+      // Only watching the package is no tie to its name, but the bytes are
+      // compared whoever decides: that is what lets the approval settle it.
       resolutionBadge: "not_a_verified_publisher",
+      reviewedBytes: "match",
     });
     expect(await alertRow(owner.organizationId, packageName, "1.1.0")).toMatchObject({
       status: "published_without_approval",
       resolution: "approved_after_release",
+      reviewedBytes: "match",
       resolvedBy: owner.userId,
       resolvedAt: expect.any(Date),
       acknowledgedAt: null,
@@ -303,6 +344,91 @@ describe("deciding a post-release review resolves its alert", () => {
     expect(events.every((event) => event.scanId === scanId)).toBe(true);
   });
 
+  test.each([
+    { reviewedBytes: "differ", digests: { sha1: "e".repeat(40), sha256: "e".repeat(64) } },
+    { reviewedBytes: "unavailable", digests: { sha1: null, sha256: null } },
+  ] as const)(
+    "approving bytes that are not the published ones ($reviewedBytes) leaves the alert open",
+    async ({ reviewedBytes, digests }) => {
+      const owner = await seedUser();
+      const app = appFor(owner);
+      const packageName = newPackage();
+      const target = await seedAlert(owner, packageName, "1.1.0");
+      const scanId = await seedPublishedReview(owner, packageName, "1.1.0", { digests });
+      await linkReview(owner, packageName, "1.1.0", scanId);
+      // A newer release that needs nothing, so the order below is the alert's.
+      await seedSettledRelease(owner, { watchId: target.watchId, packageName }, "1.2.0");
+
+      const approved = await decide(app, scanId, "publish");
+      expect(approved.postRelease).toMatchObject({
+        resolution: "approved_after_release",
+        reviewedBytes,
+      });
+      expect(await alertRow(owner.organizationId, packageName, "1.1.0")).toMatchObject({
+        resolution: "approved_after_release",
+        reviewedBytes,
+        acknowledgedAt: null,
+        notifiedAt: null,
+      });
+      const listed = await call(app, "GET", `/api/v1/publication-watches/${target.watchId}`);
+      const body = await listed.json<{
+        watch: { unresolvedAlertCount: number };
+        observations: Array<{ version: string; reviewedBytes: string | null }>;
+      }>();
+      expect(body.watch.unresolvedAlertCount).toBe(1);
+      expect(body.observations.map((observation) => observation.version)).toEqual([
+        "1.1.0",
+        "1.2.0",
+      ]);
+      expect(body.observations[0]?.reviewedBytes).toBe(reviewedBytes);
+      const db = createDb(env.DB);
+      const key = { organizationId: owner.organizationId, packageName, version: "1.1.0" };
+      expect(
+        await listUnnotifiedPublicationAlerts(db, {
+          organizationId: owner.organizationId,
+          packageName,
+          watchId: target.watchId,
+        }),
+      ).toEqual([expect.objectContaining({ version: "1.1.0" })]);
+      expect(await claimPublicationAlertDelivery(db, key, afterLease, 60_000)).toBe(true);
+    },
+  );
+
+  test("an approval of the published bytes is neither counted, sorted first, nor emailed", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    const target = await seedAlert(owner, packageName, "1.1.0");
+    const scanId = await seedPublishedReview(owner, packageName, "1.1.0");
+    await linkReview(owner, packageName, "1.1.0", scanId);
+    await seedSettledRelease(owner, { watchId: target.watchId, packageName }, "1.2.0");
+
+    await decide(app, scanId, "publish");
+    const listed = await call(app, "GET", `/api/v1/publication-watches/${target.watchId}`);
+    const body = await listed.json<{
+      watch: { unresolvedAlertCount: number };
+      observations: Array<{ version: string }>;
+    }>();
+    expect(body.watch.unresolvedAlertCount).toBe(0);
+    expect(body.observations.map((observation) => observation.version)).toEqual(["1.2.0", "1.1.0"]);
+    const db = createDb(env.DB);
+    expect(
+      await listUnnotifiedPublicationAlerts(db, {
+        organizationId: owner.organizationId,
+        packageName,
+        watchId: target.watchId,
+      }),
+    ).toEqual([]);
+    expect(
+      await claimPublicationAlertDelivery(
+        db,
+        { organizationId: owner.organizationId, packageName, version: "1.1.0" },
+        afterLease,
+        60_000,
+      ),
+    ).toBe(false);
+  });
+
   test("a resolution computed from a decision that has since changed does not land", async () => {
     const owner = await seedUser();
     const app = appFor(owner);
@@ -322,6 +448,7 @@ describe("deciding a post-release review resolves its alert", () => {
       version: "1.1.0",
       resolution: "approved_after_release",
       resolutionBadge: "applied",
+      reviewedBytes: "match",
     });
     expect(landed).toBe(false);
     expect(await alertRow(owner.organizationId, packageName, "1.1.0")).toMatchObject({

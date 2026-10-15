@@ -346,7 +346,7 @@ guard, checked when the review is decided and recorded on the alert
   package's claim and has a completed staged review of a public-npm stage its
   own token could read, under npm's name.
   A published-pair review needs no credential and anyone can run one against any
-  public package, so a watcher's decision resolves its own alert and nothing
+  public package, so a watcher's decision speaks for its own alert and nothing
   else.
 - **The public npm registry**, for both the monitor that observed the release and
   the review that read it.

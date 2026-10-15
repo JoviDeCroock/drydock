@@ -438,6 +438,7 @@ describe("one package's monitoring for the package page", () => {
         reviewScanId: null,
         resolution: null,
         resolvedAt: null,
+        reviewedBytes: null,
         inCurrentWatch: false,
       },
     ]);

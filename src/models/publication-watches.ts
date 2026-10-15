@@ -28,6 +28,12 @@ export interface PublicationWatch {
 export type PostReleaseResolution = "approved_after_release" | "declined_after_release";
 
 /**
+ * Whether the post-release review read the bytes npm published. Only an
+ * approval of a `match` settles the alert; anything else leaves it open.
+ */
+export type PostReleaseReviewedBytes = "match" | "differ" | "unavailable";
+
+/**
  * Whether a post-release decision counts on the public README badge, and if
  * not, why. Only `applied` moves the badge.
  */
@@ -74,6 +80,7 @@ export interface PublicationObservation {
   resolution: PostReleaseResolution | null;
   resolvedAt: string | null;
   resolutionBadge: PostReleaseBadgeEffect | null;
+  reviewedBytes: PostReleaseReviewedBytes | null;
 }
 
 export interface AutoEnrollmentInfo {

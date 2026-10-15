@@ -16,6 +16,7 @@ import {
 } from "../../models/package-publication";
 import {
   observationStatusLabels,
+  isAlertResolved,
   resolutionLabels,
   resolutionTone,
   watchMetaLine,
@@ -123,14 +124,12 @@ function EarlierAlerts({ publication }: { publication: PackagePublication }) {
                   <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
                   <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
                   {alert.resolution ? (
-                    <Badge tone={resolutionTone(alert.resolution)}>
-                      {resolutionLabels[alert.resolution]}
-                    </Badge>
+                    <Badge tone={resolutionTone(alert)}>{resolutionLabels[alert.resolution]}</Badge>
                   ) : null}
                   <span class="font-mono text-[11px] text-ink-subtle">
                     {alert.acknowledgedAt
                       ? `acknowledged ${formatDateTime(alert.acknowledgedAt)}`
-                      : alert.resolution === "approved_after_release"
+                      : isAlertResolved(alert)
                         ? `raised ${formatDateTime(alert.createdAt)}`
                         : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
                   </span>

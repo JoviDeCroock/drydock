@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "48c6b752-ca11-471a-a8b4-b5f7fdff411d",
+  "id": "9cc66e30-b430-4357-bcdc-af6b74464605",
   "prevId": "ae54bf1b-51be-490b-9fe6-cdbb619830ef",
   "tables": {
     "account": {
@@ -1691,6 +1691,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "reviewed_bytes": {
+          "name": "reviewed_bytes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1707,6 +1714,28 @@
           "name": "publication_alerts_review_scan",
           "columns": [
             "review_scan_id"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_package_badge": {
+          "name": "publication_alerts_package_badge",
+          "columns": [
+            "package_name",
+            "resolution_badge"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_review_requested_by": {
+          "name": "publication_alerts_review_requested_by",
+          "columns": [
+            "review_requested_by"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_resolved_by": {
+          "name": "publication_alerts_resolved_by",
+          "columns": [
+            "resolved_by"
           ],
           "isUnique": false
         }

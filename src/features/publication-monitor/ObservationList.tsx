@@ -84,7 +84,7 @@ export function ObservationList({
             </span>
             {observation.resolution ? (
               <>
-                <Badge tone={resolutionTone(observation.resolution)}>
+                <Badge tone={resolutionTone(observation)}>
                   {resolutionLabels[observation.resolution]}
                 </Badge>
                 {observation.resolvedAt ? (

@@ -17,8 +17,8 @@ export function PostReleaseNotice({
   return (
     <p class="m-0 text-[13px] text-ink-muted">
       Post-release review: {release} is already public on npm and raised a publication alert.
-      Approving resolves the alert as approved after release; declining keeps it open with next
-      steps. Nothing changes on npm.{" "}
+      Approving resolves the alert as approved after release when the reviewed bytes match the
+      published ones; declining keeps it open with next steps. Nothing changes on npm.{" "}
       <a href={packageReleasesPath(link.packageName, null, organizationId)}>
         Open the package&rsquo;s alerts
       </a>
