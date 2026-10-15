@@ -138,6 +138,7 @@ test("idle cron discovery omits three unused summary reads while dashboard recon
   queries.length = 0;
   expect(await reconcilePublicationWatches(countedDb, organizationId)).toEqual({
     deferred: 0,
+    pending: 0,
     suggestions: [],
   });
   expect(queries).toHaveLength(6);
@@ -507,11 +508,11 @@ describe("scheduled enrollment", () => {
 
   test("reading the enrollment summary enrolls nothing; the cron enrolls history and records gate suggestions", async () => {
     const { db, organizationId } = await seed();
-    await historicalScan(organizationId, "cron-history");
-    await historicalScan(organizationId, "cron-gate", {
+    await historicalScan(organizationId, "scheduled-history");
+    await historicalScan(organizationId, "scheduled-gate", {
       source: "workflow_gate",
       registryUrl: null,
-      summaryJson: gateSummary("cron-gate"),
+      summaryJson: gateSummary("scheduled-gate"),
     });
     expect(await getPublicationAutoEnrollment(db, organizationId)).toEqual({
       deferred: 0,
@@ -523,12 +524,12 @@ describe("scheduled enrollment", () => {
     await reconcileDue();
     const watches = await listPublicationWatches(db, organizationId);
     expect(watches.map((watch) => [watch.packageName, watch.source])).toEqual([
-      ["cron-history", "published_history"],
+      ["scheduled-history", "published_history"],
     ]);
     expect(await getPublicationAutoEnrollment(db, organizationId)).toEqual({
       deferred: 0,
       pending: 0,
-      suggestions: [{ packageName: "cron-gate" }],
+      suggestions: [{ packageName: "scheduled-gate" }],
     });
   });
 
