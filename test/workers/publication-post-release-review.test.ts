@@ -394,6 +394,32 @@ describe("deciding a post-release review resolves its alert", () => {
     },
   );
 
+  test("a release never hashed is hashed when decided, and an unverified organization's approval of a match settles it", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    const target = await seedAlert(owner, packageName, "1.1.0", {
+      digests: { sha1: null, sha256: null },
+    });
+    const scanId = await seedPublishedReview(owner, packageName, "1.1.0");
+    await linkReview(owner, packageName, "1.1.0", scanId);
+    const fetchMock = stubRegistry(packageName, ["1.0.0", "1.1.0"]);
+
+    const approved = await decide(app, scanId, "publish");
+    expect(fetchMock).toHaveBeenCalled();
+    // Not a verified publisher: the badge stays out of it, but the bytes were
+    // compared all the same, and they are the published ones.
+    expect(approved.postRelease).toMatchObject({
+      resolution: "approved_after_release",
+      resolutionBadge: "not_a_verified_publisher",
+      reviewedBytes: "match",
+    });
+    const listed = await call(app, "GET", `/api/v1/publication-watches/${target.watchId}`);
+    expect((await listed.json<{ watch: { unresolvedAlertCount: number } }>()).watch).toMatchObject({
+      unresolvedAlertCount: 0,
+    });
+  });
+
   test("an approval of the published bytes is neither counted, sorted first, nor emailed", async () => {
     const owner = await seedUser();
     const app = appFor(owner);
