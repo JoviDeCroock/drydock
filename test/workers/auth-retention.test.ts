@@ -127,6 +127,24 @@ describe("expired auth row retention", () => {
     });
   });
 
+  test.each([
+    ["session", "session_expires_idx"],
+    ["verification", "verification_expires_idx"],
+  ])("expiry cleanup searches the %s expiry index", async (table, index) => {
+    const plan = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN DELETE FROM ${table} WHERE expires_at < ?`,
+    )
+      .bind(Date.now() - AUTH_ROW_RETENTION_GRACE_MS)
+      .all<{ detail: string }>();
+
+    expect(plan.results.map((step) => step.detail)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`SEARCH ${table} USING (?:COVERING )?INDEX ${index}`)),
+      ]),
+    );
+    expect(plan.results.some((step) => step.detail === `SCAN ${table}`)).toBe(false);
+  });
+
   test("the scheduled tick sweeps expired rows", async () => {
     const { userId } = await seedUser({ personalOrganization: false });
     const now = Date.now();

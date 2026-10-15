@@ -614,6 +614,7 @@ export const session = sqliteTable(
   },
   (table) => ({
     userIdx: index("session_user_idx").on(table.userId),
+    expiresIdx: index("session_expires_idx").on(table.expiresAt),
   }),
 );
 
@@ -655,6 +656,7 @@ export const verification = sqliteTable(
     // Better Auth resolves verification values by identifier on every
     // email-verification / password-reset / step-up flow.
     identifierIdx: index("verification_identifier_idx").on(table.identifier),
+    expiresIdx: index("verification_expires_idx").on(table.expiresAt),
   }),
 );
 

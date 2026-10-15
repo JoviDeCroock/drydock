@@ -8,7 +8,7 @@ const dbMock = vi.hoisted(() => ({
   createScanJob: vi.fn(),
   deletePendingScanJob: vi.fn(),
   listExistingScanStageIds: vi.fn(),
-  markNpmConnectionUsed: vi.fn(),
+  markNpmConnectionUsedIfStale: vi.fn(),
   readNpmPackageClaimAvailability: vi.fn(),
   recordScanEvent: vi.fn(),
   updateNpmConnectionValidation: vi.fn(),
@@ -30,7 +30,10 @@ vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
 vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/db/scan-jobs.ts", () => dbMock);
-vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
+vi.mock("../server/lib/ecosystems/npm/connection.ts", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...npmConnectionMock,
+}));
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => enrollmentMock);
@@ -87,6 +90,7 @@ afterEach(() => {
 
 describe("ensureUsableNpmConnection token state branching", () => {
   test("returns the decrypted token without revalidating a valid connection", async () => {
+    const lastUsedAt = new Date(1_800_000_000_000);
     const result = await ensureUsableNpmConnection({
       db,
       env,
@@ -96,6 +100,7 @@ describe("ensureUsableNpmConnection token state branching", () => {
         validationStatus: "valid",
         tokenCiphertext: "x",
         tokenNonce: "y",
+        lastUsedAt,
       },
       actorUserId: "user_a",
     });
@@ -103,6 +108,7 @@ describe("ensureUsableNpmConnection token state branching", () => {
     expect(result).toEqual({
       token: "npm_secret_token",
       registryUrl: "https://registry.npmjs.org",
+      lastUsedAt,
     });
     expect(npmConnectionMock.validateNpmCredential).not.toHaveBeenCalled();
     expect(dbMock.updateNpmConnectionValidation).not.toHaveBeenCalled();
@@ -356,7 +362,12 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
     );
-    expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith(db, "org_a");
+    expect(dbMock.markNpmConnectionUsedIfStale).toHaveBeenCalledWith(
+      db,
+      "org_a",
+      expect.any(Date),
+      expect.any(Date),
+    );
   });
 
   test("filters stage ids the organization token cannot access before creating scans", async () => {

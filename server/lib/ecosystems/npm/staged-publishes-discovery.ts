@@ -1,14 +1,23 @@
 import { type AppDb } from "../../../db/client";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { recordScanEvent } from "../../../db/events";
-import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../../../db/npm-connections";
+import {
+  markNpmConnectionUsedIfStale,
+  updateNpmConnectionValidation,
+} from "../../../db/npm-connections";
 import {
   type ScanSource,
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
 } from "../../../db/scans";
-import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
+import {
+  decryptNpmToken,
+  NPM_CONNECTION_USE_DEBOUNCE_MS,
+  npmConnectionUseIsStale,
+  validateNpmCredential,
+  type NpmCredentialValidation,
+} from "./connection";
 import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../analytics";
@@ -68,6 +77,7 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+  lastUsedAt?: Date | null;
 }
 
 export interface StageStartCoordinator {
@@ -178,6 +188,7 @@ export async function ensureUsableNpmConnection(input: {
     validationStatus: string;
     tokenCiphertext: string;
     tokenNonce: string;
+    lastUsedAt?: Date | null;
   };
   actorUserId: string;
   allowInsecureLocalhost?: boolean;
@@ -186,7 +197,7 @@ export async function ensureUsableNpmConnection(input: {
   const token = await decryptNpmToken(env, connection);
 
   if (connection.validationStatus === "valid") {
-    return { token, registryUrl: connection.registryUrl };
+    return { token, registryUrl: connection.registryUrl, lastUsedAt: connection.lastUsedAt };
   }
   if (connection.validationStatus === "invalid") {
     throw new InvalidNpmConnectionError(connection.organizationId);
@@ -220,7 +231,7 @@ export async function ensureUsableNpmConnection(input: {
     }),
   ]);
   if (!validation.ok) throw new InvalidNpmConnectionError(connection.organizationId, validation);
-  return { token, registryUrl: connection.registryUrl };
+  return { token, registryUrl: connection.registryUrl, lastUsedAt: connection.lastUsedAt };
 }
 
 export async function discoverAndQueueStagedPublishes(
@@ -244,7 +255,15 @@ export async function discoverAndQueueStagedPublishes(
     perPage: 50,
     allowInsecureLocalhost,
   });
-  await markNpmConnectionUsed(db, organizationId);
+  const nowMs = Date.now();
+  if (npmConnectionUseIsStale(connection.lastUsedAt, nowMs)) {
+    await markNpmConnectionUsedIfStale(
+      db,
+      organizationId,
+      new Date(nowMs - NPM_CONNECTION_USE_DEBOUNCE_MS),
+      new Date(nowMs),
+    );
+  }
 
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);

@@ -1,6 +1,7 @@
 import { createDb } from "../../server/db/client";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createPublicationWatch,
@@ -16,6 +17,7 @@ import {
   publicationWatches,
   scans,
 } from "../../server/db/schema";
+import * as schema from "../../server/db/schema";
 import {
   checkNpmPublicationWatch,
   sweepNpmPublicationWatches,
@@ -553,8 +555,14 @@ test("oversized anonymous metadata cannot create a successful coverage claim", a
 
 test("a check reads as unfinished until its outcome is recorded", async () => {
   const { db, organizationId, watch } = await seed();
+  const overlapQueries: string[] = [];
+  const overlapDb = drizzle(env.DB, {
+    schema,
+    logger: { logQuery: (query) => overlapQueries.push(query) },
+  });
   let midCheck: { lastCheckedAt: Date | null; lastError: string | null } | undefined;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    await checkNpmPublicationWatch(overlapDb, env, watch);
     midCheck = await getPublicationWatch(db, organizationId, watch.id);
     return Response.json(registryMetadata(watch, []));
   });
@@ -563,6 +571,9 @@ test("a check reads as unfinished until its outcome is recorded", async () => {
     lastCheckedAt: expect.any(Date),
     lastError: "check_in_progress",
   });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(overlapQueries).toHaveLength(1);
+  expect(overlapQueries[0]).toMatch(/^update "publication_watches"/);
   expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
 });
 

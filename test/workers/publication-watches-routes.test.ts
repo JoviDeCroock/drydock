@@ -567,6 +567,56 @@ describe("one package's monitoring for the package page", () => {
   });
 });
 
+test("a manual check returns fresh dist-tags and the complete watch summary", async () => {
+  const owner = await seedOwner();
+  const db = createDb(env.DB);
+  const watch = await createPublicationWatch(db, owner.organizationId, "manual-package");
+  const now = new Date();
+  await savePublicationObservation(
+    db,
+    {
+      id: crypto.randomUUID(),
+      watchId: watch.id,
+      organizationId: owner.organizationId,
+      version: "1.0.0",
+      firstSeenAt: now,
+      checkedAt: now,
+      status: "approved_match",
+      distTags: [],
+    },
+    watch.packageName,
+  );
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({
+      name: watch.packageName,
+      versions: { "1.0.0": { name: watch.packageName, version: "1.0.0" } },
+      time: { "1.0.0": now.toISOString() },
+      "dist-tags": { latest: "1.0.0" },
+    }),
+  );
+  try {
+    const response = await request(owner, "POST", `/${watch.id}/check`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      watch: {
+        id: watch.id,
+        lastCheckedAt: expect.any(String),
+        distTagsCheckedAt: expect.any(String),
+        lastError: null,
+        releaseCount: 1,
+        unresolvedAlertCount: 0,
+        unverifiedReleaseCount: 0,
+        managementPending: false,
+        ownershipConflict: false,
+      },
+      observations: [{ version: "1.0.0", status: "approved_match", distTags: ["latest"] }],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  } finally {
+    fetcher.mockRestore();
+  }
+});
+
 test("a manual check that fails after claiming the watch reports the failure, not coverage", async () => {
   const owner = await seedOwner();
   const db = createDb(env.DB);
