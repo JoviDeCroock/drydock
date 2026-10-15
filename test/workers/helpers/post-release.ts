@@ -106,7 +106,7 @@ export async function seedAlert(
   packageName: string,
   version: string,
   options: {
-    status?: "published_without_approval" | "artifact_mismatch";
+    status?: "published_without_approval" | "published_despite_rejection" | "artifact_mismatch";
     digests?: { sha1: string | null; sha256: string | null };
     previousVersion?: string | null;
     distTags?: string[] | null;
