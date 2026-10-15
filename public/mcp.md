@@ -12,6 +12,14 @@ The server lists two read-only tools with structured input and output schemas:
 - `get_changed_file`: pass the same release pair plus an exact `path` from the
   comparison. Returns bounded `before`/`after` samples and their flags.
 
+When browsing Drydock's public diff page in a browser that supports WebMCP,
+the page exposes these same tools through `document.modelContext`. Comparison
+calls update the visible package/version pair and URL; file calls select and
+reveal the requested file in the workbench. These page tools change visible UI
+state but cannot write organization data or approve a release. Registration
+ends when the page is left, and cancelled or superseded calls return errors.
+Browsers without WebMCP retain the ordinary page controls.
+
 When reviewing a dependency upgrade:
 
 1. Read the package's actual registry name and old/new resolved versions from

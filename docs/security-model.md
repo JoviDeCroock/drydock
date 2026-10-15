@@ -146,6 +146,19 @@ fallback. Tool failures remain explicit errors with status/retry metadata;
 package samples remain untrusted evidence. See
 [`agent-integrations.md`](./agent-integrations.md) and the Worker boundary tests.
 
+The public diff page also exposes the same public comparison/file contracts
+through WebMCP when `document.modelContext.registerTool` is available. This
+client-only integration adds no anonymous HTTP surface or authenticated tool.
+Its requests omit cookies and organization selectors, including for signed-in
+users. Browser tools can navigate the public review and change its selected
+file, so they explicitly disclose UI changes and mark package evidence as
+untrusted. Input schemas reject credentials, organization IDs, and arbitrary
+fetch targets. Registration is scoped to the diff page; cancellation,
+supersession, and navigation guards prevent late comparisons from redirecting
+the user or stale file reads from replacing a newer selection. Backend
+validation, rate limits, registry policy, and package execution prohibitions
+remain the public API's authority.
+
 ### Email verification
 
 A verified email address is not a condition of signing in. Blocking sign-in put a mail round-trip in front of a product an account cannot evaluate without signing in, so an unverified account can sign in, open the dashboard, and run published-pair reviews — which are credential-free and touch nothing but public registry data.

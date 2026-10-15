@@ -11,6 +11,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly detail?: string,
     readonly code?: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -23,7 +24,7 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
     ...(init?.headers as Record<string, string> | undefined),
   };
   const orgId = activeOrganizationId.peek();
-  if (orgId) {
+  if (orgId && init?.credentials !== "omit") {
     headers[ACTIVE_ORG_HEADER] = orgId;
     if (pinnedOrganizationId.peek() === orgId) headers[ACTIVE_ORG_STRICT_HEADER] = "1";
   }
@@ -36,6 +37,9 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
     | (Partial<T> & { error?: string; detail?: string; message?: string; code?: string })
     | null;
   if (!res.ok) {
+    const retryHeader = res.headers.get("retry-after");
+    const retry = retryHeader !== null && /^\d+$/.test(retryHeader) ? Number(retryHeader) : NaN;
+    const retryAfterSeconds = Number.isSafeInteger(retry) ? retry : undefined;
     const code = typeof data?.code === "string" ? data.code : undefined;
     if (res.status === 401) throw new ApiError("Please sign in to continue.", 401, undefined, code);
     const detail = typeof data?.detail === "string" ? data.detail : undefined;
@@ -43,7 +47,13 @@ export async function apiFetch<T>(input: RequestInfo | URL, init?: RequestInit):
       code === "not_organization_member"
         ? "You are not a member of this organization."
         : data?.message || data?.error || "request failed";
-    throw new ApiError(detail ? `${message}: ${detail}` : message, res.status, detail, code);
+    throw new ApiError(
+      detail ? `${message}: ${detail}` : message,
+      res.status,
+      detail,
+      code,
+      retryAfterSeconds,
+    );
   }
   return data as T;
 }

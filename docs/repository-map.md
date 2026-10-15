@@ -25,6 +25,9 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/routes/public-mcp.ts` owns the anonymous MCP transport boundary;
   `server/lib/public-mcp.ts` defines tools over the public package-diff router.
   The hosted agent recipe is `public/mcp.md`; see `docs/agent-integrations.md`.
+- `src/lib/public-review-tools.ts` shares SDK-free tool inputs, metadata and
+  result envelopes. `src/features/agent-review/` owns optional WebMCP registration
+  and handoff to the diff page's immutable pair models.
 
 ## CLI
 

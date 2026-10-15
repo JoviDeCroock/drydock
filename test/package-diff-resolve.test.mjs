@@ -29,6 +29,7 @@ describe("resolveSuggestedDiffPath", () => {
     });
     expect(apiFetch).toHaveBeenCalledWith(
       "/api/public/v1/package-diff/versions?package=resolve-ok",
+      { credentials: "omit" },
     );
   });
 

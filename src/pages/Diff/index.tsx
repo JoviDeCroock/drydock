@@ -53,10 +53,34 @@ import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import type { FindingWithDiffStatus } from "../../features/review/types";
 import { useSelectedDiffFile } from "../../features/review/useSelectedDiffFile";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { DiffAgentSession } from "../../features/agent-review/diff-session";
+import {
+  registerPublicReviewWebMcp,
+  type PublicReviewWebMcpContext,
+} from "../../features/agent-review/webmcp";
 import { useAuthedSession } from "../useAuthedSession";
 
 export default function DiffPage() {
   const location = useLocation();
+  const agent = useModel(
+    () =>
+      new DiffAgentSession({
+        path: () => window.location.pathname,
+        origin: () => window.location.origin,
+      }),
+  );
+  useEffect(() => {
+    agent.setLocation(location.path, location.route);
+  }, [location.path, location.route]);
+  useEffect(() => {
+    const context = (document as Document & { modelContext?: PublicReviewWebMcpContext })
+      .modelContext;
+    const unregister = registerPublicReviewWebMcp(context, agent);
+    return () => {
+      unregister();
+      agent.stop();
+    };
+  }, []);
   const spec = parseDiffSpec(location.path);
   if (spec) {
     if (spec.ecosystem === "atpm" && spec.packageName.startsWith("@")) {
@@ -64,8 +88,9 @@ export default function DiffPage() {
     }
     return (
       <PackageDiffView
-        key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
+        key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}:${agent.viewVersion.value}`}
         spec={spec}
+        agent={agent}
       />
     );
   }
@@ -366,18 +391,37 @@ function DiffLanding() {
   );
 }
 
-function PackageDiffView({ spec }: { spec: DiffSpec }) {
+function PackageDiffView({
+  spec,
+  agent,
+}: {
+  spec: DiffSpec;
+  agent: InstanceType<typeof DiffAgentSession>;
+}) {
   const { ecosystem, packageName, fromVersion, toVersion } = spec;
   const authed = useAuthedSession();
   const location = useLocation();
   const model = useModel(
-    () => new PackageDiffModel(ecosystem, packageName, fromVersion, toVersion),
+    () =>
+      new PackageDiffModel(
+        ecosystem,
+        packageName,
+        fromVersion,
+        toVersion,
+        agent.takeInitialDiff(spec),
+      ),
   );
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
 
   useEffect(() => {
     void model.load();
+    return agent.attach(spec, model, (path, signal) => {
+      fileFilter.value = "";
+      const entry = model.diff.peek()?.diff.find((item) => item.path === path);
+      if (entry?.status === "unchanged") changedFilesOnly.value = false;
+      return model.selectPath(path, signal);
+    });
   }, []);
 
   const diffEntries = useComputed<DiffEntry[]>(() => model.diff.value?.diff ?? []);

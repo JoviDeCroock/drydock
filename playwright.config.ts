@@ -29,6 +29,7 @@ export default defineConfig({
         "**/org-switcher.spec.ts",
         "**/slack-selector.spec.ts",
         "**/npm-scope-guide.spec.ts",
+        "**/webmcp.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"] },
     },

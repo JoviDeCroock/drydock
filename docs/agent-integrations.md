@@ -1,6 +1,6 @@
 # Public agent integrations
 
-The CLI's anonymous `diff`/`file` commands and hosted MCP endpoint expose the
+The CLI's anonymous `diff`/`file` commands, hosted MCP endpoint, and in-page WebMCP tools expose the
 same existing public package-review API. The downloadable agent recipe lives
 at [`public/mcp.md`](../public/mcp.md), served as the
 [agent instructions](https://drydock.org/mcp.md). The CLI's usage and
@@ -42,6 +42,38 @@ versions are valid. Tools accept no credentials, organization selectors, or
 arbitrary fetch targets. On npm, explicit versions can also be supported
 `pkg.pr.new` preview URLs under the public API's existing rules.
 
+## WebMCP on the diff page
+
+On browsers exposing `document.modelContext.registerTool`, the public diff
+page registers the same two tools and strict input schemas. The current
+[WebMCP specification](https://webmachinelearning.github.io/webmcp/) uses
+document-scoped registration with AbortSignal cleanup. No polyfill, browser
+extension, account, or separate MCP connection is installed by Drydock. On
+unsupported browsers the normal page works unchanged.
+
+`compare_package_versions` loads an exact public pair and updates the page to
+the canonical review URL, including its heading, version picker, and workbench.
+The response seeds the new pair's model so the visible page does not repeat
+the comparison request. `get_changed_file` opens the requested pair if needed,
+selects the exact file, clears the file filter, and reveals unchanged files
+when necessary. Both tools return the complete public evidence using the same
+result envelope as hosted MCP.
+
+These browser tools change visible page state, so their annotations use
+`readOnlyHint: false`, `untrustedContentHint: true`, and
+`consequentialHint: false`. They have no backend write authority. Registration
+exists only on the diff page and is removed on navigation away. Separate
+registration and execution signals cancel disposed or superseded calls;
+late comparisons cannot redirect a user who has moved elsewhere. Newer file
+selections retain ownership of the workbench when an older response arrives.
+Registration refusal rolls back the tools and leaves ordinary page controls
+usable.
+
+All browser public-review requests omit cookies and organization selectors,
+even for a signed-in user. Errors retain status/retry information and remain
+explicit failures. WebMCP adds no endpoint, permission, account operation, or
+release decision.
+
 ## Request and evidence boundaries
 
 `server/routes/public-mcp.ts` mounts before session/API-key authentication.
@@ -76,3 +108,9 @@ and safe errors. Worker tests exercise the deployed route with the official
 client, cached public artifacts, legacy protocol requests, Origin/body/rate
 limits, and credential/organization isolation. No test installs or executes
 reviewed package content.
+
+Browser tests use a document-scoped WebMCP shim to exercise registration,
+navigation and version/file synchronization, cancellation, request races,
+unsupported browsers, and refused registration. This verifies Drydock's
+integration; native browser/agent support depends on the browser's WebMCP
+implementation and rollout.
