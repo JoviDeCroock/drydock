@@ -26,6 +26,7 @@ import { organizationMembersRoutes } from "./routes/organization-members";
 import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
+import { publicMcpRoutes } from "./routes/public-mcp";
 import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { npmPackageClaimRoutes } from "./routes/npm-package-claims";
@@ -59,6 +60,11 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
+
+// The agent transport exposes only the same public release evidence. It has
+// its own protocol budget and dispatches through the public router above, so
+// it cannot reach organization data or bypass analysis limits.
+app.route("/api/public/v1/mcp", publicMcpRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
