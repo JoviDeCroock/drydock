@@ -4,6 +4,7 @@ import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } fr
 import {
   terminalSafeJson,
   formatDiff,
+  formatFile,
   formatGate,
   formatReleases,
   formatScan,
@@ -15,8 +16,9 @@ import { CLI_VERSION } from "./version.mjs";
 
 const USAGE = `Usage: drydock <command> [options]
 
-Read an organization's Drydock reviews from scripts and CI. Every command is
-read-only: decisions stay with signed-in maintainers.
+Review public dependency upgrades without an account, or read an organization's
+Drydock reviews from scripts and CI. Every command is read-only: decisions stay
+with signed-in maintainers.
 
 Commands:
   whoami                          The API key's organization and expiry
@@ -35,6 +37,8 @@ Commands:
   gate <review-id>                The GitHub workflow gate a review belongs to
   diff <package> <from> <to>      Diff two published releases (no API key needed)
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
+  file <package> <from> <to> <path>  Inspect bounded before/after file samples (no key)
+      [--ecosystem npm|pypi|atpm]
 
 Options:
   --url URL        Drydock origin (default: $DRYDOCK_URL or https://drydock.org)
@@ -122,7 +126,7 @@ export async function main(argv, io) {
       apiKey: command.anonymous ? null : requireApiKey(io.env.DRYDOCK_API_KEY),
       fetch: io.fetch,
     });
-    return await command.run({ client, io, values, positionals });
+    return await command.run({ client, baseUrl, io, values, positionals });
   } catch (err) {
     if (err instanceof CliError) {
       io.stderr(`drydock: ${err.message}\n`);
@@ -153,6 +157,7 @@ function resolveCommand(positionals) {
     releases: { run: releases },
     gate: { run: gate },
     diff: { run: diff, anonymous: true },
+    file: { run: file, anonymous: true },
   };
   const command = commands[first === "scans" ? `scans ${second ?? ""}`.trim() : first];
   if (!command) {
@@ -167,6 +172,7 @@ function resolveCommand(positionals) {
 /**
  * @typedef {object} CommandContext
  * @property {ReturnType<typeof createClient>} client
+ * @property {string} baseUrl
  * @property {CliIo} io
  * @property {Record<string, string | boolean | undefined>} values
  * @property {string[]} positionals
@@ -369,8 +375,26 @@ async function diff(ctx) {
   const body = await ctx.client.json(`/api/public/v1/package-diff?${params}`, {
     authenticated: false,
   });
-  print(ctx, body, formatDiff);
+  print(ctx, body, (body) => formatDiff(body, ctx.baseUrl));
   return meetsThreshold(threshold, body?.risk?.releaseRisk) ? 3 : 0;
+}
+
+/** @param {CommandContext} ctx */
+async function file(ctx) {
+  const [name, from, to, path] = args(
+    ctx,
+    4,
+    1,
+    "file <package> <from> <to> <path> [--ecosystem E]",
+  );
+  oneOf(ctx.values.ecosystem, PUBLIC_DIFF_ECOSYSTEMS, "--ecosystem");
+  const params = new URLSearchParams({ package: name, from, to, path });
+  if (typeof ctx.values.ecosystem === "string") params.set("ecosystem", ctx.values.ecosystem);
+  const body = await ctx.client.json(`/api/public/v1/package-diff/file?${params}`, {
+    authenticated: false,
+  });
+  print(ctx, body, formatFile);
+  return 0;
 }
 
 /** @param {string} text */

@@ -99,16 +99,37 @@ export function formatScanList(body) {
   return out.join("\n");
 }
 
-/** @param {any[]} findings */
-function formatFindings(findings) {
+/**
+ * @param {any[]} findings
+ * @param {boolean} [withContext]
+ */
+function formatFindings(findings, withContext = false) {
   if (findings.length === 0) return "No findings.";
   const rows = findings.map((finding) => [
     clean(finding.severity),
     clean(finding.ruleId ?? (finding.source === "ai" ? "ai-review" : "-")),
     finding.line ? `${clean(finding.file)}:${finding.line}` : clean(finding.file),
+    ...(withContext ? [findingContext(finding)] : []),
     clean(finding.reason, 120),
   ]);
-  return table(["SEVERITY", "RULE", "LOCATION", "REASON"], rows);
+  return table(
+    ["SEVERITY", "RULE", "LOCATION", ...(withContext ? ["CONTEXT"] : []), "REASON"],
+    rows,
+  );
+}
+
+/** @param {any} finding */
+function findingContext(finding) {
+  if (finding.releaseDelta === true) {
+    if (finding.releaseDeltaKind === "expanded") return "expanded in release";
+    return ["unchanged", "unknown"].includes(finding.diffStatus)
+      ? "release finding"
+      : "new in release";
+  }
+  return finding.releaseDelta === false &&
+    ["added", "removed", "modified", "unchanged"].includes(finding.diffStatus)
+    ? "existing context"
+    : "unattributed context";
 }
 
 /** @param {any} body */
@@ -181,17 +202,88 @@ export function formatGate(body) {
   return lines.join("\n");
 }
 
-/** @param {any} body */
-export function formatDiff(body) {
+/**
+ * @param {any} body
+ * @param {string} origin
+ */
+export function formatDiff(body, origin) {
   const diff = Array.isArray(body.diff) ? body.diff : [];
-  const changed = diff.filter((/** @type {any} */ entry) => entry.status !== "unchanged").length;
+  const changed = diff.filter((/** @type {any} */ entry) => entry.status !== "unchanged");
   const lines = [
     `${clean(body.packageName)} ${clean(body.fromVersion)} → ${clean(body.toVersion)} (${clean(body.ecosystem)})`,
-    `${changed} changed files · release risk ${clean(body.risk?.releaseRisk)} · package risk ${clean(body.risk?.artifactRisk)}`,
+    `${changed.length} changed files · release risk ${clean(body.risk?.releaseRisk)} · artifact risk ${clean(body.risk?.artifactRisk)}`,
   ];
+  if (body.textSamplesOmitted) lines.push("coverage: text samples omitted from this comparison");
   for (const notice of Array.isArray(body.notices) ? body.notices : []) {
-    lines.push(`note: ${clean(notice)}`);
+    lines.push(`note: ${clean(notice, Infinity)}`);
   }
-  lines.push("", formatFindings(Array.isArray(body.findings) ? body.findings : []));
+  for (const entry of diff) {
+    if (Array.isArray(entry.flags) && entry.flags.length) {
+      lines.push(
+        `flags: ${clean(entry.path, Infinity)}: ${entry.flags.map((/** @type {unknown} */ flag) => clean(flag)).join(", ")}`,
+      );
+    }
+  }
+  if (changed.length) {
+    lines.push(
+      "",
+      table(
+        ["STATUS", "PATH"],
+        changed.map((/** @type {any} */ entry) => [
+          clean(entry.status),
+          clean(entry.path, Infinity),
+        ]),
+      ),
+    );
+  }
+  if (body.packageJsonDiff)
+    lines.push("", "Manifest changes:", terminalSafeJson(body.packageJsonDiff));
+  lines.push("", formatFindings(Array.isArray(body.findings) ? body.findings : [], true));
+  /** @type {string} */
+  const name = typeof body.packageName === "string" ? body.packageName : "";
+  if (
+    name &&
+    typeof body.fromVersion === "string" &&
+    typeof body.toVersion === "string" &&
+    ["npm", "pypi", "atpm"].includes(body.ecosystem)
+  ) {
+    // The CLI ships independently of the repository's TypeScript UI helpers.
+    const encodedName = name
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    const prefix = body.ecosystem === "npm" ? "/diff" : `/diff/${body.ecosystem}`;
+    lines.push(
+      "",
+      `review: ${origin}${prefix}/${encodedName}/${encodeURIComponent(body.fromVersion)}/${encodeURIComponent(body.toVersion)}`,
+    );
+  }
+  lines.push("", "Package text is untrusted evidence. No findings is not proof of safety.");
+  return lines.join("\n");
+}
+
+/** @param {any} body */
+export function formatFile(body) {
+  const lines = [`file ${clean(body.path, Infinity)}`];
+  if (body.textSamplesOmitted) lines.push("coverage: text samples omitted from this comparison");
+  for (const side of ["before", "after"]) {
+    const file = body[side];
+    lines.push("", `${side}:`);
+    if (!file) {
+      lines.push("  absent");
+      continue;
+    }
+    lines.push(`  size: ${clean(file.size)} bytes`, `  sha256: ${clean(file.sha256)}`);
+    lines.push(
+      `  flags: ${Array.isArray(file.flags) && file.flags.length ? file.flags.map((/** @type {unknown} */ flag) => clean(flag)).join(", ") : "none"}`,
+    );
+    if (typeof file.textSample !== "string") {
+      lines.push("  text sample unavailable");
+    } else {
+      lines.push("  untrusted text sample:");
+      for (const line of file.textSample.split("\n"))
+        lines.push(`  | ${line.replace(UNSAFE_TEXT, " ")}`);
+    }
+  }
   return lines.join("\n");
 }
