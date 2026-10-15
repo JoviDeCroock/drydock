@@ -50,10 +50,9 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`api-keys.md`](./api-keys.md) — read-only organization API keys: the route allowlist, authentication rules, storage, and lifecycle, plus the [`openapi.json`](./openapi.json) contract for that surface and the anonymous package diff.
-- [`agent-integrations.md`](./agent-integrations.md) — account-free CLI package evidence and the hosted, read-only public MCP endpoint.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
-- [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, and machine-readable discovery.
+- [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, the read-only public MCP endpoint, and machine-readable discovery.
 - [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset and Dependabot workflow that link dependency-update PRs to public `/diff` pages; the preset path is a public contract.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.

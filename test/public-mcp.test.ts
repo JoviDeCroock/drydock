@@ -91,6 +91,8 @@ describe("anonymous public MCP tools", () => {
       expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
       expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tool.outputSchema?.type).toBe("object");
+      // Every tool returns package-controlled text, so each says how to treat it.
+      expect(tool.description, tool.name).toMatch(/untrusted|hostile/);
     }
     expect(tools[0].outputSchema?.required).toEqual(
       expect.arrayContaining(["findings", "risk", "textSamplesOmitted", "notices", "reviewUrl"]),

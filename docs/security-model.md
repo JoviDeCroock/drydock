@@ -197,7 +197,7 @@ It creates no auth session and persists no review data. With native rate-limit
 bindings it needs no D1; absent bindings retain the existing rate-limit
 fallback. Tool failures remain explicit errors with status/retry metadata;
 package samples remain untrusted evidence. See
-[`agent-integrations.md`](./agent-integrations.md) and the Worker boundary tests.
+[`agent-package-review.md`](./agent-package-review.md) and the Worker boundary tests.
 
 ### Email verification
 
