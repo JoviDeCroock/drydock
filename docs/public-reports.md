@@ -164,9 +164,9 @@ scan finished last.
   package, and its own publication monitor alerted on that release: npm
   published it without the organization's approval, or with other bytes than it
   reviewed. When the organization had rejected it and npm published it anyway,
-  it reads `<version> rejected` (red) instead. Deciding the alert after release
-  settles either: an approval reads `approved`, a decline `rejected` (see
-  "Flagging an unapproved publish").
+  it reads `<version> rejected` (red) instead. A guarded decision on the alert
+  after release settles either: an approval reads `approved`, a decline
+  `rejected` (see "Flagging an unapproved publish").
 
 The version rendered is npm's own `registry_version` wherever there is one, and
 falls back to the manifest's only for a review the registry never answered
@@ -437,9 +437,10 @@ registry-verified publisher's alert turns a badge red (anyone else's reads grey
   removes the release from the evidence, so the badge returns to the
   approved pick (or answers `<version> approved` from the post-release
   decision itself); a guarded decline reads `rejected`. A decision that fails
-  the guard (another registry, digests that differ) resolves the alert for the
-  organization but leaves the flag, because nothing established that the
-  published bytes are the approved ones.
+  the guard is recorded for the organization but leaves the flag, because
+  nothing established that the published bytes are the approved ones. An
+  approval resolves the alert only when its digests match the published ones,
+  whether or not it passed the publisher and registry rules.
 - **Nothing new leaks.** The version is npm's (from its packument); the claim
   is the publisher's own monitor record, which its dashboard already lists
   (see [`publication-monitor.md`](./publication-monitor.md#the-log-of-unapproved-publishes)).
