@@ -1,7 +1,12 @@
 // Publication-monitor wording shared by the dashboard card and the package
 // page, so the same watch or observation never reads two different ways.
 import { formatDateTime, pluralize } from "../../lib/format";
-import type { PublicationObservation, PublicationWatch } from "../../models/publication-watches";
+import type {
+  PostReleaseBadgeEffect,
+  PostReleaseResolution,
+  PublicationObservation,
+  PublicationWatch,
+} from "../../models/publication-watches";
 
 export const observationStatusLabels: Record<PublicationObservation["status"], string> = {
   approved_match: "Approved bytes published",
@@ -68,6 +73,95 @@ export function isPublicationAlert(status: PublicationObservation["status"]): bo
     status === "published_despite_rejection" ||
     status === "artifact_mismatch"
   );
+}
+
+export const resolutionLabels: Record<PostReleaseResolution, string> = {
+  approved_after_release: "Approved after release",
+  declined_after_release: "Declined after release",
+};
+
+type PostReleaseOutcome = Pick<PublicationObservation, "resolution" | "reviewedBytes">;
+
+/**
+ * An alert approved after release is resolved, but only when the review read
+ * the bytes npm published: nothing is left to acknowledge. A decline keeps it
+ * open, because the release is still on npm, and so does approving bytes that
+ * differ from the published ones or could not be compared with them.
+ */
+export function isAlertResolved(outcome: PostReleaseOutcome): boolean {
+  return outcome.resolution === "approved_after_release" && outcome.reviewedBytes === "match";
+}
+
+export function resolutionTone(outcome: PostReleaseOutcome) {
+  if (outcome.resolution === "declined_after_release") return "critical";
+  return isAlertResolved(outcome) ? "ok" : "medium";
+}
+
+/**
+ * The state of an alert's post-release review before anyone decided it, or
+ * null once it is decided (the resolution says the rest) or when none exists.
+ */
+export function postReleaseReviewState(
+  observation: Pick<
+    PublicationObservation,
+    "reviewScanId" | "reviewStatus" | "reviewDecision" | "resolution"
+  >,
+): { label: string; tone: "neutral" | "medium" } | null {
+  if (!observation.reviewScanId || observation.resolution || observation.reviewDecision) {
+    return null;
+  }
+  if (observation.reviewStatus === "failed") return { label: "review failed", tone: "medium" };
+  if (observation.reviewStatus === "complete") return { label: "ready to decide", tone: "medium" };
+  return { label: "reviewing", tone: "neutral" };
+}
+
+/** What to do about a release this organization declined after npm published it. */
+export function declinedRemediation(packageName: string, version: string): string {
+  return `Next steps: deprecate or unpublish ${packageName}@${version} on npm, rotate the npm tokens that can publish it, and check its trusted publishers and who has publish rights.`;
+}
+
+const badgeUnchangedReasons: Record<Exclude<PostReleaseBadgeEffect, "applied">, string> = {
+  not_a_verified_publisher:
+    "this organization has no registry-verified staged review of the package",
+  digests_unavailable: "the published bytes could not be hashed to compare with the reviewed ones",
+  digests_differ: "the reviewed bytes differ from the published ones",
+  not_public_npm: "the release was not read from the public npm registry",
+};
+
+/**
+ * What a post-release decision did beyond the alert's own row: whether an
+ * approval left the alert open because the review did not read the published
+ * bytes, and whether the decision moves the public README badge. Only a
+ * registry-verified publisher whose review read the exact published bytes
+ * moves the badge; anything else speaks for this organization alone.
+ */
+export function resolutionBadgeMessage(
+  observation: Pick<
+    PublicationObservation,
+    "resolution" | "resolutionBadge" | "reviewedBytes" | "version"
+  >,
+): string | null {
+  if (!observation.resolution) return null;
+  const badge = observation.resolutionBadge;
+  if (observation.resolution === "approved_after_release" && !isAlertResolved(observation)) {
+    const bytes =
+      observation.reviewedBytes === "differ"
+        ? "the reviewed bytes differ from the published ones"
+        : "the reviewed bytes could not be compared with the published ones";
+    // A digest reason for the badge is the same fact; say it once.
+    const other =
+      badge === "not_a_verified_publisher" || badge === "not_public_npm"
+        ? `: ${badgeUnchangedReasons[badge]}`
+        : "";
+    return `This approval leaves the alert open: ${bytes}. The public badge is unchanged${other}.`;
+  }
+  if (!badge) return null;
+  if (badge === "applied") {
+    const verdict = observation.resolution === "approved_after_release" ? "approved" : "rejected";
+    return `The public badge counts this decision as ${observation.version} ${verdict}.`;
+  }
+  const reason = badgeUnchangedReasons[badge];
+  return reason ? `The public badge is unchanged: ${reason}.` : null;
 }
 
 const watchProblems: Record<string, string> = {
