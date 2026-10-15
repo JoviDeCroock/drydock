@@ -12,6 +12,7 @@ import {
   hashApiKey,
   isWellFormedApiKey,
 } from "../lib/auth/api-keys";
+import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
@@ -86,19 +87,23 @@ export async function authenticateApiKeyRequest(
   c.set("apiKey", { id: key.id, organizationId: key.organizationId });
 
   if (apiKeyUseIsStale(key.lastUsedAt, nowMs)) {
-    c.executionCtx.waitUntil(
-      markApiKeyUsedIfStale(
-        db,
-        key.id,
-        new Date(nowMs - API_KEY_USE_DEBOUNCE_MS),
-        new Date(nowMs),
-      ).catch((err: unknown) => {
-        emitOperationalEvent("warn", "api_key.last_used_update_failed", {
-          apiKeyId: key.id,
-          error: describeOperationalError(err),
-        });
-      }),
-    );
+    const markUsed = markApiKeyUsedIfStale(
+      db,
+      key.id,
+      new Date(nowMs - API_KEY_USE_DEBOUNCE_MS),
+      new Date(nowMs),
+    ).catch((err: unknown) => {
+      emitOperationalEvent("warn", "api_key.last_used_update_failed", {
+        apiKeyId: key.id,
+        error: describeOperationalError(err),
+      });
+    });
+    // Without an execution context (a Node caller) the write is awaited rather
+    // than reading `c.executionCtx`, which throws and would fail an
+    // authenticated request over a bookkeeping write.
+    const ctx = optionalWorkerExecutionContext(c);
+    if (ctx) ctx.waitUntil(markUsed);
+    else await markUsed;
   }
   return null;
 }

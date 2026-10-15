@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { addOrganizationMember } from "../../server/db/invitations";
 import * as schema from "../../server/db/schema";
+import worker from "../../server";
 import { API_KEY_ROUTES, hashApiKey } from "../../server/lib/auth/api-keys";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
@@ -474,5 +475,23 @@ describe("API key authentication", () => {
     expect(first).toBeInstanceOf(Date);
     await callWorker("GET", "/api/v1/scans", withKey(key.token));
     expect((await read())?.getTime()).toBe(first?.getTime());
+  });
+
+  test("authenticates and stamps last use when the caller supplies no execution context", async () => {
+    const owner = await signedUpAccount();
+    const key = await createKey(owner);
+    const res = await worker.fetch(
+      new Request("http://example.com/api/v1/scans", {
+        headers: { authorization: `Bearer ${key.token}` },
+      }),
+      env,
+      undefined as unknown as ExecutionContext,
+    );
+    expect(res.status).toBe(200);
+    const [row] = await createDb(env.DB)
+      .select({ lastUsedAt: schema.organizationApiKeys.lastUsedAt })
+      .from(schema.organizationApiKeys)
+      .where(eq(schema.organizationApiKeys.id, key.id));
+    expect(row.lastUsedAt).toBeInstanceOf(Date);
   });
 });
