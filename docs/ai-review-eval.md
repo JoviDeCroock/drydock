@@ -15,6 +15,13 @@ keep the version and model that actually produced them; regenerate and
 adjudicate the corpus before marking a new contract as recorded. Historical
 rows without a version parse as `null` and analytics labels them `legacy`.
 
+`INJECTION_SCREEN_VERSION` in `server/lib/ai-review/injection-screen.ts` is the
+same kind of contract for the advisory Clef injection screen: the candidate-span
+policy, question battery, model, and thresholds are one unit, and any change to
+any of them is a bump. It is separate from `AI_REVIEWER_VERSION` because the
+screen and the reviewer fail, ship, and regress independently.
+`injection_screen.finished` carries it with every screened scan.
+
 ## Submission bounds
 
 `AI_REVIEW_BOUNDS` in the same file is the single source of the per-field length
@@ -349,6 +356,40 @@ Context window is a floor, not a selection criterion. A candidate must hold
 submission, so a larger window is capacity the reviewer never uses. Lowering
 the smallest candidate's window means lowering `SUBMIT_CONTEXT_TOKENS` with it.
 
+## Clef injection screen eval
+
+`pnpm run eval:clef:live` runs the screen's production questions and thresholds
+over `test/fixtures/clef-eval/injection-spans.json`: labeled spans from the
+policy tests, the corpus, the descriptive-manipulation probe, and synthetic
+paraphrases with matched hard negatives. It reports the phrase rules alone, the
+screen alone, the screen on spans the rules missed, and rules-or-screen. Like the
+live comparison it is paid, gated (`CLEF_LIVE_EVAL`), needs
+`CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` (the wrangler OAuth token works),
+and writes `.context/eval/clef-injection-screen.{json,md}`. Options:
+`CLEF_LIVE_MODELS`, `CLEF_LIVE_BATCH` (production sends up to six spans per
+request), `CLEF_LIVE_NEUTRAL_PATHS=1`, `CLEF_LIVE_LIMIT`, `CLEF_LIVE_REPORT_STEM`.
+
+Run of screen 1.0.0, 2026-10-05 (127 spans: 73 injection, 54 benign, 44 hard
+negatives; repeated runs reproduce every number):
+
+|                                                        | clef          | clef-flash    | phrase rules  |
+| ------------------------------------------------------ | ------------- | ------------- | ------------- |
+| Hazard AUROC                                           | 0.971         | 0.862         | —             |
+| Curated positives caught (policy tests + corpus, 30)   | 27            | 14            | 30            |
+| Phrase-rule misses caught (38 synthetic + 4 probe, 42) | 40            | 22            | 0             |
+| Hard negatives fired on (44)                           | 4             | 2             | 4             |
+| Rules ∪ screen precision / recall                      | 89.9% / 97.3% | 89.8% / 72.6% | 88.6% / 42.5% |
+
+The screen routes to the full model; clef-flash misses half the paraphrases.
+The phrase-rule misses are almost all synthetic paraphrases written for this
+eval by the same author as their hard negatives, so 40/42 bounds what the
+screen can add, not what it will find in real packages. Hiding span paths left
+clef at 39/42; six-span batching moves the totals by one span (39/42, 3/44) but
+flips 10 of 127 individual decisions. Read `injection_screen.finished` fire
+rates per organization before widening the flag, and treat `spansScreened`
+against `findingCount` as the denominator: a zero-finding screen means "nothing
+in what we sent", never "this package is clean".
+
 ## Promotion checklist
 
 1. Bump `AI_REVIEWER_VERSION` for behavioral changes. Model routing is part of
@@ -363,5 +404,7 @@ the smallest candidate's window means lowering `SUBMIT_CONTEXT_TOKENS` with it.
    by reviewer version; do not treat maintainer action as ground truth.
 5. Refresh and adjudicate recorded outputs for risky categories, including
    prompt injection, missing evidence, and model failover.
-6. Preserve deterministic findings as authoritative and keep human release
+6. Bump `INJECTION_SCREEN_VERSION` separately when the screen's spans,
+   questions, model, or thresholds change, and re-run `pnpm run eval:clef:live`.
+7. Preserve deterministic findings as authoritative and keep human release
    approval mandatory.

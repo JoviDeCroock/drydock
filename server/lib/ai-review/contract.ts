@@ -460,6 +460,7 @@ export function selectReportedFindings(
 const persistedAiFindingSchema = z.object({
   severity: severitySchema,
   category: aiFindingCategorySchema.optional().catch(undefined),
+  source: z.literal("injection-screen").optional().catch(undefined),
   file: z.string(),
   line: findingLineSchema.optional().catch(undefined),
   evidence: z.string(),
@@ -487,6 +488,7 @@ const persistedAiReviewSchema = z.object({
   summary: z.string(),
   findings: z.array(persistedAiFindingSchema),
   requiresManualReview: z.boolean(),
+  reviewerRequiresManualReview: z.boolean().optional().catch(undefined),
   // Display-only (1.8.0+); a malformed entry or list is dropped, never the review.
   deterministicAssessments: z
     .array(persistedDeterministicAssessmentSchema.nullable().catch(null))

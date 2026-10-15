@@ -1,11 +1,17 @@
 import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "../review";
 import type { AiFindingCategory, AiReviewEcosystem } from "./contract";
 
-interface AiFinding {
+export interface AiFinding {
   severity: "info" | "low" | "medium" | "high" | "critical";
   /** Absent on reviews recorded before reviewer 1.8.0. */
   category?: AiFindingCategory;
   file: string;
+  /**
+   * Set on rows the injection screen added to a completed review. Risk scores
+   * the reviewer without them; the screen's only score effect is the
+   * manual-review floor.
+   */
+  source?: "injection-screen";
   /** 1-based staged-file line the reviewer took from a search match (1.8.0+). */
   line?: number;
   evidence: string;
@@ -31,6 +37,12 @@ export interface AiReview {
   summary: string;
   findings: AiFinding[];
   requiresManualReview: boolean;
+  /**
+   * The reviewer's own `requiresManualReview` when the injection screen forced
+   * it on. Risk reads this, so the screen's flag cannot unlock the reviewer's
+   * review-level risk.
+   */
+  reviewerRequiresManualReview?: boolean;
   /**
    * The reviewer's reading of individual deterministic findings (1.8.0+).
    * Display-only: it never edits a finding or moves any risk score.

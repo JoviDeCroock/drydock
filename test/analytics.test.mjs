@@ -46,6 +46,36 @@ describe("recordProductEvent", () => {
     expect(points[0].doubles).toEqual([4200, 7, 1]);
   });
 
+  test("injection screen points record outcome blobs and spend doubles", () => {
+    const { points, env } = fakeDataset();
+    recordProductEvent(env, {
+      name: "injection_screen.finished",
+      organizationId: "org_1",
+      ecosystem: "pypi",
+      status: "unavailable",
+      reason: "timeout",
+      model: "none",
+      screenVersion: "1.0.0",
+      durationMs: 8_000,
+      spansScreened: 6,
+      findingCount: 0,
+      inputTokens: 0,
+    });
+
+    expect(points[0].indexes).toEqual(["injection_screen.finished"]);
+    expect(points[0].blobs).toEqual([
+      ANALYTICS_SCHEMA_VERSION,
+      "injection_screen.finished",
+      "org_1",
+      "pypi",
+      "unavailable",
+      "timeout",
+      "none",
+      "1.0.0",
+    ]);
+    expect(points[0].doubles).toEqual([8_000, 6, 0, 0]);
+  });
+
   test("public diff events carry no organization id", () => {
     const { points, env } = fakeDataset();
     recordProductEvent(env, {
@@ -203,6 +233,19 @@ describe("recordProductEvent", () => {
         reviewerVersion: "1.0.0",
       },
       {
+        name: "injection_screen.finished",
+        organizationId: "org_1",
+        ecosystem: "npm",
+        status: "complete",
+        reason: "none",
+        model: "@cf/cloudflare/clef",
+        screenVersion: "1.0.0",
+        durationMs: 700,
+        spansScreened: 4,
+        findingCount: 1,
+        inputTokens: 3_100,
+      },
+      {
         name: "scan.discarded",
         organizationId: "org_1",
         ecosystem: "npm",
@@ -250,10 +293,10 @@ describe("recordProductEvent", () => {
         expect(blob).not.toMatch(/Bearer\s/i);
       }
     }
-    // The model id legitimately contains a slash and an @; assert it is the
-    // only such value and that it is a model, not a path.
+    // Model ids legitimately contain a slash and an @; assert they are the
+    // only such values and that they are models, not paths.
     expect(new Set(points.flatMap((p) => p.blobs).filter((b) => b.includes("/")))).toEqual(
-      new Set(["@cf/meta/llama"]),
+      new Set(["@cf/meta/llama", "@cf/cloudflare/clef"]),
     );
   });
 });

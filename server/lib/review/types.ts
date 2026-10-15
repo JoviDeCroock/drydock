@@ -24,6 +24,8 @@ export interface Finding {
   ruleVersion?: string;
   obfuscated?: boolean;
   testScoped?: boolean;
+  /** AI rows the injection screen added; risk scores them as a manual-review floor only. */
+  source?: "injection-screen";
 }
 
 export type DiffStatus = "added" | "removed" | "modified" | "unchanged";
