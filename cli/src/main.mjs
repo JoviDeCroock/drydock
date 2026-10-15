@@ -3,6 +3,8 @@ import { parseArguments } from "./args.mjs";
 import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } from "./client.mjs";
 import {
   terminalSafeJson,
+  terminalSafeJsonText,
+  terminalSafeLine,
   formatDiff,
   formatGate,
   formatReleases,
@@ -48,10 +50,12 @@ Environment:
   DRYDOCK_URL      Drydock origin
 
 Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 risk at or above --fail-on (RISK is low, medium, high, or critical).
+3 risk at or above --fail-on (RISK is low, medium, high, or critical),
+4 scans wait timed out before the review finished.
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
+const EXIT_TIMEOUT = 4;
 const SCAN_FILTERS = [
   "undecided",
   "published_without_decision",
@@ -99,7 +103,7 @@ export async function main(argv, io) {
       "fail-on": { type: "string" },
     });
   } catch (err) {
-    io.stderr(`drydock: ${err instanceof Error ? err.message : String(err)}\n\n${USAGE}`);
+    io.stderr(`drydock: ${terminalSafeLine(err instanceof Error ? err.message : err)}\n\n${USAGE}`);
     return 2;
   }
   const { values, positionals } = parsed;
@@ -124,11 +128,15 @@ export async function main(argv, io) {
     });
     return await command.run({ client, io, values, positionals });
   } catch (err) {
+    // Error text can quote the server, which can quote a package under review.
     if (err instanceof CliError) {
-      io.stderr(`drydock: ${err.message}\n`);
+      io.stderr(`drydock: ${terminalSafeLine(err.message)}\n`);
       return err.exitCode;
     }
-    throw err;
+    io.stderr(
+      `drydock: unexpected error: ${terminalSafeLine(err instanceof Error ? err.message : err)}\n`,
+    );
+    return 1;
   }
 }
 
@@ -295,15 +303,20 @@ async function scansWait(ctx) {
       return meetsThreshold(threshold, scan.risk) ? 3 : 0;
     }
     if (ctx.io.now() + intervalMs > deadline) {
-      throw new CliError(`review ${id} is still ${scan?.status ?? "pending"} after the timeout`);
+      throw new CliError(
+        `review ${id} is still ${scan?.status ?? "pending"} after the timeout`,
+        EXIT_TIMEOUT,
+      );
     }
     await ctx.io.sleep(intervalMs);
   }
 }
 
 /**
- * Writes the export's exact bytes, which are byte-stable on the server. A
- * receipt is checked against the digest the server sent with it.
+ * Writes the export's exact bytes, which are byte-stable on the server, to
+ * `--output`. On stdout the text is escaped for the terminal instead: still
+ * the same JSON value, but not the bytes a receipt digest covers. A receipt is
+ * checked against the digest the server sent with it before either.
  * @param {CommandContext} ctx
  * @param {"report.json" | "release-receipt.json"} file
  */
@@ -323,7 +336,8 @@ async function download(ctx, file) {
     await ctx.io.writeFile(output, res.text);
     ctx.io.stderr(`wrote ${output}\n`);
   } else {
-    ctx.io.stdout(res.text.endsWith("\n") ? res.text : `${res.text}\n`);
+    const text = terminalSafeJsonText(res.text);
+    ctx.io.stdout(text.endsWith("\n") ? text : `${text}\n`);
   }
   return 0;
 }

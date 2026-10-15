@@ -888,20 +888,23 @@ jobs:
             <Subsection id="cli" title="The drydock CLI">
               <Prose>
                 The CLI wraps those endpoints with readable output, exit codes for CI, and a receipt
-                check against the digest Drydock sends. It reads the key from{" "}
+                check against the digest Drydock sends. It is not published to npm yet: run it with
+                Node from a checkout of the Drydock repository. It reads the key from{" "}
                 <InlineCode>DRYDOCK_API_KEY</InlineCode> only, so the key stays out of shell
                 history.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`drydock whoami
-drydock scans list --filter undecided
-drydock scans wait <review-id> --fail-on high   # exit 3 at high risk or above
-drydock receipt <review-id> --output receipt.json
-drydock diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+                {`node cli/bin/drydock.mjs whoami
+node cli/bin/drydock.mjs scans list --filter undecided
+node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high risk or above
+node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
+node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI
-                strips terminal control characters from everything it prints.
+                strips terminal control characters from what it prints and escapes them in JSON
+                output. <InlineCode>--output</InlineCode> keeps a receipt&apos;s exact bytes for
+                digest checks.
               </Prose>
             </Subsection>
           </section>
