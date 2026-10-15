@@ -8,6 +8,7 @@
 
 - [Agent quickstart](https://drydock.org/agents): Review exact published npm or PyPI dependency versions with anonymous HTTPS requests and link the evidence for a human reviewer.
 - [Project instruction](https://drydock.org/agents/package-review.md): Copyable AGENTS.md instruction, query parameters, response fields, limits, and handling for missing or untrusted evidence.
+- [MCP endpoint](https://drydock.org/agents#mcp): Anonymous, read-only MCP server at https://drydock.org/api/public/v1/mcp (Streamable HTTP) with `compare_package_versions` and `get_changed_file` tools over the same public evidence.
 - [Package diff](https://drydock.org/diff): Human-readable comparisons of public npm, PyPI, and atpm releases, without an account.
 
 ## Maintainer setup
@@ -16,7 +17,7 @@
 - [Security model](https://drydock.org/security): Isolation, credential boundaries, and evidence limitations.
 - [Open source](https://drydock.org/open-source): Apache-2.0 source and self-hosting references.
 
-The agent quickstart uses the existing public package-diff API. It needs no
-account or API key and sends no registry credentials. Use it for public packages
+The agent quickstart and MCP endpoint use the existing public package-diff API.
+They need no account or API key and send no registry credentials. Use it for public packages
 only when the project permits contacting an external service. Authenticated
 organization APIs and unlisted report links have separate access boundaries.

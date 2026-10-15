@@ -24,7 +24,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 - `server/routes/public-mcp.ts` owns the anonymous MCP transport boundary;
   `server/lib/public-mcp.ts` defines tools over the public package-diff router.
-  The hosted agent recipe is `public/mcp.md`; see `docs/agent-integrations.md`.
+  The agent recipe is `public/agents/package-review.md`; see `docs/agent-package-review.md`.
 
 ## CLI
 
