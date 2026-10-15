@@ -4,10 +4,11 @@ import { main } from "../cli/src/main.mjs";
 import { CLI_VERSION } from "../cli/src/version.mjs";
 
 const KEY = `ddk_${"k".repeat(43)}`;
-// ESC, BEL, and the right-to-left override: what a hostile package would use
-// to rewrite or reorder a reviewer's terminal.
+// ESC, BEL, the right-to-left override, a soft hyphen, and a Unicode tag
+// character: what a hostile package would use to rewrite, reorder, or smuggle
+// text past a reviewer's terminal.
 // eslint-disable-next-line no-control-regex -- matching terminal controls is the point
-const TERMINAL_CONTROL = /[\u001b\u0007\u202e]/;
+const TERMINAL_CONTROL = /[\u001b\u0007\u202e\u00ad\u{e0041}]/u;
 
 interface Call {
   url: string;
@@ -69,6 +70,22 @@ describe("drydock CLI", () => {
   test("its version matches cli/package.json", () => {
     const pkg = JSON.parse(readFileSync(new URL("../cli/package.json", import.meta.url), "utf8"));
     expect(CLI_VERSION).toBe(pkg.version);
+  });
+
+  test("a flag a command does not take is a usage error, never silently ignored", async () => {
+    const cli = harness(() => json({ scan: { id: "s1", status: "complete", risk: "critical" } }));
+    expect(await cli.run("scans", "get", "s1", "--fail-on", "high")).toBe(2);
+    expect(cli.stderr).toContain("--fail-on does not apply to scans get");
+    expect(await cli.run("report", "s1", "--timeout", "5")).toBe(2);
+    expect(await cli.run("diff", "a", "1", "2", "--output", "x.json")).toBe(2);
+    expect(await cli.run("whoami", "--filter", "all")).toBe(2);
+    expect(cli.calls).toEqual([]);
+  });
+
+  test("a risk the CLI does not recognize fails a --fail-on gate", async () => {
+    const unknown = () => json({ scan: { id: "s1", status: "complete", risk: "severe" } });
+    expect(await harness(unknown).run("scans", "wait", "s1", "--fail-on", "critical")).toBe(3);
+    expect(await harness(unknown).run("scans", "wait", "s1")).toBe(0);
   });
 
   test("usage errors exit 2 before any request", async () => {
@@ -146,7 +163,7 @@ describe("drydock CLI", () => {
   });
 
   test("strips terminal control and bidi characters from package-controlled text", async () => {
-    const hostile = "\u001b]0;owned\u0007\u001b[2Jsafe‮reversed\nnext";
+    const hostile = "\u001b]0;owned\u0007\u001b[2Jsafe‮reversed\u00ad\u{e0041}\nnext";
     const cli = harness(() =>
       json({
         scan: { id: "scan_1", packageName: hostile, stagedVersion: "1.0.0", status: "complete" },
@@ -242,7 +259,8 @@ describe("drydock CLI", () => {
   });
 
   test("report and receipt escape hostile text on stdout and keep exact bytes in --output", async () => {
-    const hostile = "\u001b]0;owned\u0007\u001b[2J\u0085safe\u202ereversed\u200b\u2028";
+    const hostile =
+      "\u001b]0;owned\u0007\u001b[2J\u0085safe\u202ereversed\u200b\u2028\u00ad\u{e0041}";
     // Compact like the server's canonical JSON; JSON.stringify leaves C1, bidi,
     // and line-separator characters raw.
     const body = JSON.stringify({ schema: "drydock.release-receipt.v1", reason: hostile });

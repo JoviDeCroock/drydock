@@ -2,7 +2,7 @@
 
 Read an organization's Drydock reviews, report exports, and release receipts from scripts and CI. Every command is read-only: approving a gate or recording a decision stays with signed-in maintainers in Drydock.
 
-The CLI has no dependencies and runs on Node 22.14 or later. It is not published to npm yet, so run it from a checkout of this repository (`pnpm run drydock …` or `node cli/bin/drydock.mjs …`):
+The CLI has no dependencies and runs on Node 22.14 or later. It is not published to npm yet, so run it from a checkout of this repository (`pnpm run drydock …` or `node cli/bin/drydock.mjs …`). Scripts and `--json` consumers should call `node cli/bin/drydock.mjs` directly, since `pnpm run` prints its own banner to stdout:
 
 ```sh
 export DRYDOCK_API_KEY=ddk_…   # Organization settings → Integrations → API keys
@@ -25,7 +25,7 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
 | `gate <review-id>`                            | The GitHub workflow gate a review belongs to                                                      |
 | `diff <package> <from> <to> [--fail-on RISK]` | Diff two published releases through the anonymous public diff; needs no key                       |
 
-`--json` prints the API response instead of a table. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk), `4` `scans wait` timed out before the review finished.
+`--json` prints the API response instead of a table. A flag the command does not take is a usage error. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk; a risk the CLI does not recognize counts as at the threshold), `4` `scans wait` timed out before the review finished.
 
 ## In CI
 
@@ -35,6 +35,7 @@ The CLI comes from a checkout of the Drydock repository:
 - uses: actions/checkout@v4
   with:
     repository: JoviDeCroock/drydock
+    ref: <commit-sha> # pin a commit you have reviewed
     path: drydock
 - name: Check the Drydock review
   env:
