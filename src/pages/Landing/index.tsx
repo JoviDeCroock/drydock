@@ -22,13 +22,17 @@ export default function LandingPage() {
       <PageSeo metadata={homePageSeo} />
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Review your package before you publish.
+        <h1
+          id="landing-hero-title"
+          class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0"
+        >
+          See what changed in the package your users will install.
         </h1>
-        <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Compare your built npm, PyPI, or VS Code release with the previous version. Drydock shows
-          changed files and supply-chain findings so you can inspect unexpected behavior before
-          publication.
+        <p
+          id="landing-hero-description"
+          class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0"
+        >
+          {homePageSeo.description}
         </p>
         <MonoDetail
           parts={[
@@ -42,7 +46,9 @@ export default function LandingPage() {
             when={authed}
             fallback={
               <>
-                <LinkButton href="/diff">Read a diff</LinkButton>
+                <LinkButton id="landing-diff-action" href="/diff">
+                  Diff a package
+                </LinkButton>
                 <LinkButton href="/register" variant="secondary">
                   Create account
                 </LinkButton>

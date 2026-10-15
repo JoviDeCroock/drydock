@@ -62,6 +62,30 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/docs/intro")).toBe(false);
   });
 
+  it("prerenders the canonical homepage promise and diff action with matching metadata", async () => {
+    locationStub("/");
+    const result = await prerender({ url: "/" });
+    const head = "head" in result ? result.head : undefined;
+
+    expect(result.html).toMatch(
+      /<h1\b[^>]*>See what changed in the package your users will install\.<\/h1>/,
+    );
+    expect(result.html).toMatch(/<a\b[^>]*href="\/diff"[^>]*>Diff a package<\/a>/);
+    expect(result.html).toContain(homePageSeo.description);
+    expect(head?.title).toBe(homePageSeo.title);
+    expect(Array.from(head?.elements ?? [])).toEqual(
+      expect.arrayContaining([
+        { type: "meta", props: { name: "description", content: homePageSeo.description } },
+        { type: "meta", props: { property: "og:description", content: homePageSeo.description } },
+        { type: "meta", props: { name: "twitter:description", content: homePageSeo.description } },
+        expect.objectContaining({
+          type: "link",
+          props: expect.objectContaining({ rel: "canonical", href: `${SITE_URL}/` }),
+        }),
+      ]),
+    );
+  });
+
   it("emits an empty app shell for dashboard route indexes", async () => {
     const result = await prerender({ url: "/dashboard/settings" });
 
@@ -222,9 +246,11 @@ describe("public route parity", () => {
 describe("page SEO metadata", () => {
   it("names the product and the artifact promise in the home result", () => {
     expect(homePageSeo).toMatchObject({
-      title: "Drydock Package Review: review your package before you publish",
+      title: "Drydock Package Review: See what changed in the package your users will install",
     });
-    expect(homePageSeo.description).toContain("built npm, PyPI, or VS Code packages");
+    expect(homePageSeo.description).toBe(
+      "Inspect changed files and supply-chain findings. Try a public package diff without an account or installation. Add a review to your built release when you’re ready to publish.",
+    );
   });
 
   it("gives each incident analysis distinct canonical metadata", () => {

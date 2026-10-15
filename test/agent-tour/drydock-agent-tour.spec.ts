@@ -38,7 +38,9 @@ test("agent tour: local Drydock release review walkthrough", async ({
   try {
     await page.goto("/");
     await expect(
-      page.getByRole("heading", { name: "Review your package before you publish." }),
+      page.getByRole("heading", {
+        name: "See what changed in the package your users will install.",
+      }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Read the package diff from your dependency PR." }),
