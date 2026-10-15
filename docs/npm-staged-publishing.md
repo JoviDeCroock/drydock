@@ -201,7 +201,9 @@ between does not).
 The record is advisory and additive: it never moves risk, findings, or a
 decision, and a check that could not run for an organization that could be
 gating is recorded as `unknown` (and emits `scan.gate_continuity.lookup_failed`)
-rather than as no record. An organization with no live release target stays
+rather than as no record. It does keep a stage out of batch approval: only a
+`matched` stage, or one with no record, can be approved with others; every other
+status needs its own decision. An organization with no live release target stays
 silent through a failure; if its GitHub App was uninstalled with gate history
 still on record, that silence can hide what the stale rows would have said.
 A stage that was checked and is not `matched` emits

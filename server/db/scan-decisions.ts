@@ -119,6 +119,12 @@ export const BATCH_APPROVAL_LIMIT = 50;
  * context only") does not qualify. Everything else keeps its own decision. The
  * approval re-checks this in the same statement that writes it, so a review
  * that changed after the list loaded stays undecided.
+ *
+ * Gate continuity admits only a stage bound to an approved gate review of the
+ * same bytes (`matched`) or one with no record because the package is not
+ * gated. Every other status — an accusation, or a stage that could not be
+ * bound or checked — asks a person to look, as does any status this predicate
+ * does not know.
  */
 function batchApprovableConditions(organizationId: string) {
   return [
@@ -130,6 +136,7 @@ function batchApprovableConditions(organizationId: string) {
     sql`json_extract(${scans.riskSummaryJson}, '$.artifactRisk') = 'low'`,
     sql`json_extract(${scans.summaryJson}, '$.baseline.comparisonSkipped') is null`,
     sql`coalesce(json_extract(${scans.summaryJson}, '$.releaseConsistency.status'), 'none') != 'diverged'`,
+    sql`coalesce(json_extract(${scans.summaryJson}, '$.gateContinuity.status'), 'none') in ('none', 'matched')`,
     sql`coalesce(json_extract(${scans.aiJson}, '$.requiresManualReview'), 0) = 0`,
     sql`coalesce(json_extract(${scans.aiJson}, '$.releaseAssessment'), 'not_assessed') in ('nothing_unusual', 'not_assessed')`,
   ];
