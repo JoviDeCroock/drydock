@@ -177,6 +177,21 @@ Three short Card panels in a row, each containing:
 
 This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
 
+### Dependency-PR block (landing)
+
+Below “Open a live diff”, the landing uses the compact variant of
+`DependencyPrIntegrations` in one split Card: a 24px heading, short setup copy, and
+secondary `Add to Renovate` / `Add to Dependabot` links on one side; a restrained
+`--surface-2` PR excerpt on the other. The example names the demo package above a
+two-column Change / Drydock table so the practical link stays visible without a
+sparse, oversized table. Its `Read the diff` link opens the existing public demo
+version pair. The closing note distinguishes Dependabot's PR comment from
+Renovate's table. The Card stacks below the large breakpoint; text and table
+headers stay on the ink scale.
+
+This block replaces the landing's lower full integration section. `/diff` keeps
+the full integration cards with preset and workflow details.
+
 ### Project logos (landing)
 
 Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, and Preact. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment.
