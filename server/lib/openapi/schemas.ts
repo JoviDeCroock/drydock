@@ -71,9 +71,9 @@ export const ErrorResponse = z
   .meta({ id: "Error" });
 
 export const ApiKeyIdentity = z
-  .object({
-    organization: z.object({ id: z.string(), name: z.string() }),
-    key: z.object({
+  .looseObject({
+    organization: z.looseObject({ id: z.string(), name: z.string() }),
+    key: z.looseObject({
       id: z.string(),
       name: z.string(),
       prefix: z.string().describe("Non-secret head of the key, as shown in settings"),
@@ -124,7 +124,7 @@ export const ScanDetail = z
   .meta({ id: "ScanDetail" });
 
 export const ScanStatus = z
-  .object({ scan: z.looseObject(scanIdentity) })
+  .looseObject({ scan: z.looseObject(scanIdentity) })
   .meta({ id: "ScanStatus" });
 
 export const ReportExport = z
@@ -154,11 +154,11 @@ export const ReportExport = z
 export const ReleaseReceipt = z
   .looseObject({
     schema: z.literal("drydock.release-receipt.v1"),
-    address: z.object({ algorithm: z.literal("sha256"), value: z.string() }),
+    address: z.looseObject({ algorithm: z.literal("sha256"), value: z.string() }),
     content: z.looseObject({
       report: z.looseObject({
         schema: z.literal("drydock.report.v2"),
-        digest: z.object({ algorithm: z.literal("sha256"), value: z.string() }),
+        digest: z.looseObject({ algorithm: z.literal("sha256"), value: z.string() }),
       }),
       release: z.looseObject({
         scanId: z.string(),
@@ -182,7 +182,7 @@ export const ReleaseReceipt = z
 
 export const PackageReleases = z
   .looseObject({
-    package: z.object({ name: z.string(), ecosystem: z.string() }),
+    package: z.looseObject({ name: z.string(), ecosystem: z.string() }),
     summary: z.looseObject({
       totalReviews: z.number().int(),
       publishedWithoutDecision: z.number().int(),
@@ -213,7 +213,7 @@ export const PackageReleases = z
   .meta({ id: "PackageReleases" });
 
 export const WorkflowGate = z
-  .object({
+  .looseObject({
     gate: z.looseObject({
       id: z.string(),
       repositoryFullName: z.string(),

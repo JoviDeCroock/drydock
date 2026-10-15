@@ -79,6 +79,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -103,6 +113,16 @@
           },
           "401": {
             "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -188,6 +208,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -222,6 +252,16 @@
           },
           "403": {
             "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -291,6 +331,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -346,6 +396,16 @@
           },
           "404": {
             "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -426,6 +486,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -492,6 +562,16 @@
           },
           "409": {
             "description": "The review has not completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -594,6 +674,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -649,6 +739,16 @@
           },
           "404": {
             "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -875,7 +975,7 @@
               "id",
               "name"
             ],
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "key": {
             "type": "object",
@@ -901,7 +1001,7 @@
               "prefix",
               "expiresAt"
             ],
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "access": {
             "type": "string",
@@ -913,7 +1013,7 @@
           "key",
           "access"
         ],
-        "additionalProperties": false
+        "additionalProperties": {}
       },
       "OpenApiDocument": {
         "type": "object",
@@ -1851,7 +1951,7 @@
         "required": [
           "scan"
         ],
-        "additionalProperties": false
+        "additionalProperties": {}
       },
       "ReportExport": {
         "type": "object",
@@ -2153,7 +2253,7 @@
               "algorithm",
               "value"
             ],
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "content": {
             "type": "object",
@@ -2180,7 +2280,7 @@
                       "algorithm",
                       "value"
                     ],
-                    "additionalProperties": false
+                    "additionalProperties": {}
                   }
                 },
                 "required": [
@@ -2317,7 +2417,7 @@
               "name",
               "ecosystem"
             ],
-            "additionalProperties": false
+            "additionalProperties": {}
           },
           "summary": {
             "type": "object",
@@ -2706,7 +2806,7 @@
         "required": [
           "gate"
         ],
-        "additionalProperties": false
+        "additionalProperties": {}
       },
       "PublicPackageDiff": {
         "type": "object",
