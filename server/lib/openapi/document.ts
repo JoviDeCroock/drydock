@@ -113,7 +113,14 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
         description: "Decision filter",
         schema: {
           type: "string",
-          enum: ["undecided", "published_without_decision", "publish", "no_publish", "all"],
+          enum: [
+            "undecided",
+            "published_without_decision",
+            "decided",
+            "publish",
+            "no_publish",
+            "all",
+          ],
         },
       },
       ...PAGE_PARAMS,
