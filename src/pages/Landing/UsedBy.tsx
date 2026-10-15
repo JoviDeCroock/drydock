@@ -1,6 +1,7 @@
 import keyvLogo from "../../assets/keyv-logo.svg";
 import cacheableLogo from "../../assets/cacheable-logo.svg";
 import preactLogo from "../../assets/preact-logo.svg";
+import apolloLogo from "../../assets/apollo-logo.png";
 import { SectionLabel } from "../../components/Typography";
 
 const projects = [
@@ -27,6 +28,14 @@ const projects = [
     width: 1800,
     height: 512,
     size: "h-10",
+  },
+  {
+    name: "Apollo",
+    href: "https://www.apollographql.com",
+    logo: apolloLogo,
+    width: 475,
+    height: 475,
+    size: "h-14",
   },
 ];
 

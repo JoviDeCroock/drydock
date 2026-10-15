@@ -194,7 +194,7 @@ the full integration cards with preset and workflow details.
 
 ### Project logos (landing)
 
-Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, and Preact. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment.
+Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, Preact, and Apollo. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment. Apollo's supplied PNG is preserved without cropping or distortion; its approval permits the monochrome treatment and covers only the `Used by` listing, with no sponsorship, partnership, or testimonial attribution.
 
 ### The interactive review preview (landing)
 
