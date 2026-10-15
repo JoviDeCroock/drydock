@@ -169,7 +169,7 @@ function parseDistTags(raw: string | null): string[] | null {
 /**
  * The third way into the badge: a publisher's decision on a release after npm
  * published it, which answers exactly like a decision before publication —
- * `<version> approved`, or `<version> blocked` for a decline, since the
+ * `<version> approved`, or `<version> rejected` for a decline, since the
  * version is already public and the decline is the warning. Each row carries
  * the alert's own coordinates, which the guard bound to the reviewed bytes.
  * npm only: the monitor watches nothing else.
@@ -204,7 +204,7 @@ export async function listPostReleaseBadgeCandidates(
 }
 
 /**
- * The version the badge must report as `not reviewed` (or `blocked`) because
+ * The version the badge must report as `not reviewed` (or `rejected`) because
  * the answering organization's own publication monitor saw npm serve
  * something its reviews do not vouch for — or null when the monitor has
  * nothing to say.
@@ -229,14 +229,14 @@ export async function listPostReleaseBadgeCandidates(
  *   on `unknown` before it compares bytes (a decision recorded after npm's
  *   publication time, for one), and a green "3.0.0 approved" must not survive
  *   over bytes nobody compared. `unknown` with matching or absent digests
- *   leaves an approved quote alone, and a `blocked` pick stays red: it already
+ *   leaves an approved quote alone, and a `rejected` pick stays red: it already
  *   warns.
  *
  * Either case is answered by the organization's own guarded decision after
  * release (`listPostReleaseDecisions`), made on the published bytes
  * themselves: an approval clears that version — it no longer supersedes the
  * quote, and the quote's own discrepancy or byte mismatch no longer greys it —
- * and a decline turns `not reviewed` into `blocked`. The observation's own
+ * and a decline turns `not reviewed` into `rejected`. The observation's own
  * status is never rewritten; the decision is read beside it.
  *
  * Only the pick's own organization's evidence counts, for the same reason the
@@ -369,7 +369,7 @@ async function findPublicationDiscrepancy(
  * The version the badge reports instead of its pick, or null when the pick
  * still speaks for the line: the newest of a newer release this organization
  * reviewed but did not put on the badge (`findNewerPublishedRelease`) and what
- * its publication monitor recorded (`findPublicationDiscrepancy`), `blocked`
+ * its publication monitor recorded (`findPublicationDiscrepancy`), `rejected`
  * when the organization declined that release after it was published.
  */
 export async function findBadgeSupersession(

@@ -310,7 +310,7 @@ not reviewed` instead of green. `unknown` about the quoted
 version itself does not, unless its published bytes differ from the reviewed
 ones. A guarded decision after release (above) answers for its version: an
 approval clears that version's discrepancy or supersession, and a decline reads
-`<version> blocked`. See
+`<version> rejected`. See
 [`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
 
 ## API and operation

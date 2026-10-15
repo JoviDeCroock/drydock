@@ -210,7 +210,7 @@ describe("post-release review copy", () => {
         resolution: "declined_after_release",
         resolutionBadge: "applied",
       }),
-    ).toBe("The public badge counts this decision as 1.1.0 blocked.");
+    ).toBe("The public badge counts this decision as 1.1.0 rejected.");
     for (const effect of [
       "not_public_npm",
       "not_a_verified_publisher",

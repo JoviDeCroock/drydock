@@ -133,7 +133,7 @@ export function resolutionBadgeMessage(
 ): string | null {
   if (!observation.resolution || !observation.resolutionBadge) return null;
   if (observation.resolutionBadge === "applied") {
-    const verdict = observation.resolution === "approved_after_release" ? "approved" : "blocked";
+    const verdict = observation.resolution === "approved_after_release" ? "approved" : "rejected";
     return `The public badge counts this decision as ${observation.version} ${verdict}.`;
   }
   const reason = badgeUnchangedReasons[observation.resolutionBadge];

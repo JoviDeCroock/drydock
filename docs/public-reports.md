@@ -336,7 +336,7 @@ organization can **Scan** the alert: a published-pair review of the published
 bytes, linked to the alert, decided on the review page (see
 [`publication-monitor.md`](./publication-monitor.md#reviewing-an-alert-after-release)).
 That decision answers the badge exactly like a decision before publication —
-`<version> approved` (green), or `<version> blocked` (red) for a decline, since
+`<version> approved` (green), or `<version> rejected` (red) for a decline, since
 the version is already public and the decline is the warning — but only when a
 guard, checked when the review is decided and recorded on the alert
 (`resolution_badge = 'applied'`), holds:
@@ -386,7 +386,7 @@ decision no longer matches is ignored on read.
 The monitor evidence reads the same decisions, for the pick's own organization
 (`findPublicationDiscrepancy`): a guarded approval of the quoted version clears
 its discrepancy and its byte mismatch, and one of a newer release clears that
-supersession; a guarded decline turns `not reviewed` into `blocked`. The
+supersession; a guarded decline turns `not reviewed` into `rejected`. The
 observation's historical verdict is never rewritten; the decision is read beside
 it.
 

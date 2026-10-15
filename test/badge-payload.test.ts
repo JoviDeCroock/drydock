@@ -62,10 +62,10 @@ describe("badge payload", () => {
     expect(buildBadgePayload(row(), "latest", null).message).toBe("3.0.0 approved");
   });
 
-  test("a release its publisher declined after npm published it reads blocked", () => {
+  test("a release its publisher declined after npm published it reads rejected", () => {
     expect(buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true })).toMatchObject({
       label: "drydock",
-      message: "3.0.1 blocked",
+      message: "3.0.1 rejected",
       color: "red",
     });
   });
@@ -95,7 +95,7 @@ describe("post-release decisions on the badge", () => {
       color: "brightgreen",
     });
     expect(buildBadgePayload({ ...postRelease, decision: "no_publish" }, "latest")).toMatchObject({
-      message: "3.0.0 blocked",
+      message: "3.0.0 rejected",
       color: "red",
     });
   });

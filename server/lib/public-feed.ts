@@ -629,7 +629,7 @@ export interface BadgeSupersession {
  * no listed review at all: nothing is public, not that nobody looked. The
  * newer release's own decision is never consulted or disclosed — except a
  * publisher's guarded decline of a release npm already published, which reads
- * `blocked` (see `findPublicationDiscrepancy`).
+ * `rejected` (see `findPublicationDiscrepancy`).
  */
 export function buildBadgePayload(
   row: SharedScanRow | null,
@@ -660,7 +660,7 @@ export function buildBadgePayload(
       // The pick no longer speaks for the line, so its identity qualifier
       // would describe a review this badge is not reporting.
       label: badgeLabel(null, tag),
-      message: `${badgeVersion(supersession.version)} ${supersession.blocked ? "blocked" : "not reviewed"}`,
+      message: `${badgeVersion(supersession.version)} ${supersession.blocked ? "rejected" : "not reviewed"}`,
       color: supersession.blocked ? "red" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };

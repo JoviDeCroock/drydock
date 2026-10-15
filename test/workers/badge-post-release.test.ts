@@ -31,7 +31,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     return { owner, app, packageName };
   }
 
-  test("approve after release reads approved, exactly like an approval before it; decline reads blocked", async () => {
+  test("approve after release reads approved, exactly like an approval before it; decline reads rejected", async () => {
     const { owner, app, packageName } = await publisherWithDirectRelease();
     const scanId = await seedPublishedReview(owner, packageName, "1.0.1");
     await linkReview(owner, packageName, "1.0.1", scanId);
@@ -48,7 +48,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     await decide(app, scanId, "no_publish");
     expect(await fetchBadge(app, packageName)).toMatchObject({
       label: "drydock",
-      message: "1.0.1 blocked",
+      message: "1.0.1 rejected",
       color: "red",
     });
   });
@@ -161,7 +161,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     });
     await decide(app, scanId, "no_publish");
     expect(await fetchBadge(app, packageName)).toMatchObject({
-      message: "1.0.0 blocked",
+      message: "1.0.0 rejected",
       color: "red",
     });
   });
@@ -190,7 +190,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     const scanId = await seedPublishedReview(owner, packageName, "1.0.1");
     await linkReview(owner, packageName, "1.0.1", scanId);
     await decide(app, scanId, "no_publish");
-    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 blocked");
+    expect((await fetchBadge(app, packageName)).message).toBe("1.0.1 rejected");
     const off = await call(app, "PUT", `/api/v1/packages/${packageName}/badge`, {
       body: { enabled: false },
     });
@@ -198,7 +198,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     expect((await fetchBadge(app, packageName)).message).toBe("not reviewed");
   });
 
-  test("on a line the decision does not answer, an approval clears the supersession and a decline reads blocked", async () => {
+  test("on a line the decision does not answer, an approval clears the supersession and a decline reads rejected", async () => {
     const owner = await seedUser();
     const app = appFor(owner);
     const packageName = newPackage();
@@ -217,7 +217,7 @@ describe("the public badge counts a publisher's decision after release", () => {
     expect((await fetchBadge(app, packageName, "next")).message).toBe("4.0.0-rc.1 approved");
     await decide(app, scanId, "no_publish");
     expect(await fetchBadge(app, packageName, "next")).toMatchObject({
-      message: "4.0.0-rc.2 blocked",
+      message: "4.0.0-rc.2 rejected",
       color: "red",
     });
   });
@@ -237,7 +237,7 @@ describe("the public badge counts a publisher's decision after release", () => {
       resolutionBadge: "applied",
     });
     expect(await fetchBadge(app, packageName)).toMatchObject({
-      message: "1.0.1 blocked",
+      message: "1.0.1 rejected",
       color: "red",
     });
     expect((await fetchBadge(app, "left-pad")).message).toBe("not reviewed");
@@ -261,7 +261,7 @@ describe("the public badge counts a publisher's decision after release", () => {
       resolutionBadge: "applied",
     });
     expect(await fetchBadge(app, packageName)).toMatchObject({
-      message: `${version} blocked`,
+      message: `${version} rejected`,
       color: "red",
     });
   });
@@ -296,7 +296,7 @@ describe("the public badge counts a publisher's decision after release", () => {
       resolutionBadge: "not_a_verified_publisher",
     });
     expect(await fetchBadge(app, packageName)).toMatchObject({
-      message: "1.0.1 blocked",
+      message: "1.0.1 rejected",
       color: "red",
     });
   });
