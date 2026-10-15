@@ -325,7 +325,9 @@ export async function reconcileDuePublicationEnrollments(
   let failed = 0;
   await mapWithConcurrency(due, RECONCILE_CONCURRENCY, async ({ organizationId }) => {
     try {
-      await reconcilePublicationWatches(db, organizationId, registryUrl);
+      await reconcilePublicationWatches(db, organizationId, registryUrl, {
+        includeSummary: false,
+      });
     } catch (err) {
       failed++;
       emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", {
