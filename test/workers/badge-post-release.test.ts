@@ -57,14 +57,14 @@ describe("the public badge counts a publisher's decision after release", () => {
     });
   });
 
-  test("a rejection npm published over reads blocked until the publisher approves it after release", async () => {
+  test("a rejection npm published over reads rejected until the publisher approves it after release", async () => {
     const owner = await seedUser();
     const app = appFor(owner);
     const packageName = newPackage();
     await seedStagedRelease(owner, app, packageName, "1.0.0");
     await seedAlert(owner, packageName, "1.0.1", { status: "published_despite_rejection" });
     expect(await fetchBadge(app, packageName)).toMatchObject({
-      message: "1.0.1 blocked",
+      message: "1.0.1 rejected",
       color: "red",
     });
 

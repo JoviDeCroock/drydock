@@ -345,7 +345,7 @@ async function findPublicationDiscrepancy(
   // `unknown` is not among them — the evidence could not be established.
   const alertedVersions = new Set<string>();
   // Of those, the ones this organization rejected before npm published them
-  // anyway: its warning already exists, so the badge reads `blocked`.
+  // anyway: its warning already exists, so the badge reads `rejected`.
   const rejectedVersions = new Set<string>();
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =
@@ -394,7 +394,7 @@ async function findPublicationDiscrepancy(
   // accusation against the real maintainer. Everyone else keeps `not reviewed`.
   //
   // A publisher's rejection that npm published over is its own verdict on a
-  // release that is public now, so it reads `blocked`, like a decline after
+  // release that is public now, so it reads `rejected`, like a decline after
   // release. A guarded approval after release has already cleared it above.
   if (result?.unapproved) {
     if (

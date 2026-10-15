@@ -2719,7 +2719,7 @@ describe("the badge reads the organization's publication monitor", () => {
     },
   );
 
-  test("a release npm published despite the publisher's rejection reads blocked", async () => {
+  test("a release npm published despite the publisher's rejection reads rejected", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -2733,7 +2733,7 @@ describe("the badge reads the organization's publication monitor", () => {
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
       label: "drydock",
-      message: "3.0.1 blocked",
+      message: "3.0.1 rejected",
       color: "red",
     });
   });

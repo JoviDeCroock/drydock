@@ -410,7 +410,7 @@ reports instead is one the answering organization's **own monitor alerted on**
 reads `<version> published without approval` in orange.
 
 When that alert is `published_despite_rejection` — the organization rejected
-the bytes and npm published them anyway — the badge reads `<version> blocked`
+the bytes and npm published them anyway — the badge reads `<version> rejected`
 in red, like a decline after release. The rejection is the publisher's own
 verdict, and the release it is about is public now, so publishing it is the
 warning; the rule that a newer release's decision is never disclosed exists for
@@ -443,7 +443,7 @@ registry-verified publisher's alert turns a badge red (anyone else's reads grey
 - **Nothing new leaks.** The version is npm's (from its packument); the claim
   is the publisher's own monitor record, which its dashboard already lists
   (see [`publication-monitor.md`](./publication-monitor.md#the-log-of-unapproved-publishes)).
-  Beyond a rejection reading `blocked`, the badge never says which discrepancy
+  Beyond a rejection reading `rejected`, the badge never says which discrepancy
   it was, and never names who published.
 
 The serve counter records it as `superseded_unapproved`.
@@ -575,7 +575,7 @@ without approval` when it was a discrepancy (see "Flagging an unapproved
   release answers the badge itself.
 - **The quoted version itself** with a discrepancy — `published_without_approval`,
   `published_despite_rejection`, `artifact_mismatch` → `<version> published
-without approval`, orange, or `<version> blocked`, red, for a rejection npm
+without approval`, orange, or `<version> rejected`, red, for a rejection npm
   published over (`not reviewed`, lightgrey, when the organization is not a
   registry-verified publisher). A green `3.0.0 approved` beside published bytes that
   differ from the approved ones, or a publication the approval did not precede,

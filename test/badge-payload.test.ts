@@ -85,7 +85,7 @@ describe("badge payload", () => {
   test("a decline after release outranks the unapproved flag", () => {
     expect(
       buildBadgePayload(row(), "latest", { version: "3.0.1", blocked: true, unapproved: true }),
-    ).toMatchObject({ message: "3.0.1 blocked", color: "red" });
+    ).toMatchObject({ message: "3.0.1 rejected", color: "red" });
   });
 
   // `SharedScanRow` carries the owning organization so the badge's staleness
