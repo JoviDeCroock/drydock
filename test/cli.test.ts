@@ -297,6 +297,8 @@ describe("drydock CLI", () => {
     expect(await cli.run("scans", "start", "a@1", "--fail-on", "high")).toBe(2);
     expect(await cli.run("scans", "start", "--stage", "stage-1", "a@1")).toBe(2);
     expect(await cli.run("scans", "start", "--stage", "stage-1", "--ecosystem", "npm")).toBe(2);
+    expect(await cli.run("scans", "start", "a@1", "--timeout", "30")).toBe(2);
+    expect(await cli.run("check-npm", "--interval", "1")).toBe(2);
     expect(await cli.run("check-npm", "extra")).toBe(2);
     expect(await cli.run("check-npm", "--fail-on", "high")).toBe(2);
     expect(cli.calls).toEqual([]);
@@ -421,17 +423,22 @@ describe("drydock CLI", () => {
     expect(plain.stdout).toContain("@org/b@2.0.0");
     expect(plain.stdout).not.toMatch(TERMINAL_CONTROL);
 
-    const gated = harness(responder);
-    expect(await gated.run("check-npm", "--wait", "--fail-on", "high")).toBe(3);
-    expect(gated.calls.map((call) => call.url.replace("https://drydock.test", ""))).toEqual([
+    const waited = harness(responder);
+    expect(await waited.run("check-npm", "--wait")).toBe(0);
+    expect(waited.calls.map((call) => call.url.replace("https://drydock.test", ""))).toEqual([
       "/api/v1/staged-publishes/scan",
       "/api/v1/scans/scan_a/status",
       "/api/v1/scans/scan_b/status",
     ]);
 
-    expect(await harness(responder).run("check-npm", "--wait", "--fail-on", "critical")).toBe(3);
+    // Not a gate: a stage the cron already reviewed would start nothing and pass.
+    const gated = harness(responder);
+    expect(await gated.run("check-npm", "--wait", "--fail-on", "high")).toBe(2);
+    expect(gated.calls).toEqual([]);
+    expect(gated.stderr).toContain("scans start --stage <stage-id> --wait --fail-on");
+
     risks.scan_b = { status: "failed", risk: "pending" };
-    expect(await harness(responder).run("check-npm", "--wait", "--fail-on", "high")).toBe(1);
+    expect(await harness(responder).run("check-npm", "--wait")).toBe(1);
 
     const asJson = harness(responder);
     expect(await asJson.run("check-npm", "--wait", "--json")).toBe(1);

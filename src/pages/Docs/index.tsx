@@ -908,9 +908,9 @@ node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, 
                 next scheduled npm check:
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`drydock check-npm                                            # discover staged publishes now
-drydock scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
-drydock scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+                {`node cli/bin/drydock.mjs check-npm                                            # discover staged publishes now
+node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
+node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI

@@ -38,7 +38,7 @@ Commands:
       [--wait [--timeout S] [--interval S] [--fail-on RISK]]
   check-npm                       Discover new npm staged publishes and start
                                   their reviews, like "Check npm" (scan access)
-      [--wait [--timeout S] [--interval S] [--fail-on RISK]]
+      [--wait [--timeout S] [--interval S]]
   report <review-id>              The canonical report export (drydock.report.v2)
       [--output FILE]
   receipt <review-id>             The Release Receipt, checked against its digest
@@ -61,8 +61,7 @@ Environment:
   DRYDOCK_URL      Drydock origin
 
 Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 risk at or above --fail-on (RISK is low, medium, high, or critical). With
---wait over several reviews, 3 wins over 1: any review at the threshold exits 3.
+3 risk at or above --fail-on (RISK is low, medium, high, or critical),
 4 a wait timed out before the review finished.
 `;
 
@@ -351,6 +350,19 @@ function waitSettings(ctx) {
 }
 
 /**
+ * `--wait` settings for a command that starts reviews, or null without
+ * `--wait`, where a waiting flag would otherwise be silently ignored.
+ * @param {CommandContext} ctx
+ */
+function optionalWaitSettings(ctx) {
+  if (ctx.values.wait) return waitSettings(ctx);
+  for (const flag of ["fail-on", "timeout", "interval"]) {
+    if (ctx.values[flag] !== undefined) throw new CliError(`--${flag} needs --wait`, 2);
+  }
+  return null;
+}
+
+/**
  * Polls one review until it completes or fails, or the shared deadline passes.
  * @param {CommandContext} ctx
  * @param {string} id
@@ -442,10 +454,7 @@ async function scansStart(ctx) {
     body = { ecosystem: typeof ecosystem === "string" ? ecosystem : "npm", packageName, version };
     if (typeof baseline === "string" && baseline.trim()) body.baselineVersion = baseline.trim();
   }
-  const waiting = ctx.values.wait ? waitSettings(ctx) : null;
-  if (!waiting && ctx.values["fail-on"] !== undefined) {
-    throw new CliError("--fail-on needs --wait", 2);
-  }
+  const waiting = optionalWaitSettings(ctx);
 
   const started = await ctx.client.json("/api/v1/scans", { method: "POST", body });
   const id = started?.scan?.id;
@@ -460,11 +469,16 @@ async function scansStart(ctx) {
 
 /** @param {CommandContext} ctx */
 async function checkNpm(ctx) {
-  args(ctx, 0, 1, "check-npm [--wait [--timeout S] [--interval S] [--fail-on RISK]]");
-  const waiting = ctx.values.wait ? waitSettings(ctx) : null;
-  if (!waiting && ctx.values["fail-on"] !== undefined) {
-    throw new CliError("--fail-on needs --wait", 2);
+  args(ctx, 0, 1, "check-npm [--wait [--timeout S] [--interval S]]");
+  // Discovery starts reviews only for stages nobody reviewed yet, so a stage the
+  // cron already picked up would pass any threshold: check-npm is not a gate.
+  if (ctx.values["fail-on"] !== undefined) {
+    throw new CliError(
+      'check-npm is not a gate; use "scans start --stage <stage-id> --wait --fail-on RISK"',
+      2,
+    );
   }
+  const waiting = optionalWaitSettings(ctx);
   const result = await ctx.client.json("/api/v1/staged-publishes/scan", { method: "POST" });
   if (!waiting) {
     print(ctx, result, formatDiscovery);
