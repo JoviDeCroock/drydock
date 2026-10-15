@@ -19,6 +19,7 @@ const entry: PublicationAlertLogEntry = {
   resolution: null,
   resolvedAt: null,
   resolutionBadge: null,
+  reviewedBytes: null,
   watched: true,
 };
 
@@ -87,6 +88,16 @@ test("the log line says where each unapproved publish stands", () => {
       acknowledgedAt: "2026-09-03T00:00:00.000Z",
       resolution: "approved_after_release",
       resolvedAt: "2026-09-04T00:00:00.000Z",
+      reviewedBytes: "match",
     }),
-  ).toMatch(/^raised .+ · decided .+$/);
+  ).toMatch(/^raised .+ · decided [^·]+$/);
+  // Approving bytes that are not the published ones, or declining, leaves it open.
+  for (const open of [
+    { resolution: "approved_after_release", reviewedBytes: "differ" },
+    { resolution: "declined_after_release", reviewedBytes: "match" },
+  ] as const) {
+    expect(alertLogMetaLine({ ...entry, ...open, resolvedAt: "2026-09-04T00:00:00.000Z" })).toMatch(
+      /^raised .+ · decided .+ · not acknowledged$/,
+    );
+  }
 });

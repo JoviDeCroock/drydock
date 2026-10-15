@@ -344,8 +344,9 @@ async function findPublicationDiscrepancy(
   // organization's approval, despite its rejection, or with other bytes.
   // `unknown` is not among them — the evidence could not be established.
   const alertedVersions = new Set<string>();
-  // Of those, the ones this organization rejected before npm published them
-  // anyway: its warning already exists, so the badge reads `rejected`.
+  // Of those, the ones published despite this organization's rejection,
+  // recorded before npm published them or only after: its warning already
+  // exists, so the badge reads `rejected`.
   const rejectedVersions = new Set<string>();
   const publishedSha1 = quoted[0]?.sha1?.toLowerCase() ?? null;
   let pickDisqualified =

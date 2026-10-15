@@ -290,16 +290,21 @@ export function watchMetaLine(watch: PublicationWatch): string {
 export function alertLogMetaLine(
   entry: Pick<
     PublicationAlertLogEntry,
-    "createdAt" | "acknowledgedAt" | "resolution" | "resolvedAt" | "watched"
+    "createdAt" | "acknowledgedAt" | "resolution" | "resolvedAt" | "reviewedBytes" | "watched"
   >,
 ): string {
   const parts = [`raised ${formatDateTime(entry.createdAt)}`];
   if (entry.resolution && entry.resolvedAt) {
     parts.push(`decided ${formatDateTime(entry.resolvedAt)}`);
-  } else if (entry.acknowledgedAt) {
-    parts.push(`acknowledged ${formatDateTime(entry.acknowledgedAt)}`);
-  } else {
-    parts.push("not acknowledged");
+  }
+  // A decision that left the alert open (a decline, or approving bytes that
+  // are not the published ones) still wants acknowledging, as on its watch row.
+  if (!isAlertResolved(entry)) {
+    parts.push(
+      entry.acknowledgedAt
+        ? `acknowledged ${formatDateTime(entry.acknowledgedAt)}`
+        : "not acknowledged",
+    );
   }
   if (!entry.watched) parts.push("no longer watched");
   return parts.join(" · ");

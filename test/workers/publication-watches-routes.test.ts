@@ -867,6 +867,7 @@ describe("the organization's log of unapproved publishes", () => {
           resolution: null,
           resolvedAt: null,
           resolutionBadge: null,
+          reviewedBytes: null,
           watched: true,
         },
         expect.objectContaining({ packageName: "log-stopped", version: "1.0.0", watched: false }),

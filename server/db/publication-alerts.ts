@@ -253,6 +253,7 @@ export async function listPublicationAlertLog(db: AppDb, organizationId: string)
       resolution: publicationAlerts.resolution,
       resolvedAt: publicationAlerts.resolvedAt,
       resolutionBadge: publicationAlerts.resolutionBadge,
+      reviewedBytes: publicationAlerts.reviewedBytes,
       // Qualified by hand: see listUnnotifiedPublicationAlerts.
       watched:
         sql<boolean>`exists(select 1 from publication_watches w where w.organization_id = publication_alerts.organization_id and w.package_name = publication_alerts.package_name)`.mapWith(

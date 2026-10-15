@@ -55,9 +55,7 @@ export function UnapprovedPublishLog({ refreshKey }: { refreshKey: ReadonlySigna
             </a>
             <Badge tone="critical">{observationStatusLabels[entry.status]}</Badge>
             {entry.resolution ? (
-              <Badge tone={resolutionTone(entry.resolution)}>
-                {resolutionLabels[entry.resolution]}
-              </Badge>
+              <Badge tone={resolutionTone(entry)}>{resolutionLabels[entry.resolution]}</Badge>
             ) : null}
             <span class="font-mono text-[11px] text-ink-subtle">{alertLogMetaLine(entry)}</span>
           </li>

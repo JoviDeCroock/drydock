@@ -42,10 +42,14 @@ export function PublicationMonitor({
   const model = useModel(PublicationWatchesModel);
   const location = useLocation();
   const lastReviews = useSignal(reviews.peek());
+  // Bumped whenever the reviews list changes: a post-release decision is a
+  // review decision, and a decline leaves every watch field below unchanged.
+  const reviewsChanged = useSignal(0);
   useSignalEffect(() => {
     const next = reviews.value;
     if (next === lastReviews.peek()) return;
     lastReviews.value = next;
+    reviewsChanged.value = reviewsChanged.peek() + 1;
     void model.refresh();
   });
   // A pending personal claim needs its Keep or Move choice before a watch.
@@ -58,14 +62,15 @@ export function PublicationMonitor({
   const checkingId = useSignal<string | null>(null);
   const stopTarget = useSignal<{ id: string; packageName: string } | null>(null);
   const stopPackageName = useComputed(() => stopTarget.value?.packageName ?? null);
-  // A check, an acknowledgment, an enrollment or a stop may have changed the
-  // ledger, and each changes one of these fields. A string, so expanding a row
-  // (which replaces the list with equal watches) does not reload the log.
+  // A check, an acknowledgment, an enrollment, a stop or a post-release
+  // decision may have changed the ledger, and each changes one of these. A
+  // string, so expanding a row (which replaces the list with equal watches)
+  // does not reload the log.
   const logRefreshKey = useComputed(() =>
     model.loaded.value
-      ? model.watches.value
+      ? `${reviewsChanged.value}|${model.watches.value
           .map((watch) => `${watch.id}:${watch.lastCheckedAt}:${watch.unresolvedAlertCount}`)
-          .join(",")
+          .join(",")}`
       : undefined,
   );
   const confirmStop = async () => {

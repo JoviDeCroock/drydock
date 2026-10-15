@@ -410,7 +410,7 @@ reports instead is one the answering organization's **own monitor alerted on**
 reads `<version> published without approval` in orange.
 
 When that alert is `published_despite_rejection` — the organization rejected
-the bytes and npm published them anyway — the badge reads `<version> rejected`
+the published bytes, before npm published them or only after — the badge reads `<version> rejected`
 in red, like a decline after release. The rejection is the publisher's own
 verdict, and the release it is about is public now, so publishing it is the
 warning; the rule that a newer release's decision is never disclosed exists for
@@ -617,7 +617,9 @@ approval" is only ever a registry-verified publisher's own record. No watch and 
 evidence, and the badge answers from the scans alone. npm only. Like the
 registry-status sweep, the monitor runs in cron with no request colo to purge,
 so a badge it turns grey or orange does so within the 300s cache TTL rather
-than at once.
+than at once. shields.io caches the payload again for its own `cacheSeconds`
+floor on top of that, so a README can show the old badge for up to about ten
+minutes.
 
 The probe runs on a badge cache miss against `scans.badge_package_key`, the
 release line written for **every** badge-eligible scan, shared or not. For a
