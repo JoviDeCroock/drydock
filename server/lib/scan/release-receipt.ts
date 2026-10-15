@@ -2,6 +2,8 @@ import type { getScan } from "../../db/scans";
 import type { WorkflowGateRecord } from "../github-app/webhook-gates";
 import { canonicalJson } from "../platform/canonical-json";
 import { sha256Hex } from "../platform/crypto-utils";
+import { isRecord } from "../platform/guards";
+import { normalizeGateContinuity } from "./gate-continuity-record";
 import { toIsoOrNull } from "./iso-time";
 import {
   buildReportExport,
@@ -27,12 +29,14 @@ export async function buildReleaseReceipt(
     envelope: report.intentEnvelope,
   };
   const gate = buildWorkflowGate(mode, workflowGate);
+  const gateContinuity = buildGateContinuity(mode, detail);
   const releaseDecision = buildReleaseDecision(detail.scan);
   const requiredStatuses = [
     reviewedArtifacts.status,
     intentBinding.status,
     releaseDecision.status,
     gate.status,
+    gateContinuity.status,
   ];
   const evidenceStatus = aggregateEvidenceStatus(requiredStatuses);
   const content = {
@@ -68,6 +72,7 @@ export async function buildReleaseReceipt(
       intentBinding,
       releaseDecision: { status: releaseDecision.status },
       workflowGate: gate,
+      gateContinuity,
       registryOutcome: report.registryStatus
         ? { status: "complete" as const, observation: report.registryStatus }
         : { status: "unknown" as const, observation: null },
@@ -160,6 +165,30 @@ function buildWorkflowGate(
     // logs. A durable gate decision is not proof GitHub received it.
     callback: { outcome: "unknown" as const, observedAt: null },
   };
+}
+
+// A staged-publish receipt can carry the enforced gate's evidence second-hand:
+// when the stage's bytes hash to a tarball the organization's workflow gate
+// reviewed and approved, the receipt names that gate review. A stage the gate
+// never saw, or one whose bytes drifted, is incomplete or conflicting control
+// evidence for a package the organization gates, and a check that could not
+// run is `unknown` rather than `not_applicable`. Only packages the organization
+// does not gate stay `not_applicable`. The record comes from the persisted
+// summary, not the report export: the receipt is authenticated-only, so it can
+// name the gate the public-shareable report deliberately leaves out.
+function buildGateContinuity(mode: "workflow_gate" | "staged_publish", detail: ScanDetail) {
+  const summary = isRecord(detail.scan.summaryJson) ? detail.scan.summaryJson : {};
+  const record = mode === "staged_publish" ? normalizeGateContinuity(summary.gateContinuity) : null;
+  if (!record) return { status: "not_applicable" as const, record: null };
+  const status: EvidenceStatus =
+    record.status === "matched"
+      ? "complete"
+      : record.status === "digest-mismatch" || record.status === "gate-not-approved"
+        ? "conflicting"
+        : record.status === "unknown"
+          ? "unknown"
+          : "partial";
+  return { status, record };
 }
 
 function buildReleaseDecision(scan: ScanDetail["scan"]) {
