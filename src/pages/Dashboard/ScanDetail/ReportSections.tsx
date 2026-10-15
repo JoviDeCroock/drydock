@@ -176,10 +176,13 @@ function GateContinuityView({
     : (review?.status ?? (review?.gateId === null ? "record deleted" : null));
   return (
     <div class="flex flex-col gap-3">
-      <div class="flex flex-wrap gap-2">
-        <Badge tone={tone}>{continuity.status}</Badge>
-        <Badge tone="neutral">{continuity.algorithm}</Badge>
-      </div>
+      {/* A match is the expected outcome, and the description already says
+          so; only a stage that needs attention earns a badge. */}
+      {continuity.status === "matched" ? null : (
+        <div class="flex flex-wrap gap-2">
+          <Badge tone={tone}>{continuity.status}</Badge>
+        </div>
+      )}
       <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{description}</p>
       <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
         {review ? (
@@ -198,8 +201,13 @@ function GateContinuityView({
             ) : null}
           </div>
         ) : null}
-        {review ? <DigestRow label="gate reviewed" value={review.sha256} /> : null}
-        <DigestRow label={stagedLabel} value={continuity.stagedDigest} />
+        {review ? (
+          <DigestRow label={`gate reviewed · ${continuity.algorithm}`} value={review.sha256} />
+        ) : null}
+        <DigestRow
+          label={`${stagedLabel} · ${continuity.algorithm}`}
+          value={continuity.stagedDigest}
+        />
       </div>
     </div>
   );
