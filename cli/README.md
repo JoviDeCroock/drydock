@@ -2,7 +2,7 @@
 
 Read an organization's Drydock reviews, report exports, and release receipts from scripts and CI. Every command is read-only: approving a gate or recording a decision stays with signed-in maintainers in Drydock.
 
-The CLI has no dependencies and runs on Node 22.14 or later. From a checkout of this repository:
+The CLI has no dependencies and runs on Node 22.14 or later. It is not published to npm yet, so run it from a checkout of this repository (`pnpm run drydock …` or `node cli/bin/drydock.mjs …`):
 
 ```sh
 export DRYDOCK_API_KEY=ddk_…   # Organization settings → Integrations → API keys
@@ -25,21 +25,27 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
 | `gate <review-id>`                            | The GitHub workflow gate a review belongs to                                                      |
 | `diff <package> <from> <to> [--fail-on RISK]` | Diff two published releases through the anonymous public diff; needs no key                       |
 
-`--json` prints the API response instead of a table. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk).
+`--json` prints the API response instead of a table. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk), `4` `scans wait` timed out before the review finished.
 
 ## In CI
 
+The CLI comes from a checkout of the Drydock repository:
+
 ```yaml
+- uses: actions/checkout@v4
+  with:
+    repository: JoviDeCroock/drydock
+    path: drydock
 - name: Check the Drydock review
   env:
     DRYDOCK_API_KEY: ${{ secrets.DRYDOCK_API_KEY }}
   run: |
-    node cli/bin/drydock.mjs scans wait "$REVIEW_ID" --fail-on high
-    node cli/bin/drydock.mjs receipt "$REVIEW_ID" --output release-receipt.json
+    node drydock/cli/bin/drydock.mjs scans wait "$REVIEW_ID" --fail-on high
+    node drydock/cli/bin/drydock.mjs receipt "$REVIEW_ID" --output release-receipt.json
 ```
 
 ## Output safety
 
-Package names, file paths, and finding text come from the packages under review. The CLI strips control, bidi-override, and zero-width characters from everything it prints, and escapes them in `--json` output, so a hostile package cannot rewrite or reorder what a reviewer sees in a terminal. Requests never follow redirects, so the key is only ever sent to the configured origin.
+Package names, file paths, and finding text come from the packages under review. The CLI strips control, bidi-override, and zero-width characters from tables and error messages, and escapes them as `\uXXXX` in JSON output (`--json`, and `report` or `receipt` printed to stdout), so a hostile package cannot rewrite or reorder what a reviewer sees in a terminal. Escaped JSON parses to the same value but is not the same bytes: use `--output FILE` for the exact bytes a receipt digest covers. Requests never follow redirects, so the key is only ever sent to the configured origin.
 
 The API surface it reads is described in [`docs/api-keys.md`](../docs/api-keys.md) and [`docs/openapi.json`](../docs/openapi.json).

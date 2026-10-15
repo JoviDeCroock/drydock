@@ -4,17 +4,28 @@
 // packages under review, so every server string is stripped of control and
 // bidi-override characters before it reaches a terminal: an escape sequence in a
 // hostile package's README must not be able to rewrite what the reviewer sees.
-// `--json` output escapes the same characters as `\uXXXX`, which leaves the JSON
-// value unchanged.
+// JSON output (`--json`, and a report or receipt printed to stdout) escapes the
+// same characters as `\uXXXX`, which leaves the parsed value unchanged.
 
 // C0/C1 controls (including ESC and newlines), DEL, and Unicode format controls
 // (zero-width, bidi overrides and isolates, line/paragraph separators) that
 // can reorder or hide text.
-// eslint-disable-next-line no-control-regex -- stripping C0/C1 is the point
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+const UNSAFE_TEXT =
+  // eslint-disable-next-line no-control-regex -- stripping C0/C1 is the point
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
 // The same set minus C0, which JSON.stringify already escapes inside strings
 // and which is the structural whitespace of pretty-printed JSON.
-const UNSAFE_JSON_TEXT = /[\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+const UNSAFE_JSON_TEXT = /[\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+// For JSON text the CLI did not serialize: every unsafe character except tab
+// and newline, the only whitespace the server's JSON uses. Valid JSON never
+// carries a raw C0 control inside a string, so escaping one cannot change a
+// parsed value.
+const UNSAFE_RAW_JSON_TEXT =
+  // eslint-disable-next-line no-control-regex -- escaping C0/C1 is the point
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+
+/** @param {string} char */
+const unicodeEscape = (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
 
 /**
  * Pretty JSON with every unsafe character escaped. JSON.stringify escapes only
@@ -23,10 +34,25 @@ const UNSAFE_JSON_TEXT = /[\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\
  * @param {unknown} value
  */
 export function terminalSafeJson(value) {
-  return JSON.stringify(value, null, 2).replace(
-    UNSAFE_JSON_TEXT,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
+  return JSON.stringify(value, null, 2).replace(UNSAFE_JSON_TEXT, unicodeEscape);
+}
+
+/**
+ * Server JSON text made safe for a terminal without re-serializing it: the
+ * escapes keep it valid JSON with the same parsed value, but not the same bytes,
+ * so a digest is checked against the bytes the server sent, never this text.
+ * @param {string} text
+ */
+export function terminalSafeJsonText(text) {
+  return text.replace(UNSAFE_RAW_JSON_TEXT, unicodeEscape);
+}
+
+/**
+ * A single line for stderr, such as an error message that quotes the server.
+ * @param {unknown} value
+ */
+export function terminalSafeLine(value) {
+  return clean(value, 500);
 }
 
 /**
@@ -105,7 +131,7 @@ function formatFindings(findings) {
   const rows = findings.map((finding) => [
     clean(finding.severity),
     clean(finding.ruleId ?? (finding.source === "ai" ? "ai-review" : "-")),
-    finding.line ? `${clean(finding.file)}:${finding.line}` : clean(finding.file),
+    finding.line ? `${clean(finding.file)}:${clean(finding.line)}` : clean(finding.file),
     clean(finding.reason, 120),
   ]);
   return table(["SEVERITY", "RULE", "LOCATION", "REASON"], rows);

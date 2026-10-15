@@ -205,9 +205,24 @@ describe("drydock CLI", () => {
 
     const stuck = harness(() => json({ scan: { id: "scan_1", status: "running" } }));
     expect(await stuck.run("scans", "wait", "scan_1", "--timeout", "10", "--interval", "4")).toBe(
-      1,
+      4,
     );
     expect(stuck.stderr).toContain("still running");
+  });
+
+  test("an unexpected response is a one-line error, not a stack trace", async () => {
+    const cli = harness(() => json(null));
+    expect(await cli.run("scans", "wait", "scan_1")).toBe(1);
+    expect(cli.stderr).toMatch(/^drydock: unexpected error: [^\n]+\n$/);
+  });
+
+  test("strips terminal control characters from server error text", async () => {
+    const hostile = "\u001b[2Jbad \u202epackage\u0085";
+    const cli = harness(() => json({ error: hostile, code: hostile }, { status: 400 }));
+    expect(await cli.run("scans", "get", "scan_1")).toBe(1);
+    expect(cli.stderr).not.toMatch(TERMINAL_CONTROL);
+    expect(cli.stderr).not.toContain("\u0085");
+    expect(cli.stderr).toContain("bad");
   });
 
   test("a receipt must match the digest Drydock sent with it", async () => {
@@ -224,5 +239,27 @@ describe("drydock CLI", () => {
     );
     expect(await tampered.run("receipt", "scan_1")).toBe(1);
     expect(tampered.stdout).toBe("");
+  });
+
+  test("report and receipt escape hostile text on stdout and keep exact bytes in --output", async () => {
+    const hostile = "\u001b]0;owned\u0007\u001b[2J\u0085safe\u202ereversed\u200b\u2028";
+    // Compact like the server's canonical JSON; JSON.stringify leaves C1, bidi,
+    // and line-separator characters raw.
+    const body = JSON.stringify({ schema: "drydock.release-receipt.v1", reason: hostile });
+    const digest = await sha256Hex(body);
+    const responder = () => new Response(body, { headers: { "x-drydock-receipt-sha256": digest } });
+
+    for (const command of ["report", "receipt"]) {
+      const printed = harness(responder);
+      expect(await printed.run(command, "scan_1")).toBe(0);
+      expect(printed.stdout).not.toMatch(TERMINAL_CONTROL);
+      expect(printed.stdout).not.toMatch(/[\u0085\u200b\u2028]/);
+      expect(JSON.parse(printed.stdout)).toEqual(JSON.parse(body));
+
+      const saved = harness(responder);
+      expect(await saved.run(command, "scan_1", "--output", "out.json")).toBe(0);
+      expect(saved.files.get("out.json")).toBe(body);
+      expect(await sha256Hex(saved.files.get("out.json") ?? "")).toBe(digest);
+    }
   });
 });
