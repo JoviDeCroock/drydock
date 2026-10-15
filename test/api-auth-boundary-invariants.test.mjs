@@ -37,6 +37,7 @@ const REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
   { method: "use", path: "*" },
   { method: "route", path: "/webhooks" },
   { method: "route", path: "/api/public/v1/package-diff" },
+  { method: "route", path: "/api/public/v1/mcp" },
   { method: "route", path: "/og" },
   { method: "route", path: "/public" },
   { method: "use", path: "/api/*" },
