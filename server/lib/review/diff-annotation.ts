@@ -1,4 +1,6 @@
-import { hasImplicitNodeGypInstall } from "../tar-parser.js";
+import { hasImplicitNodeGypInstall, normalizeStringRecord } from "../tar-parser.js";
+import { isRecord } from "../platform/guards";
+import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
@@ -13,6 +15,11 @@ import {
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import { normalizeCodeForScanning } from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
+import {
+  installReachablePaths,
+  javascriptReachableFrom,
+  normalizeReachabilityPath,
+} from "./rules/reachability";
 import {
   changedRegions,
   changedRegionTexts,
@@ -52,6 +59,7 @@ export function annotateFindingsWithDiffStatus<
     line?: number | null;
     ruleId?: string | null;
     severity?: string | null;
+    evidence?: string | null;
   },
 >(
   findings: T[],
@@ -63,6 +71,12 @@ export function annotateFindingsWithDiffStatus<
   );
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map((options.stagedFiles ?? []).map((file) => [file.path, file]));
+  const newlyInstallReachable = lazyNewlyInstallReachablePaths(
+    options.previousFiles ?? [],
+    options.stagedFiles ?? [],
+    options.codePatternSet,
+    diffByPath,
+  );
   const changesCache = new Map<string, FileChanges | null>();
   const changesFor = (path: string) =>
     fileChangesForPath(path, previousByPath, stagedByPath, changesCache, options.codePatternSet);
@@ -92,15 +106,20 @@ export function annotateFindingsWithDiffStatus<
       ...finding,
       diffStatus,
       releaseDelta:
-        isReleaseScopedFinding(finding) ||
-        isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
-        isFindingOnReleaseDelta(
-          finding,
-          diffStatus,
-          changesFor,
-          options.codePatternSet,
-          baselineFingerprints,
-        ),
+        lifecycleCommandReleaseDelta(finding, previousByPath, stagedByPath) ??
+        (isReleaseScopedFinding(finding) ||
+          isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
+          ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
+            finding.ruleId === DETERMINISTIC_RULE_IDS.fileNativeArtifact ||
+            finding.ruleId?.startsWith("propagation.")) &&
+            newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
+          isFindingOnReleaseDelta(
+            finding,
+            diffStatus,
+            changesFor,
+            options.codePatternSet,
+            baselineFingerprints,
+          )),
     };
   });
   if (options.baselineComparisonSkipped) return annotated;
@@ -111,6 +130,104 @@ export function annotateFindingsWithDiffStatus<
     baselineHosts: lazyBaselineHosts(options.previousFiles ?? []),
     codePatternSet: options.codePatternSet,
   });
+}
+
+function lifecycleCommandReleaseDelta(
+  finding: { file: string; ruleId?: string | null; evidence?: string | null },
+  previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+  stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+): boolean | undefined {
+  if (
+    finding.ruleId !== DETERMINISTIC_RULE_IDS.installScript &&
+    finding.ruleId !== DETERMINISTIC_RULE_IDS.installScriptPreinstall
+  )
+    return undefined;
+
+  // A display line can contain unrelated version edits or an earlier duplicate
+  // key. Only the effective parsed command establishes whether this hook changed.
+  const allowedHooks =
+    finding.ruleId === DETERMINISTIC_RULE_IDS.installScriptPreinstall
+      ? ["preinstall"]
+      : ["install", "postinstall"];
+  const hook = allowedHooks.find((name) => finding.evidence?.startsWith(`${name}: `));
+  const previous = lifecycleScripts(previousByPath.get(finding.file));
+  const staged = lifecycleScripts(stagedByPath.get(finding.file));
+  if (!hook || !previous || !staged || !staged[hook]) return true;
+  const command = staged[hook];
+  if (finding.evidence !== `${hook}: ${command}` || /\[REDACTED[^\]]*\]/.test(command)) return true;
+  return previous[hook] !== command;
+}
+
+function lifecycleScripts(
+  file: Pick<FileRecord, "textSample"> | undefined,
+): Record<string, string> | null {
+  if (!file?.textSample) return null;
+  const parsed = safeJson(file.textSample);
+  if (!isRecord(parsed) || (parsed.scripts !== undefined && !isRecord(parsed.scripts))) return null;
+  return normalizeStringRecord(parsed.scripts);
+}
+
+// An unchanged hook can gain an import of dormant code. Its newly activated
+// findings belong to this release even when the payload bytes themselves did not change.
+function lazyNewlyInstallReachablePaths(
+  previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
+  stagedFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
+  codePatternSet: CodePatternSet | undefined,
+  diffByPath: Map<string, FindingDiffStatus>,
+): () => Set<string> {
+  let computed: Set<string> | undefined;
+  return () => {
+    if (computed) return computed;
+    const reachable = (files: typeof previousFiles, executionEvidenceOnly = true) => {
+      const scripts = lifecycleScripts(files.find((file) => file.path === "package.json"));
+      if (!scripts) return new Set<string>();
+      const records = files.map((file) => ({ ...file, size: 0, sha256: "" }));
+      return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
+    };
+    const previous = reachable(previousFiles);
+    const staged = reachable(stagedFiles);
+    const possiblyInstalled = reachable(stagedFiles, false);
+    const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
+    const changedInstallFiles = stagedFiles
+      .filter(
+        (file) =>
+          diffByPath.get(file.path) === "modified" &&
+          possiblyInstalled.has(normalizeReachabilityPath(file.path)) &&
+          installCodeChanged(previousSource.get(file.path), file.textSample),
+      )
+      .map((file) => normalizeReachabilityPath(file.path));
+    // A static graph cannot prove that an old import actually ran (it may have
+    // lived inside an unused function). Recheck its dangerous descendants when
+    // install code changes, instead of crediting prior graph membership as safety.
+    const activatedByChanges = javascriptReachableFrom(
+      stagedFiles.map((file) => ({ ...file, size: 0, sha256: "" })),
+      changedInstallFiles,
+      true,
+    );
+    computed = new Set([
+      ...[...staged].filter((path) => !previous.has(path)),
+      ...activatedByChanges,
+    ]);
+    return computed;
+  };
+}
+
+function installCodeChanged(previous: string | undefined, staged: string | undefined): boolean {
+  if (previous === undefined || staged === undefined) return true;
+  const codeTokens = (source: string) => {
+    const normalized = normalizeCodeForScanning(source);
+    const tokens = tokenizeJs(normalized).filter(
+      (token) => token.type !== "ws" && token.type !== "comment",
+    );
+    return tokens.map((token, index) => [
+      token.type,
+      token.type === "string" ? token.value : jsTokenText(normalized, token),
+      // A newline after return/yield or before a postfix expression can change
+      // execution through ASI even when all non-whitespace tokens are equal.
+      index > 0 && /[\r\n\u2028\u2029]/.test(normalized.slice(tokens[index - 1].end, token.start)),
+    ]);
+  };
+  return JSON.stringify(codeTokens(previous)) !== JSON.stringify(codeTokens(staged));
 }
 
 /**

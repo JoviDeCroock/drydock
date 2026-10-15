@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  annotateFindingsWithDiffStatus,
   computeRisk,
   createPackageDiff,
   deterministicFindings,
@@ -10,6 +11,7 @@ import {
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
+import { computeScanRiskBreakdown } from "../server/lib/review/risk";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases");
@@ -57,6 +59,26 @@ describe("security detection golden corpus", () => {
       expect(comparableFindings(findings)).toEqual(
         comparableFindings(fixture.expectedFindings ?? []),
       );
+      if (fixture.expectedReleaseRisk !== undefined) {
+        const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+          previousFiles,
+          stagedFiles,
+        });
+        const risk = computeScanRiskBreakdown(annotated, {
+          status: "unavailable",
+          risk: "low",
+          releaseAssessment: "not_assessed",
+          summary: "AI review is disabled.",
+          findings: [],
+          requiresManualReview: false,
+          model: null,
+          reviewerVersion: null,
+        });
+        expect(risk.releaseRisk).toBe(fixture.expectedReleaseRisk);
+        expect(comparableFindings(annotated.filter((finding) => finding.releaseDelta))).toEqual(
+          comparableFindings(fixture.expectedReleaseFindings),
+        );
+      }
       for (const finding of findings) {
         expect(finding.ruleVersion).toBe(DETERMINISTIC_RULES_VERSION);
       }

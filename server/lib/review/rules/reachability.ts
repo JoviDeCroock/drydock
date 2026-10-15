@@ -1,6 +1,8 @@
 import type { PackageJsonSummary } from "../serialize";
 import type { CodePatternSet, FileRecord } from "../types";
+import { tokenizeJs } from "../../platform/js-lexer";
 import { isTestPath } from "./file-types";
+import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
 // Static require/import edges between files inside the package. The walk is a
@@ -57,18 +59,25 @@ export function installReachablePaths(
   scripts: Record<string, string>,
   implicitScripts: Record<string, string>,
   codePatternSet: CodePatternSet | undefined = "javascript",
+  executionEvidenceOnly = false,
 ): Set<string> {
   if (codePatternSet === "python") {
     // pip executes an sdist's setup.py to install it; there is no manifest-
     // declared hook to read, so the file itself is the install entrypoint.
     return pythonReachableFrom(files, pythonSetupSeeds(files));
   }
-  const seeds = lifecycleScriptSeedPaths(files, scripts, implicitScripts);
+  const seeds = executionEvidenceOnly
+    ? lifecycleExecutionSeedPaths(files, scripts, implicitScripts)
+    : lifecycleScriptSeedPaths(files, scripts, implicitScripts);
   if (!seeds.length) return new Set();
-  return javascriptReachableFrom(files, seeds);
+  return javascriptReachableFrom(files, seeds, executionEvidenceOnly);
 }
 
-function javascriptReachableFrom(files: FileRecord[], seedCandidates: string[]): Set<string> {
+export function javascriptReachableFrom(
+  files: FileRecord[],
+  seedCandidates: string[],
+  executionEvidenceOnly = false,
+): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
     byNormalizedPath.set(stripPackagePrefix(file.path), file);
@@ -87,7 +96,13 @@ function javascriptReachableFrom(files: FileRecord[], seedCandidates: string[]):
     reachable.add(path);
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
-    for (const specifier of relativeSpecifiers(file.textSample)) {
+    // String-piece imports are statically resolvable just like the capability
+    // patterns that scan their normalized source. Runtime expressions stay unknown.
+    const specifiers = new Set([
+      ...relativeSpecifiers(file.textSample, executionEvidenceOnly),
+      ...relativeSpecifiers(normalizeCodeForScanning(file.textSample), executionEvidenceOnly),
+    ]);
+    for (const specifier of specifiers) {
       const resolved = resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
@@ -289,15 +304,73 @@ export function scriptCommandTokens(command: string): string[] {
   );
 }
 
-function relativeSpecifiers(text: string): string[] {
+function relativeSpecifiers(text: string, executionEvidenceOnly = false): string[] {
   const specifiers: string[] = [];
+  const codeStarts = executionEvidenceOnly
+    ? new Set(
+        tokenizeJs(text)
+          .filter((token) => token.type === "ident")
+          .map((token) => token.start),
+      )
+    : null;
   for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
-      specifiers.push(match[1]);
+      if (!codeStarts || codeStarts.has(match.index)) specifiers.push(match[1]);
     }
   }
   return specifiers;
+}
+
+// The broad token set is suitable for keeping findings loud, but an output
+// filename is not proof of prior execution when comparing activation graphs.
+function lifecycleExecutionSeedPaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): string[] {
+  const candidates = new Set<string>();
+  for (const hook of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
+    const command = scripts[hook];
+    if (!command || command === implicitScripts[hook]) continue;
+    const words = [...command.matchAll(/"[^"\n]*"|'[^'\n]*'|[^\s;&|]+|[;&|]+/g)].map(
+      (match) => match[0],
+    );
+    let start = 0;
+    for (let end = 0; end <= words.length; end++) {
+      if (end < words.length && !/^[;&|]+$/.test(words[end])) continue;
+      const args = words.slice(start, end).map((word) => word.replace(/^(["'])(.*)\1$/, "$2"));
+      start = end + 1;
+      const executable = args.shift();
+      if (!executable) continue;
+      if (/^(?:node|nodejs|bun|deno|sh|bash)$/.test(executable)) {
+        if ((executable === "bun" || executable === "deno") && args[0] === "run") args.shift();
+        for (let i = 0; i < args.length; i++) {
+          const arg = args[i];
+          if (/^(?:-e|--eval|-p|--print|-c)$/.test(arg)) break;
+          if (/^(?:-r|--require|--import|--loader|--experimental-loader)$/.test(arg)) {
+            if (args[i + 1]) candidates.add(args[++i]);
+          } else if (/^--(?:require|import|loader|experimental-loader)=/.test(arg)) {
+            candidates.add(arg.slice(arg.indexOf("=") + 1));
+          } else if (arg.startsWith("-")) continue;
+          else {
+            candidates.add(arg);
+            break;
+          }
+        }
+      } else if (/^(?:\.?\.?\/)/.test(executable)) candidates.add(executable);
+    }
+  }
+  const normalizedCandidates = new Set(
+    [...candidates]
+      .filter((candidate) => !/[$`]/.test(candidate))
+      .map((candidate) => candidate.replace(/^\.\//, "")),
+  );
+  return files
+    .filter((file) =>
+      [...scriptPathCandidates(file.path)].some((path) => normalizedCandidates.has(path)),
+    )
+    .map((file) => stripPackagePrefix(file.path));
 }
 
 function resolveModulePath(

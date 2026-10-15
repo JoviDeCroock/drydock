@@ -33,6 +33,7 @@ const PackageDiffPage = lazyRoute(() => import("./pages/Diff"));
 const PublicReportPage = lazyRoute(() => import("./pages/PublicReport"));
 const DiscoveryGuidePage = lazyRoute(() => import("./pages/Guides"));
 const IncidentCasePage = lazyRoute(() => import("./pages/Incidents"));
+const IncidentBenchmarkPage = lazyRoute(() => import("./pages/Benchmarks"));
 const NotFoundPage = lazyRoute(() => import("./pages/NotFound"));
 
 export function App() {
@@ -58,6 +59,7 @@ export function App() {
             <ScopedRoute path="/diff/*" component={PackageDiffPage} />
             <ScopedRoute path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
             <ScopedRoute path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
+            <ScopedRoute path="/benchmarks/shai-hulud-nx" component={IncidentBenchmarkPage} />
             <ScopedRoute path="/login" component={LoginPage} />
             <ScopedRoute path="/register" component={RegisterPage} />
             <ScopedRoute path="/verify-email" component={VerifyEmailPage} />

@@ -34,6 +34,13 @@ export interface PageSeoMetadata {
   path: string;
 }
 
+export const incidentBenchmarkSeo: PageSeoMetadata = {
+  title: "Shai-Hulud and Nx detection benchmark | Drydock",
+  description:
+    "Reproduce Drydock's deterministic review of sanitized Shai-Hulud and Nx behavior reconstructions and benign controls, with exact rule evidence and versioned results.",
+  path: "/benchmarks/shai-hulud-nx",
+};
+
 export const discoveryGuideSeoByPath = {
   "/npm-staged-publishing": {
     title: "npm staged publishing security review | Drydock",
@@ -218,6 +225,7 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/docs") return docsPageSeo;
   if (canonicalPathname === "/agents") return agentsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
+  if (canonicalPathname === incidentBenchmarkSeo.path) return incidentBenchmarkSeo;
   if (canonicalPathname === "/diff") return packageDiffSeo();
   if (canonicalPathname in discoveryGuideSeoByPath) {
     return discoveryGuideSeoByPath[canonicalPathname as DiscoveryGuidePath];

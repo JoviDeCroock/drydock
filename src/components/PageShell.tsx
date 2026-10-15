@@ -145,6 +145,7 @@ const FOOTER_GROUPS = [
     title: "Trust",
     links: [
       { label: "Security model", href: "/security" },
+      { label: "Benchmark", href: "/benchmarks/shai-hulud-nx" },
       { label: "Privacy", href: "/privacy" },
     ],
   },

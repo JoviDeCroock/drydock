@@ -17,6 +17,7 @@ export {
   getPageSeoMetadata,
   homePageSeo,
   INCIDENT_CASE_PATHS,
+  incidentBenchmarkSeo,
   incidentCaseSeoByPath,
   packageDiffIndexSeo,
   packageDiffSeo,

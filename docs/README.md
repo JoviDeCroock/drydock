@@ -42,6 +42,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
+- [`incident-benchmark.md`](./incident-benchmark.md) — public Shai-Hulud/Nx behavior benchmark, reproduction, pinned inputs, controls, and citation limits.
 - [`ai-review-eval.md`](./ai-review-eval.md) — versioned AI reviewer contract, recorded-output evals, live model comparison, traces, and feedback loop.
 - [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
 - [`registry-version-status.md`](./registry-version-status.md) — npm's own lifecycle status for a staged version (`blocked` / `validating` / `published` / …), the forgotten-approval reminder, and why an unresolved lookup is never a verdict.

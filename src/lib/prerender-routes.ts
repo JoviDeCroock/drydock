@@ -9,6 +9,7 @@ const HYDRATED_PRERENDER_ROUTES = [
   "/privacy",
   "/diff",
   "/reports",
+  "/benchmarks/shai-hulud-nx",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
 ] as const;
@@ -32,6 +33,7 @@ export const ADDITIONAL_PRERENDER_ROUTES = [
   // prerendered landing page, so a shared report link unfurls with the
   // marketing card and flashes marketing copy before client routing.
   "/reports",
+  "/benchmarks/shai-hulud-nx",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
   ...DASHBOARD_SHELL_ROUTES,

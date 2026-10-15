@@ -21,6 +21,7 @@ const SURFACES = [
   "src/pages/Diff",
   "src/pages/Guides",
   "src/pages/Incidents",
+  "src/pages/Benchmarks",
   "src/pages/PublicReport",
   "src/features/public-content",
   "src/features/agent-quickstart",
