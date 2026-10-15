@@ -132,6 +132,7 @@
               "enum": [
                 "undecided",
                 "published_without_decision",
+                "decided",
                 "publish",
                 "no_publish",
                 "all"
@@ -1187,6 +1188,7 @@
             "enum": [
               "undecided",
               "published_without_decision",
+              "decided",
               "publish",
               "no_publish",
               "all"
