@@ -22,8 +22,6 @@ import { organizationMembersRoutes } from "./routes/organization-members";
 import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
-import { landingExperimentRoutes } from "./routes/landing-experiment";
-import { landingExperimentEnabled, readAcquisition } from "./lib/acquisition";
 import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { npmPackageClaimRoutes } from "./routes/npm-package-claims";
@@ -57,9 +55,6 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
-// This anonymous exception returns only homepage copy assignment. Its signed
-// cohort cookie is never account or release authority; the route is rate-limited.
-app.route("/api/public/v1/landing-experiment", landingExperimentRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
@@ -84,11 +79,7 @@ function requestWaitUntil(c: Context): ((promise: Promise<unknown>) => void) | u
 
 app.use("/api/*", async (c, next) => {
   try {
-    const acquisition =
-      c.req.path.startsWith("/api/auth/") && (await landingExperimentEnabled(c.env))
-        ? await readAcquisition(c)
-        : null;
-    c.set("auth", createAuth(c.env, { waitUntil: requestWaitUntil(c), acquisition }));
+    c.set("auth", createAuth(c.env, { waitUntil: requestWaitUntil(c) }));
   } catch (err) {
     emitOperationalEvent("error", "auth.initialization_failed", {
       error: describeOperationalError(err),
@@ -162,8 +153,6 @@ app.get("/api", (c) =>
   c.json({
     name: "drydock",
     endpoints: {
-      landingExperiment:
-        "GET /api/public/v1/landing-experiment (anonymous; flag-controlled homepage copy assignment only)",
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",
       scanOverview: "GET /api/v1/scans/overview",
@@ -201,7 +190,7 @@ app.get("/api", (c) =>
         "GET /api/auth/config (anonymous; which optional sign-in methods are offered, whether email verification can be enforced, and whether a password-reset link can be mailed)",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /api/public/v1/landing-experiment (homepage copy assignment only), and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );

@@ -1,7 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "../lib/public-diff/page";
 import type { Bindings, Variables } from "../types";
-import { rewriteLandingExperiment } from "../lib/landing-experiment-page";
 import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "../../src/lib/public-content-routes";
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
@@ -96,8 +95,7 @@ function assetFallbackRequest(request: Request): Request {
 export async function staticAssetFallback(c: Context<AppEnv>): Promise<Response> {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
     const response = await c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
-    const page = await rewritePackageDiffMetadata(response, c.req.path, c.env);
-    return rewriteLandingExperiment(c, page);
+    return rewritePackageDiffMetadata(response, c.req.path, c.env);
   }
   return c.json({ error: "not found" }, 404);
 }

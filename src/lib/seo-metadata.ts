@@ -127,9 +127,9 @@ export function packageDiffOgImageAlt(
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock Package Review: review your package before you publish",
+  title: "Drydock Package Review: See what changed in the package your users will install",
   description:
-    "Compare built npm, PyPI, or VS Code packages with published releases. Inspect changed files and supply-chain findings before you publish.",
+    "Inspect changed files and supply-chain findings. Try a public package diff without an account or installation. Add a review to your built release when you’re ready to publish.",
   path: "/",
 };
 

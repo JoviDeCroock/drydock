@@ -6,43 +6,53 @@ const now = "2026-06-15T12:00:00.000Z";
 const shareToken = "s".repeat(43);
 const longFindingEvidence = `4278592 byte binary; sha256 ${"c".repeat(64)}`;
 
-test("homepage challenger updates its copy and metadata after SPA assignment", async ({ page }) => {
+test("homepage copy and metadata stay consistent across hydration and client navigation", async ({
+  page,
+}) => {
   const errors: string[] = [];
+  const documentRequests: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.route("**/api/public/v1/landing-experiment", (route) =>
-    route.fulfill({
-      json: { variant: "challenger" },
-    }),
-  );
-  await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "See what changed in the package your users will install.",
-  );
-  await expect(page.locator("#landing-diff-action")).toHaveText("Diff a package");
-  await expect(page.locator('meta[name="description"]')).toHaveAttribute(
-    "content",
-    /without an account or installation/,
-  );
-  await expect(page).toHaveTitle(
-    "Drydock Package Review: See what changed in the package your users will install",
-  );
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+      documentRequests.push(request.url());
+  });
+  await Promise.all([page.waitForResponse("**/api/auth/get-session"), page.goto("/")]);
+  for (const revisit of [false, true]) {
+    if (revisit) {
+      await page.getByRole("link", { name: "Diff a package", exact: true }).click();
+      await expect(page).toHaveURL(/\/diff$/);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+        "Compare npm, PyPI, or atpm releases.",
+      );
+      await page.goBack();
+      await expect(page).toHaveURL(/\/$/);
+    }
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      "See what changed in the package your users will install.",
+    );
+    await expect(page.getByRole("link", { name: "Diff a package", exact: true })).toHaveAttribute(
+      "href",
+      "/diff",
+    );
+    await expect(page).toHaveTitle(
+      "Drydock Package Review: See what changed in the package your users will install",
+    );
+    for (const selector of [
+      'meta[name="description"]',
+      'meta[property="og:description"]',
+      'meta[name="twitter:description"]',
+    ]) {
+      await expect(page.locator(selector)).toHaveAttribute(
+        "content",
+        "Inspect changed files and supply-chain findings. Try a public package diff without an account or installation. Add a review to your built release when you’re ready to publish.",
+      );
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  }
+  expect(documentRequests).toHaveLength(1);
   expect(errors).toEqual([]);
-  await page.locator("#landing-diff-action").click();
-  await expect(page).toHaveURL(/\/diff$/);
-});
-
-test("homepage keeps control copy when experiment assignment is unavailable", async ({ page }) => {
-  await page.route("**/api/public/v1/landing-experiment", (route) =>
-    route.fulfill({ status: 503, json: { error: "unavailable" } }),
-  );
-  await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Review your package before you publish.",
-  );
-  await expect(page.locator("#landing-diff-action")).toHaveText("Read a diff");
 });
 
 test("renders and decides a workflow-gate review", async ({ page }) => {
@@ -340,7 +350,7 @@ test("a legacy public report stays evidence-only", async ({ page }) => {
 test("a route chunk that fails to load shows the recovery card", async ({ page }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Review your package before you publish." }),
+    page.getByRole("heading", { name: "See what changed in the package your users will install." }),
   ).toBeVisible({ timeout: 30_000 });
 
   const privacyChunk = "**/src/pages/Privacy/**";

@@ -9,6 +9,10 @@ prerendered by `src/index.tsx`. The Worker serves package diff pages from the
 diff shell and rewrites their title, description, canonical, and social metadata
 in `server/lib/public-diff/page.ts` before JavaScript runs. Package-only npm and
 PyPI pages keep the static social card; version pairs use a generated diff card.
+
+The homepage uses one fixed hero and public-diff action in both prerendered HTML
+and the client render. Its description is shared with `homePageSeo`; there is no
+variant assignment or delayed copy swap during hydration or client navigation.
 Keep the initial HTML canonical aligned with client metadata and
 `public/sitemap.xml`.
 

@@ -1,7 +1,4 @@
 import type { ComponentChildren } from "preact";
-import { useComputed } from "@preact/signals";
-import { landingHeroCopy } from "../../lib/landing-experiment";
-import { useLandingExperiment } from "../../features/landing-experiment/use-landing-experiment";
 import { Show } from "@preact/signals/utils";
 import { homePageSeo, PageSeo, StructuredData } from "../../lib/seo";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
@@ -19,36 +16,23 @@ import { UsedBy } from "./UsedBy";
 
 export default function LandingPage() {
   const authed = useAuthedSession();
-  const variant = useLandingExperiment();
-  const title = useComputed(() => landingHeroCopy[variant.value].title);
-  const description = useComputed(() => landingHeroCopy[variant.value].description);
-  const action = useComputed(() => landingHeroCopy[variant.value].action);
-  const metadata = useComputed(() =>
-    variant.value === "control"
-      ? homePageSeo
-      : {
-          ...homePageSeo,
-          title: `Drydock Package Review: ${title.value.replace(/\.$/, "")}`,
-          description: description.value,
-        },
-  );
 
   return (
     <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
-      <PageSeo metadata={metadata.value} />
+      <PageSeo metadata={homePageSeo} />
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <h1
           id="landing-hero-title"
           class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0"
         >
-          {title}
+          See what changed in the package your users will install.
         </h1>
         <p
           id="landing-hero-description"
           class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0"
         >
-          {description}
+          {homePageSeo.description}
         </p>
         <MonoDetail
           parts={[
@@ -63,7 +47,7 @@ export default function LandingPage() {
             fallback={
               <>
                 <LinkButton id="landing-diff-action" href="/diff">
-                  {action}
+                  Diff a package
                 </LinkButton>
                 <LinkButton href="/register" variant="secondary">
                   Create account
