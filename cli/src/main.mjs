@@ -118,6 +118,7 @@ export async function main(argv, io) {
 
   try {
     const command = resolveCommand(positionals);
+    rejectForeignOptions(command, values);
     const baseUrl = resolveBaseUrl(
       typeof values.url === "string" ? values.url : io.env.DRYDOCK_URL,
     );
@@ -141,35 +142,56 @@ export async function main(argv, io) {
 }
 
 /**
- * @typedef {{ run: (ctx: CommandContext) => Promise<number>; anonymous?: boolean }} Command
+ * `options` lists the command's own flags. Any other flag is a usage error, so
+ * a gate flag such as `--fail-on` can never be silently ignored.
+ * @typedef {{
+ *   run: (ctx: CommandContext) => Promise<number>;
+ *   options: readonly string[];
+ *   anonymous?: boolean;
+ * }} Command
  */
+
+const GLOBAL_OPTIONS = ["url", "json", "help", "version"];
 
 /**
  * @param {string[]} positionals
- * @returns {Command}
+ * @returns {Command & { name: string }}
  */
 function resolveCommand(positionals) {
   const [first, second] = positionals;
   /** @type {Record<string, Command>} */
   const commands = {
-    whoami: { run: whoami },
-    "scans list": { run: scansList },
-    "scans get": { run: scansGet },
-    "scans wait": { run: scansWait },
-    report: { run: (ctx) => download(ctx, "report.json") },
-    receipt: { run: (ctx) => download(ctx, "release-receipt.json") },
-    releases: { run: releases },
-    gate: { run: gate },
-    diff: { run: diff, anonymous: true },
+    whoami: { run: whoami, options: [] },
+    "scans list": { run: scansList, options: ["filter", "limit", "cursor"] },
+    "scans get": { run: scansGet, options: [] },
+    "scans wait": { run: scansWait, options: ["timeout", "interval", "fail-on"] },
+    report: { run: (ctx) => download(ctx, "report.json"), options: ["output"] },
+    receipt: { run: (ctx) => download(ctx, "release-receipt.json"), options: ["output"] },
+    releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
+    gate: { run: gate, options: [] },
+    diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
   };
-  const command = commands[first === "scans" ? `scans ${second ?? ""}`.trim() : first];
+  const name = first === "scans" ? `scans ${second ?? ""}`.trim() : first;
+  const command = commands[name];
   if (!command) {
     throw new CliError(
       `unknown command: ${positionals.slice(0, 2).join(" ")} (see drydock --help)`,
       2,
     );
   }
-  return command;
+  return { ...command, name };
+}
+
+/**
+ * @param {Command & { name: string }} command
+ * @param {Record<string, string | boolean | undefined>} values
+ */
+function rejectForeignOptions(command, values) {
+  for (const flag of Object.keys(values)) {
+    if (!GLOBAL_OPTIONS.includes(flag) && !command.options.includes(flag)) {
+      throw new CliError(`--${flag} does not apply to ${command.name}`, 2);
+    }
+  }
 }
 
 /**
@@ -254,7 +276,8 @@ function failOnThreshold(values) {
 function meetsThreshold(threshold, risk) {
   if (threshold === null) return false;
   const level = typeof risk === "string" ? RISK_ORDER.indexOf(risk) : -1;
-  return level >= threshold;
+  // A risk the CLI does not recognize fails the gate rather than passing it.
+  return level === -1 || level >= threshold;
 }
 
 /** @param {CommandContext} ctx */

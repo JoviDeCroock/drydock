@@ -7,25 +7,30 @@
 // JSON output (`--json`, and a report or receipt printed to stdout) escapes the
 // same characters as `\uXXXX`, which leaves the parsed value unchanged.
 
-// C0/C1 controls (including ESC and newlines), DEL, and Unicode format controls
-// (zero-width, bidi overrides and isolates, line/paragraph separators) that
-// can reorder or hide text.
-const UNSAFE_TEXT =
-  // eslint-disable-next-line no-control-regex -- stripping C0/C1 is the point
-  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+// Every control (Cc: C0, DEL, C1), format character (Cf: zero-width, bidi
+// marks, overrides and isolates, soft hyphen, BOM, Unicode tag characters), and
+// line/paragraph separator: anything that can reorder, hide, or rewrite text.
+const UNSAFE_TEXT = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 // The same set minus C0, which JSON.stringify already escapes inside strings
 // and which is the structural whitespace of pretty-printed JSON.
-const UNSAFE_JSON_TEXT = /[\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+// eslint-disable-next-line no-control-regex -- excluding C0 is the point
+const UNSAFE_JSON_TEXT = /(?![\u0000-\u001f])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 // For JSON text the CLI did not serialize: every unsafe character except tab
 // and newline, the only whitespace the server's JSON uses. Valid JSON never
 // carries a raw C0 control inside a string, so escaping one cannot change a
 // parsed value.
-const UNSAFE_RAW_JSON_TEXT =
-  // eslint-disable-next-line no-control-regex -- escaping C0/C1 is the point
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+const UNSAFE_RAW_JSON_TEXT = /(?![\t\n])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
-/** @param {string} char */
-const unicodeEscape = (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+/**
+ * `\uXXXX` for each UTF-16 unit, so an astral character (a tag character)
+ * becomes a surrogate-pair escape that JSON.parse restores.
+ * @param {string} char
+ */
+const unicodeEscape = (char) =>
+  Array.from(
+    { length: char.length },
+    (_, index) => `\\u${char.charCodeAt(index).toString(16).padStart(4, "0")}`,
+  ).join("");
 
 /**
  * Pretty JSON with every unsafe character escaped. JSON.stringify escapes only
