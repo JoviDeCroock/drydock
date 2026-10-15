@@ -13,6 +13,8 @@ import {
 import { npmPackageClaims, publicationWatchCandidates, scans } from "../../server/db/schema";
 import * as schema from "../../server/db/schema";
 import {
+  getPublicationAutoEnrollment,
+  reconcileDuePublicationEnrollments,
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
@@ -136,6 +138,7 @@ test("idle cron discovery omits three unused summary reads while dashboard recon
   queries.length = 0;
   expect(await reconcilePublicationWatches(countedDb, organizationId)).toEqual({
     deferred: 0,
+    pending: 0,
     suggestions: [],
   });
   expect(queries).toHaveLength(6);
@@ -272,6 +275,7 @@ describe("automatic publication enrollment", () => {
     });
     expect(await reconcilePublicationWatches(db, organizationId)).toEqual({
       deferred: 0,
+      pending: 0,
       suggestions: [{ packageName: "gate-package" }],
     });
     expect(await listPublicationWatches(db, organizationId)).toEqual([]);
@@ -323,6 +327,7 @@ describe("automatic publication enrollment", () => {
     expect(await listPublicationWatches(db, organizationId)).toEqual([]);
     expect(await reconcilePublicationWatches(db, organizationId)).toEqual({
       deferred: 0,
+      pending: 0,
       suggestions: [],
     });
     const next = await createPublicationWatch(db, organizationId, "stoppable");
@@ -485,6 +490,7 @@ test("automatic enrollment skips foreign claims and unaudited legacy history", a
   );
   expect(await reconcilePublicationWatches(outsider.db, outsider.organizationId)).toEqual({
     deferred: 0,
+    pending: 0,
     suggestions: [],
   });
   expect(await listPublicationWatches(outsider.db, outsider.organizationId)).toEqual([]);
@@ -492,4 +498,63 @@ test("automatic enrollment skips foreign claims and unaudited legacy history", a
   expect(await listPublicationWatches(owner.db, owner.organizationId)).toMatchObject([
     { packageName: "claimed-package" },
   ]);
+});
+
+describe("scheduled enrollment", () => {
+  // Every organization in the shared test database is due at most once per
+  // call; a generous limit keeps the random order from skipping this one.
+  const reconcileDue = () =>
+    reconcileDuePublicationEnrollments(createDb(env.DB), env, { limit: 1_000 });
+
+  test("reading the enrollment summary enrolls nothing; the cron enrolls history and records gate suggestions", async () => {
+    const { db, organizationId } = await seed();
+    await historicalScan(organizationId, "scheduled-history");
+    await historicalScan(organizationId, "scheduled-gate", {
+      source: "workflow_gate",
+      registryUrl: null,
+      summaryJson: gateSummary("scheduled-gate"),
+    });
+    expect(await getPublicationAutoEnrollment(db, organizationId)).toEqual({
+      deferred: 0,
+      pending: 1,
+      suggestions: [],
+    });
+    expect(await listPublicationWatches(db, organizationId)).toEqual([]);
+
+    await reconcileDue();
+    const watches = await listPublicationWatches(db, organizationId);
+    expect(watches.map((watch) => [watch.packageName, watch.source])).toEqual([
+      ["scheduled-history", "published_history"],
+    ]);
+    expect(await getPublicationAutoEnrollment(db, organizationId)).toEqual({
+      deferred: 0,
+      pending: 0,
+      suggestions: [{ packageName: "scheduled-gate" }],
+    });
+  });
+
+  test("the cron fills a freed slot with a deferred package and never restores a stopped one", async () => {
+    const { db, organizationId } = await seed();
+    await seedPublicationWatches(db, organizationId, PUBLICATION_WATCH_LIMIT - 1);
+    await historicalScan(organizationId, "first-history");
+    await historicalScan(organizationId, "second-history", { createdAt: new Date(2) });
+    await reconcileDue();
+    expect(await getPublicationAutoEnrollment(db, organizationId)).toMatchObject({
+      deferred: 1,
+      pending: 0,
+    });
+    const first = (await listPublicationWatches(db, organizationId)).find(
+      (watch) => watch.packageName === "first-history",
+    )!;
+    expect(first).toBeDefined();
+
+    await deletePublicationWatch(db, organizationId, first.id);
+    await reconcileDue();
+    const names = (await listPublicationWatches(db, organizationId)).map(
+      (watch) => watch.packageName,
+    );
+    expect(names).toContain("second-history");
+    expect(names).not.toContain("first-history");
+    expect(names).toHaveLength(PUBLICATION_WATCH_LIMIT);
+  });
 });

@@ -1,0 +1,1 @@
+CREATE INDEX `scans_workflow_gate_enrollment_idx` ON `scans` (`organization_id`,`package_name`) WHERE "scans"."source" = 'workflow_gate' and "scans"."status" = 'complete';
