@@ -21,7 +21,7 @@ read-only: decisions stay with signed-in maintainers.
 Commands:
   whoami                          The API key's organization and expiry
   scans list                      Reviews, newest first
-      [--filter undecided|published_without_decision|publish|no_publish|all]
+      [--filter undecided|published_without_decision|decided|publish|no_publish|all]
       [--limit N] [--cursor C]
   scans get <review-id>           One review and its findings
   scans wait <review-id>          Poll until the review completes
@@ -52,7 +52,14 @@ Exit codes: 0 success, 1 request or review failed, 2 usage error,
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
-const SCAN_FILTERS = ["undecided", "published_without_decision", "publish", "no_publish", "all"];
+const SCAN_FILTERS = [
+  "undecided",
+  "published_without_decision",
+  "decided",
+  "publish",
+  "no_publish",
+  "all",
+];
 const ECOSYSTEMS = ["npm", "pypi", "vscode", "atpm"];
 const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
 
