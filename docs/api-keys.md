@@ -21,6 +21,7 @@ Only these routes, all reads a plain member can already make (`API_KEY_ROUTES` i
 | Route                                                   | Returns                                       |
 | ------------------------------------------------------- | --------------------------------------------- |
 | `GET /api/v1/api-keys/current`                          | the calling key and its organization          |
+| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface         |
 | `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`) |
 | `GET /api/v1/scans/overview`                            | dashboard counts                              |
 | `GET /api/v1/scans/:id`                                 | one review                                    |
@@ -34,12 +35,20 @@ Every other `/api/*` route answers a key with `403 { code: "api_key_endpoint_not
 
 The check matches the route that will answer the request, not the URL: `server/middleware/api-key-auth.ts` reads Hono's matched routes and compares the first method-bound route's registered path. `/api/v1/scans/batch-approval` therefore cannot pass as `/api/v1/scans/:id`. Adding a route to the allowlist is a security decision: it must be a read a member can make, its handler must resolve the organization through `requireActiveOrganization*` rather than reading `authSession` (an API-key request has none), and `test/workers/api-keys.test.ts` must exercise it.
 
+## OpenAPI document
+
+[`openapi.json`](./openapi.json) describes every route above plus the anonymous package-diff endpoints as OpenAPI 3.1, and `GET /api/v1/openapi.json` serves the same document. Its response schemas are the zod contracts in `server/lib/openapi/schemas.ts`. They pin the fields scripts may rely on and leave other fields open; a field missing from a schema is not part of the contract.
+
+- `test/openapi-document.test.ts` fails when the documented operations stop matching `API_KEY_ROUTES`, or when the checked-in file is stale. To regenerate after a deliberate change, run `WRITE_OPENAPI=1 pnpm exec vitest run --project node test/openapi-document.test.ts`.
+- `test/workers/openapi-conformance.test.ts` parses a real response from every operation, except the version listing that reaches the live registry. A schema therefore cannot promise a field the Worker does not send.
+- `OPENAPI_API_VERSION` follows semver. Bump the minor version for additive changes and the major version for removals or type changes.
+
 ## Authentication rules
 
 - An `Authorization` value that mentions a `ddk_` key selects key authentication, and anything but exactly `Bearer ddk_…` then fails as a malformed key. Any other `Authorization` value (for example HTTP basic auth in front of a self-hosted staging deployment) is ignored and the request keeps the cookie path.
 - A request that presents a key is never authenticated by its cookie. An unknown, malformed, revoked, or expired key is `401 { code: "invalid_api_key" }` with a `WWW-Authenticate: Bearer` header.
 - Every request that presents a key is first charged to a per-IP budget of 240 per minute (`api-key-ip:<ip>`), before the key is looked up, so a flood of random keys cannot turn into anonymous D1 reads beyond that budget.
-- Each key has its own budget of 120 requests per minute (`api-key:<keyId>`, served by the native 120-per-minute tier).
+- Each key has its own budget of 120 requests per minute (`api-key:<keyId>`, served by the native 120-per-minute tier). Either budget answers `429` with `retry-after`; the OpenAPI document lists the 429 on every key operation.
 - Keys are only used on `GET`, so the CSRF origin check is unchanged.
 - `test/api-auth-boundary-invariants.test.mjs` pins that the session guard's only sessionless exit follows `authenticateApiKeyRequest`, and that no path-specific `.all()` handler is registered below the guard (one would answer ahead of the route the key check judges).
 
