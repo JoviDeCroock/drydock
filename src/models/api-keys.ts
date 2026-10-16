@@ -1,10 +1,14 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
+/** `read` reaches the read-only routes; `scan` can also start reviews and check npm. */
+export type ApiKeyAccess = "read" | "scan";
+
 export interface OrganizationApiKey {
   id: string;
   name: string;
   prefix: string;
+  access: ApiKeyAccess;
   createdAt: string;
   expiresAt: string;
   lastUsedAt: string | null;
@@ -35,6 +39,8 @@ export const ApiKeysModel = createModel(() => {
   const error = signal<string | null>(null);
   const draftName = signal("");
   const draftExpiryDays = signal(DEFAULT_EXPIRY_DAYS);
+  // Read-only unless the creator asks for more; access is fixed at creation.
+  const draftAccess = signal<ApiKeyAccess>("read");
   // The secret of the key created last. It exists only in this response, so it
   // stays on screen until dismissed or the organization changes.
   const revealed = signal<{ name: string; token: string } | null>(null);
@@ -52,6 +58,7 @@ export const ApiKeysModel = createModel(() => {
     error,
     draftName,
     draftExpiryDays,
+    draftAccess,
     revealed,
     busy,
     atLimit,
@@ -97,6 +104,7 @@ export const ApiKeysModel = createModel(() => {
         const data = await apiJson<CreateResponse>("/api/v1/api-keys", {
           name,
           expiresInDays: this.draftExpiryDays.value,
+          access: this.draftAccess.value,
         });
         if (requestId !== loadRequestId) {
           // The key exists in the organization that was active when the request
@@ -108,6 +116,7 @@ export const ApiKeysModel = createModel(() => {
         this.keys.value = [...this.keys.value, data.key];
         this.revealed.value = { name: data.key.name, token: data.token };
         this.draftName.value = "";
+        this.draftAccess.value = "read";
         return true;
       } catch (err) {
         if (requestId === loadRequestId) this.error.value = errorMessage(err);

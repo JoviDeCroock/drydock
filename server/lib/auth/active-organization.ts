@@ -58,8 +58,8 @@ export async function requireActiveOrganizationContext(
 }
 
 /**
- * An API key belongs to exactly one organization and reads as a plain member:
- * every route it reaches is a read a member can make. A selector naming another
+ * An API key belongs to exactly one organization and acts as a plain member:
+ * every route it reaches is one a member can use. A selector naming another
  * organization is refused rather than silently answered from the key's own.
  */
 function apiKeyOrganizationContext(
@@ -74,6 +74,14 @@ function apiKeyOrganizationContext(
     );
   }
   return { organizationId, role: "member" };
+}
+
+/**
+ * The user a request acts as: the signed-in user, or for an API key the key's
+ * creator, whose membership the key lookup has just proved.
+ */
+export function requestActorUserId(c: AppContext): string {
+  return c.get("apiKey")?.userId ?? c.get("authSession").userId;
 }
 
 export async function requireActiveOrganization(c: AppContext, db: AppDb): Promise<string> {

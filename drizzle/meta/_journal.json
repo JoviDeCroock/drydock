@@ -281,6 +281,13 @@
       "when": 1792050796071,
       "tag": "0039_thin_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792050825700,
+      "tag": "0040_silly_sabretooth",
+      "breakpoints": true
     }
   ]
 }

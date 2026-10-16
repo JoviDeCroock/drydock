@@ -81,24 +81,37 @@ export function pathSegment(value, label) {
  */
 
 /**
+ * @typedef {object} RequestOptions
+ * @property {boolean} [authenticated]
+ * @property {"GET" | "POST"} [method]
+ * @property {unknown} [body] sent as JSON; omitted entirely when undefined
+ */
+
+/**
  * @param {{ baseUrl: string; apiKey: string | null; fetch: typeof globalThis.fetch }} options
  */
 export function createClient({ baseUrl, apiKey, fetch: send }) {
   /**
    * @param {string} path absolute path with an encoded query string
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {RequestOptions} [options]
    * @returns {Promise<ApiResponse>}
    */
-  async function request(path, { authenticated = true } = {}) {
+  async function request(path, { authenticated = true, method = "GET", body } = {}) {
     /** @type {Record<string, string>} */
     const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
     if (authenticated) {
       if (!apiKey) throw new CliError("this command needs DRYDOCK_API_KEY", 2);
       headers.authorization = `Bearer ${apiKey}`;
     }
+    /** @type {RequestInit} */
+    const init = { method, headers, redirect: "manual" };
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
     let res;
     try {
-      res = await send(`${baseUrl}${path}`, { headers, redirect: "manual" });
+      res = await send(`${baseUrl}${path}`, init);
     } catch (err) {
       throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`);
     }
@@ -112,7 +125,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
 
   /**
    * @param {string} path
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {RequestOptions} [options]
    * @returns {Promise<any>}
    */
   async function json(path, options) {
@@ -143,6 +156,9 @@ function errorMessage(status, text, headers) {
   const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
   const code = typeof body.code === "string" ? ` (${body.code})` : "";
   if (status === 401) return `the API key was rejected: ${detail}${code}`;
+  if (body.code === "api_key_access_insufficient") {
+    return "this API key is read-only; starting reviews needs a key with scan access (Organization settings → Integrations → API keys)";
+  }
   if (status === 429) {
     const retry = headers.get("retry-after");
     return `rate limited${retry ? `; retry after ${retry}s` : ""}: ${detail}`;

@@ -35,8 +35,22 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
 function summarizeApiKey(m: Record<string, unknown>): string | null {
   const name = str(m.name);
   const prefix = str(m.prefix);
-  if (name && prefix) return `${name} (${prefix}…)`;
-  return name ?? prefix;
+  const key = name && prefix ? `${name} (${prefix}…)` : (name ?? prefix);
+  return key && m.access === "scan" ? `${key}, can start reviews` : key;
+}
+
+function summarizeApiKeyReview(m: Record<string, unknown>): string | null {
+  const release = summarizePackageVersion(m);
+  const key = summarizeApiKey(m);
+  return release && key ? `${release} by ${key}` : (release ?? key);
+}
+
+function summarizeApiKeyDiscovery(m: Record<string, unknown>): string | null {
+  const key = summarizeApiKey(m);
+  const created = typeof m.created === "number" ? m.created : null;
+  if (created === null) return key;
+  const started = `${created} ${created === 1 ? "review" : "reviews"} started`;
+  return key ? `${started} by ${key}` : started;
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
@@ -313,6 +327,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "API key revoked",
     severity: "notice",
     summarize: summarizeApiKey,
+  },
+  "organization.api_key_review_started": {
+    category: "integration",
+    label: "Review started with an API key",
+    severity: "info",
+    summarize: summarizeApiKeyReview,
+  },
+  "organization.api_key_discovery_ran": {
+    category: "integration",
+    label: "npm checked with an API key",
+    severity: "info",
+    summarize: summarizeApiKeyDiscovery,
   },
 };
 
