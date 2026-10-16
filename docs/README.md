@@ -40,6 +40,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 ## Domain docs
 
+- [`dependency-intel.md`](./dependency-intel.md) — advisory Aikido Intel checks on added/changed npm dependencies, local version matching, report snapshots and feed freshness.
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
 - [`incident-benchmark.md`](./incident-benchmark.md) — public Shai-Hulud/Nx behavior benchmark, reproduction, pinned inputs, controls, and citation limits.

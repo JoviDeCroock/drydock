@@ -136,7 +136,7 @@ export async function loadPublicPackageDiff(
   options.onCacheOutcome?.(Boolean(cached));
   if (cached) {
     await adapter.validateCachedPair?.(env, ctx, input);
-    return cached;
+    return enrichPublicDiffDependencies(cached, ctx);
   }
 
   const sources = await adapter.acquire(env, ctx, input);
@@ -192,7 +192,22 @@ export async function loadPublicPackageDiff(
     payload.cacheExpiresAt,
   );
   await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
-  return payload;
+  return enrichPublicDiffDependencies(payload, ctx);
+}
+
+// Refresh mutable intelligence separately from the immutable artifact cache.
+// Saved scan reports keep their original snapshot; anonymous diffs use the
+// current feed even when their package pair was cached weeks ago.
+export async function enrichPublicDiffDependencies(
+  payload: PublicPackageDiff,
+  ctx: ExecutionContext,
+): Promise<PublicPackageDiff> {
+  const adapter = requirePublicDiffAdapter(payload.ecosystem);
+  if (!adapter.enrichDependencyIntel) return payload;
+  return {
+    ...payload,
+    packageJsonDiff: await adapter.enrichDependencyIntel(payload.packageJsonDiff, ctx),
+  };
 }
 
 export async function computePublicDiffCacheKey(input: {

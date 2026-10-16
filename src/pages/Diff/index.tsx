@@ -355,7 +355,8 @@ function DiffLanding() {
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
           This public tool uses deterministic rules to flag changes that need attention. Drydock
           reads the package files without executing their code; AI review is available only on
-          authenticated reviews.
+          authenticated reviews. npm dependency intelligence is advisory and refreshes as the feed
+          changes.
         </Muted>
       </section>
 
@@ -465,8 +466,8 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         </div>
         {hasFindings ? <SeverityBar counts={severityCounts.value} class="max-w-[420px]" /> : null}
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
-          Deterministic findings only: package code is never executed and AI review does not run on
-          this public surface, so the same version pair always produces the same report.
+          Deterministic rules review package bytes without executing code. npm dependency
+          intelligence is advisory and refreshes as the feed changes.
         </Muted>
         {pickerVersions ? (
           <VersionPairPicker

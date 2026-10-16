@@ -100,6 +100,7 @@ export interface AdapterBroker {
 export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker = AdapterBroker> {
   readonly id: string;
   readonly codePatternSet?: CodePatternSet;
+  enrichDependencyIntel?(diff: PackageJsonDiff, ctx: ExecutionContext): Promise<PackageJsonDiff>;
   parseInput(raw: unknown): TInput;
 
   /** Validate registry coordinates before a staged admission can reserve a package. */

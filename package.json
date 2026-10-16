@@ -62,6 +62,7 @@
     "preact": "^11.0.0",
     "preact-iso": "^2.12.2",
     "qrcode": "^1.5.4",
+    "semver": "^7.8.5",
     "shiki": "^4.4.3",
     "workers-ai-provider": "^4.0.0",
     "zod": "^4.4.3"
@@ -76,6 +77,7 @@
     "@shadcn/lint": "0.1.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/qrcode": "^1.5.6",
+    "@types/semver": "^7.8.0",
     "drizzle-kit": "^0.31.10",
     "fast-check": "^4.9.0",
     "knip": "^6.32.2",

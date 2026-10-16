@@ -72,6 +72,9 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       shiki:
         specifier: ^4.4.3
         version: 4.4.3
@@ -109,6 +112,9 @@ importers:
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
+      '@types/semver':
+        specifier: ^7.8.0
+        version: 7.8.0
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
@@ -2449,6 +2455,9 @@ packages:
 
   '@types/qrcode@1.5.6':
     resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -6155,6 +6164,8 @@ snapshots:
   '@types/qrcode@1.5.6':
     dependencies:
       '@types/node': 26.1.2
+
+  '@types/semver@7.8.0': {}
 
   '@types/unist@3.0.3': {}
 
