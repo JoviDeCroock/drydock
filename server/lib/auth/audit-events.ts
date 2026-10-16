@@ -32,6 +32,13 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
   return pkg ?? version;
 }
 
+function summarizeApiKey(m: Record<string, unknown>): string | null {
+  const name = str(m.name);
+  const prefix = str(m.prefix);
+  if (name && prefix) return `${name} (${prefix}…)`;
+  return name ?? prefix;
+}
+
 const REGISTRY: Record<string, AuditEventDef> = {
   "npm_package.management_confirmed": {
     category: "organization",
@@ -294,6 +301,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Notification recipient removed",
     severity: "info",
     summarize: (m) => str(m.recipient),
+  },
+  "organization.api_key_created": {
+    category: "security",
+    label: "API key created",
+    severity: "security",
+    summarize: summarizeApiKey,
+  },
+  "organization.api_key_revoked": {
+    category: "security",
+    label: "API key revoked",
+    severity: "notice",
+    summarize: summarizeApiKey,
   },
 };
 
