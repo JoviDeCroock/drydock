@@ -2,6 +2,7 @@ import keyvLogo from "../../assets/keyv-logo.svg";
 import cacheableLogo from "../../assets/cacheable-logo.svg";
 import preactLogo from "../../assets/preact-logo.svg";
 import apolloLogo from "../../assets/apollo-logo.png";
+import postcssLogo from "../../assets/postcss-logo.svg";
 import { SectionLabel } from "../../components/Typography";
 
 const projects = [
@@ -35,6 +36,14 @@ const projects = [
     logo: apolloLogo,
     width: 475,
     height: 475,
+    size: "h-14",
+  },
+  {
+    name: "PostCSS",
+    href: "https://postcss.org",
+    logo: postcssLogo,
+    width: 246,
+    height: 78,
     size: "h-14",
   },
 ];
