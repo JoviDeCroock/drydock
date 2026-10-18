@@ -57,6 +57,12 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
 
+## Proposals
+
+Drafts addressed to outside parties. Not filed unless the document says so, and nothing in Drydock depends on them.
+
+- [`proposals/npm-stage-reject-scope.md`](./proposals/npm-stage-reject-scope.md) — RFC draft for npm: a deny-only, OTP-free `stage:hold` / `stage:reject` permission a third-party reviewer can hold, plus a `stage.created` webhook; threat model, semantics, abuse cases, and which npm facts were verified.
+
 ## Retired or compatibility pointers
 
 - [`npm-workflow-gate.md`](./npm-workflow-gate.md) — short pointer kept for old links; canonical npm workflow-gate details now live in [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes).
