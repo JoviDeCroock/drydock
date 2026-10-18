@@ -1,10 +1,24 @@
 /**
  * The publish / no-publish verdict on a scanned release.
  */
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { requireVerifiedEmail } from "../../lib/auth/email-verification";
-import { SCAN_DECISIONS, type ScanDecision, getScan, recordScanDecision } from "../../db/scans";
-import { requireActiveOrganization } from "../../lib/auth/active-organization";
+import {
+  EMAIL_VERIFICATION_REQUIRED_CODE,
+  requireVerifiedEmail,
+} from "../../lib/auth/email-verification";
+import { emailVerificationAvailable } from "../../lib/auth";
+import {
+  API_KEY_DECIDABLE_SCAN_SOURCES,
+  SCAN_DECISIONS,
+  type ScanDecision,
+  getScan,
+  getScanStatus,
+  recordScanDecision,
+} from "../../db/scans";
+import { user } from "../../db/schema";
+import type { AppDb } from "../../db/client";
+import { requestActorUserId, requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
@@ -16,8 +30,36 @@ export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Vari
 export const DECISION_REASON_MAX = 500;
 const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
 
+type DecisionContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * The session check reads Better Auth's session flag; a `decide_staged` API key
+ * has no session, so the same rule is applied to the key's creator, the member
+ * the decision is attributed to.
+ */
+async function requireVerifiedDecider(c: DecisionContext, db: AppDb): Promise<Response | null> {
+  const apiKey = c.get("apiKey");
+  if (!apiKey) return requireVerifiedEmail(c);
+  if (!emailVerificationAvailable(c.env)) return null;
+  const [creator] = await db
+    .select({ emailVerified: user.emailVerified })
+    .from(user)
+    .where(eq(user.id, apiKey.userId))
+    .limit(1);
+  if (creator?.emailVerified) return null;
+  return c.json(
+    {
+      error: "The API key's creator must verify their email address before it records decisions.",
+      code: EMAIL_VERIFICATION_REQUIRED_CODE,
+    },
+    403,
+  );
+}
+
+const KEY_DECIDABLE_SOURCES = new Set<string>(API_KEY_DECIDABLE_SCAN_SOURCES);
+
 scanDecisionRoutes.post("/:id/decision", async (c) => {
-  const unverified = requireVerifiedEmail(c);
+  const unverified = await requireVerifiedDecider(c, c.var.db);
   if (unverified) return unverified;
   const body = await readJsonObject<{
     decision: string;
@@ -32,17 +74,36 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
   }
 
   const db = c.var.db;
-  const session = c.get("authSession");
+  const apiKey = c.get("apiKey");
   const organizationId = await requireActiveOrganization(c, db);
+
+  if (apiKey) {
+    // A clear refusal for a key on a gate package or a published-release
+    // review. `recordScanDecision` re-checks the same thing in its update, so
+    // this is the message, not the guarantee.
+    const existing = await getScanStatus(db, c.req.param("id"), organizationId);
+    if (!existing) return c.json({ error: "not found" }, 404);
+    if (!KEY_DECIDABLE_SOURCES.has(existing.source) || existing.gateId) {
+      return c.json(
+        {
+          error:
+            "API keys record decisions on staged npm publishes only; decide workflow gates and published-release reviews in Drydock",
+          code: "api_key_staged_decisions_only",
+        },
+        403,
+      );
+    }
+  }
 
   const updated = await recordScanDecision(
     db,
     {
       scanId: c.req.param("id"),
       organizationId,
-      actorUserId: session.userId,
+      actorUserId: requestActorUserId(c),
       decision: body.decision as ScanDecision,
       reason,
+      apiKey: apiKey ? { name: apiKey.name, prefix: apiKey.prefix } : null,
     },
     scanArtifactReadBucket(c.env),
     c.env,

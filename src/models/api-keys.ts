@@ -1,8 +1,11 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
-/** `read` reaches the read-only routes; `scan` can also start reviews and check npm. */
-export type ApiKeyAccess = "read" | "scan";
+/**
+ * `read` reaches the read-only routes; `scan` can also start reviews and check
+ * npm; `decide_staged` can also record decisions on staged publishes.
+ */
+export type ApiKeyAccess = "read" | "scan" | "decide_staged";
 
 export interface OrganizationApiKey {
   id: string;

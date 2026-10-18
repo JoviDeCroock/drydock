@@ -9,7 +9,13 @@ import {
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
 import * as schema from "../../server/db/schema";
-import { API_KEY_ROUTES, API_KEY_SCAN_ROUTES, hashApiKey } from "../../server/lib/auth/api-keys";
+import { recordScanDecision } from "../../server/db/scans";
+import {
+  API_KEY_DECIDE_ROUTES,
+  API_KEY_ROUTES,
+  API_KEY_SCAN_ROUTES,
+  hashApiKey,
+} from "../../server/lib/auth/api-keys";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
@@ -360,7 +366,6 @@ describe("API key authentication", () => {
       // Matches `/scans/:id` by shape but is answered by the batch-approval route.
       ["GET", "/api/v1/scans/batch-approval"],
       ["POST", "/api/v1/scans/batch-approval", { scanIds: [scanId] }],
-      ["POST", `/api/v1/scans/${scanId}/decision`, { decision: "publish" }],
       ["POST", `/api/v1/scans/${scanId}/share`, {}],
       ["GET", `/api/v1/scans/${scanId}/file?path=package.json`],
       ["GET", `/api/v1/scans/${scanId}/versions`],
@@ -593,7 +598,7 @@ describe("API keys with scan access", () => {
     const keys = listed.json?.keys as Array<{ id: string; access: string }>;
     expect(keys.find((key) => key.id === readKey.id)?.access).toBe("read");
     expect(keys.find((key) => key.id === scanKey.id)?.access).toBe("scan");
-    expect(listed.json?.accessLevels).toEqual(["read", "scan"]);
+    expect(listed.json?.accessLevels).toEqual(["read", "scan", "decide_staged"]);
 
     const whoami = await callWorker("GET", "/api/v1/api-keys/current", withKey(scanKey.token));
     expect(whoami.json?.access).toBe("scan");
@@ -697,15 +702,19 @@ describe("API keys with scan access", () => {
     expect(again.json).toMatchObject({ found: 1, created: 0, skipped: 1 });
   });
 
-  test("scan access adds nothing beyond starting reviews", async () => {
+  test("scan access adds nothing beyond starting reviews, and no decision", async () => {
     const owner = await signedUpAccount();
     const scanId = await seedCompletedScan({
       userId: owner.userId,
       organizationId: owner.organizationId,
     });
     const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    const decision = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "publish",
+    });
+    expect(decision.status).toBe(403);
+    expect(decision.json).toMatchObject({ code: "api_key_access_insufficient" });
     const denied: Array<[string, unknown?]> = [
-      [`/api/v1/scans/${scanId}/decision`, { decision: "publish" }],
       ["/api/v1/scans/batch-approval", { scanIds: [scanId] }],
       [`/api/v1/scans/${scanId}/share`, {}],
       ["/api/v1/api-keys", { name: "escalate", access: "scan" }],
@@ -753,5 +762,229 @@ describe("API keys with scan access", () => {
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "request origin not allowed" });
+  });
+});
+
+/** A pending workflow gate holding `scanId` as one of its packages. */
+async function seedGateHolding(organizationId: string, scanId: string): Promise<string> {
+  const db = createDb(env.DB);
+  const now = new Date();
+  const installationId = crypto.randomUUID();
+  const releaseTargetId = crypto.randomUUID();
+  const gateId = crypto.randomUUID();
+  await db.insert(schema.githubAppInstallations).values({
+    id: installationId,
+    organizationId,
+    installationId: crypto.randomUUID(),
+    accountLogin: "octo",
+    accountType: "Organization",
+    targetType: "Organization",
+    status: "active",
+    installedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(schema.githubReleaseTargets).values({
+    id: releaseTargetId,
+    organizationId,
+    installationRowId: installationId,
+    ecosystem: "npm",
+    repositoryId: 42,
+    repositoryFullName: "octo/release",
+    environment: "production",
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(schema.githubWorkflowGates).values({
+    id: gateId,
+    organizationId,
+    installationRowId: installationId,
+    releaseTargetId,
+    deliveryId: crypto.randomUUID(),
+    repositoryId: 42,
+    repositoryFullName: "octo/release",
+    environment: "production",
+    runId: 987654,
+    deploymentId: 123,
+    deploymentCallbackUrl:
+      "https://api.github.com/repos/octo/release/actions/runs/987654/deployment_protection_rule",
+    eventAction: "requested",
+    status: "pending",
+    scanId,
+    requestedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.update(schema.scans).set({ gateId }).where(eq(schema.scans.id, scanId));
+  return gateId;
+}
+
+async function scanDecision(scanId: string) {
+  const [row] = await createDb(env.DB)
+    .select({ decision: schema.scans.decision, decidedByUserId: schema.scans.decidedByUserId })
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  return row;
+}
+
+describe("API keys with decide_staged access", () => {
+  test("a decide_staged key records a staged decision as its creator, and the key is named in the audit", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+
+    const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "publish",
+      reason: "read the diff",
+    });
+    expect(res.status, JSON.stringify(res.json)).toBe(200);
+    expect(res.json?.scan).toMatchObject({ id: scanId, decision: "publish" });
+    expect(await scanDecision(scanId)).toEqual({
+      decision: "publish",
+      decidedByUserId: owner.userId,
+    });
+
+    const [event] = await auditEvents(owner.organizationId, "scan.decided");
+    expect(event).toMatchObject({ actorUserId: owner.userId, scanId });
+    expect(event.metadataJson).toMatchObject({
+      decision: "publish",
+      reason: "read the diff",
+      apiKeyName: "laptop",
+      apiKeyPrefix: key.prefix,
+    });
+    expect(JSON.stringify(event.metadataJson)).not.toContain(key.token);
+
+    // A decide_staged key keeps everything a scan key reads.
+    const read = await callWorker("GET", `/api/v1/scans/${scanId}`, withKey(key.token));
+    expect(read.res.status).toBe(200);
+  });
+
+  test("read and scan keys are refused the decision route, and nothing is recorded", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    for (const access of ["read", "scan"]) {
+      const key = await createKey(owner, owner.organizationId, { name: access, access });
+      for (const route of API_KEY_DECIDE_ROUTES) {
+        const [, template] = route.split(" ");
+        const res = await postWithoutOrigin(template.replace(":id", scanId), key.token, {
+          decision: "publish",
+        });
+        expect(res.status, `${access} ${route}`).toBe(403);
+        expect(res.json, `${access} ${route}`).toMatchObject({
+          code: "api_key_access_insufficient",
+          requiredAccess: "decide_staged",
+        });
+      }
+    }
+    expect((await scanDecision(scanId)).decision).toBeNull();
+  });
+
+  test("a decide_staged key can never decide a workflow gate or one of its packages", async () => {
+    const owner = await signedUpAccount();
+    const gateScanId = await seedCompletedScan(
+      { userId: owner.userId, organizationId: owner.organizationId },
+      { job: { source: "workflow_gate" } },
+    );
+    const gateId = await seedGateHolding(owner.organizationId, gateScanId);
+    // A staged-source row attached to a gate is refused the same way.
+    const attachedScanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ gateId })
+      .where(eq(schema.scans.id, attachedScanId));
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+
+    for (const scanId of [gateScanId, attachedScanId]) {
+      for (const decision of ["publish", "no_publish"]) {
+        const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+          decision,
+        });
+        expect(res.status, `${scanId} ${decision}`).toBe(403);
+        expect(res.json).toMatchObject({ code: "api_key_staged_decisions_only" });
+      }
+      expect((await scanDecision(scanId)).decision).toBeNull();
+    }
+
+    const gateDecision = await postWithoutOrigin(
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      key.token,
+      { decision: "approved", scanId: gateScanId },
+    );
+    expect(gateDecision.status).toBe(403);
+    expect(gateDecision.json).toMatchObject({ code: "api_key_endpoint_not_allowed" });
+    const [gate] = await createDb(env.DB)
+      .select({ status: schema.githubWorkflowGates.status })
+      .from(schema.githubWorkflowGates)
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    expect(gate.status).toBe("pending");
+
+    // The guarantee is the update itself, not only the route's pre-check.
+    const written = await recordScanDecision(createDb(env.DB), {
+      scanId: gateScanId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+      decision: "publish",
+      apiKey: { name: "laptop", prefix: key.prefix },
+    });
+    expect(written).toBeNull();
+    expect((await scanDecision(gateScanId)).decision).toBeNull();
+  });
+
+  test("a decide_staged key is refused published-release reviews", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan(
+      { userId: owner.userId, organizationId: owner.organizationId },
+      { job: { source: "published" } },
+    );
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "publish",
+    });
+    expect(res.status).toBe(403);
+    expect(res.json).toMatchObject({ code: "api_key_staged_decisions_only" });
+    expect((await scanDecision(scanId)).decision).toBeNull();
+  });
+
+  test("decide_staged access adds only the staged decision", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const denied: Array<[string, unknown?]> = [
+      ["/api/v1/scans/batch-approval", { scanIds: [scanId] }],
+      [`/api/v1/scans/${scanId}/share`, {}],
+      ["/api/v1/api-keys", { name: "escalate", access: "decide_staged" }],
+      ["/api/v1/npm-connection/validate", {}],
+      ["/api/v1/publication-watches", { packageName: "@acme/watched" }],
+    ];
+    for (const [path, body] of denied) {
+      const res = await postWithoutOrigin(path, key.token, body);
+      expect(res.status, path).toBe(403);
+      expect(res.json, path).toMatchObject({ code: "api_key_endpoint_not_allowed" });
+    }
+    expect((await scanDecision(scanId)).decision).toBeNull();
   });
 });

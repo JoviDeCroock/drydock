@@ -1,5 +1,6 @@
 // @ts-check
 import { parseArguments } from "./args.mjs";
+import { approve } from "./approve.mjs";
 import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } from "./client.mjs";
 import {
   terminalSafeJson,
@@ -16,12 +17,13 @@ import {
   formatWhoami,
 } from "./format.mjs";
 import { CLI_VERSION } from "./version.mjs";
+import { waitForReview } from "./wait.mjs";
 
 const USAGE = `Usage: drydock <command> [options]
 
 Read an organization's Drydock reviews from scripts and CI, and start new ones
-with a key that has scan access. Release decisions stay with signed-in
-maintainers.
+with a key that has scan access. "approve" records your own decision on a staged
+publish and then runs your npm; it needs a terminal and a decide_staged key.
 
 Commands:
   whoami                          The API key's organization, expiry, and access
@@ -48,6 +50,13 @@ Commands:
   gate <review-id>                The GitHub workflow gate a review belongs to
   diff <package> <from> <to>      Diff two published releases (no API key needed)
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
+  approve <stage-id | package@version>
+                                  Show the review of a staged npm publish, record
+                                  your publish or reject decision in Drydock, then
+                                  run "npm stage approve" (or offer "npm stage
+                                  reject"), which asks you for your one-time
+                                  password. Interactive only (decide_staged access)
+      [--timeout S] [--interval S]
 
 Options:
   --url URL        Drydock origin (default: $DRYDOCK_URL or https://drydock.org)
@@ -60,13 +69,13 @@ Environment:
                    so it stays out of shell history and process listings
   DRYDOCK_URL      Drydock origin
 
-Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 risk at or above --fail-on (RISK is low, medium, high, or critical),
-4 a wait timed out before the review finished.
+Exit codes: 0 success, 1 request or review failed (or approve recorded no
+decision), 2 usage error, 3 risk at or above --fail-on (RISK is low, medium,
+high, or critical), 4 a wait timed out before the review finished, 5 approve
+recorded the decision in Drydock but npm did not complete it.
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
-const EXIT_TIMEOUT = 4;
 const SCAN_FILTERS = [
   "undecided",
   "published_without_decision",
@@ -87,6 +96,10 @@ const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
  * @property {(path: string, data: string) => Promise<void>} writeFile
  * @property {(ms: number) => Promise<void>} sleep
  * @property {() => number} now
+ * @property {boolean} [interactive] stdin and stdout are a terminal; `approve` refuses to run otherwise
+ * @property {(question: string) => Promise<string | null>} [prompt] one line from the user; null when input ends
+ * @property {(args: string[]) => Promise<import("./approve.mjs").NpmResult>} [runNpm]
+ *   runs `npm` on the user's own terminal (inherited stdio) and reports how it exited
  */
 
 /**
@@ -141,7 +154,7 @@ export async function main(argv, io) {
       apiKey: command.anonymous ? null : requireApiKey(io.env.DRYDOCK_API_KEY),
       fetch: io.fetch,
     });
-    return await command.run({ client, io, values, positionals });
+    return await command.run({ client, io, values, positionals, baseUrl });
   } catch (err) {
     // Error text can quote the server, which can quote a package under review.
     if (err instanceof CliError) {
@@ -189,6 +202,10 @@ function resolveCommand(positionals) {
     releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
     gate: { run: gate, options: [] },
     diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
+    approve: {
+      run: (ctx) => approve(ctx, () => waitSettings(ctx)),
+      options: ["timeout", "interval"],
+    },
   };
   const name = first === "scans" ? `scans ${second ?? ""}`.trim() : first;
   const command = commands[name];
@@ -219,6 +236,7 @@ function rejectForeignOptions(command, values) {
  * @property {CliIo} io
  * @property {Record<string, string | boolean | undefined>} values
  * @property {string[]} positionals
+ * @property {string} baseUrl the Drydock origin requests go to
  */
 
 /**
@@ -360,28 +378,6 @@ function optionalWaitSettings(ctx) {
     if (ctx.values[flag] !== undefined) throw new CliError(`--${flag} needs --wait`, 2);
   }
   return null;
-}
-
-/**
- * Polls one review until it completes or fails, or the shared deadline passes.
- * @param {CommandContext} ctx
- * @param {string} id
- * @param {{ intervalMs: number; deadline: number }} waiting
- * @returns {Promise<any>} the review's final status
- */
-async function waitForReview(ctx, id, { intervalMs, deadline }) {
-  const path = `/api/v1/scans/${pathSegment(id, "review id")}/status`;
-  for (;;) {
-    const { scan } = await ctx.client.json(path);
-    if (scan?.status === "complete" || scan?.status === "failed") return scan;
-    if (ctx.io.now() + intervalMs > deadline) {
-      throw new CliError(
-        `review ${id} is still ${scan?.status ?? "pending"} after the timeout`,
-        EXIT_TIMEOUT,
-      );
-    }
-    await ctx.io.sleep(intervalMs);
-  }
 }
 
 /**

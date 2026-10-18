@@ -108,24 +108,51 @@ export const API_KEY_ROUTES: ReadonlySet<string> = new Set([
  * The writes a `scan` key adds: starting one review, and "Check npm" discovery.
  * Both are actions any member can take and neither decides a release; they
  * spend the organization's existing per-organization scan and discovery
- * budgets. Recording a decision, sharing, and settings stay session-only.
+ * budgets. Gate decisions, batch approval, sharing, and settings stay
+ * session-only.
  */
 export const API_KEY_SCAN_ROUTES: ReadonlySet<string> = new Set([
   "POST /api/v1/scans",
   "POST /api/v1/staged-publishes/scan",
 ]);
 
+/**
+ * The one write a `decide_staged` key adds: recording the publish / no-publish
+ * decision on a staged-publish review. That decision is an advisory record, the
+ * same one a signed-in member makes without a step-up (docs/two-factor-auth.md);
+ * it never publishes or removes anything on npm. The handler refuses a key on
+ * any review that is not a staged publish, so a key can never decide a package
+ * of a workflow gate, whose decisions release or block a held GitHub job. The
+ * gate decision route itself is on no allowlist.
+ */
+export const API_KEY_DECIDE_ROUTES: ReadonlySet<string> = new Set([
+  "POST /api/v1/scans/:id/decision",
+]);
+
 export type ApiKeyRouteVerdict = "allowed" | "endpoint_not_allowed" | "access_insufficient";
+
+/** The least access a route needs, or null when no key may reach it. */
+export function apiKeyRouteAccess(
+  route: { method: string; path: string } | null,
+): ApiKeyAccess | null {
+  if (route === null) return null;
+  const signature = `${route.method} ${route.path}`;
+  if (API_KEY_ROUTES.has(signature)) return "read";
+  if (API_KEY_SCAN_ROUTES.has(signature)) return "scan";
+  if (API_KEY_DECIDE_ROUTES.has(signature)) return "decide_staged";
+  return null;
+}
 
 export function apiKeyMayReach(
   route: { method: string; path: string } | null,
   access: ApiKeyAccess,
 ): ApiKeyRouteVerdict {
-  if (route === null) return "endpoint_not_allowed";
-  const signature = `${route.method} ${route.path}`;
-  if (API_KEY_ROUTES.has(signature)) return "allowed";
-  if (!API_KEY_SCAN_ROUTES.has(signature)) return "endpoint_not_allowed";
-  return access === "scan" ? "allowed" : "access_insufficient";
+  const required = apiKeyRouteAccess(route);
+  if (required === null) return "endpoint_not_allowed";
+  // Each level includes every level before it.
+  return API_KEY_ACCESS_LEVELS.indexOf(access) >= API_KEY_ACCESS_LEVELS.indexOf(required)
+    ? "allowed"
+    : "access_insufficient";
 }
 
 /**

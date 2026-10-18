@@ -26,7 +26,16 @@ export interface RecordScanDecisionInput {
   actorUserId: string;
   decision: ScanDecision;
   reason?: string | null;
+  /**
+   * Set when an organization API key records the decision. The update then
+   * matches only a staged-publish review outside any workflow gate, in the same
+   * statement that writes it, and the audit event names the key.
+   */
+  apiKey?: { name: string; prefix: string } | null;
 }
+
+/** The sources an API key may decide: staged npm publishes, never a gate package. */
+export const API_KEY_DECIDABLE_SCAN_SOURCES = ["manual", "auto_discovery"] as const;
 
 export async function recordScanDecision(
   db: AppDb,
@@ -51,6 +60,9 @@ export async function recordScanDecision(
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        ...(input.apiKey
+          ? [inArray(scans.source, [...API_KEY_DECIDABLE_SCAN_SOURCES]), isNull(scans.gateId)]
+          : []),
       ),
     )
     .returning({
@@ -70,7 +82,11 @@ export async function recordScanDecision(
     actorUserId: input.actorUserId,
     scanId: input.scanId,
     type: "scan.decided",
-    metadata: { decision: input.decision, reason },
+    metadata: {
+      decision: input.decision,
+      reason,
+      ...(input.apiKey ? { apiKeyName: input.apiKey.name, apiKeyPrefix: input.apiKey.prefix } : {}),
+    },
   });
 
   // Staged publishes are npm-only, but a published-pair review reaches this

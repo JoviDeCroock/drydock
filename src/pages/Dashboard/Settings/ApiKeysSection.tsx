@@ -14,6 +14,13 @@ import { formatDateTime } from "../../../lib/format";
 const ACCESS_LABELS: Record<ApiKeyAccess, string> = {
   read: "Read only",
   scan: "Read and start reviews",
+  decide_staged: "Read, start reviews, and record staged decisions",
+};
+
+const ACCESS_ROW_TEXT: Record<ApiKeyAccess, string> = {
+  read: "read only",
+  scan: "can start reviews",
+  decide_staged: "can record staged decisions",
 };
 
 export function ApiKeysSection({
@@ -154,6 +161,13 @@ export function ApiKeysSection({
             approves a release.
           </Muted>
         ) : null}
+        {draftAccess === "decide_staged" && !atLimit ? (
+          <Muted class="text-[13px] m-0">
+            For <code>drydock approve</code> on your own machine. This key can also record publish
+            or reject on staged npm publishes, as the member who creates it, without a two-factor
+            step-up. It never decides a workflow gate and never approves anything on npm.
+          </Muted>
+        ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
             This organization holds the maximum of {apiKeys.limit.value} keys. Revoke one to create
@@ -189,7 +203,7 @@ function ApiKeyRow({
           {expired ? <Badge tone="medium">expired</Badge> : null}
         </div>
         <Muted class="text-[12px] m-0">
-          {apiKey.access === "scan" ? "can start reviews" : "read only"} · created by {creator} ·{" "}
+          {ACCESS_ROW_TEXT[apiKey.access] ?? "read only"} · created by {creator} ·{" "}
           {expired ? "expired" : "expires"} {formatDateTime(apiKey.expiresAt)} ·{" "}
           {apiKey.lastUsedAt ? `last used ${formatDateTime(apiKey.lastUsedAt)}` : "never used"}
         </Muted>

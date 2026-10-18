@@ -12,6 +12,9 @@ import type { ScanQueueMessage } from "../../server/lib/scan/job";
 import { main } from "../../cli/src/main.mjs";
 import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
 import { seedCompletedScan } from "./helpers/seed";
+import * as schema from "../../server/db/schema";
+import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
+import { eq } from "drizzle-orm";
 
 // The CLI against the real Worker: its paths, headers, and response handling
 // must match what the API-key surface actually serves.
@@ -132,6 +135,91 @@ describe("drydock CLI against the Worker", () => {
     expect(await run.run("whoami")).toBe(1);
     expect(run.err.join("")).toContain("invalid_api_key");
     expect(run.err.join("") + run.out.join("")).not.toContain(token);
+  });
+
+  test("approve records a decide_staged key's decision, then runs npm; a read-only key records nothing", async () => {
+    const jar: Jar = new Map();
+    const userId = await signUpUserId(jar);
+    expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
+    const organizationId = personalOrganizationId(userId);
+    const stageId = "stage-approve-e2e-0001";
+    const scanId = await seedCompletedScan(
+      { userId, organizationId },
+      {
+        stageId,
+        packageJson: { name: "@acme/approve-e2e", version: "2.0.0" },
+        summary: {
+          diff: [{ path: "package.json", status: "modified" }],
+          packageJsonDiff: summarizePackageJsonDiff(
+            { name: "@acme/approve-e2e", version: "1.9.0", scripts: {} },
+            {
+              name: "@acme/approve-e2e",
+              version: "2.0.0",
+              scripts: { postinstall: "node setup.js" },
+              dependencies: { "left-pad": "^1.3.0" },
+            },
+          ),
+        },
+      },
+    );
+    const keyFor = async (access: string) =>
+      (await callWorker("POST", "/api/v1/api-keys", { jar, body: { name: access, access } })).json
+        ?.token as string;
+
+    const session = (token: string, answers: Array<string | null>) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const npmRuns: string[][] = [];
+      return {
+        out,
+        err,
+        npmRuns,
+        run: (...argv: string[]) =>
+          main(argv, {
+            env: { DRYDOCK_API_KEY: token, DRYDOCK_URL: CLI_ORIGIN },
+            fetch: workerFetchWith(env) as typeof fetch,
+            stdout: (text: string) => void out.push(text),
+            stderr: (text: string) => void err.push(text),
+            writeFile: async () => undefined,
+            sleep: async () => undefined,
+            now: () => 0,
+            interactive: true,
+            prompt: async () => answers.shift() ?? null,
+            runNpm: async (args: string[]) => {
+              npmRuns.push(args);
+              return { code: 0 };
+            },
+          }),
+      };
+    };
+    const decision = async () =>
+      (
+        await createDb(env.DB)
+          .select({ decision: schema.scans.decision })
+          .from(schema.scans)
+          .where(eq(schema.scans.id, scanId))
+      )[0]?.decision;
+
+    const readOnly = session(await keyFor("read"), ["p", ""]);
+    expect(await readOnly.run("approve", stageId)).toBe(1);
+    expect(readOnly.err.join("")).toContain("decide_staged access");
+    expect(readOnly.npmRuns).toEqual([]);
+    expect(await decision()).toBeNull();
+
+    const token = await keyFor("decide_staged");
+    const approve = session(token, ["publish", "read the diff"]);
+    const code = await approve.run("approve", stageId);
+    expect(code, approve.err.join("")).toBe(0);
+    const summary = approve.out.join("");
+    expect(summary).toContain("install-time scripts   postinstall added: node setup.js");
+    expect(summary).toContain("new dependencies       left-pad ^1.3.0");
+    expect(summary).toContain("compared against  1.9.0");
+    expect(summary).toContain(
+      `${CLI_ORIGIN}/dashboard/scans/${scanId}?org=${encodeURIComponent(organizationId)}`,
+    );
+    expect(approve.npmRuns).toEqual([["stage", "approve", stageId]]);
+    expect(await decision()).toBe("publish");
+    expect(approve.out.join("") + approve.err.join("")).not.toContain(token);
   });
 
   describe("starting reviews", () => {

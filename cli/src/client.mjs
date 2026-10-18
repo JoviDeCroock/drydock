@@ -146,7 +146,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
  * @param {Headers} headers
  */
 function errorMessage(status, text, headers) {
-  /** @type {{ error?: unknown; code?: unknown }} */
+  /** @type {{ error?: unknown; code?: unknown; requiredAccess?: unknown }} */
   let body = {};
   try {
     body = JSON.parse(text);
@@ -156,6 +156,9 @@ function errorMessage(status, text, headers) {
   const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
   const code = typeof body.code === "string" ? ` (${body.code})` : "";
   if (status === 401) return `the API key was rejected: ${detail}${code}`;
+  if (body.code === "api_key_access_insufficient" && body.requiredAccess === "decide_staged") {
+    return "this API key cannot record decisions; drydock approve needs a key with decide_staged access (Organization settings → Integrations → API keys)";
+  }
   if (body.code === "api_key_access_insufficient") {
     return "this API key is read-only; starting reviews needs a key with scan access (Organization settings → Integrations → API keys)";
   }

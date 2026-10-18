@@ -12,6 +12,7 @@ import {
   ScanList,
   ScanOverview,
   ScanStatus,
+  StagedDecisionRequest,
   StagedPublishDiscovery,
   StartScanRequest,
   StartedScan,
@@ -19,13 +20,13 @@ import {
 } from "./schemas";
 
 // The OpenAPI 3.1 description of Drydock's automation surface: every route an
-// organization API key reaches (exactly `API_KEY_ROUTES` and
-// `API_KEY_SCAN_ROUTES`) plus the anonymous
+// organization API key reaches (exactly `API_KEY_ROUTES`,
+// `API_KEY_SCAN_ROUTES`, and `API_KEY_DECIDE_ROUTES`) plus the anonymous
 // package-diff endpoints. Built from the zod contracts in `schemas.ts`;
 // `docs/openapi.json` is this document checked in, kept current by
 // `test/openapi-document.test.ts`.
 
-const OPENAPI_API_VERSION = "1.1.0";
+const OPENAPI_API_VERSION = "1.2.0";
 
 type ZodSchema = z.ZodType;
 
@@ -50,6 +51,8 @@ interface OperationSpec {
   requestBody?: ZodSchema;
   /** Starts work and answers 202; reachable only by a key with `scan` access. */
   startsWork?: boolean;
+  /** Records a staged-publish decision; reachable only by a `decide_staged` key. */
+  decidesStaged?: boolean;
   response: ZodSchema;
   /** Media type of the success response, when it is not plain JSON. */
   download?: boolean;
@@ -161,6 +164,20 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     startsWork: true,
     response: StagedPublishDiscovery,
     errors: [400, 401, 403, 429, 502],
+  },
+  {
+    method: "post",
+    route: "/api/v1/scans/:id/decision",
+    operationId: "recordStagedDecision",
+    summary: "Record a decision on a staged publish",
+    description:
+      "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review.",
+    tag: "Reviews",
+    parameters: [SCAN_ID],
+    requestBody: StagedDecisionRequest,
+    decidesStaged: true,
+    response: ScanDetail,
+    errors: [400, 401, 403, 404, 409],
   },
   {
     route: "/api/v1/scans/overview",
@@ -280,7 +297,7 @@ const STATUS_TEXT: Record<number, string> = {
   401: "Missing, unknown, or expired credential",
   403: "Not allowed for this credential or organization",
   404: "Not found in this organization",
-  409: "The review has not completed, or the package is claimed by another organization",
+  409: "The review has not completed or was superseded, or the package is claimed by another organization",
   413: "The release archive is larger than Drydock reviews",
   422: "The registry named a package Drydock cannot review",
   429: "Rate limited; honor `retry-after`",
@@ -340,6 +357,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         tags: [operation.tag],
         ...(operation.anonymous ? { security: [] } : {}),
         ...(operation.startsWork ? { "x-drydock-api-key-access": "scan" } : {}),
+        ...(operation.decidesStaged ? { "x-drydock-api-key-access": "decide_staged" } : {}),
         ...(operation.parameters?.length ? { parameters: operation.parameters } : {}),
         ...(requestBody ? { requestBody } : {}),
         responses,
@@ -353,7 +371,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       title: "Drydock API",
       version: OPENAPI_API_VERSION,
       description:
-        "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`). No key records a release decision. Package-diff endpoints are anonymous.",
+        "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`), and a key with `decide_staged` access can also record the advisory decision on a staged npm publish (`x-drydock-api-key-access: decide_staged`). No key decides a workflow gate. Package-diff endpoints are anonymous.",
       license: { name: "Apache-2.0", identifier: "Apache-2.0" },
     },
     servers: [{ url: "https://drydock.org", description: "Hosted Drydock" }],
@@ -377,8 +395,10 @@ export function buildOpenApiDocument(): Record<string, unknown> {
 }
 
 /** The routes this document marks as needing a key, in `API_KEY_ROUTES` form. */
-export function documentedApiKeyRoutes(access: "read" | "scan"): string[] {
+export function documentedApiKeyRoutes(access: "read" | "scan" | "decide_staged"): string[] {
+  const accessOf = (operation: OperationSpec) =>
+    operation.decidesStaged ? "decide_staged" : operation.startsWork ? "scan" : "read";
   return OPENAPI_OPERATIONS.filter(
-    (operation) => !operation.anonymous && Boolean(operation.startsWork) === (access === "scan"),
+    (operation) => !operation.anonymous && accessOf(operation) === access,
   ).map((operation) => `${(operation.method ?? "get").toUpperCase()} ${operation.route}`);
 }

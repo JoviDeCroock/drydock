@@ -858,13 +858,15 @@ jobs:
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Automate</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Start and read reviews from scripts and CI. Decide them in Drydock.
+                Start and read reviews from scripts and CI. Decide them yourself.
               </h2>
               <Prose>
                 An organization API key reads the same reviews, report exports, and release receipts
                 the dashboard shows. A key created with <strong>Read and start reviews</strong> can
-                also start reviews and check npm for staged publishes. No key can approve a gate,
-                record a decision, or change settings.
+                also start reviews and check npm for staged publishes. A key created with{" "}
+                <strong>Read, start reviews, and record staged decisions</strong> also lets{" "}
+                <InlineCode>drydock approve</InlineCode> record your decision on a staged publish.
+                No key can decide a workflow gate or change settings.
               </Prose>
             </div>
 
@@ -911,6 +913,18 @@ node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, 
                 {`node cli/bin/drydock.mjs check-npm                                            # discover staged publishes now
 node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
 node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+              </CodeBlock>
+              <Prose>
+                On your own machine, <InlineCode>drydock approve</InlineCode> shows the review at
+                npm&apos;s approval moment: new install-time scripts, new dependencies, new
+                executables, and the top findings. It records your publish or reject decision, then
+                runs your own <InlineCode>npm stage approve</InlineCode>, which asks you for your
+                one-time password; Drydock never sees it. It needs a terminal and has no{" "}
+                <InlineCode>--yes</InlineCode>. It is a convenience and a record, not enforcement:
+                approving on npmjs.com skips it.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI
