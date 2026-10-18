@@ -198,6 +198,14 @@ through the same loader and is called once per file the visitor opens, so
 counting it would report one page view as thirty and skew the cache column
 toward `hit` (only the first request of a session can miss).
 
+**`blob8` on `public_diff.viewed` is the client.** `dependency-pr` is the
+dependency-PR comment workflow fetching a pair from CI, once per PR push
+(`docs/dependency-pr-diff-links.md`). Everything else is `other`. Filter
+`blob8 != 'dependency-pr'` for people reading diffs. The value comes from the
+caller's `x-drydock-client` header, so it separates traffic shapes and proves
+nothing. Rows written before the dimension existed have no `blob8`, and the
+workflow did not fetch summaries then.
+
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at
 medium and `displayedAiResult` refuses to render it as "low risk / nothing
