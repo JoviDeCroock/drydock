@@ -253,18 +253,21 @@ may resolve somewhere else:
 
 - npm, both bots: a non-public `registry=` or `@scope:registry=` in `.npmrc`, or
   `npmRegistryServer` (top-level or under `npmScopes`) in `.yarnrc.yml`. Config
-  is read at the PR head from the lockfile's directory and the repository root;
-  for Dependabot, the root. A custom default registry drops every npm pair, and
-  a custom scope drops that scope.
+  is read at the PR head from the lockfile's directory (for Dependabot, the
+  `directory` it updated) and the repository root. A custom default registry, or
+  `npmScopes` written in flow style, drops every npm pair. A custom scope drops
+  that scope. If the config can't be read, a Dependabot run posts nothing
+  rather than guess.
 - npm lockfiles: a `package-lock.json` or yarn v1 entry whose `resolved` URL is
   not the public registry.
-- PyPI: a requirements file with `-i`, `--index-url`, or `--extra-index-url`
-  contributes no pairs, and `uv.lock` counts only pypi.org packages.
+- PyPI, Renovate only: a requirements file with `-i`, `--index-url`, or
+  `--extra-index-url` contributes no pairs, and `uv.lock` counts only pypi.org
+  packages.
 
 Those checks see only committed config. Registries set through environment
 variables, CI-only config, user-level `.npmrc`, `pip.conf`, or a Dependabot
-`registries:` block are invisible to the workflow. A Dependabot pip bump in
-particular is sent as-is. Drydock answers 404 for a name it can't find. If a
+`registries:` block are invisible to the workflow. Dependabot's pip and uv bumps
+in particular are sent as they are. Drydock answers 404 for a name it can't find. If a
 repository's private package names are themselves confidential, set
 `DRYDOCK_SUMMARIES: "false"`.
 

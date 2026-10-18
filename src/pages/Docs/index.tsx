@@ -824,9 +824,10 @@ export default function DocsPage() {
             <Callout label="What reaches Drydock">
               The Renovate column is a plain link: rendering the PR sends nothing to Drydock. The
               workflow sends each bumped package's name and version pair to the public diff API when
-              the PR opens or changes, at most 10 per run. Packages that your committed{" "}
-              <InlineCode>.npmrc</InlineCode>, <InlineCode>.yarnrc.yml</InlineCode>, or requirements
-              index options send to another registry are left out. Set{" "}
+              the PR opens or changes, at most 10 per run. npm packages that your committed{" "}
+              <InlineCode>.npmrc</InlineCode> or <InlineCode>.yarnrc.yml</InlineCode> sends to
+              another registry are left out, as are Renovate's pins from requirements files with
+              their own index. Dependabot's pip and uv bumps are sent as they are. Set{" "}
               <InlineCode>DRYDOCK_SUMMARIES</InlineCode> to <InlineCode>"false"</InlineCode> to post
               links only. If the API is slow, rate limited, or down, the comment keeps the link and
               says the summary is unavailable. The job does not fail.

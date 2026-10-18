@@ -32,6 +32,7 @@ interface Run {
   commitMessage?: string;
   files?: Array<{ filename: string; status?: string; previous_filename?: string }>;
   contents?: Record<string, string>;
+  contentError?: Error;
   comments?: Array<{ id: number; body: string; user: { login: string } }>;
   headRepo?: string;
   listFilesError?: Error;
@@ -59,6 +60,7 @@ async function runWorkflow(run: Run) {
         compareCommitsWithBasehead: async () => ({ data: { merge_base_commit: { sha: "base" } } }),
         getContent: async ({ path, ref }: { path: string; ref: string }) => {
           contentReads.push(`${ref}:${path}`);
+          if (run.contentError) throw run.contentError;
           const text = run.contents?.[`${ref}:${path}`];
           if (text === undefined) throw Object.assign(new Error("Not Found"), { status: 404 });
           return { data: text };
@@ -386,6 +388,45 @@ describe("Dependabot comment", () => {
     });
     expect(fetchUrls.map((url) => url.searchParams.get("package"))).toEqual(["left-pad"]);
     expect(posted[0].body).not.toContain("@corp");
+  });
+
+  test("reads registry config in the updated directory, and fails closed without it", async () => {
+    const run = {
+      env: {
+        ...single,
+        NAMES: "@corp/tool, left-pad",
+        DIRECTORY: "/frontend",
+        DRYDOCK_SUMMARIES: "false",
+      },
+      commitMessage:
+        "Updates `@corp/tool` from 1.0.0 to 1.1.0\nUpdates `left-pad` from 1.0.0 to 1.1.0",
+    };
+    const scoped = await runWorkflow({
+      ...run,
+      contents: {
+        "head:frontend/.yarnrc.yml":
+          "npmScopes:\n    corp:\n      npmRegistryServer: 'https://npm.corp.example' # private\n",
+      },
+    });
+    expect(scoped.contentReads).toContain("head:frontend/.yarnrc.yml");
+    expect(scoped.posted[0].body).not.toContain("@corp");
+    expect(scoped.posted[0].body).toContain("`left-pad`");
+
+    const publicConfig = await runWorkflow({
+      ...run,
+      contents: { "head:.npmrc": 'registry="http://registry.npmjs.org/"\n' },
+    });
+    expect(publicConfig.posted[0].body).toContain("`@corp/tool`");
+
+    const unreadable = await runWorkflow({
+      ...run,
+      contentError: Object.assign(new Error("Service Unavailable"), {
+        name: "HttpError",
+        status: 503,
+      }),
+    });
+    expect(unreadable.posted).toEqual([]);
+    expect(unreadable.core.warning).toHaveBeenCalledOnce();
   });
 
   test("treats Dependabot's uv and bun ecosystems as PyPI and npm", async () => {

@@ -52,6 +52,7 @@ jobs:
           NAMES: ${{ steps.meta.outputs.dependency-names }}
           FROM: ${{ steps.meta.outputs.previous-version }}
           TO: ${{ steps.meta.outputs.new-version }}
+          DIRECTORY: ${{ steps.meta.outputs.directory }}
         with:
           script: |
             const DRYDOCK = "https://drydock.org";
@@ -108,23 +109,31 @@ jobs:
               }
               const names = process.env.NAMES || "";
               let pairs = [{ ecosystem, name: names, from: process.env.FROM, to: process.env.TO }];
-              if (names.includes(",")) {
-                const { data } = await github.rest.pulls.listCommits({
-                  owner,
-                  repo,
-                  pull_number: pr.number,
-                  per_page: 1,
-                });
-                const message = data[0]?.commit?.message ?? "";
-                pairs = [
-                  ...message.matchAll(/^Updates `([^`\n]*)` from ([^ \n]*) to ([^ \n]*)$/gm),
-                ].map(([, name, from, to]) => ({ ecosystem, name, from, to }));
+              try {
+                if (names.includes(",")) {
+                  const { data } = await github.rest.pulls.listCommits({
+                    owner,
+                    repo,
+                    pull_number: pr.number,
+                    per_page: 1,
+                  });
+                  const message = data[0]?.commit?.message ?? "";
+                  pairs = [
+                    ...message.matchAll(/^Updates `([^`\n]*)` from ([^ \n]*) to ([^ \n]*)$/gm),
+                  ].map(([, name, from, to]) => ({ ecosystem, name, from, to }));
+                }
+                // The commit does not say which registry a package came from, so
+                // the repository's own registry config is the only evidence: in
+                // the updated directory and at the root.
+                if (ecosystem !== "npm") return pairs;
+                const dir = (process.env.DIRECTORY || "").replace(/^\/+|\/+$/g, "");
+                const registries = await customRegistries(dir ? `${dir}/` : "", pr.head.sha);
+                return pairs.filter((pair) => publicName(registries, pair.name));
+              } catch (error) {
+                // Without the config there is no telling which names are private.
+                core.warning(`Could not read the PR's commit or registry config (${error?.name}).`);
+                return [];
               }
-              // The commit does not say which registry a package came from, so
-              // the repository's own registry config is the only evidence.
-              if (ecosystem !== "npm") return pairs;
-              const registries = await customRegistries("", pr.head.sha);
-              return pairs.filter((pair) => publicName(registries, pair.name));
             }
 
             // Renovate's PR body, title, branch, and commit message are not
@@ -242,11 +251,12 @@ jobs:
             // root means some names resolve somewhere Drydock cannot see. Those
             // names are not diffable, may be confidential, and a same-named
             // public package would make the summary describe someone else's code.
-            const PUBLIC_NPM = /^https:\/\/registry\.(npmjs\.org|yarnpkg\.com)\/?$/;
+            const PUBLIC_NPM = /^https?:\/\/registry\.(npmjs\.org|yarnpkg\.com)\/?$/;
 
             async function customRegistries(dir, ref) {
               const found = { all: false, scopes: new Set() };
-              const mark = (scope, url) => {
+              const mark = (scope, value) => {
+                const url = value.replace(/\s+#.*$/, "").replace(/^['"]|['"]$/g, "");
                 if (PUBLIC_NPM.test(url)) return;
                 if (scope) found.scopes.add(`@${scope.replace(/^@/, "")}`);
                 else found.all = true;
@@ -258,6 +268,7 @@ jobs:
                 }
                 let inScopes = false;
                 let scope = null;
+                let scopeIndent = null;
                 for (const raw of ((await readText(`${base}.yarnrc.yml`, ref)) ?? "").split(
                   /\r?\n/,
                 )) {
@@ -267,7 +278,13 @@ jobs:
                   if (indent === 0) {
                     inScopes = entry.key === "npmScopes";
                     scope = null;
-                  } else if (inScopes && indent === 2) scope = entry.key;
+                    scopeIndent = null;
+                    // Flow-style scopes are not parsed, so assume the worst.
+                    if (inScopes && entry.value) found.all = true;
+                  } else if (inScopes && (scopeIndent === null || indent === scopeIndent)) {
+                    scopeIndent = indent;
+                    scope = entry.key;
+                  }
                   if (entry.key !== "npmRegistryServer") continue;
                   if (indent === 0) mark(null, entry.value);
                   else if (inScopes && scope) mark(scope, entry.value);
