@@ -136,11 +136,13 @@ together always verifies, which is what matters for the archival use case.
 `vscode`; npm names may contain `@scope/` slashes) returns a
 [shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
 for the most recent review of that package's release line that the badge may
-answer with. Two routes qualify a review: an **approved, published release of a
+answer with. Three routes qualify a review: an **approved, published release of a
 provably public npm package**, which needs no opt-in (see "Default-on" below),
-or any review an organization **deliberately feed-listed**. Candidates from
-both are ordered by _release_ — `compareBadgeCandidates`, semver over the
-registry's version — never by which scan finished last.
+any review an organization **deliberately feed-listed**, and a **registry-verified
+publisher's decision on a release after npm published it** (see "Decided after
+release" below). Candidates from all three are ordered by _release_ —
+`compareBadgeCandidates`, semver over the registry's version — never by which
+scan finished last.
 
 - Nothing qualifying → `not reviewed` (lightgrey). Always `200` so badge
   proxies never render an error, and byte-identical whether the package was
@@ -155,7 +157,16 @@ registry's version — never by which scan finished last.
   never speaks for a review nobody acted on.
 - Listed and rejected (`no_publish`) → `<version> rejected` (red). This records
   the review decision; it does not claim that npm publication was blocked. Listing route
-  only, for the same reason.
+  only, for the same reason — except a publisher's guarded decline of a release
+  npm already published, which is the warning (see "Decided after release").
+- Published without approval → `<version> published without approval`
+  (orange). The answering organization is a registry-verified publisher of the
+  package, and its own publication monitor alerted on that release: npm
+  published it without the organization's approval, or with other bytes than it
+  reviewed. When the organization had rejected it and npm published it anyway,
+  it reads `<version> rejected` (red) instead. A guarded decision on the alert
+  after release settles either: an approval reads `approved`, a decline
+  `rejected` (see "Flagging an unapproved publish").
 
 The version rendered is npm's own `registry_version` wherever there is one, and
 falls back to the manifest's only for a review the registry never answered
@@ -168,8 +179,9 @@ to list. `isDefaultBadgePublic` decides that at write time, and every part of
 it fails closed (see "Default-on" below).
 
 Everything else keeps the second opt-in the threat feed takes: a report shared
-privately by link never becomes queryable by package name. **Published-pair
-reviews never answer the badge at all** — see package identity below.
+privately by link never becomes queryable by package name. **A published-pair
+review never answers the badge on its own** — see package identity below — only
+as the guarded post-release decision below.
 
 ### Default-on (`badge_public`)
 
@@ -202,7 +214,7 @@ is false unless all four of these are provable:
   publicly. `publication-auto-enrollment.ts` gates on the same field.
 - **A verified digest of the reviewed bytes.** The scan's `artifactIntegrity`
   must be `verified`: npm's declared digest for the stage and the digest of
-  the bytes the scan read agree (`verifiedStagedDigest`). A badge that answers
+  the bytes the scan read agree (`isDefaultBadgePublic`). A badge that answers
   unattended must be able to notice npm serving other bytes under the version
   it approves, and that takes a digest of the approved bytes to compare the
   published tarball with (see "Releasing again"). A review that could not
@@ -324,6 +336,119 @@ reads position to break ties. Nothing about the _report_ changes — a default-o
 badge carries no link, no findings, and no feed entry. It is a verdict, not
 evidence.
 
+### Decided after release
+
+The publication monitor raises an alert when npm publishes a version the
+organization never approved — a release straight to npm, bypassing staging. The
+organization can **Scan** the alert: a published-pair review of the published
+bytes, linked to the alert, decided on the review page (see
+[`publication-monitor.md`](./publication-monitor.md#reviewing-an-alert-after-release)).
+That decision answers the badge exactly like a decision before publication —
+`<version> approved` (green), or `<version> rejected` (red) for a decline, since
+the version is already public and the decline is the warning — but only when a
+guard, checked when the review is decided and recorded on the alert
+(`resolution_badge = 'applied'`), holds:
+
+- **A registry-verified publisher of the exact name.** The same rule the off
+  switch uses (`isRegistryVerifiedPublisher`): the organization holds the
+  package's claim and has a completed staged review of a public-npm stage its
+  own token could read, under npm's name.
+  A published-pair review needs no credential and anyone can run one against any
+  public package, so a watcher's decision speaks for its own alert and nothing
+  else.
+- **The public npm registry**, for both the monitor that observed the release and
+  the review that read it.
+- **The reviewed bytes are the published bytes.** The digests of the tarball the
+  review's sandbox read (`stagedPublish.artifactDigest`) must equal the digests
+  the monitor recorded for the observation: every algorithm both carry agrees,
+  and at least one is shared. A release with no Drydock record was never hashed
+  by its check, so Scan asks the monitor to hash it.
+
+`listPostReleaseBadgeCandidates` enforces what can change again on every read:
+the organization is still a registry-verified publisher, the review is still a
+completed published-pair review of exactly the alerted release read from public
+npm, and its current decision is the one the resolution recorded. "Exactly the
+alerted release" is the registry-resolved pair the review was started for (its
+stage id, which is never redacted — the summary's copy of the name and version is
+stored through the secret redactor, so a token-shaped version would not match),
+never the name and version in the reviewed tarball's own `package.json`, which a
+hostile release controls and could otherwise use to keep a decline from landing. A row written
+some other way, or one that outlived its evidence, answers nothing. The
+candidate carries the alert's own coordinates (npm's version, from npm's
+packument), never the reviewed manifest. It answers the badge lines the
+monitor last recorded pointing at the version, and `latest` whenever the version
+is stable — a moved tag must not take a decline off the badge. For the same
+version, it outranks a review of the staged bytes, which may not be the ones
+consumers install, so a post-release approval also outranks a listed review of
+the staged bytes of the same version. Like the other npm routes it speaks only
+for the package's one canonical organization: publisher status requires the
+package claim, so an organization that staged the name without the claim, or
+moved its management elsewhere, keeps its own alert resolution but never
+reaches the badge. Should two post-release decisions on the same version ever
+both qualify, a decline wins, whichever was made last
+(`compareBadgeCandidates`). The off switch silences it like the other routes. The decision
+is re-evaluated only when the review is decided again: a resolution computed
+from a decision that has since changed never lands, and one whose review
+decision no longer matches is ignored on read.
+
+The monitor evidence reads the same decisions, for the pick's own organization
+(`findPublicationDiscrepancy`): a guarded approval of the quoted version clears
+its discrepancy and its byte mismatch, and one of a newer release clears that
+supersession; a guarded decline turns `not reviewed` (or `published without
+approval`) into `rejected`. The observation's historical verdict is never
+rewritten; the decision is read beside it.
+
+### Flagging an unapproved publish
+
+A release that npm published without going through the maintainer's approval is
+the event the badge most needs to say something about, and `not reviewed` —
+the same grey a package nobody scanned gets — undersells it. So when the
+monitor evidence below takes the badge off its pick, and the version it
+reports instead is one the answering organization's **own monitor alerted on**
+(`published_without_approval`, `published_despite_rejection`,
+`artifact_mismatch`, from the observations or the alert ledger), the badge
+reads `<version> published without approval` in orange.
+
+When that alert is `published_despite_rejection` — the organization rejected
+the published bytes, before npm published them or only after — the badge reads `<version> rejected`
+in red, like a decline after release. The rejection is the publisher's own
+verdict, and the release it is about is public now, so publishing it is the
+warning; the rule that a newer release's decision is never disclosed exists for
+releases npm has _not_ published. The same guards apply: only a
+registry-verified publisher's alert turns a badge red (anyone else's reads grey
+`not reviewed`), and a guarded approval after release clears it.
+
+- **Only a registry-verified publisher's alert flags.** The pick's organization
+  must pass `isRegistryVerifiedPublisher` for the name, checked on every badge
+  read that would flag. An organization whose listed review only _claims_ the
+  name (a workflow gate) has no tie to the package's releases, and its alert
+  would read as an accusation against the real maintainer; its badge keeps the
+  grey `not reviewed`. Publisher status follows the package claim (the off
+  switch's rule), and only the claim holder's reviews answer an npm badge, so
+  once a package's management moves, only the new holder's own alerts can flag
+  its releases. Default-on picks always pass: `badge_public` already
+  requires the organization's own token to have read a public npm stage.
+- **Only a confirmed discrepancy.** `unknown` evidence, a newer staged review
+  that is not on the badge, or a byte mismatch the badge found itself while the
+  monitor still says `unknown` stay `not reviewed`: none of them is the
+  monitor's record that npm published without an approval.
+- **Deciding it clears it.** Scanning the alert and deciding the release after
+  it shipped ("Decided after release" above) is the remedy: a guarded approval
+  removes the release from the evidence, so the badge returns to the
+  approved pick (or answers `<version> approved` from the post-release
+  decision itself); a guarded decline reads `rejected`. A decision that fails
+  the guard is recorded for the organization but leaves the flag, because
+  nothing established that the published bytes are the approved ones. An
+  approval resolves the alert only when its digests match the published ones,
+  whether or not it passed the publisher and registry rules.
+- **Nothing new leaks.** The version is npm's (from its packument); the claim
+  is the publisher's own monitor record, which its dashboard already lists
+  (see [`publication-monitor.md`](./publication-monitor.md#the-log-of-unapproved-publishes)).
+  Beyond a rejection reading `rejected`, the badge never says which discrepancy
+  it was, and never names who published.
+
+The serve counter records it as `superseded_unapproved`.
+
 ### Release lines (`?tag=`)
 
 A badge sits next to an install command, so it answers for the release that
@@ -374,14 +499,16 @@ PyPI and VS Code gate reviews remain manifest-claimed and render as
 are outside the npm claim model.
 
 **A tiebreak is not enough for a published-pair review, so it is not a badge
-candidate at all.** Ranking a `public-review` row last would still let it
+candidate by itself.** Ranking a `public-review` row last would still let it
 answer for a package nobody else has reviewed, and starting one needs no
 credential and no relationship to the package — any account can review any
 public release. That is a forged approval for a name the reviewer has no claim
 on. Two locks enforce it: `badgeLookupKey` gives such a scan no
 `public_package_key` on listing, so it never enters the badge index, and
 `listBadgeCandidateScans` excludes the source in SQL so a row that acquired a
-key some other way still never reaches `pickBadgeScan`.
+key some other way still never reaches `pickBadgeScan`. The one way one does is
+as a guarded decision after release, where the guard supplies the tie to the
+name that the review itself lacks (next section).
 
 ### Releasing again (`badge_package_key`)
 
@@ -439,15 +566,19 @@ back into a green badge.
 
 - **Another version where the quote stood** — npm now points the badge's tag
   at it (see below) — observed with anything but `approved_match` → that
-  version, `not reviewed`, exactly like the scan-based path. That includes
+  version, `not reviewed`, exactly like the scan-based path, or `published
+without approval` when it was a discrepancy (see "Flagging an unapproved
+  publish"). That includes
   `unknown`: an observation alone proves npm published the version, and
   nothing proves this organization approved it, so the badge must not keep
   vouching for the quoted one beside an install command that fetches another.
   An approved match is left to the scan-based path, which knows whether that
   release answers the badge itself.
 - **The quoted version itself** with a discrepancy — `published_without_approval`,
-  `published_despite_rejection`, `artifact_mismatch` → `<version> not
-reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
+  `published_despite_rejection`, `artifact_mismatch` → `<version> published
+without approval`, orange, or `<version> rejected`, red, for a rejection npm
+  published over (`not reviewed`, lightgrey, when the organization is not a
+  registry-verified publisher). A green `3.0.0 approved` beside published bytes that
   differ from the approved ones, or a publication the approval did not precede,
   vouches for something the review did not establish. A `blocked` pick stays
   red: it already warns.
@@ -482,11 +613,14 @@ breaks them is not seen by the inference.
 
 Same organization-scoping as the scan probe, and the rendered version is npm's
 (the monitor reads it from npm's packument), so nothing new leaks: "not
-reviewed" is the claim the badge already makes. No watch and no alert means no
+reviewed" is the claim the badge already makes, and "published without
+approval" is only ever a registry-verified publisher's own record. No watch and no alert means no
 evidence, and the badge answers from the scans alone. npm only. Like the
 registry-status sweep, the monitor runs in cron with no request colo to purge,
-so a badge it turns grey does so within the 300s cache TTL rather than at
-once.
+so a badge it turns grey or orange does so within the 300s cache TTL rather
+than at once. shields.io caches the payload again for its own `cacheSeconds`
+floor on top of that, so a README can show the old badge for up to about ten
+minutes.
 
 The probe runs on a badge cache miss against `scans.badge_package_key`, the
 release line written for **every** badge-eligible scan, shared or not. For a
@@ -596,7 +730,9 @@ quality of the review:
   review is shareable and feed-listable — publishing a review of a compromised
   public release is exactly what the feed is for — but it is never
   badge-discoverable, so it cannot render or displace an approval badge under
-  someone else's name.
+  someone else's name. The feed keeps this label even for a post-release review
+  that answers the badge ("Decided after release"): there, the guard, not the
+  review, supplies the tie to the name, and only on the badge.
 
 `scanPackageIdentity` allowlists the credential-backed sources rather than
 excluding the untrusted ones, so a scan source added later inherits
