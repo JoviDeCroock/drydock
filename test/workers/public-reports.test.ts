@@ -456,6 +456,56 @@ describe("public report sharing", () => {
     expect(consistency.decidedAt).toBeUndefined();
   });
 
+  test("a shared staged review names its gate-continuity verdict but not the gate", async () => {
+    const owner = await seedUser();
+    const gatedDigest = "e".repeat(64);
+    const scanId = await seedCompletedScan(owner, {
+      summary: {
+        gateContinuity: {
+          status: "matched",
+          reason: null,
+          algorithm: "sha256",
+          stagedDigest: gatedDigest,
+          review: {
+            scanId: "scan_gate_secret",
+            gateId: "gate_secret",
+            repository: "octo/private-monorepo",
+            environment: "secret-release-env",
+            runId: 987654321,
+            status: "approved",
+            decision: "approved",
+            decidedAt: "2026-03-04T09:12:31.004Z",
+            sha256: gatedDigest,
+          },
+        },
+      },
+    });
+
+    const app = publicApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    const text = await (await request(app, `/public/reports/${share.token}`)).text();
+    for (const internal of [
+      "scan_gate_secret",
+      "gate_secret",
+      "octo/private-monorepo",
+      "secret-release-env",
+      "987654321",
+      "2026-03-04T09:12:31.004Z",
+    ]) {
+      expect(text).not.toContain(internal);
+    }
+    // The verdict and both digests are what let a reader check the binding.
+    expect((JSON.parse(text) as { gateContinuity: unknown }).gateContinuity).toEqual({
+      status: "matched",
+      reason: null,
+      algorithm: "sha256",
+      stagedDigest: gatedDigest,
+      gateDigest: gatedDigest,
+    });
+  });
+
   test("unknown and malformed tokens return 404", async () => {
     const app = publicApp(null);
     const wellFormed = "A".repeat(43);

@@ -207,6 +207,41 @@ describe("batch approval of low-risk staged reviews", () => {
     expect((await readDecision(scanId))?.decision).toBe("no_publish");
   });
 
+  test("keeps every stage not bound to an approved gate review out of the batch", async () => {
+    const owner = await seedUser();
+    const digest = "a".repeat(64);
+    const review = { scanId: "scan_gate", gateId: "gate_1", decision: "approved", sha256: digest };
+    const continuity = (status: string, reason: string | null = null) => ({
+      summaryJson: {
+        gateContinuity: { status, reason, algorithm: "sha256", stagedDigest: digest, review },
+      },
+    });
+    const notGated = await seedReview(owner, "@batch/not-gated");
+    const matched = await seedReview(owner, "@batch/matched", continuity("matched"));
+    const held = await Promise.all([
+      seedReview(owner, "@batch/mismatch", continuity("digest-mismatch")),
+      seedReview(owner, "@batch/not-approved", continuity("gate-not-approved")),
+      seedReview(owner, "@batch/ungated", continuity("ungated")),
+      seedReview(owner, "@batch/unbound", continuity("unverified", "stage-not-bound-to-registry")),
+      seedReview(owner, "@batch/unchecked", continuity("unknown", "history-unavailable")),
+      // A status this predicate does not know fails closed.
+      seedReview(owner, "@batch/future", continuity("revoked")),
+    ]);
+
+    expect((await listApprovable(owner)).scans.map((scan) => scan.id).sort()).toEqual(
+      [notGated, matched].sort(),
+    );
+
+    // The write re-checks the predicate, so a caller naming the held stages
+    // directly cannot approve them either.
+    const res = await approve(owner, { scanIds: [matched, ...held] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { approved: Array<{ id: string }>; skipped: string[] };
+    expect(body.approved.map((row) => row.id)).toEqual([matched]);
+    expect(body.skipped.sort()).toEqual([...held].sort());
+    for (const id of held) expect((await readDecision(id))?.decision).toBeNull();
+  });
+
   test("rejects malformed requests before touching any review", async () => {
     const owner = await seedUser();
     const scanId = await seedReview(owner, "@batch/untouched");
