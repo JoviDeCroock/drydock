@@ -128,8 +128,11 @@ does not close the others.
    `holdStagedPackage` (and optionally `rejectStagedPackage`) plus stage read,
    so a review job in the maintainer's own CI can download a stage, check it,
    and hold it. Such a relationship cannot also carry `createPackage` or
-   `createStagedPackage`, and should point at a different workflow file or
-   environment from the publishing one. This is a carve-out from today's rule
+   `createStagedPackage`, and must match a different workflow file or
+   environment from every publishing relationship on the package, so no single
+   workflow can both stage and hold or reject. Its display name and report-link
+   origin are set when it is created, with 2FA, as for a grant; without them
+   its holds carry no report URL. This is a carve-out from today's rule
    that trust-relationship tokens cannot run `npm stage` subcommands; approve,
    lift, and discard stay blocked for OIDC. The limit is the same as for any
    in-repository review: a compromised repository can skip the review job, so
@@ -138,9 +141,14 @@ does not close the others.
 ### Hold semantics
 
 - A hold is attached to one stage by one grant. Repeating the call is
-  idempotent. Once a maintainer lifts that grant's hold on a stage, the grant
-  cannot hold the same stage again, so a stolen token cannot re-hold the
-  moment a maintainer lifts.
+  idempotent.
+- A maintainer's lift bars that grant from holding or rejecting the same stage
+  again, with one exception: the grant may escalate once, to a stricter reason
+  code (or from a hold to a reject, if it has `stage:reject`). That keeps a
+  reviewer able to act on new evidence found after a lift (a `needs-review`
+  hold lifted, then deeper analysis finds `malicious`), and bounds a stolen
+  token to one extra 2FA action per stage rather than a re-hold every time a
+  maintainer lifts.
 - Holds and approval are serialized by the registry. A hold placed after
   approval fails with a distinct `already-published` error, so the reviewer
   knows it lost the race.
@@ -178,8 +186,16 @@ reviewer's reject is a terminal hold:
   the clean, reviewed `1.2.3` stage and restage a malicious `1.2.3` with the
   same version and tag, which a maintainer would then approve as "the same
   release". Keeping the slot occupied removes that substitution.
-- A maintainer discards the rejected stage with 2FA, which frees the slot as
-  today's `npm stage reject` does, and can then restage.
+- A maintainer discards the rejected stage with 2FA. Discarding burns the
+  version by default, so the fix ships as a new version. Freeing the slot
+  instead (as today's `npm stage reject` does) is an explicit choice at
+  discard time, and any later stage of that version is marked on npmjs.com and
+  in the approve confirmation as replacing a reviewer-rejected stage, with
+  both tarball integrities shown. Without this, an attacker with reject and a
+  staging path could wait for the discard and race a malicious stage into the
+  freed slot, to be approved as "the restage I just triggered". The
+  replacement stage is subject to holds and minimum stage age like any
+  other.
 - npm may keep discarded stages privately for a retention period for its own
   security team. Retained bytes are never restorable or approvable.
 
@@ -296,7 +312,9 @@ staged/approved/rejected history npm already shows. Org owners can export it.
   notification emails without links leave a hostile holder very little to
   write with.
 - **Substitution through reject.** Covered under reject semantics: a
-  reviewer's reject never frees the version slot.
+  reviewer's reject never frees the version slot, a maintainer's discard burns
+  the version unless the maintainer chooses otherwise, and a replacement stage
+  is marked as such with both integrities shown.
 - **Approval racing the reviewer.** Covered by the minimum stage age and by
   serialized holds and approvals.
 - **Reviewer outage reads as "clean".** The absence of a hold is not a
