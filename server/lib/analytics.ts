@@ -52,6 +52,23 @@ export type AnalyticsEvent =
       timeToDecisionMs: number;
     }
   | {
+      /**
+       * The first recorded load of a completed review's report by an
+       * organization member, once per scan. Opened, not reviewed.
+       */
+      name: "scan.viewed";
+      organizationId: string;
+      ecosystem: string;
+      source: string;
+      /** `web`, or `notification` for a landing from an email or Slack link. */
+      surface: string;
+      /** npm's last known version status at that moment, `superseded`, or `none`. */
+      registryStatus: string;
+      decided: "decided" | "undecided";
+      /** From review completion to the first view: a human wait, like `scan.decided`. */
+      sinceCompletionMs: number;
+    }
+  | {
       name: "ai_review.finished";
       organizationId: string;
       ecosystem: string;
@@ -197,6 +214,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "scan.failed",
   "scan.discarded",
   "scan.decided",
+  "scan.viewed",
   "ai_review.finished",
   "ai_review.attempted",
   "ai_review.decided",
@@ -286,6 +304,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         event.ecosystem,
         [event.decision, event.releaseRisk, event.artifactRisk, event.via],
         [event.timeToDecisionMs],
+      );
+    case "scan.viewed":
+      return base(
+        event.organizationId,
+        event.ecosystem,
+        [event.source, event.surface, event.registryStatus, event.decided],
+        [event.sinceCompletionMs],
       );
     case "ai_review.finished":
       return base(

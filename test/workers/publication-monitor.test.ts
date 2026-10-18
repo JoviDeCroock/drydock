@@ -1,6 +1,6 @@
 import { createDb } from "../../server/db/client";
 import { env } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -342,6 +342,57 @@ test("releases without a Drydock record drain in bounded batches with no downloa
   expect(
     Object.fromEntries(observations.map((row) => [row.version, row.previousVersion])),
   ).toMatchObject({ "1.0.0": null, "2.0.0": "1.0.0", "8.0.0": "7.0.0" });
+});
+
+test("stamps npm's publication time on this organization's live staged reviews of the release only", async () => {
+  const { db, organizationId, watch } = await seed();
+  const other = await seedUser({ name: "Elsewhere" });
+  const ids = {
+    live: crypto.randomUUID(),
+    superseded: crypto.randomUUID(),
+    manifestOnly: crypto.randomUUID(),
+    otherVersion: crypto.randomUUID(),
+    otherOrganization: crypto.randomUUID(),
+    gate: crypto.randomUUID(),
+  };
+  await insertReview(db, organizationId, { id: ids.live });
+  await insertReview(db, organizationId, {
+    id: ids.superseded,
+    registryStatusSupersededAt: new Date(),
+  });
+  // A tarball manifest naming the watched package cannot borrow its timeline.
+  await insertReview(db, organizationId, {
+    id: ids.manifestOnly,
+    registryPackageName: "@drydock/someone-else",
+  });
+  await insertReview(db, organizationId, {
+    id: ids.otherVersion,
+    stagedVersion: "2.0.0",
+    registryVersion: "2.0.0",
+  });
+  await insertReview(db, other.organizationId, { id: ids.otherOrganization });
+  await insertReview(db, organizationId, { id: ids.gate, source: "workflow_gate" });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
+  );
+
+  await checkNpmPublicationWatch(db, env, watch);
+
+  const rows = await db
+    .select({ id: scans.id, registryPublishedAt: scans.registryPublishedAt })
+    .from(scans)
+    .where(inArray(scans.id, Object.values(ids)));
+  const stamped = Object.fromEntries(rows.map((row) => [row.id, row.registryPublishedAt]));
+  expect(stamped[ids.live]).toEqual(watch.createdAt);
+  for (const id of [
+    ids.superseded,
+    ids.manifestOnly,
+    ids.otherVersion,
+    ids.otherOrganization,
+    ids.gate,
+  ]) {
+    expect(stamped[id]).toBeNull();
+  }
 });
 
 test("records which dist-tags point at each release and keeps settled ones current", async () => {

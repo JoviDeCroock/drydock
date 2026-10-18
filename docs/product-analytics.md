@@ -5,8 +5,9 @@ scans run, how long they take, how often they fail, whether the AI reviewer is
 healthy, whether maintainers agree with the risk grade, and how many package
 diffs get read.
 
-Scope is deliberately narrow: it counts work done across the review funnel and
-successful public diff reads. Marketing page views and channel attribution were
+Scope is deliberately narrow: it counts work done across the review funnel,
+whether members open a completed review's report, and successful public diff
+reads. Marketing page views and channel attribution were
 removed — they measured traffic rather than work done, and every event they
 produced sat in the hot path of serving a static document.
 
@@ -43,6 +44,11 @@ Matching [`security-model.md`](./security-model.md):
   Graph metadata.
 - **No traffic data.** Referrers, campaign parameters, and page views of the
   landing and docs surfaces are not classified, counted, or stored anywhere.
+- **Report views are per scan, never per user.** The scan row keeps when its
+  report was first and last loaded, how many times, and how the first load
+  arrived; nothing records who loaded it. The question is whether anyone in the
+  organization looked before publication, and per-user rows would turn that
+  into individual activity tracking for no extra answer.
 - **Nothing is written from the browser.** No client script, no beacon
   endpoint, no cookie — and therefore no new anonymous surface to rate-limit or
   document. Every event is emitted by the Worker while it is already handling
@@ -52,7 +58,68 @@ Matching [`security-model.md`](./security-model.md):
 union, and fails if an arm is added without being exercised — so a new event
 cannot ship without a privacy assertion.
 
+## Report views
+
+Drydock records when organization members load a completed review's report, so
+"did anyone open this before npm published it?" has an answer. It is
+deliberately "the report was opened", never "the release was reviewed": a page
+load proves someone fetched the report, not that anyone read it.
+
+Recorded by `GET /api/v1/scans/:id` (the scan detail read) for a `complete`
+scan, after the response through `waitUntil`, so the write can neither slow nor
+fail the read (`server/lib/scan/report-view.ts`, `server/db/scan-views.ts`).
+Loads of queued, running, or failed reviews have no report and are not views.
+Public share links, `/diff`, the report export, and the status poll are other
+surfaces and record nothing. Four columns on `scans` (migration `0040`):
+
+- `report_first_viewed_at` / `report_last_viewed_at` — first and latest load.
+- `report_view_count` — loads, including reloads and the load that follows a
+  change on the page. Written as 0 when the scan is created. Rows that existed
+  before view tracking have null, so their earlier loads, which went
+  unrecorded, are never read as "not opened"; for them `report_first_viewed_at`
+  is the earliest recorded load, and the release timeline says so.
+- `report_first_view_surface` — `web`, or `notification` when the first load
+  was a landing from an email or Slack link (those links carry
+  `?via=notification`, which the page passes on once and then drops from its
+  address). The value is a counting hint, never authority. A GitHub comment link
+  counts as `web`.
+
+Writes never touch `updated_at`: a view is not a change to the review.
+
+**Opened before publication.** `reportOpenedBeforePublication` in
+`server/db/scan-views.ts` answers `opened`, `not_opened`, or `unknown` for a
+completed, non-superseded staged review (`manual` / `auto_discovery`), and
+null when there is no evidence of publication. The scan detail response carries
+it as `scan.reportOpenedBeforePublication`. Publication evidence is, in order:
+
+1. `registry_published_at`, npm's own publication time for the version, stamped
+   by this organization's [publication monitor](./publication-monitor.md) when it
+   observes the release. The first view orders against it, except within 10
+   seconds either side, which is `unknown` because the two clocks are
+   independent.
+2. A `published` or `deleted` [version status](./registry-version-status.md),
+   which only says the release was out by `registry_version_status_at`. A view
+   before that observation is `unknown`; only a view after it, or no view at all,
+   is `not_opened`.
+
+A stage leaving npm's stage list, a `blocked` status, or no status at all is
+not publication, and the answer is null. `not_opened` also requires
+`report_view_count` to be non-null (counted since creation); an older review can
+prove `opened` and nothing else. The answer describes the organization, not a
+person, and "not opened" never says who should have looked.
+[`ops-snapshot.md`](./ops-snapshot.md) aggregates the same rule in SQL, and
+`test/report-view-verdict.test.ts` runs both over the same rows.
+
 ## Known gaps
+
+**A report view is a load, and the answer is mostly bounded.** Without a
+publication-monitor observation, Drydock only knows a release was published by
+the time its version status was last read, so a report opened before that read is
+`unknown` rather than `opened`. Watched packages get npm's exact publication
+time. A scan created between applying migration `0040` and deploying the code
+that records views is counted from 0 although its first loads went unrecorded;
+that window is minutes. Every authenticated read today is a browser session, so
+there is no API-key surface yet.
 
 **`badge.served` counts serves, never impressions.** A README badge is fetched
 by shields.io, and on GitHub by Camo in front of that, and this Worker caches
@@ -107,8 +174,8 @@ disagreement worth adjudicating; do not tune or promote a reviewer directly on
 raw agreement rate.
 
 **`double1` is not one quantity.** It is a machine duration in milliseconds for
-every event except `scan.decided`, where it is a human hold time — also in
-milliseconds, but on a scale of hours or days. A dataset-wide
+every event except `scan.decided` and `scan.viewed`, where it is a human wait —
+also in milliseconds, but on a scale of hours or days. A dataset-wide
 `quantile(0.95)(double1)` mixes the two; always filter by `blob2` first.
 
 **Ecosystem on `scan.decided` is the decision path, not the registry.** Every
@@ -164,6 +231,7 @@ low-volume one out of the dataset.
 | `scan.failed`               | `executeScanJob`, gate runner | failure rate by error code                           |
 | `scan.discarded`            | `executeScanJob`              | queued scans retired before they ever ran            |
 | `scan.decided`              | both decision paths           | time-to-decision; agreement with the grade           |
+| `scan.viewed`               | `GET /api/v1/scans/:id`       | whether reports get opened, how soon, from where     |
 | `ai_review.finished`        | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
 | `ai_review.attempted`       | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
 | `ai_review.decided`         | both decision paths           | feedback by assessment and reviewer version          |
@@ -197,6 +265,16 @@ release solely through a gate.
 through the same loader and is called once per file the visitor opens, so
 counting it would report one page view as thirty and skew the cache column
 toward `hit` (only the first request of a session can miss).
+
+`scan.viewed` fires once per scan, on the first recorded load of a completed
+review counted since creation (the load that takes `report_view_count` from 0
+to 1), so reloads and older reviews add nothing. `blob5` is the scan source,
+`blob6` the surface (`web` / `notification`), `blob7` npm's last known version
+status at that moment (`superseded`, or `none` when unknown), and `blob8`
+whether a Drydock decision was already recorded (`decided` / `undecided`);
+`double1` is the time from review completion to that first load. Whether the
+load came before publication is usually not known yet when it happens, so the
+event does not claim it; read that from the ops snapshot.
 
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at

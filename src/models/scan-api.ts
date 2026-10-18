@@ -134,6 +134,13 @@ export interface PersistedScanDetail {
     stagedCreatedAt?: string | number | Date | null;
     /** Display name of the member who recorded the decision, when known. */
     decidedByName?: string | null;
+    /** npm's own publication time, when this organization's publication monitor saw it. */
+    registryPublishedAt?: string | number | Date | null;
+    /** Earliest recorded report load by an organization member. Opened, not reviewed. */
+    reportFirstViewedAt?: string | number | Date | null;
+    /** Null for reviews older than view tracking, whose earlier loads went unrecorded. */
+    reportViewCount?: number | null;
+    reportOpenedBeforePublication?: "opened" | "not_opened" | "unknown" | null;
   };
   riskSummary?: ScanRiskSummary | null;
   files: Array<{
@@ -297,10 +304,17 @@ export function deleteScan(id: string): Promise<{ ok: true; id: string }> {
 
 export function getScan(
   id: string,
-  options: { poll?: boolean } = {},
+  options: { poll?: boolean; via?: "notification" } = {},
 ): Promise<PersistedScanDetail> {
-  const suffix = options.poll ? "?poll=1" : "";
-  return apiFetch<PersistedScanDetail>(`/api/v1/scans/${encodeURIComponent(id)}${suffix}`);
+  const params = new URLSearchParams();
+  if (options.poll) params.set("poll", "1");
+  // Tells the server this load is a landing from an email or Slack link, so
+  // the first recorded report view can say so.
+  if (options.via) params.set("via", options.via);
+  const query = params.toString();
+  return apiFetch<PersistedScanDetail>(
+    `/api/v1/scans/${encodeURIComponent(id)}${query ? `?${query}` : ""}`,
+  );
 }
 
 /**

@@ -9,6 +9,7 @@ import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-c
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
+import { reportOpenedBeforePublication } from "./scan-views";
 import { organizationMembers, scanEvents, scans, user } from "./schema";
 
 export type ScanDetailFileMode = "samples" | "list" | "omit";
@@ -81,7 +82,11 @@ export async function getScan(
       })
     : [];
   return {
-    scan: { ...scan, decidedByName },
+    scan: {
+      ...scan,
+      decidedByName,
+      reportOpenedBeforePublication: reportOpenedBeforePublication(scan),
+    },
     files: responseFiles,
     findings: annotatedFindings,
     riskSummary:

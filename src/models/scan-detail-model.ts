@@ -406,10 +406,10 @@ export const ScanDetailModel = createModel((id: string) => {
     compare,
     compareFailure,
 
-    async load(): Promise<void> {
+    async load(options: { via?: "notification" } = {}): Promise<void> {
       const id = this.scanId.peek();
       try {
-        const data = await getScan(id);
+        const data = await getScan(id, options);
         batch(() => {
           this.detail.value = data;
           this.share.value = data.scan.publicShareToken

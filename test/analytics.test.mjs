@@ -193,6 +193,16 @@ describe("recordProductEvent", () => {
         timeToDecisionMs: 300_000,
       },
       {
+        name: "scan.viewed",
+        organizationId: "org_1",
+        ecosystem: "npm",
+        source: "auto_discovery",
+        surface: "notification",
+        registryStatus: "staged",
+        decided: "undecided",
+        sinceCompletionMs: 120_000,
+      },
+      {
         name: "ai_review.finished",
         organizationId: "org_1",
         ecosystem: "npm",
