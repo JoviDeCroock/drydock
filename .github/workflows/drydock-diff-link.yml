@@ -6,13 +6,18 @@ name: drydock-diff-link
 # snippet, minus this comment and with actions on their major tags. Never checks
 # out or executes the updated code.
 
+# pull_request_target runs this file, and the action commits it pins, as they
+# are on the base branch. Dependabot and Renovate both bump actions, so under
+# pull_request a bump of the actions below would run the bumped code with write
+# access before anyone reviewed it. Nothing from the PR head is checked out or
+# executed here; its lockfiles are only read as data through the API.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
 
 # Dependabot-triggered runs honor this permissions key; the read-only default
 # token does not apply when permissions are set explicitly. contents: read lets
-# a Renovate run read the PR's lockfiles through the API.
+# the run read lockfiles and registry config through the API.
 permissions:
   contents: read
   pull-requests: write
@@ -94,25 +99,32 @@ jobs:
             // `dependency-version` metadata -- a value that can lag the version
             // the PR actually merges once Dependabot revises the group.
             async function dependabotPairs() {
-              const ecosystem = { npm_and_yarn: "npm", pip: "pypi" }[process.env.ECOSYSTEM];
+              const ecosystem = { npm_and_yarn: "npm", bun: "npm", pip: "pypi", uv: "pypi" }[
+                process.env.ECOSYSTEM
+              ];
               if (!ecosystem) {
                 core.info(`No /diff pages for ${process.env.ECOSYSTEM}.`);
                 return [];
               }
               const names = process.env.NAMES || "";
-              if (!names.includes(",")) {
-                return [{ ecosystem, name: names, from: process.env.FROM, to: process.env.TO }];
+              let pairs = [{ ecosystem, name: names, from: process.env.FROM, to: process.env.TO }];
+              if (names.includes(",")) {
+                const { data } = await github.rest.pulls.listCommits({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  per_page: 1,
+                });
+                const message = data[0]?.commit?.message ?? "";
+                pairs = [
+                  ...message.matchAll(/^Updates `([^`\n]*)` from ([^ \n]*) to ([^ \n]*)$/gm),
+                ].map(([, name, from, to]) => ({ ecosystem, name, from, to }));
               }
-              const { data } = await github.rest.pulls.listCommits({
-                owner,
-                repo,
-                pull_number: pr.number,
-                per_page: 1,
-              });
-              const message = data[0]?.commit?.message ?? "";
-              return [
-                ...message.matchAll(/^Updates `([^`\n]*)` from ([^ \n]*) to ([^ \n]*)$/gm),
-              ].map(([, name, from, to]) => ({ ecosystem, name, from, to }));
+              // The commit does not say which registry a package came from, so
+              // the repository's own registry config is the only evidence.
+              if (ecosystem !== "npm") return pairs;
+              const registries = await customRegistries("", pr.head.sha);
+              return pairs.filter((pair) => publicName(registries, pair.name));
             }
 
             // Renovate's PR body, title, branch, and commit message are not
@@ -125,24 +137,31 @@ jobs:
                 core.info("Renovate PR from another repository; skipping.");
                 return [];
               }
-              const files = await github.paginate(github.rest.pulls.listFiles, {
-                owner,
-                repo,
-                pull_number: pr.number,
-                per_page: 100,
-              });
+              let files;
+              let compare;
+              try {
+                files = await github.paginate(github.rest.pulls.listFiles, {
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  per_page: 100,
+                });
+                ({ data: compare } = await github.rest.repos.compareCommitsWithBasehead({
+                  owner,
+                  repo,
+                  basehead: `${pr.base.sha}...${pr.head.sha}`,
+                  per_page: 1,
+                }));
+              } catch (error) {
+                core.warning(`Could not list the PR's changes (${error?.name}).`);
+                return [];
+              }
               const lockfiles = files
                 .filter((file) => file.status !== "added" && file.status !== "removed")
                 .map((file) => ({ ...file, kind: lockfileKind(file.filename) }))
                 .filter((file) => file.kind)
                 .slice(0, MAX_LOCKFILES);
               if (!lockfiles.length) return [];
-              const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({
-                owner,
-                repo,
-                basehead: `${pr.base.sha}...${pr.head.sha}`,
-                per_page: 1,
-              });
               const refs = { before: compare.merge_base_commit.sha, after: pr.head.sha };
               const pairs = [];
               for (const file of lockfiles) {
@@ -151,8 +170,13 @@ jobs:
                   const before = await readLockfile(file.kind, beforePath, refs.before);
                   const after = await readLockfile(file.kind, file.filename, refs.after);
                   if (!before || !after) continue;
+                  const registries =
+                    file.kind.ecosystem === "npm"
+                      ? await customRegistries(dirname(file.filename), refs.after)
+                      : { all: false, scopes: new Set() };
                   for (const [key, next] of after) {
                     const prev = before.get(key);
+                    if (!publicName(registries, next.name)) continue;
                     if (prev && prev.name === next.name && prev.version !== next.version) {
                       pairs.push({
                         ecosystem: file.kind.ecosystem,
@@ -203,14 +227,57 @@ jobs:
               }
             }
 
+            const dirname = (path) =>
+              path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+
             async function readLockfile(kind, path, ref) {
               const text = await readText(path, ref);
               if (text === null) return null;
               if (!kind.manifest) return kind.parse(text);
-              const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
-              const manifest = await readText(`${dir}package.json`, ref);
+              const manifest = await readText(`${dirname(path)}package.json`, ref);
               return manifest === null ? null : kind.parse(text, JSON.parse(manifest));
             }
+
+            // A registry configured beside the lockfile or at the repository
+            // root means some names resolve somewhere Drydock cannot see. Those
+            // names are not diffable, may be confidential, and a same-named
+            // public package would make the summary describe someone else's code.
+            const PUBLIC_NPM = /^https:\/\/registry\.(npmjs\.org|yarnpkg\.com)\/?$/;
+
+            async function customRegistries(dir, ref) {
+              const found = { all: false, scopes: new Set() };
+              const mark = (scope, url) => {
+                if (PUBLIC_NPM.test(url)) return;
+                if (scope) found.scopes.add(`@${scope.replace(/^@/, "")}`);
+                else found.all = true;
+              };
+              for (const base of new Set([dir, ""])) {
+                const npmrc = (await readText(`${base}.npmrc`, ref)) ?? "";
+                for (const m of npmrc.matchAll(/^\s*(?:(@[^:\s]+):)?registry\s*=\s*(\S+)/gm)) {
+                  mark(m[1], m[2]);
+                }
+                let inScopes = false;
+                let scope = null;
+                for (const raw of ((await readText(`${base}.yarnrc.yml`, ref)) ?? "").split(
+                  /\r?\n/,
+                )) {
+                  const indent = raw.length - raw.trimStart().length;
+                  const entry = yamlKey(raw.trim());
+                  if (!entry) continue;
+                  if (indent === 0) {
+                    inScopes = entry.key === "npmScopes";
+                    scope = null;
+                  } else if (inScopes && indent === 2) scope = entry.key;
+                  if (entry.key !== "npmRegistryServer") continue;
+                  if (indent === 0) mark(null, entry.value);
+                  else if (inScopes && scope) mark(scope, entry.value);
+                }
+              }
+              return found;
+            }
+
+            const publicName = (registries, name) =>
+              !registries.all && !registries.scopes.has(name.split("/")[0]);
 
             // Each parser maps "where a direct dependency is declared" to the
             // package and version it resolves to. Transitive churn is not a bump
@@ -412,6 +479,8 @@ jobs:
 
             function requirementsPins(text) {
               const pins = new Map();
+              // Another index means a pin may resolve outside pypi.org.
+              if (/^\s*(-i|--index-url|--extra-index-url)\b/m.test(text)) return pins;
               for (const raw of text.split(/\r?\n/)) {
                 const m = PIN.exec(raw);
                 if (!m) continue;
@@ -430,11 +499,10 @@ jobs:
             // a code span: GitHub does not turn code into links, mentions,
             // images, or HTML. The fence is longer than any backtick run inside.
             function code(value, max) {
-              let text = String(value ?? "")
-                .replace(
-                  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g,
-                  " ",
-                )
+              let text = (typeof value === "string" ? value : "")
+                .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u115f\u1160\ufeff\uffa0]/g, " ")
+                .replace(/[\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164]/g, " ")
+                .replace(/[\u{e0000}-\u{e007f}]/gu, " ")
                 .replace(/\s+/g, " ")
                 .trim();
               const chars = [...text];
@@ -479,6 +547,14 @@ jobs:
               if (newBin) flags.push(plural(newBin, "new `bin` command"));
               const findings = list(payload?.findings)
                 .filter((f) => f && f.releaseDelta === true && SEVERITY_RANK.has(f.severity))
+                // Only checked primitives leave this function: rendering runs
+                // outside the fetch's error handling.
+                .map((f) => ({
+                  severity: f.severity,
+                  ruleId: typeof f.ruleId === "string" && RULE_ID.test(f.ruleId) ? f.ruleId : null,
+                  file: typeof f.file === "string" ? f.file : "",
+                  reason: typeof f.reason === "string" ? f.reason : "",
+                }))
                 .sort((a, b) => SEVERITY_RANK.get(b.severity) - SEVERITY_RANK.get(a.severity));
               return {
                 risk,
@@ -548,10 +624,7 @@ jobs:
               if (s.flags.length)
                 lines.push(`  - ${s.flags.join(", ").replace(/^./, (c) => c.toUpperCase())}`);
               for (const f of s.findings.slice(0, MAX_FINDINGS)) {
-                const rule =
-                  typeof f.ruleId === "string" && RULE_ID.test(f.ruleId)
-                    ? code(f.ruleId, 80)
-                    : "unnamed rule";
+                const rule = f.ruleId ? code(f.ruleId, 80) : "unnamed rule";
                 lines.push(
                   `  - ${f.severity}: ${rule} in ${code(f.file, 120)}: ${code(f.reason, 200)}`,
                 );

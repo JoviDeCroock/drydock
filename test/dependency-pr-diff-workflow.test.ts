@@ -34,6 +34,7 @@ interface Run {
   contents?: Record<string, string>;
   comments?: Array<{ id: number; body: string; user: { login: string } }>;
   headRepo?: string;
+  listFilesError?: Error;
   fetch?: (url: URL) => Promise<Response> | Response;
 }
 
@@ -49,9 +50,10 @@ async function runWorkflow(run: Run) {
     rest: {
       pulls: {
         listCommits: async () => ({ data: [{ commit: { message: run.commitMessage ?? "" } }] }),
-        listFiles: async () => ({
-          data: (run.files ?? []).map((file) => ({ status: "modified", ...file })),
-        }),
+        listFiles: async () => {
+          if (run.listFilesError) throw run.listFilesError;
+          return { data: (run.files ?? []).map((file) => ({ status: "modified", ...file })) };
+        },
       },
       repos: {
         compareCommitsWithBasehead: async () => ({ data: { merge_base_commit: { sha: "base" } } }),
@@ -196,7 +198,11 @@ function proseOutsideCode(markdown: string): string {
 describe("published workflow snippet", () => {
   test("is the repository workflow minus its header, with actions on major tags", () => {
     expect(DEPENDENCY_PR_WORKFLOW).toBe(publishedDependencyPrWorkflow(REPO_WORKFLOW));
-    expect(DEPENDENCY_PR_WORKFLOW.startsWith("name: drydock-diff-link\n\non:\n")).toBe(true);
+    expect(
+      DEPENDENCY_PR_WORKFLOW.startsWith(
+        "name: drydock-diff-link\n\n# pull_request_target runs this file",
+      ),
+    ).toBe(true);
     expect(DEPENDENCY_PR_WORKFLOW).not.toMatch(/this\s+repo/i);
     expect(DEPENDENCY_PR_WORKFLOW).not.toMatch(/[0-9a-f]{40}/);
     expect(DEPENDENCY_PR_WORKFLOW).toContain("uses: dependabot/fetch-metadata@v3\n");
@@ -213,7 +219,12 @@ describe("published workflow snippet", () => {
   test("authenticates the Dependabot commit before anything reads it", () => {
     const steps = REPO_WORKFLOW.slice(REPO_WORKFLOW.indexOf("steps:"));
     expect(steps.indexOf("dependabot/fetch-metadata")).toBeLessThan(steps.indexOf("github-script"));
-    expect(REPO_WORKFLOW).not.toMatch(/actions\/checkout|pull_request_target/);
+    // Base-branch workflow and pins: a PR bumping the actions cannot change
+    // what runs with write access. Nothing from the head is checked out.
+    expect(REPO_WORKFLOW).toMatch(
+      /^on:\n {2}pull_request_target:\n {4}types: \[opened, synchronize\]\n/m,
+    );
+    expect(REPO_WORKFLOW).not.toMatch(/actions\/checkout|^\s*pull_request:|\bref:/m);
     expect(REPO_WORKFLOW).toMatch(
       /^permissions:\n {2}contents: read\n {2}pull-requests: write\n\n/m,
     );
@@ -347,6 +358,51 @@ describe("Dependabot comment", () => {
     );
     expect(body.split("\n").every((line) => !line.startsWith("#"))).toBe(true);
     expect(body).not.toMatch(/[\u202e\u2066]/);
+  });
+
+  test("renders non-string finding fields as empty instead of failing the job", async () => {
+    const odd = payload({
+      findings: [
+        {
+          severity: "high",
+          ruleId: ["x"],
+          file: { toString: 1 },
+          reason: [{ toString: 1 }],
+          releaseDelta: true,
+        },
+      ],
+    });
+    const { posted } = await runWorkflow({ env: single, fetch: () => json(odd) });
+    expect(posted[0].body).toContain("  - high: unnamed rule in `-`: `-`");
+  });
+
+  test("leaves out npm bumps the repository resolves from its own registry", async () => {
+    const { posted, fetchUrls } = await runWorkflow({
+      env: { ...single, NAMES: "@corp/tool, left-pad" },
+      commitMessage:
+        "Updates `@corp/tool` from 1.0.0 to 1.1.0\nUpdates `left-pad` from 1.0.0 to 1.1.0",
+      contents: { "head:.npmrc": "@corp:registry=https://npm.corp.example/\n" },
+      fetch: () => json(payload({ findings: [] })),
+    });
+    expect(fetchUrls.map((url) => url.searchParams.get("package"))).toEqual(["left-pad"]);
+    expect(posted[0].body).not.toContain("@corp");
+  });
+
+  test("treats Dependabot's uv and bun ecosystems as PyPI and npm", async () => {
+    const uv = await runWorkflow({
+      env: {
+        ECOSYSTEM: "uv",
+        NAMES: "httpx",
+        FROM: "0.27.0",
+        TO: "0.27.2",
+        DRYDOCK_SUMMARIES: "false",
+      },
+    });
+    expect(uv.posted[0].body).toContain("(https://drydock.org/diff/pypi/httpx/0.27.0/0.27.2)");
+    const bun = await runWorkflow({
+      env: { ...single, ECOSYSTEM: "bun", DRYDOCK_SUMMARIES: "false" },
+    });
+    expect(bun.posted[0].body).toContain("(https://drydock.org/diff/left-pad/1.0.0/1.1.0)");
   });
 
   test("degrades to the link with a note when the API fails", async () => {
@@ -487,7 +543,10 @@ describe("Renovate comment", () => {
         "head:package-lock.json": lock("4.17.21", "1.2.0", "2.0.0"),
       },
     });
-    expect(contentReads).toEqual(["base:package-lock.json", "head:package-lock.json"]);
+    expect(contentReads.filter((read) => !/\.(npmrc|yarnrc\.yml)$/.test(read))).toEqual([
+      "base:package-lock.json",
+      "head:package-lock.json",
+    ]);
     expect(bullets(posted[0].body)).toEqual([
       "- [`lodash` 4.17.20 → 4.17.21](https://drydock.org/diff/lodash/4.17.20/4.17.21)",
       "- [`real-pkg` 1.0.0 → 1.2.0](https://drydock.org/diff/real-pkg/1.0.0/1.2.0)",
@@ -664,5 +723,62 @@ describe("Renovate comment", () => {
     });
     expect(broken.posted).toEqual([]);
     expect(broken.core.warning).toHaveBeenCalledOnce();
+
+    const apiDown = await runWorkflow({
+      ...renovate,
+      listFilesError: Object.assign(new Error("Server Error"), { name: "HttpError", status: 502 }),
+    });
+    expect(apiDown.posted).toEqual([]);
+    expect(apiDown.core.warning).toHaveBeenCalledOnce();
+  });
+
+  test("skips packages a configured registry may serve", async () => {
+    const lock = (scoped: string, plain: string) =>
+      [
+        "lockfileVersion: '9.0'",
+        "importers:",
+        "  .:",
+        "    dependencies:",
+        "      '@corp/tool':",
+        "        specifier: ^1.0.0",
+        `        version: ${scoped}`,
+        "      '@other/tool':",
+        "        specifier: ^1.0.0",
+        `        version: ${scoped}`,
+        "      left-pad:",
+        "        specifier: ^1.0.0",
+        `        version: ${plain}`,
+      ].join("\n");
+    const files = [{ filename: "app/pnpm-lock.yaml" }];
+    const contents = {
+      "base:app/pnpm-lock.yaml": lock("1.0.0", "1.0.0"),
+      "head:app/pnpm-lock.yaml": lock("1.1.0", "1.1.0"),
+      "head:app/.npmrc":
+        "@corp:registry=https://npm.corp.example/\nregistry=https://registry.npmjs.org/\n",
+      "head:.yarnrc.yml": 'npmScopes:\n  other:\n    npmRegistryServer: "https://other.example"\n',
+    };
+    const scoped = await runWorkflow({ ...renovate, files, contents });
+    expect(bullets(scoped.posted[0].body)).toEqual([
+      "- [`left-pad` 1.0.0 → 1.1.0](https://drydock.org/diff/left-pad/1.0.0/1.1.0)",
+    ]);
+
+    const everything = await runWorkflow({
+      ...renovate,
+      files,
+      contents: { ...contents, "head:.npmrc": "registry=https://npm.corp.example/" },
+    });
+    expect(everything.posted).toEqual([]);
+
+    const pip = await runWorkflow({
+      ...renovate,
+      files: [{ filename: "requirements.txt" }],
+      contents: {
+        "base:requirements.txt":
+          "--extra-index-url https://pypi.corp.example/simple\ninternal==1.0\n",
+        "head:requirements.txt":
+          "--extra-index-url https://pypi.corp.example/simple\ninternal==1.1\n",
+      },
+    });
+    expect(pip.posted).toEqual([]);
   });
 });

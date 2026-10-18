@@ -70,17 +70,24 @@ workflow, `.github/workflows/drydock-diff-link.yml`: `dependabot/fetch-metadata`
 for Dependabot PRs, then one `actions/github-script` step that derives the
 version pairs, fetches each pair's summary from the public diff API, and upserts
 one comment. It is copy-paste YAML on the Docs page with no Drydock-owned action.
-The workflow never checks out or executes PR code, so granting
+The trigger is `pull_request_target`, so GitHub runs this workflow file and the
+action commits it pins as they are on the base branch. Under `pull_request`, the
+file came from the PR's merge ref. Dependabot and Renovate both bump GitHub
+Actions, so a PR that bumped `fetch-metadata` or `github-script` would have run
+the bumped, unreviewed action with write access. `pull_request_target` is also
+what the `dependabot/fetch-metadata` README recommends for write access.
+`pull_request_target`'s usual hazard is checking out and running the PR head
+with the base repository's token. This workflow never checks out or executes PR
+code. It reads PR lockfiles as data through the API, so granting
 `pull-requests: write` to the run is safe. `contents: read` is the only other
-scope, so a Renovate run can read lockfiles through the API. Note that
-Dependabot-triggered `pull_request` runs honor the workflow-level `permissions`
-key (GitHub changelog 2022-02-10); the `dependabot/fetch-metadata` README still
-recommends `pull_request_target` for write access, but GitHub's own Dependabot
-automation tutorial uses exactly this `pull_request` + `permissions` shape.
+scope, for those lockfile and registry-config reads. Dependabot-triggered runs
+honor the workflow-level `permissions` key (GitHub changelog 2022-02-10). The
+cost is that a change to the workflow itself takes effect only after it merges,
+so a PR editing the file is not exercised against itself.
 
 The job runs only for PRs whose author is `dependabot[bot]` or `renovate[bot]`.
 That login is GitHub's own record of who opened the PR, not something a fork
-can claim. Self-hosted Renovate opens PRs under its own account, so it needs
+can claim, which matters because `pull_request_target` also fires for fork PRs. Self-hosted Renovate opens PRs under its own account, so it needs
 that login added to the `if:`.
 
 For Dependabot PRs, `fetch-metadata` runs first for its own sake, not only for
@@ -231,17 +238,35 @@ the same minute) can hit 429. Those entries degrade to the link.
 The aggregate is bounded by adopters' PR events, not page views. A popular
 release produces one PR per adopting repository, and every request after the
 first for that pair is served from the versioned colo/KV result cache. Cold
-computation happens once per pair, under the same sandbox caps as a browser
-visit. A rebased or revised PR fetches the same pairs again, all cache hits. The
-requests carry no credentials and the route persists nothing, so the anonymous
-surface's properties in `docs/security-model.md` are unchanged.
+computation runs once per pair in the common case, under the same sandbox caps
+as a browser visit. Requests for the same cold pair that arrive at the same
+moment can each compute it. A rebased or revised PR fetches the same pairs
+again, all cache hits. The requests carry no credentials, and the route writes
+only the result cache it already writes for browsers. Nothing reaches D1, so
+the anonymous surface's properties in `docs/security-model.md` are unchanged.
 
-What the workflow sends is each bumped package's name and version pair. The
-Renovate lockfile parsers skip entries they can see were resolved outside the
-public npm registry or pypi.org. Dependabot's commit message does not say, so a
-Dependabot bump of a private package is sent too, and Drydock answers 404 unless
-a same-named public package exists. If a repository's private package names are
-themselves confidential, set `DRYDOCK_SUMMARIES: "false"`.
+What the workflow sends is each bumped package's name and version pair. A
+private package would also be summarized wrongly: when a public package has the
+same name, the comment would describe that package instead. So the workflow
+drops a pair, link included, whenever the repository's own config says the name
+may resolve somewhere else:
+
+- npm, both bots: a non-public `registry=` or `@scope:registry=` in `.npmrc`, or
+  `npmRegistryServer` (top-level or under `npmScopes`) in `.yarnrc.yml`. Config
+  is read at the PR head from the lockfile's directory and the repository root;
+  for Dependabot, the root. A custom default registry drops every npm pair, and
+  a custom scope drops that scope.
+- npm lockfiles: a `package-lock.json` or yarn v1 entry whose `resolved` URL is
+  not the public registry.
+- PyPI: a requirements file with `-i`, `--index-url`, or `--extra-index-url`
+  contributes no pairs, and `uv.lock` counts only pypi.org packages.
+
+Those checks see only committed config. Registries set through environment
+variables, CI-only config, user-level `.npmrc`, `pip.conf`, or a Dependabot
+`registries:` block are invisible to the workflow. A Dependabot pip bump in
+particular is sent as-is. Drydock answers 404 for a name it can't find. If a
+repository's private package names are themselves confidential, set
+`DRYDOCK_SUMMARIES: "false"`.
 
 The workflow sends `x-drydock-client: dependency-pr`, which `public_diff.viewed`
 records in its `client` dimension (`docs/product-analytics.md`), so CI fetches
