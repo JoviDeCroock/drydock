@@ -15,6 +15,8 @@ export interface NotifyPublicationDiscrepancyInput {
   reason?: string | null;
 }
 
+// `reviewed_without_decision` is no longer recorded; it stays for alerts
+// raised before undecided reviews were tiered by risk.
 const UNDECIDED_REVIEW_REASONS = new Set([
   "review_pending",
   "review_failed",
@@ -36,12 +38,26 @@ function describe(
     reason === "review_history_limit"
       ? " Only the latest 100 Drydock records of this version were compared."
       : "";
+  const approveFirst =
+    " An approval recorded in Drydock before the stage is approved on npm keeps a release like this from alerting.";
   switch (status) {
     case "published_without_approval":
+      if (reason === "ai_flagged_without_decision") {
+        return {
+          title: `AI reviewer flagged a release published with no approval in ${organization}`,
+          detail: `No approval in ${organization} predates the publication of this release, and Drydock's AI reviewer flagged risk in these exact bytes. Investigate whether someone here published it, then decide the review.${approveFirst}`,
+        };
+      }
+      if (reason === "reviewed_risk_without_decision") {
+        return {
+          title: `Published with no approval in ${organization}`,
+          detail: `No approval in ${organization} predates the publication of this release. Drydock's undecided review of these exact bytes did not grade the release low risk: decide it, or investigate if nobody here published it.${approveFirst}`,
+        };
+      }
       return {
         title: `Published with no approval in ${organization}`,
         detail: UNDECIDED_REVIEW_REASONS.has(reason ?? "")
-          ? `No approval in ${organization} predates the publication of this release. Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it.${reason === "review_failed" ? "" : " An approval recorded in Drydock before the stage is approved on npm keeps a release like this from alerting."}`
+          ? `No approval in ${organization} predates the publication of this release. Drydock has an undecided review of these exact bytes: decide it, or investigate if nobody here published it.${reason === "review_failed" ? "" : approveFirst}`
           : `No approval in ${organization} predates the publication of this release.${newestOnly}`,
       };
     case "published_despite_rejection":

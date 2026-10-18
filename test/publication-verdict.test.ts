@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   classifyPublication,
   isSettledUnknownReason,
+  undecidedReviewTier,
   type ReviewEvidence,
 } from "../server/lib/ecosystems/npm/publication-verdict";
 
@@ -43,6 +44,8 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
     decidedAt: before,
     status: "complete",
     summaryJson: stagedIntegrity(sha1),
+    riskSummaryJson: null,
+    aiJson: null,
     ...overrides,
   };
 }
@@ -176,10 +179,10 @@ describe("a record of the same bytes softens nothing without a decision", () => 
     },
   );
 
-  test("a completed review of the published bytes with no decision is published without approval", () => {
+  test("a completed undecided review with no readable release risk is published without approval", () => {
     expect(classify([review({ decision: null, decidedAt: null })])).toEqual({
       status: "published_without_approval",
-      reason: "reviewed_without_decision",
+      reason: "reviewed_risk_without_decision",
       scanId: "scan1",
     });
   });
@@ -263,7 +266,7 @@ describe("a restaged version", () => {
       classify([approvedA, review({ id: "stage-b", decision: null, decidedAt: null })]),
     ).toEqual({
       status: "published_without_approval",
-      reason: "reviewed_without_decision",
+      reason: "reviewed_risk_without_decision",
       scanId: "stage-b",
     });
     expect(classify([approvedA, review({ id: "stage-b" })])).toMatchObject({
@@ -521,11 +524,205 @@ test("settled unknown causes are the ones another check cannot resolve", () => {
   for (const reason of [
     "review_pending",
     "review_failed",
-    "reviewed_without_decision",
+    "reviewed_risk_without_decision",
     "review_history_limit",
     "artifact_timeout",
     null,
   ]) {
     expect(isSettledUnknownReason(reason), String(reason)).toBe(false);
   }
+});
+
+describe("an undecided completed review of the published bytes is tiered by risk", () => {
+  const risk = (releaseRisk: string) => ({
+    artifactRisk: "high",
+    releaseRisk,
+    contextRisk: "high",
+    releaseFindingCount: 0,
+    contextFindingCount: 3,
+    unknownFindingCount: 0,
+  });
+  const ai = (
+    releaseAssessment: string,
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    status: "complete",
+    risk: "low",
+    releaseAssessment,
+    summary: "inert summary",
+    findings: [],
+    requiresManualReview: false,
+    model: "reviewer-model",
+    reviewerVersion: "1.9.0",
+    ...overrides,
+  });
+  // The placeholder the pipeline persists when the killswitch is off.
+  const disabledAi = {
+    status: "unavailable",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: "AI review is disabled.",
+    findings: [],
+    requiresManualReview: false,
+    model: null,
+    reviewerVersion: null,
+  };
+  const undecided = (overrides: Partial<ReviewEvidence> = {}) =>
+    review({
+      decision: null,
+      decidedAt: null,
+      riskSummaryJson: risk("low"),
+      aiJson: ai("nothing_unusual"),
+      ...overrides,
+    });
+  const classifyWith = (
+    reviews: ReviewEvidence[],
+    options: { aiReview?: boolean; historyLimited?: boolean } = {},
+    artifact: Parameters<typeof classifyPublication>[3] = { sha1, sha256 },
+  ) =>
+    classifyPublication(name, version, published, artifact, reviews, {
+      aiReview: true,
+      declaredSha1: sha1,
+      ...options,
+    });
+  const riskyAlert = {
+    status: "published_without_approval",
+    reason: "reviewed_risk_without_decision",
+  };
+
+  test("low release risk with a clean AI review is recorded without an alert", () => {
+    // Artifact and context risk (high here) describe the package, not this release.
+    expect(classifyWith([undecided()])).toEqual({
+      status: "undecided_low_risk",
+      reason: null,
+      scanId: "scan1",
+    });
+    // No AI review ran: the killswitch was off when it was reviewed, or a legacy review.
+    expect(classifyWith([undecided({ aiJson: disabledAi })]).status).toBe("undecided_low_risk");
+    expect(classifyWith([undecided({ aiJson: null })]).status).toBe("undecided_low_risk");
+  });
+
+  test.each(["medium", "high", "critical", "unknown"])(
+    "%s release risk alerts even when the AI reviewer saw nothing unusual",
+    (releaseRisk) => {
+      expect(classifyWith([undecided({ riskSummaryJson: risk(releaseRisk) })])).toEqual({
+        ...riskyAlert,
+        scanId: "scan1",
+      });
+    },
+  );
+
+  test("a release risk that graded nothing, or an AI review asking for a look, alerts", () => {
+    const skipped = {
+      ...stagedIntegrity(sha1),
+      baseline: { comparisonSkipped: "baseline-too-large" },
+    };
+    expect(classifyWith([undecided({ summaryJson: skipped })])).toMatchObject(riskyAlert);
+    expect(classifyWith([undecided({ riskSummaryJson: null })])).toMatchObject(riskyAlert);
+    expect(classifyWith([undecided({ aiJson: ai("review_recommended") })])).toMatchObject(
+      riskyAlert,
+    );
+    expect(
+      classifyWith([undecided({ aiJson: ai("nothing_unusual", { requiresManualReview: true }) })]),
+    ).toMatchObject(riskyAlert);
+    // An attempted AI review that did not finish never reads as clean.
+    for (const status of ["unavailable", "invalid"]) {
+      expect(
+        classifyWith([undecided({ aiJson: ai("not_assessed", { status }) })]),
+        status,
+      ).toMatchObject(riskyAlert);
+    }
+  });
+
+  test.each(["suspicious", "blocked"])(
+    "an AI review that judged the release %s raises the AI-flagged alert",
+    (releaseAssessment) => {
+      expect(classifyWith([undecided({ aiJson: ai(releaseAssessment) })])).toEqual({
+        status: "published_without_approval",
+        reason: "ai_flagged_without_decision",
+        scanId: "scan1",
+      });
+      expect(
+        classifyWith([undecided({ riskSummaryJson: risk("high"), aiJson: ai(releaseAssessment) })])
+          .reason,
+      ).toBe("ai_flagged_without_decision");
+    },
+  );
+
+  test("with the AI killswitch off the AI result is not read", () => {
+    const off = { aiReview: false };
+    // Nothing is AI-flagged; the persisted release risk alone decides.
+    expect(
+      classifyWith([undecided({ riskSummaryJson: risk("high"), aiJson: ai("blocked") })], off),
+    ).toMatchObject(riskyAlert);
+    expect(classifyWith([undecided({ riskSummaryJson: risk("medium") })], off)).toMatchObject(
+      riskyAlert,
+    );
+    expect(classifyWith([undecided({ aiJson: ai("suspicious") })], off).status).toBe(
+      "undecided_low_risk",
+    );
+    expect(classifyWith([undecided({ aiJson: ai("review_recommended") })], off).status).toBe(
+      "undecided_low_risk",
+    );
+    // Callers that pass no killswitch read no AI result.
+    expect(
+      classifyPublication(name, version, published, { sha1, sha256 }, [
+        undecided({ aiJson: ai("blocked") }),
+      ]).status,
+    ).toBe("undecided_low_risk");
+  });
+
+  test("pending and failed reviews keep alerting whatever another record graded", () => {
+    const supersededLow = undecided({ id: "old", registryStatusSupersededAt: before });
+    for (const [status, reason] of [
+      ["pending", "review_pending"],
+      ["failed", "review_failed"],
+    ] as const) {
+      const owner = inFlight(status, { id: "owner", riskSummaryJson: risk("low") });
+      expect(classifyWith([owner, supersededLow])).toEqual({
+        status: "published_without_approval",
+        reason,
+        scanId: "owner",
+      });
+    }
+  });
+
+  test("quiet needs every matching record low, both sides hashed and the full history", () => {
+    const owner = undecided({ id: "owner" });
+    // The most severe matching record wins; a flagged one is the one linked.
+    expect(
+      classifyWith([owner, undecided({ id: "flagged", aiJson: ai("suspicious") })]),
+    ).toMatchObject({ reason: "ai_flagged_without_decision", scanId: "flagged" });
+    expect(
+      classifyWith([owner, undecided({ id: "risky", riskSummaryJson: risk("medium") })]),
+    ).toMatchObject({ ...riskyAlert, scanId: "owner" });
+    expect(classifyWith([owner, inFlight("pending", { id: "late" })])).toMatchObject(riskyAlert);
+    // Matched on npm's shasum alone: the tarball could not be hashed here.
+    expect(classifyWith([owner], {}, "artifact_timeout")).toMatchObject(riskyAlert);
+    // Matched on npm's record of the stage, not bytes the review hashed.
+    const unverified = undecided({ summaryJson: { stagedPublish: { shasum: sha1 } } });
+    expect(classifyWith([unverified])).toMatchObject(riskyAlert);
+    // Some records of the version were not read.
+    expect(classifyWith([owner], { historyLimited: true })).toMatchObject(riskyAlert);
+    // A flag still escalates past every one of those.
+    expect(
+      classifyWith([undecided({ aiJson: ai("blocked") })], {}, "artifact_timeout").reason,
+    ).toBe("ai_flagged_without_decision");
+  });
+
+  test("an unrecognized AI result is a concern, never clean", () => {
+    const scan = { status: "complete" as const, summaryJson: null, riskSummaryJson: risk("low") };
+    expect(
+      undecidedReviewTier(
+        { ...scan, aiJson: { status: "mystery", model: null } },
+        { aiReview: true },
+      ),
+    ).toBe("risky");
+    expect(
+      undecidedReviewTier(
+        { ...scan, aiJson: ai("nothing_unusual", { requiresManualReview: undefined }) },
+        { aiReview: true },
+      ),
+    ).toBe("risky");
+  });
 });

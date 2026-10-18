@@ -80,13 +80,14 @@ SHA-1 for the stage (its shasum, stored when the review is queued), which identi
 the staged bytes while the review is in flight, failed or unverified but never stands
 in for an approval.
 
-| Observation                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Approved bytes published                           | The published bytes match a review whose bytes Drydock hashed, approved strictly before npm's publication timestamp.                                                                                                                                                                                                                                                                  |
-| Published despite a rejection in this organization | The published bytes match a record rejected before publication, or every decision on those bytes is a rejection, including one recorded only after publication (reason `rejected_after_publication`, worded "rejected after it was published").                                                                                                                                       |
-| Published bytes differ from what this org reviewed | The published bytes match no record of the version, and some record of it was approved or rejected (at any time), or a stage of it was superseded by a restage.                                                                                                                                                                                                                       |
-| Published with no approval in this organization    | No record of the version exists at all (decided without bytes); the published bytes match no record and none was decided or superseded; or they match only records nobody decided (in review, failed, or reviewed without a decision: reason `review_pending`, `review_failed` or `reviewed_without_decision`, and the alert links that review and asks for its decision).            |
-| Evidence unknown                                   | A decision in this organization on the same bytes exists but cannot settle it: an approval recorded after publication (`decision_history_unavailable`), an approval matched only by npm's stage shasum (`review_digest_unavailable`) or by npm's `dist.shasum` when the tarball could not be hashed. Also a missing publication time, and bytes that could not be hashed or compared. |
+| Observation                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Approved bytes published                           | The published bytes match a review whose bytes Drydock hashed, approved strictly before npm's publication timestamp.                                                                                                                                                                                                                                                                                                                                                         |
+| Published despite a rejection in this organization | The published bytes match a record rejected before publication, or every decision on those bytes is a rejection, including one recorded only after publication (reason `rejected_after_publication`, worded "rejected after it was published").                                                                                                                                                                                                                              |
+| Published bytes differ from what this org reviewed | The published bytes match no record of the version, and some record of it was approved or rejected (at any time), or a stage of it was superseded by a restage.                                                                                                                                                                                                                                                                                                              |
+| Published with no approval in this organization    | No record of the version exists at all (decided without bytes); the published bytes match no record and none was decided or superseded; or they match only records nobody decided that are in review (`review_pending`), failed (`review_failed`), or completed without grading the release low risk (`reviewed_risk_without_decision`, or `ai_flagged_without_decision` when the AI reviewer flagged it; see below). The alert links that review and asks for its decision. |
+| Reviewed, no decision in this organization         | The published bytes match only completed records nobody decided, and every one graded the release low risk (`undecided_low_risk`). Recorded and shown, but never an alert (see below).                                                                                                                                                                                                                                                                                       |
+| Evidence unknown                                   | A decision in this organization on the same bytes exists but cannot settle it: an approval recorded after publication (`decision_history_unavailable`), an approval matched only by npm's stage shasum (`review_digest_unavailable`) or by npm's `dist.shasum` when the tarball could not be hashed. Also a missing publication time, and bytes that could not be hashed or compared.                                                                                        |
 
 `unknown` is earned only by a decision someone in this organization made about the
 same bytes. An attacker who can stage can create records, including a record of the
@@ -95,7 +96,9 @@ same way whether it was promoted from a stage (which needs the maintainer's 2FA)
 published directly: its version status endpoint (`published`) and the packument carry
 no stage reference, and stage records carry no outcome. So an undecided, pending or
 failed review of the published bytes cannot tell the owner's release from a bypass,
-and the release alerts as published with no approval. The alert says Drydock has an
+and it never earns `unknown` or `approved_match`. A pending or failed one alerts as
+published with no approval; a completed one is tiered by what it found (next
+section), and only a low-risk one stays quiet. The alert says Drydock has an
 undecided review of these exact bytes: decide it, or investigate if nobody here
 published it. Likewise a record of other bytes (a benign seed stage, or a restage that
 superseded the owner's approved stage) never turns an alert into `unknown`, and a
@@ -104,6 +107,55 @@ matters only when the bytes match: an approval of other bytes is a mismatch whet
 was recorded before or after publication. Beside an approval of the same bytes, a
 decision recorded after publication leaves the verdict unknown, since reconfirming a
 decision overwrites its timestamp and the overwritten one may have been newer.
+
+### Undecided reviews are tiered by risk
+
+Most maintainers approve the stage on npm and never record the decision in Drydock,
+so alerting on every completed, undecided review of the published bytes was mostly
+noise that went unacknowledged. When the published bytes match only
+records nobody decided and the owning record (the one a restage did not supersede)
+has completed, `undecidedReviewTier` in
+`server/lib/ecosystems/npm/publication-verdict.ts` grades each matching record:
+
+| Tier                   | When                                                                                                                                                                                                                                                                                                                                                           | Result                                                                                               |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| AI reviewer flagged it | The completed AI review's `releaseAssessment` is `suspicious` or `blocked`.                                                                                                                                                                                                                                                                                    | Alert, reason `ai_flagged_without_decision`, worded and listed first as the AI reviewer flagging it. |
+| Not graded low risk    | The persisted release risk (`risk_summary_json.releaseRisk`, which already carries any AI escalation) is above `low` or unreadable; no published baseline was compared (`baseline.comparisonSkipped`, so release risk graded nothing); or the AI review recommended a look (`review_recommended`, `requiresManualReview`) or was attempted and did not finish. | Alert, reason `reviewed_risk_without_decision`.                                                      |
+| Low risk               | Release risk `low`, a baseline compared, and the AI review reported `nothing_unusual` with no manual review, or no AI review ran.                                                                                                                                                                                                                              | Observation `undecided_low_risk`; no alert.                                                          |
+
+Release risk, not artifact or context risk, decides: those describe the whole
+package, which the owner has shipped before. The release is quiet only when every
+matching record is low risk, the match was on bytes Drydock hashed on both sides (the
+published tarball here and the reviewed tarball in the sandbox, so never a match on
+npm's shasum alone), and no record of the version fell outside the history read
+(`review_history_limit`). Otherwise the most severe tier wins. Pending and failed
+reviews alert as before: nothing is known about their risk.
+
+AI review is advisory and only escalates. A clean AI review never quiets a release:
+the release risk it is checked against carries the deterministic score, so a
+deterministic medium alerts whatever the AI said. The organization `ai-review`
+killswitch is read at check time (off without a FLAGS binding; a failed read counts
+as on, which can only escalate). With it off the stored AI result is not read, so
+nothing is `ai_flagged_without_decision` and the tier rests on the persisted grades
+alone, which keep any escalation the AI added while the review ran.
+
+This deliberately reverses the rule above for low-risk releases. An undecided review
+still cannot tell the owner's release from a bypass: anyone who can stage can create
+the record and then publish the same bytes directly. A bypass publish of bytes
+Drydock graded low risk now raises nothing, so that case rests on detection quality.
+The attacker controls the bytes, so they can restage variants until a review grades
+one low and its AI review comes back clean, then publish it. That is accepted because
+the noise cost more than the alert protected; every release that is not low risk, or
+that the AI flagged, still alerts.
+
+An `undecided_low_risk` observation is settled like any verdict: listed in the
+release list as "Reviewed, no decision in this organization" with a link to its
+review, never emailed, posted to Slack, written to the ledger or audit log, or
+counted as an unacknowledged alert, and it has no **Acknowledge** or **Scan** (decide
+its review instead). It never turns the public badge orange; a newer one still takes
+the badge off an older quote as `not reviewed`. Observations and alerts recorded before tiering keep their
+verdict and reason (`reviewed_without_decision`, worded as before); they are not
+rewritten.
 
 A version's release records are staged reviews and workflow gates (published-pair
 reviews are excluded in the query). Every decided record is read, up to 500, since
@@ -166,9 +218,15 @@ last problem only.
 
 New confirmed discrepancies (no approval in this organization, publication despite a
 rejection here, or bytes that differ from what this organization reviewed) create one
-durable alert per organization/package/version. The message follows the observation's
-reason: an undecided review of the published bytes asks for the decision first, and a
-rejection recorded after publication says so. Every verdict and message is about
+durable alert per organization/package/version (`undecided_low_risk` is not one). The
+message follows the observation's reason: an undecided review of the published bytes
+asks for the decision first, one the AI reviewer flagged is titled "AI reviewer flagged
+a release published with no approval in <organization>" and asks to investigate first,
+and a rejection recorded after publication says so. The release list and the alert
+ledger name an AI-flagged release ("flagged by the AI reviewer"), and the release list
+puts it ahead of other open alerts. The ledger reads the reason from the current
+watch's observation, so an alert from an earlier watch window reads by its status
+alone. Every verdict and message is about
 the alerting organization's own records only: another organization may have reviewed
 or approved the same release, and Drydock neither says so (that would disclose one
 organization's activity to another) nor words the alert as "unreviewed" or as an

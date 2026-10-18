@@ -191,6 +191,25 @@ export async function releasePublicationAlertClaim(db: AppDb, input: AlertKey) {
 const PACKAGE_ALERT_PAGE = 50;
 
 /**
+ * The reason recorded on an alert's observation in the package's current
+ * watch window, which refines its wording (an AI-flagged release, say). The
+ * ledger itself carries no reason, so an alert from an earlier window reads by
+ * status alone. Qualified by hand: see listUnnotifiedPublicationAlerts.
+ */
+function currentWatchReason(watchId: string | null) {
+  return watchId
+    ? sql<
+        string | null
+      >`(select o.reason from publication_observations o where o.watch_id = ${watchId} and o.organization_id = publication_alerts.organization_id and o.version = publication_alerts.version)`
+    : sql<string | null>`null`;
+}
+
+/** `currentWatchReason` across packages: each alert's own package's watch. */
+const watchedPackageReason = sql<
+  string | null
+>`(select o.reason from publication_observations o join publication_watches w on w.id = o.watch_id where w.organization_id = publication_alerts.organization_id and w.package_name = publication_alerts.package_name and o.organization_id = publication_alerts.organization_id and o.version = publication_alerts.version limit 1)`;
+
+/**
  * The organization's alert ledger for one package, across every watch window,
  * newest first. Stopping a watch removes its observations, but not what was
  * alerted and acknowledged, so the package page can keep showing that history.
@@ -219,6 +238,7 @@ export async function listPublicationAlertsForPackage(
             Boolean,
           )
         : sql<boolean>`0`.mapWith(Boolean),
+      reason: currentWatchReason(currentWatchId),
     })
     .from(publicationAlerts)
     .where(
@@ -254,6 +274,7 @@ export async function listPublicationAlertLog(db: AppDb, organizationId: string)
       resolvedAt: publicationAlerts.resolvedAt,
       resolutionBadge: publicationAlerts.resolutionBadge,
       reviewedBytes: publicationAlerts.reviewedBytes,
+      reason: watchedPackageReason,
       // Qualified by hand: see listUnnotifiedPublicationAlerts.
       watched:
         sql<boolean>`exists(select 1 from publication_watches w where w.organization_id = publication_alerts.organization_id and w.package_name = publication_alerts.package_name)`.mapWith(

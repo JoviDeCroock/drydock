@@ -59,6 +59,8 @@ function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
         },
       },
     },
+    riskSummaryJson: null,
+    aiJson: null,
     ...overrides,
   };
 }
@@ -429,6 +431,104 @@ test("a pending review of the published bytes, known by npm's stage shasum, aler
     sha1,
   });
   expect(observation?.scanId).toEqual(expect.any(String));
+});
+
+describe("an undecided completed review of the published bytes", () => {
+  const releaseRisk = (risk: string) => ({
+    artifactRisk: "high",
+    releaseRisk: risk,
+    contextRisk: "high",
+    releaseFindingCount: 0,
+    contextFindingCount: 1,
+    unknownFindingCount: 0,
+  });
+  const aiReview = (releaseAssessment: string) => ({
+    status: "complete",
+    risk: "low",
+    releaseAssessment,
+    summary: "inert summary",
+    findings: [],
+    requiresManualReview: false,
+    model: "reviewer-model",
+    reviewerVersion: "1.9.0",
+  });
+  const flags = (aiReviewOn: boolean) =>
+    ({
+      ...env,
+      FLAGS: {
+        getBooleanValue: vi.fn(async (flag: string, fallback: boolean) =>
+          flag === "ai-review" ? aiReviewOn : fallback,
+        ),
+      },
+    }) as unknown as Cloudflare.Env;
+  const releases = ["1.0.0", "2.0.0", "3.0.0"];
+
+  async function seedTiers({ db, organizationId, watch }: Awaited<ReturnType<typeof seed>>) {
+    const undecided = { decision: null, decidedAt: null };
+    const at = (release: string) => ({ stagedVersion: release, registryVersion: release });
+    await insertReview(db, organizationId, {
+      ...undecided,
+      ...at("1.0.0"),
+      riskSummaryJson: releaseRisk("low"),
+      aiJson: aiReview("nothing_unusual"),
+    });
+    await insertReview(db, organizationId, {
+      ...undecided,
+      ...at("2.0.0"),
+      riskSummaryJson: releaseRisk("low"),
+      aiJson: aiReview("suspicious"),
+    });
+    await insertReview(db, organizationId, {
+      ...undecided,
+      ...at("3.0.0"),
+      riskSummaryJson: releaseRisk("medium"),
+      aiJson: aiReview("nothing_unusual"),
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, releases)),
+    );
+  }
+
+  async function alertsOf(db: Awaited<ReturnType<typeof seed>>["db"], organizationId: string) {
+    const rows = await db
+      .select({ version: publicationAlerts.version })
+      .from(publicationAlerts)
+      .where(eq(publicationAlerts.organizationId, organizationId));
+    return rows.map((row) => row.version).sort();
+  }
+
+  test("alerts only when risky, names an AI flag, and lists it first", async () => {
+    const seeded = await seed();
+    const { db, organizationId, watch } = seeded;
+    await seedTiers(seeded);
+    await checkNpmPublicationWatch(db, flags(true), watch);
+    const observations = await listPublicationObservations(db, organizationId, watch.id);
+    expect(observations.map(({ version, status, reason }) => [version, status, reason])).toEqual([
+      ["2.0.0", "published_without_approval", "ai_flagged_without_decision"],
+      ["3.0.0", "published_without_approval", "reviewed_risk_without_decision"],
+      ["1.0.0", "undecided_low_risk", null],
+    ]);
+    // The quiet release is recorded and links its review, but raises nothing.
+    expect(observations[2]).toMatchObject({ scanId: expect.any(String), acknowledgedAt: null });
+    expect(await alertsOf(db, organizationId)).toEqual(["2.0.0", "3.0.0"]);
+    expect((await getPublicationWatch(db, organizationId, watch.id))?.unresolvedAlertCount).toBe(2);
+  });
+
+  test("with the AI killswitch off, an AI flag neither alerts nor escalates", async () => {
+    const seeded = await seed();
+    const { db, organizationId, watch } = seeded;
+    await seedTiers(seeded);
+    await checkNpmPublicationWatch(db, flags(false), watch);
+    const observations = await listPublicationObservations(db, organizationId, watch.id);
+    expect(
+      Object.fromEntries(observations.map(({ version, status }) => [version, status])),
+    ).toEqual({
+      "1.0.0": "undecided_low_risk",
+      "2.0.0": "undecided_low_risk",
+      "3.0.0": "published_without_approval",
+    });
+    expect(await alertsOf(db, organizationId)).toEqual(["3.0.0"]);
+  });
 });
 
 test("rejecting the published bytes after publication raises the rejection alert", async () => {

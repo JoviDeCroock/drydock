@@ -455,7 +455,8 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ),
     )
     .orderBy(
-      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and not ${publicationAlertSettled("publication_alerts")} then 0 else 1 end`,
+      // Open alerts first, a release the AI reviewer flagged ahead of the rest.
+      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and not ${publicationAlertSettled("publication_alerts")} then (case when ${publicationObservations.reason} = 'ai_flagged_without_decision' then 0 else 1 end) else 2 end`,
       desc(publicationObservations.firstSeenAt),
       desc(publicationObservations.id),
     )

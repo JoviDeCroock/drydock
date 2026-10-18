@@ -409,7 +409,10 @@ monitor evidence below takes the badge off its pick, and the version it
 reports instead is one the answering organization's **own monitor alerted on**
 (`published_without_approval`, `published_despite_rejection`,
 `artifact_mismatch`, from the observations or the alert ledger), the badge
-reads `<version> published without approval` in orange.
+reads `<version> published without approval` in orange. A release whose bytes
+match an undecided review that graded it low risk (`undecided_low_risk`) is not
+an alert, so it never turns the badge orange: like `unknown`, a newer one still
+takes the badge off an older quote and reads `<version> not reviewed`.
 
 When that alert is `published_despite_rejection` — the organization rejected
 the published bytes, before npm published them or only after — the badge reads `<version> rejected`
