@@ -17,7 +17,8 @@ non-superseded staged reviews with evidence of publication, grouped by
 `decided` (a Drydock decision was recorded, at any time), `publicationEvidence`
 (`npm_publish_time` from the publication monitor, or `version_status`, which only
 bounds publication from above), `reviewReady` (whether the review had completed
-before publication: `before`, `after`, or `unknown`), and
+before publication: `before` or `after` with npm's publication time, otherwise
+`unknown`, since a version status is only read after the review completes), and
 `openedBeforePublication` (`opened` / `not_opened` / `unknown`, the rule in
 [`product-analytics.md`](./product-analytics.md#report-views)). The share is
 `opened / (opened + not_opened)` per `decided` group; report `unknown` beside

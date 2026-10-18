@@ -117,9 +117,11 @@ export async function recordScanReportView(
 
 /**
  * Stamp npm's publication time on this organization's live staged reviews of
- * the release, from the publication monitor's observation. Keyed on the
- * immutable registry coordinates, never the tarball manifest, so a stage whose
- * package.json names another package cannot borrow that package's timeline.
+ * the published bytes, from the publication monitor's observation. Keyed on
+ * the immutable registry coordinates, never the tarball manifest, so a stage
+ * whose package.json names another package cannot borrow that package's
+ * timeline; and on npm's SHA-1 for the stage, so a stage rejected on npm, its
+ * version then published from other bytes, is not told it was published.
  * First write wins: npm does not republish a version.
  */
 export async function recordScanRegistryPublishedAt(
@@ -130,6 +132,8 @@ export async function recordScanRegistryPublishedAt(
     packageName: string;
     version: string;
     publishedAt: Date;
+    /** SHA-1 of the published tarball. */
+    sha1: string;
   },
 ): Promise<void> {
   await db
@@ -141,6 +145,7 @@ export async function recordScanRegistryPublishedAt(
         sql`rtrim(${scans.registryUrl}, '/') = rtrim(${input.registryUrl}, '/')`,
         eq(scans.registryPackageName, input.packageName),
         eq(scans.registryVersion, input.version),
+        eq(scans.stagedDeclaredSha1, input.sha1.toLowerCase()),
         inArray(scans.source, ["manual", "auto_discovery"]),
         isNull(scans.registryStatusSupersededAt),
         isNull(scans.registryPublishedAt),

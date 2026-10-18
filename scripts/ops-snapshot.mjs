@@ -46,11 +46,13 @@ export const OPENED_BEFORE_PUBLICATION_SQL = `CASE
   WHEN report_view_count IS NOT NULL THEN 'not_opened'
   ELSE 'unknown' END`;
 // Whether the review had finished before publication, so "not opened" for a
-// report that did not exist yet can be told apart from one nobody opened.
+// report that did not exist yet can be told apart from one nobody opened. Only
+// npm's publication time can say: a version status is first read after the
+// review completes, so it never orders against completion.
 const REVIEW_READY_SQL = `CASE
-  WHEN registry_published_at IS NOT NULL THEN CASE WHEN completed_at < registry_published_at THEN 'before' ELSE 'after' END
-  WHEN completed_at > registry_version_status_at THEN 'after'
-  ELSE 'unknown' END`;
+  WHEN registry_published_at IS NULL THEN 'unknown'
+  WHEN completed_at < registry_published_at THEN 'before'
+  ELSE 'after' END`;
 
 // Every query is a plain aggregate SELECT. Result columns may only be product
 // dimensions (day, source, status, decision, rule id, event type, error code)
