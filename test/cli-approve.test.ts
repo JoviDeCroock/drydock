@@ -247,7 +247,7 @@ describe("drydock approve", () => {
     );
     await skipped.run("approve", STAGE);
     expect(skipped.stdout).toContain(
-      "install-time scripts   unknown (the previous release was not downloaded for comparison)",
+      "install-time scripts   unknown (the previous release 2.0.3 was not downloaded for comparison)",
     );
     expect(skipped.stdout).toContain("new dependencies       unknown");
     expect(skipped.stdout).toContain("AI review         not run");
@@ -270,6 +270,68 @@ describe("drydock approve", () => {
     expect(legacy.stdout).toContain("new executables        unknown");
     expect(legacy.stdout).toContain("AI review         unavailable (unavailable)");
     expect(legacy.stdout).not.toContain("nothing unusual");
+  });
+
+  test("an npm baseline that was not downloaded is unknown, and only a missing predecessor is a first release", async () => {
+    const added = {
+      hasPreviousManifest: false,
+      previousVersion: null,
+      scripts: [{ key: "postinstall", status: "added", staged: "node setup.js" }],
+      dependencies: [{ key: "left-pad", status: "added", staged: "^1.3.0" }],
+      bin: [],
+    };
+    // npm names the baseline it picked and drops the manifest diff's previous side.
+    const tooLarge = harness(
+      {
+        list: listed,
+        detail: stagedDetail({
+          previousVersion: null,
+          summaryJson: {
+            baseline: { version: "2.0.3", reason: "semver-predecessor:baseline-too-large" },
+            packageJsonDiff: added,
+          },
+        }),
+      },
+      { answers: ["s"] },
+    );
+    await tooLarge.run("approve", STAGE);
+    expect(tooLarge.stdout).toContain("compared against  2.0.3 (not downloaded for comparison)");
+    expect(tooLarge.stdout).toContain(
+      "install-time scripts   unknown (the previous release 2.0.3 was not downloaded for comparison)",
+    );
+    expect(tooLarge.stdout).not.toContain("first release");
+    expect(tooLarge.stdout).not.toContain("postinstall added");
+
+    const metadata = harness(
+      {
+        list: listed,
+        detail: stagedDetail({
+          previousVersion: null,
+          summaryJson: {
+            baseline: { version: null, reason: "metadata-unavailable" },
+            packageJsonDiff: added,
+          },
+        }),
+      },
+      { answers: ["s"] },
+    );
+    await metadata.run("approve", STAGE);
+    expect(metadata.stdout).toContain("compared against  unknown");
+    expect(metadata.stdout).toContain("new dependencies       unknown");
+
+    const first = harness(
+      {
+        list: listed,
+        detail: stagedDetail({
+          previousVersion: null,
+          summaryJson: { baseline: { version: null, reason: "none" }, packageJsonDiff: added },
+        }),
+      },
+      { answers: ["s"] },
+    );
+    await first.run("approve", STAGE);
+    expect(first.stdout).toContain("compared against  none (first release)");
+    expect(first.stdout).toContain("install-time scripts   postinstall added: node setup.js");
   });
 
   test("strips terminal controls from package-controlled summary text", async () => {
@@ -365,6 +427,18 @@ describe("drydock approve", () => {
     expect(cli.stderr).toContain("drydock approve needs a key with decide_staged access");
     expect(cli.stderr).toContain("Drydock recorded nothing and npm was not run");
     expect(cli.npmRuns).toEqual([]);
+
+    // A server error may follow a committed decision, so the CLI does not claim either way.
+    const failed = harness(
+      { list: listed, decision: () => json({ error: "internal error" }, 500) },
+      { answers: ["p", ""] },
+    );
+    expect(await failed.run("approve", STAGE)).toBe(1);
+    expect(failed.stderr).toContain(
+      "Drydock may have recorded the decision; check https://drydock.test/dashboard/scans/",
+    );
+    expect(failed.stderr).not.toContain("recorded nothing");
+    expect(failed.npmRuns).toEqual([]);
   });
 
   test("reject records the rejection and says how to reject on npm, running it only when asked", async () => {

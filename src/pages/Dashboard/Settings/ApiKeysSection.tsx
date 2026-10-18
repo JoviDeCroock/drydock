@@ -60,8 +60,10 @@ export function ApiKeysSection({
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Keys for scripts and the Drydock CLI. A key reads this organization's reviews, reports,
           release receipts, and gate status. A key created with "Read and start reviews" can also
-          start reviews and check npm. No key can record a decision or change settings. Keys expire,
-          and a key is deleted when the member who created it leaves the organization.
+          start reviews and check npm, and one created with "Read, start reviews, and record staged
+          decisions" can also record decisions on staged publishes for drydock approve. No key can
+          decide a workflow gate or change settings. Keys expire, and a key is deleted when the
+          member who created it leaves the organization.
         </Muted>
 
         {revealed ? (
