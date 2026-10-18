@@ -20,6 +20,8 @@ export const SCAN_DECISION_FILTERS = [
 ] as const;
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
+export type ReportViewSurface = "web" | "notification";
+
 export type InvitationStatus = "pending" | "accepted" | "revoked";
 
 export type NpmConnectionValidationStatus = "valid" | "invalid" | "unvalidated";

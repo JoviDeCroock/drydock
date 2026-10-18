@@ -27,6 +27,31 @@ const DEFAULT_DATABASE = "staged-publish-review";
 // snapshot reflects D1's clock, not the operator's machine.
 const FOURTEEN_DAYS_SQL = "(CAST(strftime('%s', 'now', '-14 days') AS INTEGER) * 1000)";
 
+// Mirrors REPORT_VIEW_CLOCK_SKEW_MS in server/db/scan-views.ts.
+const VIEW_SKEW_MS = 10_000;
+// Published staged reviews: npm's own publication time when the publication
+// monitor saw it, otherwise a `published`/`deleted` version status, which only
+// bounds publication from above. Superseded stages and unfinished reviews have
+// no report of the release npm published.
+const PUBLISHED_STAGED_REVIEWS_SQL = `source IN ('manual', 'auto_discovery') AND status = 'complete' AND registry_status_superseded_at IS NULL AND (registry_published_at IS NOT NULL OR (registry_version_status IN ('published', 'deleted') AND registry_version_status_at IS NOT NULL))`;
+// The SQL twin of reportOpenedBeforePublication() in server/db/scan-views.ts;
+// test/report-view-verdict.test.ts runs both over the same rows.
+export const OPENED_BEFORE_PUBLICATION_SQL = `CASE
+  WHEN registry_published_at IS NOT NULL THEN CASE
+    WHEN report_first_viewed_at IS NOT NULL AND report_first_viewed_at < registry_published_at - ${VIEW_SKEW_MS} THEN 'opened'
+    WHEN report_first_viewed_at IS NOT NULL AND report_first_viewed_at <= registry_published_at + ${VIEW_SKEW_MS} THEN 'unknown'
+    WHEN report_view_count IS NOT NULL THEN 'not_opened'
+    ELSE 'unknown' END
+  WHEN report_first_viewed_at IS NOT NULL AND report_first_viewed_at <= registry_version_status_at + ${VIEW_SKEW_MS} THEN 'unknown'
+  WHEN report_view_count IS NOT NULL THEN 'not_opened'
+  ELSE 'unknown' END`;
+// Whether the review had finished before publication, so "not opened" for a
+// report that did not exist yet can be told apart from one nobody opened.
+const REVIEW_READY_SQL = `CASE
+  WHEN registry_published_at IS NOT NULL THEN CASE WHEN completed_at < registry_published_at THEN 'before' ELSE 'after' END
+  WHEN completed_at > registry_version_status_at THEN 'after'
+  ELSE 'unknown' END`;
+
 // Every query is a plain aggregate SELECT. Result columns may only be product
 // dimensions (day, source, status, decision, rule id, event type, error code)
 // plus counts — never identifiers.
@@ -68,6 +93,20 @@ export const SNAPSHOT_QUERIES = [
     name: "scan_events_by_type_14d",
     columns: ["type", "events"],
     sql: `SELECT type, COUNT(*) AS events FROM scan_events WHERE created_at >= ${FOURTEEN_DAYS_SQL} GROUP BY type ORDER BY events DESC`,
+  },
+  {
+    // Was the report opened (a load, not a review) before npm published the
+    // release? Share = opened / (opened + not_opened); `unknown` is reported,
+    // never folded into either side.
+    name: "published_staged_reviews_opened_before_publication",
+    columns: [
+      "decided",
+      "publicationEvidence",
+      "reviewReady",
+      "openedBeforePublication",
+      "reviews",
+    ],
+    sql: `SELECT CASE WHEN decision IS NULL THEN 'undecided' ELSE 'decided' END AS decided, CASE WHEN registry_published_at IS NOT NULL THEN 'npm_publish_time' ELSE 'version_status' END AS publicationEvidence, ${REVIEW_READY_SQL} AS reviewReady, ${OPENED_BEFORE_PUBLICATION_SQL} AS openedBeforePublication, COUNT(*) AS reviews FROM scans WHERE ${PUBLISHED_STAGED_REVIEWS_SQL} GROUP BY decided, publicationEvidence, reviewReady, openedBeforePublication ORDER BY reviews DESC`,
   },
   {
     name: "scan_errors_by_code",

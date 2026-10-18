@@ -124,6 +124,9 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     risk: "unknown",
     status: "pending" as const,
     source,
+    // Counted from creation. Rows from before view tracking stay null, so their
+    // unrecorded loads are never read as "not opened".
+    reportViewCount: 0,
     createdAt: now,
     updatedAt: now,
   };

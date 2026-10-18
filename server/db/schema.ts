@@ -4,6 +4,7 @@ import type {
   GithubAppInstallationStatus,
   InvitationStatus,
   NpmConnectionValidationStatus,
+  ReportViewSurface,
   ScanDecision,
   ScanSource,
   ScanStatus,
@@ -308,6 +309,25 @@ export const scans = sqliteTable(
     registryApprovableNotifiedAt: integer("registry_approvable_notified_at", {
       mode: "timestamp_ms",
     }),
+    // npm's own publication time for this registry package version (the
+    // packument's `time[version]`), stamped when this organization's
+    // publication monitor observes the release. The version status above only
+    // bounds publication ("published by the time we asked"); this is the exact
+    // moment, and null whenever no watch saw the release.
+    registryPublishedAt: integer("registry_published_at", { mode: "timestamp_ms" }),
+    // Authenticated report loads by organization members (`GET /api/v1/scans/:id`
+    // on a completed scan). Per scan, never per user: the question is whether
+    // anyone opened the report, not who. A load is not a review.
+    reportFirstViewedAt: integer("report_first_viewed_at", { mode: "timestamp_ms" }),
+    reportLastViewedAt: integer("report_last_viewed_at", { mode: "timestamp_ms" }),
+    // Null on rows created before view tracking existed, whose earlier loads
+    // were never recorded; `createScanJob` writes 0. A null count therefore
+    // means "the first recorded view may not be the first view", which keeps
+    // "not opened" from being claimed for a review nobody was counting.
+    reportViewCount: integer("report_view_count"),
+    // How the first recorded load arrived: `web`, or `notification` for a
+    // landing from an email or Slack link.
+    reportFirstViewSurface: text("report_first_view_surface").$type<ReportViewSurface>(),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

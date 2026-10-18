@@ -98,7 +98,11 @@ function ScanDetailView({ id, organizationId }: { id: string; organizationId: st
           named = true;
         }
       }
-      await model.load();
+      // Notification links carry `?via=notification` for the first load only;
+      // dropping it keeps a copied or reloaded address from claiming the same.
+      const fromNotification = location.query.via === "notification";
+      await model.load(fromNotification ? { via: "notification" } : {});
+      if (fromNotification && !isCancelled()) location.route(buildQueryUrl({ via: null }), true);
       const scanOrganization = model.detail.peek()?.scan.organizationId;
       // The lookup failed but the remembered organization held the review.
       if (!isCancelled() && !named && scanOrganization) {

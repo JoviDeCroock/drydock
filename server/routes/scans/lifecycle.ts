@@ -38,6 +38,7 @@ import {
 } from "../../lib/ecosystems/npm/staged-publishes";
 import { getPublicationMonitor, getStagedAdapter } from "../../lib/ecosystems";
 import { parseScanInput } from "../../lib/scan/input";
+import { recordReportView, reportViewSurface } from "../../lib/scan/report-view";
 import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list-cursor";
 import {
   createPreparedScan,
@@ -268,6 +269,10 @@ scanLifecycleRoutes.get("/:id", async (c) => {
     files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
+  // After the response: a view write must never slow or fail the read.
+  c.executionCtx.waitUntil(
+    recordReportView(c.env, db, scan.scan, reportViewSurface(c.req.query("via"))),
+  );
   return c.json({
     ...scan,
     postRelease: await postReleaseLink(db, organizationId, scan.scan.id, scan.scan.source),

@@ -7,6 +7,8 @@ type ReleaseTimelineEventKey =
   | "queued"
   | "started"
   | "completed"
+  | "opened"
+  | "published"
   | "registry_status"
   | "decided"
   | "superseded";
@@ -32,6 +34,9 @@ type TimelineScan = Pick<
   | "registryVersionStatus"
   | "registryVersionStatusAt"
   | "registryStatusSupersededAt"
+  | "registryPublishedAt"
+  | "reportFirstViewedAt"
+  | "reportViewCount"
 >;
 
 function epoch(value: string | number | Date | null | undefined): number | null {
@@ -88,6 +93,20 @@ export function buildReleaseTimeline(
       label: scan.status === "failed" ? "Review failed" : "Review completed",
       detail: null,
       at: epoch(scan.completedAt),
+    },
+    {
+      key: "opened",
+      // A load, not a review. Reviews older than view tracking can only show
+      // the earliest load that was recorded, so they do not claim "first".
+      label: scan.reportViewCount == null ? "Report opened" : "Report first opened",
+      detail: scan.reportViewCount == null ? "earliest recorded" : null,
+      at: epoch(scan.reportFirstViewedAt),
+    },
+    {
+      key: "published",
+      label: "Published on npm",
+      detail: null,
+      at: superseded ? null : epoch(scan.registryPublishedAt),
     },
     {
       key: "registry_status",
