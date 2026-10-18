@@ -751,9 +751,9 @@ export default function DocsPage() {
                   </>,
                   <>
                     After every package is approved, Drydock tells GitHub to let the job continue.
-                    It verifies <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded
-                    files. On any rejection, GitHub keeps the configured protected publish job
-                    blocked.
+                    The job then verifies <InlineCode>SHA256SUMS</InlineCode> and publishes the
+                    downloaded files. On any rejection, GitHub keeps the configured protected
+                    publish job blocked.
                   </>,
                 ]}
               />

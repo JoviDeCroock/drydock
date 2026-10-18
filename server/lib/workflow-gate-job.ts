@@ -585,7 +585,6 @@ export function buildHumanDecisionComment(
   decision: "approved" | "rejected",
   reportUrl: string | null,
 ): string {
-  const verb = decision === "approved" ? "approved" : "blocked";
-  const head = `A Drydock maintainer ${verb} this release.`;
+  const head = `A Drydock maintainer ${decision} this deployment.`;
   return reportUrl ? `${head} Review: ${reportUrl}` : head;
 }

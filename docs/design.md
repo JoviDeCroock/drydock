@@ -334,7 +334,7 @@ Five patterns, picked by _what the user can do next_.
 
 - Lead with the reader's task and a concrete benefit. Name the package, file, command, or job involved instead of relying on slogans.
 - Give each sentence one main point. Cut filler, dramatic contrasts, and long lists of capabilities; keep technical detail where it helps the reader act.
-- Buttons say what the action does. Advisory review actions use `Record approval` and `Record rejection`; only a Workflow Gate decision can continue or block the configured protected job.
+- Buttons say what the action does. Advisory review actions use `Record approval` and `Record rejection`; only a Workflow Gate decision makes GitHub continue or block the configured protected job.
 - Use `approved` and `rejected` for recorded review decisions. Reserve `blocked` for an observed npm status or a protected GitHub job that cannot continue.
 - Keep public page titles and search descriptions aligned with the visible copy. Findings point to relevant evidence, with file and line context when available; a review does not guarantee a safe release.
 - Keep established mode names (`Workflow Gate — enforced`, `Stage Watchtower — advisory`) and useful technical terms. Remove decorative punctuation and unexplained jargon from surrounding prose.

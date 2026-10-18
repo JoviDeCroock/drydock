@@ -42,7 +42,8 @@ CI builds the release and uploads it. A GitHub Environment pauses the publish jo
 the review in Drydock, then the same job publishes the exact reviewed bytes.
 
 GitHub enforces the hold, through the protection rule on that environment, and only for jobs that
-target it. Repository admins can remove the rule or allow administrators to bypass it. For npm,
+target it. Repository admins can remove the rule, and GitHub lets administrators bypass it unless
+you uncheck that option on the environment. For npm,
 npm's trusted-publisher and token settings can narrow automated publishing to that path, but npm still
 permits an account holder to publish interactively with password, 2FA, and an OTP.
 
