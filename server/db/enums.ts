@@ -21,10 +21,13 @@ export const SCAN_DECISION_FILTERS = [
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
 /**
- * What an organization API key may do. `read` reaches only `API_KEY_ROUTES`;
- * `scan` also starts reviews (`API_KEY_SCAN_ROUTES`). Neither decides a release.
+ * What an organization API key may do, each level including the one before it.
+ * `read` reaches only `API_KEY_ROUTES`; `scan` also starts reviews
+ * (`API_KEY_SCAN_ROUTES`); `decide_staged` also records the advisory decision
+ * on a staged-publish review (`API_KEY_DECIDE_ROUTES`). No level decides a
+ * workflow gate.
  */
-export const API_KEY_ACCESS_LEVELS = ["read", "scan"] as const;
+export const API_KEY_ACCESS_LEVELS = ["read", "scan", "decide_staged"] as const;
 export type ApiKeyAccess = (typeof API_KEY_ACCESS_LEVELS)[number];
 
 export type InvitationStatus = "pending" | "accepted" | "revoked";

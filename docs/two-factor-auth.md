@@ -136,7 +136,10 @@ This is scoped to the approval gate. The **staged-publish** decision (`POST
 for low-risk reviews) is an audit record only — it never publishes or cancels a
 release on npm — and intentionally does **not** require a step-up. The decision dialog can open npm's staged-packages page in a new tab with
 `filterPackage` set to the reviewed package; the maintainer still approves or declines
-in npm with npm's own 2FA. That checkbox is sticky per browser
+in npm with npm's own 2FA. An organization API key with `decide_staged` access
+records the same staged decision for `drydock approve`, and is refused on any
+workflow-gate package (see [`api-keys.md`](./api-keys.md#recording-staged-decisions)).
+That checkbox is sticky per browser
 (`drydock:open-npm-after-decision` in localStorage, `src/models/publish-preferences.ts`)
 so reviewers who always finish in npm opt in once — it is a UI convenience with no
 server state and no bearing on the step-up rules.

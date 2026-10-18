@@ -1,7 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { API_KEY_ROUTES, API_KEY_SCAN_ROUTES } from "../server/lib/auth/api-keys";
+import {
+  API_KEY_DECIDE_ROUTES,
+  API_KEY_ROUTES,
+  API_KEY_SCAN_ROUTES,
+} from "../server/lib/auth/api-keys";
 import {
   OPENAPI_OPERATIONS,
   buildOpenApiDocument,
@@ -19,6 +23,9 @@ describe("OpenAPI document", () => {
   test("documents exactly the routes an API key may reach", () => {
     expect(documentedApiKeyRoutes("read").sort()).toEqual([...API_KEY_ROUTES].sort());
     expect(documentedApiKeyRoutes("scan").sort()).toEqual([...API_KEY_SCAN_ROUTES].sort());
+    expect(documentedApiKeyRoutes("decide_staged").sort()).toEqual(
+      [...API_KEY_DECIDE_ROUTES].sort(),
+    );
   });
 
   test("every path template parameter is declared, and nothing else is a path parameter", () => {

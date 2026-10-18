@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Drydock API",
-    "version": "1.1.0",
-    "description": "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`). No key records a release decision. Package-diff endpoints are anonymous.",
+    "version": "1.2.0",
+    "description": "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`), and a key with `decide_staged` access can also record the advisory decision on a staged npm publish (`x-drydock-api-key-access: decide_staged`). No key decides a workflow gate. Package-diff endpoints are anonymous.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -301,7 +301,7 @@
             }
           },
           "409": {
-            "description": "The review has not completed, or the package is claimed by another organization",
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
             "content": {
               "application/json": {
                 "schema": {
@@ -425,6 +425,110 @@
           },
           "502": {
             "description": "The registry rejected or could not answer the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}/decision": {
+      "post": {
+        "operationId": "recordStagedDecision",
+        "summary": "Record a decision on a staged publish",
+        "description": "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review.",
+        "tags": [
+          "Reviews"
+        ],
+        "x-drydock-api-key-access": "decide_staged",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StagedDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
             "content": {
               "application/json": {
                 "schema": {
@@ -692,7 +796,7 @@
             }
           },
           "409": {
-            "description": "The review has not completed, or the package is claimed by another organization",
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
             "content": {
               "application/json": {
                 "schema": {
@@ -775,7 +879,7 @@
             }
           },
           "409": {
-            "description": "The review has not completed, or the package is claimed by another organization",
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
             "content": {
               "application/json": {
                 "schema": {
@@ -1334,9 +1438,10 @@
             "type": "string",
             "enum": [
               "read",
-              "scan"
+              "scan",
+              "decide_staged"
             ],
-            "description": "`read` keys only read; `scan` keys can also start reviews"
+            "description": "`read` keys only read; `scan` keys can also start reviews; `decide_staged` keys can also record staged-publish decisions"
           }
         },
         "required": [
@@ -1394,6 +1499,27 @@
             "description": "Review an already-published release"
           }
         ]
+      },
+      "StagedDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "no_publish"
+            ]
+          },
+          "reason": {
+            "description": "Shown with the decision in Drydock",
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "additionalProperties": {}
       },
       "StartedScan": {
         "type": "object",

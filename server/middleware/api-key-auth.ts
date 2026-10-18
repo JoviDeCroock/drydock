@@ -8,6 +8,7 @@ import {
   API_KEY_USE_DEBOUNCE_MS,
   apiKeyExpired,
   apiKeyMayReach,
+  apiKeyRouteAccess,
   apiKeyUseIsStale,
   hashApiKey,
   isWellFormedApiKey,
@@ -70,7 +71,8 @@ export async function authenticateApiKeyRequest(
   const nowMs = Date.now();
   if (!key || apiKeyExpired(key.expiresAt, nowMs)) return rejectKey(c);
 
-  const verdict = apiKeyMayReach(answeringRoute(c), key.access);
+  const route = answeringRoute(c);
+  const verdict = apiKeyMayReach(route, key.access);
   if (verdict === "endpoint_not_allowed") {
     return c.json(
       { error: "this endpoint does not accept API keys", code: "api_key_endpoint_not_allowed" },
@@ -78,10 +80,15 @@ export async function authenticateApiKeyRequest(
     );
   }
   if (verdict === "access_insufficient") {
+    const required = apiKeyRouteAccess(route);
     return c.json(
       {
-        error: "this API key is read-only; starting reviews needs a key with scan access",
+        error:
+          required === "decide_staged"
+            ? "recording a staged-publish decision needs a key with decide_staged access"
+            : "this API key is read-only; starting reviews needs a key with scan access",
         code: "api_key_access_insufficient",
+        requiredAccess: required,
       },
       403,
     );
