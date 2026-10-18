@@ -83,7 +83,7 @@ export async function notifyWorkflowGateReview(
         `Repository: ${repositoryFullName}`,
         `Environment: ${environment}`,
         "",
-        dashboardUrl ? `Approve or block the release: ${dashboardUrl}` : null,
+        dashboardUrl ? `Approve or reject the held job: ${dashboardUrl}` : null,
         "",
         "The held GitHub deployment stays blocked until someone approves or rejects it.",
         "",

@@ -43,7 +43,18 @@ verifier that sorts by code point will disagree. Implement the JCS rule (JS
 ## Evidence semantics
 
 `content.release` records scan id, stage id, package coordinates, source, mode,
-risk, and a structured decision with decision time and the authenticated Drydock reviewer id when one exists. It also states the narrow control classification: a workflow-gate receipt is `workflow_enforced` for the configured publish workflow, while a staged-publish receipt is `advisory` registry-stage observation. Neither classification claims universal registry enforcement. `mode` is `workflow_gate` only for gate scans; manual and auto-discovered registry stages are `staged_publish`.
+risk, and a structured decision with decision time and the authenticated Drydock reviewer id when one exists. `mode` is `workflow_gate` only for gate scans; manual and auto-discovered registry stages are `staged_publish`.
+
+`content.release.control` states who enforces the release decision, and how far:
+
+| Mode             | `classification`    | `scope`                       | `enforcedBy`                        | `enforcementScope`           |
+| ---------------- | ------------------- | ----------------------------- | ----------------------------------- | ---------------------------- |
+| `workflow_gate`  | `workflow_enforced` | `configured_publish_workflow` | `github_deployment_protection_rule` | `configured_environment_job` |
+| `staged_publish` | `advisory`          | `registry_stage_observation`  | `null`                              | `null`                       |
+
+Read `workflow_enforced` as **enforced by GitHub for the configured publish job**. Drydock holds nothing itself. GitHub's deployment-protection rule on the configured Environment keeps the jobs that target that Environment waiting until Drydock answers, and fails them on a rejection. That enforcement belongs to GitHub and to the repository's settings. A repository admin can remove the rule or allow administrators to bypass it. The `sha256sum --check` that ties the published bytes to the reviewed digests runs in a job the repository controls. Other publication paths, such as a token or an interactive npm publish, are outside the gate. `advisory` means no party enforces the Drydock decision: npm's stage approval is the maintainer's, made independently in npm. Neither classification claims registry-wide enforcement.
+
+`classification` and `scope` keep their original v1 values. `enforcedBy` and `enforcementScope` were added within v1 without a schema bump, as `evidence.gateContinuity` was. A verifier re-serializes `content` to check `address`, so it accepts the added fields. Because receipts are generated from current state, a receipt downloaded again for an older scan includes them and has a different `address`. A receipt archived earlier still verifies against its own content.
 
 `content.evidence` separates independent claims:
 

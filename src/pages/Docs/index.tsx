@@ -479,15 +479,15 @@ export default function DocsPage() {
                 need an OTP, and there is no stage webhook. Drydock does not need one. Run{" "}
                 <InlineCode>npm stage publish</InlineCode> inside a gated GitHub Environment and the
                 workflow gate reviews the tarball before npm ever receives it. The gate is the
-                enforced checkpoint; the stage is npm holding exactly the reviewed bytes; the 2FA
-                approval on npm stays with you.
+                enforced checkpoint, held by GitHub; the stage is npm holding exactly the reviewed
+                bytes; the 2FA approval on npm stays with you.
               </Prose>
               <Steps
                 items={[
                   <>
                     Pin the stage-only trusted publisher to the gate environment. npm then refuses
-                    the OIDC exchange for any job outside it, and the job inside it cannot start
-                    until Drydock has passed the gate.
+                    the OIDC exchange for any job outside it, and GitHub keeps the job inside it
+                    from starting until you approve the gate in Drydock.
                   </>,
                   <>
                     Pack once, record <InlineCode>SHA256SUMS</InlineCode>, upload, and run{" "}
@@ -526,8 +526,9 @@ export default function DocsPage() {
               </h2>
               <Prose>
                 CI uploads built files and reaches a protected publish job. GitHub asks Drydock for
-                a decision before that configured job continues. The enforcement boundary is the
-                configured protected job. Other publication paths remain outside the gate.
+                a decision before that configured job continues. GitHub enforces the hold, for that
+                job only: repository admins can remove the protection rule or bypass it, and other
+                publication paths remain outside the gate.
               </Prose>
             </div>
 
@@ -749,9 +750,10 @@ export default function DocsPage() {
                     gate when evidence is unsafe, unexpected, or incomplete.
                   </>,
                   <>
-                    After every package is approved, Drydock releases the GitHub job, which verifies{" "}
-                    <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded files. Any
-                    rejection keeps the configured protected publish job blocked.
+                    After every package is approved, Drydock tells GitHub to let the job continue.
+                    It verifies <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded
+                    files. On any rejection, GitHub keeps the configured protected publish job
+                    blocked.
                   </>,
                 ]}
               />
