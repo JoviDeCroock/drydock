@@ -12,11 +12,13 @@ export class CliError extends Error {
   /**
    * @param {string} message
    * @param {number} [exitCode]
+   * @param {number} [status] the HTTP status, when the server answered with an error
    */
-  constructor(message, exitCode = 1) {
+  constructor(message, exitCode = 1, status) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;
+    this.status = status;
   }
 }
 
@@ -119,7 +121,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
     if (res.status >= 300 && res.status < 400) {
       throw new CliError(`${baseUrl} answered with a redirect; check the Drydock URL`);
     }
-    if (!res.ok) throw new CliError(errorMessage(res.status, text, res.headers));
+    if (!res.ok) throw new CliError(errorMessage(res.status, text, res.headers), 1, res.status);
     return { status: res.status, headers: res.headers, text };
   }
 

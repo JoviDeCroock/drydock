@@ -110,8 +110,13 @@ export async function approve(ctx, startWaiting) {
     });
   } catch (err) {
     if (err instanceof CliError) {
+      // Only a refusal proves nothing was written; a 5xx or a lost response
+      // may follow a committed decision.
+      const refused = typeof err.status === "number" && err.status >= 400 && err.status < 500;
       throw new CliError(
-        `${err.message}. Drydock recorded nothing and npm was not run.`,
+        refused
+          ? `${err.message}. Drydock recorded nothing and npm was not run.`
+          : `${err.message}. Drydock may have recorded the decision; check ${link}. npm was not run.`,
         err.exitCode,
       );
     }
@@ -388,6 +393,41 @@ function asObject(value) {
 }
 
 /**
+ * What the review compared the stage against. npm marks a baseline it could
+ * not download only by leaving the manifest diff without a previous manifest,
+ * with the baseline it picked still named; PyPI sets `comparisonSkipped`.
+ * Either way the diff then lists everything as added, so the facts are
+ * unknown. Only a baseline lookup that found no earlier release ("none") is a
+ * first release.
+ * @param {any} detail
+ * @returns {{ label: string; version: string | null; unknown: string | null }}
+ */
+function comparedAgainst(detail) {
+  const scan = detail?.scan ?? {};
+  const summary = asObject(scan.summaryJson);
+  const manifest = asObject(summary?.packageJsonDiff);
+  const baseline = asObject(summary?.baseline);
+  const picked =
+    typeof baseline?.version === "string" && baseline.version ? baseline.version : null;
+  const version = scan.previousVersion || manifest?.previousVersion || picked || null;
+  const notDownloaded = (/** @type {string | null} */ named) => ({
+    label: named ? `${clean(named)} (not downloaded for comparison)` : "unknown",
+    version: named,
+    unknown: named
+      ? `the previous release ${clean(named)} was not downloaded for comparison`
+      : "the review could not tell which release came before",
+  });
+  if (baseline?.comparisonSkipped) return notDownloaded(version);
+  if (manifest && manifest.hasPreviousManifest === false) {
+    if (baseline && !picked && baseline.reason === "none") {
+      return { label: "none (first release)", version: null, unknown: null };
+    }
+    return notDownloaded(picked);
+  }
+  return { label: version ? clean(version) : "unknown", version, unknown: null };
+}
+
+/**
  * The three install-path facts against the previous release, from the
  * review's manifest diff and release-delta findings. A fact the review cannot
  * support is null and prints as unknown, never as "none".
@@ -408,8 +448,8 @@ function releaseFacts(detail) {
 
   let unknown = null;
   if (!manifest) unknown = "the review has no package.json comparison";
-  else if (asObject(summary?.baseline)?.comparisonSkipped) {
-    unknown = "the previous release was not downloaded for comparison";
+  else if (comparedAgainst(detail).unknown) {
+    unknown = comparedAgainst(detail).unknown;
   } else if (
     findings.some((/** @type {any} */ finding) => finding?.ruleId === "package-json.parse-failed")
   ) {
@@ -527,15 +567,10 @@ function formatApprovalSummary(detail, link) {
   const scan = detail?.scan ?? {};
   const risk = detail?.riskSummary;
   const facts = releaseFacts(detail);
-  const manifest = asObject(asObject(scan.summaryJson)?.packageJsonDiff);
-  const previousVersion = scan.previousVersion || manifest?.previousVersion;
-  const previous = previousVersion
-    ? clean(previousVersion)
-    : manifest && manifest.hasPreviousManifest === false
-      ? "none (first release)"
-      : "unknown";
-  const since = previousVersion
-    ? `Since ${clean(previousVersion)}`
+  const compared = comparedAgainst(detail);
+  const previous = compared.label;
+  const since = compared.version
+    ? `Since ${clean(compared.version)}`
     : "Against the previous release";
   const ai = aiLines(scan.aiJson);
   const lines = [

@@ -865,6 +865,55 @@ describe("API keys with decide_staged access", () => {
     expect(read.res.status).toBe(200);
   });
 
+  test("where verification is enforced, a decide_staged key needs a verified creator", async () => {
+    const owner = await signedUpAccount();
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const db = createDb(env.DB);
+    // Mail-capable, non-local deployment: the per-action verification guard is on.
+    const enforcing = {
+      ...env,
+      SEND_EMAIL: { send: async () => undefined },
+      BETTER_AUTH_URL: "https://drydock.example",
+    } as unknown as typeof env;
+    const decide = async () => {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        new Request(`http://example.com/api/v1/scans/${scanId}/decision`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${key.token}`, "content-type": "application/json" },
+          body: JSON.stringify({ decision: "publish" }),
+        }),
+        enforcing,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    };
+
+    await db
+      .update(schema.user)
+      .set({ emailVerified: false })
+      .where(eq(schema.user.id, owner.userId));
+    const refused = await decide();
+    expect(refused.status).toBe(403);
+    expect(refused.json).toMatchObject({ code: "email_verification_required" });
+    expect((await scanDecision(scanId)).decision).toBeNull();
+
+    await db
+      .update(schema.user)
+      .set({ emailVerified: true })
+      .where(eq(schema.user.id, owner.userId));
+    expect((await decide()).status).toBe(200);
+    expect((await scanDecision(scanId)).decision).toBe("publish");
+  });
+
   test("read and scan keys are refused the decision route, and nothing is recorded", async () => {
     const owner = await signedUpAccount();
     const scanId = await seedCompletedScan({
