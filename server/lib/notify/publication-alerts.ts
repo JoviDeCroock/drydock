@@ -15,8 +15,9 @@ export interface NotifyPublicationDiscrepancyInput {
   reason?: string | null;
 }
 
-// `reviewed_without_decision` is no longer recorded; it stays for alerts
-// raised before undecided reviews were tiered by risk.
+// `reviewed_without_decision` says only that the review is undecided: a review
+// that read low but could not vouch for these bytes alone, and every such
+// alert raised before undecided reviews were tiered by risk.
 const UNDECIDED_REVIEW_REASONS = new Set([
   "review_pending",
   "review_failed",

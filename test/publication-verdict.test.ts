@@ -696,18 +696,86 @@ describe("an undecided completed review of the published bytes is tiered by risk
     expect(
       classifyWith([owner, undecided({ id: "risky", riskSummaryJson: risk("medium") })]),
     ).toMatchObject({ ...riskyAlert, scanId: "owner" });
-    expect(classifyWith([owner, inFlight("pending", { id: "late" })])).toMatchObject(riskyAlert);
+    // A low review that cannot vouch alone alerts without claiming any risk.
+    const undecidedAlert = {
+      status: "published_without_approval",
+      reason: "reviewed_without_decision",
+      scanId: "owner",
+    };
+    expect(classifyWith([owner, inFlight("pending", { id: "late" })])).toEqual(undecidedAlert);
     // Matched on npm's shasum alone: the tarball could not be hashed here.
-    expect(classifyWith([owner], {}, "artifact_timeout")).toMatchObject(riskyAlert);
+    expect(classifyWith([owner], {}, "artifact_timeout")).toEqual(undecidedAlert);
     // Matched on npm's record of the stage, not bytes the review hashed.
     const unverified = undecided({ summaryJson: { stagedPublish: { shasum: sha1 } } });
-    expect(classifyWith([unverified])).toMatchObject(riskyAlert);
+    expect(classifyWith([unverified])).toMatchObject({ reason: "reviewed_without_decision" });
     // Some records of the version were not read.
-    expect(classifyWith([owner], { historyLimited: true })).toMatchObject(riskyAlert);
+    expect(classifyWith([owner], { historyLimited: true })).toEqual(undecidedAlert);
     // A flag still escalates past every one of those.
     expect(
       classifyWith([undecided({ aiJson: ai("blocked") })], {}, "artifact_timeout").reason,
     ).toBe("ai_flagged_without_decision");
+  });
+
+  test("an organization that decides here, or a restage, is never quieted", () => {
+    // The owner approved stage A; B restaged the version (superseding A) and
+    // was published undecided. A's decision covered other bytes.
+    const approvedA = review({
+      id: "stage-a",
+      summaryJson: stagedIntegrity("a".repeat(40)),
+      registryStatusSupersededAt: before,
+    });
+    expect(classifyWith([approvedA, undecided({ id: "stage-b" })])).toEqual({
+      status: "published_without_approval",
+      reason: "reviewed_without_decision",
+      scanId: "stage-b",
+    });
+    // A decision on other bytes, even with nothing superseded.
+    const rejectedOther = review({
+      id: "other",
+      decision: "no_publish",
+      summaryJson: stagedIntegrity("b".repeat(40)),
+    });
+    expect(classifyWith([rejectedOther, undecided({ id: "low" })]).reason).toBe(
+      "reviewed_without_decision",
+    );
+    // An undecided restage of other bytes.
+    const supersededOther = undecided({
+      id: "old",
+      summaryJson: stagedIntegrity("c".repeat(40)),
+      registryStatusSupersededAt: before,
+    });
+    expect(classifyWith([supersededOther, undecided({ id: "low" })]).reason).toBe(
+      "reviewed_without_decision",
+    );
+  });
+
+  test("a stage not bound to an approved gate review, or with new findings, alerts", () => {
+    const withSummary = (extra: Record<string, unknown>) =>
+      undecided({ summaryJson: { ...stagedIntegrity(sha1), ...extra } });
+    for (const status of [
+      "ungated",
+      "digest-mismatch",
+      "gate-not-approved",
+      "unverified",
+      "unknown",
+    ]) {
+      expect(
+        classifyWith([withSummary({ gateContinuity: { status, reason: "x" } })]),
+        status,
+      ).toMatchObject(riskyAlert);
+    }
+    expect(classifyWith([withSummary({ gateContinuity: "garbled" })])).toMatchObject(riskyAlert);
+    for (const status of ["none", "matched"]) {
+      expect(classifyWith([withSummary({ gateContinuity: { status } })]).status, status).toBe(
+        "undecided_low_risk",
+      );
+    }
+    expect(
+      classifyWith([withSummary({ releaseConsistency: { status: "diverged" } })]),
+    ).toMatchObject(riskyAlert);
+    expect(classifyWith([withSummary({ releaseConsistency: { status: "match" } })]).status).toBe(
+      "undecided_low_risk",
+    );
   });
 
   test("an unrecognized AI result is a concern, never clean", () => {

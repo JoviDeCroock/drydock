@@ -235,12 +235,22 @@ export function undecidedReviewTier(
   if (scan.status !== "complete" || ai === "concern") return "risky";
   const releaseRisk = isRecord(scan.riskSummaryJson) ? scan.riskSummaryJson.releaseRisk : null;
   if (releaseRisk !== "low") return "risky";
-  const baseline =
-    isRecord(scan.summaryJson) && isRecord(scan.summaryJson.baseline)
-      ? scan.summaryJson.baseline
-      : null;
-  if (baseline?.comparisonSkipped != null) return "risky";
+  const summary = isRecord(scan.summaryJson) ? scan.summaryJson : {};
+  if (isRecord(summary.baseline) && summary.baseline.comparisonSkipped != null) return "risky";
+  // The signals batch approval also refuses to read as likely safe: findings
+  // new since the last approved release, and a stage that is not bound to an
+  // approved gate review of a gated package (one that skipped the gate is the
+  // account-takeover path). Neither moves risk, so neither shows in it.
+  if (summarizedStatus(summary.releaseConsistency) === "diverged") return "risky";
+  const gate = summarizedStatus(summary.gateContinuity);
+  if (gate !== null && gate !== "none" && gate !== "matched") return "risky";
   return "low_risk";
+}
+
+// Null when the summary has no such record; anything unreadable is not null.
+function summarizedStatus(value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  return isRecord(value) ? (value.status ?? "malformed") : "malformed";
 }
 
 /**
@@ -254,11 +264,16 @@ export function undecidedReviewTier(
  * that a bypass of bytes Drydock graded low risk goes unannounced, because
  * owners who approve on npm and never decide here made that alert mostly
  * noise. Quiet needs every matching record to read low, both sides hashed by
- * Drydock (the published tarball here, the reviewed one in the sandbox), and
- * every record of the version compared.
+ * Drydock (the published tarball here, the reviewed one in the sandbox), every
+ * record of the version compared, and no record of it (of any bytes) decided
+ * or superseded by a restage: an organization that decides here, or a
+ * restage, is not the noise this answers. When the review reads low but quiet
+ * is refused for one of those, the alert says only that the review is
+ * undecided (`reviewed_without_decision`), never that it found risk.
  */
 function undecidedVerdict(
   matching: readonly { scan: ReviewEvidence; reviewed: boolean }[],
+  records: readonly ReviewEvidence[],
   unhashed: ArtifactUnavailableReason | null,
   options: { aiReview: boolean; historyLimited: boolean },
 ): Verdict {
@@ -270,11 +285,12 @@ function undecidedVerdict(
   if (owner.status === "failed") {
     return { status: "published_without_approval", reason: "review_failed", scanId: owner.id };
   }
-  const tiers = matching.map(({ scan, reviewed }) => ({
-    scan,
-    reviewed,
-    tier: undecidedReviewTier(scan, options),
-  }));
+  // A record still in flight (or failed) beside the owner graded nothing: it
+  // cannot vouch, but it does not say the release is risky either.
+  const tiers = matching
+    .filter(({ scan }) => scan.status === "complete")
+    .map(({ scan, reviewed }) => ({ scan, reviewed, tier: undecidedReviewTier(scan, options) }));
+  const allComplete = tiers.length === matching.length;
   const flagged = tiers.find(({ tier }) => tier === "ai_flagged");
   if (flagged) {
     return {
@@ -283,17 +299,26 @@ function undecidedVerdict(
       scanId: flagged.scan.id,
     };
   }
-  const quiet =
+  const alert = (reason: string): Verdict => ({
+    status: "published_without_approval",
+    reason,
+    scanId: owner.id,
+  });
+  if (!tiers.every(({ tier }) => tier === "low_risk")) {
+    return alert("reviewed_risk_without_decision");
+  }
+  const vouched =
+    allComplete &&
     !unhashed &&
     !options.historyLimited &&
-    tiers.every(({ tier, reviewed }) => tier === "low_risk" && reviewed);
-  return quiet
+    tiers.every(({ reviewed }) => reviewed) &&
+    !records.some(
+      (scan) =>
+        (scan.decision !== null && scan.decidedAt !== null) || scan.registryStatusSupersededAt,
+    );
+  return vouched
     ? { status: "undecided_low_risk", reason: null, scanId: owner.id }
-    : {
-        status: "published_without_approval",
-        reason: "reviewed_risk_without_decision",
-        scanId: owner.id,
-      };
+    : alert("reviewed_without_decision");
 }
 
 /**
@@ -308,13 +333,13 @@ function matchedVerdict(
   matching: readonly { scan: ReviewEvidence; reviewed: boolean }[],
   publishedAt: Date,
   unhashed: ArtifactUnavailableReason | null,
-  options: { aiReview: boolean; historyLimited: boolean },
+  options: { aiReview: boolean; historyLimited: boolean; records: readonly ReviewEvidence[] },
 ): Verdict {
   const scansOfTheseBytes = matching.map(({ scan }) => scan);
   const decided = scansOfTheseBytes.filter(
     (scan) => scan.decision !== null && scan.decidedAt !== null,
   );
-  if (decided.length === 0) return undecidedVerdict(matching, unhashed, options);
+  if (decided.length === 0) return undecidedVerdict(matching, options.records, unhashed, options);
   const before = decided.filter((scan) => scan.decidedAt! < publishedAt);
   const late = decided.filter((scan) => scan.decidedAt! >= publishedAt);
   // A rejection of these exact bytes with no approval of them anywhere alerts,
@@ -377,8 +402,8 @@ export function classifyPublication(
 ): Verdict {
   if (!publishedAt) return unknown("publication_time_unavailable");
   const historyLimited = options.historyLimited ?? false;
-  const tiering = { aiReview: options.aiReview ?? false, historyLimited };
   const records = releaseRecords(name, version, reviews, options.registry);
+  const tiering = { aiReview: options.aiReview ?? false, historyLimited, records };
   if (records.length === 0)
     return {
       status: "published_without_approval",

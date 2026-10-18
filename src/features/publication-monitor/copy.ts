@@ -40,6 +40,7 @@ const unknownReasonLabels: Record<string, string> = {
   publication_time_unavailable: "npm reports no publication time",
   review_pending: "a Drydock review of this version is still running",
   review_failed: "the Drydock review of this version failed",
+  decided_after_observation: "a review of it was decided since; the next check re-reads it",
   reviewed_without_decision: "reviewed these bytes, no decision recorded before publication",
   decision_history_unavailable: "decided only after publication",
   review_digest_unavailable: "npm's record matches, but the review could not confirm these bytes",
@@ -53,8 +54,9 @@ const unknownReasonLabels: Record<string, string> = {
 // What refines an alert. An undecided review of the published bytes is most
 // often the owner's own release promoted before anyone decided, so it asks for
 // the decision first and never accuses whoever published it.
-// `reviewed_without_decision` is only on alerts raised before undecided
-// reviews were tiered by risk.
+// `reviewed_without_decision` claims nothing about risk: it is a low-risk
+// review that could not vouch for the bytes alone, or an alert raised before
+// undecided reviews were tiered by risk.
 const alertReasonLabels: Record<string, string> = {
   review_pending:
     "a Drydock review of these exact bytes is still undecided: decide it, or investigate if nobody here published it",

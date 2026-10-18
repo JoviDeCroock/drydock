@@ -23,6 +23,7 @@ import {
   sweepNpmPublicationWatches,
 } from "../../server/lib/ecosystems/npm/publication-monitor";
 import type { ReviewEvidence } from "../../server/lib/ecosystems/npm/publication-verdict";
+import { recordScanDecision } from "../../server/db/scan-decisions";
 import { createHash } from "node:crypto";
 import { seedPublicationWatches, seedUser } from "./helpers/seed";
 import { seedLegacyScanJob } from "./helpers/seed-scan-job";
@@ -512,6 +513,43 @@ describe("an undecided completed review of the published bytes", () => {
     expect(observations[2]).toMatchObject({ scanId: expect.any(String), acknowledgedAt: null });
     expect(await alertsOf(db, organizationId)).toEqual(["2.0.0", "3.0.0"]);
     expect((await getPublicationWatch(db, organizationId, watch.id))?.unresolvedAlertCount).toBe(2);
+  });
+
+  test("deciding a quiet release's review hands it back to the monitor", async () => {
+    const seeded = await seed();
+    const { db, organizationId, userId, watch } = seeded;
+    await seedTiers(seeded);
+    await checkNpmPublicationWatch(db, flags(true), watch);
+    const quiet = (await listPublicationObservations(db, organizationId, watch.id)).find(
+      (row) => row.version === "1.0.0",
+    )!;
+    expect(quiet.status).toBe("undecided_low_risk");
+    await recordScanDecision(db, {
+      scanId: quiet.scanId!,
+      organizationId,
+      actorUserId: userId,
+      decision: "no_publish",
+    });
+    const reopened = await listPublicationObservations(db, organizationId, watch.id);
+    expect(reopened.find((row) => row.version === "1.0.0")).toMatchObject({
+      status: "unknown",
+      reason: "decided_after_observation",
+    });
+    // Alerts already raised are left exactly as they were.
+    expect(reopened.find((row) => row.version === "2.0.0")?.status).toBe(
+      "published_without_approval",
+    );
+    await releaseLease(db, watch.id);
+    await checkNpmPublicationWatch(db, flags(true), watch);
+    expect(
+      (await listPublicationObservations(db, organizationId, watch.id)).find(
+        (row) => row.version === "1.0.0",
+      ),
+    ).toMatchObject({
+      status: "published_despite_rejection",
+      reason: "rejected_after_publication",
+    });
+    expect(await alertsOf(db, organizationId)).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
   });
 
   test("with the AI killswitch off, an AI flag neither alerts nor escalates", async () => {
