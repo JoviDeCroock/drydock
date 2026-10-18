@@ -675,8 +675,13 @@ async function examineReleases(
       watch.packageName,
       registry,
     );
-    if (item.publishedAt) {
-      await recordPublishedAtOnReviews(db, watch, registry, item.version, item.publishedAt);
+    // The bytes this check hashed, else npm's own shasum for them.
+    const publishedSha1 = digests?.sha1 ?? entry?.shasum ?? null;
+    if (item.publishedAt && publishedSha1) {
+      await recordPublishedAtOnReviews(db, watch, registry, item.version, {
+        publishedAt: item.publishedAt,
+        sha1: publishedSha1,
+      });
     }
     if (createdAlert && isPublicationAlert(verdict.status)) {
       // One line per new unapproved publish on a watched package, so operators
@@ -707,17 +712,17 @@ async function examineReleases(
 }
 
 /**
- * Give this organization's staged reviews of the release npm's own publication
- * time, so "was the report opened before publication" has an exact answer.
- * Ancillary to the check: a failure leaves the reviews on the version-status
- * bound and never fails the observation.
+ * Give this organization's staged reviews of the published bytes npm's own
+ * publication time, so "was the report opened before publication" has an
+ * exact answer. Ancillary to the check: a failure leaves the reviews on the
+ * version-status bound and never fails the observation.
  */
 async function recordPublishedAtOnReviews(
   db: AppDb,
   watch: PublicationWatch,
   registry: string,
   version: string,
-  publishedAt: Date,
+  published: { publishedAt: Date; sha1: string },
 ): Promise<void> {
   try {
     await recordScanRegistryPublishedAt(db, {
@@ -725,7 +730,7 @@ async function recordPublishedAtOnReviews(
       registryUrl: registry,
       packageName: watch.packageName,
       version,
-      publishedAt,
+      ...published,
     });
   } catch (err) {
     emitOperationalEvent("warn", "npm.publication_monitor.published_at_write_failed", {

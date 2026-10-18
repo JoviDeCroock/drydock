@@ -133,11 +133,13 @@ deleted review or registry event.
 
 When an observation carries npm's publication time, the check also stamps it on
 this organization's live staged reviews of that exact registry package and
-version (`scans.registry_published_at`, first write wins), so "was the report
-opened before publication" can be answered exactly
-([`product-analytics.md`](./product-analytics.md#report-views)). It is keyed on
-the registry coordinates npm supplied, never the tarball manifest, and a failed
-write leaves the observation untouched.
+version whose stage SHA-1 matches the published bytes (the hash this check
+computed, else npm's `dist.shasum`) as `scans.registry_published_at`, first
+write wins, so "was the report opened before publication" can be answered
+exactly ([`product-analytics.md`](./product-analytics.md#report-views)). It is
+keyed on the registry coordinates npm supplied, never the tarball manifest, a
+stage rejected on npm whose version shipped from other bytes is not stamped,
+and a failed write leaves the observation untouched.
 
 Each observation also records which dist-tags pointed at the version at the latest
 check (`dist_tags`, sorted; malformed tag names are dropped). Every check refreshes

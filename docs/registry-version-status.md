@@ -273,7 +273,8 @@ Eight columns on `scans` (migration `0027`), plus one from `0030`:
   notice (migration `0030`).
 - `registry_published_at` — npm's own publication time for the version (the
   packument's `time[version]`), stamped on this organization's live staged
-  reviews of it, matched by the immutable registry coordinates, when its
+  reviews of it, matched by the immutable registry coordinates and by the
+  stage's SHA-1 against the published bytes, when its
   [publication monitor](./publication-monitor.md) observes the release
   (migration `0040`). Null when no watch saw the release; the status columns
   above then only bound publication from above.

@@ -80,8 +80,8 @@ surfaces and record nothing. Four columns on `scans` (migration `0040`):
   is the earliest recorded load, and the release timeline says so.
 - `report_first_view_surface` — `web`, or `notification` when the first load
   was a landing from an email or Slack link (those links carry
-  `?via=notification`, which the page passes on once and then drops from its
-  address). The value is a counting hint, never authority. A GitHub comment link
+  `?via=notification`; the page drops it from its address and passes it on
+  until a load returns the completed report). The value is a counting hint, never authority. A GitHub comment link
   counts as `web`.
 
 Writes never touch `updated_at`: a view is not a change to the review.
@@ -94,7 +94,8 @@ it as `scan.reportOpenedBeforePublication`. Publication evidence is, in order:
 
 1. `registry_published_at`, npm's own publication time for the version, stamped
    by this organization's [publication monitor](./publication-monitor.md) when it
-   observes the release. The first view orders against it, except within 10
+   observes the release, only on reviews whose stage SHA-1 matches the published
+   bytes. The first view orders against it, except within 10
    seconds either side, which is `unknown` because the two clocks are
    independent.
 2. A `published` or `deleted` [version status](./registry-version-status.md),
@@ -116,10 +117,15 @@ person, and "not opened" never says who should have looked.
 publication-monitor observation, Drydock only knows a release was published by
 the time its version status was last read, so a report opened before that read is
 `unknown` rather than `opened`. Watched packages get npm's exact publication
-time. A scan created between applying migration `0040` and deploying the code
-that records views is counted from 0 although its first loads went unrecorded;
-that window is minutes. Every authenticated read today is a browser session, so
-there is no API-key surface yet.
+time. While a deploy rolls out, a scan created by the new code is counted from 0
+but can be read through an older Worker version that records nothing, so a
+`not_opened` from that window may be wrong; scans the old code created stay
+null and are safe. A page left open while a review runs records a load when the
+review completes, whether or not anyone is looking. `not_opened` does not say
+whether the report existed before publication: a review that completed after
+npm published could not have been opened, and only the snapshot's `reviewReady`
+column (exact publication times only) separates the two. Every authenticated
+read today is a browser session, so there is no API-key surface yet.
 
 **`badge.served` counts serves, never impressions.** A README badge is fetched
 by shields.io, and on GitHub by Camo in front of that, and this Worker caches

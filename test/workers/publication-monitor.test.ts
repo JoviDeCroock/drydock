@@ -344,34 +344,44 @@ test("releases without a Drydock record drain in bounded batches with no downloa
   ).toMatchObject({ "1.0.0": null, "2.0.0": "1.0.0", "8.0.0": "7.0.0" });
 });
 
-test("stamps npm's publication time on this organization's live staged reviews of the release only", async () => {
+test("stamps npm's publication time on this organization's live staged reviews of the published bytes only", async () => {
   const { db, organizationId, watch } = await seed();
   const other = await seedUser({ name: "Elsewhere" });
   const ids = {
     live: crypto.randomUUID(),
+    otherBytes: crypto.randomUUID(),
     superseded: crypto.randomUUID(),
     manifestOnly: crypto.randomUUID(),
     otherVersion: crypto.randomUUID(),
     otherOrganization: crypto.randomUUID(),
     gate: crypto.randomUUID(),
   };
-  await insertReview(db, organizationId, { id: ids.live });
+  const sameBytes = { stagedDeclaredSha1: sha1 };
+  await insertReview(db, organizationId, { id: ids.live, ...sameBytes });
+  // A stage rejected on npm whose version was then published from other bytes.
+  await insertReview(db, organizationId, {
+    id: ids.otherBytes,
+    stagedDeclaredSha1: "e".repeat(40),
+  });
   await insertReview(db, organizationId, {
     id: ids.superseded,
+    ...sameBytes,
     registryStatusSupersededAt: new Date(),
   });
   // A tarball manifest naming the watched package cannot borrow its timeline.
   await insertReview(db, organizationId, {
     id: ids.manifestOnly,
+    ...sameBytes,
     registryPackageName: "@drydock/someone-else",
   });
   await insertReview(db, organizationId, {
     id: ids.otherVersion,
+    ...sameBytes,
     stagedVersion: "2.0.0",
     registryVersion: "2.0.0",
   });
-  await insertReview(db, other.organizationId, { id: ids.otherOrganization });
-  await insertReview(db, organizationId, { id: ids.gate, source: "workflow_gate" });
+  await insertReview(db, other.organizationId, { id: ids.otherOrganization, ...sameBytes });
+  await insertReview(db, organizationId, { id: ids.gate, ...sameBytes, source: "workflow_gate" });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
     isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
   );
@@ -385,6 +395,7 @@ test("stamps npm's publication time on this organization's live staged reviews o
   const stamped = Object.fromEntries(rows.map((row) => [row.id, row.registryPublishedAt]));
   expect(stamped[ids.live]).toEqual(watch.createdAt);
   for (const id of [
+    ids.otherBytes,
     ids.superseded,
     ids.manifestOnly,
     ids.otherVersion,
