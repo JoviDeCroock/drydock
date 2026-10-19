@@ -180,7 +180,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.50.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -766,6 +766,21 @@ the install-root path, not merely `node_modules` plus a write anywhere in the fi
 clears esbuild's self-replacing binary install and keeps a write into a sibling package.
 `files-allowlist-escape-negated-dir`, `install-root-sibling-package-write` and the
 `legit-npm-packlist-files-semantics` hard-negative pin both sides.
+
+`1.50.0` narrows the `code.*` capability rules that fired on ordinary npm releases.
+`code.credential-access` keys on what is read: secret-shaped environment names,
+runtime-chosen keys, whole-environment harvests (including through an alias) and credential
+file paths. Named configuration reads (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`), an
+environment handed to a child process, and comments no longer count. `code.network-access`
+and `code.dynamic-evaluation` ignore JavaScript comments. Eval-family calls also ignore
+string and template text (template substitutions stay visible), methods named `eval`, and
+the dynamic-import shim. A decode next to an eval stays high in a modified module.
+`code.remote-shell` needs an operand after `curl`/`wget`, and no longer reads a shell
+grammar's keyword alternation as a pipeline. `secret-named-env-exfil`,
+`env-alias-harvest-exfil` and `env-computed-key-exfil` pin the shapes that must keep firing.
+`legit-nonsecret-env-config`, `legit-comment-network-and-codegen` and
+`legit-shell-grammar-keyword-lists` pin the exempted shapes. The release-injection gate now
+expects zero misses; `npm-assembled-require-exfil` is caught.
 
 ### Fixture format
 
