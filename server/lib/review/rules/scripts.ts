@@ -765,7 +765,7 @@ function eraseKeepingNewlines(match: string): string {
   return match.replace(/[^\n]/g, " ");
 }
 
-// `const { PORT, HOME: home = '' } = process.env`, on one line or many, reads
+// `const { PORT, HOME: home = '' } = process.env`, on one line or many, declares
 // exactly the names it lists, so it is judged like `process.env.PORT`: erased
 // when no listed name looks like a secret, kept with a rest element or a
 // computed key. The pattern is found by a backward bracket scan over the
@@ -790,6 +790,11 @@ function omitNamedEnvironmentDestructuring(code: string, inert: string): string 
       continue;
     }
     budget -= close - open;
+    // Only a declaration. A destructuring assignment (`({ HOME } =
+    // process.env)`) is an expression whose value is the whole env object.
+    if (!/(?<![\w$.])(?:const|let|var)\s*$/.test(inert.slice(Math.max(0, open - 16), open))) {
+      continue;
+    }
     const names = code.slice(open + 1, close);
     if (/\.\.\.|\[/.test(names) || SECRET_NAME.test(names)) continue;
     erase.push([match.index, match.index + match[0].length]);

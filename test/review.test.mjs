@@ -707,6 +707,46 @@ describe("review", () => {
     ).toHaveLength(1);
   });
 
+  test("the line-comment pass keeps template substitutions on comment-looking lines", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "t", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    // Past the 4 MB lexing cap, as well as in single-file components.
+    const filler = `const pad = 0;\n`.repeat(300 * 1024);
+    for (const [prefix, path] of [
+      [filler, "dist/huge.js"],
+      ["<script>\n", "src/App.vue"],
+      ["<script>\n", "src/App.svelte"],
+    ]) {
+      expect(
+        ruleIds(path, `${prefix}const t = \`\n// \${eval(atob(blob))}\n\`;\n`),
+        path,
+      ).toContain("code.dynamic-evaluation");
+      expect(ruleIds(path, `${prefix}const t = \`\n// \${fetch(u)}\n\`;\n`), path).toContain(
+        "code.network-access",
+      );
+      expect(
+        ruleIds(path, `${prefix}const t = \`\n// \${JSON.stringify(process.env)}\n\`;\n`),
+        path,
+      ).toContain("code.credential-access");
+    }
+  });
+
+  test("nested template markers past the view budget fall back to raw text", () => {
+    const textSample = "`${".repeat(1_300_000);
+    const staged = [
+      { path: "dist/nest.js", size: textSample.length, sha256: "n", flags: [], textSample },
+    ];
+    const heapBefore = process.memoryUsage().heapUsed;
+    const started = performance.now();
+    deterministicFindings(staged, createPackageDiff([], staged));
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
+  }, 60_000);
+
   test("a comment-only change does not make an existing credential read part of the release", () => {
     const previousFiles = [
       {
@@ -754,6 +794,10 @@ describe("review", () => {
       "const { AWS_REGION } = process.env;\n",
       "const {\n  CI_JOB_JWT: identity,\n} = process.env;\n",
       "const { PORT, ...rest } = process.env;\n",
+      // A destructuring assignment evaluates to the whole env object.
+      "let HOME;\nmodule.exports = () => JSON.stringify({ HOME } = process.env);\n",
+      "let HOME, PATH;\nfs.writeFileSync(out, JSON.stringify(({ HOME, PATH } = process.env)));\n",
+      "let HOME;\nprocess.send({ HOME } = process.env);\n",
       "const k = process.env.CI_JOB_JWT_V2;\n",
       "const f = readFileSync(process.env.KUBECONFIG);\n",
       "const f = process.env.DOCKER_CONFIG + '/config.json';\n",

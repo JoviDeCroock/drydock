@@ -109,10 +109,27 @@ const COMPONENT_PATH = /\.(?:astro|vue|svelte)$/i;
 // files that carry the most JSDoc.
 const MAX_CODE_VIEW_BYTES = 4 * 1024 * 1024;
 // A whole line that is a `//` comment. It is a comment or text inside a
-// multi-line string, never code, unless a quote, backtick or `*/` on it ends
-// that string or an enclosing block comment and resumes code, so such lines
-// stay.
-const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"\n])*$/gm;
+// multi-line string, never code, unless something on it runs or resumes code:
+// a quote, backtick or `*/` that ends a string or an enclosing block comment,
+// or a `$` that may open a `${…}` substitution in a multi-line template. Such
+// lines stay.
+const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"$\n])*$/gm;
+// The lexer keeps state per open template and substitution, about 2 KB a
+// level, so a file of nested `` `${ `` can exhaust memory. Every level needs a
+// backtick or a `${`; past this many of them (the largest bundles under the
+// size cap carry about 40,000) the view is the raw text, which blanks nothing.
+const MAX_TEMPLATE_MARKERS = 64 * 1024;
+
+function templateMarkersExceed(source: string, limit: number): boolean {
+  let count = 0;
+  for (let i = source.indexOf("`"); i >= 0; i = source.indexOf("`", i + 1)) {
+    if (++count > limit) return true;
+  }
+  for (let i = source.indexOf("${"); i >= 0; i = source.indexOf("${", i + 2)) {
+    if (++count > limit) return true;
+  }
+  return false;
+}
 
 export interface CodeViews {
   // Comments blanked.
@@ -129,6 +146,9 @@ export function codeViewsForScanning(path: string, source: string): CodeViews {
     if (!javascript && !COMPONENT_PATH.test(path)) return { code: source, codeNoStrings: source };
     const code = source.replace(LINE_COMMENT_ONLY, (line) => line.replace(/[^\r\n]/g, " "));
     return { code, codeNoStrings: code };
+  }
+  if (templateMarkersExceed(source, MAX_TEMPLATE_MARKERS)) {
+    return { code: source, codeNoStrings: source };
   }
   const comments: JsToken[] = [];
   const literals: JsToken[] = [];
