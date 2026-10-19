@@ -188,10 +188,8 @@ Gated metrics (`detection-eval.test.mjs`):
 - every `expectMinRisk: critical` case caught (100%)
 - benign regression positives exactly match the acknowledged fixture ids
 - benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
-- release injection: no misses beyond the pinned `npm-assembled-require-exfil`
-  (lines shape; the environment is read through a computed key no rule sees, a
-  detection gap rather than a classification one) and none in the minified
-  shape, over at least 20 cases each
+- release injection: no misses in either the lines or the minified shape, over
+  at least 20 cases each
 
 Frontier recall and evasion robustness are reported, not gated, so they can start
 red. The benign FP gate was the first ratchet step and landed with weighted

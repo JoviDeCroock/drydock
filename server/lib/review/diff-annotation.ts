@@ -13,7 +13,7 @@ import {
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
-import { normalizeCodeForScanning } from "./rules/normalize";
+import { codeViewsForScanning, normalizeCodeForScanning } from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
 import {
   installReachablePaths,
@@ -329,6 +329,8 @@ interface FileChanges {
   stagedText: string;
   raw: ChangedRegions;
   folded: () => { text: string; regions: ChangedRegions } | null;
+  // Comment-blind views of the staged and folded texts (same offsets).
+  code: (text: string) => string;
 }
 
 function fileChangesForPath(
@@ -354,7 +356,16 @@ function fileChangesForPath(
   const stagedText = staged.textSample;
   const foldable = codePatternSet !== "python" && !path.endsWith(".py");
   let folded: { text: string; regions: ChangedRegions } | null | undefined;
+  const codeViews = new Map<string, string>();
   const changes: FileChanges = {
+    code: (text) => {
+      let view = codeViews.get(text);
+      if (view === undefined) {
+        view = codeViewsForScanning(path, text).code;
+        codeViews.set(text, view);
+      }
+      return view;
+    },
     stagedText,
     raw: changedRegions(previousText, stagedText),
     folded: () => {
@@ -394,10 +405,24 @@ function findingPatternMatchesChanges(
         : [],
     );
   }
-  if (patternsTouchChangedRegions(changes.stagedText, changes.raw, patterns)) return true;
+  // Detection reads these rules comment-blind in JavaScript, so an edited
+  // comment beside an older call is not that call arriving. Blanking keeps
+  // offsets, so the changed regions still apply.
+  const view = COMMENT_BLIND_RULE_IDS.has(finding.ruleId ?? "")
+    ? changes.code
+    : (text: string) => text;
+  if (patternsTouchChangedRegions(view(changes.stagedText), changes.raw, patterns)) return true;
   const folded = changes.folded();
-  return Boolean(folded && patternsTouchChangedRegions(folded.text, folded.regions, patterns));
+  return Boolean(
+    folded && patternsTouchChangedRegions(view(folded.text), folded.regions, patterns),
+  );
 }
+
+const COMMENT_BLIND_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.codeNetworkAccess,
+  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
+  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
+]);
 
 // Whether the file's changes match some capability pattern only once string
 // pieces are joined (`'chi' + 'ld_process'`), even where a sibling pattern
@@ -464,7 +489,10 @@ function patternsForFinding(
     case DETERMINISTIC_RULE_IDS.codeDynamicEvaluation:
       return patterns.dynamicEvaluation;
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
-      return patterns.credentialAccess;
+      // An env alias counts with the secret name or harvest read through it,
+      // and the finding's line is that evidence; either half arriving is this
+      // release's change.
+      return [...patterns.credentialAccess, ...patterns.credentialAlias, ...patterns.secretName];
     case DETERMINISTIC_RULE_IDS.propagationRegistryPublish:
       return patterns.registryPublish;
     case DETERMINISTIC_RULE_IDS.propagationPackageMutation:

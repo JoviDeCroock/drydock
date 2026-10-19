@@ -48,13 +48,10 @@ describe("detection eval (gated thresholds)", () => {
   // lone capabilities (a benign build script's child_process), so the benign
   // hard-negative roll-up FP rate now stays under 10%.
   test("a payload spliced into an existing module still raises release risk", () => {
-    // Pinned known miss: the environment is read through a computed key
-    // (`globalThis['proc' + 'ess'][e]`), which no rule sees, so only the lone
-    // process spawn lands on the release delta. A detection gap, not a
-    // classification one: the added-file original is caught by co-occurrence.
-    expect(result.releaseInjection.lines.misses.map((miss) => miss.id)).toEqual([
-      "npm-assembled-require-exfil",
-    ]);
+    // `npm-assembled-require-exfil` reads the environment through a computed
+    // member of `process` (`globalThis['proc' + 'ess'][e]`), which the
+    // credential rule now counts as a runtime-chosen key.
+    expect(result.releaseInjection.lines.misses).toEqual([]);
     expect(result.releaseInjection.minified.misses).toEqual([]);
     expect(result.releaseInjection.lines.samples).toBeGreaterThanOrEqual(20);
     expect(result.releaseInjection.minified.samples).toBeGreaterThanOrEqual(20);

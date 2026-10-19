@@ -38,9 +38,14 @@ const PYTHON_PROCESS_EXECUTION_PATTERNS = [
 // whole release rolled up to low.
 //
 // Command strings are language-agnostic, so both ecosystems share these sets.
+// A download names something to fetch: a flag, a quoted or variable operand, a
+// number, or a host/URL with a dot, slash or colon. A bare word after the tool
+// name is prose ("curl is required", "retry with `vercel curl <url>`") or a
+// syntax highlighter's keyword table ("cp cpp curl cvpa …").
+const SHELL_TOOL_OPERAND = String.raw`(?=[-"'\x60$\\({[]|\d|[\w%@-]*[./:][\w%/.-])`;
 const SHELL_NETWORK_TOOL_PATTERNS = [
-  /\bcurl\s/,
-  /\bwget\s/,
+  new RegExp(String.raw`\bcurl\s+${SHELL_TOOL_OPERAND}`),
+  new RegExp(String.raw`\bwget\s+${SHELL_TOOL_OPERAND}`),
   // `nc` requires a flag. Bare `\bnc\s` reads a two-letter identifier as a
   // reverse shell: `nc` is a ubiquitous variable name in scientific Python
   // (`nc = netCDF4.Dataset(...)`), and no real netcat invocation omits flags.
@@ -63,9 +68,11 @@ const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
   // (`| base64 -d | bash`, `| gunzip | sh` — the standard obfuscated forms), an
   // absolute path (`| /bin/bash`), and a privilege/environment prefix
   // (`| sudo -E bash`, `| env bash`). The trailing `\b` is what keeps
-  // `| sha256sum` and `| shasum` out.
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
+  // `| sha256sum` and `| shasum` out. A tool name directly followed by `|` or
+  // `)` downloads nothing: that is an alternation keyword list
+  // (`(?:…|curl|cut|…|zsh)` in a shell grammar), not a pipeline.
+  /\b(?:curl|wget)\b(?!\s*[|)])[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
+  /\b(?:curl|wget)\b(?!\s*[|)])[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
   // Substitution captures data; only an execution consumer makes it remote
   // code execution. Bare $(curl ... | jq), <(curl ...), and backticks also
   // appear in generated docs and JavaScript template strings. Allow escaped
@@ -93,7 +100,9 @@ const JS_NETWORK_ACCESS_PATTERNS = [
   /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
   /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
   /\b(?:global|globalThis|self|window)\.fetch\s*\(/,
-  /(?<![\w$.])fetch\s*\((?![^\n;]*\)\s*\{)/,
+  // `fetch(input, init) {` on one line is a method definition, never a call;
+  // a parenthesis in between (`if (!fetch(u)) {`) means it is a call.
+  /(?<![\w$.])fetch\s*\((?![^()\n;]*\)[ \t]*\{)/,
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
 ];
@@ -110,17 +119,49 @@ const PYTHON_NETWORK_ACCESS_PATTERNS = [
 // Primitives that run a string as code. A method named `eval` on some other
 // object is not one: Redis clients expose `client.eval(luaScript)`. Global
 // receivers and optional calls keep a member-shaped eval.
-const JS_DYNAMIC_EXECUTION_PATTERNS = [
-  /(?<![\w$.])eval\s*(?:\?\.\s*)?\(/,
+// A Function body that is exactly `return import(<name or literal>)` is the
+// CommonJS dynamic-import shim (`new Function('specifier', 'return
+// import(specifier)')`, playwright's `new Function('return import("vite")')`).
+// It runs no caller code, so it is not eval; the computed import it performs
+// stays a decoded-payload sink, which is why string-blind scanning erases it
+// (`omitDynamicImportShims`) instead of the sink patterns ignoring it.
+const DYNAMIC_IMPORT_SHIM_ARGUMENTS = String.raw`\s*(?:(["'\x60])[\w$]+\1\s*,\s*)?(["'\x60])return import\((?:[\w$]+|"[^"\\\n]*"|'[^'\\\n]*')\);?\2\s*\)`;
+const DYNAMIC_IMPORT_SHIM = new RegExp(
+  String.raw`\bnew\s+Function\s*\(${DYNAMIC_IMPORT_SHIM_ARGUMENTS}`,
+  "g",
+);
+
+export function omitDynamicImportShims(source: string): string {
+  return source.replace(DYNAMIC_IMPORT_SHIM, (shim) => shim.replace(/[^\n]+/g, ""));
+}
+
+// A same-line `eval(params) {` is a method definition (less's `eval(context)
+// { return this; }`), never a call; `if (eval(x)) {` keeps its inner `)`.
+const NOT_METHOD_DEFINITION = String.raw`(?![^()\n;]*\)[ \t]*\{)`;
+// Call-shaped primitives. Scanned with string literal bodies blanked (see
+// `codeViewsForScanning`): a code generator's `"WebAssembly.compile(bytes)"`
+// is output, and code inside a string only runs through a call or a staging
+// sink outside it.
+const JS_DYNAMIC_CALL_PATTERNS = [
+  new RegExp(String.raw`(?<![\w$.])eval\s*(?:\?\.\s*)?\(${NOT_METHOD_DEFINITION}`),
   /\b(?:globalThis|window|global|self|top|parent|frames)\s*\??\.\s*eval\s*(?:\?\.\s*)?\(/,
-  /\bnew\s+Function\s*\(/,
-  // `node -e` is an interpreter-backed eval even when launched through the
-  // child-process API instead of JavaScript's in-process eval primitives.
-  /\bspawn(?:Sync)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[\s*["'`](?:-e|--eval)["'`]/,
+  // The dynamic-import shim is not eval; see `DYNAMIC_IMPORT_SHIM_ARGUMENTS`.
+  new RegExp(String.raw`\bnew\s+Function\s*\((?!${DYNAMIC_IMPORT_SHIM_ARGUMENTS})`),
   // The whole compile/instantiate family: instantiate(Streaming) — not bare
   // compile — is the loader idiom packed wasm payloads actually use (typically
   // `WebAssembly.instantiateStreaming(fetch(...))`).
   /\bWebAssembly\.(?:compile|compileStreaming|instantiate|instantiateStreaming)\s*\(/,
+];
+// Shapes whose evidence is itself a string argument; scanned with only
+// comments blanked.
+const JS_DYNAMIC_STRING_ARGUMENT_PATTERNS = [
+  // `node -e` is an interpreter-backed eval even when launched through the
+  // child-process API instead of JavaScript's in-process eval primitives.
+  /\bspawn(?:Sync)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[\s*["'`](?:-e|--eval)["'`]/,
+];
+const JS_DYNAMIC_EXECUTION_PATTERNS = [
+  ...JS_DYNAMIC_CALL_PATTERNS,
+  ...JS_DYNAMIC_STRING_ARGUMENT_PATTERNS,
 ];
 // Ways a decoded string reaches execution that are too common in benign code to
 // be findings on their own: regenerator's `Function("r", …)`, core-js task
@@ -155,9 +196,11 @@ const JS_DECODED_PAYLOAD_SINK_PATTERNS = [
 // Bundlers resolve the global object with `new Function("return this")()`
 // (webpack's `__webpack_require__.g`, lodash's `Function('return this')()`).
 // That exact literal runs no caller data. A shim whose result is dereferenced
-// on the spot, even through closing parens or `?.` (`(…()).eval(x)`), is kept.
+// on the spot, even through closing parens or `?.` (`(…()).eval(x)`), is kept,
+// except a terminal read of `Promise` or `Symbol` (es6-promise's
+// `promiseImpl = new Function("return this;")().Promise`).
 const GLOBAL_OBJECT_SHIM =
-  /(?<![\w$.])(?:new\s+)?Function\s*\(\s*(["'`])return this;?\1\s*\)(?!\s*\(\s*\)(?:\s*\))*\s*(?:\?\.|\.|\[))/g;
+  /(?<![\w$.])(?:new\s+)?Function\s*\(\s*(["'`])return this;?\1\s*\)(?!\s*\(\s*\)(?:\s*\))*\s*(?:\?\.|\.|\[)(?!\s*(?:Promise|Symbol)\b(?!\s*(?:\?\.|\.|\[|\())))/g;
 
 // Erases the shim but keeps its newlines, so later findings keep their lines.
 export function omitGlobalObjectShims(source: string): string {
@@ -196,9 +239,71 @@ const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /\bcodecs\.decode\s*\(/,
   /\bbytes\.fromhex\s*\(/,
 ];
+// Credential access is reading a secret, not reading the environment. A named
+// configuration variable (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`,
+// `npm_config_https_proxy`) is not one; what still counts is a name shaped like
+// a secret, the whole environment leaving as data, a key chosen at runtime, a
+// known secret name anywhere, and credential files on disk.
+//
+// Secret-shaped names: substrings that only occur in secrets, plus whole
+// `_`-delimited segments for words that are also substrings of ordinary names
+// (`KEY` not `KEYBOARD`, `AUTH` not `AUTHOR`, `PASS`/`PWD` only after a prefix
+// so the shell's `PWD` stays a path). `AWS_` is the one prefix that is all
+// credentials or credential selectors. `PRIVATE` alone is not used: every
+// private-key variable also says `KEY`, and Next.js' `NEXT_PRIVATE_*` flags
+// are configuration. Neither are CI descriptors such as `GITHUB_ACTIONS` or
+// `GITHUB_REF`; every GitHub credential name carries `TOKEN`, `PAT` or `KEY`.
+// A handful of public names that bundles carry everywhere are carved out:
+// React's `__SECRET_INTERNALS_…`, Babel's `ALIAS_KEYS`/`VISITOR_KEYS`/
+// `BUILDER_KEYS` tables, and terminal ids (`WT_SESSION`, `TERM_SESSION_ID`).
+const SECRET_NAME_MARKER = String.raw`(?:TOKEN(?!IZ)|SECRET(?!_INTERNALS)|PASSW(?:OR)?D|PASSPHRASE|CREDENTIAL|COOKIE|AUTHORIZATION|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|(?<![A-Za-z0-9])(?:KEY|(?<!(?:ALIAS|VISITOR|BUILDER)_)KEYS|PAT|(?<!(?:WT|TERM)_)SESSION|DSN|WEBHOOK|O?AUTH)(?![A-Za-z0-9])|_(?:PASS|PWD)(?![A-Za-z0-9])|(?<![A-Za-z0-9])AWS_|(?<![A-Za-z0-9])(?:DATABASE|DB|MONGO(?:DB)?|REDIS|POSTGRES(?:QL)?|MYSQL)_UR[LI](?![A-Za-z0-9]))`;
+// `process?.env` and `globalThis.process.env` included; `process['env']` is
+// member-folded by the normalizer.
+const ENV_OBJECT = String.raw`(?:\bprocess\s*\??\.\s*env|\bimport\s*\.\s*meta\s*\.\s*env|\bBun\s*\.\s*env)\b`;
+// The env object used as a value: not followed by a member read.
+const ENV_OBJECT_VALUE = String.raw`${ENV_OBJECT}(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.)?\s*\[)`;
 const JS_CREDENTIAL_ACCESS_PATTERNS = [
-  /\bprocess\.env\b/,
-  /\bnpm_config_/,
+  // Named reads of a secret-shaped variable: dot, bracket literal, Deno's
+  // getter, and same-line destructuring (`const { NPM_TOKEN } = process.env`).
+  new RegExp(String.raw`${ENV_OBJECT}\s*\??\.\s*[\w$]*?${SECRET_NAME_MARKER}`, "i"),
+  new RegExp(
+    String.raw`${ENV_OBJECT}\s*(?:\?\.)?\s*\[\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}[^"'\x60\n]*\1\s*\]`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\bDeno\s*\.\s*env\s*\.\s*get\s*\(\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\{[^{}\n]*?(?<![\w$])[\w$]*?${SECRET_NAME_MARKER}[^{}\n]*\}\s*=\s*${ENV_OBJECT_VALUE}`,
+    "i",
+  ),
+  // A key chosen at runtime: anything but one plain literal. Which secret it
+  // reads is invisible to review, which is how a stealer hides its target.
+  // Assembled literals fold first (`["NPM_" + "TOKEN"]` reads as `.NPM_TOKEN`);
+  // a computed member of `process` itself (`globalThis.process[e]`) can reach
+  // `env` the same way.
+  new RegExp(
+    String.raw`${ENV_OBJECT}\s*(?:\?\.)?\s*\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*\x60[^\x60$\n\\]*\x60\s*\])`,
+  ),
+  /(?<![\w$.])(?:(?:globalThis|global|window|self)\s*\??\.\s*)?process\s*(?:\?\.)?\s*\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*`[^`$\n\\]*`\s*\])/,
+  /\bDeno\s*\.\s*env\s*\.\s*(?:get\s*\(\s*(?!["'`])|toObject\s*\()/,
+  // The whole environment as data: serialized, enumerated, spread into a
+  // payload, handed to a send, or exported for another module to read.
+  new RegExp(
+    String.raw`\b(?:JSON\s*\.\s*stringify|Object\s*\.\s*(?:keys|entries|values|getOwnPropertyNames|getOwnPropertyDescriptors)|Reflect\s*\.\s*ownKeys|structuredClone|inspect)\s*\(\s*(?:\{\s*\.\.\.\s*)?${ENV_OBJECT_VALUE}`,
+  ),
+  new RegExp(String.raw`\bfor\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+in\s+${ENV_OBJECT_VALUE}`),
+  new RegExp(
+    String.raw`\b(?:body|data|payload|json|form|params|query|headers)\s*:\s*(?:\{\s*\.\.\.\s*)?${ENV_OBJECT_VALUE}`,
+  ),
+  new RegExp(
+    String.raw`\.\s*(?:send|write|end|post|put|patch|emit)\s*\((?:[^()\n]*,)?\s*${ENV_OBJECT_VALUE}\s*[,)]`,
+  ),
+  new RegExp(
+    String.raw`(?:\bmodule\s*\.\s*exports|\bexports\s*\.\s*[\w$]+|\bexport\s+default|\bexport\s+(?:const|let|var)\s+[\w$]+)\s*=?\s*${ENV_OBJECT_VALUE}`,
+  ),
+  /\bnpm_config_[\w\-./:@]*?(?:_auth|token|_password)/i,
   /\bNPM_TOKEN\b/,
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
@@ -211,6 +316,44 @@ const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\.ssh\/id_/,
   /\.netrc/,
 ];
+// The env object bound or passed as a value (`const env = process.env`,
+// `f(process.env)`, `{ ...process.env }`). Which variables are then read is out
+// of a line regex's reach, so an alias counts only beside a secret-shaped
+// constant name in the same file (`env.OPENAI_API_KEY`) or a harvest of the
+// alias itself (`JSON.stringify(env)`; see `scripts.ts`). Handing the whole
+// environment to a child process or a config loader stays quiet.
+const JS_CREDENTIAL_ALIAS_PATTERNS = [new RegExp(ENV_OBJECT_VALUE)];
+// Upper-case constant style only: lower-case identifiers (`secretKey`,
+// `tokenizer`) are ordinary variables, not environment names.
+const JS_SECRET_NAME_PATTERNS = [
+  // The lookahead asserts the whole identifier is upper-case before the
+  // marker search, which keeps a long identifier linear.
+  new RegExp(String.raw`(?<![\w$])(?=[A-Z0-9_$]+(?![\w$]))[A-Z0-9_$]*?${SECRET_NAME_MARKER}`),
+];
+
+export function envAliasHarvestPatterns(names: string[]): RegExp[] {
+  if (names.length === 0) return [];
+  const alias = String.raw`(?:${names.map((name) => name.replace(/\$/g, "\\$")).join("|")})(?![\w$])(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.)?\s*\[)`;
+  return [
+    new RegExp(
+      String.raw`\b(?:JSON\s*\.\s*stringify|Object\s*\.\s*(?:keys|entries|values|getOwnPropertyNames|getOwnPropertyDescriptors)|Reflect\s*\.\s*ownKeys|structuredClone|inspect)\s*\(\s*(?:\{\s*\.\.\.\s*)?(?<![\w$])${alias}`,
+    ),
+    new RegExp(String.raw`\bfor\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+in\s+(?<![\w$])${alias}`),
+    new RegExp(
+      String.raw`\b(?:body|data|payload|json|form|params|query|headers)\s*:\s*(?:\{\s*\.\.\.\s*)?(?<![\w$])${alias}`,
+    ),
+    new RegExp(
+      String.raw`\.\s*(?:send|write|end|post|put|patch|emit)\s*\((?:[^()\n]*,)?\s*(?<![\w$])${alias}\s*[,)]`,
+    ),
+  ];
+}
+
+// The names an env alias is bound to: declarations, assignments and default
+// parameters (`env = process.env`, `(e = process.env).NODE_ENV`).
+export const ENV_ALIAS_BINDING = new RegExp(
+  String.raw`(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?!=)\s*${ENV_OBJECT_VALUE}`,
+  "g",
+);
 const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\bos\.environ\b/,
   /\bos\.getenv\s*\(/,
@@ -262,8 +405,13 @@ export const JS_PATTERN_SET = {
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
   dynamicExecution: JS_DYNAMIC_EXECUTION_PATTERNS,
+  dynamicCall: JS_DYNAMIC_CALL_PATTERNS,
+  dynamicStringArgument: JS_DYNAMIC_STRING_ARGUMENT_PATTERNS,
+  payloadDecoding: JS_PAYLOAD_DECODING_PATTERNS,
   decodedPayloadSink: [...JS_DECODED_PAYLOAD_SINK_PATTERNS, ...JS_INSTALL_WRITE_PATTERNS],
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
+  credentialAlias: JS_CREDENTIAL_ALIAS_PATTERNS,
+  secretName: JS_SECRET_NAME_PATTERNS,
   registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: JS_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: JS_INSTALL_WRITE_PATTERNS,
@@ -274,8 +422,13 @@ export const PYTHON_PATTERN_SET = {
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   dynamicExecution: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicCall: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicStringArgument: [] as RegExp[],
+  payloadDecoding: [] as RegExp[],
   decodedPayloadSink: [] as RegExp[],
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
+  credentialAlias: [] as RegExp[],
+  secretName: [] as RegExp[],
   registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: PYTHON_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: PYTHON_INSTALL_WRITE_PATTERNS,

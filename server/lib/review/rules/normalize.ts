@@ -83,6 +83,158 @@ export function normalizeCodeForScanning(source: string): string {
   return current;
 }
 
+// --- Code views ------------------------------------------------------------
+//
+// Same-length copies of a JavaScript source with inert text blanked to spaces,
+// so a capability pattern stops matching prose (`// fetch() leaves them alone`,
+// a JSDoc `import … from 'node:http'`) or code emitted as data
+// (`"WebAssembly.compile(bytes)"` in a bundler's runtime template). Offsets,
+// line terminators and therefore line numbers and changed regions are
+// unchanged. Blanking removes matches, so it is limited to what the lexer
+// classifies unambiguously and to JavaScript-family paths: lexing a shell
+// script as JavaScript would read `https://host` as a `//` comment.
+//
+// Kept as written: Annex B HTML-like comments (`<!--`, `-->`), which are
+// comments only in Script source, so a module could hide a call behind one;
+// the `${…}` bodies of template literals, which are code (string and template
+// literals inside them are still literal text); regex literals.
+
+const CODE_VIEW_PATH = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i;
+
+export interface CodeViews {
+  // Comments blanked.
+  code: string;
+  // Comments, string literal bodies and substitution-free template bodies
+  // blanked. Only for patterns that are call-shaped outside any string.
+  codeNoStrings: string;
+}
+
+export function codeViewsForScanning(path: string, source: string): CodeViews {
+  if (!source || source.length > MAX_NORMALIZE_BYTES || !CODE_VIEW_PATH.test(path)) {
+    return { code: source, codeNoStrings: source };
+  }
+  const comments: JsToken[] = [];
+  const literals: JsToken[] = [];
+  const budget = { left: Math.max(TEMPLATE_RELEX_BUDGET, 2 * source.length) };
+  for (const token of tokenizeJs(source)) {
+    if (token.type === "comment") {
+      const text = jsTokenText(source, token);
+      if (!text.startsWith("<!--") && !text.startsWith("-->")) comments.push(token);
+    } else if (token.type === "string") {
+      literals.push({ ...token, start: token.start + 1, end: token.end - 1 });
+    } else if (token.type === "template") {
+      pushTemplateLiteralSpans(source, token.start, token.end, 0, literals, budget);
+    }
+  }
+  const code = blankSpans(source, comments);
+  return { code, codeNoStrings: blankSpans(code, literals) };
+}
+
+// The lexer returns a template with substitutions as one token, so each
+// `${…}` is re-lexed on its own to find where it closes. Past a per-file
+// budget of re-lexed characters (about twice the file) or a nesting cap, the
+// remaining text stays unblanked, which can only keep a finding.
+const TEMPLATE_RELEX_BUDGET = 256 * 1024;
+const TEMPLATE_NESTING_LIMIT = 8;
+
+function pushTemplateLiteralSpans(
+  source: string,
+  start: number,
+  end: number,
+  depth: number,
+  out: JsToken[],
+  budget: { left: number },
+): void {
+  const close = end - 1 > start && source[end - 1] === "`" ? end - 1 : end;
+  let chunkStart = start + 1;
+  let i = start + 1;
+  while (i < close) {
+    if (source[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (source[i] === "$" && source[i + 1] === "{") {
+      out.push({ type: "template", start: chunkStart, end: i });
+      const exprEnd =
+        depth < TEMPLATE_NESTING_LIMIT
+          ? pushSubstitutionLiteralSpans(source, i + 2, close, depth, out, budget)
+          : -1;
+      if (exprEnd < 0) return;
+      i = exprEnd + 1;
+      chunkStart = i;
+      continue;
+    }
+    i += 1;
+  }
+  out.push({ type: "template", start: chunkStart, end: Math.min(i, close) });
+}
+
+// Returns the offset of the `}` closing the substitution, or -1 when it
+// cannot be found within the budget. The window grows from a small prefix:
+// lexing is left to right, so every token before the cut is final and a `}`
+// found there is the real close.
+function pushSubstitutionLiteralSpans(
+  source: string,
+  exprStart: number,
+  limit: number,
+  depth: number,
+  out: JsToken[],
+  budget: { left: number },
+): number {
+  for (let window = 64; ; window *= 4) {
+    const end = Math.min(limit, exprStart + window);
+    budget.left -= end - exprStart;
+    if (budget.left < 0) return -1;
+    const close = substitutionClose(source, exprStart, end, depth, out, budget);
+    if (close >= 0 || end === limit) return close;
+  }
+}
+
+function substitutionClose(
+  source: string,
+  exprStart: number,
+  end: number,
+  depth: number,
+  out: JsToken[],
+  budget: { left: number },
+): number {
+  const expression = source.slice(exprStart, end);
+  const inner: JsToken[] = [];
+  let braces = 0;
+  for (const token of tokenizeJs(expression)) {
+    const at = exprStart + token.start;
+    if (token.type === "punct") {
+      const text = jsTokenText(expression, token);
+      if (text === "{") braces += 1;
+      else if (text === "}") {
+        if (braces === 0) {
+          out.push(...inner);
+          return at;
+        }
+        braces -= 1;
+      }
+    } else if (token.type === "string") {
+      inner.push({ ...token, start: at + 1, end: exprStart + token.end - 1 });
+    } else if (token.type === "template") {
+      pushTemplateLiteralSpans(source, at, exprStart + token.end, depth + 1, inner, budget);
+    }
+  }
+  return -1;
+}
+
+function blankSpans(source: string, spans: JsToken[]): string {
+  if (spans.length === 0) return source;
+  let out = "";
+  let pos = 0;
+  for (const span of spans) {
+    if (span.end <= span.start) continue;
+    out +=
+      source.slice(pos, span.start) + source.slice(span.start, span.end).replace(/[^\r\n]/g, " ");
+    pos = span.end;
+  }
+  return out + source.slice(pos);
+}
+
 function foldOnce(src: string): string {
   const sig = tokenizeJs(src).filter((t) => t.type !== "ws" && t.type !== "comment");
   const replacements: Replacement[] = [];
