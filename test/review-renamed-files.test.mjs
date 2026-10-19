@@ -51,6 +51,25 @@ describe("renamed file pairing", () => {
     expect([...pairs]).toEqual([["dist/c-33333333.js", "dist/a-11111111.js"]]);
   });
 
+  test("a chunk the release substantially rewrote does not pair", () => {
+    // Two thirds of the predecessor kept, a third replaced: Jaccard 0.5.
+    const pairs = pairRenamedFiles(
+      [file("dist/chunk-YQNCOY6V.js", `${body("keep", 30)}\n${body("old", 15)}`)],
+      [file("dist/chunk-64MTZBJ6.js", `${body("keep", 30)}\n${body("new", 15)}`)],
+    );
+
+    expect(pairs.size).toBe(0);
+  });
+
+  test("an added file pairs with at most one predecessor", () => {
+    const pairs = pairRenamedFiles(
+      [file("dist/a-11111111.js", body("format")), file("dist/b-11111111.js", body("format"))],
+      [file("dist/c-22222222.js", body("format"))],
+    );
+
+    expect([...pairs]).toEqual([["dist/c-22222222.js", "dist/a-11111111.js"]]);
+  });
+
   test("never pairs across directories, extensions, binaries or non-code files", () => {
     const pairs = pairRenamedFiles(
       [

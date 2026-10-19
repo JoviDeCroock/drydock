@@ -712,6 +712,23 @@ describe("renamed bundler chunks", () => {
     });
   });
 
+  test("a capability the predecessor never had keeps full scoring in a renamed chunk", () => {
+    const previous = chunk("1.0.0").replace(/.*execFileSync.*\n/g, "");
+    const { diff, annotated } = release(
+      { "dist/chunk-YQNCOY6V.js": previous },
+      {
+        "dist/chunk-64MTZBJ6.js": `${previous}\nimport('node:child_process').then((cp) => cp.execSync(next));`,
+      },
+    );
+    const spawn = annotated.find((finding) => finding.ruleId === "code.process-execution");
+
+    expect(diff.find((entry) => entry.status === "added")?.renamedFrom).toBe(
+      "dist/chunk-YQNCOY6V.js",
+    );
+    expect(spawn).toMatchObject({ releaseDelta: true });
+    expect(spawn.releaseDeltaKind).toBeUndefined();
+  });
+
   test("a payload chunk unrelated to the removed chunk keeps the added-file treatment", () => {
     // The decoy: a release that drops some chunk does not lend its history to
     // whatever new file lands in the same directory.

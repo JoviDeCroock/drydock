@@ -59,14 +59,20 @@ describe("detection eval (gated thresholds)", () => {
 
   test("a payload spliced into a renamed bundler chunk still raises release risk", () => {
     // A renamed chunk is attributed against its predecessor like a modified
-    // file, so it may miss only what a modified file misses: the same pinned
-    // gap. The minified shape shares it because its padded carrier is a line
-    // long enough for changed-span narrowing, unlike the short minified carrier.
-    for (const shape of ["renamed", "renamed-minified"]) {
+    // file, so it may miss only what an in-place edit of the same padded
+    // carrier misses. Pinned: minifying `module-html-comment-template-eval`
+    // strips its `// fetch(...)` line, leaving a lone eval. The short minified
+    // carrier still catches it only because that whole line is under the
+    // narrowing threshold, so the carrier's own fetch counts as changed.
+    const expectedMisses = {
+      renamed: [],
+      "renamed-minified": ["module-html-comment-template-eval"],
+    };
+    for (const [shape, misses] of Object.entries(expectedMisses)) {
       const stats = result.releaseInjection[shape];
       expect(stats.samples).toBeGreaterThanOrEqual(20);
       expect(stats.paired).toBe(stats.samples);
-      expect(stats.misses.map((miss) => miss.id)).toEqual(["npm-assembled-require-exfil"]);
+      expect(stats.misses.map((miss) => miss.id)).toEqual(misses);
     }
   });
 

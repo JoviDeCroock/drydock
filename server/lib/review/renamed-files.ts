@@ -18,7 +18,11 @@ import type { FileRecord } from "./types";
 
 /** Code extensions only: other names carry meaning (`binding.gyp`, `.npmrc`). */
 const PAIRABLE_PATH = /\.(?:[cm]?[jt]sx?)$/i;
-const MIN_SIMILARITY = 0.5;
+// Near-identical only. Real hash renames sit at 0.8 and above (vitest, tsx,
+// storybook, vercel, cypress chunks in the npm sweep); a looser bar would also
+// pair chunks a release substantially rewrote, which then lose added-file
+// severity even though changed spans still catch their new lines.
+const MIN_SIMILARITY = 0.8;
 const MIN_SHINGLES = 4;
 // A shingle shared by more removed files than this, within one group, is
 // boilerplate (`"use strict"`, a shared import line). Dropping it can only
