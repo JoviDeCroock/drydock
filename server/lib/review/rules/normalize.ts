@@ -100,6 +100,19 @@ export function normalizeCodeForScanning(source: string): string {
 // literals inside them are still literal text); regex literals.
 
 const CODE_VIEW_PATH = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i;
+// Single-file components mix script with markup the lexer cannot read, so
+// they, and JavaScript past the lexing cap, get only the line-comment pass.
+const COMPONENT_PATH = /\.(?:astro|vue|svelte)$/i;
+// The lexer is linear (about 0.4 ms/KB) and the views are built lazily, only
+// for files a pattern already matched raw, so the cap sits well above the
+// constant folder's: bundled chunks (vite's `node.js` is 1.4 MB) are the
+// files that carry the most JSDoc.
+const MAX_CODE_VIEW_BYTES = 4 * 1024 * 1024;
+// A whole line that is a `//` comment. It is a comment or text inside a
+// multi-line string, never code, unless a quote, backtick or `*/` on it ends
+// that string or an enclosing block comment and resumes code, so such lines
+// stay.
+const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"\n])*$/gm;
 
 export interface CodeViews {
   // Comments blanked.
@@ -110,8 +123,12 @@ export interface CodeViews {
 }
 
 export function codeViewsForScanning(path: string, source: string): CodeViews {
-  if (!source || source.length > MAX_NORMALIZE_BYTES || !CODE_VIEW_PATH.test(path)) {
-    return { code: source, codeNoStrings: source };
+  if (!source) return { code: source, codeNoStrings: source };
+  const javascript = CODE_VIEW_PATH.test(path);
+  if (!javascript || source.length > MAX_CODE_VIEW_BYTES) {
+    if (!javascript && !COMPONENT_PATH.test(path)) return { code: source, codeNoStrings: source };
+    const code = source.replace(LINE_COMMENT_ONLY, (line) => line.replace(/[^\r\n]/g, " "));
+    return { code, codeNoStrings: code };
   }
   const comments: JsToken[] = [];
   const literals: JsToken[] = [];
