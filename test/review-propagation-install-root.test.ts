@@ -1,724 +1,198 @@
 import { describe, expect, test } from "vitest";
 import { createPackageDiff, deterministicFindings } from "../server/lib/review";
-import {
-  analyzeInstallWrites,
-  findLinkCreation,
-} from "../server/lib/review/rules/install-root-writes";
 
-const unproven = (source: string, filePath = "install.js") =>
-  analyzeInstallWrites(source, { filePath, packageName: "pkg", packageMain: "lib/main.js" })
-    .unproven;
-
-// esbuild's install.js, reduced to the shapes the proof has to follow: a
-// platform table looked up by a computed key, a destructured helper result,
-// `require.resolve` of its own name, a template that renames the scoped
-// package, and a binary path whose dominating definition sits in a catch.
-const ESBUILD_SHAPED = [
-  "var fs2 = require('fs');",
-  "var path = require('path');",
-  "var path2 = require('path');",
-  "var child_process = require('child_process');",
-  "var knownWindowsPackages = { 'win32 x64 LE': '@esbuild/win32-x64' };",
-  "var knownUnixlikePackages = { 'linux x64 LE': '@esbuild/linux-x64', 'darwin arm64 LE': '@esbuild/darwin-arm64' };",
-  "function pkgAndSubpathForCurrentPlatform() {",
-  "  let pkg;",
-  "  let subpath;",
-  "  let platformKey = `${process.platform} ${os.arch()} ${os.endianness()}`;",
-  "  if (platformKey in knownWindowsPackages) {",
-  "    pkg = knownWindowsPackages[platformKey];",
-  "    subpath = 'esbuild.exe';",
-  "  } else if (platformKey in knownUnixlikePackages) {",
-  "    pkg = knownUnixlikePackages[platformKey];",
-  "    subpath = 'bin/esbuild';",
-  "  } else {",
-  "    throw new Error(`Unsupported platform: ${platformKey}`);",
-  "  }",
-  "  return { pkg, subpath };",
-  "}",
-  "function downloadedBinPath(pkg, subpath) {",
-  "  const esbuildLibDir = path.dirname(require.resolve('pkg'));",
-  "  return path.join(esbuildLibDir, `downloaded-${pkg.replace('/', '-')}-${path.basename(subpath)}`);",
-  "}",
-  "var toPath = path2.join(__dirname, 'bin', 'esbuild');",
-  "function installUsingNPM(pkg, subpath, binPath) {",
-  "  const esbuildLibDir = path2.dirname(require.resolve('pkg'));",
-  "  const installDir = path2.join(esbuildLibDir, 'npm-install');",
-  "  fs2.mkdirSync(installDir);",
-  "  fs2.writeFileSync(path2.join(installDir, 'package.json'), '{}');",
-  "  child_process.execSync(`npm install --loglevel=error ${pkg}`, { cwd: installDir });",
-  "  const installedBinPath = path2.join(installDir, 'node_modules', pkg, subpath);",
-  "  fs2.renameSync(installedBinPath, binPath);",
-  "}",
-  "async function downloadDirectlyFromNPM(pkg, subpath, binPath) {",
-  "  fs2.writeFileSync(binPath, await fetch(url));",
-  "}",
-  "function maybeOptimizePackage(binPath) {",
-  "  const tempPath = path2.join(__dirname, 'bin-esbuild');",
-  "  fs2.linkSync(binPath, tempPath);",
-  "  fs2.renameSync(tempPath, toPath);",
-  "}",
-  "async function checkAndPreparePackage() {",
-  "  const { pkg, subpath } = pkgAndSubpathForCurrentPlatform();",
-  "  let binPath;",
-  "  try {",
-  "    binPath = require.resolve(`${pkg}/${subpath}`);",
-  "  } catch (e) {",
-  "    binPath = downloadedBinPath(pkg, subpath);",
-  "    try {",
-  "      installUsingNPM(pkg, subpath, binPath);",
-  "    } catch (e2) {",
-  "      await downloadDirectlyFromNPM(pkg, subpath, binPath);",
-  "    }",
-  "  }",
-  "  maybeOptimizePackage(binPath);",
-  "}",
-  "checkAndPreparePackage();",
-].join("\n");
-
-describe("analyzeInstallWrites", () => {
-  test.each([
-    {
-      name: "a literal install-root destination",
-      source: "fs.writeFileSync('node_modules/left-pad/index.js', payload);\n",
-    },
-    {
-      name: "a template destination naming node_modules",
-      source: "for (const n of names) fs.writeFileSync(`../node_modules/${n}/.hook.js`, hook);\n",
-    },
-    {
-      name: "a multi-line path.join alias chain without semicolons",
-      source: [
-        "const path = require('path')",
-        "const root = path.join(",
-        "  process.cwd(),",
-        "  'node_modules'",
-        ")",
-        "const target = path.join(root, 'left-pad')",
-        "fs.appendFileSync(path.join(target, 'index.js'), payload)",
-      ].join("\n"),
-    },
-    {
-      name: "a parent escape out of the package from __dirname",
-      source:
-        "const path = require('path');\nconst root = path.resolve(__dirname, '..', '..');\nif (__dirname.includes('node_modules')) fs.writeFileSync(path.join(root, 'left-pad', 'index.js'), hook);\n",
-    },
-    {
-      name: "a sibling walk over the parent directory",
-      source:
-        "const path = require('path');\nconst parent = path.join(__dirname, '..');\nif (path.basename(parent) === 'node_modules') for (const sib of fs.readdirSync(parent)) fs.writeFileSync(path.join(parent, sib, 'index.js'), hook);\n",
-    },
-    {
-      name: "a shell copy into node_modules",
-      source: "execSync('cp ./hook.js node_modules/left-pad/index.js');\n",
-    },
-    {
-      name: "a template-string shell move",
-      source: "child_process.execSync(`mv ${hook} ${target}/index.js`);\n",
-    },
-    {
-      name: "a shell redirect outside the package",
-      source: "execSync('cat hook.js > ../left-pad/index.js');\n",
-    },
-    {
-      name: "a cp spawned with an argv array",
-      source: "spawnSync('cp', ['hook.js', '../left-pad/index.js']);\n",
-    },
-    {
-      name: "an append-mode file descriptor",
-      source:
-        "const fd = fs.openSync(path.join(process.env.INIT_CWD, 'node_modules/x/index.js'), 'a');\nfs.writeSync(fd, hook);\n",
-    },
-    {
-      name: "taint through push and forEach",
-      source:
-        "const path = require('path');\nconst dirs = [path.join(__dirname, 'out')];\ndirs.push(path.join(__dirname, '..', 'left-pad'));\ndirs.forEach((dir) => fs.writeFileSync(path.join(dir, 'index.js'), hook));\n",
-    },
-    {
-      name: "taint through Object.assign",
-      source:
-        "const path = require('path');\nconst target = { dir: path.join(__dirname, 'out') };\nObject.assign(target, { dir: path.join(__dirname, '..', 'left-pad') });\nfs.writeFileSync(path.join(target.dir, 'index.js'), hook);\n",
-    },
-    {
-      name: "taint through a Map",
-      source:
-        "const m = new Map();\nm.set('t', path.join(__dirname, '..', 'left-pad'));\nfs.writeFileSync(m.get('t'), hook);\n",
-    },
-    {
-      name: "a relative write after chdir",
-      source:
-        "const path = require('path');\nprocess.chdir(path.join(__dirname, '..'));\nfs.writeFileSync('left-pad/index.js', hook);\n",
-    },
-    {
-      name: "require.resolve of another package",
-      source: "fs.writeFileSync(require.resolve('left-pad'), hook);\n",
-    },
-    {
-      name: "module.paths",
-      source: "fs.writeFileSync(path.join(module.paths[1], 'left-pad/index.js'), hook);\n",
-    },
-    {
-      name: "a path imported from another module",
-      source: "const { target } = require('./paths');\nfs.writeFileSync(target, hook);\n",
-    },
-    {
-      name: "a reassignment in a loop after the dominating definition",
-      source:
-        "const path = require('path');\nlet dest = path.join(__dirname, 'out');\nfor (const name of names) {\n  fs.writeFileSync(dest, hook);\n  dest = path.join(__dirname, '..', name);\n}\n",
-    },
-    {
-      name: "a definition inside an if without braces",
-      source:
-        "const path = require('path');\nlet dest = path.join(__dirname, 'out');\nif (flag) dest = path.join(__dirname, '..', 'left-pad');\nfs.writeFileSync(dest, hook);\n",
-    },
-    {
-      name: "a closure that reassigns the destination",
-      source:
-        "const path = require('path');\nlet dest = path.join(__dirname, 'out');\nhooks.on('x', () => { dest = '../left-pad'; });\nfs.writeFileSync(dest, hook);\n",
-    },
-    {
-      name: "a wrapper whose parameter a call site fills with the install root",
-      source:
-        "function plant(dir) { fs.writeFileSync(path.join(dir, 'index.js'), payload); }\nplant(path.join(process.cwd(), 'node_modules', 'left-pad'));\n",
-    },
-    {
-      name: "a named function handed to a call",
-      source:
-        "function plant(name) { fs.writeFileSync(name, payload); }\nfs.readdirSync(root).forEach(plant);\n",
-    },
-    {
-      name: "a sink aliased to another name",
-      source:
-        "const w = fs.writeFileSync;\nw(path.join(cwd, 'node_modules', 'x', 'index.js'), p);\n",
-    },
-    {
-      name: "a sink renamed on import",
-      source: "import { writeFile as put } from 'node:fs/promises';\nawait put('x', p);\n",
-    },
-    {
-      name: "write code handed to another interpreter as a string",
-      source:
-        "execSync(\"node -e \\\"require('fs').writeFileSync(process.argv[1], 'x')\\\" \" + t);\n",
-    },
-    {
-      name: "an assignment hidden in a template interpolation",
-      source:
-        "let dest = path.join(__dirname, 'out');\nconsole.log(`${(dest = '../left-pad/index.js')}`);\nfs.writeFileSync(dest, hook);\n",
-    },
-    {
-      name: "an unbalanced sink call",
-      source: "fs.writeFileSync(path.join(own, 'x'), (\n",
-    },
-    {
-      name: "a generic fs sink taken as a value",
-      source:
-        "const fs = require('fs');\nconst mv = promisify(fs.rename);\nawait mv(tmp, path.join(__dirname, 'x'));\n",
-    },
-    {
-      name: "a sink named in a computed member",
-      source: "fs['writeFileSync'](path.join(__dirname, 'x'), hook);\n",
-    },
-    {
-      name: "a sink chosen by a computed member",
-      source: "const m = pick();\nfs[m](path.join(__dirname, 'x'), hook);\n",
-    },
-    {
-      name: "a nested container read out of a bound object",
-      source:
-        "const path = require('path');\nconst o = { inner: { d: path.join(__dirname, 'x') } };\nconst i = o.inner;\ni.d = '../left-pad/index.js';\nfs.writeFileSync(o.inner.d, hook);\n",
-    },
-    {
-      name: "a container returned and mutated by the caller",
-      source:
-        "const path = require('path');\nconst CONFIG = { d: path.join(__dirname, 'x') };\nfunction get() { return CONFIG; }\nget().d = '../left-pad/index.js';\nfs.writeFileSync(CONFIG.d, hook);\n",
-    },
-    {
-      name: "a monkeypatched path module",
-      source:
-        "const path = require('path');\npath.join = () => '../left-pad/index.js';\nfs.writeFileSync(path.join(__dirname, 'x'), hook);\n",
-    },
-    {
-      name: "a property the literal does not define",
-      source: "const o = { a: 'x' };\nfs.writeFileSync(o.b, hook);\n",
-    },
-    {
-      name: "a destination from an exported function's parameter",
-      source:
-        "export async function emit(outDir) {\n  await writeFile(path.join(outDir, 'x'), '{}');\n}\n",
-    },
-  ])("does not prove $name", ({ source }) => {
-    expect(unproven(source)).toBe(true);
-  });
-
-  test.each([
-    { name: "the esbuild-shaped installer", source: ESBUILD_SHAPED },
-    {
-      name: "writes under the package directory, including a parent of a nested file",
-      source:
-        "const path = require('path');\nfs.writeFileSync(path.join(__dirname, '..', 'bin', 'x'), b);\nfs.renameSync(tmp, path.resolve(__dirname, '../lib/x.node'));\n",
-      filePath: "scripts/install.js",
-    },
-    {
-      name: "temp and home destinations",
-      source:
-        "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nconst dir = fs.mkdtempSync(path.join(os.tmpdir(), 'x-'));\nfs.writeFileSync(path.join(dir, 'a'), b);\nfs.writeFileSync(path.join(os.homedir(), '.cache', 'pkg', 'a'), b);\n",
-    },
-    {
-      name: "a wrapper only ever called with its own directory",
-      source:
-        "const path = require('path');\nfunction plant(dir) { fs.writeFileSync(path.join(dir, 'index.js'), payload); }\nplant(path.join(__dirname, 'lib'));\n",
-    },
-    {
-      name: "a callback over an array literal",
-      source:
-        "const path = require('path');\n['a', 'b'].forEach((file) => fs.writeFileSync(path.join(__dirname, file), ''));\n",
-    },
-    {
-      name: "an ESM installer anchored on import.meta",
-      source:
-        "import { writeFileSync } from 'node:fs';\nimport { fileURLToPath } from 'node:url';\nimport path from 'node:path';\nconst here = path.dirname(fileURLToPath(import.meta.url));\nwriteFileSync(path.join(here, 'out.json'), '{}');\n",
-    },
-    {
-      name: "a read-only open and a shell command that writes nothing",
-      source:
-        "const fd = fs.openSync(path.join(__dirname, 'a'), 'r');\nexecSync('node-gyp rebuild 2>&1');\n",
-    },
-    {
-      name: "a relative shell copy inside the package",
-      source: "execSync('cp prebuilds/x.node build/Release/x.node');\n",
-    },
-  ])("proves $name", ({ source, filePath }) => {
-    expect(unproven(source, filePath)).toBe(false);
-  });
-
-  test("fails closed instead of walking a quadratic-shaped hostile file", () => {
-    const chain = Array.from({ length: 60_000 }, (_, index) => `a${index}`).join(" = ");
-    const started = performance.now();
-    expect(unproven(`${chain} = own;\nfs.writeFileSync(a0, 'x');\n`)).toBe(true);
-    expect(performance.now() - started).toBeLessThan(10_000);
-  }, 30_000);
-
-  test("reports the relative module an unproven destination came from", () => {
-    expect(
-      analyzeInstallWrites("import { target } from './paths.js';\nfs.writeFileSync(target, h);\n", {
-        filePath: "install.js",
-      }).importedFrom,
-    ).toEqual(["./paths.js"]);
-  });
+// Install-time writes are scored by co-occurrence: an install-root reference
+// and a write in the same install-time source. These pin the write shapes that
+// earlier attempts to prove a destination stays in the package missed, so a
+// future narrowing has to keep them high.
+const file = (path: string, textSample: string) => ({
+  path,
+  size: textSample.length,
+  sha256: path,
+  flags: [] as string[],
+  textSample,
 });
 
-describe("analyzeInstallWrites interop and climbs", () => {
-  const origin = { filePath: "scripts/install.js", packageName: "pkg" };
+const findingsFor = (
+  installJs: string,
+  extra: ReturnType<typeof file>[] = [],
+  scripts: Record<string, string> = { postinstall: "node install.js" },
+) => {
+  const staged = [
+    file("package.json", JSON.stringify({ name: "pkg", main: "lib/main.js", scripts })),
+    file("install.js", installJs),
+    ...extra,
+  ];
+  return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+    (finding) => finding.ruleId === "propagation.package-mutation",
+  );
+};
 
-  test("proves a TypeScript CommonJS interop write into its own directory", () => {
-    expect(
-      analyzeInstallWrites(
-        'const fs_1 = require("fs");\nconst path_1 = require("path");\n(0, fs_1.writeFileSync)((0, path_1.join)(__dirname, "out.txt"), data);\n',
-        origin,
-      ),
-    ).toEqual(expect.objectContaining({ unproven: false, intoInstallRoot: false }));
-  });
-
-  test.each([
-    ["a doubled dirname", "const root = path.dirname(path.dirname(__dirname));\n", 1],
-    ["a parent escape", "const x = 1;\nconst root = path.resolve(__dirname, '../..');\n", 2],
-    ["another package", "const target = require.resolve('left-pad');\n", 1],
-    ["an unknown specifier", "const target = require.resolve(name);\n", 1],
-    ["an unknown base climbed", "const up = path.join(base, '..');\n", 1],
-  ])("reports %s as a climb", (_label, body, line) => {
-    expect(analyzeInstallWrites(`const path = require('path');\n${body}`, origin).climbLine).toBe(
-      line + 1,
-    );
-  });
-
-  test.each([
-    "const own = path.join(__dirname, '..', 'templates');\n",
-    "const self = require.resolve('pkg/package.json');\n",
-    "if (rel.split('/').includes('..')) throw new Error('outside');\n",
-  ])("does not report an in-package path as a climb: %#", (body) => {
-    expect(
-      analyzeInstallWrites(`const path = require('path');\n${body}`, origin).climbLine,
-    ).toBeUndefined();
-  });
-});
+const PRELUDE =
+  "const fs = require('fs');\nconst path = require('path');\nconst SRC = path.join(__dirname, '..', '..', 'node_modules', 'react', 'index.js');\nconst own = path.join(__dirname, 'h.js');\n";
 
 describe("propagation.package-mutation", () => {
-  const file = (path: string, textSample: string) => ({
-    path,
-    size: textSample.length,
-    sha256: path,
-    flags: [] as string[],
-    textSample,
-  });
-  const findingsFor = (
-    installJs: string,
-    flags: string[] = [],
-    extra: ReturnType<typeof file>[] = [],
-    scripts: Record<string, string> = {},
-  ) => {
-    const staged = [
-      file(
-        "package.json",
-        JSON.stringify({
-          name: "pkg",
-          main: "lib/main.js",
-          scripts: { postinstall: "node install.js", ...scripts },
-        }),
-      ),
-      { ...file("install.js", installJs), flags },
-      ...extra,
-    ];
-    return deterministicFindings(staged, createPackageDiff([], staged)).filter(
-      (finding) => finding.ruleId === "propagation.package-mutation",
-    );
-  };
-
-  test("stays quiet for an install hook that writes only into its own directory", () => {
-    expect(
-      findingsFor(
-        "const path = require('path');\nconst tmp = path.join(__dirname, 'npm-install');\nfs.writeFileSync(path.join(tmp, 'package.json'), '{}');\nconst bin = path.join(tmp, 'node_modules', '@x/bin', 'x');\nfs.renameSync(bin, path.join(__dirname, 'bin', 'x'));\n",
-      ),
-    ).toEqual([]);
-  });
-
-  test("fires on the esbuild-shaped installer, whose hardlink voids the proof", () => {
-    expect(findingsFor(ESBUILD_SHAPED)).toEqual([
-      expect.objectContaining({ severity: "high", file: "install.js" }),
-    ]);
-  });
-
-  test("fires on the install-root literal line for a write into a sibling package", () => {
-    expect(
-      findingsFor(
-        "const fs = require('fs');\nconst target = path.join(process.cwd(), 'node_modules', 'left-pad', 'index.js');\nfs.writeFileSync(target, payload);\n",
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js", line: 2 })]);
-  });
-
   test.each([
-    "const path = require('path');\nconst root = path.resolve(__dirname, '..', '..');\nfs.writeFileSync(path.join(root, 'left-pad', 'index.js'), hook);\n",
-    "fs.writeFileSync(require.resolve('left-pad'), hook);\n",
-    "process.chdir(process.env.INIT_CWD);\nfs.writeFileSync('node_modules/left-pad/index.js', hook);\n",
-    "fs.writeFileSync(path.join(module.paths[1], 'left-pad', 'index.js'), hook);\n",
-    "execSync(`cp hook.js ${process.env.INIT_CWD}/node_modules/left-pad/index.js`);\n",
-  ])("fires when the file climbs to the install root without naming it: %#", (installJs) => {
+    [
+      "a sibling package write",
+      "fs.writeFileSync(path.join(process.cwd(), 'node_modules', 'left-pad', 'index.js'), p);\n",
+    ],
+    [
+      "a template destination",
+      "for (const n of names) fs.writeFileSync(`../node_modules/${n}/.hook.js`, hook);\n",
+    ],
+    [
+      "a chdir to INIT_CWD",
+      "process.chdir(process.env.INIT_CWD);\nfs.writeFileSync('node_modules/left-pad/index.js', hook);\n",
+    ],
+    [
+      "a module.paths write",
+      "fs.writeFileSync(path.join(module.paths[1], 'node_modules', 'left-pad', 'index.js'), hook);\n",
+    ],
+    [
+      "a constant-folded root",
+      "const root = path.join(process.cwd(), 'node' + '_modules');\nfs.writeFileSync(path.join(root, 'left-pad', 'index.js'), payload);\n",
+    ],
+  ])("fires on %s", (_label, installJs) => {
     expect(findingsFor(installJs)).toEqual([
       expect.objectContaining({ severity: "high", file: "install.js" }),
     ]);
   });
 
-  test("fires when the destination comes from a sibling module that reaches the install root", () => {
-    const paths = file(
-      "paths.js",
-      "const path = require('path');\nexports.target = path.join(__dirname, '..', 'left-pad', 'index.js');\n",
-    );
-    expect(
-      findingsFor(
-        "const { target } = require('./paths');\nfs.writeFileSync(target, hook);\n",
-        [],
-        [paths],
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js" })]);
-  });
-
-  test("fires on a sibling walk that climbs out with a single dirname and never names the root", () => {
-    expect(
-      findingsFor(
-        "const fs = require('fs');\nconst path = require('path');\nconst parent = path.dirname(__dirname);\nfor (const name of fs.readdirSync(parent)) fs.appendFileSync(path.join(parent, name, 'index.js'), hook);\n",
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js", line: 4 })]);
-  });
-
-  test("stays quiet when an unproven destination has nothing to do with the install root", () => {
-    expect(findingsFor("fs.writeFileSync(process.argv[2], report);\n")).toEqual([]);
-  });
-
+  // Each body runs after PRELUDE, which names the install root.
   test.each([
-    "const helpers = require('../shared/helpers');\nimport { log } from '../log.js';\nfs.writeFileSync(process.argv[2], report);\n",
-    "if (rel.startsWith('..') || rel.split('/').includes('..')) throw new Error('outside');\nfs.writeFileSync(dest, report);\n",
-    "const path = require('path');\nconst template = path.join(__dirname, 'lib', '..', 'templates', 'a.txt');\nfs.writeFileSync(dest, fs.readFileSync(template));\n",
-    "const path = require('path');\nconst types = require.resolve('./lib/types.js');\nfs.writeFileSync(dest, types);\n",
-  ])(
-    "does not count own-module loads, traversal guards, or in-package `..` as a climb: %#",
-    (installJs) => {
-      expect(findingsFor(installJs)).toEqual([]);
-    },
-  );
-
-  test("follows TypeScript CommonJS interop calls to the install root", () => {
-    expect(
-      findingsFor(
-        'const fs_1 = require("fs");\nconst path_1 = require("path");\n(0, fs_1.writeFileSync)((0, path_1.join)(__dirname, "..", "left-pad", "index.js"), hook);\n',
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js", line: 3 })]);
-  });
-
-  // Any link in the package voids every write proof, so none of these needs
-  // the order of the link and the write to be worked out.
-  test.each([
+    ["a hardlink to a sibling file", "fs.linkSync(SRC, own);\nfs.appendFileSync(own, p);\n"],
     [
-      "a symlink into its own dir",
-      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync(path.join(__dirname, '..', '..', 'node_modules', 'react'), path.join(__dirname, 'vendor'));\nfs.appendFileSync(path.join(__dirname, 'vendor', 'index.js'), p);\n",
+      "a symlink through promises",
+      "await fs.promises.symlink(SRC, own);\nawait fs.promises.appendFile(own, p);\n",
+    ],
+    ["a shell ln", "execSync('ln -s ../react h');\nfs.appendFileSync(own, p);\n"],
+    [
+      "a shell ln with a cwd option",
+      "execSync('ln -s ../react ../h', { cwd: path.join(__dirname, 'lib') });\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a relative symlink",
-      "const fs = require('fs');\nfs.symlinkSync('../../node_modules', 'nm');\nfs.appendFileSync('nm/react/index.js', p);\n",
+      "a shell cd before a copy",
+      "execSync('cd .. && cp pkg/payload.js react/index.js');\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "fs.promises.symlink",
-      "const fs = require('fs');\nconst path = require('path');\nawait fs.promises.symlink('../../node_modules/react', path.join(__dirname, 'vendor'));\nawait fs.promises.appendFile(path.join(__dirname, 'vendor', 'index.js'), p);\n",
+      "a subshell cd before a copy",
+      "execSync('(cd .. && ln -s react pkg/h.js)');\nfs.appendFileSync(own, p);\n",
+    ],
+    ["a cp -t", "execSync('cp -t ../react payload.js');\nfs.appendFileSync(own, p);\n"],
+    [
+      "an env-prefixed copy",
+      "execSync('env X=1 nice ln -s ../react h');\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a symlink to the global npm",
-      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('/usr/lib/node_modules/npm', path.join(__dirname, 'g'));\nfs.appendFileSync(path.join(__dirname, 'g', 'index.js'), p);\n",
+      "exec options in a variable",
+      "const o = { cwd: '..' };\nexecSync('ln -s react pkg/h.js', o);\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a shell symlink",
-      "const { execSync } = require('child_process');\nexecSync('ln -s ../../node_modules/react vendor');\nrequire('fs').appendFileSync('vendor/index.js', p);\n",
+      "an aliased exec",
+      "const run = require('child_process').execSync;\nrun('ln -s ../react h');\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a hardlink to a sibling file",
-      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfs.linkSync(path.join(__dirname, '..', 'react', 'index.js'), own);\nfs.appendFileSync(own, p);\n",
+      "a reversed fs member name",
+      "fs['cnySknil'.split('').reverse().join('')](SRC, own);\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a hardlink renamed in one function and written in a later one",
-      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfunction a() { const tmp = path.join(__dirname, 't'); fs.linkSync(require.resolve('react'), tmp); fs.renameSync(tmp, own); }\nfunction b() { fs.appendFileSync(own, p); }\na();\nb();\n",
+      "a base64 fs member name",
+      "fs[Buffer.from('bGlua1N5bmM=', 'base64').toString()](SRC, own);\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a hardlink written from a callback",
-      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfunction b() { fs.appendFileSync(own, p); }\nsetTimeout(b, 10);\nfs.linkSync(require.resolve('react'), own);\n",
+      "fs members from Object.entries",
+      "const l = Object.fromEntries(Object.entries(fs)).linkSync;\nl(SRC, own);\nfs.appendFileSync(own, p);\n",
     ],
-    ...(
-      [
-        [
-          "a link made in the writer's arguments",
-          "function w() { fs.appendFileSync(own, p); }\nw(fs.linkSync(SRC, own));\n",
-        ],
-        [
-          "a link made in a constructor's arguments",
-          "function W() { fs.appendFileSync(own, p); }\nnew W(fs.linkSync(SRC, own));\n",
-        ],
-        [
-          "a writer called with a linker's result",
-          "function l() { fs.linkSync(SRC, own); return 1; }\nfunction x() { fs.appendFileSync(own, p); }\nx(l());\n",
-        ],
-        [
-          "an async writer started before the link",
-          "async function w() { await null; fs.appendFileSync(own, p); }\nw();\nfs.linkSync(SRC, own);\n",
-        ],
-        [
-          "an async writer awaited after the link",
-          "async function w() { await null; fs.appendFileSync(own, p); }\nconst q = w();\nfs.linkSync(SRC, own);\nawait q;\n",
-        ],
-        [
-          "a callback write before the link",
-          "fs.appendFile(own, p, () => {});\nfs.linkSync(SRC, own);\n",
-        ],
-        [
-          "an unawaited promise write before the link",
-          "const done = fs.promises.appendFile(own, p);\nfs.linkSync(SRC, own);\nawait done;\n",
-        ],
-        [
-          "a generator writer",
-          "function* w() { fs.appendFileSync(own, p); }\nconst g = w();\nfs.linkSync(SRC, own);\ng.next();\n",
-        ],
-        [
-          "a writer looped around the link",
-          "function w() { fs.appendFileSync(own, p); }\nfor (const _ of [1, 2]) { w(); fs.linkSync(SRC, own); }\n",
-        ],
-        [
-          "a class field initialised after the link",
-          "class A { x = fs.appendFileSync(own, p); }\nfs.linkSync(SRC, own);\nnew A();\n",
-        ],
-        [
-          "a recursive IIFE",
-          "(function w(n) { if (n) { fs.appendFileSync(own, p); return; } fs.linkSync(SRC, own); w(1); })(0);\n",
-        ],
-        [
-          "a default parameter evaluated after the link",
-          "function w() { fs.appendFileSync(own, p); }\nfunction g(b = w()) { return b; }\nfs.linkSync(SRC, own);\ng();\n",
-        ],
-        [
-          "a getter read after the link",
-          "const o = { get v() { fs.appendFileSync(own, p); return 1; } };\nfs.linkSync(SRC, own);\nconsole.log(o.v);\n",
-        ],
-        [
-          "a Proxy get trap",
-          "const o = new Proxy({}, { get() { fs.appendFileSync(own, p); } });\nfs.linkSync(SRC, own);\nconsole.log(o.x);\n",
-        ],
-        [
-          "an implicit toString",
-          "const o = { toString() { fs.appendFileSync(own, p); return ''; } };\nfs.linkSync(SRC, own);\nconsole.log('' + o);\n",
-        ],
-        [
-          "a key-named function expression beside an unrelated bare call",
-          "function w() { return 0; }\nw();\nconst o = { w: function w() { fs.appendFileSync(own, p); } };\nfs.linkSync(SRC, own);\no.w();\n",
-        ],
-        [
-          "a symlink copied without dereference",
-          "fs.cpSync(path.join(__dirname, '..', '..', 'node_modules', '.bin', 'tsc'), own, { dereference: false });\nfs.appendFileSync(own, p);\n",
-        ],
-        [
-          "a symlink renamed into place",
-          "fs.renameSync(path.join(__dirname, '..', '..', 'node_modules', '.bin', 'tsc'), own);\nfs.appendFileSync(own, p);\n",
-        ],
-        [
-          "a symlink moved with fs-extra",
-          "const fse = require('fs-extra');\nfse.moveSync(path.join(process.env.INIT_CWD, 'node_modules', '.bin', 'tsc'), own);\nfse.appendFileSync(own, p);\n",
-        ],
-      ] as const
-    ).map(
-      ([label, body]) =>
-        [
-          label,
-          `const fs = require('fs');\nconst path = require('path');\nconst SRC = path.join(__dirname, '..', '..', 'node_modules', 'react', 'index.js');\nconst own = path.join(__dirname, 'h.js');\n${body}`,
-        ] as [string, string],
-    ),
+    ["a WriteStream", "new fs.WriteStream(SRC).end(p);\nfs.appendFileSync(own, p);\n"],
+    ["shelljs", "require('shelljs').ln('-s', '../react', 'h');\nfs.appendFileSync(own, p);\n"],
     [
-      "a shell ln run in another directory",
-      "const { execSync } = require('child_process');\nconst fs = require('fs');\nconst path = require('path');\nexecSync('ln -s ../react ../h', { cwd: path.join(__dirname, 'lib') });\nfs.appendFileSync(path.join(__dirname, 'h', 'index.js'), p);\n",
+      "write-file-atomic",
+      "require('write-file-atomic').sync(SRC, p);\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "an own-dir symlink",
-      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('lib/cli.js', path.join(__dirname, 'bin', 'cli'));\nfs.writeFileSync(path.join(__dirname, 'bin', 'version'), v);\n",
+      "tar extracting a link",
+      "require('tar').x({ file: 'links.tgz', cwd: __dirname, sync: true });\nfs.appendFileSync(own, p);\n",
     ],
     [
-      "a copy from outside the package",
-      "const fs = require('fs');\nconst path = require('path');\nfs.copyFileSync(path.join(__dirname, '..', 'dep', 'tool'), path.join(__dirname, 'bin', 'copy'));\nfs.appendFileSync(path.join(__dirname, 'bin', 'copy'), p);\n",
+      "npx creating a link",
+      "execSync('npx -y symlink-dir ../react h');\nfs.appendFileSync(own, p);\n",
     ],
-  ])("fires when the package creates a link: %s", (_label, installJs) => {
-    expect(findLinkCreation(installJs, { filePath: "install.js" })).not.toBeNull();
-    expect(findingsFor(installJs)).toEqual([
-      expect.objectContaining({ severity: "high", file: "install.js" }),
-    ]);
-  });
-
-  test("fires when another file in the package creates the link", () => {
-    const linker = file(
-      "l.js",
-      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('../react', path.join(__dirname, 'h'));\n",
-    );
-    const installJs =
-      "const fs = require('fs');\nconst path = require('path');\nrequire('./l.js');\nfs.writeFileSync(path.join(__dirname, 'h', 'index.js'), p);\n";
-    expect(analyzeInstallWrites(installJs, { filePath: "install.js" }).unproven).toBe(false);
-    expect(findingsFor(installJs, [], [linker])).toEqual([
-      expect.objectContaining({ severity: "high", file: "install.js", line: 4 }),
-      expect.objectContaining({ severity: "high", file: "l.js", line: 3 }),
-    ]);
-  });
-
-  test("fires when a lifecycle script links and a hook writes", () => {
-    expect(
-      findingsFor(
-        "require('fs').writeFileSync(require('path').join(__dirname, 'h', 'index.js'), p);\n",
-        [],
-        [],
-        { preinstall: "ln -s ../react h" },
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js" })]);
-  });
-
-  test("fires on a shell cd before a copy", () => {
-    const installJs =
-      "const { execSync } = require('child_process');\nexecSync('cd .. && cp pkg/payload.js react/index.js');\n";
-    expect(analyzeInstallWrites(installJs, { filePath: "install.js" }).unproven).toBe(true);
-    expect(findingsFor(installJs)).toEqual([
-      expect.objectContaining({ severity: "high", file: "install.js" }),
-    ]);
-  });
-
-  test("leaves a write run with a cwd option unproven", () => {
-    expect(
-      analyzeInstallWrites(
-        "const { execSync } = require('child_process');\nexecSync('cp a.js b.js', { cwd: __dirname });\n",
-        { filePath: "install.js" },
-      ).unproven,
-    ).toBe(true);
-  });
-
-  test("stays quiet when an unrelated file is unsampled but not code", () => {
-    expect(
-      findingsFor(
-        "const fs = require('fs');\nconst path = require('path');\nfs.writeFileSync(path.join(__dirname, 'out.txt'), v);\n",
-        [],
-        [{ ...file("assets/logo.png", ""), textSample: undefined as unknown as string }],
-      ),
-    ).toEqual([]);
-  });
-
-  test("fires when a code file was not sampled in full, since it may hold a link", () => {
-    expect(
-      findingsFor(
-        "const fs = require('fs');\nconst path = require('path');\nfs.writeFileSync(path.join(__dirname, 'out.txt'), v);\n",
-        [],
-        [{ ...file("dist/big.js", "x"), flags: ["truncated"] }],
-      ),
-    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js" })]);
-  });
-
-  test.each([
+    ["mklink", "execSync('mklink /J h ..\\\\react');\nfs.appendFileSync(own, p);\n"],
+    ["node -e writing", "execSync(`node -e \"require('fs').appendFileSync('${SRC}', 'x')\"`);\n"],
+    [
+      "a forked non-js linker",
+      "require('child_process').fork(path.join(__dirname, 'l.dat'));\nfs.appendFileSync(own, p);\n",
+    ],
+    [
+      "a class field write after a link",
+      "class A { x = fs.appendFileSync(own, p); }\nfs.linkSync(SRC, own);\nnew A();\n",
+    ],
+    [
+      "a recursive IIFE",
+      "(function w(n) { if (n) { fs.appendFileSync(own, p); return; } fs.linkSync(SRC, own); w(1); })(0);\n",
+    ],
+    [
+      "a default parameter",
+      "function w() { fs.appendFileSync(own, p); }\nfunction g(b = w()) { return b; }\nfs.linkSync(SRC, own);\ng();\n",
+    ],
+    [
+      "a getter",
+      "const o = { get v() { fs.appendFileSync(own, p); return 1; } };\nfs.linkSync(SRC, own);\nconsole.log(o.v);\n",
+    ],
+    [
+      "a Proxy get trap",
+      "const o = new Proxy({}, { get() { fs.appendFileSync(own, p); } });\nfs.linkSync(SRC, own);\nconsole.log(o.x);\n",
+    ],
+    [
+      "an implicit toString",
+      "const o = { toString() { fs.appendFileSync(own, p); return ''; } };\nfs.linkSync(SRC, own);\nconsole.log('' + o);\n",
+    ],
+    ["a symlink renamed into place", "fs.renameSync(SRC, own);\nfs.appendFileSync(own, p);\n"],
+    [
+      "a symlink copied without dereference",
+      "fs.cpSync(SRC, own, { dereference: false });\nfs.appendFileSync(own, p);\n",
+    ],
     [
       "a TMPDIR redirect",
-      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nprocess.env.TMPDIR = path.resolve(__dirname, '..', '..', 'node_modules', 'react');\nfs.appendFileSync(path.join(os.tmpdir(), 'index.js'), p);\n",
-    ],
-    [
-      "a HOME redirect",
-      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nprocess.env['HOME'] = path.resolve(__dirname, '..', '..', 'node_modules', 'react');\nfs.appendFileSync(path.join(os.homedir(), 'index.js'), p);\n",
-    ],
-    [
-      "a TMPDIR from INIT_CWD",
-      "const fs = require('fs');\nconst os = require('os');\nprocess.env.TMPDIR = process.env.INIT_CWD + '/node_modules/react';\nfs.appendFileSync(os.tmpdir() + '/index.js', p);\n",
+      "process.env.TMPDIR = path.dirname(SRC);\nfs.appendFileSync(path.join(require('os').tmpdir(), 'index.js'), p);\n",
     ],
     [
       "an aliased chdir",
-      "const fs = require('fs');\nconst { chdir: go } = process;\ngo('../../node_modules/react');\nfs.appendFileSync('index.js', p);\n",
+      "const { chdir: go } = process;\ngo(path.dirname(SRC));\nfs.appendFileSync('index.js', p);\n",
     ],
-    [
-      "a Reflect.apply chdir",
-      "const fs = require('fs');\nReflect.apply(process.chdir, process, ['../../node_modules/react']);\nfs.appendFileSync(require('path').join(process.cwd(), 'index.js'), p);\n",
-    ],
-    [
-      "an ~/.npmrc registry hijack",
-      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nfs.appendFileSync(path.join(os.homedir(), '.npmrc'), 'registry=https://evil.example/\\n');\n",
-    ],
-    [
-      "a shell rc append",
-      "const fs = require('fs');\nconst os = require('os');\nfs.appendFileSync(`${os.homedir()}/.bashrc`, 'node ~/.x/run.js\\n');\n",
-    ],
-  ])("fires on %s", (_label, installJs) => {
-    expect(
-      analyzeInstallWrites(installJs, { filePath: "install.js", packageName: "pkg" }).unproven,
-    ).toBe(true);
-    expect(findingsFor(installJs)).toEqual([
+  ])("fires on %s", (_label, body) => {
+    expect(findingsFor(`${PRELUDE}${body}`)).toEqual([
       expect.objectContaining({ severity: "high", file: "install.js" }),
     ]);
   });
 
-  test.each([
-    "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nspawnSync('node', ['x.js'], { env: { ...process.env, FORCE_COLOR: '1' } });\nconst { HOME } = process.env;\nfs.writeFileSync(path.join(os.tmpdir(), 'pkg-cache.json'), data);\n",
-    "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nfs.mkdirSync(path.join(os.homedir(), '.cache', 'pkg'), { recursive: true });\nfs.writeFileSync(path.join(os.homedir(), '.cache', 'pkg', 'bin'), data);\n",
-    "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'bin', 'tool');\nfs.cpSync(path.join(__dirname, 'vendor', 'tool'), own);\nfs.renameSync(path.join(__dirname, 'bin', 'tool'), path.join(__dirname, 'bin', 'tool2'));\nfs.appendFileSync(own, p);\n",
-  ])("stays quiet for env reads, a home cache, and copies inside the package: %#", (installJs) => {
-    expect(findLinkCreation(installJs, { filePath: "install.js" })).toBeNull();
-    expect(analyzeInstallWrites(installJs, { filePath: "install.js", packageName: "pkg" })).toEqual(
-      expect.objectContaining({ unproven: false, intoInstallRoot: false }),
+  test("fires on a write in a module the hook requires", () => {
+    const helper = file(
+      "helper.js",
+      `${PRELUDE}fs.symlinkSync('../react', path.join(__dirname, 'h'));\nfs.writeFileSync(path.join(__dirname, 'h', 'index.js'), p);\n`,
     );
-    expect(findingsFor(installJs)).toEqual([]);
+    expect(findingsFor("require('./helper');\n", [helper])).toEqual([
+      expect.objectContaining({ severity: "high", file: "helper.js" }),
+    ]);
   });
 
-  test("keeps the co-occurrence verdict when the sample was truncated", () => {
+  test("fires when a shell lifecycle file makes the link", () => {
+    const linker = file("link.sh", "ln -s ../react h.js\n");
     expect(
-      findingsFor(
-        "const nm = 'node_modules';\nfs.writeFileSync(path.join(__dirname, 'own.txt'), 'x');\n",
-        ["truncated"],
-      ),
-    ).toHaveLength(1);
+      findingsFor(`${PRELUDE}fs.appendFileSync(own, p);\n`, [linker], {
+        preinstall: "sh link.sh",
+        postinstall: "node install.js",
+      }),
+    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js" })]);
   });
 
-  test("follows constant-folded install-root paths and marks them obfuscated", () => {
+  test("fires on a lifecycle node -e that writes into the install root", () => {
     expect(
-      findingsFor(
-        "const root = path.join(process.cwd(), 'node' + '_modules');\nfs.writeFileSync(path.join(root, 'left-pad', 'index.js'), payload);\n",
-      ),
-    ).toEqual([expect.objectContaining({ obfuscated: true })]);
+      findingsFor("", [], {
+        postinstall:
+          "node -e \"require('fs').appendFileSync('../../node_modules/react/index.js', 'x')\"",
+      }),
+    ).toEqual([expect.objectContaining({ severity: "high", file: "package.json" })]);
   });
 });

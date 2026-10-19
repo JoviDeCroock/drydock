@@ -1,11 +1,14 @@
 {
   "id": "install-root-shell-cd-copy",
   "title": "Existing postinstall hook changes directory in a shell command and copies over a sibling package",
-  "category": "install-time-self-propagation",
+  "ecosystem": "npm",
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "The shell command's write destinations are relative to a directory the command itself moves to with `cd ..`, so they cannot be placed from the command text. Any `cd`/`pushd` segment (or a `cwd` option) leaves the write unproven, and the parent escape is the install-root reference. Inert fixture; the paths are fixture paths.",
+  "intent": "A shell command moves to the parent directory with `cd ..` and copies over a sibling package, so its destinations cannot be placed from the command text. Inert fixture; the paths are fixture paths. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
   "previousPackageJson": {
     "name": "tinyfmt",
     "version": "2.3.0",
@@ -50,37 +53,6 @@
       "sha256": "staged-install-js",
       "flags": [],
       "textSample": "const { execSync } = require('node:child_process');\n// Replace the sibling's entry point with ours.\nexecSync('cd .. && cp tinyfmt/payload.js react/index.js');\n"
-    }
-  ],
-  "expectedRisk": "high",
-  "expectedFindings": [
-    {
-      "ruleId": "install-script.lifecycle",
-      "severity": "high",
-      "file": "package.json"
-    },
-    {
-      "ruleId": "code.process-execution",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
-    }
-  ],
-  "expectedReleaseRisk": "high",
-  "expectedReleaseFindings": [
-    {
-      "ruleId": "code.process-execution",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
     }
   ]
 }

@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "Model local propagation that hides the install-root path behind a multi-line path.join alias and a helper whose parameter receives it at the call site, so only following the path into the write destination connects node_modules to the write. Inert fixture; the target is a fixture path, not a real tree.",
+  "intent": "Model local propagation that hides the install-root path behind a multi-line path.join alias and a helper whose parameter receives it at the call site. Inert fixture; the target is a fixture path, not a real tree.",
   "previousPackageJson": {
     "name": "tinyfmt",
     "version": "2.3.0"
