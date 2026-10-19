@@ -658,25 +658,27 @@ describe("review", () => {
     for (const textSample of [
       "if (process.env.NAPI_RS_NATIVE_LIBRARY_PATH) load(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);\n",
       "const port = process.env.PORT || 1234;\nprocess.env.PATH = `${bin}:${process.env.PATH}`;\n",
-      "const dir = process.env['XDG_RUNTIME_DIR'] ?? process.env.DOCKER_CONFIG;\n",
+      "const dir = process.env['XDG_RUNTIME_DIR'] ?? process.env.XDG_CONFIG_HOME;\n",
       "const proxy = process.env.npm_config_https_proxy || process.env.npm_config_user_agent;\n",
       "const { APPDATA = join(home, 'AppData'), OSTYPE } = process.env;\n",
       "const a = process.env.GIT_AUTHOR_NAME, t = process.env.TOKENIZERS_PARALLELISM, k = process.env.KEYBOARD_LAYOUT;\n",
       "const flag = process.env.NEXT_PRIVATE_LOCAL_DEV || process.env.GITHUB_ACTIONS || process.env.PWD;\n",
       "// process.env.PACKAGE_VERSION is injected when we publish.\nmodule.exports = 1;\n",
       "/**\n * @param {Record<string, string>} processEnv process.env object\n */\nmodule.exports = (env) => env;\n",
-      // Handing the whole environment to a child or a config loader reads nothing.
-      "spawn(cmd, args, { env: { ...process.env, FORCE_COLOR: '1' } });\n",
-      "const env = { ...process.env };\nconst cfg = loadConfig(process.env);\nfunction f(e = process.env) { return e.CI; }\n",
-      // An environment alias in a bundle that also carries public names
-      // shaped like secrets (React internals, Babel tables, terminal ids).
-      "const env = process.env;\nconst wt = !!env.WT_SESSION || !!env.TERM_SESSION_ID;\nexports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = W;\nif (_index.ALIAS_KEYS[t] || VISITOR_KEYS[t] || BUILDER_KEYS[t]) x();\n",
+      // Uses of the env object that read nothing.
+      "if (typeof process.env === 'object' && process.env !== undefined && !process.env.CI) x();\nconst y = void 0 !== process.env ? 1 : 2;\nif (process.env) z();\nconst t = !!process.env;\n",
+      // Named reads spelled through a split line, a multi-line destructuring, an
+      // alias used only for named reads, and TypeScript's optional-chain lowering.
+      "const a = process.env\n  .npm_command;\nconst {\n  APPDATA = '',\n  PORT: port,\n} = process.env;\n",
+      "const env = process.env;\nif ('NO_COLOR' in env) x();\nconst wt = !!env.WT_SESSION || !!env.TERM_SESSION_ID || env['CI'];\n",
+      "const mode = (null == process ? void 0 : process.env)?.NODE_ENV;\n",
+      "var _a;\nconst m = (_a = process === null || process === void 0 ? void 0 : process.env) === null || _a === void 0 ? void 0 : _a.NODE_ENV;\n",
     ]) {
       expect(credentialFindings(textSample), textSample).toEqual([]);
     }
   });
 
-  test("still flags secret-shaped, computed, harvested and aliased environment reads", () => {
+  test("still flags secret-shaped, computed and whole-object environment uses", () => {
     const credentialFindings = (textSample) => {
       const staged = [
         { path: "index.js", size: textSample.length, sha256: "s", flags: [], textSample },
@@ -692,6 +694,11 @@ describe("review", () => {
       "const k = process?.env?.CI_JOB_TOKEN;\n",
       "const k = import.meta.env.VITE_SUPABASE_KEY;\n",
       "const { AWS_REGION } = process.env;\n",
+      "const {\n  CI_JOB_JWT: identity,\n} = process.env;\n",
+      "const { PORT, ...rest } = process.env;\n",
+      "const k = process.env.CI_JOB_JWT_V2;\n",
+      "const f = readFileSync(process.env.KUBECONFIG);\n",
+      "const f = process.env.DOCKER_CONFIG + '/config.json';\n",
       "const t = process.env.npm_config__auth;\n",
       'const t = process.env["npm_config_//registry.npmjs.org/:_authToken"];\n',
       "const t = Deno.env.get('GH_PAT');\n",
@@ -707,9 +714,42 @@ describe("review", () => {
       "module.exports = process.env;\n",
       "const env = process.env;\nconst key = env.ANTHROPIC_API_KEY;\n",
       "const e = process.env;\nhttps.request(u).end(JSON.stringify(e));\n",
+      // The env object as a value: copied, spread, wrapped, passed or bound.
+      "const copy = Object.assign({}, process.env);\n",
+      "const snapshot = { ...process.env };\n",
+      "const q = new URLSearchParams(process.env);\n",
+      "report(process.env);\n",
+      "function f(e = process.env) { return e.CI; }\n",
+      "const mode = (null == process ? void 0 : process.env)?.NPM_TOKEN;\n",
+      "const env = process.env;\nconst names = Object.keys(env);\n",
+      "const env = process.env, copy = env;\n",
+      // A child inherits the environment anyway, but a callee named `spawn` is
+      // not proof of a child process, so handing the object on still counts.
+      "spawn(cmd, args, { env: { ...process.env, FORCE_COLOR: '1' } });\n",
       "const v = globalThis['proc' + 'ess']['e' + 'nv'];\n",
     ]) {
       expect(credentialFindings(textSample), textSample).toHaveLength(1);
+    }
+  });
+
+  test("socket, HTTP/2, TLS and userland clients are network egress", () => {
+    for (const textSample of [
+      "const dgram = require('node:dgram');\n",
+      "const tls = require ( 'tls' );\n",
+      "import http2 from 'http2';\n",
+      "import { request } from 'undici';\n",
+      "const WebSocket = require('ws');\n",
+      "const { connect } = await import('node:net');\n",
+      "const ws = new WebSocket('wss://example.invalid');\n",
+      "navigator.sendBeacon('https://example.invalid', body);\n",
+    ]) {
+      const staged = [
+        { path: "lib/x.js", size: textSample.length, sha256: "n", flags: [], textSample },
+      ];
+      expect(
+        deterministicFindings(staged, createPackageDiff([], staged)).map((f) => f.ruleId),
+        textSample,
+      ).toContain("code.network-access");
     }
   });
 
@@ -847,10 +887,11 @@ describe("review", () => {
     expect(findings.filter((finding) => finding.file === "site/usage.txt")).toEqual([]);
     expect(findings).toEqual(
       expect.arrayContaining([
+        // `navigator.sendBeacon(...)` on line 4 is itself egress.
         expect.objectContaining({
           ruleId: "code.network-access",
           file: "site/index.html",
-          line: 5,
+          line: 4,
         }),
         expect.objectContaining({
           ruleId: "code.dynamic-evaluation",
@@ -1342,6 +1383,15 @@ describe("review", () => {
     expect(run("site/index.html", "<script>".repeat(64 * 1024))).toBeLessThan(2000);
     expect(run("site/handlers.html", '<a onclick="'.repeat(40 * 1024))).toBeLessThan(2000);
     expect(run("index.js", `process.env${"\n".repeat(128 * 1024)}`)).toBeLessThan(2000);
+    expect(run("lib/destructure.js", "} = process.env\n".repeat(20 * 1024))).toBeLessThan(2000);
+    expect(run("lib/braces.js", `${"{ a, ".repeat(40 * 1024)}} = process.env`)).toBeLessThan(2000);
+    expect(run("lib/aliases.js", "const e = process.env;\n".repeat(16 * 1024))).toBeLessThan(2000);
+    expect(
+      run("lib/alias-uses.js", `const e = process.env;\n${"e.PORT;".repeat(32 * 1024)}`),
+    ).toBeLessThan(2000);
+    expect(
+      run("lib/guards.js", `${"!".repeat(64 * 1024)}process.env${" ".repeat(64 * 1024)}`),
+    ).toBeLessThan(2000);
     expect(run("site/attrs.html", `<p x=${" ".repeat(128 * 1024)}y>`)).toBeLessThan(2000);
     expect(run("site/refs.html", `<a href="${"&#x".repeat(40 * 1024)}`)).toBeLessThan(2000);
     expect(run("lib/conn.js", "Host=".repeat(40 * 1024))).toBeLessThan(2000);
