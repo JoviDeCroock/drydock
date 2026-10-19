@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { jsTokenText, tokenizeJs } from "../server/lib/platform/js-lexer";
+import { jsTokenText, tokenizeJs, tokenizeJsWithinBudget } from "../server/lib/platform/js-lexer";
 
 // `/` is the one character whose meaning a lexer cannot read off the preceding
 // character alone, and both consumers are hurt by getting it wrong: the constant
@@ -339,4 +339,47 @@ describe("tokenizeJs regex vs division", () => {
     expect(tokens).toHaveLength(depth * 4 + 3);
     expect(performance.now() - start).toBeLessThan(1_500);
   }, 5_000);
+});
+
+describe("tokenizeJsWithinBudget", () => {
+  test("returns the same tokens as tokenizeJs on ordinary code", () => {
+    const source =
+      "async function f(a, b = (c) => c * 2) {\n  // note\n  return `${a}` + /x/.test(b);\n}\n";
+    expect(tokenizeJsWithinBudget(source)).toEqual(tokenizeJs(source));
+    const large = "export const f = (a) => a.map((x) => x * 2).filter(Boolean);\n".repeat(30_000);
+    expect(tokenizeJsWithinBudget(large)).not.toBeNull();
+  });
+
+  test("gives up in linear time on shapes that grow its stacks", () => {
+    for (const source of [
+      `fetch(u)\n${"(a)=>".repeat(120_000)}`,
+      `fetch(u)\n${"async (a)=>".repeat(60_000)}`,
+      `fetch(u)\n${"let a: (b) => ".repeat(50_000)}`,
+    ]) {
+      const start = performance.now();
+      expect(tokenizeJsWithinBudget(source)).toBeNull();
+      // Generous: about 0.1 s here, against minutes for the unbounded lexer.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+  }, 60_000);
+
+  test("with rejectJsx, gives up at a `<` where an expression may start", () => {
+    for (const source of [
+      "const A = () => <p>/*</p>;\n",
+      "return <div />;\n",
+      "render(<App />);\n",
+      "const s = `${<b>x</b>}`;\n",
+      "const f = <T,>(x: T) => x;\n",
+    ]) {
+      expect(tokenizeJsWithinBudget(source, { rejectJsx: true }), source).toBeNull();
+      expect(tokenizeJsWithinBudget(source), source).not.toBeNull();
+    }
+    for (const source of [
+      "if (a < b) f();\n",
+      "const m = new Map<string, number>();\n",
+      "x = i<n;\n",
+    ]) {
+      expect(tokenizeJsWithinBudget(source, { rejectJsx: true }), source).not.toBeNull();
+    }
+  });
 });

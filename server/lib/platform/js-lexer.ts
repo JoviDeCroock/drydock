@@ -40,6 +40,51 @@ export interface TokenizeJsOptions {
   sourceGoal?: JsSourceGoal;
 }
 
+export interface BoundedTokenizeJsOptions extends TokenizeJsOptions {
+  // Give up at a `<` where an expression may start: JSX text (where `//` and
+  // `/*` are text, not comments) or a TypeScript generic arrow or type
+  // assertion, none of which this lexer reads.
+  rejectJsx?: boolean;
+}
+
+// Work units a bounded tokenize may spend per source character. A token costs
+// one unit plus the length of every bracket or mode stack it scans; ordinary
+// code spends a few units a character, while shapes that grow those stacks
+// without bound (`(a)=>(a)=>…`, deep nesting) are quadratic and run out.
+const WORK_PER_CHAR = 32;
+const MIN_WORK = 4096;
+
+class LexBudgetExceeded extends Error {}
+
+let work: { left: number; rejectJsx: boolean } | null = null;
+
+function chargeWork(units: number): void {
+  if (work && (work.left -= units) < 0) throw new LexBudgetExceeded();
+}
+
+// `tokenizeJs` within a work budget proportional to the input, for callers
+// that lex untrusted bytes of any size. Returns null when the budget runs out
+// or, with `rejectJsx`, at JSX; the caller must then fall back to a reading
+// that keeps every finding (raw text, "changed", "reachable").
+export function tokenizeJsWithinBudget(
+  src: string,
+  options: BoundedTokenizeJsOptions = {},
+): JsToken[] | null {
+  const outer = work;
+  work = {
+    left: Math.max(MIN_WORK, WORK_PER_CHAR * src.length),
+    rejectJsx: options.rejectJsx ?? false,
+  };
+  try {
+    return tokenizeJs(src, options);
+  } catch (error) {
+    if (error instanceof LexBudgetExceeded) return null;
+    throw error;
+  } finally {
+    work = outer;
+  }
+}
+
 // Bracket kinds, tracked so the regex-vs-division decision can see past the
 // single preceding token. `)` and `}` are the two closers whose meaning depends
 // on what they closed: `if(a)` and a statement block are followed by a
@@ -476,7 +521,7 @@ export function tokenizeJs(src: string, options: TokenizeJsOptions = {}): JsToke
     }
 
     if (
-      c === "/" &&
+      (c === "/" || (c === "<" && work?.rejectJsx)) &&
       regexAllowed(
         src,
         prev,
@@ -491,6 +536,7 @@ export function tokenizeJs(src: string, options: TokenizeJsOptions = {}): JsToke
         state.previousContextualIdentifierIsValue,
       )
     ) {
+      if (c === "<") throw new LexBudgetExceeded();
       const start = i;
       i = scanRegex(src, i);
       pushSignificant({ type: "regex", start, end: i });
@@ -671,7 +717,7 @@ function scanTemplate(src: string, i: number, parentState: BracketState): number
       continue;
     }
     if (
-      c === "/" &&
+      (c === "/" || (c === "<" && work?.rejectJsx)) &&
       regexAllowed(
         src,
         frame.prev,
@@ -686,6 +732,7 @@ function scanTemplate(src: string, i: number, parentState: BracketState): number
         frame.state.previousContextualIdentifierIsValue,
       )
     ) {
+      if (c === "<") throw new LexBudgetExceeded();
       const start = j;
       j = scanRegex(src, j);
       pushTemplateExpressionToken(src, frame, { type: "regex", start, end: j });
@@ -870,6 +917,7 @@ function updateBracketState(
   state: BracketState,
   lineTerminatorBefore: boolean,
 ): void {
+  chargeWork(1);
   const text = jsTokenText(src, token);
   if (expressionFunctionModeEndsBeforeToken(src, token, prev, state, lineTerminatorBefore)) {
     clearExpressionFunctionModesAtDepth(state, state.brackets.length);
@@ -1007,6 +1055,7 @@ function updateBracketState(
       contextualBindingFollows(prev, src) &&
       contextualCatchBindingPosition(state, prev, src)
     ) {
+      chargeWork(state.brackets.length);
       const catchParameterDepth = state.brackets.lastIndexOf("catch-params") + 1;
       if (catchParameterDepth > 0) {
         captureContextualBinding(state, "catch", catchParameterDepth, text, prev, src);
@@ -1409,6 +1458,7 @@ function updateBracketState(
   } else if (text === ")" || text === "]" || text === "}") {
     const closedDepth = state.brackets.length;
     const closingForHead = text === ")" && state.forHeadDepths.has(closedDepth);
+    if (closingForHead) chargeWork(state.contextualBindingsByDepth.get(closedDepth)?.size ?? 0);
     const forBodyBindings = closingForHead
       ? new Set(state.contextualBindingsByDepth.get(closedDepth) ?? [])
       : null;
@@ -1998,6 +2048,7 @@ function contextualCatchBindingPosition(
   prev: JsToken | undefined,
   src: string,
 ): boolean {
+  chargeWork(state.brackets.length);
   const catchDepth = state.brackets.lastIndexOf("catch-params") + 1;
   if (catchDepth === 0) return false;
   if (state.brackets.length === catchDepth) {
@@ -2080,6 +2131,7 @@ function contextualFunctionParameterBindingDepth(
 ): number | null {
   const text = jsTokenText(src, token);
   if (!CONTEXTUAL_REGEX_KEYWORDS.has(text)) return null;
+  chargeWork(state.brackets.length);
   const depth = state.brackets.lastIndexOf("function-params") + 1;
   if (depth === 0 || depth !== state.brackets.length) return null;
   if (prev?.type !== "punct") return null;
@@ -2149,8 +2201,9 @@ function expressionFunctionModeEndsBeforeToken(
   state: BracketState,
   lineTerminatorBefore: boolean,
 ): boolean {
+  if (!lineTerminatorBefore) return false;
+  chargeWork(state.expressionFunctionModes.length);
   if (
-    !lineTerminatorBefore ||
     !state.expressionFunctionModes.some((mode) => mode.depth === state.brackets.length) ||
     !startsStatementAfterLineTerminator(src, prev, state, true)
   ) {
@@ -2165,6 +2218,7 @@ function expressionFunctionModeEndsBeforeToken(
 
 function clearExpressionFunctionModesAtDepth(state: BracketState, depth: number): void {
   if (state.expressionFunctionModes.length) {
+    chargeWork(state.expressionFunctionModes.length);
     state.expressionFunctionModes = state.expressionFunctionModes.filter(
       (mode) => mode.depth !== depth,
     );
@@ -2174,6 +2228,7 @@ function clearExpressionFunctionModesAtDepth(state: BracketState, depth: number)
 
 function clearExpressionFunctionModesLeavingDepth(state: BracketState, closedDepth: number): void {
   if (state.expressionFunctionModes.length) {
+    chargeWork(state.expressionFunctionModes.length);
     state.expressionFunctionModes = state.expressionFunctionModes.filter(
       (mode) => mode.depth < closedDepth,
     );
@@ -2553,6 +2608,7 @@ function isForOfOperator(src: string, prev: JsToken | undefined, state: BracketS
 }
 
 function hasContextualBinding(state: BracketState, name: string): boolean {
+  chargeWork(state.contextualBindingsByDepth.size + state.pendingForBodyBindings.length);
   for (const [depth, bindings] of state.contextualBindingsByDepth) {
     if (depth <= state.brackets.length && bindings.has(name)) return true;
   }
@@ -2564,13 +2620,16 @@ function hasContextualBinding(state: BracketState, name: string): boolean {
 
 function visibleContextualBindings(state: BracketState): Set<string> {
   const result = new Set<string>();
+  chargeWork(state.contextualBindingsByDepth.size + state.pendingForBodyBindings.length);
   for (const [depth, bindings] of state.contextualBindingsByDepth) {
     if (depth <= state.brackets.length) {
+      chargeWork(bindings.size);
       for (const binding of bindings) result.add(binding);
     }
   }
   for (const pending of state.pendingForBodyBindings) {
     if (pending.depth === state.brackets.length) {
+      chargeWork(pending.bindings.size);
       for (const binding of pending.bindings) result.add(binding);
     }
   }
@@ -2622,6 +2681,7 @@ function popActiveDepth(depths: number[], closedDepth: number): void {
 }
 
 function enclosingClassBodyDepth(state: BracketState): number | null {
+  chargeWork(state.brackets.length);
   for (let depth = state.brackets.length; depth > 0; depth -= 1) {
     const kind = state.brackets[depth - 1];
     if (kind === "class-block" || kind === "class-value-block") return depth;
@@ -2633,6 +2693,7 @@ function peekPendingForBodyBindings(
   state: BracketState,
   depth: number,
 ): { depth: number; bindings: Set<string> } | undefined {
+  chargeWork(state.pendingForBodyBindings.length);
   for (let index = state.pendingForBodyBindings.length - 1; index >= 0; index -= 1) {
     const pending = state.pendingForBodyBindings[index];
     if (pending.depth === depth) return pending;
@@ -2641,6 +2702,7 @@ function peekPendingForBodyBindings(
 }
 
 function popPendingForBodyBindings(state: BracketState, depth: number): void {
+  chargeWork(state.pendingForBodyBindings.length);
   for (let index = state.pendingForBodyBindings.length - 1; index >= 0; index -= 1) {
     if (state.pendingForBodyBindings[index].depth === depth) {
       state.pendingForBodyBindings.splice(index, 1);
@@ -2650,6 +2712,7 @@ function popPendingForBodyBindings(state: BracketState, depth: number): void {
 }
 
 function clearPendingForBodyBindingsAtDepth(state: BracketState, depth: number): void {
+  chargeWork(state.pendingForBodyBindings.length);
   state.pendingForBodyBindings = state.pendingForBodyBindings.filter(
     (pending) => pending.depth !== depth,
   );
