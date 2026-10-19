@@ -1,11 +1,14 @@
 {
   "id": "install-root-shell-ln-cwd",
   "title": "Existing postinstall hook symlinks a sibling package from another directory with shell ln, then writes through it",
-  "category": "install-time-self-propagation",
+  "ecosystem": "npm",
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "`ln -s ../react ../h` runs with a cwd inside the package, so the link lands in the package root and its target is the sibling package. A shell `ln` anywhere in the package voids the write proof, and any exec with a cwd option leaves its writes unproven. Inert fixture.",
+  "intent": "`ln -s ../react ../h` runs with a cwd inside the package, so the link lands in the package root and points at a sibling package, and a later write goes through it. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
   "previousPackageJson": {
     "name": "tinyfmt",
     "version": "2.3.0",
@@ -50,37 +53,6 @@
       "sha256": "staged-install-js",
       "flags": [],
       "textSample": "const { execSync } = require('node:child_process');\nconst fs = require('node:fs');\nconst path = require('node:path');\nexecSync('ln -s ../react ../h', { cwd: path.join(__dirname, 'lib') });\nfs.appendFileSync(path.join(__dirname, 'h', 'index.js'), \"require('tinyfmt/loader');\\n\");\n"
-    }
-  ],
-  "expectedRisk": "high",
-  "expectedFindings": [
-    {
-      "ruleId": "install-script.lifecycle",
-      "severity": "high",
-      "file": "package.json"
-    },
-    {
-      "ruleId": "code.process-execution",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
-    }
-  ],
-  "expectedReleaseRisk": "high",
-  "expectedReleaseFindings": [
-    {
-      "ruleId": "code.process-execution",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
     }
   ]
 }

@@ -780,9 +780,35 @@ describe("review", () => {
         "<!-- <script> -->\n<p>it's\n// {eval(atob(u))}\n</p>\n<script>\nlet u;\n</script>\n",
       ),
     ).toContain("code.dynamic-evaluation");
-    // Comments inside a component's script block are still blanked.
+    // Once markup starts, a `<script>` in an HTML comment, an attribute value or
+    // an expression string opens no region, so a directive line stays.
+    const directive = "  <button\n// @click=fetch(u)\n  >go</button>\n";
+    const script = "<script setup>\nconst u = '/x';\n</script>\n";
+    for (const [path, source] of [
+      ["src/App.vue", `<template>\n  <!-- <script> -->\n${directive}</template>\n${script}`],
+      [
+        "src/App.vue",
+        `<template>\n  <p title="<script>">hi</p>\n${directive}</template>\n${script}`,
+      ],
+      ["src/App.svelte", `<p>{'<script>'}</p>\n${directive}${script}`],
+      [
+        "src/Page.astro",
+        `---\nconst u = '/x';\n---\n<p title="<script>">hi</p>\n${directive}${script}`,
+      ],
+      // A `---` line inside a frontmatter template is not the closing fence.
+      ["src/Page.astro", "---\nconst t = `\n---\n<script>\n// fetch(u)\n</script>\n`;\n---\n"],
+    ]) {
+      expect(ruleIds(path, source), source).toContain("code.network-access");
+    }
+    // Comments inside a component's leading script blocks are still blanked.
     expect(
       ruleIds("src/App.svelte", "<script>\n// reads process.env[name] at build time\n</script>\n"),
+    ).toEqual([]);
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        '<script context="module">\nexport const a = 1;\n</script>\n<script lang="ts">\n// reads process.env[name] at build time\n</script>\n<p>hi</p>\n',
+      ),
     ).toEqual([]);
     expect(
       ruleIds("src/Page.astro", "---\n// do not use import.meta.env[varname]\n---\n<p>hi</p>\n"),
@@ -943,6 +969,14 @@ describe("review", () => {
     );
     // Annex B HTML-like comments are code in module source and stay visible.
     expect(ruleIds("if (a <!--b) fetch('https://example.invalid');\n", "lib/index.mjs")).toContain(
+      "code.network-access",
+    );
+    // and their presence anywhere leaves the whole file unblanked, since the
+    // lexer's template boundaries after one may be wrong.
+    expect(
+      ruleIds("let t = '', a = 1, b = 1\nif (!(a <!--b)) t = `\n// fetch(u)\n`\n", "lib/a.js"),
+    ).toContain("code.network-access");
+    expect(ruleIds("while (n-->0) step()\n// fetch(u)\n", "lib/a.js")).toContain(
       "code.network-access",
     );
     for (const textSample of [

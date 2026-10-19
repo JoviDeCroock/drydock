@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "The write runs from a class field initialiser after the hardlink is made, which no simple call-order model places. The hardlink alone voids every write proof in the package, so the order never needs to be worked out. Inert fixture.",
+  "intent": "A hardlink from a sibling package's file into the package, written from a class field initialiser so the write's order relative to the link is not obvious from the text. Pins the shape that slipped past an attempt to prove install-time writes stay in the package; it stays high because the source names node_modules and writes. Inert fixture.",
   "previousPackageJson": {
     "name": "tinyfmt",
     "version": "2.3.0",

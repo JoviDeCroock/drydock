@@ -1,11 +1,14 @@
 {
   "id": "install-root-cross-file-symlink",
   "title": "Existing postinstall hook writes through a symlink that a required module created",
-  "category": "install-time-self-propagation",
+  "ecosystem": "npm",
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "The write destination in install.js is inside the package, but a module it requires links that directory to a sibling package. Links are not followed per file: any link created anywhere in the package voids every install-time write proof. Inert fixture.",
+  "intent": "The write destination in install.js is inside the package, but a module it requires links that directory to a sibling package. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
   "previousPackageJson": {
     "name": "tinyfmt",
     "version": "2.3.0",
@@ -57,37 +60,6 @@
       "sha256": "staged-l-js",
       "flags": [],
       "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nfs.symlinkSync('../react', path.join(__dirname, 'h'));\n"
-    }
-  ],
-  "expectedRisk": "high",
-  "expectedFindings": [
-    {
-      "ruleId": "install-script.lifecycle",
-      "severity": "high",
-      "file": "package.json"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "l.js"
-    }
-  ],
-  "expectedReleaseRisk": "high",
-  "expectedReleaseFindings": [
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "install.js"
-    },
-    {
-      "ruleId": "propagation.package-mutation",
-      "severity": "high",
-      "file": "l.js"
     }
   ]
 }
