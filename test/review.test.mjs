@@ -1830,7 +1830,7 @@ describe("review", () => {
     expect(computeRisk(changed)).toBe("medium");
   });
 
-  test("keeps the retention-tier notice informational when only hash-only native binaries changed", () => {
+  test("keeps the retention-tier notice informational when only never-sampled bodies changed", () => {
     const entries = [
       {
         kind: "retention-tier",
@@ -1850,6 +1850,8 @@ describe("review", () => {
           status: "added",
           flags: ["content-skipped", "native-pe"],
         },
+        { path: "runtime/client.js.map", status: "modified", flags: ["content-skipped"] },
+        { path: "dist/bundle.min.js", status: "modified", flags: ["content-skipped"] },
       ],
     });
 

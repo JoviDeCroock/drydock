@@ -1,4 +1,4 @@
-import type { TarSuspiciousEntry } from "../../tar-parser.js";
+import { shouldSkipTextSample, type TarSuspiciousEntry } from "../../tar-parser.js";
 import type { DiffEntry } from "../diff";
 import type { FileRecord, Finding, FindingSeverity } from "../types";
 import { DETERMINISTIC_RULE_IDS } from "./rule-ids";
@@ -33,10 +33,11 @@ export interface TarEntryFindingOptions {
 
 // Whether the retention tier cost this release any inspection: a file that
 // changed relative to the baseline (by sha256) and whose reviewed body was
-// recorded hash-only. Hash-only bodies the parser sniffed as native binaries
-// do not count: a retained binary decodes to no text sample either, so the
-// tier hid nothing the content rules would have read, and `file.native-artifact`
-// already reports the changed binary from the same magic-byte flag.
+// recorded hash-only. Bodies that would carry no text sample even if retained
+// do not count, because the tier hid nothing the content rules would have
+// read: a sniffed native binary (which `file.native-artifact` already reports
+// from the same magic-byte flag), and the source maps / minified bundles the
+// parser never samples.
 function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean {
   const stagedFlags = options.stagedFiles
     ? new Map(options.stagedFiles.map((file) => [file.path, file.flags]))
@@ -44,7 +45,9 @@ function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean 
   return (options.fileDiff ?? []).some((entry) => {
     if (entry.status !== "added" && entry.status !== "modified") return false;
     const flags = (entry.path !== undefined && stagedFlags?.get(entry.path)) || entry.flags;
-    return flags.includes("content-skipped") && !flags.some((flag) => flag.startsWith("native-"));
+    if (!flags.includes("content-skipped")) return false;
+    if (flags.some((flag) => flag.startsWith("native-"))) return false;
+    return !(entry.path !== undefined && shouldSkipTextSample(entry.path));
   });
 }
 
