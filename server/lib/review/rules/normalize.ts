@@ -94,52 +94,78 @@ export function normalizeCodeForScanning(source: string): string {
 // classifies unambiguously and to JavaScript-family paths: lexing a shell
 // script as JavaScript would read `https://host` as a `//` comment.
 //
-// Kept as written: Annex B HTML-like comments (`<!--`, `-->`), which are
-// comments only in Script source, so a module could hide a call behind one;
-// the `${…}` bodies of template literals, which are code (string and template
-// literals inside them are still literal text); regex literals.
+// A source containing `<!--` or `-->` is not blanked at all. The lexer reads
+// both as Annex B HTML-like comments, which they are only in Script source; in
+// a module `a <!--b` is `a < !(--b)`, so the lexer's view of every later token,
+// a template literal's extent included, can be wrong. The package's own module
+// type is not trusted to decide which goal applies.
+//
+// Kept as written: the `${…}` bodies of template literals, which are code
+// (string and template literals inside them are still literal text); regex
+// literals.
 
 const CODE_VIEW_PATH = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i;
 // Single-file components mix script with markup the lexer cannot read. Only
-// whole-line `//` comments inside their script regions (`<script>` elements
-// and Astro's leading `---` frontmatter) are blanked, and only where the
-// lexer, run over that region, also reads a comment: a `//` line inside a
-// template literal is template text that an eval can still run. The region
-// finder is not an HTML parser (a `<script>` inside an HTML comment or a
-// `<style>` opens a false region), so a blanked line must also carry nothing
-// that runs in markup or resumes code: no quote, backtick, `$`, brace, `<` or
-// `*/`. Strings are never blanked in a component.
+// whole-line `//` comments inside their script regions are blanked, and only
+// where the lexer, run over that region, also reads a comment: a `//` line
+// inside a template literal is template text that an eval can still run. A
+// region is trusted only in the component's leading run of script blocks
+// (Astro's `---` frontmatter, or plain `<script …>…</script>` elements
+// separated by whitespace): once markup starts, a `<script>` could sit in an
+// attribute value, an expression string or an HTML comment, which only a full
+// parser of each dialect could tell apart. A blanked line must also carry
+// nothing that runs in markup or resumes code: no quote, backtick, `$`, brace,
+// `<` or `*/`. Strings are never blanked in a component.
 const COMPONENT_PATH = /\.(?:astro|vue|svelte)$/i;
 const ASTRO_FRONTMATTER = /^\s*---\r?\n([\s\S]*?)\r?\n---/;
+// Plain attributes only; any other opening tag ends the leading run.
+const SCRIPT_OPEN_TAG = /^<script(?:\s+[\w:-]+(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[\w-]+))?)*\s*>/;
+// The close every dialect agrees on; any other spelling ends the leading run,
+// since Svelte matches it case-sensitively and HTML parsers do not.
+const SCRIPT_CLOSE_TAG = /^<\/script\s*>/;
 const INERT_LINE_COMMENT = /^\/\/(?:(?!\*\/)[^`'"${}<\n])*$/;
 // The lexer is linear (about 0.4 ms/KB) and the views are built lazily, only
 // for files a pattern already matched raw, so the cap sits well above the
 // constant folder's: bundled chunks (vite's `node.js` is 1.4 MB) are the
 // files that carry the most JSDoc.
 const MAX_CODE_VIEW_BYTES = 4 * 1024 * 1024;
-function componentScriptViews(path: string, source: string): CodeViews {
+function leadingScriptRegions(path: string, source: string): Array<[number, number]> {
   const regions: Array<[number, number]> = [];
+  let pos = 0;
   if (/\.astro$/i.test(path)) {
     const frontmatter = ASTRO_FRONTMATTER.exec(source);
     if (frontmatter) {
       const start = frontmatter.index + frontmatter[0].indexOf(frontmatter[1]);
-      regions.push([start, start + frontmatter[1].length]);
+      const body = frontmatter[1];
+      // A fence-like line inside means the real fence may close earlier.
+      if (/^\s*---/m.test(body)) return regions;
+      // The real fence may close later (a `---` line inside a frontmatter
+      // template): lexing this prefix still reads it right, but what follows
+      // may be frontmatter code, not a top-level `<script>`.
+      regions.push([start, start + body.length]);
+      return regions;
     }
   }
-  // indexOf rather than a lazy regex keeps an unterminated `<script>` linear;
-  // a tag spelled any other way is simply not blanked.
-  for (let open = source.indexOf("<script"); open >= 0;) {
-    const start = source.indexOf(">", open) + 1;
-    const end = start > 0 ? source.indexOf("</script", start) : -1;
-    if (end < 0) break;
+  for (;;) {
+    while (pos < source.length && /\s/.test(source[pos])) pos += 1;
+    // Bounded so the attribute pattern cannot backtrack over a long run.
+    const open = SCRIPT_OPEN_TAG.exec(source.slice(pos, pos + 512));
+    if (!open) return regions;
+    const start = pos + open[0].length;
+    const closeFinder = /<\/script/gi;
+    closeFinder.lastIndex = start;
+    const end = closeFinder.exec(source)?.index ?? -1;
+    if (end < 0) return regions;
+    const close = SCRIPT_CLOSE_TAG.exec(source.slice(end, end + 64));
+    if (!close) return regions;
     regions.push([start, end]);
-    open = source.indexOf("<script", end);
+    pos = end + close[0].length;
   }
+}
+
+function componentScriptViews(path: string, source: string): CodeViews {
   const comments: JsToken[] = [];
-  let pos = 0;
-  for (const [start, end] of regions.sort((a, b) => a[0] - b[0])) {
-    if (start < pos) continue;
-    pos = end;
+  for (const [start, end] of leadingScriptRegions(path, source)) {
     const region = source.slice(start, end);
     if (templateMarkersExceed(region, MAX_TEMPLATE_MARKERS)) continue;
     for (const token of tokenizeJs(region)) {
@@ -183,6 +209,9 @@ export function codeViewsForScanning(path: string, source: string): CodeViews {
   // Past the cap the view is the raw text: a line-based comment pass cannot
   // tell a `//` line inside a template literal from a comment.
   if (source.length > MAX_CODE_VIEW_BYTES) return { code: source, codeNoStrings: source };
+  if (source.includes("<!--") || source.includes("-->")) {
+    return { code: source, codeNoStrings: source };
+  }
   if (!CODE_VIEW_PATH.test(path)) {
     return COMPONENT_PATH.test(path)
       ? componentScriptViews(path, source)
@@ -196,8 +225,7 @@ export function codeViewsForScanning(path: string, source: string): CodeViews {
   const budget = { left: Math.max(TEMPLATE_RELEX_BUDGET, 2 * source.length) };
   for (const token of tokenizeJs(source)) {
     if (token.type === "comment") {
-      const text = jsTokenText(source, token);
-      if (!text.startsWith("<!--") && !text.startsWith("-->")) comments.push(token);
+      comments.push(token);
     } else if (token.type === "string") {
       literals.push({ ...token, start: token.start + 1, end: token.end - 1 });
     } else if (token.type === "template") {
