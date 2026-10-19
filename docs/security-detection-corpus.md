@@ -181,7 +181,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.50.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.51.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -782,6 +782,17 @@ grammar's keyword alternation as a pipeline. `secret-named-env-exfil`,
 `legit-nonsecret-env-config`, `legit-comment-network-and-codegen` and
 `legit-shell-grammar-keyword-lists` pin the exempted shapes. The release-injection gate now
 expects zero misses; `npm-assembled-require-exfil` is caught.
+
+`1.51.0` tightens the finding side of `file.secret-content`; redaction is unchanged. A
+generic `secret`/`token`/`password`/`apiKey` value now has to be credential-shaped.
+Identifier-like constants (`"__WEBPACK_MODULE_REFERENCE__"`), property reads
+(`password: options.password`), digit-free unquoted identifiers, placeholders and
+minified string seams no longer count. An AWS key id must stand alone rather than sit
+inside a base64 run, a Slack webhook needs the `T…/B…/<secret>` shape, a private-key
+header needs a base64 body, and URL credentials stop at quotes and brackets. These drove
+most gate-blocking findings on real releases of webpack, storybook, graphql, got,
+npm-check-updates, openpgp and the Prisma packages. The `benign-secret-shaped-code-and-placeholders`
+fixtures and the `secret-generic-key-value-added` golden case pin both sides.
 
 ### Fixture format
 
