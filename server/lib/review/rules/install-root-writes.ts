@@ -126,6 +126,9 @@ const LINK_SINKS = new Set([
   "ensureSymlinkSync",
 ]);
 const RENAME_SINKS = new Set(["rename", "renameSync", "move", "moveSync"]);
+// Copy a symlink as a symlink unless told to dereference (`fs.cp`, fs-extra
+// `copy`). `copyFile` copies the target's bytes, so it never carries a link.
+const COPY_LINK_SINKS = new Set(["cp", "cpSync", "copy", "copySync"]);
 const SYMLINK_SINKS = new Set(["symlink", "symlinkSync", "ensureSymlink", "ensureSymlinkSync"]);
 // npm and shell start-up files: a write there redirects the next install or
 // runs on the next shell, so it counts as a definite hit wherever it lands.
@@ -1904,9 +1907,20 @@ class InstallWriteAnalysis {
     if (!destination) return;
     const value = this.evaluate(this.parse(this.main, destination.start, destination.end));
     const replaces = LINK_SINKS.has(name) || RENAME_SINKS.has(name);
-    if (!this.provenDestination(value, OWN, replaces ? "inside" : "at", index)) {
+    if (
+      !this.provenDestination(value, OWN, replaces ? "inside" : "at", this.orderedAt(index, name))
+    ) {
       fail(index, value);
     }
+  }
+
+  // A callback or unawaited promise call finishes at some later point, so it
+  // is ordered against nothing (undefined); a `Sync` or awaited call runs
+  // where it stands.
+  private orderedAt(index: number, name: string): number | undefined {
+    if (name.endsWith("Sync")) return index;
+    const start = calleeStart(index + 1, this.tokens, this.main.texts, this.matching);
+    return this.text(start - 1) === "await" ? index : undefined;
   }
 
   // Links whose target is not proven to stay home, and the paths renames move
@@ -1918,9 +1932,13 @@ class InstallWriteAnalysis {
     for (let index = 0; index < this.tokens.length; index += 1) {
       if (this.tokens[index].type !== "ident") continue;
       const name = this.text(index);
-      if (!LINK_SINKS.has(name) && !RENAME_SINKS.has(name)) continue;
+      if (!LINK_SINKS.has(name) && !RENAME_SINKS.has(name) && !COPY_LINK_SINKS.has(name)) {
+        continue;
+      }
       const args = this.sinkArgs(index, name);
-      if (args && args.length >= 2) calls.push({ name, args, index });
+      if (!args || args.length < 2) continue;
+      if (COPY_LINK_SINKS.has(name) && args[2] && this.dereferences(args[2])) continue;
+      calls.push({ name, args, index });
     }
     const valueOf = (range: Range) => this.evaluate(this.parse(this.main, range.start, range.end));
     for (let round = 0; calls.length && round < 4; round += 1) {
@@ -1930,9 +1948,12 @@ class InstallWriteAnalysis {
         if (!links) continue;
         let source = valueOf(args[0]);
         if (SYMLINK_SINKS.has(name)) source = this.symlinkTarget(source, links);
+        // A link carries its target; a rename or copy carries whatever its
+        // source is, which may itself be a link unless it is a concrete path
+        // in the package or the temp directory that no link reaches.
         const carries = LINK_SINKS.has(name)
           ? !this.provenDestination(source, OWN, "at", index)
-          : this.linked(source, index);
+          : !this.sourceStaysHome(source, index);
         if (!carries) continue;
         for (const link of links) {
           const anchored = this.anchor(link);
@@ -1973,14 +1994,16 @@ class InstallWriteAnalysis {
     );
   }
 
-  private linked(value: Value, at: number): boolean {
+  private sourceStaysHome(value: Value, at: number): boolean {
     const paths = concreteStrings(value);
     return Boolean(
-      paths?.some((path) => {
+      paths?.every((path) => {
         const anchored = this.anchor(path);
+        if (anchored === null) return false;
+        const root = rootOf(anchored);
         return (
-          anchored !== null &&
-          this.linkedPaths.some(
+          (root === OWN || root === TMP) &&
+          !this.linkedPaths.some(
             (linked) =>
               (anchored === linked.path || anchored.startsWith(`${linked.path}/`)) &&
               this.mayFollow(at, linked.at),
@@ -1990,28 +2013,73 @@ class InstallWriteAnalysis {
     );
   }
 
-  // Whether the call at `later` can run after the one at `earlier`: compare
-  // their call paths from the module top at the first call site where they
-  // part. A shared loop, a function used as a value (a callback, an export),
-  // recursion, or too many paths all count as "may follow".
-  private mayFollow(later: number, earlier: number): boolean {
-    const laterPaths = this.callPaths(later, 0);
-    const earlierPaths = this.callPaths(earlier, 0);
+  private dereferences(options: Range): boolean {
+    for (let at = options.start; at + 2 < options.end; at += 1) {
+      if (
+        this.text(at) === "dereference" &&
+        this.isPunct(at + 1, ":") &&
+        this.text(at + 2) === "true"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Whether the call at `later` can run after the one at `earlier`. Calls
+  // are ordered at their closing paren (arguments run first) and compared
+  // along their call paths from the module top, at the first call site where
+  // the paths part; within one run of a function, statements run in order.
+  // Everything else may follow: no position (an unawaited async call), a loop
+  // around the parting point or around a shared call site, a later path that
+  // enters an async function (its tail runs after the caller moves on), a
+  // function used as a value (a callback, an export, a generator), recursion,
+  // or too many paths.
+  private mayFollow(later: number | undefined, earlier: number): boolean {
+    if (later === undefined) return true;
+    const laterPaths = this.callPaths(this.point(later), 0);
+    const earlierPaths = this.callPaths(this.point(earlier), 0);
     if (!laterPaths || !earlierPaths) return true;
+    const inLoop = (low: number, high: number) =>
+      this.loops.some((loop) => loop.start <= low && high < loop.end);
     for (const a of laterPaths) {
       for (const b of earlierPaths) {
         this.spend();
         let level = 0;
         while (level < a.length && level < b.length && a[level] === b[level]) level += 1;
         if (level === a.length || level === b.length) return true;
+        if (a.slice(0, level).some((site) => inLoop(site, site))) return true;
         const [x, y] = [a[level], b[level]];
-        if (x > y) return true;
-        const low = Math.min(x, y);
-        const high = Math.max(x, y);
-        if (this.loops.some((loop) => loop.start <= low && high < loop.end)) return true;
+        if (x > y || inLoop(Math.min(x, y), Math.max(x, y))) return true;
+        if (a.slice(level + 1).some((site) => this.isAsync(this.innermost[site] ?? -1))) {
+          return true;
+        }
       }
     }
     return false;
+  }
+
+  // Calls run at their closing paren.
+  private point(position: number): number {
+    if (this.isPunct(position, "(") && this.matching[position] > position) {
+      return this.matching[position];
+    }
+    if (this.tokens[position]?.type === "ident") {
+      const open = this.callOpen(position);
+      if (open >= 0 && this.matching[open] > open) return this.matching[open];
+    }
+    return position;
+  }
+
+  private isAsync(fn: number): boolean {
+    if (fn < 0) return false;
+    return this.text(this.functions[fn].start) === "async";
+  }
+
+  private isGenerator(fn: number): boolean {
+    const start = this.functions[fn].start;
+    const keyword = this.text(start) === "async" ? start + 1 : start;
+    return this.text(keyword) === "function" && this.isPunct(keyword + 1, "*");
   }
 
   private callPaths(position: number, depth: number): number[][] | null {
@@ -2025,12 +2093,13 @@ class InstallWriteAnalysis {
       if (calls) {
         const out: number[][] = [];
         for (const call of calls) {
-          const prefix = this.callPaths(call, depth + 1);
+          const site = this.point(call);
+          const prefix = this.callPaths(site, depth + 1);
           if (!prefix || out.length + prefix.length > 64) {
             out.length = 0;
             break;
           }
-          out.push(...prefix.map((path) => [...path, call]));
+          out.push(...prefix);
         }
         sites = out.length ? out : null;
       }
@@ -2040,10 +2109,10 @@ class InstallWriteAnalysis {
   }
 
   // Call sites of a function invoked only by name (or as an IIFE); null when
-  // it escapes as a value.
+  // it escapes as a value or is a generator, whose body runs at `next()`.
   private directCalls(fn: number): number[] | null {
     const info = this.functions[fn];
-    if (info.method || info.exported) return null;
+    if (info.method || info.exported || this.isGenerator(fn)) return null;
     const open = this.enclosing[info.start];
     if (open >= 0 && this.text(open) === "(") {
       const close = this.matching[open];
@@ -2181,7 +2250,10 @@ class InstallWriteAnalysis {
         }
         for (const operand of operands) {
           const destination = operand && operand.k !== "spread" ? this.evaluate(operand) : top();
-          if (cwd === null || !this.provenDestination(destination, cwd, "at", index)) {
+          if (
+            cwd === null ||
+            !this.provenDestination(destination, cwd, "at", this.orderedAt(index, name))
+          ) {
             fail(index, destination);
             return;
           }
@@ -2204,7 +2276,8 @@ class InstallWriteAnalysis {
       if (
         destinations === null ||
         destinations.some(
-          (destination) => !this.provenDestination(items([destination]), cwd, "at", index),
+          (destination) =>
+            !this.provenDestination(items([destination]), cwd, "at", this.orderedAt(index, name)),
         )
       ) {
         const anchored = (destinations ?? []).map((destination) =>

@@ -479,6 +479,64 @@ describe("propagation.package-mutation", () => {
       "a hardlink written from a callback",
       "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfunction b() { fs.appendFileSync(own, p); }\nsetTimeout(b, 10);\nfs.linkSync(require.resolve('react'), own);\n",
     ],
+    ...(
+      [
+        [
+          "a link made in the writer's arguments",
+          "function w() { fs.appendFileSync(own, p); }\nw(fs.linkSync(SRC, own));\n",
+        ],
+        [
+          "a link made in a constructor's arguments",
+          "function W() { fs.appendFileSync(own, p); }\nnew W(fs.linkSync(SRC, own));\n",
+        ],
+        [
+          "a writer called with a linker's result",
+          "function l() { fs.linkSync(SRC, own); return 1; }\nfunction x() { fs.appendFileSync(own, p); }\nx(l());\n",
+        ],
+        [
+          "an async writer started before the link",
+          "async function w() { await null; fs.appendFileSync(own, p); }\nw();\nfs.linkSync(SRC, own);\n",
+        ],
+        [
+          "an async writer awaited after the link",
+          "async function w() { await null; fs.appendFileSync(own, p); }\nconst q = w();\nfs.linkSync(SRC, own);\nawait q;\n",
+        ],
+        [
+          "a callback write before the link",
+          "fs.appendFile(own, p, () => {});\nfs.linkSync(SRC, own);\n",
+        ],
+        [
+          "an unawaited promise write before the link",
+          "const done = fs.promises.appendFile(own, p);\nfs.linkSync(SRC, own);\nawait done;\n",
+        ],
+        [
+          "a generator writer",
+          "function* w() { fs.appendFileSync(own, p); }\nconst g = w();\nfs.linkSync(SRC, own);\ng.next();\n",
+        ],
+        [
+          "a writer looped around the link",
+          "function w() { fs.appendFileSync(own, p); }\nfor (const _ of [1, 2]) { w(); fs.linkSync(SRC, own); }\n",
+        ],
+        [
+          "a symlink copied without dereference",
+          "fs.cpSync(path.join(__dirname, '..', '..', 'node_modules', '.bin', 'tsc'), own, { dereference: false });\nfs.appendFileSync(own, p);\n",
+        ],
+        [
+          "a symlink renamed into place",
+          "fs.renameSync(path.join(__dirname, '..', '..', 'node_modules', '.bin', 'tsc'), own);\nfs.appendFileSync(own, p);\n",
+        ],
+        [
+          "a symlink moved with fs-extra",
+          "const fse = require('fs-extra');\nfse.moveSync(path.join(process.env.INIT_CWD, 'node_modules', '.bin', 'tsc'), own);\nfse.appendFileSync(own, p);\n",
+        ],
+      ] as const
+    ).map(
+      ([label, body]) =>
+        [
+          label,
+          `const fs = require('fs');\nconst path = require('path');\nconst SRC = path.join(__dirname, '..', '..', 'node_modules', 'react', 'index.js');\nconst own = path.join(__dirname, 'h.js');\n${body}`,
+        ] as [string, string],
+    ),
     [
       "a TMPDIR redirect",
       "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nprocess.env.TMPDIR = path.resolve(__dirname, '..', '..', 'node_modules', 'react');\nfs.appendFileSync(path.join(os.tmpdir(), 'index.js'), p);\n",
@@ -520,6 +578,10 @@ describe("propagation.package-mutation", () => {
     "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('lib/cli.js', path.join(__dirname, 'bin', 'cli'));\nfs.writeFileSync(path.join(__dirname, 'bin', 'version'), v);\n",
     "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nspawnSync('node', ['x.js'], { env: { ...process.env, FORCE_COLOR: '1' } });\nconst { HOME } = process.env;\nfs.writeFileSync(path.join(os.tmpdir(), 'pkg-cache.json'), data);\n",
     "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nfs.mkdirSync(path.join(os.homedir(), '.cache', 'pkg'), { recursive: true });\nfs.writeFileSync(path.join(os.homedir(), '.cache', 'pkg', 'bin'), data);\n",
+    "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'bin', 'tool');\nfs.cpSync(path.join(__dirname, 'vendor', 'tool'), own);\nfs.copyFileSync(path.join(__dirname, '..', 'dep', 'tool'), path.join(__dirname, 'bin', 'copy'));\nfs.cpSync(path.join(__dirname, '..', 'dep', 'lib'), path.join(__dirname, 'lib2'), { dereference: true, recursive: true });\nfs.appendFileSync(own, p);\nfs.appendFileSync(path.join(__dirname, 'bin', 'copy'), p);\nfs.appendFileSync(path.join(__dirname, 'lib2', 'x.js'), p);\n",
+    // esbuild's async caller: one run of `main` still runs its statements in
+    // order, and the writer it calls first is synchronous.
+    "const fs = require('fs');\nconst path = require('path');\nconst toPath = path.join(__dirname, 'bin', 'x');\nfunction override() { fs.writeFileSync(toPath, shim); }\nfunction optimize() { const tmp = path.join(__dirname, 'bin-x'); fs.linkSync(require.resolve('@x/bin/x'), tmp); fs.renameSync(tmp, toPath); }\nasync function main() { if (env) { override(); return; } await download(); optimize(); }\nmain().then(() => {});\n",
     // esbuild's shape: the override that writes the binary runs and returns
     // before the step that hardlinks a sibling's binary over it.
     "const fs = require('fs');\nconst path = require('path');\nconst toPath = path.join(__dirname, 'bin', 'x');\nfunction override() { fs.writeFileSync(toPath, shim); }\nfunction optimize() { const tmp = path.join(__dirname, 'bin-x'); fs.linkSync(require.resolve('@x/bin/x'), tmp); fs.renameSync(tmp, toPath); }\nfunction main() { if (env) { override(); return; } optimize(); }\nmain();\n",
