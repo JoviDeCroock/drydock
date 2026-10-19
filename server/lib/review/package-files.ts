@@ -34,11 +34,8 @@ import type { PackageJsonSummary } from "./serialize";
 // because `require("./CHANGELOG")` loads one as JavaScript.
 
 export interface PackageFilesAllowlist {
-  /**
-   * The given paths npm would not have packed, or null when the manifest's
-   * patterns ran past the matching budget and were not evaluated.
-   */
-  outsidePaths(paths: Iterable<string>): Set<string> | null;
+  /** The given paths npm would not have packed. */
+  outsidePaths(paths: Iterable<string>): Set<string>;
 }
 
 export interface PackageFilesAllowlistOptions {
@@ -48,8 +45,11 @@ export interface PackageFilesAllowlistOptions {
 
 // `files` comes from the reviewed (hostile) manifest. Patterns are matched by a
 // linear-time wildcard walk rather than compiled to RegExp, and the work per
-// manifest is capped; a manifest over a cap is not evaluated at all, which only
-// gives up a signal the same author could disable with `files: ["**"]`.
+// manifest is capped. A manifest over a cap falls back to its literal entries:
+// a glob nobody can afford to evaluate proves nothing is packed, so every path
+// not named literally, always packed, bundled or an entrypoint counts as
+// outside. Real manifests never reach the caps, so the fallback only ever
+// over-reports on a manifest built to exhaust them.
 const MAX_FILES_ENTRIES = 1_000;
 const MAX_ENTRY_LENGTH = 1_024;
 const MAX_EXPANSIONS_PER_ENTRY = 64;
@@ -68,7 +68,7 @@ export function isOutsidePackageFilesAllowlist(
   rawManifest?: unknown,
 ): boolean {
   return (
-    compilePackageFilesAllowlist(packageJson, rawManifest)?.outsidePaths([path])?.has(path) ?? false
+    compilePackageFilesAllowlist(packageJson, rawManifest)?.outsidePaths([path]).has(path) ?? false
   );
 }
 
@@ -84,11 +84,25 @@ export function compilePackageFilesAllowlist(
 ): PackageFilesAllowlist | null {
   const raw = isRecord(rawManifest) ? rawManifest : {};
   const files = (packageJson?.files ?? stringList(raw.files)).filter((entry) => entry.trim());
-  if (!files.length || files.length > MAX_FILES_ENTRIES) return null;
-  if (files.some((entry) => entry.length > MAX_ENTRY_LENGTH)) return null;
+  if (!files.length) return null;
 
   const budget: MatchBudget = { remaining: MAX_MATCH_WORK };
-  const rules = files.flatMap((entry) => compileFilesEntry(entry, budget));
+  let rules: FilesRule[] | null = null;
+  if (
+    files.length <= MAX_FILES_ENTRIES &&
+    files.every((entry) => entry.length <= MAX_ENTRY_LENGTH)
+  ) {
+    try {
+      rules = files.flatMap((entry) => compileFilesEntry(entry, budget));
+    } catch (error) {
+      if (!(error instanceof MatchBudgetExceeded)) throw error;
+    }
+  }
+  const literalDirectories = files
+    .map((entry) => entry.trim())
+    .filter((entry) => !entry.startsWith("!") && !hasGlobMagic(entry))
+    .map((entry) => normalizeManifestPath(entry).toLowerCase())
+    .filter(Boolean);
   const alwaysPacked = new Set(
     [
       packageJson?.main ?? raw.main,
@@ -113,7 +127,7 @@ export function compilePackageFilesAllowlist(
       const key = segments.slice(0, depth).join("/");
       let survives = directoryWalked.get(key);
       if (survives === undefined) {
-        survives = evaluate(rules, segments.slice(0, depth), true);
+        survives = evaluate(rules ?? [], segments.slice(0, depth), true);
         directoryWalked.set(key, survives);
       }
       if (!survives) return false;
@@ -132,22 +146,29 @@ export function compilePackageFilesAllowlist(
       return false;
     }
     if (isBundledPath(segments, bundled)) return false;
+    if (!rules) {
+      return !literalDirectories.some(
+        (entry) => normalized === entry || normalized.startsWith(`${entry}/`),
+      );
+    }
     if (!walked(segments)) return true;
     return !evaluate(rules, segments, false);
   };
 
   return {
     outsidePaths(paths) {
+      const list = [...paths];
       const outside = new Set<string>();
       try {
-        for (const path of paths) {
+        for (const path of list) {
           if (isOutside(path)) outside.add(path);
         }
+        return outside;
       } catch (error) {
-        if (error instanceof MatchBudgetExceeded) return null;
-        throw error;
+        if (!(error instanceof MatchBudgetExceeded)) throw error;
       }
-      return outside;
+      rules = null;
+      return new Set(list.filter(isOutside));
     },
   };
 }

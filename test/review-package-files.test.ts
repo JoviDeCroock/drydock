@@ -195,7 +195,7 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
-  test("a manifest whose patterns exhaust the matching budget is not evaluated", () => {
+  test("a manifest whose patterns exhaust the matching budget falls back to its literal entries", () => {
     const paths = Array.from(
       { length: 2_500 },
       (_, index) => `${"a".repeat(40)}/${"a".repeat(40)}/${"a".repeat(30)}${index}.js`,
@@ -207,12 +207,24 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
       const started = Date.now();
       const result = compilePackageFilesAllowlist({ files })?.outsidePaths(paths);
       expect(Date.now() - started).toBeLessThan(3_000);
-      if (result) expect(result.size).toBe(paths.length);
+      expect(result?.size).toBe(paths.length);
     }
   });
 
-  test("a manifest past the entry cap is not evaluated", () => {
-    const files = Array.from({ length: 1_001 }, (_, index) => `dir${index}`);
-    expect(compilePackageFilesAllowlist({ files })).toBeNull();
+  test("a budget-exhausting manifest still reports a file outside its literal entries", () => {
+    const files = [...Array.from({ length: 60 }, () => `*${"a".repeat(100)}b`), "dist"];
+    const dist = Array.from({ length: 40 }, (_, index) => `dist/${"a".repeat(200)}${index}.js`);
+    const started = Date.now();
+    expect(outside(files, [...dist, "lib/hidden.js", "package.json", "README.md"])).toEqual([
+      "lib/hidden.js",
+    ]);
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  test("a manifest past the entry or length cap falls back to its literal entries", () => {
+    const many = [...Array.from({ length: 1_000 }, (_, index) => `dir${index}/*.js`), "lib"];
+    expect(outside(many, ["dir1/a.js", "lib/a.js", "src/a.js"])).toEqual(["dir1/a.js", "src/a.js"]);
+    const long = [`*${"a".repeat(1_100)}`, "lib"];
+    expect(outside(long, ["lib/a.js", "src/a.js"])).toEqual(["src/a.js"]);
   });
 });
