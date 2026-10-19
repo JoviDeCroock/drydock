@@ -678,6 +678,64 @@ describe("review", () => {
     }
   });
 
+  test("environment mentions in comments are not credential access", () => {
+    const credential = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "c", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+    const jsdoc =
+      "/**\n * Has no effect on `process.env`; the caller decides what to do with it.\n */\n";
+    const astroComment =
+      "---\n// do not access env variables using import.meta.env[varname]\nconst id = import.meta.env.PUBLIC_ID;\n---\n<div>{id}</div>\n";
+    // Past the constant folder's 512 KB cap, as in bundled chunks.
+    const filler = `const pad = 0;\n`.repeat(40 * 1024);
+
+    expect(credential("lib/index.js", `${jsdoc}module.exports = 1;\n`)).toEqual([]);
+    expect(credential("dist/chunk.js", `${filler}${jsdoc}module.exports = 1;\n`)).toEqual([]);
+    expect(credential("src/index.astro", astroComment)).toEqual([]);
+    // A real use with a trailing comment on the same line still counts.
+    expect(
+      credential("lib/index.js", "const all = { ...process.env }; // snapshot for debugging\n"),
+    ).toHaveLength(1);
+    expect(
+      credential("dist/chunk.js", `${filler}send(process.env); // process.env is fine\n`),
+    ).toHaveLength(1);
+    expect(
+      credential("src/index.astro", "---\nconst v = import.meta.env[name]; // computed\n---\n"),
+    ).toHaveLength(1);
+  });
+
+  test("a comment-only change does not make an existing credential read part of the release", () => {
+    const previousFiles = [
+      {
+        path: "lib/index.js",
+        size: 1,
+        sha256: "a",
+        flags: [],
+        textSample: "const t = process.env.NPM_TOKEN;\nfetch(u, { body: t });\n",
+      },
+    ];
+    const stagedFiles = [
+      {
+        path: "lib/index.js",
+        size: 1,
+        sha256: "b",
+        flags: [],
+        textSample:
+          "// Copies process.env[name] for the child; see JSON.stringify(process.env) below.\nconst t = process.env.NPM_TOKEN;\nfetch(u, { body: t });\n",
+      },
+    ];
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const findings = deterministicFindings(stagedFiles, diff, undefined, { previousFiles });
+    const credential = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles,
+      stagedFiles,
+    }).find((finding) => finding.ruleId === "code.credential-access");
+    expect(credential?.releaseDelta).toBeFalsy();
+  });
+
   test("still flags secret-shaped, computed and whole-object environment uses", () => {
     const credentialFindings = (textSample) => {
       const staged = [
