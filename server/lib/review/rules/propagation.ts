@@ -3,6 +3,7 @@ import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
+import { writesIntoInstallRoot } from "./install-root-writes";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
@@ -36,6 +37,7 @@ export function propagationFindings(ctx: RuleContext): Finding[] {
         sample,
         normalized,
         prefix: changedPrefix(ctx, file.path),
+        truncated: file.flags.includes("truncated"),
       }),
     );
   }
@@ -48,6 +50,8 @@ interface PropagationSource {
   normalized: string;
   prefix: string;
   line?: number;
+  command?: boolean;
+  truncated?: boolean;
 }
 
 function lifecycleCommandFindings(ctx: RuleContext): Finding[] {
@@ -63,6 +67,7 @@ function lifecycleCommandFindings(ctx: RuleContext): Finding[] {
         normalized: ctx.codePatternSet === "python" ? command : normalizeCodeForScanning(command),
         prefix: changedPrefix(ctx, file),
         line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, script, command),
+        command: true,
       }),
     );
   }
@@ -88,7 +93,7 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
 
   const installRoot = matchLine(ctx.patterns.installRootPath, source.sample, source.normalized);
   const write = matchLine(ctx.patterns.installWrite, source.sample, source.normalized);
-  if (installRoot && write) {
+  if (installRoot && write && writesIntoInstallRootFor(ctx, source)) {
     findings.push(
       tag("propagationPackageMutation", {
         severity: "high",
@@ -102,6 +107,22 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
     );
   }
   return findings;
+}
+
+// Naming node_modules and writing a file is every native-binary installer
+// (esbuild reads `<tmp>/node_modules/...` and renames the binary into its own
+// `bin/`); the propagation shape is a write whose destination is the install
+// root. JavaScript sources follow the path into write destinations, either text
+// form counting. Lifecycle command lines are shell, not a JS file; a truncated
+// sample may hide the sink; Python keeps the file-level co-occurrence. All of
+// those stay on the co-occurrence verdict.
+function writesIntoInstallRootFor(ctx: RuleContext, source: PropagationSource): boolean {
+  if (ctx.codePatternSet === "python" || source.command || source.truncated) return true;
+  const patterns = ctx.patterns.installRootPath;
+  return (
+    writesIntoInstallRoot(source.sample, patterns) ||
+    (source.normalized !== source.sample && writesIntoInstallRoot(source.normalized, patterns))
+  );
 }
 
 // Matches the capability rules' contract: scan the literal text first so the

