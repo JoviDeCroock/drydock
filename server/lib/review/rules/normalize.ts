@@ -101,8 +101,12 @@ export function normalizeCodeForScanning(source: string): string {
 
 const CODE_VIEW_PATH = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i;
 // Single-file components mix script with markup the lexer cannot read, so
-// they, and JavaScript past the lexing cap, get only the line-comment pass.
+// they, and JavaScript past the lexing cap, get only the line-comment pass;
+// in a component only inside its script regions (`<script>` elements and
+// Astro's leading `---` frontmatter), since in template markup `//` is text
+// and `{…}` / `{{ … }}` run.
 const COMPONENT_PATH = /\.(?:astro|vue|svelte)$/i;
+const ASTRO_FRONTMATTER = /^\s*---\r?\n([\s\S]*?)\r?\n---/;
 // The lexer is linear (about 0.4 ms/KB) and the views are built lazily, only
 // for files a pattern already matched raw, so the cap sits well above the
 // constant folder's: bundled chunks (vite's `node.js` is 1.4 MB) are the
@@ -111,9 +115,42 @@ const MAX_CODE_VIEW_BYTES = 4 * 1024 * 1024;
 // A whole line that is a `//` comment. It is a comment or text inside a
 // multi-line string, never code, unless something on it runs or resumes code:
 // a quote, backtick or `*/` that ends a string or an enclosing block comment,
-// or a `$` that may open a `${…}` substitution in a multi-line template. Such
-// lines stay.
-const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"$\n])*$/gm;
+// a `$` that may open a `${…}` substitution in a multi-line template, or a
+// brace or `<` that may be JSX (`// {fetch(u)}` as JSX text runs). Such lines
+// stay.
+const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"${}<\n])*$/gm;
+
+function blankLineComments(source: string): string {
+  return source.replace(LINE_COMMENT_ONLY, (line) => line.replace(/[^\r\n]/g, " "));
+}
+
+function blankComponentScriptComments(path: string, source: string): string {
+  const regions: Array<[number, number]> = [];
+  if (/\.astro$/i.test(path)) {
+    const frontmatter = ASTRO_FRONTMATTER.exec(source);
+    if (frontmatter) {
+      const start = frontmatter.index + frontmatter[0].indexOf(frontmatter[1]);
+      regions.push([start, start + frontmatter[1].length]);
+    }
+  }
+  // indexOf rather than a lazy regex keeps an unterminated `<script>` linear;
+  // a tag spelled any other way is simply not blanked.
+  for (let open = source.indexOf("<script"); open >= 0;) {
+    const start = source.indexOf(">", open) + 1;
+    const end = start > 0 ? source.indexOf("</script", start) : -1;
+    if (end < 0) break;
+    regions.push([start, end]);
+    open = source.indexOf("<script", end);
+  }
+  let out = "";
+  let pos = 0;
+  for (const [start, end] of regions.sort((a, b) => a[0] - b[0])) {
+    if (start < pos) continue;
+    out += source.slice(pos, start) + blankLineComments(source.slice(start, end));
+    pos = end;
+  }
+  return out + source.slice(pos);
+}
 // The lexer keeps state per open template and substitution, about 2 KB a
 // level, so a file of nested `` `${ `` can exhaust memory. Every level needs a
 // backtick or a `${`; past this many of them (the largest bundles under the
@@ -144,7 +181,9 @@ export function codeViewsForScanning(path: string, source: string): CodeViews {
   const javascript = CODE_VIEW_PATH.test(path);
   if (!javascript || source.length > MAX_CODE_VIEW_BYTES) {
     if (!javascript && !COMPONENT_PATH.test(path)) return { code: source, codeNoStrings: source };
-    const code = source.replace(LINE_COMMENT_ONLY, (line) => line.replace(/[^\r\n]/g, " "));
+    const code = javascript
+      ? blankLineComments(source)
+      : blankComponentScriptComments(path, source);
     return { code, codeNoStrings: code };
   }
   if (templateMarkersExceed(source, MAX_TEMPLATE_MARKERS)) {
