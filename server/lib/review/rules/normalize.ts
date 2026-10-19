@@ -100,31 +100,24 @@ export function normalizeCodeForScanning(source: string): string {
 // literals inside them are still literal text); regex literals.
 
 const CODE_VIEW_PATH = /\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/i;
-// Single-file components mix script with markup the lexer cannot read, so
-// they, and JavaScript past the lexing cap, get only the line-comment pass;
-// in a component only inside its script regions (`<script>` elements and
-// Astro's leading `---` frontmatter), since in template markup `//` is text
-// and `{…}` / `{{ … }}` run.
+// Single-file components mix script with markup the lexer cannot read. Only
+// whole-line `//` comments inside their script regions (`<script>` elements
+// and Astro's leading `---` frontmatter) are blanked, and only where the
+// lexer, run over that region, also reads a comment: a `//` line inside a
+// template literal is template text that an eval can still run. The region
+// finder is not an HTML parser (a `<script>` inside an HTML comment or a
+// `<style>` opens a false region), so a blanked line must also carry nothing
+// that runs in markup or resumes code: no quote, backtick, `$`, brace, `<` or
+// `*/`. Strings are never blanked in a component.
 const COMPONENT_PATH = /\.(?:astro|vue|svelte)$/i;
 const ASTRO_FRONTMATTER = /^\s*---\r?\n([\s\S]*?)\r?\n---/;
+const INERT_LINE_COMMENT = /^\/\/(?:(?!\*\/)[^`'"${}<\n])*$/;
 // The lexer is linear (about 0.4 ms/KB) and the views are built lazily, only
 // for files a pattern already matched raw, so the cap sits well above the
 // constant folder's: bundled chunks (vite's `node.js` is 1.4 MB) are the
 // files that carry the most JSDoc.
 const MAX_CODE_VIEW_BYTES = 4 * 1024 * 1024;
-// A whole line that is a `//` comment. It is a comment or text inside a
-// multi-line string, never code, unless something on it runs or resumes code:
-// a quote, backtick or `*/` that ends a string or an enclosing block comment,
-// a `$` that may open a `${…}` substitution in a multi-line template, or a
-// brace or `<` that may be JSX (`// {fetch(u)}` as JSX text runs). Such lines
-// stay.
-const LINE_COMMENT_ONLY = /^[ \t]*\/\/(?:(?!\*\/)[^`'"${}<\n])*$/gm;
-
-function blankLineComments(source: string): string {
-  return source.replace(LINE_COMMENT_ONLY, (line) => line.replace(/[^\r\n]/g, " "));
-}
-
-function blankComponentScriptComments(path: string, source: string): string {
+function componentScriptViews(path: string, source: string): CodeViews {
   const regions: Array<[number, number]> = [];
   if (/\.astro$/i.test(path)) {
     const frontmatter = ASTRO_FRONTMATTER.exec(source);
@@ -142,14 +135,23 @@ function blankComponentScriptComments(path: string, source: string): string {
     regions.push([start, end]);
     open = source.indexOf("<script", end);
   }
-  let out = "";
+  const comments: JsToken[] = [];
   let pos = 0;
   for (const [start, end] of regions.sort((a, b) => a[0] - b[0])) {
     if (start < pos) continue;
-    out += source.slice(pos, start) + blankLineComments(source.slice(start, end));
     pos = end;
+    const region = source.slice(start, end);
+    if (templateMarkersExceed(region, MAX_TEMPLATE_MARKERS)) continue;
+    for (const token of tokenizeJs(region)) {
+      if (token.type !== "comment") continue;
+      const text = jsTokenText(region, token);
+      const lineStart = region.lastIndexOf("\n", token.start - 1) + 1;
+      if (!INERT_LINE_COMMENT.test(text) || region.slice(lineStart, token.start).trim()) continue;
+      comments.push({ ...token, start: start + token.start, end: start + token.end });
+    }
   }
-  return out + source.slice(pos);
+  const code = blankSpans(source, comments);
+  return { code, codeNoStrings: code };
 }
 // The lexer keeps state per open template and substitution, about 2 KB a
 // level, so a file of nested `` `${ `` can exhaust memory. Every level needs a
@@ -178,13 +180,13 @@ export interface CodeViews {
 
 export function codeViewsForScanning(path: string, source: string): CodeViews {
   if (!source) return { code: source, codeNoStrings: source };
-  const javascript = CODE_VIEW_PATH.test(path);
-  if (!javascript || source.length > MAX_CODE_VIEW_BYTES) {
-    if (!javascript && !COMPONENT_PATH.test(path)) return { code: source, codeNoStrings: source };
-    const code = javascript
-      ? blankLineComments(source)
-      : blankComponentScriptComments(path, source);
-    return { code, codeNoStrings: code };
+  // Past the cap the view is the raw text: a line-based comment pass cannot
+  // tell a `//` line inside a template literal from a comment.
+  if (source.length > MAX_CODE_VIEW_BYTES) return { code: source, codeNoStrings: source };
+  if (!CODE_VIEW_PATH.test(path)) {
+    return COMPONENT_PATH.test(path)
+      ? componentScriptViews(path, source)
+      : { code: source, codeNoStrings: source };
   }
   if (templateMarkersExceed(source, MAX_TEMPLATE_MARKERS)) {
     return { code: source, codeNoStrings: source };
