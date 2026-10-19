@@ -891,15 +891,13 @@ function decodeEscape(src: string, p: number): { text: string; len: number } {
     }
     case "u": {
       if (src[p + 2] === "{") {
-        const close = src.indexOf("}", p + 3);
-        if (close !== -1) {
+        const close = hexDigitsEnd(src, p + 3);
+        if (close > p + 3 && src[close] === "}") {
           const hex = src.slice(p + 3, close);
-          if (/^[0-9a-fA-F]+$/.test(hex)) {
-            try {
-              return { text: String.fromCodePoint(parseInt(hex, 16)), len: close - p + 1 };
-            } catch {
-              // out-of-range code point; fall through
-            }
+          try {
+            return { text: String.fromCodePoint(parseInt(hex, 16)), len: close - p + 1 };
+          } catch {
+            // out-of-range code point; fall through
           }
         }
         return { text: "u", len: 2 };
@@ -2839,10 +2837,9 @@ function scanIdentifierUnicodeEscape(
   start: number,
 ): { end: number; value: string } | null {
   if (src[start + 2] === "{") {
-    const close = src.indexOf("}", start + 3);
-    if (close === -1) return null;
+    const close = hexDigitsEnd(src, start + 3);
+    if (close === start + 3 || src[close] !== "}") return null;
     const digits = src.slice(start + 3, close);
-    if (!/^[0-9a-fA-F]+$/.test(digits)) return null;
     const codePoint = Number.parseInt(digits, 16);
     if (codePoint > 0x10ffff) return null;
     return { end: close + 1, value: String.fromCodePoint(codePoint) };
@@ -2850,6 +2847,15 @@ function scanIdentifierUnicodeEscape(
   const digits = src.slice(start + 2, start + 6);
   if (!/^[0-9a-fA-F]{4}$/.test(digits)) return null;
   return { end: start + 6, value: String.fromCharCode(Number.parseInt(digits, 16)) };
+}
+
+// End of the hex-digit run at `index`. A `\u{…}` escape is that run and a
+// `}`; searching for the `}` alone rescans to the end of the file for every
+// unterminated escape.
+function hexDigitsEnd(src: string, index: number): number {
+  let end = index;
+  while (end < src.length && /[0-9a-fA-F]/.test(src[end])) end += 1;
+  return end;
 }
 
 function isIdentText(src: string, token: JsToken | undefined, value: string): boolean {
