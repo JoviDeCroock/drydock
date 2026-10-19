@@ -852,11 +852,18 @@ describe("review", () => {
       );
     };
     const deep = `x=${"[".repeat(20_000)}${"]".repeat(20_000)};\n`;
+    const template = `\`${"${0}".repeat(1_000)}\`;`;
+    // About 505 KB each, under the fold's cap: contextual bindings at 2,000 and
+    // 5,000 depths, then a `${` or a `yield` lookup on every few bytes.
+    const catchTemplates = `${"catch(await){".repeat(2_000)}${template.repeat(120)}${"}".repeat(2_000)}\n`;
+    const letLookups = `${"{let await;".repeat(5_000)}${"yield;".repeat(74_000)}${"}".repeat(5_000)}\n`;
     // 500 KB, under the fold's 512 KB cap, so the fold runs too.
     const arrows = `const f = ${"(a)=>".repeat(100_000)}0;\n`;
     for (const [path, source, ruleId] of [
       ["lib/a.js", `fetch(u)\n${"(a)=>".repeat(120_000)}`, "code.network-access"],
       ["lib/b.js", `${deep}fetch(u);\n`, "code.network-access"],
+      ["lib/e.js", `${catchTemplates}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
+      ["lib/f.js", `${letLookups}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
       ["lib/c.js", `${deep}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
       [
         "lib/d.js",

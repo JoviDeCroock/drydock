@@ -341,6 +341,23 @@ describe("tokenizeJs regex vs division", () => {
   }, 5_000);
 });
 
+// `catch(await){` binds `await` at a new depth; every `${` then copies the
+// bindings visible at its depth into the substitution's state.
+function contextualBindingTemplates(size: number): string {
+  const depth = 2_000;
+  const template = `\`${"${0}".repeat(1_000)}\`;`;
+  const repeats = Math.ceil((size - depth * 14) / template.length);
+  return `${"catch(await){".repeat(depth)}${template.repeat(repeats)}${"}".repeat(depth)}`;
+}
+
+// `{let await;` binds `await` at a new depth; every `yield` asks whether it is
+// a bound name.
+function contextualBindingLookups(size: number): string {
+  const depth = 5_000;
+  const repeats = Math.ceil((size - depth * 12) / 6);
+  return `${"{let await;".repeat(depth)}${"yield;".repeat(repeats)}${"}".repeat(depth)}`;
+}
+
 describe("tokenizeJsWithinBudget", () => {
   test("returns the same tokens as tokenizeJs on ordinary code", () => {
     const source =
@@ -368,12 +385,20 @@ describe("tokenizeJsWithinBudget", () => {
     }
   }, 120_000);
 
-  test("gives up when contextual-binding scans would go quadratic", () => {
-    const source = `${"(function(yield){".repeat(2_000)}${"`${a}`;".repeat(5_000)}`;
-    const start = performance.now();
-    expect(tokenizeJsWithinBudget(source)).toBeNull();
-    expect(performance.now() - start).toBeLessThan(10_000);
-  }, 60_000);
+  test("lexes many contextual bindings in linear time, within the budget", () => {
+    for (const source of [
+      `${"(function(yield){".repeat(2_000)}${"`${a}`;".repeat(5_000)}`,
+      contextualBindingTemplates(512 * 1024),
+      contextualBindingLookups(512 * 1024),
+    ]) {
+      const start = performance.now();
+      const tokens = tokenizeJs(source);
+      expect(tokenizeJsWithinBudget(source)).toEqual(tokens);
+      // Generous: well under a second here, against tens of seconds when every
+      // `${` and every `await` / `yield` scanned all bound depths.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+  }, 120_000);
 
   test("with rejectJsx, gives up at a `<` where an expression may start", () => {
     for (const source of [
