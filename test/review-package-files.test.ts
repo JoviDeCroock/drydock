@@ -4,9 +4,19 @@ import {
   isOutsidePackageFilesAllowlist,
 } from "../server/lib/review/package-files";
 
-function outside(files: string[], paths: string[], extra: Record<string, unknown> = {}) {
-  const allowlist = compilePackageFilesAllowlist({ files, ...extra }, { files, ...extra });
-  return paths.filter((path) => allowlist?.isOutside(path));
+function outside(
+  files: string[],
+  paths: string[],
+  extra: Record<string, unknown> = {},
+  manifests: Record<string, unknown> = {},
+) {
+  const allowlist = compilePackageFilesAllowlist(
+    { files, ...extra },
+    { files, ...extra },
+    { packedManifest: (path) => manifests[path] },
+  );
+  const result = allowlist?.outsidePaths(paths);
+  return paths.filter((path) => result?.has(path));
 }
 
 describe("isOutsidePackageFilesAllowlist", () => {
@@ -111,6 +121,7 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
         [
           "package.json",
           "README.md",
+          "README",
           "LICENSE",
           "CHANGELOG.md",
           "History.md",
@@ -122,15 +133,53 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
           "evil/README.md",
           "docs/CHANGELOG.md",
           "notice.js",
+          "CHANGELOG",
         ],
         { bin: { cli: "./cli.js", other: "bin.mjs" }, browser: "./browser.js" },
       ),
-    ).toEqual(["evil/README.md", "docs/CHANGELOG.md", "notice.js"]);
+    ).toEqual(["evil/README.md", "docs/CHANGELOG.md", "notice.js", "CHANGELOG"]);
   });
 
-  test("bundled dependencies are exempt under the root node_modules only when declared", () => {
-    const paths = ["node_modules/spdx-expression-parse/AUTHORS", "lib/node_modules/x/index.js"];
-    expect(outside(["lib/"], paths, { bundleDependencies: ["spdx-expression-parse"] })).toEqual([]);
+  test("README, LICENSE and package.json are always packed at the root only", () => {
+    expect(
+      outside(
+        ["dist/*.js"],
+        [
+          "dist/index.js",
+          "dist/README.cjs",
+          "dist/README",
+          "dist/LICENSE",
+          "dist/package.json",
+          "README.cjs",
+        ],
+      ),
+    ).toEqual(["dist/README.cjs", "dist/README", "dist/LICENSE", "dist/package.json"]);
+  });
+
+  test("only declared bundled dependencies and what they depend on are exempt", () => {
+    const paths = [
+      "node_modules/spdx-expression-parse/AUTHORS",
+      "node_modules/spdx-exceptions/index.json",
+      "node_modules/@scope/nested/index.js",
+      "node_modules/undeclared/index.js",
+      "node_modules/spdx-expression-parse",
+      "lib/node_modules/x/index.js",
+    ];
+    const manifests = {
+      "node_modules/spdx-expression-parse/package.json": {
+        dependencies: { "spdx-exceptions": "^2.1.0" },
+        optionalDependencies: { "@scope/nested": "1.0.0" },
+      },
+    };
+    expect(
+      outside(["lib/"], paths, { bundleDependencies: ["spdx-expression-parse"] }, manifests),
+    ).toEqual(["node_modules/undeclared/index.js", "node_modules/spdx-expression-parse"]);
+    expect(
+      outside(["lib/"], ["node_modules/a/index.js", "node_modules/b/index.js"], {
+        bundleDependencies: true,
+        dependencies: { a: "1.0.0" },
+      }),
+    ).toEqual(["node_modules/b/index.js"]);
     expect(outside(["dist"], paths)).toEqual(paths);
   });
 
@@ -142,8 +191,24 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     const started = Date.now();
     const files = [`${"*a".repeat(40)}b`, `{${"x,".repeat(200)}y}`, "**/**/**/**/**/**/z"];
     const allowlist = compilePackageFilesAllowlist({ files });
-    allowlist?.isOutside(`${"a".repeat(5_000)}/${"a/".repeat(200)}c`);
+    allowlist?.outsidePaths([`${"a".repeat(5_000)}/${"a/".repeat(200)}c`]);
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("a manifest whose patterns exhaust the matching budget is not evaluated", () => {
+    const paths = Array.from(
+      { length: 2_500 },
+      (_, index) => `${"a".repeat(40)}/${"a".repeat(40)}/${"a".repeat(30)}${index}.js`,
+    );
+    for (const files of [
+      Array.from({ length: 1_000 }, () => "**/**/**/*a*a*a*a*b"),
+      [`${"**/".repeat(300)}*a*a*b`],
+    ]) {
+      const started = Date.now();
+      const result = compilePackageFilesAllowlist({ files })?.outsidePaths(paths);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      if (result) expect(result.size).toBe(paths.length);
+    }
   });
 
   test("a manifest past the entry cap is not evaluated", () => {

