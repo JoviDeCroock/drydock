@@ -197,6 +197,59 @@ describe("review diff annotation", () => {
     );
   });
 
+  test("install reachability and the install-code check stay near-linear on large staged files", () => {
+    const template = `\`${"${0}".repeat(1_000)}\`;`;
+    const catchTemplates = (repeats) =>
+      `${"catch(await){".repeat(2_000)}${template.repeat(repeats)}${"}".repeat(2_000)}\n`;
+    const letLookups = (repeats) =>
+      `${"{let await;".repeat(5_000)}${"yield;".repeat(repeats)}${"}".repeat(5_000)}\n`;
+    const manifest = JSON.stringify({
+      name: "pkg",
+      version: "1.0.1",
+      scripts: { postinstall: "node install.js" },
+    });
+    // About 505 KB (folded too) and about 1 MB (past the fold's cap) each.
+    for (const padding of [
+      catchTemplates(120),
+      letLookups(74_000),
+      catchTemplates(250),
+      letLookups(160_000),
+    ]) {
+      const before = "require('./lib/helper');\n";
+      const after = `${padding}require('./lib/helper');\nfetch('https://example.invalid/c');\n`;
+      const file = (path, textSample, sha256) => ({
+        path,
+        size: textSample.length,
+        sha256,
+        flags: [],
+        textSample,
+      });
+      const previous = [
+        file("package.json", manifest, "m"),
+        file("install.js", before, "old"),
+        file("lib/helper.js", "module.exports = 1;\n", "h"),
+      ];
+      const staged = [
+        file("package.json", manifest, "m"),
+        file("install.js", after, "new"),
+        file("lib/helper.js", "module.exports = 1;\n", "h"),
+      ];
+      const start = performance.now();
+      const diff = createPackageDiff(previous, staged);
+      const annotated = annotateFindingsWithDiffStatus(deterministicFindings(staged, diff), diff, {
+        previousFiles: previous,
+        stagedFiles: staged,
+      });
+      expect(annotated.find((finding) => finding.ruleId === "code.network-access")).toMatchObject({
+        file: "install.js",
+        releaseDelta: true,
+      });
+      // Generous: about a second here, against minutes when each `${` and each
+      // contextual lookup scanned every bound depth.
+      expect(performance.now() - start, `${padding.length} bytes`).toBeLessThan(30_000);
+    }
+  }, 300_000);
+
   test("keeps modified-file findings release scoped when a later matching line changed", () => {
     const previous = [
       {

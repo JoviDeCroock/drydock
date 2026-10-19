@@ -48,10 +48,9 @@ export interface BoundedTokenizeJsOptions extends TokenizeJsOptions {
 }
 
 // Work units a bounded tokenize may spend per source character. A token costs
-// one unit, plus the size of the contextual-binding sets it scans for an
-// `await` / `yield` binding or a template substitution. Bracket and mode
-// lookups are O(1), so ordinary code of any nesting spends about one unit a
-// token; only crafted binding-heavy shapes approach the limit.
+// one unit and every bracket, mode and binding lookup is O(1), so no input
+// should come near the limit; it stays as a guard for a future lookup that
+// regresses to a scan, in callers where giving up is safe.
 const WORK_PER_CHAR = 32;
 const MIN_WORK = 4096;
 
@@ -65,9 +64,10 @@ function chargeWork(units: number): void {
 
 // `tokenizeJs` within a work budget proportional to the input. Returns null
 // when the budget runs out or, with `rejectJsx`, at JSX, so it suits only
-// callers for which giving up is safe: the comment-blind code view (raw text)
-// and the diff formatter (shipped bytes). Constant folding and release-delta
-// comparison must lex unbounded, since an unfolded source hides findings.
+// callers for which giving up is safe: the comment-blind code view (raw text),
+// the diff formatter (shipped bytes), the install-code check (changed) and
+// reachability (every specifier counts). Constant folding and the folded
+// release-delta view must lex unbounded, since giving up there hides findings.
 export function tokenizeJsWithinBudget(
   src: string,
   options: BoundedTokenizeJsOptions = {},
@@ -107,6 +107,11 @@ type BracketKind =
   | "bracket";
 
 type PendingBodyKind = "value-block" | "class-block" | "class-value-block";
+
+interface PendingForBodyBindings {
+  sets: Set<string>[];
+  names: Map<string, number>;
+}
 
 interface ContextualKeywordMode {
   awaitIsKeyword: boolean;
@@ -205,7 +210,9 @@ interface BracketState {
   pendingCatchBodyBindings: { depth: number; bindings: Set<string> } | null;
   bindingPatternKinds: Map<number, "object" | "array" | "computed">;
   pendingContextualBindingCandidate: PendingContextualBindingCandidate | null;
-  pendingForBodyBindings: { depth: number; bindings: Set<string> }[];
+  // By the depth the `for` head closed at, in push order; `names` counts how
+  // many of those sets hold each name, so a lookup at one depth is O(1).
+  pendingForBodyBindings: Map<number, PendingForBodyBindings>;
   // Ambient functions have no implementation body. Their semicolon is optional,
   // so a line-start slash after the completed signature begins a regex statement.
   pendingAmbientFunctionDeclarationDepth: number | null;
@@ -272,7 +279,13 @@ interface BracketState {
   // contextual bindings at their current lexical bracket depth so their uses
   // remain value-shaped without changing genuine async/generator keywords in a
   // nested function body.
+  // Every key is at most the current depth (a close deletes its own depth), so
+  // a name is visible exactly when some depth binds it; `contextualBindingCounts`
+  // counts those depths per name and keeps the lookup O(1). Mutate both only
+  // through addContextualBinding / setContextualBindings /
+  // deleteContextualBindings.
   contextualBindingsByDepth: Map<number, Set<string>>;
+  contextualBindingCounts: Map<string, number>;
   // A class body is not an async/generator context even when its declaration is
   // nested in one. Computed member names are the exception: they evaluate in
   // the surrounding context, so retain both modes at their respective depths.
@@ -1025,9 +1038,7 @@ function updateBracketState(
         state.bareVariableDeclarationKind === "var"
           ? (state.activeFunctionModeDepths.at(-1) ?? 0)
           : state.brackets.length;
-      const bindings = state.contextualBindingsByDepth.get(bindingDepth);
-      if (bindings) bindings.add(text);
-      else state.contextualBindingsByDepth.set(bindingDepth, new Set([text]));
+      addContextualBinding(state, bindingDepth, text);
     }
     const declarationName =
       CONTEXTUAL_REGEX_KEYWORDS.has(text) &&
@@ -1418,7 +1429,7 @@ function updateBracketState(
         state.pendingFunctionBodyBindings,
         state.brackets.length - 1,
       );
-      if (bindings?.size) state.contextualBindingsByDepth.set(state.brackets.length, bindings);
+      if (bindings?.size) setContextualBindings(state, state.brackets.length, bindings);
       const functionMode = popPendingFunctionBodyMode(
         state.pendingFunctionBodyModes,
         state.brackets.length - 1,
@@ -1434,15 +1445,15 @@ function updateBracketState(
       if (arrowMode) state.pendingArrowBody = null;
       if (state.pendingCatchBodyBindings?.depth === state.brackets.length - 1) {
         const catchBindings = state.pendingCatchBodyBindings.bindings;
-        if (catchBindings.size) state.contextualBindingsByDepth.set(bodyDepth, catchBindings);
+        if (catchBindings.size) setContextualBindings(state, bodyDepth, catchBindings);
         state.pendingCatchBodyBindings = null;
       }
       clearAmbientFunctionDeclaration(state);
     }
     const pendingForBody = peekPendingForBodyBindings(state, bodyDepth - 1);
     if (pendingForBody) {
-      if (pendingForBody.bindings.size) {
-        state.contextualBindingsByDepth.set(bodyDepth, pendingForBody.bindings);
+      if (pendingForBody.size) {
+        setContextualBindings(state, bodyDepth, pendingForBody);
       }
       popPendingForBodyBindings(state, bodyDepth - 1);
     }
@@ -1468,7 +1479,6 @@ function updateBracketState(
   } else if (text === ")" || text === "]" || text === "}") {
     const closedDepth = state.brackets.length;
     const closingForHead = text === ")" && state.forHeadDepths.has(closedDepth);
-    if (closingForHead) chargeWork(state.contextualBindingsByDepth.get(closedDepth)?.size ?? 0);
     const forBodyBindings = closingForHead
       ? new Set(state.contextualBindingsByDepth.get(closedDepth) ?? [])
       : null;
@@ -1490,7 +1500,7 @@ function updateBracketState(
       text === ")" ? (state.parenAsyncPrefixes.get(closedDepth) ?? false) : false;
     state.closed = popBracket(state);
     state.forHeadDepths.delete(closedDepth);
-    state.contextualBindingsByDepth.delete(closedDepth);
+    deleteContextualBindings(state, closedDepth);
     state.bindingPatternKinds.delete(closedDepth);
     state.computedMethodModes.delete(closedDepth);
     state.computedClassNameModes.delete(closedDepth);
@@ -1506,10 +1516,7 @@ function updateBracketState(
     state.parenAsyncPrefixes.delete(closedDepth);
     clearExpressionFunctionModesLeavingDepth(state, closedDepth);
     if (forBodyBindings?.size) {
-      state.pendingForBodyBindings.push({
-        depth: state.brackets.length,
-        bindings: forBodyBindings,
-      });
+      pushPendingForBodyBindings(state, state.brackets.length, forBodyBindings);
     }
     if (closingFunctionParameters) {
       state.functionParameterBindings.delete(closedDepth);
@@ -1665,7 +1672,7 @@ function createBracketState(): BracketState {
     pendingCatchBodyBindings: null,
     bindingPatternKinds: new Map(),
     pendingContextualBindingCandidate: null,
-    pendingForBodyBindings: [],
+    pendingForBodyBindings: new Map(),
     pendingAmbientFunctionDeclarationDepth: null,
     pendingTypedBodyDepth: null,
     pendingCaseDepth: null,
@@ -1692,6 +1699,7 @@ function createBracketState(): BracketState {
     variableTypeAngleDepth: 0,
     forHeadDepths: new Set(),
     contextualBindingsByDepth: new Map(),
+    contextualBindingCounts: new Map(),
     classBodyModes: new Map(),
     activeClassBodyModeDepths: [],
     classOuterModes: new Map(),
@@ -1708,8 +1716,9 @@ function createTemplateExpressionState(parent: BracketState): BracketState {
     state.functionBodyModes.set(0, mode);
     state.activeFunctionModeDepths.push(0);
   }
+  // At most the three contextual names, however many depths bind them.
   const bindings = visibleContextualBindings(parent);
-  if (bindings.size) state.contextualBindingsByDepth.set(0, bindings);
+  if (bindings.size) setContextualBindings(state, 0, bindings);
   return state;
 }
 
@@ -2090,10 +2099,35 @@ function contextualVariableBindingDepth(
   return depth;
 }
 
+function countName(counts: Map<string, number>, name: string, delta: number): void {
+  const count = (counts.get(name) ?? 0) + delta;
+  if (count) counts.set(name, count);
+  else counts.delete(name);
+}
+
 function addContextualBinding(state: BracketState, depth: number, name: string): void {
+  let bindings = state.contextualBindingsByDepth.get(depth);
+  if (!bindings) {
+    bindings = new Set();
+    state.contextualBindingsByDepth.set(depth, bindings);
+  }
+  if (bindings.has(name)) return;
+  bindings.add(name);
+  countName(state.contextualBindingCounts, name, 1);
+}
+
+// Replaces the depth's bindings with a copy, so the set handed over stays out
+// of the count bookkeeping.
+function setContextualBindings(state: BracketState, depth: number, names: Set<string>): void {
+  deleteContextualBindings(state, depth);
+  for (const name of names) addContextualBinding(state, depth, name);
+}
+
+function deleteContextualBindings(state: BracketState, depth: number): void {
   const bindings = state.contextualBindingsByDepth.get(depth);
-  if (bindings) bindings.add(name);
-  else state.contextualBindingsByDepth.set(depth, new Set([name]));
+  if (!bindings) return;
+  for (const name of bindings) countName(state.contextualBindingCounts, name, -1);
+  state.contextualBindingsByDepth.delete(depth);
 }
 
 function captureContextualBinding(
@@ -2611,31 +2645,16 @@ function isForOfOperator(src: string, prev: JsToken | undefined, state: BracketS
 }
 
 function hasContextualBinding(state: BracketState, name: string): boolean {
-  chargeWork(state.contextualBindingsByDepth.size + state.pendingForBodyBindings.length);
-  for (const [depth, bindings] of state.contextualBindingsByDepth) {
-    if (depth <= state.brackets.length && bindings.has(name)) return true;
-  }
-  for (const pending of state.pendingForBodyBindings) {
-    if (pending.depth === state.brackets.length && pending.bindings.has(name)) return true;
-  }
-  return false;
+  return (
+    state.contextualBindingCounts.has(name) ||
+    (state.pendingForBodyBindings.get(state.brackets.length)?.names.has(name) ?? false)
+  );
 }
 
 function visibleContextualBindings(state: BracketState): Set<string> {
-  const result = new Set<string>();
-  chargeWork(state.contextualBindingsByDepth.size + state.pendingForBodyBindings.length);
-  for (const [depth, bindings] of state.contextualBindingsByDepth) {
-    if (depth <= state.brackets.length) {
-      chargeWork(bindings.size);
-      for (const binding of bindings) result.add(binding);
-    }
-  }
-  for (const pending of state.pendingForBodyBindings) {
-    if (pending.depth === state.brackets.length) {
-      chargeWork(pending.bindings.size);
-      for (const binding of pending.bindings) result.add(binding);
-    }
-  }
+  const result = new Set(state.contextualBindingCounts.keys());
+  const pending = state.pendingForBodyBindings.get(state.brackets.length);
+  if (pending) for (const name of pending.names.keys()) result.add(name);
   return result;
 }
 
@@ -2706,33 +2725,34 @@ function enclosingClassBodyDepth(state: BracketState): number | null {
   return state.classBodyDepths.at(-1) ?? null;
 }
 
-function peekPendingForBodyBindings(
+function pushPendingForBodyBindings(
   state: BracketState,
   depth: number,
-): { depth: number; bindings: Set<string> } | undefined {
-  chargeWork(state.pendingForBodyBindings.length);
-  for (let index = state.pendingForBodyBindings.length - 1; index >= 0; index -= 1) {
-    const pending = state.pendingForBodyBindings[index];
-    if (pending.depth === depth) return pending;
+  bindings: Set<string>,
+): void {
+  let pending = state.pendingForBodyBindings.get(depth);
+  if (!pending) {
+    pending = { sets: [], names: new Map() };
+    state.pendingForBodyBindings.set(depth, pending);
   }
-  return undefined;
+  pending.sets.push(bindings);
+  for (const name of bindings) countName(pending.names, name, 1);
+}
+
+function peekPendingForBodyBindings(state: BracketState, depth: number): Set<string> | undefined {
+  return state.pendingForBodyBindings.get(depth)?.sets.at(-1);
 }
 
 function popPendingForBodyBindings(state: BracketState, depth: number): void {
-  chargeWork(state.pendingForBodyBindings.length);
-  for (let index = state.pendingForBodyBindings.length - 1; index >= 0; index -= 1) {
-    if (state.pendingForBodyBindings[index].depth === depth) {
-      state.pendingForBodyBindings.splice(index, 1);
-      return;
-    }
-  }
+  const pending = state.pendingForBodyBindings.get(depth);
+  const bindings = pending?.sets.pop();
+  if (!pending || !bindings) return;
+  for (const name of bindings) countName(pending.names, name, -1);
+  if (!pending.sets.length) state.pendingForBodyBindings.delete(depth);
 }
 
 function clearPendingForBodyBindingsAtDepth(state: BracketState, depth: number): void {
-  chargeWork(state.pendingForBodyBindings.length);
-  state.pendingForBodyBindings = state.pendingForBodyBindings.filter(
-    (pending) => pending.depth !== depth,
-  );
+  state.pendingForBodyBindings.delete(depth);
 }
 
 function isMemberAccess(src: string, token: JsToken | undefined): boolean {
