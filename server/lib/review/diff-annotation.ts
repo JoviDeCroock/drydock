@@ -1,6 +1,6 @@
 import { hasImplicitNodeGypInstall, normalizeStringRecord } from "../tar-parser.js";
 import { isRecord } from "../platform/guards";
-import { jsTokenText, tokenizeJsWithinBudget } from "../platform/js-lexer";
+import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
@@ -216,9 +216,9 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
   if (previous === undefined || staged === undefined) return true;
   const codeTokens = (source: string) => {
     const normalized = normalizeCodeForScanning(source);
-    const lexed = tokenizeJsWithinBudget(normalized);
-    if (!lexed) return null;
-    const tokens = lexed.filter((token) => token.type !== "ws" && token.type !== "comment");
+    const tokens = tokenizeJs(normalized).filter(
+      (token) => token.type !== "ws" && token.type !== "comment",
+    );
     return tokens.map((token, index) => [
       token.type,
       token.type === "string" ? token.value : jsTokenText(normalized, token),
@@ -227,11 +227,7 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
       index > 0 && /[\r\n\u2028\u2029]/.test(normalized.slice(tokens[index - 1].end, token.start)),
     ]);
   };
-  // A source the lexer gives up on counts as changed.
-  const before = codeTokens(previous);
-  const after = codeTokens(staged);
-  if (!before || !after) return true;
-  return JSON.stringify(before) !== JSON.stringify(after);
+  return JSON.stringify(codeTokens(previous)) !== JSON.stringify(codeTokens(staged));
 }
 
 /**

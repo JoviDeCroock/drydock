@@ -48,9 +48,10 @@ export interface BoundedTokenizeJsOptions extends TokenizeJsOptions {
 }
 
 // Work units a bounded tokenize may spend per source character. A token costs
-// one unit plus the length of every bracket or mode stack it scans; ordinary
-// code spends a few units a character, while shapes that grow those stacks
-// without bound (`(a)=>(a)=>…`, deep nesting) are quadratic and run out.
+// one unit, plus the size of the contextual-binding sets it scans for an
+// `await` / `yield` binding or a template substitution. Bracket and mode
+// lookups are O(1), so ordinary code of any nesting spends about one unit a
+// token; only crafted binding-heavy shapes approach the limit.
 const WORK_PER_CHAR = 32;
 const MIN_WORK = 4096;
 
@@ -62,10 +63,11 @@ function chargeWork(units: number): void {
   if (work && (work.left -= units) < 0) throw new LexBudgetExceeded();
 }
 
-// `tokenizeJs` within a work budget proportional to the input, for callers
-// that lex untrusted bytes of any size. Returns null when the budget runs out
-// or, with `rejectJsx`, at JSX; the caller must then fall back to a reading
-// that keeps every finding (raw text, "changed", "reachable").
+// `tokenizeJs` within a work budget proportional to the input. Returns null
+// when the budget runs out or, with `rejectJsx`, at JSX, so it suits only
+// callers for which giving up is safe: the comment-blind code view (raw text)
+// and the diff formatter (shipped bytes). Constant folding and release-delta
+// comparison must lex unbounded, since an unfolded source hides findings.
 export function tokenizeJsWithinBudget(
   src: string,
   options: BoundedTokenizeJsOptions = {},
@@ -146,6 +148,11 @@ interface ConditionalContext {
 
 interface BracketState {
   brackets: BracketKind[];
+  // Depths (1-based) of the open brackets of these kinds, innermost last, so
+  // finding the nearest one is O(1) however deep the nesting runs.
+  catchParameterDepths: number[];
+  functionParameterDepths: number[];
+  classBodyDepths: number[];
   closed: BracketKind | null;
   // Class/interface/enum/namespace bodies are blocks even though the token
   // immediately before `{` is usually the declaration name or extends
@@ -181,6 +188,9 @@ interface BracketState {
   parenAsyncPrefixes: Map<number, boolean>;
   lastClosedParen: { depth: number; async: boolean } | null;
   pendingArrowBody: PendingArrowBody | null;
+  // Sorted by depth, none deeper than `brackets`: a mode is only added at the
+  // current depth and every close drops the modes at or past it, so lookups
+  // and clears work from the end.
   expressionFunctionModes: ExpressionFunctionMode[];
   // Computed and generic method names do not leave the method name immediately
   // before `(`. Carry their mode across `]` / `<...>` so the body still creates
@@ -1055,8 +1065,7 @@ function updateBracketState(
       contextualBindingFollows(prev, src) &&
       contextualCatchBindingPosition(state, prev, src)
     ) {
-      chargeWork(state.brackets.length);
-      const catchParameterDepth = state.brackets.lastIndexOf("catch-params") + 1;
+      const catchParameterDepth = state.catchParameterDepths.at(-1) ?? 0;
       if (catchParameterDepth > 0) {
         captureContextualBinding(state, "catch", catchParameterDepth, text, prev, src);
       }
@@ -1302,7 +1311,8 @@ function updateBracketState(
     const functionParameters =
       state.pendingFunctionParametersDepth === state.brackets.length || methodMode !== null;
     const statementHead = isStatementHead(src, prev, beforePrev, beforeBeforePrev);
-    state.brackets.push(
+    pushBracket(
+      state,
       catchParameters
         ? "catch-params"
         : functionParameters
@@ -1348,7 +1358,7 @@ function updateBracketState(
       lineTerminatorBefore,
     );
     const bindingPatternKind = bindingPatternKindForOpen(src, text, prev, state);
-    state.brackets.push("bracket");
+    pushBracket(state, "bracket");
     if (computedMethodMode) {
       state.computedMethodModes.set(state.brackets.length, computedMethodMode);
     }
@@ -1396,7 +1406,7 @@ function updateBracketState(
       opensBlock(src, prev)
         ? "block"
         : "object");
-    state.brackets.push(openedKind);
+    pushBracket(state, openedKind);
     const bodyDepth = state.brackets.length;
     if (openedKind === "class-block" || openedKind === "class-value-block") {
       state.classBodyModes.set(bodyDepth, ordinaryFunctionMode());
@@ -1478,7 +1488,7 @@ function updateBracketState(
       : undefined;
     const closedParenAsync =
       text === ")" ? (state.parenAsyncPrefixes.get(closedDepth) ?? false) : false;
-    state.closed = state.brackets.pop() ?? null;
+    state.closed = popBracket(state);
     state.forHeadDepths.delete(closedDepth);
     state.contextualBindingsByDepth.delete(closedDepth);
     state.bindingPatternKinds.delete(closedDepth);
@@ -1625,6 +1635,9 @@ function updateBracketState(
 function createBracketState(): BracketState {
   return {
     brackets: [],
+    catchParameterDepths: [],
+    functionParameterDepths: [],
+    classBodyDepths: [],
     closed: null,
     pendingDeclarationDepth: null,
     pendingDecoratorDepth: null,
@@ -2048,8 +2061,7 @@ function contextualCatchBindingPosition(
   prev: JsToken | undefined,
   src: string,
 ): boolean {
-  chargeWork(state.brackets.length);
-  const catchDepth = state.brackets.lastIndexOf("catch-params") + 1;
+  const catchDepth = state.catchParameterDepths.at(-1) ?? 0;
   if (catchDepth === 0) return false;
   if (state.brackets.length === catchDepth) {
     return prev?.type === "punct" && jsTokenText(src, prev) === "(";
@@ -2131,8 +2143,7 @@ function contextualFunctionParameterBindingDepth(
 ): number | null {
   const text = jsTokenText(src, token);
   if (!CONTEXTUAL_REGEX_KEYWORDS.has(text)) return null;
-  chargeWork(state.brackets.length);
-  const depth = state.brackets.lastIndexOf("function-params") + 1;
+  const depth = state.functionParameterDepths.at(-1) ?? 0;
   if (depth === 0 || depth !== state.brackets.length) return null;
   if (prev?.type !== "punct") return null;
   return ["(", ",", "..."].includes(jsTokenText(src, prev)) ? depth : null;
@@ -2201,10 +2212,9 @@ function expressionFunctionModeEndsBeforeToken(
   state: BracketState,
   lineTerminatorBefore: boolean,
 ): boolean {
-  if (!lineTerminatorBefore) return false;
-  chargeWork(state.expressionFunctionModes.length);
   if (
-    !state.expressionFunctionModes.some((mode) => mode.depth === state.brackets.length) ||
+    !lineTerminatorBefore ||
+    state.expressionFunctionModes.at(-1)?.depth !== state.brackets.length ||
     !startsStatementAfterLineTerminator(src, prev, state, true)
   ) {
     return false;
@@ -2216,23 +2226,16 @@ function expressionFunctionModeEndsBeforeToken(
   return token.type === "punct" && ["{", "@"].includes(jsTokenText(src, token));
 }
 
+// Only ever called with the current depth, whose modes are the list's tail.
 function clearExpressionFunctionModesAtDepth(state: BracketState, depth: number): void {
-  if (state.expressionFunctionModes.length) {
-    chargeWork(state.expressionFunctionModes.length);
-    state.expressionFunctionModes = state.expressionFunctionModes.filter(
-      (mode) => mode.depth !== depth,
-    );
-  }
+  const modes = state.expressionFunctionModes;
+  while (modes.length && modes[modes.length - 1].depth === depth) modes.pop();
   if (state.pendingArrowBody?.depth === depth) state.pendingArrowBody = null;
 }
 
 function clearExpressionFunctionModesLeavingDepth(state: BracketState, closedDepth: number): void {
-  if (state.expressionFunctionModes.length) {
-    chargeWork(state.expressionFunctionModes.length);
-    state.expressionFunctionModes = state.expressionFunctionModes.filter(
-      (mode) => mode.depth < closedDepth,
-    );
-  }
+  const modes = state.expressionFunctionModes;
+  while (modes.length && modes[modes.length - 1].depth >= closedDepth) modes.pop();
   if (state.pendingArrowBody && state.pendingArrowBody.depth >= closedDepth) {
     state.pendingArrowBody = null;
   }
@@ -2676,17 +2679,31 @@ function currentContextualKeywordMode(state: BracketState): ContextualKeywordMod
   return selectedMode;
 }
 
+function bracketKindDepths(state: BracketState, kind: BracketKind): number[] | null {
+  if (kind === "catch-params") return state.catchParameterDepths;
+  if (kind === "function-params") return state.functionParameterDepths;
+  if (kind === "class-block" || kind === "class-value-block") return state.classBodyDepths;
+  return null;
+}
+
+function pushBracket(state: BracketState, kind: BracketKind): void {
+  state.brackets.push(kind);
+  bracketKindDepths(state, kind)?.push(state.brackets.length);
+}
+
+function popBracket(state: BracketState): BracketKind | null {
+  const kind = state.brackets.pop();
+  if (kind === undefined) return null;
+  bracketKindDepths(state, kind)?.pop();
+  return kind;
+}
+
 function popActiveDepth(depths: number[], closedDepth: number): void {
   if (depths.at(-1) === closedDepth) depths.pop();
 }
 
 function enclosingClassBodyDepth(state: BracketState): number | null {
-  chargeWork(state.brackets.length);
-  for (let depth = state.brackets.length; depth > 0; depth -= 1) {
-    const kind = state.brackets[depth - 1];
-    if (kind === "class-block" || kind === "class-value-block") return depth;
-  }
-  return null;
+  return state.classBodyDepths.at(-1) ?? null;
 }
 
 function peekPendingForBodyBindings(
