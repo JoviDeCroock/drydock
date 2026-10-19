@@ -751,14 +751,41 @@ describe("review", () => {
     expect(
       ruleIds("src/App.vue", "<template>\n  <p>\n// {{ fetch(u) }}\n  </p>\n</template>\n"),
     ).toContain("code.network-access");
-    // JSX text past the 4 MB lexing cap.
+    // Past the 4 MB lexing cap the view is raw: JSX text and a `//` line inside
+    // a template literal both stay.
     const filler = `const pad = 0;\n`.repeat(300 * 1024);
     expect(
-      ruleIds("dist/huge.jsx", `${filler}const el = (\n  <p>\n// {fetch(u)}\n  </p>\n);\n`),
-    ).toContain("code.network-access");
+      ruleIds(
+        "dist/huge.jsx",
+        `${filler}const el = (\n  <p>\n// {fetch(u)}\n  </p>\n);\nconst t = \`\n// eval(p)\n\`;\n`,
+      ),
+    ).toEqual(expect.arrayContaining(["code.network-access", "code.dynamic-evaluation"]));
+    // A `//` line inside a template literal in a script region is template
+    // text an eval can run, in every component flavour.
+    const templated = "const step = `\n// fetch(target, init)\n`;\neval(step.slice(2));\n";
+    for (const [path, source] of [
+      ["src/App.svelte", `<script>\n${templated}</script>\n<p>hi</p>\n`],
+      ["src/App.vue", `<script setup>\n${templated}</script>\n<template><p>hi</p></template>\n`],
+      ["src/Page.astro", `---\n${templated}---\n<p>hi</p>\n`],
+    ]) {
+      expect(ruleIds(path, source), path).toEqual(
+        expect.arrayContaining(["code.network-access", "code.dynamic-evaluation"]),
+      );
+    }
+    // A `<script>` inside an HTML comment opens a false region over markup;
+    // nothing in that markup is blanked.
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        "<!-- <script> -->\n<p>it's\n// {eval(atob(u))}\n</p>\n<script>\nlet u;\n</script>\n",
+      ),
+    ).toContain("code.dynamic-evaluation");
     // Comments inside a component's script block are still blanked.
     expect(
       ruleIds("src/App.svelte", "<script>\n// reads process.env[name] at build time\n</script>\n"),
+    ).toEqual([]);
+    expect(
+      ruleIds("src/Page.astro", "---\n// do not use import.meta.env[varname]\n---\n<p>hi</p>\n"),
     ).toEqual([]);
   }, 60_000);
 
