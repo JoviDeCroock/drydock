@@ -152,7 +152,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 - A newly added `bin` command raises `diff.bin-added` (medium), but `main`/`module`/`types`/`exports` retargets are intentionally not flagged: they change on almost every build (`index.js` → `dist/index.js`) and would be noise. They remain visible as the `entrypointsChanged` diff flag. A retarget that points at a path the artifact does not contain is a different question and does fire (`package-json.entrypoint-missing`).
 - Files a release stops shipping raise nothing on their own: file rules run over the staged artifact, so a dropped binary is visible only as a removed diff entry unless the manifest still declares it as an entrypoint. A `files` allowlist entry with no matching file is likewise not flagged — allowlist entries are globs whose absence can be legitimate (an optional platform build).
 - The propagation family only models the install path. A payload that republishes or rewrites its neighbours when the package is later imported or run — rather than while it is being installed — raises nothing from `propagation.*`, because separating that from ordinary release and patch tooling by pattern alone produced false positives on exactly the tools maintainers depend on. The capability rules still see its process, network, and credential use.
-- `propagation.package-mutation` evaluates the destination of every write in an install-time JavaScript file (`server/lib/review/rules/install-root-writes.ts`, a token-level evaluator, not a parser) and stays quiet only when each is proven to stay in the package's own directory, a temp or the home directory. It fails closed: a destination it cannot place (a value from another package, a callback the file never calls itself, a mutated array or object, a destructured runtime result) falls back to the old co-occurrence verdict, firing when the file names `node_modules`, builds a path the evaluator places above the package (a parent escape or `dirname` past the package root, another package's or an unknown specifier's `require.resolve`), reads module lookup paths, the consumer's cwd or npm prefix, or calls `chdir`, or takes the destination from a sibling module that does. Relative module specifiers, `..` comparisons and climbs that stay inside the package do not count. Links are a package-wide precondition, not something followed per file: if any code file or lifecycle script in the package (install-reachable or not; a code file not sampled in full counts) calls a link or symlink API, including the promise forms and aliases, runs a shell `ln`, or copies or renames a path not proven to be a concrete one in the package or temp directory, every install-time write in the package is unproven and the link itself counts as the install-root reference. Any exec with a `cwd` option or a shell `cd`/`pushd` segment leaves its writes unproven, and `cd ..` is a parent escape. A write to `process.env` makes the temp and home directories unknown, and any mention of `chdir` makes the cwd unknown. Home dotfiles and `~/.ssh` are never proven, and a write to `.npmrc` or a shell start-up file (`.bashrc`, `.profile`, `.zshrc`, …) fires on its own, since it redirects the next install or shell. A destination that concretely climbs out of the package fires without any reference. So install-time code with untraceable destinations still fires: netlify-cli's function builder; nx, whose postinstall loads library helpers that write to caller-supplied paths next to `node_modules/.cache` lookups; and esbuild, which hardlinks its platform binary into `bin/`. A write into `node_modules/.cache` also still counts as the install root. A shell command whose text is not known, and archive extraction through a library (`tar.x({ cwd })`), are not treated as writes; the process-execution rules see the former. The finding is a reviewer signal at `high`, never an automatic rejection.
+- `propagation.package-mutation` reads a path literal, not a resolved path, so it cannot tell which part of the install root a write lands in: an install hook that writes only into a shared cache directory such as `node_modules/.cache` raises the same finding as one that rewrites a neighbouring package's manifest. The finding is a reviewer signal at `high`, never an automatic rejection, and the evidence line points at the path expression so the distinction is one click away.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
 - JavaScript credential access reads names, not values: a secret held in a variable with a configuration-shaped name (`process.env.CONFIG`) raises nothing, `const { env } = process` is not followed, and `.npmrc` reads are not credential paths. A runtime-chosen key and the env object handed to a child process still count, so webpack's `EnvironmentPlugin`-style `process.env[key]` loops and `spawn(…, { env: { ...process.env } })` remain known false positives.
@@ -766,21 +766,15 @@ capability itself. The retention-tier notice escalates only for a
 changed file whose content the rules could have read, so native binaries, source maps and
 minified bundles stored hash-only stop counting as inspection gaps unless they are what runs
 (an entrypoint or a loaded file).
-`propagation.package-mutation` stays quiet only when every install-time write destination is
-proven to stay inside the package's own directory, a temp directory or home (never through
-a redirected `TMPDIR`/`HOME`, an unknown working directory, a `cwd` option or shell `cd`, or a
-home dotfile), and nothing in the package creates a link. A link or symlink call anywhere in
-the package (promise forms and aliases included), a shell `ln`, or a copy or rename from a path
-outside the package or temp directory voids every write proof in it: a link redirects a write
-that looks local, and ordering links against writes is deliberately not modelled. An unproven
-write falls back to the previous co-occurrence check, with a link counting as the install-root
-reference. That clears installers that only write inside their own directory and keeps writes
-into sibling packages, parent-directory walks, shell copies, module-lookup destinations and
-link redirects; esbuild, which hardlinks its platform binary, still fires.
-`files-allowlist-escape-negated-dir`, `install-root-sibling-package-write`,
-`install-root-parent-dir-walk`, `install-root-shell-cd-copy`, `install-root-cross-file-symlink`,
-`install-root-shell-ln-cwd`, `install-root-link-class-field` and the
-`legit-npm-packlist-files-semantics` hard-negative pin both sides.
+`files-allowlist-escape-negated-dir` and the `legit-npm-packlist-files-semantics`
+hard-negative pin both sides.
+Install-time writes keep the 1.48.0 co-occurrence scoring for
+`propagation.package-mutation`: an attempt to prove destinations stay inside the package was
+dropped because every review round found another write or link channel around it.
+`install-root-sibling-package-write` and `install-root-link-class-field` pin shapes it fires
+on; `install-root-parent-dir-walk`, `install-root-cross-file-symlink`,
+`install-root-shell-cd-copy` and `install-root-shell-ln-cwd` are reported frontier misses,
+since their sources never name the install root.
 
 `1.50.0` narrows the `code.*` capability rules that fired on ordinary npm releases.
 `code.credential-access` keys on what is read. Secret-shaped environment names,
