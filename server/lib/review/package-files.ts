@@ -68,8 +68,7 @@ export function isOutsidePackageFilesAllowlist(
   rawManifest?: unknown,
 ): boolean {
   return (
-    compilePackageFilesAllowlist(packageJson, rawManifest)?.outsidePaths([path])?.has(path) ??
-    false
+    compilePackageFilesAllowlist(packageJson, rawManifest)?.outsidePaths([path])?.has(path) ?? false
   );
 }
 
@@ -300,8 +299,7 @@ function compileGlob(
         const usePartial = partial && !options.matchBase;
         if (!matchSegments(compiled, target, usePartial, budget)) return false;
         return (
-          usePartial ||
-          !excluded.some((negative) => matchSegments(negative, target, false, budget))
+          usePartial || !excluded.some((negative) => matchSegments(negative, target, false, budget))
         );
       },
     };

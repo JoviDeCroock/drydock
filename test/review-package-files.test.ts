@@ -175,11 +175,10 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
       outside(["lib/"], paths, { bundleDependencies: ["spdx-expression-parse"] }, manifests),
     ).toEqual(["node_modules/undeclared/index.js", "node_modules/spdx-expression-parse"]);
     expect(
-      outside(
-        ["lib/"],
-        ["node_modules/a/index.js", "node_modules/b/index.js"],
-        { bundleDependencies: true, dependencies: { a: "1.0.0" } },
-      ),
+      outside(["lib/"], ["node_modules/a/index.js", "node_modules/b/index.js"], {
+        bundleDependencies: true,
+        dependencies: { a: "1.0.0" },
+      }),
     ).toEqual(["node_modules/b/index.js"]);
     expect(outside(["dist"], paths)).toEqual(paths);
   });

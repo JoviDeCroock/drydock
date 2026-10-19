@@ -1860,6 +1860,48 @@ describe("review", () => {
     ]);
   });
 
+  test("escalates the retention-tier notice when a never-sampled bundle is what runs", () => {
+    const entries = [
+      {
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: "2 file bodies were recorded hash-only",
+      },
+    ];
+    const changedBundle = [
+      { path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] },
+      { path: "dist/app.min.js.map", status: "modified", flags: ["content-skipped"] },
+    ];
+    const severity = (stagedFiles) =>
+      tarSuspiciousEntryFindings(entries, { fileDiff: changedBundle, stagedFiles })[0].severity;
+    const hashOnly = changedBundle.map(({ path, flags }) => ({ path, flags }));
+    const sampled = (path, textSample) => ({ path, flags: [], textSample });
+
+    expect(severity([...hashOnly, sampled("package.json", '{"main":"./dist/app.min.js"}')])).toBe(
+      "medium",
+    );
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"exports":{".":{"require":"./dist/app.min.js"}}}'),
+      ]),
+    ).toBe("medium");
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"main":"index.js"}'),
+        sampled("index.js", "module.exports = require(path.join(__dirname, 'dist', 'app.min'));"),
+      ]),
+    ).toBe("medium");
+    expect(
+      severity([
+        ...hashOnly,
+        sampled("package.json", '{"main":"index.js"}'),
+        sampled("index.js", "module.exports = 1;\n//# sourceMappingURL=app.min.js.map"),
+      ]),
+    ).toBe("info");
+  });
+
   test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {
     const entries = [
       {
