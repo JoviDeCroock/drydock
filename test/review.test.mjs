@@ -714,26 +714,53 @@ describe("review", () => {
         (finding) => finding.ruleId,
       );
     };
-    // Past the 4 MB lexing cap, as well as in single-file components.
-    const filler = `const pad = 0;\n`.repeat(300 * 1024);
-    for (const [prefix, path] of [
-      [filler, "dist/huge.js"],
-      ["<script>\n", "src/App.vue"],
-      ["<script>\n", "src/App.svelte"],
-    ]) {
-      expect(
-        ruleIds(path, `${prefix}const t = \`\n// \${eval(atob(blob))}\n\`;\n`),
-        path,
-      ).toContain("code.dynamic-evaluation");
-      expect(ruleIds(path, `${prefix}const t = \`\n// \${fetch(u)}\n\`;\n`), path).toContain(
-        "code.network-access",
-      );
-      expect(
-        ruleIds(path, `${prefix}const t = \`\n// \${JSON.stringify(process.env)}\n\`;\n`),
-        path,
-      ).toContain("code.credential-access");
+    const payloads = [
+      ["code.dynamic-evaluation", "const a = `\n// ${eval(atob(blob))}\n`;\n"],
+      ["code.network-access", "const b = `\n// ${fetch(u)}\n`;\n"],
+      ["code.credential-access", "const c = `\n// ${JSON.stringify(process.env)}\n`;\n"],
+    ];
+    for (const path of ["src/App.vue", "src/App.svelte"]) {
+      for (const [ruleId, payload] of payloads) {
+        expect(ruleIds(path, `<script>\n${payload}</script>\n`), path).toContain(ruleId);
+      }
     }
-  });
+    // Past the 4 MB lexing cap: one large file carrying all three.
+    const filler = `const pad = 0;\n`.repeat(300 * 1024);
+    expect(ruleIds("dist/huge.js", filler + payloads.map(([, p]) => p).join(""))).toEqual(
+      expect.arrayContaining(payloads.map(([ruleId]) => ruleId)),
+    );
+  }, 60_000);
+
+  test("the line-comment pass leaves component markup and JSX alone", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "m", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const svelteScript = "<script>\n  let u = '/x', m = 'POST';\n</script>\n";
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        `${svelteScript}<p>\n// {fetch(u,{method:m,body:JSON.stringify(process.env)})}\n</p>\n`,
+      ),
+    ).toEqual(expect.arrayContaining(["code.network-access", "code.credential-access"]));
+    expect(ruleIds("src/App.svelte", `${svelteScript}<p>\n// {eval(atob(u))}\n</p>\n`)).toContain(
+      "code.dynamic-evaluation",
+    );
+    expect(
+      ruleIds("src/App.vue", "<template>\n  <p>\n// {{ fetch(u) }}\n  </p>\n</template>\n"),
+    ).toContain("code.network-access");
+    // JSX text past the 4 MB lexing cap.
+    const filler = `const pad = 0;\n`.repeat(300 * 1024);
+    expect(
+      ruleIds("dist/huge.jsx", `${filler}const el = (\n  <p>\n// {fetch(u)}\n  </p>\n);\n`),
+    ).toContain("code.network-access");
+    // Comments inside a component's script block are still blanked.
+    expect(
+      ruleIds("src/App.svelte", "<script>\n// reads process.env[name] at build time\n</script>\n"),
+    ).toEqual([]);
+  }, 60_000);
 
   test("nested template markers past the view budget fall back to raw text", () => {
     const textSample = "`${".repeat(1_300_000);
