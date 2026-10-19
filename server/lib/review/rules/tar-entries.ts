@@ -28,7 +28,7 @@ export interface TarEntryFindingOptions {
    * sides, so without these a file the baseline stored hash-only but this
    * release fully inspected would read as an uninspected change.
    */
-  stagedFiles?: Array<Pick<FileRecord, "path" | "flags">>;
+  stagedFiles?: Array<Pick<FileRecord, "path" | "flags"> & Partial<Pick<FileRecord, "textSample">>>;
 }
 
 // Whether the retention tier cost this release any inspection: a file that
@@ -37,18 +37,95 @@ export interface TarEntryFindingOptions {
 // do not count, because the tier hid nothing the content rules would have
 // read: a sniffed native binary (which `file.native-artifact` already reports
 // from the same magic-byte flag), and the source maps / minified bundles the
-// parser never samples.
+// parser never samples. A never-sampled bundle that a manifest entrypoint
+// names or shipped code refers to still counts: it is the code that runs.
 function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean {
   const stagedFlags = options.stagedFiles
     ? new Map(options.stagedFiles.map((file) => [file.path, file.flags]))
     : null;
+  let loaded: LoadedBundleIndex | undefined;
   return (options.fileDiff ?? []).some((entry) => {
     if (entry.status !== "added" && entry.status !== "modified") return false;
     const flags = (entry.path !== undefined && stagedFlags?.get(entry.path)) || entry.flags;
     if (!flags.includes("content-skipped")) return false;
     if (flags.some((flag) => flag.startsWith("native-"))) return false;
-    return !(entry.path !== undefined && shouldSkipTextSample(entry.path));
+    if (entry.path === undefined || !shouldSkipTextSample(entry.path)) return true;
+    loaded ??= loadedBundleIndex(options.stagedFiles ?? []);
+    return loaded.isLoaded(entry.path);
   });
+}
+
+interface LoadedBundleIndex {
+  isLoaded(path: string): boolean;
+}
+
+// File-name tokens in shipped text, minus `sourceMappingURL` comments (every
+// bundle names its own map). Matching is by basename, so a reference through
+// `path.join(__dirname, "app.min.js")` or `require("./app.min")` counts, at
+// the cost of a same-named file elsewhere also counting.
+const SOURCE_MAP_COMMENT = /[#@]\s*sourceMappingURL\s*=\s*\S*/g;
+const FILE_NAME_TOKEN = /[^\s'"`\\/()+,;:=<>{}[\]|&*?!]+/g;
+const CODE_EXTENSION = /\.[cm]?js$/;
+
+function loadedBundleIndex(
+  stagedFiles: NonNullable<TarEntryFindingOptions["stagedFiles"]>,
+): LoadedBundleIndex {
+  const entrypoints = manifestEntrypoints(stagedFiles);
+  const names = new Set<string>();
+  for (const file of stagedFiles) {
+    if (!file.textSample || /(?:^|\/)package\.json$/i.test(file.path)) continue;
+    const text = file.textSample.replace(SOURCE_MAP_COMMENT, "");
+    for (const token of text.match(FILE_NAME_TOKEN) ?? []) names.add(token.toLowerCase());
+  }
+  return {
+    isLoaded(path) {
+      const normalized = path.toLowerCase();
+      if (entrypoints.has(normalized)) return true;
+      const basename = normalized.split("/").at(-1) ?? "";
+      return names.has(basename) || names.has(basename.replace(CODE_EXTENSION, ""));
+    },
+  };
+}
+
+// Every path string under the shallowest manifest's entrypoint fields
+// (`main`, `module`, `browser`, `bin`, `exports`), resolved from its directory.
+function manifestEntrypoints(
+  stagedFiles: NonNullable<TarEntryFindingOptions["stagedFiles"]>,
+): Set<string> {
+  const manifest = stagedFiles
+    .filter((file) => file.textSample && /(?:^|\/)package\.json$/i.test(file.path))
+    .sort((a, b) => a.path.split("/").length - b.path.split("/").length)[0];
+  const targets = new Set<string>();
+  if (!manifest?.textSample) return targets;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifest.textSample);
+  } catch {
+    return targets;
+  }
+  if (!parsed || typeof parsed !== "object") return targets;
+  const directory = manifest.path.split("/").slice(0, -1).join("/");
+  const fields = parsed as Record<string, unknown>;
+  const pending: unknown[] = [
+    fields.main,
+    fields.module,
+    fields.browser,
+    fields.bin,
+    fields.exports,
+  ];
+  for (let visited = 0; pending.length && visited < 10_000; visited += 1) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      const relative = value
+        .replaceAll("\\", "/")
+        .replace(/^(?:\.\/)+/, "")
+        .replace(/^\/+/, "");
+      targets.add((directory ? `${directory}/${relative}` : relative).toLowerCase());
+    } else if (value && typeof value === "object") {
+      pending.push(...Object.values(value));
+    }
+  }
+  return targets;
 }
 
 function tarSuspiciousSeverity(

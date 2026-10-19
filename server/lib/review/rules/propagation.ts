@@ -3,7 +3,7 @@ import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
-import { writesIntoInstallRoot } from "./install-root-writes";
+import { analyzeInstallWrites, type InstallWriteOrigin } from "./install-root-writes";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
@@ -91,37 +91,124 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
     );
   }
 
-  const installRoot = matchLine(ctx.patterns.installRootPath, source.sample, source.normalized);
-  const write = matchLine(ctx.patterns.installWrite, source.sample, source.normalized);
-  if (installRoot && write && writesIntoInstallRootFor(ctx, source)) {
+  const mutation = packageMutation(ctx, source);
+  if (mutation) {
     findings.push(
       tag("propagationPackageMutation", {
         severity: "high",
         file: source.file,
-        line: source.line ?? installRoot.line,
+        line: source.line ?? mutation.line,
         evidence: `${source.prefix}install-time write into the dependency install root`,
         reason:
           "code that runs during a consumer's install writes into the directory the package manager unpacks dependencies into, so it can add hooks or payloads to packages the consumer already trusts",
-        ...(installRoot.obfuscated || write.obfuscated ? { obfuscated: true } : {}),
+        ...(mutation.obfuscated ? { obfuscated: true } : {}),
       }),
     );
   }
   return findings;
 }
 
+// Besides naming `node_modules` and the path climbs the evaluator sees
+// (`climbLine`: a parent escape or another package's resolved path), the
+// install root is reached through the module-lookup paths, the consumer's cwd
+// or npm prefix, a `chdir`, or resolving a bare specifier against the
+// importing module.
+const JS_INSTALL_ROOT_REFERENCE_PATTERNS = [
+  /\bmodule\s*\.\s*paths\b|\b_nodeModulePaths\b|\bglobalPaths\b/,
+  /\bINIT_CWD\b|\bnpm_config_(?:local_)?prefix\b|\bnpm\s+(?:root|prefix)\b/,
+  /\bchdir\s*\(/,
+  /\bimport\.meta\s*\.\s*resolve\s*\(\s*(?!['"`]\.\.?[/\\'"`])/,
+];
+const JS_WRITE_CANDIDATE =
+  /\b(?:writeFile|appendFile|outputFile|writeJson|writeJSON|outputJson|outputJSON|createWriteStream|copyFile|cp|copy|move|rename|link|symlink|ensureLink|ensureSymlink|open)(?:Sync)?\b|\b(?:exec|spawn|execFile|execa|execaCommand)(?:Sync)?\s*\(/;
+
 // Naming node_modules and writing a file is every native-binary installer
-// (esbuild reads `<tmp>/node_modules/...` and renames the binary into its own
-// `bin/`); the propagation shape is a write whose destination is the install
-// root. JavaScript sources follow the path into write destinations, either text
-// form counting. Lifecycle command lines are shell, not a JS file; a truncated
-// sample may hide the sink; Python keeps the file-level co-occurrence. All of
-// those stay on the co-occurrence verdict.
-function writesIntoInstallRootFor(ctx: RuleContext, source: PropagationSource): boolean {
-  if (ctx.codePatternSet === "python" || source.command || source.truncated) return true;
-  const patterns = ctx.patterns.installRootPath;
+// (esbuild installs its platform binary under its own `lib/` and renames it
+// into `bin/`), so a JavaScript source fires only when some write's
+// destination is not proven to stay in the package's own directory, a temp
+// or the home directory (`analyzeInstallWrites`), and either the destination
+// is concretely the install root, the file reaches for the install root, or
+// it takes the destination from a sibling module that does.
+// Lifecycle command lines are shell, not a JS file; a truncated sample may
+// hide the sink; Python keeps the file-level co-occurrence.
+function packageMutation(
+  ctx: RuleContext,
+  source: PropagationSource,
+): { line: number | undefined; obfuscated: boolean } | null {
+  const installRoot = matchLine(ctx.patterns.installRootPath, source.sample, source.normalized);
+  if (ctx.codePatternSet === "python" || source.command || source.truncated) {
+    const write = matchLine(ctx.patterns.installWrite, source.sample, source.normalized);
+    if (!installRoot || !write) return null;
+    return { line: installRoot.line, obfuscated: installRoot.obfuscated || write.obfuscated };
+  }
+  if (!JS_WRITE_CANDIDATE.test(source.sample) && !JS_WRITE_CANDIDATE.test(source.normalized)) {
+    return null;
+  }
+  const origin = {
+    filePath: source.file,
+    packageName: ctx.packageJson?.name ?? null,
+    packageMain: ctx.packageJson?.main ?? null,
+  };
+  const raw = analyzeInstallWrites(source.sample, origin);
+  const folded =
+    source.normalized !== source.sample && (!raw.unproven || raw.climbLine === undefined)
+      ? analyzeInstallWrites(source.normalized, origin)
+      : null;
+  const verdict = raw.unproven || !folded ? raw : folded;
+  if (!verdict.unproven) return null;
+  const climb =
+    raw.climbLine !== undefined
+      ? { line: raw.climbLine, obfuscated: false }
+      : folded?.climbLine !== undefined
+        ? { line: folded.climbLine, obfuscated: true }
+        : null;
+  if (installRoot)
+    return { line: installRoot.line ?? verdict.line, obfuscated: installRoot.obfuscated };
+  if (verdict.intoInstallRoot) return { line: verdict.line, obfuscated: false };
+  const reference =
+    climb ?? matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, source.sample, source.normalized);
+  if (reference) {
+    return { line: reference.line ?? verdict.line, obfuscated: reference.obfuscated };
+  }
+  if (
+    verdict.importedFrom.some((specifier) =>
+      importReachesInstallRoot(ctx, source.file, specifier, origin),
+    )
+  ) {
+    return { line: verdict.line, obfuscated: false };
+  }
+  return null;
+}
+
+const MODULE_SUFFIXES = ["", ".js", ".cjs", ".mjs", "/index.js", "/index.cjs", "/index.mjs"];
+
+function importReachesInstallRoot(
+  ctx: RuleContext,
+  from: string,
+  specifier: string,
+  origin: InstallWriteOrigin,
+): boolean {
+  const segments = from.split("/").slice(0, -1);
+  for (const segment of specifier.split("/")) {
+    if (segment === "..") segments.pop();
+    else if (segment && segment !== ".") segments.push(segment);
+  }
+  const base = segments.join("/");
+  const target = MODULE_SUFFIXES.map((suffix) => `${base}${suffix}`);
+  const file = ctx.files.find((candidate) => target.includes(candidate.path));
+  if (!file?.textSample) return false;
+  const normalized = normalizeCodeForScanning(file.textSample);
+  if (
+    matchLine(ctx.patterns.installRootPath, file.textSample, normalized) ||
+    matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, file.textSample, normalized)
+  ) {
+    return true;
+  }
+  const sibling = { ...origin, filePath: file.path };
   return (
-    writesIntoInstallRoot(source.sample, patterns) ||
-    (source.normalized !== source.sample && writesIntoInstallRoot(source.normalized, patterns))
+    analyzeInstallWrites(file.textSample, sibling).climbLine !== undefined ||
+    (normalized !== file.textSample &&
+      analyzeInstallWrites(normalized, sibling).climbLine !== undefined)
   );
 }
 
