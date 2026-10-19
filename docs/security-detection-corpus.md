@@ -181,7 +181,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.51.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.52.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -806,6 +806,15 @@ header needs a base64 body, and URL credentials stop at quotes and brackets. The
 most gate-blocking findings on real releases of webpack, storybook, graphql, got,
 npm-check-updates, openpgp and the Prisma packages. The `benign-secret-shaped-code-and-placeholders`
 fixtures and the `secret-generic-key-value-added` golden case pin both sides.
+
+`1.52.0` pairs renamed bundler chunks. An added JS/TS file whose content nearly matches a
+removed file in the same directory (shingle Jaccard ≥ 0.8 over the first 1 MiB, one-to-one,
+names ignored) is recorded as `renamedFrom`. It is judged as that predecessor modified:
+rule severity tiers, changed-span release attribution and `expanded`. Content-hash renames
+no longer put a chunk's existing capabilities on the release delta, and a payload spliced
+into a renamed chunk scores as it would in a modified file. Pairing work per diff is
+capped and anything past the cap stays unpaired (added). Goldens:
+`renamed-chunk-capability-context`, `renamed-chunk-spliced-payload`.
 
 ### Fixture format
 
