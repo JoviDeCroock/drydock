@@ -26,16 +26,7 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
     );
   }
 
-  const allowlist = compilePackageFilesAllowlist(
-    ctx.packageJson,
-    ctx.packageJsonFile?.textSample ? safeJson(ctx.packageJsonFile.textSample) : null,
-  );
-  const outsideAllowlist = allowlist
-    ? ctx.files.filter(
-        (file) =>
-          ctx.diffByPath.get(file.path)?.status !== "removed" && allowlist.isOutside(file.path),
-      )
-    : [];
+  const outsideAllowlist = filesOutsideAllowlist(ctx);
   const loadableDocumentation = documentationNamedByCode(
     ctx,
     outsideAllowlist.filter((file) => isDocumentationPath(file.path)),
@@ -125,6 +116,28 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
+}
+
+function filesOutsideAllowlist(ctx: RuleContext): FileRecord[] {
+  const bundledManifests = new Map<string, string>();
+  for (const file of ctx.files) {
+    if (file.textSample && /^node_modules\/.*\/package\.json$/i.test(file.path)) {
+      bundledManifests.set(file.path.toLowerCase(), file.textSample);
+    }
+  }
+  const allowlist = compilePackageFilesAllowlist(
+    ctx.packageJson,
+    ctx.packageJsonFile?.textSample ? safeJson(ctx.packageJsonFile.textSample) : null,
+    {
+      packedManifest: (path) => {
+        const text = bundledManifests.get(path);
+        return text ? safeJson(text) : null;
+      },
+    },
+  );
+  const present = ctx.files.filter((file) => ctx.diffByPath.get(file.path)?.status !== "removed");
+  const outside = allowlist?.outsidePaths(present.map((file) => file.path));
+  return outside ? present.filter((file) => outside.has(file.path)) : [];
 }
 
 // Documentation files outside the allowlist that something could load as code:

@@ -19,19 +19,31 @@ import type { PackageJsonSummary } from "./serialize";
 //   ancestor directory survives the rules, and a directory survives while some
 //   include rule could still match beneath it.
 // - Always packed regardless of later `!` entries: a literal entry naming a
-//   file (npm makes it a strict rule), `package.json` and README / LICENSE /
-//   LICENCE / COPYING (with any extension) in every walked directory, and the
-//   `main`, `browser` and `bin` targets. Bundled dependencies are packed under
-//   the root `node_modules/` by their own rules, not the root `files`.
+//   file (npm makes it a strict rule), and at the package root only
+//   `package.json`, README / LICENSE / LICENCE / COPYING (with any extension)
+//   and the `main`, `browser` and `bin` targets. Bundled dependencies are
+//   packed under the root `node_modules/` by their own rules, not the root
+//   `files`: the declared names (`true` means every `dependencies` name) plus
+//   the dependencies their packed manifests declare, which npm hoists too.
 //
 // Deliberate tolerances beyond npm 7+: CHANGELOG / CHANGES / HISTORY / NOTICE
-// documents at the root (always packed by npm <= 6 and yarn, both still
-// publish), npm-shrinkwrap.json, and the declared `module` / `types` targets.
-// Each is a document name or a declared entrypoint, so none can hide an
-// undeclared script.
+// documents with a document extension at the root (always packed by npm <= 6
+// and yarn, both still publish), npm-shrinkwrap.json, and the declared
+// `module` / `types` targets. Each is a document or a declared entrypoint, so
+// none can hide an undeclared script; an extensionless name is excluded
+// because `require("./CHANGELOG")` loads one as JavaScript.
 
 export interface PackageFilesAllowlist {
-  isOutside(path: string): boolean;
+  /**
+   * The given paths npm would not have packed, or null when the manifest's
+   * patterns ran past the matching budget and were not evaluated.
+   */
+  outsidePaths(paths: Iterable<string>): Set<string> | null;
+}
+
+export interface PackageFilesAllowlistOptions {
+  /** Parsed text of a packed `package.json`, used for bundled dependencies. */
+  packedManifest?: (path: string) => unknown;
 }
 
 // `files` comes from the reviewed (hostile) manifest. Patterns are matched by a
@@ -41,17 +53,24 @@ export interface PackageFilesAllowlist {
 const MAX_FILES_ENTRIES = 1_000;
 const MAX_ENTRY_LENGTH = 1_024;
 const MAX_EXPANSIONS_PER_ENTRY = 64;
+// Wildcard steps across every path matched against one manifest. Real
+// manifests spend well under 1% of it on the largest packages in the sweep.
+const MAX_MATCH_WORK = 30_000_000;
+const MAX_BUNDLED_MANIFESTS = 5_000;
 
-const ALWAYS_PACKED_AT_ANY_LEVEL =
-  /^(?:package\.json|(?:readme|copying|license|licence)(?:\..*[^~$])?)$/i;
-const TOLERATED_AT_ROOT = /^(?:changelog|changes|history|notice)(?:\.(?:md|markdown|txt|rst))?$/i;
+const ALWAYS_PACKED_AT_ROOT =
+  /^(?:package\.json|npm-shrinkwrap\.json|(?:readme|copying|license|licence)(?:\..*[^~$])?)$/i;
+const TOLERATED_AT_ROOT = /^(?:changelog|changes|history|notice)\.(?:md|markdown|txt|rst)$/i;
 
 export function isOutsidePackageFilesAllowlist(
   path: string,
   packageJson: PackageJsonSummary | null | undefined,
   rawManifest?: unknown,
 ): boolean {
-  return compilePackageFilesAllowlist(packageJson, rawManifest)?.isOutside(path) ?? false;
+  return (
+    compilePackageFilesAllowlist(packageJson, rawManifest)?.outsidePaths([path])?.has(path) ??
+    false
+  );
 }
 
 /**
@@ -62,13 +81,15 @@ export function isOutsidePackageFilesAllowlist(
 export function compilePackageFilesAllowlist(
   packageJson: PackageJsonSummary | null | undefined,
   rawManifest?: unknown,
+  options: PackageFilesAllowlistOptions = {},
 ): PackageFilesAllowlist | null {
   const raw = isRecord(rawManifest) ? rawManifest : {};
   const files = (packageJson?.files ?? stringList(raw.files)).filter((entry) => entry.trim());
   if (!files.length || files.length > MAX_FILES_ENTRIES) return null;
   if (files.some((entry) => entry.length > MAX_ENTRY_LENGTH)) return null;
 
-  const rules = files.flatMap(compileFilesEntry);
+  const budget: MatchBudget = { remaining: MAX_MATCH_WORK };
+  const rules = files.flatMap((entry) => compileFilesEntry(entry, budget));
   const alwaysPacked = new Set(
     [
       packageJson?.main ?? raw.main,
@@ -85,9 +106,7 @@ export function compilePackageFilesAllowlist(
     const literal = literalFileEntry(entry);
     if (literal) alwaysPacked.add(literal);
   }
-  alwaysPacked.add("package.json");
-  alwaysPacked.add("npm-shrinkwrap.json");
-  const bundled = hasBundledDependencies(raw);
+  const bundled = bundledDependencyNames(raw, options.packedManifest);
 
   const directoryWalked = new Map<string, boolean>();
   const walked = (segments: string[]): boolean => {
@@ -102,20 +121,92 @@ export function compilePackageFilesAllowlist(
     }
     return true;
   };
+  const isOutside = (path: string): boolean => {
+    const normalized = normalizeManifestPath(path).toLowerCase();
+    if (!normalized) return false;
+    if (alwaysPacked.has(normalized)) return false;
+    const segments = normalized.split("/");
+    if (
+      segments.length === 1 &&
+      (ALWAYS_PACKED_AT_ROOT.test(normalized) || TOLERATED_AT_ROOT.test(normalized))
+    ) {
+      return false;
+    }
+    if (isBundledPath(segments, bundled)) return false;
+    if (!walked(segments)) return true;
+    return !evaluate(rules, segments, false);
+  };
 
   return {
-    isOutside(path: string): boolean {
-      const normalized = normalizeManifestPath(path).toLowerCase();
-      if (!normalized) return false;
-      if (alwaysPacked.has(normalized)) return false;
-      const segments = normalized.split("/");
-      if (segments.length === 1 && TOLERATED_AT_ROOT.test(normalized)) return false;
-      if (bundled && segments[0] === "node_modules" && segments.length > 1) return false;
-      if (!walked(segments)) return true;
-      if (ALWAYS_PACKED_AT_ANY_LEVEL.test(segments.at(-1) ?? "")) return false;
-      return !evaluate(rules, segments, false);
+    outsidePaths(paths) {
+      const outside = new Set<string>();
+      try {
+        for (const path of paths) {
+          if (isOutside(path)) outside.add(path);
+        }
+      } catch (error) {
+        if (error instanceof MatchBudgetExceeded) return null;
+        throw error;
+      }
+      return outside;
     },
   };
+}
+
+interface MatchBudget {
+  remaining: number;
+}
+
+class MatchBudgetExceeded extends Error {}
+
+function spend(budget: MatchBudget, units: number): void {
+  budget.remaining -= units;
+  if (budget.remaining < 0) throw new MatchBudgetExceeded();
+}
+
+// `node_modules/<name>/…` or `node_modules/@scope/<name>/…` for a bundled name.
+function isBundledPath(segments: string[], bundled: Set<string>): boolean {
+  if (segments[0] !== "node_modules" || !bundled.size) return false;
+  const name = segments[1]?.startsWith("@") ? segments.slice(1, 3).join("/") : segments[1];
+  return segments.length > (name?.includes("/") ? 3 : 2) && bundled.has(name ?? "");
+}
+
+// npm-packlist packs each bundled dependency and, from the bundle down, every
+// prod and optional dependency it resolves, wherever arborist placed it. The
+// packed manifests say which names those are; a name whose manifest is not in
+// the archive contributes nothing further.
+function bundledDependencyNames(
+  raw: Record<string, unknown>,
+  packedManifest: PackageFilesAllowlistOptions["packedManifest"],
+): Set<string> {
+  const declared = raw.bundleDependencies ?? raw.bundledDependencies;
+  const roots =
+    declared === true
+      ? Object.keys(isRecord(raw.dependencies) ? raw.dependencies : {})
+      : stringList(declared);
+  const names = new Set<string>();
+  const queue: string[] = [];
+  const visit = (directory: string, name: string) => {
+    if (queue.length >= MAX_BUNDLED_MANIFESTS) return;
+    queue.push(`${directory}node_modules/${name.toLowerCase()}`);
+  };
+  for (const name of roots) visit("", name);
+  const seen = new Set<string>();
+  for (let index = 0; index < queue.length; index += 1) {
+    const directory = queue[index];
+    if (seen.has(directory)) continue;
+    seen.add(directory);
+    if (!directory.includes("/node_modules/")) names.add(directory.slice("node_modules/".length));
+    const manifest = packedManifest?.(`${directory}/package.json`);
+    if (!isRecord(manifest)) continue;
+    for (const field of [manifest.dependencies, manifest.optionalDependencies]) {
+      for (const name of Object.keys(isRecord(field) ? field : {})) {
+        visit(`${directory}/`, name);
+        visit("", name);
+      }
+    }
+  }
+  return names;
 }
 
 interface FilesRule {
@@ -140,7 +231,7 @@ function evaluate(rules: FilesRule[], segments: string[], isDirectory: boolean):
   return included;
 }
 
-function compileFilesEntry(entry: string): FilesRule[] {
+function compileFilesEntry(entry: string, budget: MatchBudget): FilesRule[] {
   let pattern = entry.trim();
   let include = true;
   while (pattern.startsWith("!")) {
@@ -155,11 +246,11 @@ function compileFilesEntry(entry: string): FilesRule[] {
   if (!pattern || pattern === ".") pattern = "**";
   pattern = pattern.toLowerCase();
 
-  const rule = { include, matchers: compileGlob(pattern, { matchBase, directoryOnly }) };
+  const rule = { include, matchers: compileGlob(pattern, budget, { matchBase, directoryOnly }) };
   if (hasGlobMagic(pattern)) return [rule];
   // A literal entry is either a file or a directory; npm adds `<entry>/**` for
   // the directory case, and for a file it matches nothing extra.
-  return [rule, { include, matchers: compileGlob(`${pattern}/**`, { matchBase: false }) }];
+  return [rule, { include, matchers: compileGlob(`${pattern}/**`, budget, { matchBase: false }) }];
 }
 
 // A non-negated entry without glob syntax; npm-packlist turns one that names a
@@ -186,9 +277,15 @@ type SegmentToken =
   | { kind: "char"; char: string }
   | { kind: "class"; negated: boolean; test: (char: string) => boolean };
 type Segment = typeof GLOBSTAR | SegmentToken[];
+interface CompiledPattern {
+  segments: Segment[];
+  // restIsGlobstar[i]: every segment from i on is `**`.
+  restIsGlobstar: boolean[];
+}
 
 function compileGlob(
   pattern: string,
+  budget: MatchBudget,
   options: { matchBase: boolean; directoryOnly?: boolean },
 ): GlobMatcher[] {
   return expandAlternatives(pattern).map(({ positive, negatives }) => {
@@ -201,8 +298,11 @@ function compileGlob(
         // ignore-walk's partial test is minimatch's own: a basename pattern
         // still compares against the directory's basename.
         const usePartial = partial && !options.matchBase;
-        if (!matchSegments(compiled, target, usePartial)) return false;
-        return usePartial || !excluded.some((negative) => matchSegments(negative, target, false));
+        if (!matchSegments(compiled, target, usePartial, budget)) return false;
+        return (
+          usePartial ||
+          !excluded.some((negative) => matchSegments(negative, target, false, budget))
+        );
       },
     };
   });
@@ -350,11 +450,19 @@ function splitGroup(
   return null;
 }
 
-function compileSegments(pattern: string): Segment[] {
-  return pattern
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => (segment === "**" ? GLOBSTAR : compileSegment(segment)));
+// Adjacent `**` segments are one `**`; collapsing them keeps a stack of
+// globstars from multiplying the walk below.
+function compileSegments(pattern: string): CompiledPattern {
+  const segments: Segment[] = [];
+  for (const segment of pattern.split("/").filter(Boolean)) {
+    if (segment !== "**") segments.push(compileSegment(segment));
+    else if (segments.at(-1) !== GLOBSTAR) segments.push(GLOBSTAR);
+  }
+  const restIsGlobstar = Array.from({ length: segments.length + 1 }, () => true);
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    restIsGlobstar[index] = segments[index] === GLOBSTAR && restIsGlobstar[index + 1];
+  }
+  return { segments, restIsGlobstar };
 }
 
 function compileSegment(segment: string): SegmentToken[] {
@@ -410,7 +518,12 @@ function parseClass(segment: string, open: number): { token: SegmentToken; end: 
 
 // Memoized walk over (pattern segment, path segment) positions, so stacked
 // `**` segments cost O(pattern x path) instead of backtracking.
-function matchSegments(pattern: Segment[], path: string[], partial: boolean): boolean {
+function matchSegments(
+  { segments: pattern, restIsGlobstar }: CompiledPattern,
+  path: string[],
+  partial: boolean,
+  budget: MatchBudget,
+): boolean {
   const memo = new Map<number, boolean>();
   const width = path.length + 1;
   const visit = (pi: number, fi: number): boolean => {
@@ -420,27 +533,31 @@ function matchSegments(pattern: Segment[], path: string[], partial: boolean): bo
     let result: boolean;
     if (pi === pattern.length) result = fi === path.length;
     else if (fi === path.length) {
-      result = partial || pattern.slice(pi).every((segment) => segment === GLOBSTAR);
+      result = partial || restIsGlobstar[pi];
     } else {
       const segment = pattern[pi];
       result =
         segment === GLOBSTAR
           ? visit(pi + 1, fi) || visit(pi, fi + 1)
-          : matchSegment(segment, path[fi]) && visit(pi + 1, fi + 1);
+          : matchSegment(segment, path[fi], budget) && visit(pi + 1, fi + 1);
     }
     memo.set(key, result);
     return result;
   };
-  return visit(0, 0);
+  const matched = visit(0, 0);
+  spend(budget, memo.size);
+  return matched;
 }
 
 // Greedy wildcard match with single-star backtracking: O(tokens x chars).
-function matchSegment(tokens: SegmentToken[], text: string): boolean {
+function matchSegment(tokens: SegmentToken[], text: string, budget: MatchBudget): boolean {
+  let steps = 0;
   let ti = 0;
   let ci = 0;
   let starToken = -1;
   let starChar = 0;
   while (ci < text.length) {
+    steps += 1;
     const token = tokens[ti];
     if (token && token.kind !== "star" && tokenMatches(token, text[ci])) {
       ti += 1;
@@ -454,9 +571,11 @@ function matchSegment(tokens: SegmentToken[], text: string): boolean {
       starChar += 1;
       ci = starChar;
     } else {
+      spend(budget, steps);
       return false;
     }
   }
+  spend(budget, steps);
   while (tokens[ti]?.kind === "star") ti += 1;
   return ti === tokens.length;
 }
@@ -479,11 +598,6 @@ function binTargets(bin: unknown): unknown[] {
   if (typeof bin === "string") return [bin];
   if (isRecord(bin)) return Object.values(bin);
   return [];
-}
-
-function hasBundledDependencies(raw: Record<string, unknown>): boolean {
-  const value = raw.bundleDependencies ?? raw.bundledDependencies;
-  return value === true || (Array.isArray(value) && value.length > 0);
 }
 
 function stringList(value: unknown): string[] {
