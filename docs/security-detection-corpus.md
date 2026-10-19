@@ -768,16 +768,20 @@ clears esbuild's self-replacing binary install and keeps a write into a sibling 
 `legit-npm-packlist-files-semantics` hard-negative pin both sides.
 
 `1.50.0` narrows the `code.*` capability rules that fired on ordinary npm releases.
-`code.credential-access` keys on what is read: secret-shaped environment names,
-runtime-chosen keys, whole-environment harvests (including through an alias) and credential
-file paths. Named configuration reads (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`), an
-environment handed to a child process, and comments no longer count. `code.network-access`
+`code.credential-access` keys on what is read. Secret-shaped environment names,
+runtime-chosen keys and credential file paths still count. So does any use of the
+environment object other than a named member read: binding, passing, spreading, copying,
+wrapping, serializing or enumerating it, including handing it to a child process. Named
+configuration reads (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`), presence guards and
+comments no longer count. `code.network-access` also recognizes `dgram`, `tls`, `http2`,
+`undici`, `ws`, `WebSocket`, `EventSource` and `sendBeacon`. `code.network-access`
 and `code.dynamic-evaluation` ignore JavaScript comments. Eval-family calls also ignore
 string and template text (template substitutions stay visible), methods named `eval`, and
 the dynamic-import shim. A decode next to an eval stays high in a modified module.
 `code.remote-shell` needs an operand after `curl`/`wget`, and no longer reads a shell
 grammar's keyword alternation as a pipeline. `secret-named-env-exfil`,
-`env-alias-harvest-exfil` and `env-computed-key-exfil` pin the shapes that must keep firing.
+`env-alias-harvest-exfil`, `env-computed-key-exfil`, `env-object-value-exfil` and
+`ci-credential-names-exfil` pin the shapes that must keep firing.
 `legit-nonsecret-env-config`, `legit-comment-network-and-codegen` and
 `legit-shell-grammar-keyword-lists` pin the exempted shapes. The release-injection gate now
 expects zero misses; `npm-assembled-require-exfil` is caught.
