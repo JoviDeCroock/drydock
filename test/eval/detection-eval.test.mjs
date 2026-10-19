@@ -57,6 +57,19 @@ describe("detection eval (gated thresholds)", () => {
     expect(result.releaseInjection.minified.samples).toBeGreaterThanOrEqual(20);
   });
 
+  test("a payload spliced into a renamed bundler chunk still raises release risk", () => {
+    // A renamed chunk is attributed against its predecessor like a modified
+    // file, so it may miss only what a modified file misses: the same pinned
+    // gap. The minified shape shares it because its padded carrier is a line
+    // long enough for changed-span narrowing, unlike the short minified carrier.
+    for (const shape of ["renamed", "renamed-minified"]) {
+      const stats = result.releaseInjection[shape];
+      expect(stats.samples).toBeGreaterThanOrEqual(20);
+      expect(stats.paired).toBe(stats.samples);
+      expect(stats.misses.map((miss) => miss.id)).toEqual(["npm-assembled-require-exfil"]);
+    }
+  });
+
   test("benign hard-negative false-positive rate stays under the ratchet target", () => {
     expect(result.benignHardNegatives.fpRate).toBeLessThan(0.1);
   });

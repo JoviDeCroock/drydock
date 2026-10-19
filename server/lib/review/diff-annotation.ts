@@ -63,7 +63,7 @@ export function annotateFindingsWithDiffStatus<
   },
 >(
   findings: T[],
-  diff: Array<{ path: string; status?: unknown }>,
+  diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
   options: FindingAnnotationOptions = {},
 ): Array<T & FindingDiffAnnotation> {
   const diffByPath = new Map(
@@ -71,23 +71,37 @@ export function annotateFindingsWithDiffStatus<
   );
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map((options.stagedFiles ?? []).map((file) => [file.path, file]));
+  // An added file renamed from a removed one (a bundler chunk under a new
+  // content hash) is attributed as that predecessor modified: changed spans,
+  // baseline findings and `expanded` all read the predecessor's bytes. Its
+  // reported diffStatus stays `added`. Without the predecessor's text it keeps
+  // the full added-file treatment.
+  const predecessors = renamedPredecessors(diff, diffByPath, previousByPath);
+  const attributionStatus = (path: string, status: FindingDiffStatus): FindingDiffStatus =>
+    status === "added" && predecessors.has(path) ? "modified" : status;
+  const comparedByPath = new Map([...previousByPath, ...predecessors]);
   const newlyInstallReachable = lazyNewlyInstallReachablePaths(
     options.previousFiles ?? [],
     options.stagedFiles ?? [],
     options.codePatternSet,
-    diffByPath,
+    (path) => attributionStatus(path, diffByPath.get(path) ?? "unknown"),
+    predecessors,
   );
   const changesCache = new Map<string, FileChanges | null>();
   const changesFor = (path: string) =>
-    fileChangesForPath(path, previousByPath, stagedByPath, changesCache, options.codePatternSet);
+    fileChangesForPath(path, comparedByPath, stagedByPath, changesCache, options.codePatternSet);
   // Both readers of the baseline finding set ask only about modified files, so
   // the rules re-run over those and the manifests that give them context.
   // Fewer baseline files can only mean fewer baseline fingerprints, which
   // classifies more findings as new — never fewer.
   const baselineFingerprints = lazyBaselineFingerprints(
-    (options.previousFiles ?? []).filter(
-      (file) => diffByPath.get(file.path) === "modified" || isManifestPath(file.path),
-    ),
+    [
+      ...(options.previousFiles ?? []).filter(
+        (file) => diffByPath.get(file.path) === "modified" || isManifestPath(file.path),
+      ),
+      // A predecessor's findings are keyed by the path that replaced it.
+      ...[...predecessors].map(([path, file]) => ({ ...file, path })),
+    ],
     options.codePatternSet,
   );
   const annotated = findings.map((finding) => {
@@ -115,7 +129,7 @@ export function annotateFindingsWithDiffStatus<
             newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
           isFindingOnReleaseDelta(
             finding,
-            diffStatus,
+            attributionStatus(finding.file, diffStatus),
             changesFor,
             options.codePatternSet,
             baselineFingerprints,
@@ -124,12 +138,34 @@ export function annotateFindingsWithDiffStatus<
   });
   if (options.baselineComparisonSkipped) return annotated;
   return markExpandedCapabilities(annotated, {
+    modified: (finding) => attributionStatus(finding.file, finding.diffStatus) === "modified",
     persisted: (finding) => Boolean(finding.id && options.persistedAnnotations?.has(finding.id)),
     changesFor,
     baselineFingerprints,
     baselineHosts: lazyBaselineHosts(options.previousFiles ?? []),
     codePatternSet: options.codePatternSet,
   });
+}
+
+function renamedPredecessors(
+  diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
+  diffByPath: Map<string, FindingDiffStatus>,
+  previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+): Map<string, Pick<FileRecord, "path" | "textSample" | "flags">> {
+  const predecessors = new Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>();
+  const claimed = new Set<string>();
+  for (const entry of diff) {
+    if (entry.status !== "added" || typeof entry.renamedFrom !== "string") continue;
+    // The diff is data that may have round-tripped through storage: honour a
+    // pairing only onto a file this release removed, and only once.
+    if (claimed.has(entry.renamedFrom) || diffByPath.get(entry.renamedFrom) !== "removed") continue;
+    if (previousByPath.has(entry.path)) continue;
+    const predecessor = previousByPath.get(entry.renamedFrom);
+    if (!predecessor?.textSample || predecessor.flags.includes("binary")) continue;
+    claimed.add(entry.renamedFrom);
+    predecessors.set(entry.path, predecessor);
+  }
+  return predecessors;
 }
 
 function lifecycleCommandReleaseDelta(
@@ -173,7 +209,8 @@ function lazyNewlyInstallReachablePaths(
   previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   codePatternSet: CodePatternSet | undefined,
-  diffByPath: Map<string, FindingDiffStatus>,
+  statusOf: (path: string) => FindingDiffStatus,
+  predecessors: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
 ): () => Set<string> {
   let computed: Set<string> | undefined;
   return () => {
@@ -185,13 +222,22 @@ function lazyNewlyInstallReachablePaths(
       return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
     };
     const previous = reachable(previousFiles);
+    // A renamed file was reachable before when its predecessor was.
+    for (const [path, predecessor] of predecessors) {
+      if (previous.has(normalizeReachabilityPath(predecessor.path))) {
+        previous.add(normalizeReachabilityPath(path));
+      }
+    }
     const staged = reachable(stagedFiles);
     const possiblyInstalled = reachable(stagedFiles, false);
-    const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
+    const previousSource = new Map([
+      ...previousFiles.map((file) => [file.path, file.textSample] as const),
+      ...[...predecessors].map(([path, file]) => [path, file.textSample] as const),
+    ]);
     const changedInstallFiles = stagedFiles
       .filter(
         (file) =>
-          diffByPath.get(file.path) === "modified" &&
+          statusOf(file.path) === "modified" &&
           possiblyInstalled.has(normalizeReachabilityPath(file.path)) &&
           installCodeChanged(previousSource.get(file.path), file.textSample),
       )
@@ -545,6 +591,7 @@ function markExpandedCapabilities<
 >(
   findings: T[],
   ctx: {
+    modified: (finding: T) => boolean;
     persisted: (finding: T) => boolean;
     changesFor: (path: string) => FileChanges | null;
     baselineFingerprints: () => Set<string> | null;
@@ -554,7 +601,7 @@ function markExpandedCapabilities<
 ): T[] {
   const deltasByFile = new Map<string, T[]>();
   for (const finding of findings) {
-    if (!finding.releaseDelta || finding.diffStatus !== "modified" || ctx.persisted(finding)) {
+    if (!finding.releaseDelta || !ctx.modified(finding) || ctx.persisted(finding)) {
       continue;
     }
     const deltas = deltasByFile.get(finding.file) ?? [];
