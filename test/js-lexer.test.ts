@@ -385,6 +385,29 @@ describe("tokenizeJsWithinBudget", () => {
     }
   }, 120_000);
 
+  test("lexes unterminated `\\u{` escapes in linear time", () => {
+    const size = 1024 * 1024;
+    for (const source of [
+      `"${"\\u{".repeat(size / 3)}"`,
+      "a\\u{".repeat(size / 4),
+      `"${"\\u{0041".repeat(size / 7)}"`,
+    ]) {
+      const start = performance.now();
+      tokenizeJs(source);
+      // Generous: tens of milliseconds here, against 15 s when each escape
+      // searched to the end of the file for its `}`.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+    // Long leading-zero runs still decode.
+    const string = tokenizeJs(`"\\u{${"0".repeat(10_000)}41}"`).find(
+      (token) => token.type === "string",
+    );
+    expect(string?.value).toBe("A");
+    expect(kinds(`\\u{${"0".repeat(10_000)}61}b = 1`)).toBe(
+      `ident:\\u{${"0".repeat(10_000)}61}b punct:= number:1`,
+    );
+  }, 60_000);
+
   test("lexes many contextual bindings in linear time, within the budget", () => {
     for (const source of [
       `${"(function(yield){".repeat(2_000)}${"`${a}`;".repeat(5_000)}`,
