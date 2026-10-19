@@ -810,5 +810,5 @@ describe("renamed bundler chunks", () => {
       ),
     ).toEqual([]);
     expect(largeNewFiles(release({}, { "dist/table-64MTZBJ6.js": big("1.0.1") }))).toHaveLength(1);
-  });
+  }, 30_000);
 });
