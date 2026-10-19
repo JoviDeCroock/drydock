@@ -1528,6 +1528,55 @@ describe("review", () => {
     );
   });
 
+  test("discloses unreferenced documentation outside the files allowlist at low severity", () => {
+    const manifest = { name: "pkg", version: "1.0.1", files: ["dist"] };
+    const staged = [
+      {
+        path: "package.json",
+        size: 72,
+        sha256: "pkg",
+        flags: [],
+        textSample: JSON.stringify(manifest),
+      },
+      { path: "dist/index.js", size: 20, sha256: "dist", flags: [], textSample: "export {};" },
+      {
+        path: "readme-template.md",
+        size: 30,
+        sha256: "template",
+        flags: [],
+        textSample: "# <%= name %>\n",
+      },
+      {
+        path: "payload.md",
+        size: 40,
+        sha256: "payload",
+        flags: [],
+        textSample: "module.exports = 'javascript as a doc';\n",
+      },
+      {
+        path: "scripts/load.js",
+        size: 40,
+        sha256: "loader",
+        flags: [],
+        textSample: "require('../payload.md');\n",
+      },
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged)).filter(
+      (finding) => finding.ruleId === "file.outside-files-list",
+    );
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ file: "readme-template.md", severity: "low" }),
+    );
+    // Named by shipped code, so it may run as code.
+    expect(findings).toContainEqual(
+      expect.objectContaining({ file: "payload.md", severity: "high" }),
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ file: "scripts/load.js", severity: "high" }),
+    );
+  });
+
   test("matches glob entries in package.json files allowlist", () => {
     const staged = [
       {
@@ -1779,6 +1828,75 @@ describe("review", () => {
     expect(unchanged[0].severity).toBe("info");
     expect(changed[0].severity).toBe("medium");
     expect(computeRisk(changed)).toBe("medium");
+  });
+
+  test("keeps the retention-tier notice informational when only hash-only native binaries changed", () => {
+    const entries = [
+      {
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: "6 file bodies were recorded hash-only",
+      },
+    ];
+    const findings = tarSuspiciousEntryFindings(entries, {
+      fileDiff: [
+        {
+          path: "build/engine.wasm",
+          status: "modified",
+          flags: ["content-skipped", "native-wasm"],
+        },
+        {
+          path: "prebuilds/win32-x64.node",
+          status: "added",
+          flags: ["content-skipped", "native-pe"],
+        },
+      ],
+    });
+
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "tar.suspicious-entry", severity: "info" }),
+    ]);
+  });
+
+  test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {
+    const entries = [
+      {
+        kind: "retention-tier",
+        path: "<archive>",
+        detail: "2 file bodies were recorded hash-only",
+      },
+    ];
+    const findings = tarSuspiciousEntryFindings(entries, {
+      fileDiff: [
+        {
+          path: "build/engine.wasm",
+          status: "modified",
+          flags: ["content-skipped", "native-wasm"],
+        },
+        { path: "dist/zz-tail.js", status: "modified", flags: ["content-skipped"] },
+      ],
+    });
+
+    expect(findings[0].severity).toBe("medium");
+  });
+
+  test("judges the retention-tier gap by the reviewed side's record, not the union of both sides", () => {
+    const entries = [
+      { kind: "retention-tier", path: "<archive>", detail: "1 file body was recorded hash-only" },
+    ];
+    // The baseline stored dist/index.js hash-only; this release inspected it in full.
+    const fileDiff = [{ path: "dist/index.js", status: "modified", flags: ["content-skipped"] }];
+    const inspected = tarSuspiciousEntryFindings(entries, {
+      fileDiff,
+      stagedFiles: [{ path: "dist/index.js", flags: [] }],
+    });
+    const uninspected = tarSuspiciousEntryFindings(entries, {
+      fileDiff,
+      stagedFiles: [{ path: "dist/index.js", flags: ["content-skipped"] }],
+    });
+
+    expect(inspected[0].severity).toBe("info");
+    expect(uninspected[0].severity).toBe("medium");
   });
 
   test("uses staged metadata to flag implicit node-gyp even when the gyp file is absent from the tarball", () => {

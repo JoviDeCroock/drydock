@@ -1,23 +1,16 @@
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import type { DiffEntry } from "../diff";
-import type { Finding, FindingSeverity } from "../types";
+import type { FileRecord, Finding, FindingSeverity } from "../types";
 import { DETERMINISTIC_RULE_IDS } from "./rule-ids";
 
 // Archive-structure findings from the tar parser's suspicious-entry report.
 // Stamped with the ruleset version by `rules/index.ts` like every other family.
 export function tarEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
-  options: {
-    dialect?: "npm" | "pypi";
-    fileDiff?: Array<Pick<DiffEntry, "status" | "flags">>;
-  } = {},
+  options: TarEntryFindingOptions = {},
 ): Finding[] {
   if (!entries || !entries.length) return [];
-  const hasChangedSkippedContent = (options.fileDiff ?? []).some(
-    (entry) =>
-      (entry.status === "added" || entry.status === "modified") &&
-      entry.flags.includes("content-skipped"),
-  );
+  const hasChangedSkippedContent = hasChangedUninspectedContent(options);
   return entries.map((entry) => ({
     severity: tarSuspiciousSeverity(entry, hasChangedSkippedContent),
     file: entry.path || "<unknown>",
@@ -25,6 +18,34 @@ export function tarEntryFindings(
     reason: tarSuspiciousReason(entry, options.dialect ?? "npm"),
     ruleId: DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   }));
+}
+
+export interface TarEntryFindingOptions {
+  dialect?: "npm" | "pypi";
+  fileDiff?: Array<Pick<DiffEntry, "status" | "flags"> & { path?: string }>;
+  /**
+   * The reviewed side's records. A diff entry's flags are the union of both
+   * sides, so without these a file the baseline stored hash-only but this
+   * release fully inspected would read as an uninspected change.
+   */
+  stagedFiles?: Array<Pick<FileRecord, "path" | "flags">>;
+}
+
+// Whether the retention tier cost this release any inspection: a file that
+// changed relative to the baseline (by sha256) and whose reviewed body was
+// recorded hash-only. Hash-only bodies the parser sniffed as native binaries
+// do not count: a retained binary decodes to no text sample either, so the
+// tier hid nothing the content rules would have read, and `file.native-artifact`
+// already reports the changed binary from the same magic-byte flag.
+function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean {
+  const stagedFlags = options.stagedFiles
+    ? new Map(options.stagedFiles.map((file) => [file.path, file.flags]))
+    : null;
+  return (options.fileDiff ?? []).some((entry) => {
+    if (entry.status !== "added" && entry.status !== "modified") return false;
+    const flags = (entry.path !== undefined && stagedFlags?.get(entry.path)) || entry.flags;
+    return flags.includes("content-skipped") && !flags.some((flag) => flag.startsWith("native-"));
+  });
 }
 
 function tarSuspiciousSeverity(

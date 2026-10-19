@@ -1,8 +1,9 @@
-import { isOutsidePackageFilesAllowlist } from "../package-files";
-import type { Finding } from "../types";
-import { containsSecretLikeText, firstSecretLine, tag, testScope } from "./helpers";
+import { compilePackageFilesAllowlist } from "../package-files";
+import type { FileRecord, Finding } from "../types";
+import { containsSecretLikeText, firstSecretLine, safeJson, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
+import { normalizeReachabilityPath } from "./reachability";
 
 // Manifest integrity and secret-exposure rules: parse failures, secret-looking
 // files, files outside the declared allowlist, and credential files added to
@@ -24,6 +25,22 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
       }),
     );
   }
+
+  const allowlist = compilePackageFilesAllowlist(
+    ctx.packageJson,
+    ctx.packageJsonFile?.textSample ? safeJson(ctx.packageJsonFile.textSample) : null,
+  );
+  const outsideAllowlist = allowlist
+    ? ctx.files.filter(
+        (file) =>
+          ctx.diffByPath.get(file.path)?.status !== "removed" && allowlist.isOutside(file.path),
+      )
+    : [];
+  const loadableDocumentation = documentationNamedByCode(
+    ctx,
+    outsideAllowlist.filter((file) => isDocumentationPath(file.path)),
+  );
+  const outsidePaths = new Set(outsideAllowlist.map((file) => file.path));
 
   for (const file of ctx.files) {
     const sample = file.textSample || "";
@@ -74,10 +91,16 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
         ),
       );
     }
-    if (isOutsidePackageFilesAllowlist(file.path, ctx.packageJson) && changed !== "removed") {
+    if (outsidePaths.has(file.path)) {
+      // Documentation is excluded from content scanning and only runs if
+      // something loads it, so an unreferenced README-style file is a packaging
+      // quirk to disclose, not a hidden payload. Anything code could load keeps
+      // the full severity, including a doc that code names or reaches.
+      const inertDocumentation =
+        isDocumentationPath(file.path) && !loadableDocumentation.has(file.path);
       findings.push(
         tag("fileOutsideFilesList", {
-          severity: changed === "added" ? "high" : "medium",
+          severity: inertDocumentation ? "low" : changed === "added" ? "high" : "medium",
           file: file.path,
           evidence: `${prefix}file is not matched by package.json files allowlist`,
           reason:
@@ -102,4 +125,47 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
+}
+
+// Documentation files outside the allowlist that something could load as code:
+// reachable from an entrypoint or lifecycle hook through static imports, or
+// whose basename appears anywhere in shipped code, or whose extension is a path
+// token of a load call (`require(dir + '.md')`), as the capability scan reads
+// data files. A load path assembled at runtime from pieces is not followed, the
+// same limit the reachability walk has everywhere.
+const LOAD_CALL_ARGUMENTS =
+  /\b(?:require|import|fork|Worker|spawn(?:Sync)?|execFile(?:Sync)?|exec(?:Sync)?)\s*\(([^\n;]{0,300})/g;
+const LOAD_CALL_PATH_TOKEN = /[^\s'"`\\/()+,;${}[\]]+/g;
+
+function documentationNamedByCode(ctx: RuleContext, docs: FileRecord[]): Set<string> {
+  const loadable = new Set<string>();
+  if (!docs.length) return loadable;
+  const pending = new Map<string, { basename: string; extension: string }>();
+  for (const doc of docs) {
+    if (ctx.consumerReachable.has(normalizeReachabilityPath(doc.path))) {
+      loadable.add(doc.path);
+      continue;
+    }
+    const basename = (doc.path.split("/").at(-1) ?? "").toLowerCase();
+    const dot = basename.lastIndexOf(".");
+    pending.set(doc.path, { basename, extension: dot > 0 ? basename.slice(dot) : "" });
+  }
+  for (const file of ctx.files) {
+    if (!pending.size) break;
+    if (!file.textSample || isDocumentationPath(file.path)) continue;
+    const text = file.textSample.toLowerCase();
+    LOAD_CALL_ARGUMENTS.lastIndex = 0;
+    const loadTokens = new Set(
+      [...file.textSample.matchAll(LOAD_CALL_ARGUMENTS)].flatMap((match) =>
+        (match[1].match(LOAD_CALL_PATH_TOKEN) ?? []).map((token) => token.toLowerCase()),
+      ),
+    );
+    for (const [path, { basename, extension }] of pending) {
+      if (text.includes(basename) || (extension && loadTokens.has(extension))) {
+        loadable.add(path);
+        pending.delete(path);
+      }
+    }
+  }
+  return loadable;
 }

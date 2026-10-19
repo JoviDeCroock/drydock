@@ -10,7 +10,7 @@ import { dependencyDiffFindings } from "./deps";
 import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 import { propagationFindings } from "./propagation";
 import { promptInjectionFindings } from "./prompt-injection";
-import { tarEntryFindings } from "./tar-entries";
+import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 
 // Bump when deterministic rule semantics, severities, or coverage change in a
 // way that should invalidate cached scan reports. Stored alongside each finding
@@ -57,10 +57,7 @@ export function packageJsonDiffFindings(
 
 export function tarSuspiciousEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
-  options: {
-    dialect?: "npm" | "pypi";
-    fileDiff?: Array<Pick<DiffEntry, "status" | "flags">>;
-  } = {},
+  options: TarEntryFindingOptions = {},
 ): Finding[] {
   return stampVersion(tarEntryFindings(entries, options));
 }
