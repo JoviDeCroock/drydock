@@ -303,6 +303,41 @@ describe("analyzeInstallWrites", () => {
   });
 });
 
+describe("analyzeInstallWrites interop and climbs", () => {
+  const origin = { filePath: "scripts/install.js", packageName: "pkg" };
+
+  test("proves a TypeScript CommonJS interop write into its own directory", () => {
+    expect(
+      analyzeInstallWrites(
+        'const fs_1 = require("fs");\nconst path_1 = require("path");\n(0, fs_1.writeFileSync)((0, path_1.join)(__dirname, "out.txt"), data);\n',
+        origin,
+      ),
+    ).toEqual({ unproven: false, intoInstallRoot: false, importedFrom: [] });
+  });
+
+  test.each([
+    ["a doubled dirname", "const root = path.dirname(path.dirname(__dirname));\n", 1],
+    ["a parent escape", "const x = 1;\nconst root = path.resolve(__dirname, '../..');\n", 2],
+    ["another package", "const target = require.resolve('left-pad');\n", 1],
+    ["an unknown specifier", "const target = require.resolve(name);\n", 1],
+    ["an unknown base climbed", "const up = path.join(base, '..');\n", 1],
+  ])("reports %s as a climb", (_label, body, line) => {
+    expect(analyzeInstallWrites(`const path = require('path');\n${body}`, origin).climbLine).toBe(
+      line + 1,
+    );
+  });
+
+  test.each([
+    "const own = path.join(__dirname, '..', 'templates');\n",
+    "const self = require.resolve('pkg/package.json');\n",
+    "if (rel.split('/').includes('..')) throw new Error('outside');\n",
+  ])("does not report an in-package path as a climb: %#", (body) => {
+    expect(
+      analyzeInstallWrites(`const path = require('path');\n${body}`, origin).climbLine,
+    ).toBeUndefined();
+  });
+});
+
 describe("propagation.package-mutation", () => {
   const file = (path: string, textSample: string) => ({
     path,
@@ -389,6 +424,26 @@ describe("propagation.package-mutation", () => {
 
   test("stays quiet when an unproven destination has nothing to do with the install root", () => {
     expect(findingsFor("fs.writeFileSync(process.argv[2], report);\n")).toEqual([]);
+  });
+
+  test.each([
+    "const helpers = require('../shared/helpers');\nimport { log } from '../log.js';\nfs.writeFileSync(process.argv[2], report);\n",
+    "if (rel.startsWith('..') || rel.split('/').includes('..')) throw new Error('outside');\nfs.writeFileSync(dest, report);\n",
+    "const path = require('path');\nconst template = path.join(__dirname, 'lib', '..', 'templates', 'a.txt');\nfs.writeFileSync(dest, fs.readFileSync(template));\n",
+    "const path = require('path');\nconst types = require.resolve('./lib/types.js');\nfs.writeFileSync(dest, types);\n",
+  ])(
+    "does not count own-module loads, traversal guards, or in-package `..` as a climb: %#",
+    (installJs) => {
+      expect(findingsFor(installJs)).toEqual([]);
+    },
+  );
+
+  test("follows TypeScript CommonJS interop calls to the install root", () => {
+    expect(
+      findingsFor(
+        'const fs_1 = require("fs");\nconst path_1 = require("path");\n(0, fs_1.writeFileSync)((0, path_1.join)(__dirname, "..", "left-pad", "index.js"), hook);\n',
+      ),
+    ).toEqual([expect.objectContaining({ severity: "high", file: "install.js", line: 3 })]);
   });
 
   test("keeps the co-occurrence verdict when the sample was truncated", () => {

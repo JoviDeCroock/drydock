@@ -54,6 +54,12 @@ export interface InstallWriteVerdict {
   intoInstallRoot: boolean;
   /** Relative module specifiers an unproven destination was imported from. */
   importedFrom: string[];
+  /**
+   * 1-based line of the first path the file builds above its own package or
+   * inside a `node_modules` (a parent climb, another package's resolved path),
+   * whether or not a write is seen to use it.
+   */
+  climbLine?: number;
 }
 
 const OWN = "\u0000own";
@@ -134,6 +140,8 @@ const BUILTIN_MODULES = new Map<string, string>([
   ["module", "nodemodule"],
   ["process", "process"],
 ]);
+const PATH_BUILDER_NAMES = new Set(["join", "resolve", "dirname", "normalize"]);
+const PATH_BUILDERS = new Set(["path.join", "path.resolve", "path.dirname", "path.normalize"]);
 const INTEROP_HELPERS = new Set([
   "__toESM",
   "__importDefault",
@@ -419,6 +427,7 @@ class InstallWriteAnalysis {
 
   run(): InstallWriteVerdict {
     let line: number | undefined;
+    let climbLine: number | undefined;
     let intoInstallRoot = false;
     const imports = new Set<string>();
     const fail = (index: number, value?: Value) => {
@@ -445,6 +454,9 @@ class InstallWriteAnalysis {
       const name = this.text(index);
       if (SINK_DESTINATION_ARG.has(name)) this.checkFsSink(index, name, fail);
       else if (EXEC_SHELL.has(name) || EXEC_ARGV.has(name)) this.checkExec(index, name, fail);
+      if (climbLine === undefined && PATH_BUILDER_NAMES.has(name) && this.climbs(index)) {
+        climbLine = this.lineOf(index);
+      }
     }
     const unproven = line !== undefined || this.failClosed;
     return {
@@ -452,7 +464,43 @@ class InstallWriteAnalysis {
       ...(line !== undefined ? { line } : {}),
       intoInstallRoot,
       importedFrom: [...imports].slice(0, MAX_IMPORTS),
+      ...(climbLine !== undefined ? { climbLine } : {}),
     };
+  }
+
+  // A path-module call or `require.resolve` whose result leaves the package.
+  // An unknown base climbed with an explicit `..`, and an unknown specifier
+  // resolved, count too: neither can be shown to stay home.
+  private climbs(index: number): boolean {
+    if (this.methodAt.has(index) || this.text(index - 1) === "function") return false;
+    const open = this.callOpen(index);
+    if (open < 0 || this.matching[open] < 0) return false;
+    const start = calleeStart(index + 1, this.tokens, this.main.texts, this.matching);
+    const callee = this.parse(this.main, start, index + 1);
+    const calleeValue = this.evaluate(callee);
+    if (calleeValue.top || !calleeValue.items.length) return false;
+    const builtins = calleeValue.items.map((item) =>
+      typeof item !== "string" && item.t === "builtin" ? item.name : null,
+    );
+    const resolve = builtins.every((name) => name === "require.resolve");
+    if (!resolve && !builtins.every((name) => name !== null && PATH_BUILDERS.has(name))) {
+      return false;
+    }
+    const args = this.callArguments(open);
+    const value = this.evaluate({ k: "call", callee, args });
+    if (value.rootward) return true;
+    if (!value.top) {
+      return value.items.some((item) => typeof item === "string" && this.installRootPath(item));
+    }
+    if (resolve) return true;
+    return args.some((arg) => {
+      if (arg.k === "spread") return false;
+      const part = this.evaluate(arg);
+      return (
+        !part.top &&
+        part.items.some((item) => typeof item === "string" && item.split(/[/\\]/).includes(".."))
+      );
+    });
   }
 
   // ---- token helpers ----------------------------------------------------
@@ -1741,6 +1789,13 @@ class InstallWriteAnalysis {
   private callOpen(index: number): number {
     if (this.isPunct(index + 1, "(")) return index + 1;
     if (this.isPunct(index + 1, "?.") && this.isPunct(index + 2, "(")) return index + 2;
+    // TypeScript's CommonJS output calls an import as `(0, fs_1.writeFileSync)(...)`.
+    if (this.isPunct(index + 1, ")") && this.isPunct(index + 2, "(")) {
+      const group = this.matching[index + 1];
+      if (group >= 0 && this.text(group + 1) === "0" && this.isPunct(group + 2, ",")) {
+        return index + 2;
+      }
+    }
     return -1;
   }
 

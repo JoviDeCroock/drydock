@@ -3,7 +3,7 @@ import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
-import { analyzeInstallWrites } from "./install-root-writes";
+import { analyzeInstallWrites, type InstallWriteOrigin } from "./install-root-writes";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
@@ -108,17 +108,16 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
   return findings;
 }
 
-// The install root is reached by name (`node_modules`) or by climbing out of
-// the package: a parent escape, another package's resolved path, the
-// module-lookup paths, the consumer's cwd or npm prefix, a `chdir`, or a
-// doubled `dirname`.
+// Besides naming `node_modules` and the path climbs the evaluator sees
+// (`climbLine`: a parent escape or another package's resolved path), the
+// install root is reached through the module-lookup paths, the consumer's cwd
+// or npm prefix, a `chdir`, or resolving a bare specifier against the
+// importing module.
 const JS_INSTALL_ROOT_REFERENCE_PATTERNS = [
-  /['"`]\.\.(?:['"`/\\]|$)|[/\\]\.\.(?:[/\\'"`]|$)/,
-  /\brequire\s*\.\s*resolve\b|\bimport\.meta\.resolve\b|\bcreateRequire\b/,
   /\bmodule\s*\.\s*paths\b|\b_nodeModulePaths\b|\bglobalPaths\b/,
   /\bINIT_CWD\b|\bnpm_config_(?:local_)?prefix\b|\bnpm\s+(?:root|prefix)\b/,
   /\bchdir\s*\(/,
-  /\bdirname\s*\(\s*(?:[\w$]+\.)?dirname\s*\(/,
+  /\bimport\.meta\s*\.\s*resolve\s*\(\s*(?!['"`]\.\.?[/\\'"`])/,
 ];
 const JS_WRITE_CANDIDATE =
   /\b(?:writeFile|appendFile|outputFile|writeJson|writeJSON|outputJson|outputJSON|createWriteStream|copyFile|cp|copy|move|rename|link|symlink|ensureLink|ensureSymlink|open)(?:Sync)?\b|\b(?:exec|spawn|execFile|execa|execaCommand)(?:Sync)?\s*\(/;
@@ -150,19 +149,31 @@ function packageMutation(
     packageName: ctx.packageJson?.name ?? null,
     packageMain: ctx.packageJson?.main ?? null,
   };
-  let verdict = analyzeInstallWrites(source.sample, origin);
-  if (!verdict.unproven && source.normalized !== source.sample) {
-    verdict = analyzeInstallWrites(source.normalized, origin);
-  }
+  const raw = analyzeInstallWrites(source.sample, origin);
+  const folded =
+    source.normalized !== source.sample && (!raw.unproven || raw.climbLine === undefined)
+      ? analyzeInstallWrites(source.normalized, origin)
+      : null;
+  const verdict = raw.unproven || !folded ? raw : folded;
   if (!verdict.unproven) return null;
+  const climb =
+    raw.climbLine !== undefined
+      ? { line: raw.climbLine, obfuscated: false }
+      : folded?.climbLine !== undefined
+        ? { line: folded.climbLine, obfuscated: true }
+        : null;
+  if (installRoot)
+    return { line: installRoot.line ?? verdict.line, obfuscated: installRoot.obfuscated };
+  if (verdict.intoInstallRoot) return { line: verdict.line, obfuscated: false };
   const reference =
-    installRoot ?? matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, source.sample, source.normalized);
+    climb ?? matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, source.sample, source.normalized);
   if (reference) {
     return { line: reference.line ?? verdict.line, obfuscated: reference.obfuscated };
   }
   if (
-    verdict.intoInstallRoot ||
-    verdict.importedFrom.some((specifier) => importReachesInstallRoot(ctx, source.file, specifier))
+    verdict.importedFrom.some((specifier) =>
+      importReachesInstallRoot(ctx, source.file, specifier, origin),
+    )
   ) {
     return { line: verdict.line, obfuscated: false };
   }
@@ -171,7 +182,12 @@ function packageMutation(
 
 const MODULE_SUFFIXES = ["", ".js", ".cjs", ".mjs", "/index.js", "/index.cjs", "/index.mjs"];
 
-function importReachesInstallRoot(ctx: RuleContext, from: string, specifier: string): boolean {
+function importReachesInstallRoot(
+  ctx: RuleContext,
+  from: string,
+  specifier: string,
+  origin: InstallWriteOrigin,
+): boolean {
   const segments = from.split("/").slice(0, -1);
   for (const segment of specifier.split("/")) {
     if (segment === "..") segments.pop();
@@ -182,9 +198,17 @@ function importReachesInstallRoot(ctx: RuleContext, from: string, specifier: str
   const file = ctx.files.find((candidate) => target.includes(candidate.path));
   if (!file?.textSample) return false;
   const normalized = normalizeCodeForScanning(file.textSample);
-  return Boolean(
+  if (
     matchLine(ctx.patterns.installRootPath, file.textSample, normalized) ||
-    matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, file.textSample, normalized),
+    matchLine(JS_INSTALL_ROOT_REFERENCE_PATTERNS, file.textSample, normalized)
+  ) {
+    return true;
+  }
+  const sibling = { ...origin, filePath: file.path };
+  return (
+    analyzeInstallWrites(file.textSample, sibling).climbLine !== undefined ||
+    (normalized !== file.textSample &&
+      analyzeInstallWrites(normalized, sibling).climbLine !== undefined)
   );
 }
 
