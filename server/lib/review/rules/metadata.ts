@@ -1,8 +1,10 @@
+import { firstMatchingLine } from "../../platform/text-utils";
 import { compilePackageFilesAllowlist } from "../package-files";
 import type { FileRecord, Finding } from "../types";
 import { containsSecretLikeText, firstSecretLine, safeJson, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
+import { normalizeCodeForScanning } from "./normalize";
 import { normalizeReachabilityPath } from "./reachability";
 
 // Manifest integrity and secret-exposure rules: parse failures, secret-looking
@@ -27,7 +29,7 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
   }
 
   const outsideAllowlist = filesOutsideAllowlist(ctx);
-  const loadableDocumentation = documentationNamedByCode(
+  const loadableDocumentation = documentationLoadableAsCode(
     ctx,
     outsideAllowlist.filter((file) => isDocumentationPath(file.path)),
   );
@@ -83,10 +85,9 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
       );
     }
     if (outsidePaths.has(file.path)) {
-      // Documentation is excluded from content scanning and only runs if
-      // something loads it, so an unreferenced README-style file is a packaging
-      // quirk to disclose, not a hidden payload. Anything code could load keeps
-      // the full severity, including a doc that code names or reaches.
+      // An unreferenced doc with no code capability in it is a packaging
+      // quirk to disclose, not a hidden payload (see
+      // `documentationLoadableAsCode`); everything else keeps full severity.
       const inertDocumentation =
         isDocumentationPath(file.path) && !loadableDocumentation.has(file.path);
       findings.push(
@@ -140,22 +141,40 @@ function filesOutsideAllowlist(ctx: RuleContext): FileRecord[] {
   return outside ? present.filter((file) => outside.has(file.path)) : [];
 }
 
-// Documentation files outside the allowlist that something could load as code:
-// reachable from an entrypoint or lifecycle hook through static imports, or
-// whose basename appears anywhere in shipped code, or whose extension is a path
-// token of a load call (`require(dir + '.md')`), as the capability scan reads
-// data files. A load path assembled at runtime from pieces is not followed, the
-// same limit the reachability walk has everywhere.
+// Documentation files outside the allowlist that could run as code. Docs are
+// excluded from the capability scan, so the demotion has to prove two things:
+// nothing loads the file, and it would do nothing if something did.
+//
+// - Loaded: reachable from an entrypoint or lifecycle hook through static
+//   imports; its basename named anywhere in shipped code, raw or after the
+//   scanner's constant folding (`'guide.' + 'md'`, `['gui','de.md'].join('')`);
+//   or its extension a path token of a load call (`require(dir + '.md')`).
+//   Shipped code that installs a module loader (`require.extensions`,
+//   `Module._extensions` / `_compile`, `module.register` / `registerHooks`)
+//   can make any extension executable, so then no doc is presumed inert.
+// - Would act: its own text matches the code capability rules (process,
+//   network, credential, dynamic evaluation). A doc that only describes such
+//   calls in an example keeps full severity too; that is the cost of not
+//   trusting a hostile file's extension.
+//
+// A path assembled in a way the folding does not undo (a template literal, a
+// computed index) is not followed, the same limit the reachability walk has
+// everywhere; the content check is what still covers that case.
 const LOAD_CALL_ARGUMENTS =
   /\b(?:require|import|fork|Worker|spawn(?:Sync)?|execFile(?:Sync)?|exec(?:Sync)?)\s*\(([^\n;]{0,300})/g;
 const LOAD_CALL_PATH_TOKEN = /[^\s'"`\\/()+,;${}[\]]+/g;
+const MODULE_LOADER_HOOK =
+  /\brequire\s*(?:\.\s*|\[\s*['"`])extensions\b|\b_extensions\b|\b_compile\b|\bregisterHooks\s*\(|\bmodule\s*\.\s*register\s*\(/;
 
-function documentationNamedByCode(ctx: RuleContext, docs: FileRecord[]): Set<string> {
+function documentationLoadableAsCode(ctx: RuleContext, docs: FileRecord[]): Set<string> {
   const loadable = new Set<string>();
   if (!docs.length) return loadable;
   const pending = new Map<string, { basename: string; extension: string }>();
   for (const doc of docs) {
-    if (ctx.consumerReachable.has(normalizeReachabilityPath(doc.path))) {
+    if (
+      ctx.consumerReachable.has(normalizeReachabilityPath(doc.path)) ||
+      documentationActsAsCode(ctx, doc.textSample)
+    ) {
       loadable.add(doc.path);
       continue;
     }
@@ -166,19 +185,50 @@ function documentationNamedByCode(ctx: RuleContext, docs: FileRecord[]): Set<str
   for (const file of ctx.files) {
     if (!pending.size) break;
     if (!file.textSample || isDocumentationPath(file.path)) continue;
-    const text = file.textSample.toLowerCase();
-    LOAD_CALL_ARGUMENTS.lastIndex = 0;
+    const folded = normalizeCodeForScanning(file.textSample);
+    const texts = folded === file.textSample ? [file.textSample] : [file.textSample, folded];
+    if (texts.some((text) => MODULE_LOADER_HOOK.test(text))) {
+      for (const path of pending.keys()) loadable.add(path);
+      break;
+    }
+    const lowered = texts.map((text) => text.toLowerCase());
     const loadTokens = new Set(
-      [...file.textSample.matchAll(LOAD_CALL_ARGUMENTS)].flatMap((match) =>
-        (match[1].match(LOAD_CALL_PATH_TOKEN) ?? []).map((token) => token.toLowerCase()),
+      texts.flatMap((text) =>
+        [...text.matchAll(LOAD_CALL_ARGUMENTS)].flatMap((match) =>
+          (match[1].match(LOAD_CALL_PATH_TOKEN) ?? []).map((token) => token.toLowerCase()),
+        ),
       ),
     );
     for (const [path, { basename, extension }] of pending) {
-      if (text.includes(basename) || (extension && loadTokens.has(extension))) {
+      if (
+        lowered.some((text) => text.includes(basename)) ||
+        (extension && loadTokens.has(extension))
+      ) {
         loadable.add(path);
         pending.delete(path);
       }
     }
   }
   return loadable;
+}
+
+function documentationActsAsCode(ctx: RuleContext, sample: string | undefined): boolean {
+  if (!sample) return false;
+  const folded = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
+  const texts = folded === sample ? [sample] : [sample, folded];
+  const patterns = [
+    ...ctx.patterns.processExecution,
+    ...ctx.patterns.networkAccess,
+    ...ctx.patterns.credentialAccess,
+    ...ctx.patterns.dynamicExecution,
+    ...ctx.patterns.dynamicEvaluation,
+  ];
+  return texts.some(
+    (text) =>
+      firstMatchingLine(text, patterns) !== undefined ||
+      patterns.some((pattern) => {
+        pattern.lastIndex = 0;
+        return pattern.test(text);
+      }),
+  );
 }
