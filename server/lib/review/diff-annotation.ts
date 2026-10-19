@@ -19,6 +19,7 @@ import {
   installReachablePaths,
   javascriptReachableFrom,
   normalizeReachabilityPath,
+  type ReachabilityLexing,
 } from "./rules/reachability";
 import {
   changedRegions,
@@ -178,13 +179,28 @@ function lazyNewlyInstallReachablePaths(
   let computed: Set<string> | undefined;
   return () => {
     if (computed) return computed;
-    const reachable = (files: typeof previousFiles, executionEvidenceOnly = true) => {
+    const reachable = (
+      files: typeof previousFiles,
+      executionEvidenceOnly = true,
+      lexing?: ReachabilityLexing,
+    ) => {
       const scripts = lifecycleScripts(files.find((file) => file.path === "package.json"));
       if (!scripts) return new Set<string>();
       const records = files.map((file) => ({ ...file, size: 0, sha256: "" }));
-      return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
+      return installReachablePaths(
+        records,
+        scripts,
+        {},
+        codePatternSet,
+        executionEvidenceOnly,
+        lexing,
+      );
     };
-    const previous = reachable(previousFiles);
+    // A previous graph built past a lexer give-up over-counts, which would
+    // shrink "newly reachable"; credit nothing as already reachable instead.
+    const previousLexing: ReachabilityLexing = { gaveUp: false };
+    const previousReachable = reachable(previousFiles, true, previousLexing);
+    const previous = previousLexing.gaveUp ? new Set<string>() : previousReachable;
     const staged = reachable(stagedFiles);
     const possiblyInstalled = reachable(stagedFiles, false);
     const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
