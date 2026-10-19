@@ -7,10 +7,11 @@ import {
 import type { Finding } from "../types";
 import {
   CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
-  ENV_ALIAS_BINDING,
-  envAliasHarvestPatterns,
+  ENV_OBJECT_PATTERN,
+  ENV_OBJECT_VALUE_USE,
   omitDynamicImportShims,
   omitGlobalObjectShims,
+  SECRET_NAME,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
   SHELL_NETWORK_TOOL_PATTERN_SET,
 } from "./patterns";
@@ -38,13 +39,22 @@ const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
   /<!@?\([^)\n]*\bnode\b(?:\s+--[^\s'")]+)*\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js)["']?/i,
   /<!@?\([^)\n]*\bbun\b(?:\s+run)?\s+["']?(?:\.\/)?[\w@./-]+\.(?:cjs|mjs|js|ts)["']?/i,
 ];
-// Uses of `process.env` that read no value: a presence test (`'CI' in
-// process.env`, any name, since the value still needs a separate read) and an
-// existence guard (`process.env && process.env.NODE_DEBUG`). Erased before the
-// alias check so they do not read as the env object bound to a name; whatever
-// the guard protects is judged on its own.
-const PROCESS_ENV_MEMBERSHIP_TEST = /(['"`])[A-Za-z_][A-Za-z0-9_]*\1\s+in\s+process\.env\b/g;
-const PROCESS_ENV_EXISTENCE_GUARD = /\bprocess\.env\s*&&/g;
+// Uses of the env object as a value that read nothing: a presence test
+// (`'CI' in process.env`, any name, since the value still needs a separate
+// read), existence and type guards (`process.env && …`, `typeof process.env`,
+// `void 0 !== process.env`, `!process.env`, `process.env ? … : …`). Erased
+// before credential matching; whatever the guard protects is judged on its own.
+const ENV_VALUE = ENV_OBJECT_VALUE_USE.source;
+const VALUELESS_ENVIRONMENT_USES = [
+  new RegExp(String.raw`(['"\x60])[A-Za-z_][A-Za-z0-9_]*\1\s+in\s+${ENV_VALUE}`, "g"),
+  new RegExp(String.raw`${ENV_VALUE}\s*&&`, "g"),
+  new RegExp(String.raw`\btypeof\s+${ENV_VALUE}`, "g"),
+  new RegExp(String.raw`${ENV_VALUE}\s*[!=]==?\s*(?:undefined\b|null\b|void\s+0\b)`, "g"),
+  new RegExp(String.raw`(?:\bundefined|\bnull|\bvoid\s+0)\s*[!=]==?\s*${ENV_VALUE}`, "g"),
+  new RegExp(String.raw`(?<![!=<>])!+\s*${ENV_VALUE}`, "g"),
+  new RegExp(String.raw`${ENV_VALUE}\s*\?(?![?.])`, "g"),
+  new RegExp(String.raw`\bif\s*\(\s*${ENV_VALUE}\s*\)`, "g"),
+];
 // javascript-obfuscator-style output commonly wraps a hexadecimal identifier
 // lookup in a self-rotating string table. Individual names can remain opaque to
 // the bounded constant folder, but the wrapper itself is a strong evasion
@@ -272,16 +282,15 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
             true,
           )
         : NO_MATCH;
-    const credentialAccess = matchCategory(
-      [...ctx.patterns.credentialAccess, ...ctx.patterns.credentialAlias],
-      sample,
-      normalized,
-    ).matched
-      ? matchCredentialAccess(
-          ctx.patterns,
-          javascript ? omitValuelessEnvironmentUses(views().code) : views().code,
+    const credentialAccess = matchCategory(ctx.patterns.credentialAccess, sample, normalized)
+      .matched
+      ? matchCategory(
+          ctx.patterns.credentialAccess,
           javascript
-            ? omitValuelessEnvironmentUses(views().normalizedCode)
+            ? omitValuelessEnvironmentUses(views().code, views().codeNoStrings)
+            : views().code,
+          javascript
+            ? omitValuelessEnvironmentUses(views().normalizedCode, views().normalizedCodeNoStrings)
             : views().normalizedCode,
           packedObfuscation,
         )
@@ -638,50 +647,172 @@ function isLoadedAsCode(ctx: RuleContext, path: string, loadCallNames: Set<strin
   );
 }
 
-function omitValuelessEnvironmentUses(source: string): string {
-  return source
-    .replace(PROCESS_ENV_MEMBERSHIP_TEST, eraseKeepingNewlines)
-    .replace(PROCESS_ENV_EXISTENCE_GUARD, eraseKeepingNewlines);
-}
-
-// Keep the match's newlines so line numbers stay stable for later findings and
-// the release-delta changed-line check that consumes finding.line.
-function eraseKeepingNewlines(match: string): string {
-  return match.replace(/[^\n]+/g, "");
-}
-
-// Credential access in one file: a direct match (secret-shaped name, computed
-// key, whole-environment harvest, credential file), or the env object bound to
-// a value together with evidence of what is read through it — a secret-shaped
-// constant name, or a harvest of the binding itself. The finding points at that
-// evidence line, which is the one a payload adds.
-function matchCredentialAccess(
-  patterns: RuleContext["patterns"],
-  sample: string,
-  normalized: string,
-  sourceObfuscated: boolean,
-): CategoryMatch {
-  const direct = matchCategory(patterns.credentialAccess, sample, normalized, sourceObfuscated);
-  if (direct.matched || patterns.credentialAlias.length === 0) return direct;
-  const alias = matchCategory(patterns.credentialAlias, sample, normalized, sourceObfuscated);
-  if (!alias.matched) return NO_MATCH;
-  // An env object that only appears once string pieces are joined
-  // (`globalThis['proc' + 'ess']['e' + 'nv']`), or in a packed string-table
-  // file, is hidden on purpose; nobody assembles it to read `PORT`.
-  if (alias.obfuscated) return alias;
-  const names = new Set<string>();
-  for (const text of normalized === sample ? [sample] : [sample, normalized]) {
-    ENV_ALIAS_BINDING.lastIndex = 0;
-    for (const binding of text.matchAll(ENV_ALIAS_BINDING)) names.add(binding[1]);
+// `code` and `inert` are same-length views (comments blanked; `inert` also
+// blanks string bodies), so offsets found in one apply to the other.
+function omitValuelessEnvironmentUses(code: string, inert: string): string {
+  let out = hoistSplitEnvironmentMembers(code);
+  for (const pattern of VALUELESS_ENVIRONMENT_USES) {
+    out = out.replace(pattern, eraseKeepingNewlines);
   }
-  const evidence = matchCategory(
-    [...patterns.secretName, ...envAliasHarvestPatterns([...names])],
-    sample,
-    normalized,
-    sourceObfuscated,
+  for (const pattern of LOWERED_OPTIONAL_ENVIRONMENT_READS) {
+    // Replacer arguments are the captures, then the offset and the input.
+    out = out.replace(pattern, (match: string, ...rest: unknown[]) =>
+      SECRET_NAME.test(String(rest.slice(0, -2).at(-1))) ? match : eraseKeepingNewlines(match),
+    );
+  }
+  const hoistedInert = hoistSplitEnvironmentMembers(inert);
+  out = omitNamedEnvironmentAliases(out, hoistedInert);
+  return omitNamedEnvironmentDestructuring(out, hoistedInert);
+}
+
+// Compilers lower `process?.env?.NODE_ENV` into a bare `process.env` inside a
+// conditional whose result is then read by name: TypeScript's
+// `(null == process ? void 0 : process.env)?.NODE_ENV`, and the temporary forms
+// `null==(t=null==process?void 0:process.env)?void 0:t.NODE_ENV` and
+// `(_a = process === null || process === void 0 ? void 0 : process.env) ===
+// null || _a === void 0 ? void 0 : _a.NODE_ENV`. Only those exact shapes, and
+// only for a non-secret name (the last capture), are a named read.
+const LOWERED_OPTIONAL_ENVIRONMENT_READS = [
+  new RegExp(String.raw`\?\s*void\s+0\s*:\s*${ENV_VALUE}\s*\)\s*\??\.\s*([\w$]+)`, "g"),
+  new RegExp(
+    String.raw`\(\s*([A-Za-z_$][\w$]*)\s*=\s*(?:null\s*==\s*process|process\s*===\s*null\s*\|\|\s*process\s*===\s*void\s+0)\s*\?\s*void\s+0\s*:\s*${ENV_VALUE}\s*\)\s*(?:===\s*null\s*\|\|\s*\1\s*===\s*void\s+0\s*)?\?\s*void\s+0\s*:\s*\1\s*\.\s*([\w$]+)`,
+    "g",
+  ),
+];
+
+// `const env = process.env` followed only by named reads of non-secret
+// variables (`env.TERM`, `env['CI']`, `'NO_COLOR' in env`) is the same as
+// reading them directly. Only a declaration whose initializer is exactly the
+// env object qualifies (not a default parameter or an assignment expression,
+// whose value can flow on). Every other occurrence of the name, found in the
+// string-blind view, keeps the binding counted: passed, spread, copied,
+// re-bound, enumerated, indexed by a computed key, or reused as an unrelated
+// variable (a minifier's `e`), since the scan has no scopes.
+const ENV_ALIAS_DECLARATION = new RegExp(
+  String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(${ENV_VALUE})(?=[^\S\n]*(?:[;,\n]|$))`,
+  "gd",
+);
+const ENV_ALIAS_LIMIT = 32;
+
+function omitNamedEnvironmentAliases(code: string, inert: string): string {
+  const erase: Array<[number, number]> = [];
+  let seen = 0;
+  ENV_ALIAS_DECLARATION.lastIndex = 0;
+  for (const binding of code.matchAll(ENV_ALIAS_DECLARATION)) {
+    if (++seen > ENV_ALIAS_LIMIT) break;
+    const [nameStart] = binding.indices?.[1] ?? [-1];
+    const env = binding.indices?.[2];
+    if (env && onlyNamedReadsThrough(code, inert, binding[1], nameStart)) erase.push(env);
+  }
+  return blankRanges(code, erase);
+}
+
+function onlyNamedReadsThrough(
+  code: string,
+  inert: string,
+  name: string,
+  declaration: number,
+): boolean {
+  const occurrence = new RegExp(String.raw`(?<![\w$.])${name.replace(/\$/g, "\\$")}(?![\w$])`, "g");
+  for (const use of inert.matchAll(occurrence)) {
+    if (use.index === declaration) continue;
+    const after = code.slice(use.index + name.length, use.index + name.length + 256);
+    const member =
+      /^\s*(?:\?\.|\.)\s*([\w$]+)/.exec(after) ??
+      /^\s*(?:\?\.\s*)?\[\s*(["'])([^"'\n\\]*)\1\s*\]/.exec(after);
+    if (member) {
+      if (SECRET_NAME.test(member.at(-1) ?? "")) return false;
+      continue;
+    }
+    const before = code.slice(Math.max(0, use.index - 128), use.index);
+    if (/(['"\x60])[A-Za-z_][\w]*\1\s+in\s+$/.test(before)) continue;
+    return false;
+  }
+  return true;
+}
+
+function blankRanges(source: string, ranges: Array<[number, number]>): string {
+  if (ranges.length === 0) return source;
+  let out = "";
+  let pos = 0;
+  for (const [start, end] of ranges.sort((a, b) => a[0] - b[0])) {
+    out += source.slice(pos, start) + " ".repeat(end - start);
+    pos = end;
+  }
+  return out + source.slice(pos);
+}
+
+// Patterns match line by line, so a member read split across lines
+// (`process.env\n  .npm_command`) would leave a bare `process.env` that reads
+// as a value. Moving the line break after the member keeps the read on the
+// env object's line and the line count, and the length, unchanged.
+const SPLIT_ENVIRONMENT_MEMBER = new RegExp(
+  String.raw`(${ENV_OBJECT_PATTERN.source})([^\S\n]*\n\s*)((?:\?\.|\.)\s*[\w$]+|(?:\?\.\s*)?\[)`,
+  "g",
+);
+
+function hoistSplitEnvironmentMembers(source: string): string {
+  return source.replace(
+    SPLIT_ENVIRONMENT_MEMBER,
+    (_, env: string, gap: string, member: string) => env + member + gap,
   );
-  if (!evidence.matched) return NO_MATCH;
-  return { ...evidence, obfuscated: evidence.obfuscated || alias.obfuscated };
+}
+
+// Blank to spaces, keeping newlines and length: line numbers stay stable for
+// later findings and the release-delta changed-line check that consumes
+// finding.line, and offsets stay aligned with the string-blind view.
+function eraseKeepingNewlines(match: string): string {
+  return match.replace(/[^\n]/g, " ");
+}
+
+// `const { PORT, HOME: home = '' } = process.env`, on one line or many, reads
+// exactly the names it lists, so it is judged like `process.env.PORT`: erased
+// when no listed name looks like a secret, kept with a rest element or a
+// computed key. The pattern is found by a backward bracket scan over the
+// string-blind view; a slash in it (regex or division), or a scan past the
+// window or the per-file budget, leaves the use counted.
+const DESTRUCTURING_WINDOW = 4096;
+const DESTRUCTURING_BUDGET = 256 * 1024;
+
+function omitNamedEnvironmentDestructuring(code: string, inert: string): string {
+  if (!code.includes("}")) return code;
+  let budget = DESTRUCTURING_BUDGET;
+  const erase: Array<[number, number]> = [];
+  ENV_OBJECT_VALUE_USE.lastIndex = 0;
+  for (const match of code.matchAll(ENV_OBJECT_VALUE_USE)) {
+    const before = /\}\s*=\s*$/.exec(inert.slice(Math.max(0, match.index - 64), match.index));
+    if (!before) continue;
+    const close = match.index - before[0].length;
+    const open = matchingOpenBrace(inert, close, Math.min(DESTRUCTURING_WINDOW, budget));
+    if (open < 0) {
+      budget -= DESTRUCTURING_WINDOW;
+      if (budget <= 0) break;
+      continue;
+    }
+    budget -= close - open;
+    const names = code.slice(open + 1, close);
+    if (/\.\.\.|\[/.test(names) || SECRET_NAME.test(names)) continue;
+    erase.push([match.index, match.index + match[0].length]);
+  }
+  return blankRanges(code, erase);
+}
+
+function matchingOpenBrace(inert: string, close: number, window: number): number {
+  let depth = 0;
+  const stop = Math.max(0, close - window);
+  for (let i = close - 1; i >= stop; i -= 1) {
+    const c = inert[i];
+    if (c === "/") return -1;
+    if (c === "}" || c === ")" || c === "]") depth += 1;
+    else if (c === "(" || c === "[") {
+      if (depth === 0) return -1;
+      depth -= 1;
+    } else if (c === "{") {
+      if (depth === 0) return i;
+      depth -= 1;
+    }
+  }
+  return -1;
 }
 
 type CategoryMatch = { matched: boolean; line: number | undefined; obfuscated: boolean };

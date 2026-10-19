@@ -489,10 +489,7 @@ function patternsForFinding(
     case DETERMINISTIC_RULE_IDS.codeDynamicEvaluation:
       return patterns.dynamicEvaluation;
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
-      // An env alias counts with the secret name or harvest read through it,
-      // and the finding's line is that evidence; either half arriving is this
-      // release's change.
-      return [...patterns.credentialAccess, ...patterns.credentialAlias, ...patterns.secretName];
+      return patterns.credentialAccess;
     case DETERMINISTIC_RULE_IDS.propagationRegistryPublish:
       return patterns.registryPublish;
     case DETERMINISTIC_RULE_IDS.propagationPackageMutation:

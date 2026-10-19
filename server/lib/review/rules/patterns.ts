@@ -96,9 +96,16 @@ const SHELL_REMOTE_PATTERNS = [...SHELL_NETWORK_TOOL_PATTERNS, ...SHELL_DOWNLOAD
 // credential collect-and-exfiltrate chain exactly like `fetch()` is.
 export const SHELL_NETWORK_TOOL_PATTERN_SET = SHELL_NETWORK_TOOL_PATTERNS;
 export const SHELL_DOWNLOAD_EXECUTE_PATTERN_SET = SHELL_DOWNLOAD_EXECUTE_PATTERNS;
+// Egress modules: Node's sockets and HTTP stacks plus the two userland clients
+// (`undici`, `ws`) that bundles import by name, by `require`, `import … from`
+// or a literal dynamic `import()`.
+const NETWORK_MODULE = String.raw`(["'])(?:node:)?(?:https?|http2|net|dns|dgram|tls|undici|ws)\1`;
 const JS_NETWORK_ACCESS_PATTERNS = [
-  /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
-  /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
+  new RegExp(String.raw`\brequire\s*\(\s*${NETWORK_MODULE}\s*\)`),
+  new RegExp(String.raw`\bfrom\s*${NETWORK_MODULE}`),
+  new RegExp(String.raw`\bimport\s*\(\s*${NETWORK_MODULE}\s*[,)]`),
+  /\bnew\s+(?:WebSocket|EventSource)\s*\(/,
+  /\bsendBeacon\s*\(/,
   /\b(?:global|globalThis|self|window)\.fetch\s*\(/,
   // `fetch(input, init) {` on one line is a method definition, never a call;
   // a parenthesis in between (`if (!fetch(u)) {`) means it is a call.
@@ -240,10 +247,16 @@ const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /\bbytes\.fromhex\s*\(/,
 ];
 // Credential access is reading a secret, not reading the environment. A named
-// configuration variable (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`,
-// `npm_config_https_proxy`) is not one; what still counts is a name shaped like
-// a secret, the whole environment leaving as data, a key chosen at runtime, a
-// known secret name anywhere, and credential files on disk.
+// read of a configuration variable (`PORT`, `HOME`,
+// `NAPI_RS_NATIVE_LIBRARY_PATH`, `npm_config_https_proxy`) is not one. Every
+// other use of the env object counts: a secret-shaped name, a key chosen at
+// runtime, and the object itself used as a value (bound, passed, spread,
+// copied, wrapped, serialized or enumerated), because once the whole
+// environment is a value no line regex can follow which variables leave with
+// it. `scripts.ts` exempts only uses that read nothing (presence tests and
+// guards), destructuring of named non-secret variables, and the `env` option of
+// a child-process call, which the child inherits anyway. Known secret names
+// anywhere and credential files on disk count too.
 //
 // Secret-shaped names: substrings that only occur in secrets, plus whole
 // `_`-delimited segments for words that are also substrings of ordinary names
@@ -253,29 +266,30 @@ const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
 // private-key variable also says `KEY`, and Next.js' `NEXT_PRIVATE_*` flags
 // are configuration. Neither are CI descriptors such as `GITHUB_ACTIONS` or
 // `GITHUB_REF`; every GitHub credential name carries `TOKEN`, `PAT` or `KEY`.
+// `JWT` (GitLab's `CI_JOB_JWT`) is a credential; `KUBECONFIG`, `DOCKER_CONFIG`,
+// npm's `USERCONFIG` and `NETRC` name the file that holds one.
 // A handful of public names that bundles carry everywhere are carved out:
 // React's `__SECRET_INTERNALS_…`, Babel's `ALIAS_KEYS`/`VISITOR_KEYS`/
 // `BUILDER_KEYS` tables, and terminal ids (`WT_SESSION`, `TERM_SESSION_ID`).
-const SECRET_NAME_MARKER = String.raw`(?:TOKEN(?!IZ)|SECRET(?!_INTERNALS)|PASSW(?:OR)?D|PASSPHRASE|CREDENTIAL|COOKIE|AUTHORIZATION|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|(?<![A-Za-z0-9])(?:KEY|(?<!(?:ALIAS|VISITOR|BUILDER)_)KEYS|PAT|(?<!(?:WT|TERM)_)SESSION|DSN|WEBHOOK|O?AUTH)(?![A-Za-z0-9])|_(?:PASS|PWD)(?![A-Za-z0-9])|(?<![A-Za-z0-9])AWS_|(?<![A-Za-z0-9])(?:DATABASE|DB|MONGO(?:DB)?|REDIS|POSTGRES(?:QL)?|MYSQL)_UR[LI](?![A-Za-z0-9]))`;
+const SECRET_NAME_MARKER = String.raw`(?:TOKEN(?!IZ)|SECRET(?!_INTERNALS)|PASSW(?:OR)?D|PASSPHRASE|CREDENTIAL|COOKIE|AUTHORIZATION|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|(?<![A-Za-z0-9])(?:KEY|(?<!(?:ALIAS|VISITOR|BUILDER)_)KEYS|PAT|(?<!(?:WT|TERM)_)SESSION|DSN|WEBHOOK|O?AUTH|JWT|KUBECONFIG|DOCKER_CONFIG|USERCONFIG|NETRC)(?![A-Za-z0-9])|_(?:PASS|PWD)(?![A-Za-z0-9])|(?<![A-Za-z0-9])AWS_|(?<![A-Za-z0-9])(?:DATABASE|DB|MONGO(?:DB)?|REDIS|POSTGRES(?:QL)?|MYSQL)_UR[LI](?![A-Za-z0-9]))`;
 // `process?.env` and `globalThis.process.env` included; `process['env']` is
 // member-folded by the normalizer.
 const ENV_OBJECT = String.raw`(?:\bprocess\s*\??\.\s*env|\bimport\s*\.\s*meta\s*\.\s*env|\bBun\s*\.\s*env)\b`;
 // The env object used as a value: not followed by a member read.
-const ENV_OBJECT_VALUE = String.raw`${ENV_OBJECT}(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.)?\s*\[)`;
+const ENV_OBJECT_VALUE = String.raw`${ENV_OBJECT}(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.\s*)?\[)`;
 const JS_CREDENTIAL_ACCESS_PATTERNS = [
-  // Named reads of a secret-shaped variable: dot, bracket literal, Deno's
-  // getter, and same-line destructuring (`const { NPM_TOKEN } = process.env`).
+  // The env object as a value. Destructuring is a value use too; `scripts.ts`
+  // exempts it when every name it pulls out is a plain non-secret one.
+  new RegExp(ENV_OBJECT_VALUE),
+  // Named reads of a secret-shaped variable: dot, bracket literal and Deno's
+  // getter.
   new RegExp(String.raw`${ENV_OBJECT}\s*\??\.\s*[\w$]*?${SECRET_NAME_MARKER}`, "i"),
   new RegExp(
-    String.raw`${ENV_OBJECT}\s*(?:\?\.)?\s*\[\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}[^"'\x60\n]*\1\s*\]`,
+    String.raw`${ENV_OBJECT}\s*(?:\?\.\s*)?\[\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}[^"'\x60\n]*\1\s*\]`,
     "i",
   ),
   new RegExp(
     String.raw`\bDeno\s*\.\s*env\s*\.\s*get\s*\(\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}`,
-    "i",
-  ),
-  new RegExp(
-    String.raw`\{[^{}\n]*?(?<![\w$])[\w$]*?${SECRET_NAME_MARKER}[^{}\n]*\}\s*=\s*${ENV_OBJECT_VALUE}`,
     "i",
   ),
   // A key chosen at runtime: anything but one plain literal. Which secret it
@@ -284,25 +298,10 @@ const JS_CREDENTIAL_ACCESS_PATTERNS = [
   // a computed member of `process` itself (`globalThis.process[e]`) can reach
   // `env` the same way.
   new RegExp(
-    String.raw`${ENV_OBJECT}\s*(?:\?\.)?\s*\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*\x60[^\x60$\n\\]*\x60\s*\])`,
+    String.raw`${ENV_OBJECT}\s*(?:\?\.\s*)?\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*\x60[^\x60$\n\\]*\x60\s*\])`,
   ),
-  /(?<![\w$.])(?:(?:globalThis|global|window|self)\s*\??\.\s*)?process\s*(?:\?\.)?\s*\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*`[^`$\n\\]*`\s*\])/,
+  /(?<![\w$.])(?:(?:globalThis|global|window|self)\s*\??\.\s*)?process\s*(?:\?\.\s*)?\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*`[^`$\n\\]*`\s*\])/,
   /\bDeno\s*\.\s*env\s*\.\s*(?:get\s*\(\s*(?!["'`])|toObject\s*\()/,
-  // The whole environment as data: serialized, enumerated, spread into a
-  // payload, handed to a send, or exported for another module to read.
-  new RegExp(
-    String.raw`\b(?:JSON\s*\.\s*stringify|Object\s*\.\s*(?:keys|entries|values|getOwnPropertyNames|getOwnPropertyDescriptors)|Reflect\s*\.\s*ownKeys|structuredClone|inspect)\s*\(\s*(?:\{\s*\.\.\.\s*)?${ENV_OBJECT_VALUE}`,
-  ),
-  new RegExp(String.raw`\bfor\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+in\s+${ENV_OBJECT_VALUE}`),
-  new RegExp(
-    String.raw`\b(?:body|data|payload|json|form|params|query|headers)\s*:\s*(?:\{\s*\.\.\.\s*)?${ENV_OBJECT_VALUE}`,
-  ),
-  new RegExp(
-    String.raw`\.\s*(?:send|write|end|post|put|patch|emit)\s*\((?:[^()\n]*,)?\s*${ENV_OBJECT_VALUE}\s*[,)]`,
-  ),
-  new RegExp(
-    String.raw`(?:\bmodule\s*\.\s*exports|\bexports\s*\.\s*[\w$]+|\bexport\s+default|\bexport\s+(?:const|let|var)\s+[\w$]+)\s*=?\s*${ENV_OBJECT_VALUE}`,
-  ),
   /\bnpm_config_[\w\-./:@]*?(?:_auth|token|_password)/i,
   /\bNPM_TOKEN\b/,
   /\bGITHUB_TOKEN\b/,
@@ -316,44 +315,10 @@ const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\.ssh\/id_/,
   /\.netrc/,
 ];
-// The env object bound or passed as a value (`const env = process.env`,
-// `f(process.env)`, `{ ...process.env }`). Which variables are then read is out
-// of a line regex's reach, so an alias counts only beside a secret-shaped
-// constant name in the same file (`env.OPENAI_API_KEY`) or a harvest of the
-// alias itself (`JSON.stringify(env)`; see `scripts.ts`). Handing the whole
-// environment to a child process or a config loader stays quiet.
-const JS_CREDENTIAL_ALIAS_PATTERNS = [new RegExp(ENV_OBJECT_VALUE)];
-// Upper-case constant style only: lower-case identifiers (`secretKey`,
-// `tokenizer`) are ordinary variables, not environment names.
-const JS_SECRET_NAME_PATTERNS = [
-  // The lookahead asserts the whole identifier is upper-case before the
-  // marker search, which keeps a long identifier linear.
-  new RegExp(String.raw`(?<![\w$])(?=[A-Z0-9_$]+(?![\w$]))[A-Z0-9_$]*?${SECRET_NAME_MARKER}`),
-];
-
-export function envAliasHarvestPatterns(names: string[]): RegExp[] {
-  if (names.length === 0) return [];
-  const alias = String.raw`(?:${names.map((name) => name.replace(/\$/g, "\\$")).join("|")})(?![\w$])(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.)?\s*\[)`;
-  return [
-    new RegExp(
-      String.raw`\b(?:JSON\s*\.\s*stringify|Object\s*\.\s*(?:keys|entries|values|getOwnPropertyNames|getOwnPropertyDescriptors)|Reflect\s*\.\s*ownKeys|structuredClone|inspect)\s*\(\s*(?:\{\s*\.\.\.\s*)?(?<![\w$])${alias}`,
-    ),
-    new RegExp(String.raw`\bfor\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+in\s+(?<![\w$])${alias}`),
-    new RegExp(
-      String.raw`\b(?:body|data|payload|json|form|params|query|headers)\s*:\s*(?:\{\s*\.\.\.\s*)?(?<![\w$])${alias}`,
-    ),
-    new RegExp(
-      String.raw`\.\s*(?:send|write|end|post|put|patch|emit)\s*\((?:[^()\n]*,)?\s*(?<![\w$])${alias}\s*[,)]`,
-    ),
-  ];
-}
-
-// The names an env alias is bound to: declarations, assignments and default
-// parameters (`env = process.env`, `(e = process.env).NODE_ENV`).
-export const ENV_ALIAS_BINDING = new RegExp(
-  String.raw`(?<![\w$.])([A-Za-z_$][\w$]*)\s*=(?!=)\s*${ENV_OBJECT_VALUE}`,
-  "g",
-);
+// Global, for the exemption pass in `scripts.ts`.
+export const ENV_OBJECT_VALUE_USE = new RegExp(ENV_OBJECT_VALUE, "g");
+export const SECRET_NAME = new RegExp(SECRET_NAME_MARKER, "i");
+export const ENV_OBJECT_PATTERN = new RegExp(ENV_OBJECT);
 const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\bos\.environ\b/,
   /\bos\.getenv\s*\(/,
@@ -410,8 +375,6 @@ export const JS_PATTERN_SET = {
   payloadDecoding: JS_PAYLOAD_DECODING_PATTERNS,
   decodedPayloadSink: [...JS_DECODED_PAYLOAD_SINK_PATTERNS, ...JS_INSTALL_WRITE_PATTERNS],
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
-  credentialAlias: JS_CREDENTIAL_ALIAS_PATTERNS,
-  secretName: JS_SECRET_NAME_PATTERNS,
   registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: JS_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: JS_INSTALL_WRITE_PATTERNS,
@@ -427,8 +390,6 @@ export const PYTHON_PATTERN_SET = {
   payloadDecoding: [] as RegExp[],
   decodedPayloadSink: [] as RegExp[],
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
-  credentialAlias: [] as RegExp[],
-  secretName: [] as RegExp[],
   registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: PYTHON_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: PYTHON_INSTALL_WRITE_PATTERNS,
