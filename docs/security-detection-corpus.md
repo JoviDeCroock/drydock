@@ -178,7 +178,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.48.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -749,6 +749,21 @@ alongside exact release findings and risk. These assertions separate persistent
 artifact capabilities from new release behavior; the aggregate eval's existing
 artifact-risk metrics retain their meanings. The public incident benchmark uses
 the identical attack/control fixture bytes before and after this change.
+
+`1.49.0` comes from replaying real npm releases through the production rules
+(`pnpm run eval:npm-sweep`, see `detection-eval.md`). `file.outside-files-list` now reads
+`package.json` `files` with npm-packlist semantics. Before, a leading `/`, a `dir/*` entry,
+braces, `!` negations, bundled `node_modules/` and root CHANGELOG/HISTORY files all put
+legitimately packed files outside the allowlist; tsup, ts-node and a dozen other popular
+packages raised a high finding on every added chunk. A documentation file outside the list
+drops to `low` unless something loads it. The retention-tier notice escalates only for a
+changed file whose content the rules could have read, so native binaries, source maps and
+minified bundles stored hash-only stop counting as inspection gaps.
+`propagation.package-mutation` now needs a write, copy or rename whose destination carries
+the install-root path, not merely `node_modules` plus a write anywhere in the file. That
+clears esbuild's self-replacing binary install and keeps a write into a sibling package.
+`files-allowlist-escape-negated-dir`, `install-root-sibling-package-write` and the
+`legit-npm-packlist-files-semantics` hard-negative pin both sides.
 
 ### Fixture format
 
