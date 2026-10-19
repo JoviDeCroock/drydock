@@ -755,14 +755,20 @@ the identical attack/control fixture bytes before and after this change.
 `package.json` `files` with npm-packlist semantics. Before, a leading `/`, a `dir/*` entry,
 braces, `!` negations, bundled `node_modules/` and root CHANGELOG/HISTORY files all put
 legitimately packed files outside the allowlist; tsup, ts-node and a dozen other popular
-packages raised a high finding on every added chunk. A documentation file outside the list
-drops to `low` unless something loads it. The retention-tier notice escalates only for a
+packages raised a high finding on every added chunk. README, LICENSE and COPYING are always packed only at the package root,
+and a bundled-dependency exemption covers only the listed bundled packages. A documentation
+file outside the list drops to `low` only when nothing loads it and it carries no code
+capability itself. The retention-tier notice escalates only for a
 changed file whose content the rules could have read, so native binaries, source maps and
-minified bundles stored hash-only stop counting as inspection gaps.
-`propagation.package-mutation` now needs a write, copy or rename whose destination carries
-the install-root path, not merely `node_modules` plus a write anywhere in the file. That
-clears esbuild's self-replacing binary install and keeps a write into a sibling package.
-`files-allowlist-escape-negated-dir`, `install-root-sibling-package-write` and the
+minified bundles stored hash-only stop counting as inspection gaps unless they are what runs
+(an entrypoint or a loaded file).
+`propagation.package-mutation` stays quiet only when every install-time write destination is
+proven to stay inside the package's own directory, a temp directory or home; any destination
+it cannot place falls back to the previous co-occurrence check. That clears esbuild's
+self-replacing binary install and keeps writes into sibling packages, parent-directory walks,
+shell copies and module-lookup destinations.
+`files-allowlist-escape-negated-dir`, `install-root-sibling-package-write`,
+`install-root-parent-dir-walk` and the
 `legit-npm-packlist-files-semantics` hard-negative pin both sides.
 
 ### Fixture format
