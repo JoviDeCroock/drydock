@@ -599,19 +599,28 @@ const PLACEHOLDER_USERNAME_SEGMENT = [
   "test",
   "demo",
   "example",
+  "login",
+  "guest",
+  "johndoe",
 ].join("|");
 const WEAK_WORD_PASSWORD_SEGMENT = [
-  "pass(?:word|wd)?",
+  "(?:auth|db)?pass(?:word|wd)?",
+  "p%40ss(?:word)?",
   "pwd",
+  "psw",
   "secret",
   "token",
   "example",
   "admin",
+  "guest",
+  // The redis.conf / README example password.
+  "foobared",
 ].join("|");
 const STRUCTURAL_PLACEHOLDER_SEGMENT = [
   "changeme",
   "hunter2",
   "(?:your|my)[-_]?(?:password|token|secret|key)",
+  "(?:random|dummy|fake|example|sample)[-_]?pass(?:word|wd)?",
   "x{3,}",
   "\\*{3,}",
   "<[^>@\\s]*>",
@@ -620,8 +629,14 @@ const STRUCTURAL_PLACEHOLDER_SEGMENT = [
   "\\$[A-Za-z_][A-Za-z0-9_]*",
   "%[^%@\\s]+%",
 ].join("|");
+// Userinfo cannot contain quotes, brackets or braces, so the finding side
+// stops at them: in minified code `https://example.com",keywords:[…]…@scope`
+// would otherwise read a string boundary and a later `@` as credentials, and
+// `http://[user:pwd]@host` is a bracketed doc placeholder.
+const URL_USER_CHAR = String.raw`[^\s/@:'"\x60<>{}[\]\\,;()]`;
+const URL_PASSWORD_CHAR = String.raw`[^\s/@'"\x60<>{}[\]\\,;()]`;
 const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
-  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+`,
+  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)${URL_USER_CHAR}+:${URL_PASSWORD_CHAR}+@[^\s'"\\]+`,
   "gi",
 );
 
@@ -634,8 +649,50 @@ const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
 // `KEY=value`, including `P@ssw0rd!` style values, but not `x=n.token!==void 0`.
 const GENERIC_SECRET_REDACTION_PATTERN =
   /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi;
-const GENERIC_SECRET_FINDING_PATTERN =
-  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)(?:(['"])[^'"\s]{12,}\2|[^'"\s,;:(){}[\]=]{12,}={0,2}(?=$|\s))/gi;
+//
+// Code names its secrets far more often than it holds them. A real sweep of
+// popular packages found the generic key/value shape matching, never a leak:
+//   - identifier-shaped constants: `TOKEN = "__WEBPACK_MODULE_REFERENCE__"`,
+//     `SECRET: "MF-Proxy-Shared-Secret"`, Monaco's `token: "delimiter.curly"`,
+//     error codes like `'auth/invalid-api-key'`. A value made only of letter
+//     words (each ≤16 letters, ≤4 trailing digits) joined by `-_.:/` is a name,
+//     not key material, so neither branch accepts one. Monaco's `@brackets`
+//     and `type.$0` tokenizer references are names of the same kind.
+//   - unquoted expressions: `password: options.password`, `token = this.ctx`,
+//     `exports.Token = exports.Location`. An unquoted value is a secret only in
+//     `.env`/YAML-style files, where it is not a property path and, unlike an
+//     identifier, carries a digit (`sk-abc123…`, `Tr0ub4dor&3`).
+//   - placeholders: `"<client-secret>"`, `"${API_KEY}"`, `"{{token}}"`,
+//     `xxxx`/`****` masks, and "example"/"placeholder"/"your-" values.
+//   - minified string seams: `"…password: "),m=n.limit…"` reads the code
+//     between two literals as a quoted value; a quoted value with code
+//     punctuation `(){};,` is that seam, not a password.
+// Spacing around the separator stays on one line so `token =\n  this.x`
+// cannot reach the next statement. Every sub-pattern is bounded or anchored
+// on disjoint character classes so a long run stays linear.
+const SECRET_KEY_ASSIGNMENT = String.raw`(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)[ \t]*[:=][ \t]*)`;
+const WORD_SEGMENT = String.raw`(?:[A-Za-z]{1,16}[0-9]{0,4}|\$?[0-9]{1,2})`;
+// Quoted names may use `:` (`urn:…:token-type`); the unquoted variant leaves it
+// out, as its value cannot contain one. Keeping `:` out also keeps the scan
+// linear: a run of `token:token:…` would otherwise rescan to the end from
+// every key.
+const wordShapedValue = (separators: string) =>
+  String.raw`[${separators}@]*${WORD_SEGMENT}(?:[${separators}]+${WORD_SEGMENT})*[${separators}]*`;
+const QUOTED_WORD_SHAPED_VALUE = wordShapedValue("-_.:/");
+const UNQUOTED_WORD_SHAPED_VALUE = wordShapedValue("-_./");
+const PLACEHOLDER_VALUE_HINT = String.raw`x{4}|\*{3}|<|>|example|placeholder|changeme|redacted|your[-_]`;
+const UNQUOTED_SECRET_CHAR = String.raw`[^'"\s,;:(){}[\]=]`;
+const GENERIC_SECRET_FINDING_PATTERN = new RegExp(
+  SECRET_KEY_ASSIGNMENT +
+    "(?:" +
+    // Quoted literal.
+    String.raw`(['"])(?![{%[]|\$\{)(?!${QUOTED_WORD_SHAPED_VALUE}\2)(?![^'"\s]*?(?:${PLACEHOLDER_VALUE_HINT}))[^'"\s(){};,\x60]{12,}\2` +
+    "|" +
+    // Unquoted `.env`/YAML value running to whitespace or end of text.
+    String.raw`(?![$<%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])(?!${UNQUOTED_WORD_SHAPED_VALUE}={0,2}(?:\s|$))(?!${UNQUOTED_SECRET_CHAR}*?(?:${PLACEHOLDER_VALUE_HINT}))(?=${UNQUOTED_SECRET_CHAR}*?[0-9])${UNQUOTED_SECRET_CHAR}{12,}={0,2}(?=$|\s)` +
+    ")",
+  "gi",
+);
 
 // .npmrc auth (`//registry/:_authToken=…`, legacy `_auth=`/`_password=`).
 // Redaction masks any literal value; `${NPM_TOKEN}` is a reference. A finding
@@ -650,28 +707,64 @@ const NPM_AUTH_FINDING_PATTERN =
 // the generic pattern's whitespace terminator cannot end. A connection-string
 // key earlier on the same line is required, segments are bounded so a long run
 // of keys stays linear, and a template placeholder (`${pwd}`, `<password>`) or a
-// property read (`host=e.host;password=e.password`) is not a value.
-const CONNECTION_STRING_PASSWORD_PATTERN =
-  /(\b(?:Server|Data Source|Host|Uid|User ID|Initial Catalog|Database)[ \t]*=[^;"'\n]{0,256};(?:[^;"'\n]{0,256};){0,8}?[ \t]*(?:Password|Pwd)[ \t]*=[ \t]*)(?![$<{%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])[^;"'\s]{6,}/gi;
+// property read (`host=e.host;password=e.password`) is not a value. The
+// finding side also skips the structural placeholders (`Password=myPassword;`,
+// `password=randompassword;` in a CLI's sample connection strings).
+const CONNECTION_STRING_PASSWORD_PREFIX = String.raw`(\b(?:Server|Data Source|Host|Uid|User ID|Initial Catalog|Database)[ \t]*=[^;"'\n]{0,256};(?:[^;"'\n]{0,256};){0,8}?[ \t]*(?:Password|Pwd)[ \t]*=[ \t]*)(?![$<{%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])`;
+const CONNECTION_STRING_PASSWORD_PATTERN = new RegExp(
+  String.raw`${CONNECTION_STRING_PASSWORD_PREFIX}[^;"'\s]{6,}`,
+  "gi",
+);
+const CONNECTION_STRING_PASSWORD_FINDING_PATTERN = new RegExp(
+  String.raw`${CONNECTION_STRING_PASSWORD_PREFIX}(?!(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})(?:[;"'\s]|$))[^;"'\s]{6,}`,
+  "gi",
+);
+
+// Self-identifying token shapes that still occur by chance inside long base64
+// runs (a 20-char `AKIA…` window in an inlined WASM module): the finding side
+// requires the token to stand alone rather than sit inside a longer base64 run.
+const AWS_ACCESS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
+const AWS_SESSION_KEY_PATTERN = /ASIA[0-9A-Z]{16}/g;
+const AWS_ACCESS_KEY_FINDING_PATTERN = /(?<![A-Za-z0-9+/])AKIA[0-9A-Z]{16}(?![A-Za-z0-9+/])/g;
+const AWS_SESSION_KEY_FINDING_PATTERN = /(?<![A-Za-z0-9+/])ASIA[0-9A-Z]{16}(?![A-Za-z0-9+/])/g;
+
+// Slack webhook paths are `T<team>/B<bot>/<secret>`; docs and bundled samples
+// use `xxx/xxx/xxx` or short made-up segments.
+const SLACK_WEBHOOK_PATTERN = /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g;
+const SLACK_WEBHOOK_FINDING_PATTERN =
+  /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{6,}\/B[A-Z0-9]{6,}\/(?![xX]{8})[A-Za-z0-9]{16,}/g;
+
+// A PEM/PGP private key body is base64 in 64-char lines. Documentation and
+// armor code carry the header with a placeholder or code instead
+// (`-----BEGIN PRIVATE KEY-----\nXXXX\n…`, `<KEY>`, `…'\n'); result.push(`),
+// so the finding side needs a 40-char base64 run within the first 400
+// characters after the header (room for `Proc-Type`/`Version:` headers). The
+// window is bounded and stops at the next `-----`, keeping the scan linear.
+const PRIVATE_KEY_LABEL = "(?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?";
+const PRIVATE_KEY_PATTERN = new RegExp(
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  "g",
+);
+const PRIVATE_KEY_FINDING_PATTERN = new RegExp(
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----(?:[^-]|-(?!----)){0,400}?[A-Za-z0-9+/]{40}[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  "g",
+);
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
-  [/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]"],
-  [/ASIA[0-9A-Z]{16}/g, "[REDACTED_AWS_SESSION_KEY]"],
+  [AWS_ACCESS_KEY_PATTERN, "[REDACTED_AWS_ACCESS_KEY]"],
+  [AWS_SESSION_KEY_PATTERN, "[REDACTED_AWS_SESSION_KEY]"],
   [/AIza[0-9A-Za-z\-_]{35}/g, "[REDACTED_GOOGLE_API_KEY]"],
   [/ya29\.[0-9A-Za-z\-_]{20,}/g, "[REDACTED_GOOGLE_OAUTH_TOKEN]"],
   [/sk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/rk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/xox[abprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED_SLACK_TOKEN]"],
-  [/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, "[REDACTED_SLACK_WEBHOOK]"],
+  [SLACK_WEBHOOK_PATTERN, "[REDACTED_SLACK_WEBHOOK]"],
   [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]"],
   [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
-  [
-    /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
-    "[REDACTED_PRIVATE_KEY]",
-  ],
+  [PRIVATE_KEY_PATTERN, "[REDACTED_PRIVATE_KEY]"],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
   [NPM_AUTH_REDACTION_PATTERN, "$1[REDACTED_NPM_AUTH]"],
   [CONNECTION_STRING_PASSWORD_PATTERN, "$1[REDACTED_SECRET]"],
@@ -682,6 +775,11 @@ const FINDING_PATTERN_FOR_REDACTION = new Map<RegExp, RegExp>([
   [URL_CREDENTIALS_REDACTION_PATTERN, URL_CREDENTIALS_FINDING_PATTERN],
   [GENERIC_SECRET_REDACTION_PATTERN, GENERIC_SECRET_FINDING_PATTERN],
   [NPM_AUTH_REDACTION_PATTERN, NPM_AUTH_FINDING_PATTERN],
+  [CONNECTION_STRING_PASSWORD_PATTERN, CONNECTION_STRING_PASSWORD_FINDING_PATTERN],
+  [AWS_ACCESS_KEY_PATTERN, AWS_ACCESS_KEY_FINDING_PATTERN],
+  [AWS_SESSION_KEY_PATTERN, AWS_SESSION_KEY_FINDING_PATTERN],
+  [SLACK_WEBHOOK_PATTERN, SLACK_WEBHOOK_FINDING_PATTERN],
+  [PRIVATE_KEY_PATTERN, PRIVATE_KEY_FINDING_PATTERN],
 ]);
 
 // Detection-side view of SECRET_PATTERNS: identical except where a finding needs
@@ -696,7 +794,7 @@ export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.
 const KEY_VALUE_FINDING_PATTERNS = new Set([
   GENERIC_SECRET_FINDING_PATTERN,
   NPM_AUTH_FINDING_PATTERN,
-  CONNECTION_STRING_PASSWORD_PATTERN,
+  CONNECTION_STRING_PASSWORD_FINDING_PATTERN,
 ]);
 export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =
   FINDING_SECRET_PATTERNS.filter(([pattern]) => !KEY_VALUE_FINDING_PATTERNS.has(pattern));
