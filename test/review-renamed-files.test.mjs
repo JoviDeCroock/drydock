@@ -99,4 +99,19 @@ describe("renamed file pairing", () => {
     expect(pairRenamedFiles(previous, staged).size).toBe(1);
     expect(pairRenamedFiles(previous, staged, text.length).size).toBe(0);
   });
+
+  test("bounds overlap counting when every shingle hits a full posting list", () => {
+    // Identical removed files fill each posting list, so a release adding
+    // many copies would cost list length per shingle on top of its characters.
+    const text = Array.from({ length: 4_000 }, (_, index) => `q${index}x`).join(";");
+    const previous = Array.from({ length: 32 }, (_, index) => file(`d/r${index}.js`, text));
+    const staged = Array.from({ length: 1_744 }, (_, index) => file(`d/a${index}.js`, text));
+
+    const start = performance.now();
+    const pairs = pairRenamedFiles(previous, staged);
+    const elapsed = performance.now() - start;
+
+    expect(pairs.size).toBeLessThanOrEqual(32);
+    expect(elapsed).toBeLessThan(2_500);
+  }, 30_000);
 });

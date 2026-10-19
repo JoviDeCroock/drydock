@@ -63,6 +63,10 @@ export function pairRenamedFiles(
   for (const file of previousFiles) if (!stagedPaths.has(file.path)) addTo(file, "removed");
 
   let budget = charBudget;
+  // Overlap counting is charged separately: identical removed files make every
+  // shingle hit a full posting list, so characters alone do not bound it. Once
+  // spent, the remaining added files stay unpaired.
+  let postingBudget = charBudget;
   const shingle = (file: PairableFile): Set<number> | null => {
     const text = (file.textSample ?? "").slice(0, SHINGLE_WINDOW);
     if (text.length > budget) return null;
@@ -87,12 +91,16 @@ export function pairRenamedFiles(
     });
     const candidates: Array<{ added: number; removed: number; score: number }> = [];
     group.added.forEach((file, addedIndex) => {
+      if (postingBudget <= 0) return;
       const set = shingle(file);
       if (!set) return;
       const shared = new Map<number, number>();
       for (const hash of set) {
         const list = postings.get(hash);
         if (!list || list.length > MAX_POSTING) continue;
+        postingBudget -= list.length;
+        // A file whose count ran out of budget is incomplete; leave it unpaired.
+        if (postingBudget < 0) return;
         for (const index of list) shared.set(index, (shared.get(index) ?? 0) + 1);
       }
       for (const [removedIndex, count] of shared) {
