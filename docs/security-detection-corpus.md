@@ -756,14 +756,17 @@ the identical attack/control fixture bytes before and after this change.
 braces, `!` negations, bundled `node_modules/` and root CHANGELOG/HISTORY files all put
 legitimately packed files outside the allowlist; tsup, ts-node and a dozen other popular
 packages raised a high finding on every added chunk. README, LICENSE and COPYING are always packed only at the package root,
-and a bundled-dependency exemption covers only the listed bundled packages. A documentation
+and a bundled-dependency exemption covers only the listed bundled packages. A manifest whose
+`files` patterns exhaust the matcher's work budget falls back to literal entries rather than
+skipping the rule. A documentation
 file outside the list drops to `low` only when nothing loads it and it carries no code
 capability itself. The retention-tier notice escalates only for a
 changed file whose content the rules could have read, so native binaries, source maps and
 minified bundles stored hash-only stop counting as inspection gaps unless they are what runs
 (an entrypoint or a loaded file).
 `propagation.package-mutation` stays quiet only when every install-time write destination is
-proven to stay inside the package's own directory, a temp directory or home; any destination
+proven to stay inside the package's own directory, a temp directory or home (never through
+a link, a redirected `TMPDIR`/`HOME`, an unknown working directory, or a home dotfile); any destination
 it cannot place falls back to the previous co-occurrence check. That clears esbuild's
 self-replacing binary install and keeps writes into sibling packages, parent-directory walks,
 shell copies and module-lookup destinations.
