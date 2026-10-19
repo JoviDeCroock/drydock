@@ -350,17 +350,29 @@ describe("tokenizeJsWithinBudget", () => {
     expect(tokenizeJsWithinBudget(large)).not.toBeNull();
   });
 
-  test("gives up in linear time on shapes that grow its stacks", () => {
+  test("lexes deep nesting and long arrow chains in linear time, within the budget", () => {
     for (const source of [
+      `fetch(u)\n${"[".repeat(20_000)}${"]".repeat(20_000)}`,
+      `fetch(u)\n${"(".repeat(20_000)}${")".repeat(20_000)}`,
+      `fetch(u)\n${"{".repeat(20_000)}${"}".repeat(20_000)}`,
       `fetch(u)\n${"(a)=>".repeat(120_000)}`,
       `fetch(u)\n${"async (a)=>".repeat(60_000)}`,
       `fetch(u)\n${"let a: (b) => ".repeat(50_000)}`,
     ]) {
       const start = performance.now();
-      expect(tokenizeJsWithinBudget(source)).toBeNull();
-      // Generous: about 0.1 s here, against minutes for the unbounded lexer.
+      const tokens = tokenizeJs(source);
+      expect(tokenizeJsWithinBudget(source)).toEqual(tokens);
+      // Generous: about 0.1 s here, against minutes when bracket and mode
+      // lookups scanned their stacks.
       expect(performance.now() - start).toBeLessThan(10_000);
     }
+  }, 120_000);
+
+  test("gives up when contextual-binding scans would go quadratic", () => {
+    const source = `${"(function(yield){".repeat(2_000)}${"`${a}`;".repeat(5_000)}`;
+    const start = performance.now();
+    expect(tokenizeJsWithinBudget(source)).toBeNull();
+    expect(performance.now() - start).toBeLessThan(10_000);
   }, 60_000);
 
   test("with rejectJsx, gives up at a `<` where an expression may start", () => {

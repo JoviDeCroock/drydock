@@ -1,6 +1,6 @@
 import type { PackageJsonSummary } from "../serialize";
 import type { CodePatternSet, FileRecord } from "../types";
-import { tokenizeJsWithinBudget } from "../../platform/js-lexer";
+import { tokenizeJs } from "../../platform/js-lexer";
 import { isTestPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
@@ -306,10 +306,12 @@ export function scriptCommandTokens(command: string): string[] {
 
 function relativeSpecifiers(text: string, executionEvidenceOnly = false): string[] {
   const specifiers: string[] = [];
-  // A source the lexer gives up on keeps every match.
-  const tokens = executionEvidenceOnly ? tokenizeJsWithinBudget(text) : null;
-  const codeStarts = tokens
-    ? new Set(tokens.filter((token) => token.type === "ident").map((token) => token.start))
+  const codeStarts = executionEvidenceOnly
+    ? new Set(
+        tokenizeJs(text)
+          .filter((token) => token.type === "ident")
+          .map((token) => token.start),
+      )
     : null;
   for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;

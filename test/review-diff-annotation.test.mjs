@@ -179,6 +179,24 @@ describe("review diff annotation", () => {
     expect(annotated.every((finding) => finding.releaseDelta)).toBe(true);
   });
 
+  test("an assembled call behind bracket padding is release scoped", () => {
+    const before = "eval(existing);\n";
+    const after = `${before}x=${"[".repeat(400)}${"]".repeat(400)};globalThis['ev'+'al'](p);\n`;
+    const previous = [{ path: "index.js", size: 16, sha256: "old", flags: [], textSample: before }];
+    const staged = [
+      { path: "index.js", size: after.length, sha256: "new", flags: [], textSample: after },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(deterministicFindings(staged, diff), diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+
+    expect(annotated.find((finding) => finding.ruleId === "code.dynamic-evaluation")).toMatchObject(
+      { releaseDelta: true },
+    );
+  });
+
   test("keeps modified-file findings release scoped when a later matching line changed", () => {
     const previous = [
       {

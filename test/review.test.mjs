@@ -844,20 +844,33 @@ describe("review", () => {
     }
   });
 
-  test("the code view stays near-linear on shapes that are quadratic to lex", () => {
+  test("the code view and the constant fold stay near-linear on deep nesting and arrow chains", () => {
     const ruleIds = (path, textSample) => {
       const staged = [{ path, size: textSample.length, sha256: "q", flags: [], textSample }];
       return deterministicFindings(staged, createPackageDiff([], staged)).map(
         (finding) => finding.ruleId,
       );
     };
-    for (const [path, source] of [
-      ["lib/a.js", `fetch(u)\n${"(a)=>".repeat(120_000)}`],
-      ["lib/b.js", `fetch(u)\n${"(a)=>".repeat(52_000)}`],
-      ["src/App.svelte", `<script>\nfetch(u)\n${"/**/".repeat(64_000)}</script>\n`],
+    const deep = `x=${"[".repeat(20_000)}${"]".repeat(20_000)};\n`;
+    // 500 KB, under the fold's 512 KB cap, so the fold runs too.
+    const arrows = `const f = ${"(a)=>".repeat(100_000)}0;\n`;
+    for (const [path, source, ruleId] of [
+      ["lib/a.js", `fetch(u)\n${"(a)=>".repeat(120_000)}`, "code.network-access"],
+      ["lib/b.js", `${deep}fetch(u);\n`, "code.network-access"],
+      ["lib/c.js", `${deep}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
+      [
+        "lib/d.js",
+        `${arrows}require('chi'+'ld_process')['exec'+'Sync'](atob(p));\n`,
+        "code.process-execution",
+      ],
+      [
+        "src/App.svelte",
+        `<script>\nfetch(u)\n${"/**/".repeat(64_000)}</script>\n`,
+        "code.network-access",
+      ],
     ]) {
       const start = performance.now();
-      expect(ruleIds(path, source), path).toContain("code.network-access");
+      expect(ruleIds(path, source), path).toContain(ruleId);
       // Generous: well under a second here, against seconds to minutes before.
       expect(performance.now() - start, path).toBeLessThan(15_000);
     }
