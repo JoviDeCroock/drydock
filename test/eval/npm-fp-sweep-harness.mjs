@@ -108,7 +108,7 @@ async function fetchWithRetry(url, init = {}, attempts = 3) {
 // below it (listVersions' suggestion), then walking further down the same
 // ordering for depth > 1. Prereleases are skipped so every pair is a release a
 // maintainer actually promoted.
-export async function resolvePairs(name, depth) {
+async function resolvePairs(name, depth) {
   const res = await fetchWithRetry(`${REGISTRY}/${name.replace("/", "%2f")}`, {
     headers: { accept: "application/vnd.npm.install-v1+json" },
   });
@@ -172,7 +172,7 @@ async function parseTarball(bytes) {
 }
 
 // loadPublicPackageDiff, minus caching and display metadata.
-export async function reviewPair(pair) {
+async function reviewPair(pair) {
   const [fromArchive, toArchive] = await Promise.all([
     tarballBytes(pair.fromTarball).then(parseTarball),
     tarballBytes(pair.toTarball).then(parseTarball),
@@ -325,7 +325,7 @@ function pct(n, d) {
   return d ? `${((100 * n) / d).toFixed(1)}%` : "n/a";
 }
 
-export function renderSweepMarkdown(result) {
+function renderSweepMarkdown(result) {
   const lines = [
     `# npm false-positive sweep`,
     ``,

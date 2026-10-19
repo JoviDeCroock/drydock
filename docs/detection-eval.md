@@ -160,6 +160,26 @@ or regressed attestations plus a matching-provenance control.
   is kept in the report as a regression guard against re-introducing a scan-time
   window.
 
+## Real-package false-positive sweep
+
+The benign hard-negatives are distilled by hand. `pnpm run eval:npm-sweep`
+measures the same thing against what maintainers actually ship: it pulls
+consecutive releases of a curated list of popular packages
+(`test/eval/npm-fp-sweep-packages.json`) from the public registry and runs
+each pair through the production public-diff path — the rendered sandbox
+parser, `buildNpmFindings`, redaction, release-delta annotation, and the risk
+breakdown with AI review off. A pair whose `releaseRisk` reaches medium (or
+whose `artifactRisk` reaches high) is listed in
+`.context/npm-fp-sweep/report.md` with the finding, its line and an excerpt.
+
+It is network-bound and report-only, so `pnpm test` never runs it, and a
+flagged pair is a triage candidate rather than a proven false positive.
+Tarballs are cached compressed under `.context/npm-fp-sweep/tarballs` and are
+only ever parsed as data. `NPM_FP_SWEEP_DEPTH` sets release pairs per package,
+`NPM_FP_SWEEP_PACKAGES` replaces the list, and `NPM_FP_SWEEP_CACHE` moves the
+cache. A false positive it finds becomes a distilled `cases-benign/` fixture
+before the rule changes, so the gated eval keeps the fix.
+
 ## Gated thresholds (and the ratchet)
 
 Gated metrics (`detection-eval.test.mjs`):
