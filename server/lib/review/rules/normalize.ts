@@ -19,7 +19,12 @@
 // re-encode control characters, so `firstMatchingLine` keeps pointing at the
 // real line in the original file.
 
-import { jsTokenText, tokenizeJsWithinBudget, type JsToken } from "../../platform/js-lexer";
+import {
+  jsTokenText,
+  tokenizeJs,
+  tokenizeJsWithinBudget,
+  type JsToken,
+} from "../../platform/js-lexer";
 
 // Samples are bounded to 64KB by the sandbox; this is a safety valve only.
 const MAX_NORMALIZE_BYTES = 512 * 1024;
@@ -353,11 +358,9 @@ function blankSpans(source: string, spans: JsToken[]): string {
 }
 
 function foldOnce(src: string): string {
-  // Past the lexer's work budget the source is left unfolded, as it is past
-  // the size cap.
-  const tokens = tokenizeJsWithinBudget(src);
-  if (!tokens) return src;
-  const sig = tokens.filter((t) => t.type !== "ws" && t.type !== "comment");
+  // Unbounded: a lexer that gave up here would leave the source unfolded and
+  // hide what the fold reveals.
+  const sig = tokenizeJs(src).filter((t) => t.type !== "ws" && t.type !== "comment");
   const replacements: Replacement[] = [];
   let consumed = -1;
   for (let k = 0; k < sig.length; k += 1) {
