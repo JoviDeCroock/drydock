@@ -3,7 +3,11 @@ import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
-import { analyzeInstallWrites, type InstallWriteOrigin } from "./install-root-writes";
+import {
+  analyzeInstallWrites,
+  findLinkCreation,
+  type InstallWriteOrigin,
+} from "./install-root-writes";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
@@ -116,7 +120,7 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
 const JS_INSTALL_ROOT_REFERENCE_PATTERNS = [
   /\bmodule\s*\.\s*paths\b|\b_nodeModulePaths\b|\bglobalPaths\b/,
   /\bINIT_CWD\b|\bnpm_config_(?:local_)?prefix\b|\bnpm\s+(?:root|prefix)\b/,
-  /\bchdir\s*\(/,
+  /\bchdir\s*\(|\b(?:cd|pushd)\s+["']?\.\.(?:[/\\\s"';&|]|$)/,
   /\bimport\.meta\s*\.\s*resolve\s*\(\s*(?!['"`]\.\.?[/\\'"`])/,
 ];
 const JS_WRITE_CANDIDATE =
@@ -155,7 +159,11 @@ function packageMutation(
       ? analyzeInstallWrites(source.normalized, origin)
       : null;
   const verdict = raw.unproven || !folded ? raw : folded;
-  if (!verdict.unproven) return null;
+  const writeLine = verdict.line ?? raw.writeLine ?? folded?.writeLine;
+  // A link anywhere in the package can redirect a write that is proven to
+  // stay home, so it voids the proof and is itself the install-root reference.
+  const link = verdict.unproven || writeLine !== undefined ? packageLinkCreation(ctx) : null;
+  if (!verdict.unproven && !link) return null;
   const climb =
     raw.climbLine !== undefined
       ? { line: raw.climbLine, obfuscated: false }
@@ -170,6 +178,7 @@ function packageMutation(
   if (reference) {
     return { line: reference.line ?? verdict.line, obfuscated: reference.obfuscated };
   }
+  if (link) return { line: writeLine, obfuscated: false };
   if (
     verdict.importedFrom.some((specifier) =>
       importReachesInstallRoot(ctx, source.file, specifier, origin),
@@ -178,6 +187,52 @@ function packageMutation(
     return { line: verdict.line, obfuscated: false };
   }
   return null;
+}
+
+const LINK_SCAN_PATH = /\.(?:[cm]?jsx?|[cm]?tsx?|sh|bash|zsh|command)$/i;
+const linkCreationCache = new WeakMap<RuleContext, { file: string; line?: number } | null>();
+
+// Where the package first creates a link: any code file or lifecycle script,
+// install-reachable or not, since reachability is only approximated. A code
+// file whose text was not sampled in full counts, because the link could be
+// in the part that was not read.
+function packageLinkCreation(ctx: RuleContext): { file: string; line?: number } | null {
+  if (linkCreationCache.has(ctx)) return linkCreationCache.get(ctx) ?? null;
+  const origin = {
+    filePath: "package.json",
+    packageName: ctx.packageJson?.name ?? null,
+    packageMain: ctx.packageJson?.main ?? null,
+  };
+  let found: { file: string; line?: number } | null = null;
+  for (const command of [...Object.values(ctx.scripts), ...Object.values(ctx.implicitScripts)]) {
+    if (findLinkCreation(command, origin) !== null) {
+      found = { file: ctx.packageJsonFile?.path ?? "package.json" };
+      break;
+    }
+  }
+  for (const file of found ? [] : ctx.files) {
+    const shebang = file.textSample?.startsWith("#!") ?? false;
+    const code =
+      (LINK_SCAN_PATH.test(file.path) || shebang) &&
+      !isTypeDeclarationPath(file.path) &&
+      !isDocumentationPath(file.path);
+    if (!code || ctx.diffByPath.get(file.path)?.status === "removed") continue;
+    if (!file.textSample || file.flags.includes("truncated")) {
+      found = { file: file.path };
+      break;
+    }
+    const fileOrigin = { ...origin, filePath: file.path };
+    const normalized = normalizeCodeForScanning(file.textSample);
+    const line =
+      findLinkCreation(file.textSample, fileOrigin) ??
+      (normalized !== file.textSample ? findLinkCreation(normalized, fileOrigin) : null);
+    if (line !== null) {
+      found = { file: file.path, line };
+      break;
+    }
+  }
+  linkCreationCache.set(ctx, found);
+  return found;
 }
 
 const MODULE_SUFFIXES = ["", ".js", ".cjs", ".mjs", "/index.js", "/index.cjs", "/index.mjs"];

