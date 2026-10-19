@@ -1497,6 +1497,51 @@ describe("review", () => {
       secretFindings(`token:"${"token:".repeat(40_000)}`);
       expect(performance.now() - started).toBeLessThan(2000);
     });
+
+    // Provider-shaped fakes are assembled at runtime so no committed file
+    // carries a literal that secret scanners read as a live credential.
+    const fakeSendGrid = [
+      "SG",
+      "Fx7Qp2Lm9Rt4Vb6Nc8Wd1Z",
+      "Gh3Jk5Lm7Np9Qr2St4Uv6Wx8Yz0Ab1Cd3Ef5Gh7Ij9K",
+    ];
+    const fakeDiscord = ["MTAwMDAwMDAwMDAwMDAwMDAw", "GaBcDe", "Fx7Qp2Lm9Rt4Vb6Nc8Wd1Zk3Jh5"];
+    const fakeAwsKeyId = ["AKIA", "Q7XK2M9PLR4T8VB3"];
+
+    test.each([
+      [
+        "SendGrid key in .env",
+        () => `SENDGRID_API_KEY=${fakeSendGrid.join(".")}\n`,
+        "deploy/app.conf",
+      ],
+      ["Discord bot token in YAML", () => `token: ${fakeDiscord.join(".")}\n`, "config/bot.yml"],
+      [
+        "AWS key id after a \\n escape",
+        () => `const creds = "[default]\\n${fakeAwsKeyId.join("")}\\n";\n`,
+        "lib/client.js",
+      ],
+      [
+        "AWS key id in a SigV4 credential scope",
+        () =>
+          `const url = "https://bucket.example.invalid/o?X-Amz-Credential=${fakeAwsKeyId.join("")}/20240101/us-east-1/s3/aws4_request";\n`,
+        "lib/client.js",
+      ],
+      [
+        "CamelCase password with a trailing year",
+        () => '  password: "AcmeCorp2024",\n',
+        "lib/client.js",
+      ],
+    ])("flags a %s", (_shape, sample, path) => {
+      expect(secretFindings(sample(), path)).toHaveLength(1);
+    });
+
+    test.each([
+      ['const X_AWS_EC2_METADATA_TOKEN = "x-aws-ec2-metadata-token";\n'],
+      ["    password = url44.password\n"],
+      ["    const token = exports$1.HEX_TOKEN_VALUE\n"],
+    ])("keeps %j a name or property path", (textSample) => {
+      expect(secretFindings(textSample)).toEqual([]);
+    });
   });
 
   test("requires self-identifying tokens and key bodies to stand alone", () => {

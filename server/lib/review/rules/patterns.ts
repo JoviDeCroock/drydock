@@ -616,13 +616,17 @@ const GENERIC_SECRET_REDACTION_PATTERN =
 //   - identifier-shaped constants: `TOKEN = "__WEBPACK_MODULE_REFERENCE__"`,
 //     `SECRET: "MF-Proxy-Shared-Secret"`, Monaco's `token: "delimiter.curly"`,
 //     error codes like `'auth/invalid-api-key'`. A value made only of letter
-//     words (each ≤16 letters, ≤4 trailing digits) joined by `-_.:/` is a name,
-//     not key material, so neither branch accepts one. Monaco's `@brackets`
-//     and `type.$0` tokenizer references are names of the same kind.
+//     words (≤16 letters) joined by `-_.:/` is a name, not key material, so
+//     neither branch accepts one. A word may carry digits only as a short
+//     tag (`ec2`, `x509`, Monaco's `type.$0`), so a CamelCase word with a
+//     trailing year or counter (`AcmeCorp2024`) stays credential-shaped.
 //   - unquoted expressions: `password: options.password`, `token = this.ctx`,
 //     `exports.Token = exports.Location`. An unquoted value is a secret only in
 //     `.env`/YAML-style files, where it is not a property path and, unlike an
-//     identifier, carries a digit (`sk-abc123…`, `Tr0ub4dor&3`).
+//     identifier, carries a digit (`sk-abc123…`, `Tr0ub4dor&3`). A property
+//     path is a chain of identifiers whose digits only trail (`url44.password`);
+//     dotted tokens with base64url segments (SendGrid `SG.…`, Discord bot
+//     tokens) are not paths.
 //   - placeholders: `"<client-secret>"`, `"${API_KEY}"`, `"{{token}}"`,
 //     `xxxx`/`****` masks, and "example"/"placeholder"/"your-" values.
 //   - minified string seams: `"…password: "),m=n.limit…"` reads the code
@@ -632,7 +636,11 @@ const GENERIC_SECRET_REDACTION_PATTERN =
 // cannot reach the next statement. Every sub-pattern is bounded or anchored
 // on disjoint character classes so a long run stays linear.
 const SECRET_KEY_ASSIGNMENT = String.raw`(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)[ \t]*[:=][ \t]*)`;
-const WORD_SEGMENT = String.raw`(?:[A-Za-z]{1,16}[0-9]{0,4}|\$?[0-9]{1,2})`;
+const WORD_SEGMENT = String.raw`(?:[A-Za-z]{1,16}|[A-Za-z]{1,3}[0-9]{1,4}|\$?[0-9]{1,2})`;
+// Segments are separated by `.` and cannot contain one, so the chain scans
+// linearly; every dotted part must be an identifier, not just a prefix of them.
+const IDENTIFIER_SEGMENT = String.raw`[A-Za-z_$][A-Za-z_$]*[0-9]*`;
+const PROPERTY_PATH = String.raw`(?:${IDENTIFIER_SEGMENT}\.)+${IDENTIFIER_SEGMENT}(?![\w$.-])`;
 // Quoted names may use `:` (`urn:…:token-type`); the unquoted variant leaves it
 // out, as its value cannot contain one. Keeping `:` out also keeps the scan
 // linear: a run of `token:token:…` would otherwise rescan to the end from
@@ -650,7 +658,7 @@ const GENERIC_SECRET_FINDING_PATTERN = new RegExp(
     String.raw`(['"])(?![{%[]|\$\{)(?!${QUOTED_WORD_SHAPED_VALUE}\2)(?![^'"\s]*?(?:${PLACEHOLDER_VALUE_HINT}))[^'"\s(){};,\x60]{12,}\2` +
     "|" +
     // Unquoted `.env`/YAML value running to whitespace or end of text.
-    String.raw`(?![$<%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])(?!${UNQUOTED_WORD_SHAPED_VALUE}={0,2}(?:\s|$))(?!${UNQUOTED_SECRET_CHAR}*?(?:${PLACEHOLDER_VALUE_HINT}))(?=${UNQUOTED_SECRET_CHAR}*?[0-9])${UNQUOTED_SECRET_CHAR}{12,}={0,2}(?=$|\s)` +
+    String.raw`(?![$<%]|${PROPERTY_PATH})(?!${UNQUOTED_WORD_SHAPED_VALUE}={0,2}(?:\s|$))(?!${UNQUOTED_SECRET_CHAR}*?(?:${PLACEHOLDER_VALUE_HINT}))(?=${UNQUOTED_SECRET_CHAR}*?[0-9])${UNQUOTED_SECRET_CHAR}{12,}={0,2}(?=$|\s)` +
     ")",
   "gi",
 );
@@ -684,10 +692,13 @@ const CONNECTION_STRING_PASSWORD_FINDING_PATTERN = new RegExp(
 // Self-identifying token shapes that still occur by chance inside long base64
 // runs (a 20-char `AKIA…` window in an inlined WASM module): the finding side
 // requires the token to stand alone rather than sit inside a longer base64 run.
+// The letter of a `\n`/`\t` escape is not part of a run (`"…\nAKIA…"`), and a
+// trailing `/` is the SigV4 credential scope (`X-Amz-Credential=AKIA…/2024…`).
 const AWS_ACCESS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
 const AWS_SESSION_KEY_PATTERN = /ASIA[0-9A-Z]{16}/g;
-const AWS_ACCESS_KEY_FINDING_PATTERN = /(?<![A-Za-z0-9+/])AKIA[0-9A-Z]{16}(?![A-Za-z0-9+/])/g;
-const AWS_SESSION_KEY_FINDING_PATTERN = /(?<![A-Za-z0-9+/])ASIA[0-9A-Z]{16}(?![A-Za-z0-9+/])/g;
+const AWS_ACCESS_KEY_FINDING_PATTERN = /(?<!(?<!\\)[A-Za-z0-9+/])AKIA[0-9A-Z]{16}(?![A-Za-z0-9+])/g;
+const AWS_SESSION_KEY_FINDING_PATTERN =
+  /(?<!(?<!\\)[A-Za-z0-9+/])ASIA[0-9A-Z]{16}(?![A-Za-z0-9+])/g;
 
 // Slack webhook paths are `T<team>/B<bot>/<secret>`; docs and bundled samples
 // use `xxx/xxx/xxx` or short made-up segments.
