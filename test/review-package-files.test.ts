@@ -227,4 +227,21 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     const long = [`*${"a".repeat(1_100)}`, "lib"];
     expect(outside(long, ["lib/a.js", "src/a.js"])).toEqual(["src/a.js"]);
   });
+
+  test("a manifest whose expanded patterns pass the compile cap falls back to its literal entries", () => {
+    // 999 hostile entries plus `lib` stays inside the entry cap, so only the
+    // compile cap can stop these from compiling.
+    const braces = `{${Array.from({ length: 64 }, (_, index) => `b${index}`).join(",")}}`;
+    const entry = (index: number) => `${"a".repeat(700)}${index}${braces}`;
+    const matched = `${"a".repeat(700)}0b63`;
+    expect(outside([entry(0), entry(1), "lib"], [matched, "lib/a.js"])).toEqual([]);
+    const hostile = [...Array.from({ length: 999 }, (_, index) => entry(index)), "lib"];
+    expect(outside(hostile, [matched, "lib/a.js"])).toEqual([matched]);
+
+    const negated = (alternatives: number) =>
+      `{${Array.from({ length: 64 }, (_, index) => index).join(",")}}${"p".repeat(100)}!(${Array.from({ length: alternatives }, (_, index) => `n${index}`).join("|")})`;
+    const negatedMatch = `0${"p".repeat(100)}x.js`;
+    expect(outside([negated(10), "lib"], [negatedMatch, "lib/a.js"])).toEqual([]);
+    expect(outside([negated(150), "lib"], [negatedMatch, "lib/a.js"])).toEqual([negatedMatch]);
+  });
 });

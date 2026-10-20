@@ -53,6 +53,10 @@ export interface PackageFilesAllowlistOptions {
 const MAX_FILES_ENTRIES = 1_000;
 const MAX_ENTRY_LENGTH = 1_024;
 const MAX_EXPANSIONS_PER_ENTRY = 64;
+// Pattern characters compiled across every expanded alternative of one
+// manifest. Compiling allocates per character, so without this the entry,
+// length and expansion caps multiply into gigabytes before any path is matched.
+const MAX_COMPILE_CHARS = 250_000;
 // Wildcard steps across every path matched against one manifest. Real
 // manifests spend well under 1% of it on the largest packages in the sweep.
 const MAX_MATCH_WORK = 30_000_000;
@@ -87,13 +91,14 @@ export function compilePackageFilesAllowlist(
   if (!files.length) return null;
 
   const budget: MatchBudget = { remaining: MAX_MATCH_WORK };
+  const compileBudget: MatchBudget = { remaining: MAX_COMPILE_CHARS };
   let rules: FilesRule[] | null = null;
   if (
     files.length <= MAX_FILES_ENTRIES &&
     files.every((entry) => entry.length <= MAX_ENTRY_LENGTH)
   ) {
     try {
-      rules = files.flatMap((entry) => compileFilesEntry(entry, budget));
+      rules = files.flatMap((entry) => compileFilesEntry(entry, budget, compileBudget));
     } catch (error) {
       if (!(error instanceof MatchBudgetExceeded)) throw error;
     }
@@ -251,7 +256,11 @@ function evaluate(rules: FilesRule[], segments: string[], isDirectory: boolean):
   return included;
 }
 
-function compileFilesEntry(entry: string, budget: MatchBudget): FilesRule[] {
+function compileFilesEntry(
+  entry: string,
+  budget: MatchBudget,
+  compileBudget: MatchBudget,
+): FilesRule[] {
   let pattern = entry.trim();
   let include = true;
   while (pattern.startsWith("!")) {
@@ -266,11 +275,20 @@ function compileFilesEntry(entry: string, budget: MatchBudget): FilesRule[] {
   if (!pattern || pattern === ".") pattern = "**";
   pattern = pattern.toLowerCase();
 
-  const rule = { include, matchers: compileGlob(pattern, budget, { matchBase, directoryOnly }) };
+  const rule = {
+    include,
+    matchers: compileGlob(pattern, budget, compileBudget, { matchBase, directoryOnly }),
+  };
   if (hasGlobMagic(pattern)) return [rule];
   // A literal entry is either a file or a directory; npm adds `<entry>/**` for
   // the directory case, and for a file it matches nothing extra.
-  return [rule, { include, matchers: compileGlob(`${pattern}/**`, budget, { matchBase: false }) }];
+  return [
+    rule,
+    {
+      include,
+      matchers: compileGlob(`${pattern}/**`, budget, compileBudget, { matchBase: false }),
+    },
+  ];
 }
 
 // A non-negated entry without glob syntax; npm-packlist turns one that names a
@@ -306,11 +324,17 @@ interface CompiledPattern {
 function compileGlob(
   pattern: string,
   budget: MatchBudget,
+  compileBudget: MatchBudget,
   options: { matchBase: boolean; directoryOnly?: boolean },
 ): GlobMatcher[] {
-  return expandAlternatives(pattern).map(({ positive, negatives }) => {
+  const compiledNegatives = new Map<string[], CompiledPattern[]>();
+  return expandAlternatives(pattern, compileBudget).map(({ positive, negatives }) => {
     const compiled = compileSegments(positive);
-    const excluded = negatives.map(compileSegments);
+    let excluded = compiledNegatives.get(negatives);
+    if (!excluded) {
+      excluded = negatives.map(compileSegments);
+      compiledNegatives.set(negatives, excluded);
+    }
     return {
       match(segments, isDirectory, partial) {
         if (options.directoryOnly && !isDirectory) return false;
@@ -330,26 +354,41 @@ function compileGlob(
 // Brace sets and the `@(a|b)` / `?(a|b)` extglobs expand to alternatives; one
 // `!(a|b)` per pattern becomes "matches `*` here but none of the alternatives".
 // `+(…)` and `*(…)` stay literal, which can only make an entry match less.
-function expandAlternatives(pattern: string): Array<{ positive: string; negatives: string[] }> {
+// Every string kept is charged to the compile budget as it is produced, so a
+// hostile entry stops allocating at the cap instead of after expanding fully.
+function expandAlternatives(
+  pattern: string,
+  compileBudget: MatchBudget,
+): Array<{ positive: string; negatives: string[] }> {
   const out: Array<{ positive: string; negatives: string[] }> = [];
+  const keep = (positive: string, negatives: string[]): boolean => {
+    if (out.length === MAX_EXPANSIONS_PER_ENTRY) return false;
+    spend(compileBudget, positive.length);
+    out.push({ positive, negatives });
+    return true;
+  };
   for (const expanded of expandBraces(pattern)) {
+    if (out.length === MAX_EXPANSIONS_PER_ENTRY) break;
     const negation = findGroup(expanded, "!");
     if (!negation) {
-      out.push(...expandExtglobs(expanded).map((positive) => ({ positive, negatives: [] })));
+      for (const positive of expandExtglobs(expanded)) if (!keep(positive, [])) break;
       continue;
     }
     const before = expanded.slice(0, negation.start);
     const after = expanded.slice(negation.end);
+    // Shared by every positive this alternative expands to.
+    const negatives: string[] = [];
+    for (const alternative of negation.alternatives) {
+      for (const negative of expandExtglobs(`${before}${alternative}${after}`)) {
+        spend(compileBudget, negative.length);
+        negatives.push(negative);
+      }
+    }
     for (const positive of expandExtglobs(`${before}*${after}`)) {
-      out.push({
-        positive,
-        negatives: negation.alternatives.flatMap((alternative) =>
-          expandExtglobs(`${before}${alternative}${after}`),
-        ),
-      });
+      if (!keep(positive, negatives)) break;
     }
   }
-  return out.slice(0, MAX_EXPANSIONS_PER_ENTRY);
+  return out;
 }
 
 function expandBraces(pattern: string): string[] {
