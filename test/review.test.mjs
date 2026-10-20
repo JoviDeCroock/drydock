@@ -1628,6 +1628,200 @@ describe("review", () => {
     expect(secretFindings("const c = `Server=${host};User Id=sa;Password=${pwd};`;\n")).toEqual([]);
     expect(secretFindings("// Server=db;User Id=sa;Password=<password>;\n")).toEqual([]);
     expect(secretFindings("o.host=e.host;password=e.password;\n")).toEqual([]);
+    expect(
+      secretFindings(
+        "return `sqlserver://localhost;database=mydb;user=SA;password=randompassword;`;\n",
+      ),
+    ).toEqual([]);
+  });
+
+  describe("generic key/value secrets", () => {
+    const secretFindings = (textSample, path = "lib/index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+
+    test.each([
+      ['  token: "__ASTRO_ASSET_IMAGE__",\n'],
+      ['const MODULE_REFERENCE_TOKEN = "__WEBPACK_MODULE_REFERENCE__";\n'],
+      ['  DATA_PROXY_SECRET: "MINIFLARE_PROXY_SECRET",\n'],
+      ['var VERCEL_OIDC_TOKEN="VERCEL_OIDC_TOKEN",SENSITIVE="[SENSITIVE]";\n'],
+      ['  PROXY_SHARED_SECRET: "MF-Proxy-Shared-Secret",\n'],
+      ["  INVALID_API_KEY: 'auth/invalid-api-key',\n"],
+      ["const X509_SUBJECT_TOKEN = 'urn:ietf:params:oauth:token-type:x509';\n"],
+      ['  { token: "delimiter.curly", open: "{", close: "}" },\n'],
+      ['  [/@\\w+/, { token: "@brackets.directive" }],\n'],
+      ['  [/\\$\\w+/, { token: "type.reserved.$0" }],\n'],
+      [" * token: 'TotallyRealToken',\n"],
+      ["      password: parsedURL.password\n"],
+      ["      token: record.token\n"],
+      ["    var token = this.context.strict ? options.stricted : options.firstRestricted;\n"],
+      ["    password: options.password\n"],
+      ["        token: n._authToken || n.token,\n"],
+      ['    const password = this.options.proxy.password || "";\n'],
+      ["    const apiKey = props.__apiKey === undefined ? client.apiKey : props.__apiKey;\n"],
+      ["  target.username = target.password = target.search = target.hash = '';\n"],
+      ["  setOidcToken({ config, opts, authTokenKey, token: response.token })\n"],
+      ["exports.OperationTypeNode = exports.Token = exports.Location = void 0;\n"],
+      ["    const token = relatedModuleToken\n"],
+      ["      password:\n            options.password\n"],
+      ["    $token = Get-AzAccessToken @params\n"],
+      [' * const clientSecret = "<client-secret>";\n'],
+      ['  apiKey:"${AI_GATEWAY_API_KEY}"\n'],
+      ["exports.DEFAULT_PROJECT_ID_TOKEN = '{{projectId}}';\n"],
+      ['w=q("Enter password: "),m=n.limitMessage;!v;)n.limit=A,w=q(t,n),r=["Retry"];\n'],
+    ])("does not read %j as a secret", (textSample) => {
+      expect(secretFindings(textSample)).toEqual([]);
+    });
+
+    test.each([
+      ['const API_KEY = "sk-live-4f9b2c7e1a8d3f6b0c5e9a2d";\n', "lib/client.js"],
+      ['  password: "Tr0ub4dor&3xyzzy",\n', "lib/client.js"],
+      ["  apiKey: 'a8f5f167f44f4964e6c998dee827110c',\n", "lib/client.js"],
+      ['  client_secret: "0bXq7Zr2LmN8vK4pT1sW9yD6",\n', "lib/client.js"],
+      ["  token: 'dGhpc2lzbm90YXJlYWx0b2tlbjEyMw==',\n", "lib/client.js"],
+      ['  password: "SuperSecretPasswordValue"\n', "lib/client.js"],
+      ["API_KEY=sk-abc123def456ghi789\n", "config/production.conf"],
+      ["APP_SECRET=8f14e45fceea167a5a36dedd4bea2543\n", "config/production.conf"],
+      ["password: Tr0ub4dor&3xyzzy\n", "config/settings.yml"],
+      ["export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYzz1x2y\n", "scripts/deploy.sh"],
+    ])("flags %j", (textSample, path) => {
+      expect(secretFindings(textSample, path)).toHaveLength(1);
+    });
+
+    test("scans a run of keys without rescanning from each one", () => {
+      const started = performance.now();
+      secretFindings("token:".repeat(40_000));
+      secretFindings(`token:"${"token:".repeat(40_000)}`);
+      expect(performance.now() - started).toBeLessThan(2000);
+    });
+
+    // Provider-shaped fakes are assembled at runtime so no committed file
+    // carries a literal that secret scanners read as a live credential.
+    const fakeSendGrid = [
+      "SG",
+      "Fx7Qp2Lm9Rt4Vb6Nc8Wd1Z",
+      "Gh3Jk5Lm7Np9Qr2St4Uv6Wx8Yz0Ab1Cd3Ef5Gh7Ij9K",
+    ];
+    const fakeDiscord = ["MTAwMDAwMDAwMDAwMDAwMDAw", "GaBcDe", "Fx7Qp2Lm9Rt4Vb6Nc8Wd1Zk3Jh5"];
+    const fakeAwsKeyId = ["AKIA", "Q7XK2M9PLR4T8VB3"];
+
+    test.each([
+      [
+        "SendGrid key in .env",
+        () => `SENDGRID_API_KEY=${fakeSendGrid.join(".")}\n`,
+        "deploy/app.conf",
+      ],
+      ["Discord bot token in YAML", () => `token: ${fakeDiscord.join(".")}\n`, "config/bot.yml"],
+      [
+        "AWS key id after a \\n escape",
+        () => `const creds = "[default]\\n${fakeAwsKeyId.join("")}\\n";\n`,
+        "lib/client.js",
+      ],
+      [
+        "AWS key id in a SigV4 credential scope",
+        () =>
+          `const url = "https://bucket.example.invalid/o?X-Amz-Credential=${fakeAwsKeyId.join("")}/20240101/us-east-1/s3/aws4_request";\n`,
+        "lib/client.js",
+      ],
+      [
+        "CamelCase password with a trailing year",
+        () => '  password: "AcmeCorp2024",\n',
+        "lib/client.js",
+      ],
+    ])("flags a %s", (_shape, sample, path) => {
+      expect(secretFindings(sample(), path)).toHaveLength(1);
+    });
+
+    test.each([
+      ['const X_AWS_EC2_METADATA_TOKEN = "x-aws-ec2-metadata-token";\n'],
+      ["    password = url44.password\n"],
+      ["    const token = exports$1.HEX_TOKEN_VALUE\n"],
+    ])("keeps %j a name or property path", (textSample) => {
+      expect(secretFindings(textSample)).toEqual([]);
+    });
+  });
+
+  test("requires self-identifying tokens and key bodies to stand alone", () => {
+    const secretFindings = (textSample, path = "lib/index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+    const fakeKeyBody = "MIIEowIBAAKCAQEAfakefixturefakefixturefakefixturefakefixture00";
+
+    // A 20-char AKIA window inside an inlined WASM module's base64 is chance.
+    expect(
+      secretFindings(
+        'const wasm = "AAAABzAAAAAAAAAKEAAAB0AAAAAAAAAKIAAAB0AAAAAAAAAKMAAAB1AAAA";\n',
+      ),
+    ).toEqual([]);
+    expect(secretFindings("aws_access_key_id = AKIAQ7XK2M9PLR4T8VB3\n")).toHaveLength(1);
+
+    expect(secretFindings("// https://hooks.slack.com/services/xxx/xxx/xxx\n")).toEqual([]);
+    // Assembled at runtime so push protection does not read the fixture as a live webhook.
+    const slackHookFixture = [
+      "https://hooks.slack.com/services",
+      "T0FAKE123",
+      "B0FAKE456",
+      "fakefixture0000000000000",
+    ].join("/");
+    expect(secretFindings(`const hook = "${slackHookFixture}";\n`)).toHaveLength(1);
+
+    expect(
+      secretFindings(
+        ' * key="-----BEGIN PRIVATE KEY-----\\nXXXX\\nXXXX\\n-----END PRIVATE KEY-----"\n' +
+          ' * privateKey: "-----BEGIN PRIVATE KEY-----<KEY>-----END PRIVATE KEY-----\\n"\n',
+      ),
+    ).toEqual([]);
+    expect(
+      secretFindings(
+        "result.push('-----BEGIN PGP PRIVATE KEY BLOCK-----\\n');\n" +
+          "result.push(addheader(customComment, config));\n" +
+          "result.push(base64.encode(body));\n" +
+          "result.push('-----END PGP PRIVATE KEY BLOCK-----\\n');\n",
+      ),
+    ).toEqual([]);
+    expect(
+      secretFindings(
+        `-----BEGIN RSA PRIVATE KEY-----\n${fakeKeyBody}\n-----END RSA PRIVATE KEY-----\n`,
+        "certs/server.key",
+      ),
+    ).toHaveLength(1);
+    expect(
+      secretFindings(
+        `const key = "-----BEGIN PRIVATE KEY-----\\n${fakeKeyBody}\\n-----END PRIVATE KEY-----\\n";\n`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("does not read minified string seams or placeholder logins as URL credentials", () => {
+    const secretFindings = (textSample, path = "lib/index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: path, flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "file.secret-content",
+      );
+    };
+
+    expect(
+      secretFindings(
+        'homepage:"https://dotenvx.example",keywords:["dotenv","env"],author:"dev@example.invalid"\n',
+      ),
+    ).toEqual([]);
+    expect(secretFindings("npm config set proxy http://[user:pwd]@domain.tld:port\n")).toEqual([]);
+    expect(secretFindings('return "postgresql://login:password@localhost:5432/db";\n')).toEqual([]);
+    expect(
+      secretFindings('return "mongodb+srv://root:randompassword@cluster0.example.invalid/db";\n'),
+    ).toEqual([]);
+    expect(secretFindings('url: "redis://alice:foobared@cache.example.invalid:6380",\n')).toEqual(
+      [],
+    );
+    expect(
+      secretFindings('const dsn = "postgres://svc:9f8a7b6c5d4e@10.0.0.5/prod";\n'),
+    ).toHaveLength(1);
   });
 
   test("scans adversarial markup and env whitespace in linear time", () => {
@@ -1779,7 +1973,8 @@ describe("review", () => {
       size: 160,
       sha256: "test-key",
       flags: [],
-      textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+      textSample:
+        "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLYTESTFIXTUREONLYTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
     };
     const findings = deterministicFindings([key], createPackageDiff([key], [key]));
 
@@ -1804,7 +1999,8 @@ describe("review", () => {
         size: 160,
         sha256: "test-key",
         flags: [],
-        textSample: "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
+        textSample:
+          "-----BEGIN PRIVATE KEY-----\nTESTFIXTUREONLYTESTFIXTUREONLYTESTFIXTUREONLY\n-----END PRIVATE KEY-----\n",
       },
     ];
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
@@ -1820,14 +2016,14 @@ describe("review", () => {
       size: 80,
       sha256: "python-absolute-secret",
       flags: [],
-      textSample: 'password = "production-secret-value"\n',
+      textSample: 'password = "fixture-s3cr3t-9f8a7b6c"\n',
     };
     const relativeSecret = {
       path: "sdist/src/demo/tests/relative_secrets.py",
       size: 80,
       sha256: "python-relative-secret",
       flags: [],
-      textSample: 'password = "another-production-secret"\n',
+      textSample: 'password = "fixture-s3cr3t-1e2d3c4b"\n',
     };
     const app = {
       path: "sdist/src/demo/app.py",
