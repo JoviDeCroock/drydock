@@ -133,7 +133,11 @@ or regressed attestations plus a matching-provenance control.
   findings include a `code.*` rule is replayed as a payload spliced into an
   existing module: each code file becomes a modification of a carrier that
   already uses the network, process, environment and dynamic-code primitives,
-  once as ordinary lines and once as a single minified line. The payload must
+  once as ordinary lines and once as a single minified line. The `renamed`
+  shapes replay the same splice into a bundler chunk that changed content hash:
+  the carrier, padded with a module body, shipped last release under a hashed
+  sibling name, so the payload's file is added and pairs with it as a rename
+  (`paired` counts samples that did). The payload must
   still raise `releaseRisk` (the score the workflow gate reads) to its
   `expectMinRisk`, through the real annotation and risk-breakdown path. This
   guards release-delta classification, which the other metrics never exercise:
