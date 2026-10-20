@@ -61,10 +61,11 @@ The first corpus slice covers:
 
 - benign version bump control;
 - preinstall credential/environment collection with command and network capability;
-- credential file-path reads (`.aws/credentials`, `.ssh/id_`, `.netrc`) in addition to broad environment reads and known token names, matching the Python rule coverage while excluding common non-secret JS runtime flags and npm's own lifecycle variables (`npm_command`, `npm_lifecycle_event`, `npm_package_name`, …) — but not `npm_config_*`, which can carry live registry auth such as `npm_config__authToken`;
+- credential access keyed on what is read: JavaScript `code.credential-access` counts environment reads whose name looks like a secret (`TOKEN`, `SECRET`, `PASSWORD`, `KEY`, `AUTH`, `JWT`, `CREDENTIAL`, `COOKIE`, `SESSION`, `AWS_`, database URLs, `npm_config_*` auth keys such as `npm_config__authToken`, the legacy token names) or names a credential file (`KUBECONFIG`, `DOCKER_CONFIG`, npm's `USERCONFIG`, `NETRC`), reads whose key is chosen at runtime (`process.env[name]`, a computed member of `process`, `Deno.env.get(name)`), any use of the env object as a value (bound, passed, spread, copied, wrapped in `URLSearchParams`, serialized, enumerated, or handed to a child process, since a callee's name does not prove what it does with it), and credential file paths (`.aws/credentials`, `.ssh/id_`, `.netrc`). Named reads of configuration variables (`PORT`, `HOME`, `XDG_RUNTIME_DIR`, `npm_config_https_proxy`) do not count, whether direct, split across lines, destructured (on one line or many, without a rest element), through a `const` alias used only for named reads, or through TypeScript's lowering of `process?.env?.X`; nor do presence tests, existence and type guards, or mentions in comments (`legit-nonsecret-env-config`; `secret-named-env-exfil`, `env-alias-harvest-exfil`, `env-computed-key-exfil`, `env-object-value-exfil` and `ci-credential-names-exfil` pin the kept shapes);
 - the collect-and-exfiltrate sink: a single file that reads credentials and has a network egress path escalates `code.credential-access` to high even on a modified (not newly added) module;
 - implicit `node-gyp rebuild` from root `binding.gyp`, GYP command substitution that executes package JavaScript, and native artifact review — by extension and by magic-byte flags, so extensionless Linux/macOS platform binaries are held to the same bar as a Windows `.exe`;
-- base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation) and literal `node -e`/`node --eval` child-process launches;
+- base64/dynamic evaluation plus network-capable code, including the `WebAssembly.instantiateStreaming(fetch(...))` loader idiom (the whole `compile`/`compileStreaming`/`instantiate`/`instantiateStreaming` family counts as dynamic evaluation) and literal `node -e`/`node --eval` child-process launches. `code.network-access` covers `http`/`https`/`http2`, `net`, `dns`, `dgram`, `tls`, `undici` and `ws` (by `require`, `import … from` or a literal `import()`), `fetch`, `XMLHttpRequest`, `axios`, `new WebSocket`/`EventSource` and `sendBeacon`. In JavaScript and TypeScript, `code.network-access` and `code.dynamic-evaluation` skip comments, and eval-family calls skip code emitted as string literals, methods named `eval`, and the CommonJS dynamic-import shim (`new Function('s', 'return import(s)')`); network calls inside strings still count, because code in a string can run through `vm` sinks that are not findings. A decode within a few hundred characters of an eval call is the staged-payload chain and stays high in a modified module (`legit-comment-network-and-codegen` pins the quiet shapes);
+- shell tool names in data rather than commands: `code.remote-shell` needs an operand after `curl`/`wget` (a flag, quote, URL, path or substitution), and download-and-execute does not read `curl|…|zsh` regex alternations as a pipeline, so syntax-highlighter grammars and keyword tables stay quiet while `curl … | bash` in an exec string stays critical (`legit-shell-grammar-keyword-lists`);
 - javascript-obfuscator-style rotating string tables around code capabilities, recognized from the combined hexadecimal lookup, `while (!![])`, `parseInt`, and `push(shift())` wrapper shape rather than any one minifier-like token;
 - secret-looking file addition;
 - large opaque binary addition;
@@ -154,6 +155,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 - `propagation.package-mutation` reads a path literal, not a resolved path, so it cannot tell which part of the install root a write lands in: an install hook that writes only into a shared cache directory such as `node_modules/.cache` raises the same finding as one that rewrites a neighbouring package's manifest. The finding is a reviewer signal at `high`, never an automatic rejection, and the evidence line points at the path expression so the distinction is one click away.
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
+- JavaScript credential access reads names, not values: a secret held in a variable with a configuration-shaped name (`process.env.CONFIG`) raises nothing, `const { env } = process` is not followed, and `.npmrc` reads are not credential paths. A runtime-chosen key and the env object handed to a child process still count, so webpack's `EnvironmentPlugin`-style `process.env[key]` loops and `spawn(…, { env: { ...process.env } })` remain known false positives.
 - Anti-analysis and environment-detection patterns are not deeply modeled because Drydock intentionally avoids package execution.
 - Prompt-injection detection is phrase-based: paraphrased, encoded, non-English, or unusually segmented injection text raises nothing deterministically and falls to the AI reviewer, whose prompt treats injection attempts as reportable high/critical findings. Ordinary soft line breaks are normalized, but a phrase spread across more than the scanner's 4 KiB overlap remains outside deterministic coverage. Explicitly framed, tightly quoted threat examples and narrow defensive instructions to ignore untrusted content stay quiet; unqualified directives in strings, comments, or Markdown code spans still flag. Drydock schema tokens in ordinary API source or documentation stay quiet unless an explicit AI/Drydock review audience is told to produce them.
 
@@ -178,7 +180,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.50.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -773,6 +775,25 @@ dropped because every review round found another write or link channel around it
 on; `install-root-parent-dir-walk`, `install-root-cross-file-symlink`,
 `install-root-shell-cd-copy` and `install-root-shell-ln-cwd` are reported frontier misses,
 since their sources never name the install root.
+
+`1.50.0` narrows the `code.*` capability rules that fired on ordinary npm releases.
+`code.credential-access` keys on what is read. Secret-shaped environment names,
+runtime-chosen keys and credential file paths still count. So does any use of the
+environment object other than a named member read: binding, passing, spreading, copying,
+wrapping, serializing or enumerating it, including handing it to a child process. Named
+configuration reads (`PORT`, `HOME`, `NAPI_RS_NATIVE_LIBRARY_PATH`), presence guards and
+comments no longer count. `code.network-access` also recognizes `dgram`, `tls`, `http2`,
+`undici`, `ws`, `WebSocket`, `EventSource` and `sendBeacon`. `code.network-access`
+and `code.dynamic-evaluation` ignore JavaScript comments. Eval-family calls also ignore
+string and template text (template substitutions stay visible), methods named `eval`, and
+the dynamic-import shim. A decode next to an eval stays high in a modified module.
+`code.remote-shell` needs an operand after `curl`/`wget`, and no longer reads a shell
+grammar's keyword alternation as a pipeline. `secret-named-env-exfil`,
+`env-alias-harvest-exfil`, `env-computed-key-exfil`, `env-object-value-exfil` and
+`ci-credential-names-exfil` pin the shapes that must keep firing.
+`legit-nonsecret-env-config`, `legit-comment-network-and-codegen` and
+`legit-shell-grammar-keyword-lists` pin the exempted shapes. The release-injection gate now
+expects zero misses; `npm-assembled-require-exfil` is caught.
 
 ### Fixture format
 

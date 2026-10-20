@@ -1,6 +1,6 @@
 import { hasImplicitNodeGypInstall, normalizeStringRecord } from "../tar-parser.js";
 import { isRecord } from "../platform/guards";
-import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
+import { jsTokenText, tokenizeJsWithinBudget } from "../platform/js-lexer";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
@@ -13,12 +13,13 @@ import {
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
-import { normalizeCodeForScanning } from "./rules/normalize";
+import { codeViewsForScanning, normalizeCodeForScanning } from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
 import {
   installReachablePaths,
   javascriptReachableFrom,
   normalizeReachabilityPath,
+  type ReachabilityLexing,
 } from "./rules/reachability";
 import {
   changedRegions,
@@ -178,13 +179,28 @@ function lazyNewlyInstallReachablePaths(
   let computed: Set<string> | undefined;
   return () => {
     if (computed) return computed;
-    const reachable = (files: typeof previousFiles, executionEvidenceOnly = true) => {
+    const reachable = (
+      files: typeof previousFiles,
+      executionEvidenceOnly = true,
+      lexing?: ReachabilityLexing,
+    ) => {
       const scripts = lifecycleScripts(files.find((file) => file.path === "package.json"));
       if (!scripts) return new Set<string>();
       const records = files.map((file) => ({ ...file, size: 0, sha256: "" }));
-      return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
+      return installReachablePaths(
+        records,
+        scripts,
+        {},
+        codePatternSet,
+        executionEvidenceOnly,
+        lexing,
+      );
     };
-    const previous = reachable(previousFiles);
+    // A previous graph built past a lexer give-up over-counts, which would
+    // shrink "newly reachable"; credit nothing as already reachable instead.
+    const previousLexing: ReachabilityLexing = { gaveUp: false };
+    const previousReachable = reachable(previousFiles, true, previousLexing);
+    const previous = previousLexing.gaveUp ? new Set<string>() : previousReachable;
     const staged = reachable(stagedFiles);
     const possiblyInstalled = reachable(stagedFiles, false);
     const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
@@ -216,9 +232,9 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
   if (previous === undefined || staged === undefined) return true;
   const codeTokens = (source: string) => {
     const normalized = normalizeCodeForScanning(source);
-    const tokens = tokenizeJs(normalized).filter(
-      (token) => token.type !== "ws" && token.type !== "comment",
-    );
+    const lexed = tokenizeJsWithinBudget(normalized);
+    if (!lexed) return null;
+    const tokens = lexed.filter((token) => token.type !== "ws" && token.type !== "comment");
     return tokens.map((token, index) => [
       token.type,
       token.type === "string" ? token.value : jsTokenText(normalized, token),
@@ -227,7 +243,11 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
       index > 0 && /[\r\n\u2028\u2029]/.test(normalized.slice(tokens[index - 1].end, token.start)),
     ]);
   };
-  return JSON.stringify(codeTokens(previous)) !== JSON.stringify(codeTokens(staged));
+  // A source the lexer gives up on counts as changed.
+  const before = codeTokens(previous);
+  const after = codeTokens(staged);
+  if (!before || !after) return true;
+  return JSON.stringify(before) !== JSON.stringify(after);
 }
 
 /**
@@ -329,6 +349,8 @@ interface FileChanges {
   stagedText: string;
   raw: ChangedRegions;
   folded: () => { text: string; regions: ChangedRegions } | null;
+  // Comment-blind views of the staged and folded texts (same offsets).
+  code: (text: string) => string;
 }
 
 function fileChangesForPath(
@@ -354,7 +376,16 @@ function fileChangesForPath(
   const stagedText = staged.textSample;
   const foldable = codePatternSet !== "python" && !path.endsWith(".py");
   let folded: { text: string; regions: ChangedRegions } | null | undefined;
+  const codeViews = new Map<string, string>();
   const changes: FileChanges = {
+    code: (text) => {
+      let view = codeViews.get(text);
+      if (view === undefined) {
+        view = codeViewsForScanning(path, text).code;
+        codeViews.set(text, view);
+      }
+      return view;
+    },
     stagedText,
     raw: changedRegions(previousText, stagedText),
     folded: () => {
@@ -394,10 +425,24 @@ function findingPatternMatchesChanges(
         : [],
     );
   }
-  if (patternsTouchChangedRegions(changes.stagedText, changes.raw, patterns)) return true;
+  // Detection reads these rules comment-blind in JavaScript, so an edited
+  // comment beside an older call is not that call arriving. Blanking keeps
+  // offsets, so the changed regions still apply.
+  const view = COMMENT_BLIND_RULE_IDS.has(finding.ruleId ?? "")
+    ? changes.code
+    : (text: string) => text;
+  if (patternsTouchChangedRegions(view(changes.stagedText), changes.raw, patterns)) return true;
   const folded = changes.folded();
-  return Boolean(folded && patternsTouchChangedRegions(folded.text, folded.regions, patterns));
+  return Boolean(
+    folded && patternsTouchChangedRegions(view(folded.text), folded.regions, patterns),
+  );
 }
+
+const COMMENT_BLIND_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.codeNetworkAccess,
+  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
+  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
+]);
 
 // Whether the file's changes match some capability pattern only once string
 // pieces are joined (`'chi' + 'ld_process'`), even where a sibling pattern
