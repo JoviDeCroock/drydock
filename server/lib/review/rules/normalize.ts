@@ -330,7 +330,7 @@ function substitutionClose(
       if (text === "{") braces += 1;
       else if (text === "}") {
         if (braces === 0) {
-          out.push(...inner);
+          for (const token of inner) out.push(token);
           return at;
         }
         braces -= 1;

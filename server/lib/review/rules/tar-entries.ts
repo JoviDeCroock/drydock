@@ -124,7 +124,9 @@ function manifestEntrypoints(
         .replace(/^\/+/, "");
       targets.add((directory ? `${directory}/${relative}` : relative).toLowerCase());
     } else if (value && typeof value === "object") {
-      pending.push(...Object.values(value));
+      // A loop, not a spread: a hostile manifest's object can hold more
+      // values than a call has room for arguments.
+      for (const entry of Object.values(value)) pending.push(entry);
     }
   }
   return targets;

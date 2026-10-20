@@ -960,6 +960,37 @@ describe("review", () => {
     expect(severities(20_000)).toEqual(new Set(["high"]));
   });
 
+  test("a manifest with millions of export targets still reviews", () => {
+    const targets = Array.from({ length: 2_000_000 }, (_, index) => `./f${index}.js`);
+    const manifest = JSON.stringify({ name: "pkg", version: "1.0.0", exports: targets });
+    const staged = [
+      { path: "package.json", size: manifest.length, sha256: "p", flags: [], textSample: manifest },
+      { path: "dist/app.min.js", size: 1, sha256: "a", flags: ["content-skipped"] },
+      { path: "f1.js", size: 1, sha256: "f", flags: [], textSample: "module.exports = 1;\n" },
+    ];
+    expect(() => deterministicFindings(staged, createPackageDiff([], staged))).not.toThrow();
+    const notice = tarSuspiciousEntryFindings(
+      [{ kind: "retention-tier", path: "<archive>", detail: "1 file body was hash-only" }],
+      {
+        fileDiff: [{ path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] }],
+        stagedFiles: staged,
+      },
+    );
+    expect(notice).toHaveLength(1);
+  }, 60_000);
+
+  test("a Python import with half a million dotted segments still reviews", () => {
+    const text = `import ${Array.from({ length: 500_000 }, () => "a").join(".")}\n`;
+    const staged = [
+      { path: "sdist/pkg/mod.py", size: text.length, sha256: "m", flags: [], textSample: text },
+    ];
+    expect(() =>
+      deterministicFindings(staged, createPackageDiff([], staged), null, {
+        codePatternSet: "python",
+      }),
+    ).not.toThrow();
+  }, 60_000);
+
   test("a comment-only change does not make an existing credential read part of the release", () => {
     const previousFiles = [
       {
