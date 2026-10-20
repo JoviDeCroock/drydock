@@ -36,6 +36,8 @@ const cleanReport: HarnessReport = {
     runtimeHooks: true,
     dependencyInstall: "complete",
     stepsSkipped: 0,
+    exercise: "load",
+    browserTargeted: false,
   },
   steps: [
     { step: "require", target: "@org/pkg:require", exitCode: 0, timedOut: false, durationMs: 40 },

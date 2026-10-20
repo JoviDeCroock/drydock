@@ -4,7 +4,9 @@
     "syscallTracing": true,
     "runtimeHooks": true,
     "dependencyInstall": "complete",
-    "stepsSkipped": 0
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
   },
   "steps": [
     {
@@ -12,21 +14,21 @@
       "target": "drydock-fixture-npm-run@1.0.0:postinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 1058
+      "durationMs": 1294
     },
     {
       "step": "require",
       "target": "drydock-fixture-npm-run:require",
       "exitCode": 1,
       "timedOut": false,
-      "durationMs": 86
+      "durationMs": 109
     },
     {
       "step": "import",
       "target": "drydock-fixture-npm-run:import",
       "exitCode": 1,
       "timedOut": false,
-      "durationMs": 88
+      "durationMs": 93
     }
   ],
   "events": [
@@ -766,7 +768,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/home/pkg/.npm/_logs/2026-10-20T15_36_04_519Z-debug-0.log"
+      "path": "/home/pkg/.npm/_logs/2026-10-20T16_00_38_442Z-debug-0.log"
     },
     {
       "step": "lifecycle",
@@ -919,7 +921,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc.bwRIii"
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc.pmbQZp"
     },
     {
       "step": "lifecycle",
@@ -1126,7 +1128,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/node"
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/node"
     },
     {
       "step": "lifecycle",
@@ -1135,7 +1137,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "chmod",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/node"
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/node"
     },
     {
       "step": "lifecycle",
@@ -1144,7 +1146,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/yarn"
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/yarn"
     },
     {
       "step": "lifecycle",
@@ -1153,7 +1155,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "chmod",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/yarn"
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/yarn"
     },
     {
       "step": "lifecycle",
@@ -1170,7 +1172,7 @@
       "pid": 91,
       "via": "syscall",
       "kind": "exec",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/node",
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/node",
       "argv": ["node", "-e", "0"]
     },
     {
@@ -1180,7 +1182,7 @@
       "via": "syscall",
       "kind": "file",
       "op": "read",
-      "path": "/tmp/yarn--1792510565165-0.21763942960753124/node"
+      "path": "/tmp/yarn--1792512039234-0.16190666026964706/node"
     },
     {
       "step": "lifecycle",

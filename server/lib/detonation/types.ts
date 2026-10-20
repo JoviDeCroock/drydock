@@ -62,6 +62,14 @@ export interface HarnessCoverage {
    * that skipped the reviewed package's own steps is not a clean run.
    */
   stepsSkipped: number;
+  /**
+   * How far the package's code was driven. `load`: lifecycle scripts,
+   * require/import, and bins with `--help`; no export was called, so a payload
+   * that waits for a call or a browser never ran.
+   */
+  exercise: "load";
+  /** The manifest ships a browser build, whose code paths never run in Node. */
+  browserTargeted: boolean;
 }
 
 export interface HarnessReport {

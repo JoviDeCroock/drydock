@@ -4,7 +4,9 @@
     "syscallTracing": true,
     "runtimeHooks": true,
     "dependencyInstall": "complete",
-    "stepsSkipped": 0
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
   },
   "steps": [
     {
@@ -12,28 +14,28 @@
       "target": "drydock-detonation-benign@1.0.0:postinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 96
+      "durationMs": 129
     },
     {
       "step": "require",
       "target": "drydock-detonation-benign:require",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 94
+      "durationMs": 210
     },
     {
       "step": "import",
       "target": "drydock-detonation-benign:import",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 93
+      "durationMs": 247
     }
   ],
   "events": [
     {
       "step": "lifecycle",
       "target": "drydock-detonation-benign@1.0.0:postinstall",
-      "pid": 49,
+      "pid": 50,
       "via": "syscall",
       "kind": "exec",
       "path": "/usr/local/bin/node",

@@ -4,7 +4,9 @@
     "syscallTracing": true,
     "runtimeHooks": true,
     "dependencyInstall": "complete",
-    "stepsSkipped": 0
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
   },
   "steps": [
     {
@@ -12,28 +14,28 @@
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 515
+      "durationMs": 469
     },
     {
       "step": "require",
       "target": "drydock-fixture-npm-run-thief:require",
       "exitCode": 1,
       "timedOut": false,
-      "durationMs": 86
+      "durationMs": 82
     },
     {
       "step": "import",
       "target": "drydock-fixture-npm-run-thief:import",
       "exitCode": 1,
       "timedOut": false,
-      "durationMs": 86
+      "durationMs": 89
     }
   ],
   "events": [
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "exec",
       "path": "/usr/local/bin/npm",
@@ -42,7 +44,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "exec",
       "path": "/usr/local/bin/node",
@@ -51,7 +53,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -60,7 +62,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -69,7 +71,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -78,7 +80,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -87,7 +89,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -96,7 +98,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -105,7 +107,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -114,7 +116,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -123,7 +125,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -132,7 +134,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -141,7 +143,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -150,7 +152,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -159,7 +161,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -168,7 +170,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -177,7 +179,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -186,7 +188,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -195,7 +197,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -204,7 +206,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -213,7 +215,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -222,7 +224,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -231,7 +233,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -240,7 +242,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -249,7 +251,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -258,7 +260,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -267,7 +269,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -276,7 +278,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -285,7 +287,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -294,7 +296,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -303,7 +305,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -312,7 +314,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -321,7 +323,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -330,7 +332,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -339,7 +341,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -348,7 +350,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -357,7 +359,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -366,7 +368,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -375,7 +377,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -384,7 +386,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -393,7 +395,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -402,7 +404,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -411,7 +413,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -420,7 +422,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -429,7 +431,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -438,7 +440,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -447,7 +449,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -456,7 +458,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -465,7 +467,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -474,7 +476,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -483,7 +485,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -492,7 +494,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -501,7 +503,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -510,7 +512,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -519,7 +521,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -528,7 +530,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -537,7 +539,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -546,7 +548,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -555,7 +557,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -564,7 +566,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -573,7 +575,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -582,7 +584,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -591,7 +593,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -600,7 +602,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -609,7 +611,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -618,7 +620,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -627,7 +629,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -636,7 +638,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -645,7 +647,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -654,7 +656,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -663,7 +665,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -672,7 +674,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -681,7 +683,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -690,7 +692,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -699,7 +701,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -708,7 +710,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -717,7 +719,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -726,7 +728,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -735,7 +737,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -744,7 +746,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -753,7 +755,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -762,16 +764,16 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/home/pkg/.npm/_logs/2026-10-20T15_36_07_008Z-debug-0.log"
+      "path": "/home/pkg/.npm/_logs/2026-10-20T16_00_41_231Z-debug-0.log"
     },
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -780,7 +782,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -789,7 +791,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -798,7 +800,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -807,7 +809,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -816,7 +818,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -825,7 +827,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -834,7 +836,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -843,7 +845,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -852,7 +854,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -861,7 +863,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -870,7 +872,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -879,7 +881,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -888,7 +890,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -897,7 +899,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 61,
+      "pid": 60,
       "via": "syscall",
       "kind": "exec",
       "path": "/usr/bin/sh",
@@ -910,7 +912,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 62,
+      "pid": 61,
       "via": "syscall",
       "kind": "exec",
       "path": "/usr/local/bin/node",
@@ -919,7 +921,7 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 62,
+      "pid": 61,
       "via": "syscall",
       "kind": "file",
       "op": "read",
@@ -928,16 +930,16 @@
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "create",
-      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc.AMSYwA"
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc.noHAuU"
     },
     {
       "step": "lifecycle",
       "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
-      "pid": 50,
+      "pid": 49,
       "via": "syscall",
       "kind": "file",
       "op": "rename",

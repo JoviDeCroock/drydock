@@ -263,6 +263,8 @@ export async function executeDetonationJob(
                 runtimeHooks: false,
                 dependencyInstall: installState,
                 stepsSkipped: 0,
+                exercise: "load" as const,
+                browserTargeted: false,
               }
             : null),
         steps: report?.steps ?? [],

@@ -18,6 +18,7 @@ import {
   MAX_REPORT_BYTES,
   MAX_REPORT_EVENTS,
 } from "./event-budget.mjs";
+import { isBrowserTargeted } from "./manifest.mjs";
 import {
   boundEvent,
   createTraceReader,
@@ -113,6 +114,9 @@ const state = {
   dependencyInstall: "failed",
   /** @type {string | null} */
   extraCaCerts: null,
+  // Read right after `npm install --ignore-scripts`, before any package code
+  // ran, so it is the manifest as published.
+  browserTargeted: false,
 };
 
 const syscallTracing = probeTracing();
@@ -282,6 +286,9 @@ function prepare(tarball) {
   const installName = readInstallName(packageName);
   state.installName = installName;
   const installed = fs.existsSync(path.join(NODE_MODULES, installName, "package.json"));
+  state.browserTargeted = isBrowserTargeted(
+    readManifest(path.join(NODE_MODULES, installName, "package.json")),
+  );
   /** @type {HarnessCoverage["dependencyInstall"]} */
   const dependencyInstall =
     install.status === 0 && installed ? "complete" : installed ? "partial" : "failed";
@@ -447,6 +454,8 @@ async function detonate(request) {
       runtimeHooks,
       dependencyInstall: state.dependencyInstall,
       stepsSkipped,
+      exercise: "load",
+      browserTargeted: state.browserTargeted,
     },
     steps,
     events: [],

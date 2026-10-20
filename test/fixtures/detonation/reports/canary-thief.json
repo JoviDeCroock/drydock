@@ -4,7 +4,9 @@
     "syscallTracing": true,
     "runtimeHooks": true,
     "dependencyInstall": "complete",
-    "stepsSkipped": 0
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
   },
   "steps": [
     {
@@ -12,21 +14,21 @@
       "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 141
+      "durationMs": 190
     },
     {
       "step": "require",
       "target": "drydock-detonation-canary-thief:require",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 85
+      "durationMs": 120
     },
     {
       "step": "import",
       "target": "drydock-detonation-canary-thief:import",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 90
+      "durationMs": 140
     }
   ],
   "events": [

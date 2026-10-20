@@ -7,9 +7,9 @@ import {
   type ScanDetonationRun,
 } from "../src/models/scan";
 import {
+  cleanRunCaveat,
   coverageParts,
   detonationView,
-  weakCleanResult,
 } from "../src/pages/Dashboard/ScanDetail/detonation-view";
 import { jsonResponse, stubFetchRoutes } from "./helpers/fetch-stub";
 
@@ -36,6 +36,8 @@ function result(overrides: Partial<DetonationResult> = {}): DetonationResult {
       runtimeHooks: true,
       dependencyInstall: "complete",
       stepsSkipped: 0,
+      exercise: "load",
+      browserTargeted: false,
     },
     steps: [],
     egress: [],
@@ -128,40 +130,43 @@ describe("detonationView", () => {
 });
 
 describe("coverage", () => {
-  test("names syscall tracing and install completeness, and flags weak clean runs", () => {
-    const full = {
-      syscallTracing: true,
-      runtimeHooks: true,
-      dependencyInstall: "complete",
-      stepsSkipped: 0,
-    } as const;
+  const full = {
+    syscallTracing: true,
+    runtimeHooks: true,
+    dependencyInstall: "complete",
+    stepsSkipped: 0,
+    exercise: "load",
+    browserTargeted: false,
+  } as const;
+  const LIMITED = "Limited coverage makes a clean run weaker evidence.";
+
+  test("names syscall tracing, install completeness, and how far the code ran", () => {
     expect(coverageParts(full, false)).toEqual([
       "syscall tracing on",
       "dependency install complete",
+      "loaded only, no exports called",
     ]);
-    expect(weakCleanResult(full, false)).toBe(false);
+    expect(cleanRunCaveat(full, false)).toBeNull();
 
-    const hooksOnly = {
-      syscallTracing: false,
-      runtimeHooks: true,
-      dependencyInstall: "partial",
-      stepsSkipped: 0,
-    } as const;
+    const hooksOnly = { ...full, syscallTracing: false, dependencyInstall: "partial" } as const;
     expect(coverageParts(hooksOnly, true)).toEqual([
       "syscall tracing off",
       "dependency install partial",
+      "loaded only, no exports called",
       "record truncated",
     ]);
-    expect(weakCleanResult(hooksOnly, false)).toBe(true);
-    expect(weakCleanResult(null, false)).toBe(true);
+    expect(cleanRunCaveat(hooksOnly, false)).toBe(LIMITED);
+    expect(cleanRunCaveat(null, false)).toBe(LIMITED);
 
     const starved = { ...full, stepsSkipped: 3 };
-    expect(coverageParts(starved, false)).toEqual([
-      "syscall tracing on",
-      "dependency install complete",
-      "3 steps not run",
-    ]);
-    expect(weakCleanResult(starved, false)).toBe(true);
+    expect(coverageParts(starved, false)).toContain("3 steps not run");
+    expect(cleanRunCaveat(starved, false)).toBe(LIMITED);
+  });
+
+  test("a browser build gets its own caveat, even with full coverage", () => {
+    expect(cleanRunCaveat({ ...full, browserTargeted: true }, false)).toMatch(
+      /ships a browser build, which never runs in the sandbox/,
+    );
   });
 });
 

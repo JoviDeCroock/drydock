@@ -96,6 +96,10 @@ export function coverageParts(coverage: HarnessCoverage | null, truncated: boole
         coverage.stepsSkipped > 0
           ? `${coverage.stepsSkipped} ${coverage.stepsSkipped === 1 ? "step" : "steps"} not run`
           : null,
+        // Results stored before the field existed were load-only too.
+        coverage.exercise === "load" || coverage.exercise === undefined
+          ? "loaded only, no exports called"
+          : null,
       ].filter((part): part is string => part !== null)
     : ["coverage not reported"];
   if (truncated) parts.push("record truncated");
@@ -103,15 +107,22 @@ export function coverageParts(coverage: HarnessCoverage | null, truncated: boole
 }
 
 /**
- * A clean run proves less when only the tamperable in-process hooks watched
- * it, or when some of the package never ran.
+ * What a clean run cannot vouch for, or null when coverage was full for a
+ * load-only run. A browser build never runs in the Node sandbox, so a web
+ * library's payload (a wrapped `fetch` or wallet hook) would not show up.
  */
-export function weakCleanResult(coverage: HarnessCoverage | null, truncated: boolean): boolean {
-  return (
+export function cleanRunCaveat(
+  coverage: HarnessCoverage | null,
+  truncated: boolean,
+): string | null {
+  if (coverage?.browserTargeted) {
+    return "This package ships a browser build, which never runs in the sandbox, so a clean run does not cover it.";
+  }
+  const weak =
     !coverage ||
     !coverage.syscallTracing ||
     coverage.dependencyInstall !== "complete" ||
     coverage.stepsSkipped > 0 ||
-    truncated
-  );
+    truncated;
+  return weak ? "Limited coverage makes a clean run weaker evidence." : null;
 }

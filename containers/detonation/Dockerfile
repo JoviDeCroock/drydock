@@ -10,7 +10,7 @@ RUN apt-get update \
 RUN groupadd --gid 10001 pkg \
   && useradd --uid 10001 --gid 10001 --home-dir /home/pkg --create-home --shell /bin/sh pkg
 
-COPY harness.mjs trace-parse.mjs event-budget.mjs observe.cjs /opt/drydock/
+COPY harness.mjs trace-parse.mjs event-budget.mjs manifest.mjs observe.cjs /opt/drydock/
 RUN chmod 0755 /opt/drydock && chmod 0644 /opt/drydock/*
 
 EXPOSE 8080

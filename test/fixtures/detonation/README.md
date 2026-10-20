@@ -18,6 +18,9 @@ wrote all of them; none is real malware.
   not count as the package reading credentials.
 - `npm-run-thief/`: the same shape, but the build script npm launches reads
   `~/.npmrc` itself, which must.
+- `browser-lib/`: a web library (`"browser"` field) whose code only acts when
+  `window` exists. Loading it under Node does nothing; the report must carry
+  `browserTargeted: true` so the UI does not present the clean run as strong.
 
 `reports/` holds each fixture's captured report; `test/detonation-classify.test.ts`
 classifies them, so re-capture them when the harness output changes.

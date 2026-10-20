@@ -226,10 +226,13 @@ stays inert under **Read full AI assessment**, labeled advisory and potentially
 quoting package text. Release memory stays beside the verdict evidence (the severity bar renders only for two or more findings). Declared
 source binding shows one unverified repository link; only an exact duplicate
 manifest declaration is omitted, preserving additional or conflicting evidence.
-The detonation section (`ScanDetail/DetonationSection.tsx`) renders nothing when
-its endpoint 404s outside the beta. It states once that it is advisory, keeps
-Badges for critical/high signals, puts Run/Run again beside the state line, and
-folds the egress and step log under **Sandbox log**.
+The detonation section (`ScanDetail/DetonationSection.tsx`) renders nothing
+outside the beta (its endpoint answers `eligible: false`). It states once that
+it is advisory, keeps Badges for critical/high signals, puts Run/Run again
+beside the state line, and folds the egress and step log under **Sandbox log**.
+Coverage always says the package was loaded only, and a clean run carries one
+caveat line: the browser build never ran (for a browser-targeted manifest), or
+limited coverage.
 
 ## Dashboard overview strip
 
