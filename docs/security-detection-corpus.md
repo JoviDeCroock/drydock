@@ -68,7 +68,7 @@ The first corpus slice covers:
 - javascript-obfuscator-style rotating string tables around code capabilities, recognized from the combined hexadecimal lookup, `while (!![])`, `parseInt`, and `push(shift())` wrapper shape rather than any one minifier-like token;
 - secret-looking file addition;
 - large opaque binary addition;
-- files that appear in the tarball outside a declared `package.json.files` allowlist;
+- files that appear in the tarball outside a declared `package.json.files` allowlist, read with npm-packlist's semantics (`server/lib/review/package-files.ts`: root-anchored entries with a leading `/` that only anchors, `/*` widened to `/**`, literal directories with implicit `/**`, ordered `!` negations, slashless patterns matching basenames, minimatch braces/classes/`!(…)`, directory-gated walking, npm's root-only always-packed files, and bundled `node_modules/` limited to the declared bundles and the dependencies their packed manifests name; a manifest past the entry, length or matching-work caps falls back to its literal entries, so anything not named literally, always packed, bundled or an entrypoint counts as outside). Documentation outside the list is disclosed at low severity only when it is inert: no shipped code reaches it, names it (raw or after constant folding), or installs a module loader (`require.extensions`, `Module._extensions`), and its own text matches none of the code capability rules; otherwise it keeps full severity, since docs are excluded from the capability scan (`files-allowlist-escape-negated-dir`, `legit-npm-packlist-files-semantics`);
 - malformed `package.json` parse failure;
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
@@ -178,7 +178,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.48.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -749,6 +749,30 @@ alongside exact release findings and risk. These assertions separate persistent
 artifact capabilities from new release behavior; the aggregate eval's existing
 artifact-risk metrics retain their meanings. The public incident benchmark uses
 the identical attack/control fixture bytes before and after this change.
+
+`1.49.0` comes from replaying real npm releases through the production rules
+(`pnpm run eval:npm-sweep`, see `detection-eval.md`). `file.outside-files-list` now reads
+`package.json` `files` with npm-packlist semantics. Before, a leading `/`, a `dir/*` entry,
+braces, `!` negations, bundled `node_modules/` and root CHANGELOG/HISTORY files all put
+legitimately packed files outside the allowlist; tsup, ts-node and a dozen other popular
+packages raised a high finding on every added chunk. README, LICENSE and COPYING are always packed only at the package root,
+and a bundled-dependency exemption covers only the listed bundled packages. A manifest whose
+`files` patterns exhaust the matcher's work budget falls back to literal entries rather than
+skipping the rule. A documentation
+file outside the list drops to `low` only when nothing loads it and it carries no code
+capability itself. The retention-tier notice escalates only for a
+changed file whose content the rules could have read, so native binaries, source maps and
+minified bundles stored hash-only stop counting as inspection gaps unless they are what runs
+(an entrypoint or a loaded file).
+`files-allowlist-escape-negated-dir` and the `legit-npm-packlist-files-semantics`
+hard-negative pin both sides.
+Install-time writes keep the 1.48.0 co-occurrence scoring for
+`propagation.package-mutation`: an attempt to prove destinations stay inside the package was
+dropped because every review round found another write or link channel around it.
+`install-root-sibling-package-write` and `install-root-link-class-field` pin shapes it fires
+on; `install-root-parent-dir-walk`, `install-root-cross-file-symlink`,
+`install-root-shell-cd-copy` and `install-root-shell-ln-cwd` are reported frontier misses,
+since their sources never name the install root.
 
 ### Fixture format
 

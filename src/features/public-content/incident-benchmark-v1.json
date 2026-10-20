@@ -45,7 +45,7 @@
       "publishedOn": "2025-08-27"
     }
   ],
-  "rulesVersion": "1.48.0",
+  "rulesVersion": "1.49.0",
   "corpusSha256": "d25da1118c9e62bafc123fdaf64a09408841d2776e9c4cb633f5f043158114dc",
   "summary": {
     "malicious": {

