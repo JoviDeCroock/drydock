@@ -182,7 +182,9 @@ export function compilePackageFilesAllowlist(
 // What the fallback can read without evaluating a glob: the literal entries,
 // and the literal `!` entries that carve paths back out of them. A glob `!`
 // entry could exclude anything beneath a literal directory, so then only the
-// literal file entries (always packed) stay covered: `negations` is null.
+// literal file entries (always packed) stay covered: `negations` is null. So
+// does a spelling the matcher reads differently from a plain path (an escape,
+// an empty segment, or nothing at all, which the matcher widens to `**`).
 function literalFallback(files: string[]): {
   directories: Set<string>;
   negations: Set<string> | null;
@@ -193,11 +195,17 @@ function literalFallback(files: string[]): {
     const trimmed = entry.trim();
     const bangs = trimmed.length - trimmed.replace(/^!+/, "").length;
     const normalized = normalizeManifestPath(trimmed.slice(bangs)).toLowerCase();
+    const plain =
+      normalized !== "" &&
+      normalized !== "." &&
+      !normalized.includes("//") &&
+      !trimmed.includes("\\") &&
+      !hasGlobMagic(trimmed);
     if (bangs % 2 === 0) {
-      if (!bangs && normalized && !hasGlobMagic(trimmed)) directories.add(normalized);
-    } else if (hasGlobMagic(trimmed)) {
+      if (!bangs && plain) directories.add(normalized);
+    } else if (!plain) {
       negations = null;
-    } else if (normalized) {
+    } else {
       negations?.add(normalized);
     }
   }

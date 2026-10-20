@@ -288,6 +288,12 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     expect(
       outside(["lib", "index.js", "!lib/*.map", ...filler], ["lib/a.js", "index.js", "lib/a.map"]),
     ).toEqual(["lib/a.js", "lib/a.map"]);
+    for (const negation of ["!", "!./", "!.", "!lib//evil.js", "!lib/evil\\.js"]) {
+      expect(outside(["lib", negation, ...filler], ["lib/evil.js"]), negation).toEqual([
+        "lib/evil.js",
+      ]);
+    }
+    expect(outside(["src\\lib", ...filler], ["src/lib/a.js"])).toEqual(["src/lib/a.js"]);
   });
 
   test("the literal fallback stays linear in the archive's paths", () => {
