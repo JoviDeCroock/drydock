@@ -22,6 +22,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
 - [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md) — atpm's OIDC trusted publishing, the Sigstore bundles Drydock re-verifies against a pinned root, and the anonymous public-diff link atpm's own dashboard uses to hand a maintainer a pre-publish review with no account. Review only: Drydock does not approve, gate, or watch an atpm release.
+- [`detonation-sandbox.md`](./detonation-sandbox.md) — **beta**, flag-gated: installs and loads a reviewed staged npm package in an isolated container with planted canary credentials and records network, file, and process behavior as advisory signals. The one place package code runs.
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 - [`package-claims.md`](./package-claims.md) — canonical npm organization ownership and private, audited historical migration.

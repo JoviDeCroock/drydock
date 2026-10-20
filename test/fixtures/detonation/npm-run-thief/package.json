@@ -1,0 +1,10 @@
+{
+  "name": "drydock-fixture-npm-run-thief",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Synthetic detonation fixture: the build script npm launches reads the planted ~/.npmrc.",
+  "scripts": {
+    "postinstall": "npm run build",
+    "build": "node -e \"require('fs').readFileSync(require('os').homedir() + '/.npmrc')\""
+  }
+}

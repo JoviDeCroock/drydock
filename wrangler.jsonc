@@ -138,11 +138,47 @@
 			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
+	// Beta detonation sandbox: runs a staged package's install scripts and
+	// entry points in a container with no internet; all HTTP(S) is
+	// intercepted by DetonationEgress. Gated per organization by the
+	// `detonation-sandbox` flag. See docs/detonation-sandbox.md.
+	"containers": [
+		{
+			"class_name": "DetonationSandbox",
+			"image": "./containers/detonation/Dockerfile",
+			"instance_type": "standard-1",
+			"max_instances": 5
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "DETONATION_SANDBOX",
+				"class_name": "DetonationSandbox"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-detonation-sandbox",
+			"new_sqlite_classes": ["DetonationSandbox"]
+		}
+	],
+	// Local `vite dev` would otherwise require Docker to build the image on
+	// every start. Use `node scripts/detonation-local.mjs` to exercise the
+	// container harness locally.
+	"dev": {
+		"enable_containers": false
+	},
 	"queues": {
 		"producers": [
 			{
 				"binding": "SCAN_QUEUE",
 				"queue": "staged-publish-review-scans"
+			},
+			{
+				"binding": "DETONATION_QUEUE",
+				"queue": "staged-publish-review-detonations"
 			}
 		],
 		"consumers": [
@@ -153,6 +189,16 @@
 				"max_concurrency": 10,
 				"max_retries": 3,
 				"dead_letter_queue": "staged-publish-review-scans-dlq"
+			},
+			// Its own queue so a run (up to ~8 minutes) never holds a scan or
+			// gate consumer; concurrency matches the container max_instances.
+			{
+				"queue": "staged-publish-review-detonations",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_concurrency": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "staged-publish-review-detonations-dlq"
 			}
 		]
 	},

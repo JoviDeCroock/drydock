@@ -1,0 +1,10 @@
+{
+  "name": "drydock-detonation-canary-thief",
+  "version": "1.0.0",
+  "description": "SIMULATED malicious package for the Drydock detonation sandbox. Not real malware.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}

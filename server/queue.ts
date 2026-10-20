@@ -12,19 +12,43 @@ import {
   type QueueMessage,
 } from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
+import {
+  executeDetonationJob,
+  isDetonationMessage,
+  MAX_DETONATION_JOB_ATTEMPTS,
+  type DetonationQueueMessage,
+} from "./lib/detonation/job";
 
 /**
- * The SCAN_QUEUE consumer `server/index.ts` exports. Scan and workflow-gate
- * messages share the queue; each is retried with backoff up to
- * `MAX_SCAN_JOB_ATTEMPTS` and only a retryable exhaustion rethrows.
+ * The queue consumer `server/index.ts` exports. Scan and workflow-gate
+ * messages share SCAN_QUEUE and are retried with backoff up to
+ * `MAX_SCAN_JOB_ATTEMPTS`; only a retryable exhaustion rethrows. Detonation
+ * messages arrive on DETONATION_QUEUE.
  */
 export async function queue(
-  batch: MessageBatch<QueueMessage>,
+  batch: MessageBatch<QueueMessage | DetonationQueueMessage>,
   env: Cloudflare.Env,
   ctx: ExecutionContext,
 ): Promise<void> {
   for (const message of batch.messages) {
     const messageStartedAtMs = Date.now();
+    if (isDetonationMessage(message.body)) {
+      const detonation = message.body;
+      // The job records its own failures; only "no container could start" is
+      // retried, after it has handed its claim back.
+      const outcome = await executeDetonationJob(env, ctx, detonation, undefined, {
+        finalAttempt: message.attempts >= MAX_DETONATION_JOB_ATTEMPTS,
+      }).catch((err: unknown) => {
+        emitOperationalEvent("error", "detonation.queue.message_failed", {
+          organizationId: detonation.organizationId,
+          scanId: detonation.scanId,
+          error: describeOperationalError(err),
+        });
+        return "done" as const;
+      });
+      if (outcome === "retry") message.retry({ delaySeconds: 60 });
+      continue;
+    }
     if (isWorkflowGateMessage(message.body)) {
       const gateMessage = message.body;
       try {

@@ -1,0 +1,10 @@
+{
+  "name": "drydock-fixture-npm-run",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Synthetic detonation fixture: a postinstall that runs its build through npm and yarn.",
+  "scripts": {
+    "postinstall": "npm run build && yarn run build",
+    "build": "node -e 0"
+  }
+}

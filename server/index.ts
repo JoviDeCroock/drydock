@@ -34,6 +34,8 @@ import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/ecosystems/npm";
+export { DetonationSandbox } from "./lib/detonation/sandbox-do";
+export { DetonationEgress } from "./lib/detonation/egress";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 

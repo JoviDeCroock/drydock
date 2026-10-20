@@ -168,6 +168,35 @@
 			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
+	// Optional, beta: the detonation sandbox runs staged packages' install
+	// scripts in a Cloudflare Container (Workers Paid). Remove `containers`,
+	// `durable_objects`, and `migrations` to never execute package code; the
+	// `detonation-sandbox` flag is then moot. See docs/detonation-sandbox.md.
+	"containers": [
+		{
+			"class_name": "DetonationSandbox",
+			"image": "./containers/detonation/Dockerfile",
+			"instance_type": "standard-1",
+			"max_instances": 5
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "DETONATION_SANDBOX",
+				"class_name": "DetonationSandbox"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1-detonation-sandbox",
+			"new_sqlite_classes": ["DetonationSandbox"]
+		}
+	],
+	"dev": {
+		"enable_containers": false
+	},
 	// Optional: asynchronous scan execution and retries. Without this block,
 	// requests enqueue work with the Worker's waitUntil fallback.
 	"queues": {
@@ -175,6 +204,10 @@
 			{
 				"binding": "SCAN_QUEUE",
 				"queue": "staged-publish-review-scans"
+			},
+			{
+				"binding": "DETONATION_QUEUE",
+				"queue": "staged-publish-review-detonations"
 			}
 		],
 		"consumers": [
@@ -185,6 +218,16 @@
 				"max_concurrency": 10,
 				"max_retries": 3,
 				"dead_letter_queue": "staged-publish-review-scans-dlq"
+			},
+			// Its own queue so a run (up to ~8 minutes) never holds a scan or
+			// gate consumer; concurrency matches the container max_instances.
+			{
+				"queue": "staged-publish-review-detonations",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_concurrency": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "staged-publish-review-detonations-dlq"
 			}
 		]
 	},

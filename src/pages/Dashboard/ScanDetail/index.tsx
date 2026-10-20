@@ -29,6 +29,7 @@ import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
+import { DetonationSection } from "./DetonationSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { PostReleaseNotice } from "./PostReleaseNotice";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
@@ -315,6 +316,7 @@ function ScanReport({ model, view }: SectionProps) {
                 onInspectFindings={view.inspectFindings}
               />
               {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+              <DetonationSection key={detail.scan.id} scanId={detail.scan.id} />
             </div>
           </CollapsibleCard>
 

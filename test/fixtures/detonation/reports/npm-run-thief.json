@@ -1,0 +1,948 @@
+{
+  "version": 1,
+  "coverage": {
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0
+  },
+  "steps": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 515
+    },
+    {
+      "step": "require",
+      "target": "drydock-fixture-npm-run-thief:require",
+      "exitCode": 1,
+      "timedOut": false,
+      "durationMs": 86
+    },
+    {
+      "step": "import",
+      "target": "drydock-fixture-npm-run-thief:import",
+      "exitCode": 1,
+      "timedOut": false,
+      "durationMs": 86
+    }
+  ],
+  "events": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/npm",
+      "argv": ["npm", "run", "build"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/node",
+      "argv": ["node", "/usr/local/bin/npm", "run", "build"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/dc7166bc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/1215b633"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a57eba5c"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/8d6b6687"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9eec5070"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/1b711ba2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/ffa931aa"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/bf0630bb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9680544a"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/aa1c21db"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/14003ba0"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/09cc6bf3"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/1400e130"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/c750d204"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/d652d8a3"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/88c20709"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9f0dcddd"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/40194e3b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/31af2baa"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/e200e7d9"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/c5dca45b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/47f4c8eb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/b20c954a"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/2d333828"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/d2cc9f7b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/6e2af0ae"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/34d66bd2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/31503801"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9f164f81"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/bf65294b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/cfbd32c3"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/557c0551"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/f3cdfa2d"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/e8e2d976"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/78b597a2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/c115827e"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a800670b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/6fefea4d"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/d3fca832"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/4e2640f8"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/b2413048"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/f3620b98"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9e3d89b2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a2bbb47c"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/1134cedf"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/14321a91"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/9c76eda3"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/8983e5b2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/3046aaf2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/36354dfa"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/0c92995d"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/bff28abc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/3c96d784"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/ac22db77"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a01932e9"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a0fc4530"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/2b80aaeb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/7ff8930f"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/2512a231"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/a6197ae0"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/596e3987"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/aff87990"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/67bd5aa5"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/e0b61e81"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/aca69bca"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/eebc5e81"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/49b91afd"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/0555bc32"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/5244a2f6"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/996086c4"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/de2caf7a"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/70ba0036"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/82b0c840"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.npmrc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/82aab2a4"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/8b2837bb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/0535d717"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/5d6fa746"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/2d189c75"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/home/pkg/.npm/_logs/2026-10-20T15_36_07_008Z-debug-0.log"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.npm/_logs"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/52839e32"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/e9502cdb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/d9a4ba7c"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/fc0948bb"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/61368bb0"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/b18fd37b"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/720db5a5"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/728a2656"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/bca9f9a7"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/92c9815e"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/262de1a0"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/b3a2e9e7"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/107ab572"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/bin/sh",
+      "argv": [
+        "sh",
+        "-c",
+        "node -e \"require('fs').readFileSync(require('os').homedir() + '/.npmrc')\""
+      ]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 62,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/node",
+      "argv": ["node", "-e", "require('fs').readFileSync(require('os').homedir() + '/.npmrc')"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 62,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.npmrc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc.AMSYwA"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-fixture-npm-run-thief@1.0.0:postinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "rename",
+      "path": "/tmp/node-compile-cache/v22.23.3-arm64-2b4477fa-10001/90a14efc"
+    }
+  ],
+  "truncated": false
+}

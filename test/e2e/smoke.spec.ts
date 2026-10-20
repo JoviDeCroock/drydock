@@ -174,6 +174,9 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   ).toHaveAttribute("href", "https://github.com/drydock/example");
   await expect(notes.getByText("manifest-repository", { exact: true })).toHaveCount(0);
   await expect(notes.getByRole("heading", { name: "Release changes", exact: true })).toBeVisible();
+  await expect(notes.getByRole("heading", { name: /^Detonation/ })).toBeVisible();
+  await expect(notes.getByText("1 suspicious behavior observed", { exact: true })).toBeVisible();
+  await expect(notes.getByText("seen at the network boundary · during lifecycle")).toBeVisible();
   await notes.screenshot({ path: testInfo.outputPath("review-notes.png") });
   await notes.locator("summary").filter({ hasText: "Remote shell" }).click();
   const locations = notes.getByRole("button", { name: /^site\/dist\/changelog.*:42$/ });
@@ -655,6 +658,57 @@ function publicReportExport() {
   };
 }
 
+function detonationResponse() {
+  return {
+    eligible: true,
+    detonation: {
+      status: "complete",
+      stale: false,
+      errorCode: null,
+      artifactSha256: "a".repeat(64),
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      result: {
+        status: "complete",
+        signals: [
+          {
+            id: "dynamic.canary-exfiltration",
+            severity: "critical",
+            title: "Planted npm token sent to an outside host",
+            evidence: ["POST collect.example.test/upload", "canary npm-token"],
+            source: "egress",
+            step: "lifecycle",
+          },
+        ],
+        coverage: { syscallTracing: true, runtimeHooks: true, dependencyInstall: "complete" },
+        steps: [
+          {
+            step: "lifecycle",
+            target: "@drydock/gate-demo@1.2.0:postinstall",
+            exitCode: 0,
+            timedOut: false,
+            durationMs: 812,
+          },
+        ],
+        egress: [
+          {
+            phase: "detonate",
+            method: "POST",
+            host: "collect.example.test",
+            path: "/upload",
+            bodyBytes: 96,
+            canaryHits: ["npm-token"],
+            action: "sinkholed",
+          },
+        ],
+        truncated: false,
+        errorCode: null,
+      },
+    },
+  };
+}
+
 async function installWorkflowGateMocks(
   page: Page,
   reviewNotes = false,
@@ -793,6 +847,16 @@ async function installWorkflowGateMocks(
         packageJson: null,
         findingAnnotations: [],
       });
+      return;
+    }
+
+    // The beta sandbox endpoint 404s outside the beta, and Chromium logs every
+    // 404 as a console error, so the mock answers as a beta organization.
+    if (path === `/api/v1/scans/${scanId}/detonation`) {
+      await fulfillJson(
+        route,
+        reviewNotes ? detonationResponse() : { eligible: false, detonation: null },
+      );
       return;
     }
 

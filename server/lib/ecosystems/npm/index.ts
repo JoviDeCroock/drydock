@@ -61,6 +61,10 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     return acquireBaselineNpm(ctx, input, broker, staged);
   },
 
+  fetchStagedArchive(broker, request) {
+    return broker.fetchStagedArchive(request);
+  },
+
   runFindings(args) {
     return buildNpmFindings({
       staged: args.staged,
