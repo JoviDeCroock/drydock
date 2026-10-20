@@ -895,6 +895,23 @@ describe("review", () => {
     expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
   }, 60_000);
 
+  test("load-call arguments full of distinct tokens keep only names a file can be looked up by", () => {
+    let calls = "";
+    for (let index = 0; calls.length < 12_000_000;) {
+      let args = "";
+      while (args.length < 280) args += `t${(index++).toString(36)} `;
+      calls += `require(${args})\n`;
+    }
+    const staged = [
+      { path: "package.json", size: 1, sha256: "p", flags: [], textSample: '{"main":"index.js"}' },
+      { path: "index.js", size: calls.length, sha256: "i", flags: [], textSample: calls },
+      { path: "docs/guide.md", size: 1, sha256: "d", flags: [], textSample: "# guide" },
+    ];
+    const heapBefore = process.memoryUsage().heapUsed;
+    deterministicFindings(staged, createPackageDiff([], staged));
+    expect(process.memoryUsage().heapUsed - heapBefore).toBeLessThan(64 * 1024 * 1024);
+  }, 60_000);
+
   test("a comment-only change does not make an existing credential read part of the release", () => {
     const previousFiles = [
       {
@@ -2617,6 +2634,28 @@ describe("review", () => {
       ]),
     ).toBe("info");
   });
+
+  test("finds a never-sampled bundle named among millions of distinct tokens", () => {
+    const entries = [
+      { kind: "retention-tier", path: "<archive>", detail: "1 file body was hash-only" },
+    ];
+    const fileDiff = [{ path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] }];
+    const tokens = Array.from({ length: 1_500_000 }, (_, index) => `t${index.toString(36)}`);
+    const severity = (text) =>
+      tarSuspiciousEntryFindings(entries, {
+        fileDiff,
+        stagedFiles: [
+          { path: "dist/app.min.js", flags: ["content-skipped"] },
+          { path: "package.json", flags: [], textSample: '{"main":"index.js"}' },
+          { path: "index.js", flags: [], textSample: text },
+        ],
+      })[0].severity;
+
+    const started = performance.now();
+    expect(severity(tokens.join(" "))).toBe("info");
+    expect(severity(`${tokens.join(" ")} require('./dist/APP.MIN')`)).toBe("medium");
+    expect(performance.now() - started).toBeLessThan(10_000);
+  }, 60_000);
 
   test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {
     const entries = [

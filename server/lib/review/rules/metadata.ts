@@ -192,13 +192,18 @@ function documentationLoadableAsCode(ctx: RuleContext, docs: FileRecord[]): Set<
       break;
     }
     const lowered = texts.map((text) => text.toLowerCase());
-    const loadTokens = new Set(
-      texts.flatMap((text) =>
-        [...text.matchAll(LOAD_CALL_ARGUMENTS)].flatMap((match) =>
-          (match[1].match(LOAD_CALL_PATH_TOKEN) ?? []).map((token) => token.toLowerCase()),
-        ),
-      ),
-    );
+    // Streamed and kept only when a pending extension: the text is hostile and
+    // its distinct tokens are bounded only by the retained bytes.
+    const extensions = new Set([...pending.values()].map(({ extension }) => extension));
+    const loadTokens = new Set<string>();
+    for (const text of texts) {
+      for (const match of text.matchAll(LOAD_CALL_ARGUMENTS)) {
+        for (const [token] of match[1].matchAll(LOAD_CALL_PATH_TOKEN)) {
+          const name = token.toLowerCase();
+          if (extensions.has(name)) loadTokens.add(name);
+        }
+      }
+    }
     for (const [path, { basename, extension }] of pending) {
       if (
         lowered.some((text) => text.includes(basename)) ||

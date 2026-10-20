@@ -619,6 +619,9 @@ const LOAD_CALL_ARGUMENTS =
 const LOAD_CALL_PATH_TOKEN = /[^\s'"`\\/()+,;${}[\]]+/g;
 
 function codeLoadCallNames(ctx: RuleContext): Set<string> {
+  // Only names some file here can be looked up by are kept: the text is hostile
+  // and its distinct tokens are bounded only by the retained bytes.
+  const lookups = new Set(ctx.files.flatMap((file) => loadCallLookupNames(file.path)));
   const names = new Set<string>();
   for (const file of ctx.files) {
     const path = file.path;
@@ -627,7 +630,10 @@ function codeLoadCallNames(ctx: RuleContext): Set<string> {
     if (isDocumentationPath(path) || isTypeDeclarationPath(path)) continue;
     LOAD_CALL_ARGUMENTS.lastIndex = 0;
     for (const call of file.textSample.matchAll(LOAD_CALL_ARGUMENTS)) {
-      for (const token of call[1].match(LOAD_CALL_PATH_TOKEN) ?? []) names.add(token.toLowerCase());
+      for (const [token] of call[1].matchAll(LOAD_CALL_PATH_TOKEN)) {
+        const name = token.toLowerCase();
+        if (lookups.has(name)) names.add(name);
+      }
     }
   }
   return names;
@@ -639,12 +645,15 @@ function codeLoadCallNames(ctx: RuleContext): Set<string> {
 function isLoadedAsCode(ctx: RuleContext, path: string, loadCallNames: Set<string>): boolean {
   if (ctx.consumerReachable.has(normalizeReachabilityPath(path))) return true;
   if (isLifecycleScriptFile(ctx, path)) return true;
-  // Lowercased: `require('./PAYLOAD.TXT')` loads payload.txt on a case-insensitive
-  // filesystem.
+  const [basename, extension] = loadCallLookupNames(path);
+  return loadCallNames.has(basename) || loadCallNames.has(extension);
+}
+
+// Lowercased: `require('./PAYLOAD.TXT')` loads payload.txt on a case-insensitive
+// filesystem.
+function loadCallLookupNames(path: string): [string, string] {
   const basename = (path.replaceAll("\\", "/").split("/").at(-1) ?? "").toLowerCase();
-  return (
-    loadCallNames.has(basename) || loadCallNames.has(basename.slice(basename.lastIndexOf(".")))
-  );
+  return [basename, basename.slice(basename.lastIndexOf("."))];
 }
 
 // `code` and `inert` are same-length views (comments blanked; `inert` also

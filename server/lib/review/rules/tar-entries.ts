@@ -43,20 +43,16 @@ function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean 
   const stagedFlags = options.stagedFiles
     ? new Map(options.stagedFiles.map((file) => [file.path, file.flags]))
     : null;
-  let loaded: LoadedBundleIndex | undefined;
-  return (options.fileDiff ?? []).some((entry) => {
-    if (entry.status !== "added" && entry.status !== "modified") return false;
+  const neverSampled: string[] = [];
+  for (const entry of options.fileDiff ?? []) {
+    if (entry.status !== "added" && entry.status !== "modified") continue;
     const flags = (entry.path !== undefined && stagedFlags?.get(entry.path)) || entry.flags;
-    if (!flags.includes("content-skipped")) return false;
-    if (flags.some((flag) => flag.startsWith("native-"))) return false;
+    if (!flags.includes("content-skipped")) continue;
+    if (flags.some((flag) => flag.startsWith("native-"))) continue;
     if (entry.path === undefined || !shouldSkipTextSample(entry.path)) return true;
-    loaded ??= loadedBundleIndex(options.stagedFiles ?? []);
-    return loaded.isLoaded(entry.path);
-  });
-}
-
-interface LoadedBundleIndex {
-  isLoaded(path: string): boolean;
+    neverSampled.push(entry.path);
+  }
+  return neverSampled.length > 0 && isAnyBundleLoaded(neverSampled, options.stagedFiles ?? []);
 }
 
 // File-name tokens in shipped text, minus `sourceMappingURL` comments (every
@@ -67,24 +63,30 @@ const SOURCE_MAP_COMMENT = /[#@]\s*sourceMappingURL\s*=\s*\S*/g;
 const FILE_NAME_TOKEN = /[^\s'"`\\/()+,;:=<>{}[\]|&*?!]+/g;
 const CODE_EXTENSION = /\.[cm]?js$/;
 
-function loadedBundleIndex(
+// The shipped text is hostile and its token count is bounded only by the
+// retained bytes, so tokens are streamed against the few names being looked
+// for rather than collected; memory stays proportional to the candidates.
+function isAnyBundleLoaded(
+  paths: string[],
   stagedFiles: NonNullable<TarEntryFindingOptions["stagedFiles"]>,
-): LoadedBundleIndex {
+): boolean {
   const entrypoints = manifestEntrypoints(stagedFiles);
-  const names = new Set<string>();
+  const wanted = new Set<string>();
+  for (const path of paths) {
+    const normalized = path.toLowerCase();
+    if (entrypoints.has(normalized)) return true;
+    const basename = normalized.split("/").at(-1) ?? "";
+    wanted.add(basename);
+    wanted.add(basename.replace(CODE_EXTENSION, ""));
+  }
   for (const file of stagedFiles) {
     if (!file.textSample || /(?:^|\/)package\.json$/i.test(file.path)) continue;
     const text = file.textSample.replace(SOURCE_MAP_COMMENT, "");
-    for (const token of text.match(FILE_NAME_TOKEN) ?? []) names.add(token.toLowerCase());
+    for (const [token] of text.matchAll(FILE_NAME_TOKEN)) {
+      if (wanted.has(token.toLowerCase())) return true;
+    }
   }
-  return {
-    isLoaded(path) {
-      const normalized = path.toLowerCase();
-      if (entrypoints.has(normalized)) return true;
-      const basename = normalized.split("/").at(-1) ?? "";
-      return names.has(basename) || names.has(basename.replace(CODE_EXTENSION, ""));
-    },
-  };
+  return false;
 }
 
 // Every path string under the shallowest manifest's entrypoint fields
