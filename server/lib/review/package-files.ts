@@ -351,10 +351,19 @@ function compileFilesEntry(
 
 // A non-negated entry without glob syntax; npm-packlist turns one that names a
 // file into a required file that no later `!` entry can drop. Directory names
-// land here too, which is harmless: no packed file has a directory's path.
+// land here too, which is harmless: no packed file has a directory's path. A
+// backslash is an escape to the matcher, not a separator, so such an entry is
+// left to the matcher rather than read as a path.
 function literalFileEntry(entry: string): string | null {
   const trimmed = entry.trim();
-  if (trimmed.startsWith("!") || trimmed.endsWith("/") || hasGlobMagic(trimmed)) return null;
+  if (
+    trimmed.startsWith("!") ||
+    trimmed.endsWith("/") ||
+    trimmed.includes("\\") ||
+    hasGlobMagic(trimmed)
+  ) {
+    return null;
+  }
   return normalizeManifestPath(trimmed).toLowerCase() || null;
 }
 
@@ -698,6 +707,8 @@ function matchSegment(tokens: SegmentToken[], text: string, budget: MatchBudget)
   while (ci < text.length) {
     const token = tokens[ti];
     steps += token?.kind === "class" ? token.cost : 1;
+    // Charged as it goes: one long segment must not run past the budget first.
+    if (steps > budget.remaining) spend(budget, steps);
     if (token && token.kind !== "star" && tokenMatches(token, text[ci])) {
       ti += 1;
       ci += 1;

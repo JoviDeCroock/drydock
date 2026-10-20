@@ -296,6 +296,20 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     expect(outside(["src\\lib", ...filler], ["src/lib/a.js"])).toEqual(["src/lib/a.js"]);
   });
 
+  test("one long path segment stops at the matching budget", () => {
+    // Every start position matches a thousand characters before failing.
+    const files = [`*${"a".repeat(1_000)}b`, "lib"];
+    const started = performance.now();
+    expect(outside(files, ["lib/a.js", "a".repeat(1_000_000)])).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  test("a backslash entry is an escape, not a packed path", () => {
+    expect(outside(["lib\\evil.js", "dist"], ["lib/evil.js", "dist/a.js"])).toEqual([
+      "lib/evil.js",
+    ]);
+  });
+
   test("the literal fallback stays linear in the archive's paths", () => {
     const files = [...Array.from({ length: 100_000 }, (_, index) => `missing-${index}/x`), "lib"];
     const paths = [...Array.from({ length: 20_000 }, (_, index) => `src/f${index}.js`), "lib/a.js"];
