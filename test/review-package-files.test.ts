@@ -244,4 +244,23 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     expect(outside([negated(10), "lib"], [negatedMatch, "lib/a.js"])).toEqual([]);
     expect(outside([negated(150), "lib"], [negatedMatch, "lib/a.js"])).toEqual([negatedMatch]);
   });
+
+  test("empty alternatives still count against the compile cap", () => {
+    // Each `!(||…)` alternative is empty, so a length-only charge costs nothing
+    // while every one still compiles a pattern.
+    const empties = `/{${",".repeat(63)}}!(${"|".repeat(955)})`;
+    const files = [...Array.from({ length: 999 }, () => empties), "lib"];
+    expect(outside(files, ["x.js", "lib/a.js"])).toEqual(["x.js"]);
+  });
+
+  test("the literal fallback stays linear in the archive's paths", () => {
+    const files = [...Array.from({ length: 100_000 }, (_, index) => `missing-${index}/x`), "lib"];
+    const paths = [...Array.from({ length: 20_000 }, (_, index) => `src/f${index}.js`), "lib/a.js"];
+    const started = performance.now();
+    const result = outside(files, [...paths, "lib", "libx/a.js"]);
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(result).toHaveLength(20_001);
+    expect(result).not.toContain("lib/a.js");
+    expect(result).toContain("libx/a.js");
+  });
 });

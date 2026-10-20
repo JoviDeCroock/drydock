@@ -53,10 +53,13 @@ export interface PackageFilesAllowlistOptions {
 const MAX_FILES_ENTRIES = 1_000;
 const MAX_ENTRY_LENGTH = 1_024;
 const MAX_EXPANSIONS_PER_ENTRY = 64;
-// Pattern characters compiled across every expanded alternative of one
-// manifest. Compiling allocates per character, so without this the entry,
-// length and expansion caps multiply into gigabytes before any path is matched.
-const MAX_COMPILE_CHARS = 250_000;
+// Compile work across one manifest: every expanded pattern costs its length
+// plus a fixed overhead (an empty alternative still allocates a compiled
+// pattern), and parsing a group costs the characters it scans. Without it the
+// entry, length and expansion caps multiply into gigabytes before any path is
+// matched.
+const MAX_COMPILE_WORK = 250_000;
+const PATTERN_OVERHEAD = 32;
 // Wildcard steps across every path matched against one manifest. Real
 // manifests spend well under 1% of it on the largest packages in the sweep.
 const MAX_MATCH_WORK = 30_000_000;
@@ -91,7 +94,7 @@ export function compilePackageFilesAllowlist(
   if (!files.length) return null;
 
   const budget: MatchBudget = { remaining: MAX_MATCH_WORK };
-  const compileBudget: MatchBudget = { remaining: MAX_COMPILE_CHARS };
+  const compileBudget: MatchBudget = { remaining: MAX_COMPILE_WORK };
   let rules: FilesRule[] | null = null;
   if (
     files.length <= MAX_FILES_ENTRIES &&
@@ -103,11 +106,13 @@ export function compilePackageFilesAllowlist(
       if (!(error instanceof MatchBudgetExceeded)) throw error;
     }
   }
-  const literalDirectories = files
-    .map((entry) => entry.trim())
-    .filter((entry) => !entry.startsWith("!") && !hasGlobMagic(entry))
-    .map((entry) => normalizeManifestPath(entry).toLowerCase())
-    .filter(Boolean);
+  const literalDirectories = new Set(
+    files
+      .map((entry) => entry.trim())
+      .filter((entry) => !entry.startsWith("!") && !hasGlobMagic(entry))
+      .map((entry) => normalizeManifestPath(entry).toLowerCase())
+      .filter(Boolean),
+  );
   const alwaysPacked = new Set(
     [
       packageJson?.main ?? raw.main,
@@ -151,11 +156,7 @@ export function compilePackageFilesAllowlist(
       return false;
     }
     if (isBundledPath(segments, bundled)) return false;
-    if (!rules) {
-      return !literalDirectories.some(
-        (entry) => normalized === entry || normalized.startsWith(`${entry}/`),
-      );
-    }
+    if (!rules) return !isUnderLiteralEntry(normalized, literalDirectories);
     if (!walked(segments)) return true;
     return !evaluate(rules, segments, false);
   };
@@ -176,6 +177,21 @@ export function compilePackageFilesAllowlist(
       return new Set(list.filter(isOutside));
     },
   };
+}
+
+// Whether the path is a literal entry or lies beneath one. The fallback runs
+// precisely when `files` is too large to trust, so the lookup walks the path's
+// own prefixes instead of the entries.
+function isUnderLiteralEntry(normalized: string, entries: Set<string>): boolean {
+  if (entries.has(normalized)) return true;
+  for (
+    let slash = normalized.indexOf("/");
+    slash >= 0;
+    slash = normalized.indexOf("/", slash + 1)
+  ) {
+    if (entries.has(normalized.slice(0, slash))) return true;
+  }
+  return false;
 }
 
 interface MatchBudget {
@@ -363,15 +379,17 @@ function expandAlternatives(
   const out: Array<{ positive: string; negatives: string[] }> = [];
   const keep = (positive: string, negatives: string[]): boolean => {
     if (out.length === MAX_EXPANSIONS_PER_ENTRY) return false;
-    spend(compileBudget, positive.length);
+    spend(compileBudget, PATTERN_OVERHEAD + positive.length);
     out.push({ positive, negatives });
     return true;
   };
-  for (const expanded of expandBraces(pattern)) {
+  for (const expanded of expandBraces(pattern, compileBudget)) {
     if (out.length === MAX_EXPANSIONS_PER_ENTRY) break;
-    const negation = findGroup(expanded, "!");
+    const negation = findGroup(expanded, "!", compileBudget);
     if (!negation) {
-      for (const positive of expandExtglobs(expanded)) if (!keep(positive, [])) break;
+      for (const positive of expandExtglobs(expanded, compileBudget)) {
+        if (!keep(positive, [])) break;
+      }
       continue;
     }
     const before = expanded.slice(0, negation.start);
@@ -379,25 +397,25 @@ function expandAlternatives(
     // Shared by every positive this alternative expands to.
     const negatives: string[] = [];
     for (const alternative of negation.alternatives) {
-      for (const negative of expandExtglobs(`${before}${alternative}${after}`)) {
-        spend(compileBudget, negative.length);
+      for (const negative of expandExtglobs(`${before}${alternative}${after}`, compileBudget)) {
+        spend(compileBudget, PATTERN_OVERHEAD + negative.length);
         negatives.push(negative);
       }
     }
-    for (const positive of expandExtglobs(`${before}*${after}`)) {
+    for (const positive of expandExtglobs(`${before}*${after}`, compileBudget)) {
       if (!keep(positive, negatives)) break;
     }
   }
   return out;
 }
 
-function expandBraces(pattern: string): string[] {
+function expandBraces(pattern: string, compileBudget: MatchBudget): string[] {
   let results = [pattern];
   for (let round = 0; round < 8; round += 1) {
     let changed = false;
     const next: string[] = [];
     for (const candidate of results) {
-      const group = findBraceGroup(candidate);
+      const group = findBraceGroup(candidate, compileBudget);
       if (!group) {
         next.push(candidate);
         continue;
@@ -416,6 +434,7 @@ function expandBraces(pattern: string): string[] {
 
 function findBraceGroup(
   pattern: string,
+  compileBudget: MatchBudget,
 ): { start: number; end: number; alternatives: string[] } | null {
   for (let start = 0; start < pattern.length; start += 1) {
     if (pattern[start] === "\\") {
@@ -423,20 +442,21 @@ function findBraceGroup(
       continue;
     }
     if (pattern[start] !== "{") continue;
-    const group = splitGroup(pattern, start + 1, "}", ",");
+    const group = splitGroup(pattern, start + 1, "}", ",", compileBudget);
     // `{x}` (no comma) is literal in minimatch.
     if (group && group.alternatives.length > 1) return { start, ...group };
   }
   return null;
 }
 
-function expandExtglobs(pattern: string): string[] {
+function expandExtglobs(pattern: string, compileBudget: MatchBudget): string[] {
   let results = [pattern];
   for (let round = 0; round < 8; round += 1) {
     const next: string[] = [];
     let changed = false;
     for (const candidate of results) {
-      const group = findGroup(candidate, "@") ?? findGroup(candidate, "?");
+      const group =
+        findGroup(candidate, "@", compileBudget) ?? findGroup(candidate, "?", compileBudget);
       if (!group) {
         next.push(candidate);
         continue;
@@ -458,6 +478,7 @@ function expandExtglobs(pattern: string): string[] {
 function findGroup(
   pattern: string,
   marker: "!" | "@" | "?",
+  compileBudget: MatchBudget,
 ): { start: number; end: number; alternatives: string[] } | null {
   for (let start = 0; start + 1 < pattern.length; start += 1) {
     if (pattern[start] === "\\") {
@@ -465,7 +486,7 @@ function findGroup(
       continue;
     }
     if (pattern[start] !== marker || pattern[start + 1] !== "(") continue;
-    const group = splitGroup(pattern, start + 2, ")", "|");
+    const group = splitGroup(pattern, start + 2, ")", "|", compileBudget);
     if (group) return { start, ...group };
   }
   return null;
@@ -478,7 +499,11 @@ function splitGroup(
   from: number,
   close: "}" | ")",
   separator: "," | "|",
+  compileBudget: MatchBudget,
 ): { end: number; alternatives: string[] } | null {
+  // An unclosed group scans to the end, once per opener; charging the scan
+  // keeps a pattern of openers from going quadratic.
+  spend(compileBudget, pattern.length - from);
   const open = close === "}" ? "{" : "(";
   const alternatives: string[] = [];
   let depth = 0;
