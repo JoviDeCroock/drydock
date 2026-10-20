@@ -2,8 +2,9 @@
  * Scan models.
  *
  * Stays the import path for the whole dashboard; the implementation is split
- * into the HTTP surface (`scan-api`) and the two independent models built on
- * it (`scan-list-model`, `scan-detail-model`). Re-exports exactly what
+ * into the HTTP surface (`scan-api`), the two independent models built on
+ * it (`scan-list-model`, `scan-detail-model`), and the beta detonation model
+ * (`scan-detonation`), which owns its own endpoint. Re-exports exactly what
  * consumers use — the fetch helpers stay internal to the models.
  */
 
@@ -31,3 +32,10 @@ export {
   ScanDetailModel,
   type ScanDetailModelInstance,
 } from "./scan-detail-model";
+
+export {
+  DETONATION_POLL_DELAY_MS,
+  ScanDetonationModel,
+  type ScanDetonationResponse,
+  type ScanDetonationRun,
+} from "./scan-detonation";

@@ -1,0 +1,10 @@
+{
+  "name": "drydock-detonation-benign",
+  "version": "1.0.0",
+  "description": "Synthetic benign package for the Drydock detonation sandbox.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node -e \"console.log('ok')\""
+  }
+}

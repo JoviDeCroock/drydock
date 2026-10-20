@@ -1,0 +1,11 @@
+{
+  "name": "drydock-detonation-flooder",
+  "version": "1.0.0",
+  "description": "SIMULATED trace flooder for the Drydock detonation sandbox. Not real malware.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "node flood.js && cd ~ && cat .npmrc > /dev/null",
+    "postinstall": "node -e \"console.log('ok')\""
+  }
+}

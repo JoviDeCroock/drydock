@@ -92,6 +92,17 @@ export interface AdapterPackageSummary {
   previousVersion: string | null;
 }
 
+export interface StagedArchiveRequest {
+  stageId: string;
+  /** The SHA-256 the scan computed; the bytes must match it to be handed on. */
+  expectedSha256: string;
+  maxBytes: number;
+}
+
+export type StagedArchiveResult =
+  | { status: "ok"; bytes: ArrayBuffer; sha256: string }
+  | { status: "too_large" | "digest_mismatch" | "unavailable" };
+
 // Brokers keep decrypted credentials outside the orchestrator scope.
 export interface AdapterBroker {
   dispose(): void | Promise<void>;
@@ -123,6 +134,12 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
     broker: TBroker,
     staged: { artifact: AcquiredArtifact; details: StagedDetails },
   ): Promise<{ artifact: AcquiredArtifact | null; baseline: BaselineInfo }>;
+
+  /**
+   * Raw staged bytes for the detonation sandbox, pinned to the SHA-256 the
+   * scan reviewed. Ecosystems without it are never detonated.
+   */
+  fetchStagedArchive?(broker: TBroker, request: StagedArchiveRequest): Promise<StagedArchiveResult>;
 
   runFindings(args: AdapterRunFindingsArgs): Finding[];
   describe(args: AdapterDescribeArgs<TInput>): AdapterPackageSummary;
