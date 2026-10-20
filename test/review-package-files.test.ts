@@ -253,6 +253,43 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     expect(outside(files, ["x.js", "lib/a.js"])).toEqual(["x.js"]);
   });
 
+  test("character classes cost the matcher every range they test", () => {
+    const paths = [
+      "lib/a.js",
+      ...Array.from({ length: 2_500 }, (_, i) => `${i}${"a".repeat(505)}`),
+    ];
+    for (const files of [
+      [...Array.from({ length: 8 }, () => `*[${"b-c".repeat(339)}]`), "lib"],
+      [...Array.from({ length: 2 }, () => `*[${"~".repeat(1_018)}]`), "lib"],
+    ]) {
+      const started = performance.now();
+      expect(outside(files, paths)).toHaveLength(2_500);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }
+  });
+
+  test("unclosed character classes are charged for rescanning their segment", () => {
+    const files = [...Array.from({ length: 236 }, (_, i) => `${"[".repeat(1_020)}${i}`), "lib"];
+    const started = performance.now();
+    expect(outside(files, ["lib/a.js", "x.js"])).toEqual(["x.js"]);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("the literal fallback still applies `!` entries", () => {
+    const filler = Array.from({ length: 1_000 }, (_, index) => `d${index}/*.js`);
+    expect(
+      outside(
+        ["lib", "!lib/evil.js", "!__tests__", ...filler],
+        ["lib/evil.js", "lib/ok.js", "lib/__tests__/a.test.js"],
+      ),
+    ).toEqual(["lib/evil.js", "lib/__tests__/a.test.js"]);
+    // A glob negation could carve anything out of a literal directory, so only
+    // literal file entries stay covered.
+    expect(
+      outside(["lib", "index.js", "!lib/*.map", ...filler], ["lib/a.js", "index.js", "lib/a.map"]),
+    ).toEqual(["lib/a.js", "lib/a.map"]);
+  });
+
   test("the literal fallback stays linear in the archive's paths", () => {
     const files = [...Array.from({ length: 100_000 }, (_, index) => `missing-${index}/x`), "lib"];
     const paths = [...Array.from({ length: 20_000 }, (_, index) => `src/f${index}.js`), "lib/a.js"];
