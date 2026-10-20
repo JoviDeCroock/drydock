@@ -5,6 +5,7 @@ import {
   eventTier,
   fitEvents,
 } from "../containers/detonation/event-budget.mjs";
+import { isBrowserTargeted } from "../containers/detonation/manifest.mjs";
 import {
   createLineJoiner,
   createTraceReader,
@@ -657,5 +658,33 @@ describe("isNoiseEvent", () => {
       false,
     );
     expect(isNoiseEvent({ ...base, kind: "dns", hostname: "exfil.example" })).toBe(false);
+  });
+});
+
+describe("isBrowserTargeted", () => {
+  test("recognizes browser fields and a nested browser export condition", () => {
+    expect(isBrowserTargeted({ browser: "dist/browser.js" })).toBe(true);
+    expect(isBrowserTargeted({ browser: { fs: false } })).toBe(true);
+    expect(isBrowserTargeted({ unpkg: "dist/umd.js" })).toBe(true);
+    expect(
+      isBrowserTargeted({
+        exports: { ".": { import: { browser: "./b.mjs", default: "./n.mjs" } } },
+      }),
+    ).toBe(true);
+    expect(isBrowserTargeted({ exports: [{ node: "./n.js" }, { browser: "./b.js" }] })).toBe(true);
+  });
+
+  test("treats a Node-only or missing manifest as not browser-targeted", () => {
+    expect(isBrowserTargeted(null)).toBe(false);
+    expect(isBrowserTargeted({ main: "index.js", browser: false })).toBe(false);
+    expect(isBrowserTargeted({ exports: { ".": { node: "./n.js", default: "./n.js" } } })).toBe(
+      false,
+    );
+  });
+
+  test("stops walking a hostile exports tree at its depth bound", () => {
+    let deep: Record<string, unknown> = { browser: "./b.js" };
+    for (let index = 0; index < 50; index += 1) deep = { [`c${index}`]: deep };
+    expect(isBrowserTargeted({ exports: deep })).toBe(false);
   });
 });

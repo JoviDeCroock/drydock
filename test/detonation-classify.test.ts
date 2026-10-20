@@ -18,6 +18,8 @@ function report(events: HarnessEvent[]): HarnessReport {
       runtimeHooks: true,
       dependencyInstall: "complete",
       stepsSkipped: 0,
+      exercise: "load",
+      browserTargeted: false,
     },
     steps: [],
     events,
@@ -336,6 +338,21 @@ describe("captured harness reports", () => {
     expect(await classifyFixture("flooder")).toEqual([["dynamic.credential-file-read", "high"]]);
   });
 
+  test("a web library loads clean but is reported as browser-targeted", async () => {
+    expect(await classifyFixture("browser-lib")).toEqual([]);
+    const { readFile } = await import("node:fs/promises");
+    const raw = JSON.parse(
+      await readFile(
+        new URL("./fixtures/detonation/reports/browser-lib.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(parseHarnessReport(raw)?.coverage).toMatchObject({
+      exercise: "load",
+      browserTargeted: true,
+    });
+  });
+
   test("npm and yarn reading their own config under a postinstall raise nothing", async () => {
     expect(await classifyFixture("npm-run")).toEqual([]);
   });
@@ -412,6 +429,8 @@ describe("harness report validation", () => {
       runtimeHooks: false,
       dependencyInstall: "partial",
       stepsSkipped: 0,
+      exercise: "load",
+      browserTargeted: false,
     });
     expect(parsed?.events).toHaveLength(2);
     expect(parsed?.events[0]).toMatchObject({ path: "a?b" });

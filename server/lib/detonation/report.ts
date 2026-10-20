@@ -112,6 +112,8 @@ function parseCoverage(value: unknown): HarnessCoverage | null {
     runtimeHooks: value.runtimeHooks === true,
     dependencyInstall,
     stepsSkipped: Math.max(0, boundedInt(value.stepsSkipped) ?? 0),
+    exercise: "load",
+    browserTargeted: value.browserTargeted === true,
   };
 }
 

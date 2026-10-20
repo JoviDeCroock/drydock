@@ -1,0 +1,8 @@
+{
+  "name": "drydock-fixture-browser-lib",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Synthetic detonation fixture: a web library whose code only acts in a browser.",
+  "main": "index.js",
+  "browser": "index.js"
+}

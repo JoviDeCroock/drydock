@@ -15,8 +15,8 @@ import {
   coverageParts,
   detonationView,
   signalNeedsBadge,
+  cleanRunCaveat,
   signalSourceHint,
-  weakCleanResult,
 } from "./detonation-view";
 
 const EVIDENCE_PREVIEW_LINES = 3;
@@ -39,6 +39,10 @@ export function DetonationSection({ scanId }: { scanId: string }) {
   // A first load that failed stays silent: the beta should not surface on a
   // transient error for organizations that may not be in it.
   if (hidden || view.kind === "hidden") return null;
+  const caveat =
+    view.kind === "complete" && !view.signals.length
+      ? cleanRunCaveat(view.coverage, view.truncated)
+      : null;
 
   const runButton =
     "canRun" in view && view.canRun ? (
@@ -93,11 +97,7 @@ export function DetonationSection({ scanId }: { scanId: string }) {
       {view.kind === "complete" ? (
         <>
           <MonoDetail parts={coverageParts(view.coverage, view.truncated)} />
-          {!view.signals.length && weakCleanResult(view.coverage, view.truncated) ? (
-            <p class="m-0 text-[12px] text-ink-muted">
-              Limited coverage makes a clean run weaker evidence.
-            </p>
-          ) : null}
+          {caveat ? <p class="m-0 text-[12px] text-ink-muted">{caveat}</p> : null}
         </>
       ) : null}
       {result && (result.egress.length || result.steps.length) ? (

@@ -4,7 +4,9 @@
     "syscallTracing": true,
     "runtimeHooks": true,
     "dependencyInstall": "complete",
-    "stepsSkipped": 0
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
   },
   "steps": [
     {
@@ -12,28 +14,28 @@
       "target": "drydock-detonation-flooder@1.0.0:preinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 1923
+      "durationMs": 2373
     },
     {
       "step": "lifecycle",
       "target": "drydock-detonation-flooder@1.0.0:postinstall",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 98
+      "durationMs": 113
     },
     {
       "step": "require",
       "target": "drydock-detonation-flooder:require",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 81
+      "durationMs": 105
     },
     {
       "step": "import",
       "target": "drydock-detonation-flooder:import",
       "exitCode": 0,
       "timedOut": false,
-      "durationMs": 95
+      "durationMs": 108
     }
   ],
   "events": [

@@ -144,6 +144,32 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("blocked").first()).toBeVisible();
 });
 
+test("a clean detonation of a browser build says the sandbox did not cover it", async ({
+  page,
+}) => {
+  await installWorkflowGateMocks(page, true);
+  const clean = detonationResponse();
+  const result = clean.detonation.result;
+  clean.detonation.result = {
+    ...result,
+    signals: [],
+    egress: [],
+    coverage: { ...result.coverage, browserTargeted: true },
+  };
+  // Registered after the shared mocks, so it answers first.
+  await page.route(`**/api/v1/scans/${scanId}/detonation`, (route) =>
+    route.fulfill({ json: clean }),
+  );
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const notes = page
+    .getByRole("heading", { name: "Review notes", exact: true })
+    .locator("xpath=ancestor::details[1]");
+  await expect(notes.getByText(/loaded only, no exports called/)).toBeVisible();
+  await expect(
+    notes.getByText(/ships a browser build, which never runs in the sandbox/),
+  ).toBeVisible();
+});
+
 test("review notes group evidence and keep AI advice subordinate to findings", async ({
   page,
 }, testInfo) => {
@@ -177,6 +203,9 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   await expect(notes.getByRole("heading", { name: /^Detonation/ })).toBeVisible();
   await expect(notes.getByText("1 suspicious behavior observed", { exact: true })).toBeVisible();
   await expect(notes.getByText("seen at the network boundary · during lifecycle")).toBeVisible();
+  await expect(notes.getByText(/loaded only, no exports called/)).toBeVisible();
+  // The clean-run caveat is for runs without signals only.
+  await expect(notes.getByText(/ships a browser build/)).toHaveCount(0);
   await notes.screenshot({ path: testInfo.outputPath("review-notes.png") });
   await notes.locator("summary").filter({ hasText: "Remote shell" }).click();
   const locations = notes.getByRole("button", { name: /^site\/dist\/changelog.*:42$/ });
@@ -681,7 +710,14 @@ function detonationResponse() {
             step: "lifecycle",
           },
         ],
-        coverage: { syscallTracing: true, runtimeHooks: true, dependencyInstall: "complete" },
+        coverage: {
+          syscallTracing: true,
+          runtimeHooks: true,
+          dependencyInstall: "complete",
+          stepsSkipped: 0,
+          exercise: "load",
+          browserTargeted: true,
+        },
         steps: [
           {
             step: "lifecycle",
@@ -850,8 +886,8 @@ async function installWorkflowGateMocks(
       return;
     }
 
-    // The beta sandbox endpoint 404s outside the beta, and Chromium logs every
-    // 404 as a console error, so the mock answers as a beta organization.
+    // Outside the beta the endpoint answers `eligible: false`; review-notes
+    // scenarios answer as a beta organization with a finished run.
     if (path === `/api/v1/scans/${scanId}/detonation`) {
       await fulfillJson(
         route,
