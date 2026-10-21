@@ -227,4 +227,97 @@ describe("compilePackageFilesAllowlist follows npm-packlist", () => {
     const long = [`*${"a".repeat(1_100)}`, "lib"];
     expect(outside(long, ["lib/a.js", "src/a.js"])).toEqual(["src/a.js"]);
   });
+
+  test("a manifest whose expanded patterns pass the compile cap falls back to its literal entries", () => {
+    // 999 hostile entries plus `lib` stays inside the entry cap, so only the
+    // compile cap can stop these from compiling.
+    const braces = `{${Array.from({ length: 64 }, (_, index) => `b${index}`).join(",")}}`;
+    const entry = (index: number) => `${"a".repeat(700)}${index}${braces}`;
+    const matched = `${"a".repeat(700)}0b63`;
+    expect(outside([entry(0), entry(1), "lib"], [matched, "lib/a.js"])).toEqual([]);
+    const hostile = [...Array.from({ length: 999 }, (_, index) => entry(index)), "lib"];
+    expect(outside(hostile, [matched, "lib/a.js"])).toEqual([matched]);
+
+    const negated = (alternatives: number) =>
+      `{${Array.from({ length: 64 }, (_, index) => index).join(",")}}${"p".repeat(100)}!(${Array.from({ length: alternatives }, (_, index) => `n${index}`).join("|")})`;
+    const negatedMatch = `0${"p".repeat(100)}x.js`;
+    expect(outside([negated(10), "lib"], [negatedMatch, "lib/a.js"])).toEqual([]);
+    expect(outside([negated(150), "lib"], [negatedMatch, "lib/a.js"])).toEqual([negatedMatch]);
+  });
+
+  test("empty alternatives still count against the compile cap", () => {
+    // Each `!(||…)` alternative is empty, so a length-only charge costs nothing
+    // while every one still compiles a pattern.
+    const empties = `/{${",".repeat(63)}}!(${"|".repeat(955)})`;
+    const files = [...Array.from({ length: 999 }, () => empties), "lib"];
+    expect(outside(files, ["x.js", "lib/a.js"])).toEqual(["x.js"]);
+  });
+
+  test("character classes cost the matcher every range they test", () => {
+    const paths = [
+      "lib/a.js",
+      ...Array.from({ length: 2_500 }, (_, i) => `${i}${"a".repeat(505)}`),
+    ];
+    for (const files of [
+      [...Array.from({ length: 8 }, () => `*[${"b-c".repeat(339)}]`), "lib"],
+      [...Array.from({ length: 2 }, () => `*[${"~".repeat(1_018)}]`), "lib"],
+    ]) {
+      const started = performance.now();
+      expect(outside(files, paths)).toHaveLength(2_500);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }
+  });
+
+  test("unclosed character classes are charged for rescanning their segment", () => {
+    const files = [...Array.from({ length: 236 }, (_, i) => `${"[".repeat(1_020)}${i}`), "lib"];
+    const started = performance.now();
+    expect(outside(files, ["lib/a.js", "x.js"])).toEqual(["x.js"]);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("the literal fallback still applies `!` entries", () => {
+    const filler = Array.from({ length: 1_000 }, (_, index) => `d${index}/*.js`);
+    expect(
+      outside(
+        ["lib", "!lib/evil.js", "!__tests__", ...filler],
+        ["lib/evil.js", "lib/ok.js", "lib/__tests__/a.test.js"],
+      ),
+    ).toEqual(["lib/evil.js", "lib/__tests__/a.test.js"]);
+    // A glob negation could carve anything out of a literal directory, so only
+    // literal file entries stay covered.
+    expect(
+      outside(["lib", "index.js", "!lib/*.map", ...filler], ["lib/a.js", "index.js", "lib/a.map"]),
+    ).toEqual(["lib/a.js", "lib/a.map"]);
+    for (const negation of ["!", "!./", "!.", "!lib//evil.js", "!lib/evil\\.js"]) {
+      expect(outside(["lib", negation, ...filler], ["lib/evil.js"]), negation).toEqual([
+        "lib/evil.js",
+      ]);
+    }
+    expect(outside(["src\\lib", ...filler], ["src/lib/a.js"])).toEqual(["src/lib/a.js"]);
+  });
+
+  test("one long path segment stops at the matching budget", () => {
+    // Every start position matches a thousand characters before failing.
+    const files = [`*${"a".repeat(1_000)}b`, "lib"];
+    const started = performance.now();
+    expect(outside(files, ["lib/a.js", "a".repeat(1_000_000)])).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
+  test("a backslash entry is an escape, not a packed path", () => {
+    expect(outside(["lib\\evil.js", "dist"], ["lib/evil.js", "dist/a.js"])).toEqual([
+      "lib/evil.js",
+    ]);
+  });
+
+  test("the literal fallback stays linear in the archive's paths", () => {
+    const files = [...Array.from({ length: 100_000 }, (_, index) => `missing-${index}/x`), "lib"];
+    const paths = [...Array.from({ length: 20_000 }, (_, index) => `src/f${index}.js`), "lib/a.js"];
+    const started = performance.now();
+    const result = outside(files, [...paths, "lib", "libx/a.js"]);
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(result).toHaveLength(20_001);
+    expect(result).not.toContain("lib/a.js");
+    expect(result).toContain("libx/a.js");
+  });
 });
