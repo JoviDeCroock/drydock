@@ -706,7 +706,9 @@ function introducesHost(changes: FileChanges | null, baselineHosts: () => Set<st
   if (!changes) return true;
   const texts = changedRegionTexts(changes.stagedText, changes.raw);
   const folded = changes.folded();
-  if (folded) texts.push(...changedRegionTexts(folded.text, folded.regions));
+  if (folded) {
+    for (const text of changedRegionTexts(folded.text, folded.regions)) texts.push(text);
+  }
   const known = baselineHosts();
   return texts.some((text) => hostsIn(text).some((host) => !known.has(host)));
 }

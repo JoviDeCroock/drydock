@@ -209,7 +209,9 @@ function pythonModuleCandidate(sourcePath: string, moduleName: string): string |
     segments = [...rootSegments];
     remainder = moduleName;
   }
-  if (remainder) segments.push(...remainder.split(".").filter(Boolean));
+  if (remainder) {
+    for (const segment of remainder.split(".")) if (segment) segments.push(segment);
+  }
   return normalizePathSegments(segments.join("/"));
 }
 
@@ -254,7 +256,7 @@ function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] 
       if (typeof target === "string") candidates.push(target);
     }
   }
-  candidates.push(...exportTargets(packageJson.exports));
+  for (const target of exportTargets(packageJson.exports)) candidates.push(target);
   if (typeof packageJson.browser === "string") candidates.push(packageJson.browser);
   return candidates;
 }
