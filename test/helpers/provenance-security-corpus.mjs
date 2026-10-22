@@ -1,4 +1,5 @@
 import { npmRegistryProvenance } from "../../server/lib/ecosystems/npm/provenance";
+import { projectRegistryMetadata } from "../../server/lib/ecosystems/npm/registry";
 import {
   classifyPyPiProvenanceResponse,
   combinePyPiFileProvenance,
@@ -37,8 +38,23 @@ function sideProvenance(ecosystem, packageName, side) {
       ),
     );
   }
+  // The marker is read the way production reads it: from a packument
+  // version entry through the registry projection. Omitted means the entry
+  // carried no dist object, which projects to unknown.
+  const dist =
+    side.packumentProvenance === undefined
+      ? undefined
+      : {
+          tarball: `https://registry.npmjs.org/${packageName}/-/${packageName}-${side.version}.tgz`,
+          ...(side.packumentProvenance
+            ? { attestations: { provenance: { predicateType: SLSA_V1 } } }
+            : {}),
+        };
+  const packument = projectRegistryMetadata({
+    versions: { [side.version]: dist ? { dist } : {} },
+  });
   return npmRegistryProvenance({
-    hasProvenance: side.packumentProvenance,
+    hasProvenance: packument.versions?.[side.version]?.hasProvenance,
     attestations: npmAttestationsDocument(side),
     packageName,
     version: side.version,

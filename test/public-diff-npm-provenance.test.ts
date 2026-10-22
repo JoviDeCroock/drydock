@@ -51,12 +51,12 @@ function metadata(fromProvenance: boolean, toProvenance: boolean) {
   };
 }
 
-async function acquireFindings(registryUrl = PUBLIC) {
+async function acquireFindings(registryUrl = PUBLIC, fromVersion = "1.0.0", toVersion = "1.0.1") {
   const sources = await npmPublicDiff.acquire({} as Cloudflare.Env, {} as ExecutionContext, {
     ecosystem: "npm",
     packageName: "example-widget",
-    fromVersion: "1.0.0",
-    toVersion: "1.0.1",
+    fromVersion,
+    toVersion,
     registryUrl,
   });
   const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
@@ -82,6 +82,21 @@ describe("npm public diff provenance continuity", () => {
       vi.fn(async () => new Response("unavailable", { status: 503 })),
     );
     expect(await acquireFindings()).toContain("release.provenance-dropped");
+  });
+
+  test("a reversed pair is not evaluated", async () => {
+    // 1.0.1 is attested and 1.0.0 is not; diffing newer -> older must not read
+    // as the older release dropping provenance.
+    mocks.fetchPublicPackageMetadata.mockResolvedValue(metadata(false, true));
+    mocks.downloadPublishedTarball.mockImplementation(async (_env, _ctx, url: string) =>
+      archive(url.includes("1.0.1") ? "1.0.1" : "1.0.0"),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await acquireFindings(PUBLIC, "1.0.1", "1.0.0")).not.toContain(
+      "release.provenance-dropped",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("a custom registry never evaluates provenance", async () => {

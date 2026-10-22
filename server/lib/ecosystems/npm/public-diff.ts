@@ -145,7 +145,10 @@ export const npmPublicDiff: PublicDiffAdapter = {
           throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
         }
       }
-      if (!fromPreview && !toPreview) {
+      // Continuity reads forward: a reversed pair (an older release picked as
+      // the "to" side) would report the older release as having dropped
+      // provenance its successor added.
+      if (!fromPreview && !toPreview && compareSemver(input.toVersion, input.fromVersion) > 0) {
         provenance = Promise.all([
           readNpmRegistryProvenance(
             metadata,

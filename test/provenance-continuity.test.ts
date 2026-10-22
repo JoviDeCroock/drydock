@@ -165,6 +165,9 @@ describe("attestedRepositoryFromUrl", () => {
       "https://github.com/a",
       "https://github.com/a/b?x=1",
       "https://github.com/a/b\nforged",
+      "https://github.com/a/b\u202Eforged",
+      "https://github.com/a/b\u200Bc",
+      "https://github.com/a/b\u0085c",
       `https://github.com/a/${"b".repeat(300)}`,
       "not a url",
       42,
@@ -513,6 +516,15 @@ describe("PyPI provenance", () => {
     ]);
     const init = fetchMock.mock.calls[0][1];
     expect(new Headers(init?.headers).get("accept")).toBe("application/vnd.pypi.integrity.v1+json");
+  });
+
+  test("a malformed filename from metadata is unknown, not a failed diff", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(readPyPiRegistryProvenance("p", "1.0", ["p-\uD800.tar.gz"])).resolves.toEqual({
+      status: "unknown",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("a network failure is unknown, never absent", async () => {

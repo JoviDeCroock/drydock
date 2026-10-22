@@ -69,7 +69,7 @@ export async function readNpmRegistryProvenance(
       // npm serves this endpoint directly; a redirect is not part of the
       // contract and is not followed to another host.
       redirect: "manual",
-      attempts: 2,
+      attempts: 1,
       timeoutMs: FETCH_TIMEOUT_MS,
     });
     if (!response.ok) {
