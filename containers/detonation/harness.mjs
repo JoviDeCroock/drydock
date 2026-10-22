@@ -35,6 +35,7 @@ import {
   PIP_CACHE,
   planPyPiSteps,
   PYPI_INDEX,
+  requiresDist,
   RUN_DIR,
   SDIST_DIR,
   SYSTEM_PYTHON,
@@ -106,9 +107,8 @@ const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // the tracer stays attached across the uid change and every later fork.
 //
 // Root-run binaries are absolute paths: a step's env carries the package's
-// PATH (`node_modules/.bin` first), which the package fills through its own
-// `bin` entries, so a bare name would let it plant a `setpriv` or `strace`
-// that runs as root.
+// PATH (`node_modules/.bin`, the venv's `bin`), which the package can write,
+// so a bare name would let it plant a `setpriv` or `strace` that runs as root.
 const STRACE = "/usr/bin/strace";
 const DROP_PRIVILEGES = [
   "/usr/bin/setpriv",
@@ -418,15 +418,22 @@ function preparePyPi(files) {
   if (wheel && identity && siteDir) {
     info.siteDir = siteDir;
     const wheelPath = path.join(DIST_DIR, wheel.name);
-    const full = runPip(["--only-binary", ":all:", wheelPath], siteDir, PIP_INSTALL_TIMEOUT_MS);
-    // A dependency with no binary wheel fails the whole resolution; the
-    // reviewed wheel alone still runs its own startup and import code.
-    const partial =
-      full === 0 ? 0 : runPip(["--no-deps", wheelPath], siteDir, PIP_NO_DEPS_TIMEOUT_MS);
+    // The wheel goes in alone, then only its index-resolvable dependencies
+    // (see `requiresDist`). A dependency with no binary wheel fails that
+    // second resolution; the reviewed wheel still runs its own code.
+    runPip(["--no-deps", wheelPath], siteDir, PIP_NO_DEPS_TIMEOUT_MS);
     const distInfo = findDistInfo(safeReaddir(siteDir), identity);
     info.installed = distInfo !== null;
     if (distInfo !== null) {
-      dependencyInstall = full === 0 ? "complete" : partial === 0 ? "partial" : "failed";
+      const deps = requiresDist(readTextHead(path.join(siteDir, distInfo, "METADATA")));
+      const depsInstalled =
+        deps.requirements.length === 0 ||
+        runPip(
+          ["--only-binary", ":all:", ...deps.requirements],
+          siteDir,
+          PIP_INSTALL_TIMEOUT_MS,
+        ) === 0;
+      dependencyInstall = depsInstalled && deps.dropped === 0 ? "complete" : "partial";
       info.modules = topLevelModules(
         readSmallText(path.join(siteDir, distInfo, "RECORD")),
         identity.name,
@@ -652,6 +659,27 @@ function readSmallText(file) {
     return fs.readFileSync(file, "utf8");
   } catch {
     return "";
+  }
+}
+
+/**
+ * The first bytes of a regular file: wheel `METADATA` puts its headers before
+ * a description of any length. `O_NOFOLLOW` refuses a symlink at open time.
+ *
+ * @param {string} file
+ */
+function readTextHead(file) {
+  let fd = -1;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (!fs.fstatSync(fd).isFile()) return "";
+    const buffer = Buffer.alloc(MAX_MANIFEST_BYTES);
+    const read = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, read).toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    if (fd !== -1) fs.closeSync(fd);
   }
 }
 

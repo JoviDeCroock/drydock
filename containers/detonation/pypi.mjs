@@ -266,6 +266,39 @@ export function isSafeRequirement(requirement) {
 }
 
 /**
+ * The wheel's own `Requires-Dist` entries pip should resolve from the index.
+ *
+ * The reviewed wheel is installed with `--no-deps` and these are installed in
+ * a second, binary-only pip call: pip honours a direct reference
+ * (`dep @ file:///…` or an sdist URL) in a local wheel's metadata even with
+ * `--only-binary`, which would build an sdist, running its code untraced
+ * during prepare. Extras-only requirements are not installed by default, so
+ * they are skipped rather than counted as dropped.
+ *
+ * @param {string} metadataText the head of the installed `METADATA`
+ * @returns {{ requirements: string[], dropped: number }}
+ */
+export function requiresDist(metadataText) {
+  /** @type {string[]} */
+  const requirements = [];
+  let dropped = 0;
+  for (const line of metadataText.split(/\r?\n/)) {
+    // Headers end at the first blank line; the description follows.
+    if (line.trim() === "") break;
+    const match = /^Requires-Dist:\s*(.*)$/i.exec(line);
+    if (!match) continue;
+    const requirement = match[1].trim();
+    if (/;[^;]*\bextra\b/.test(requirement)) continue;
+    if (!isSafeRequirement(requirement) || requirements.length >= MAX_REQUIREMENTS) {
+      dropped += 1;
+      continue;
+    }
+    requirements.push(requirement);
+  }
+  return { requirements, dropped };
+}
+
+/**
  * The `[build-system]` table as `build_system.py` printed it, narrowed. A
  * missing table means the PEP 517 setuptools fallback; a malformed one, or a
  * requirement this harness will not hand to pip, leaves the build to run

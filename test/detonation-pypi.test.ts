@@ -114,8 +114,27 @@ describe("wheel selection for the sandbox interpreter", () => {
     ).toEqual({ wheel: null, sdist: null });
   });
 
-  test("selects for the image's interpreter", () => {
+  test("never selects a filename the harness would refuse", () => {
+    // The harness rejects the whole bundle on one bad name, which would also
+    // stop the wheel from running.
+    const selected = selectPyPiDetonationArtifacts(
+      provenance(["dist/_pkg-1.0-py3-none-any.whl", "dist/Pkg-1.0.TAR.GZ"]),
+    );
+    expect(selected).toEqual({ wheel: null, sdist: null });
+    const accepted = selectPyPiDetonationArtifacts(
+      provenance(["dist/pkg-1.0-py3-none-any.whl", "dist/pkg-1.0.tar.gz"]),
+    );
+    const files = [accepted.wheel, accepted.sdist].map((artifact) => ({
+      name: artifact!.path.slice("dist/".length),
+      kind: artifact!.kind,
+      bytes: bytes("x"),
+    }));
+    expect(harness.decodePyPiBundle(Buffer.from(encodePyPiPrepareBundle(files)))).not.toBeNull();
+  });
+
+  test("pins the base image its wheel selection assumes", () => {
     // Bookworm's python3 is CPython 3.11; a base-image bump must move both.
+    // This only pins the pairing: the local harness run checks the real interpreter.
     const dockerfile = readFileSync(
       new URL("../containers/detonation/Dockerfile", import.meta.url),
       "utf8",
@@ -140,6 +159,39 @@ describe("wheel selection for the sandbox interpreter", () => {
       expect(helpers).toContain(script.slice(script.lastIndexOf("/") + 1));
     }
     expect(dockerfile).toContain("pypi.mjs");
+  });
+
+  test("spawns root-run binaries by absolute path, never through the package's PATH", () => {
+    // A step's env carries a PATH the package can write (`node_modules/.bin`,
+    // the venv's `bin`); a bare `setpriv` or `strace` there would run as root.
+    const source = readFileSync(
+      new URL("../containers/detonation/harness.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toMatch(/["'](?:setpriv|strace)["']/);
+    expect(source).toContain('"/usr/bin/setpriv"');
+    expect(source).toContain('"/usr/bin/strace"');
+  });
+});
+
+describe("dependencies of the reviewed wheel", () => {
+  test("keeps index requirements and drops direct references pip would build", () => {
+    const metadata = [
+      "Metadata-Version: 2.1",
+      "Name: demo",
+      "Requires-Dist: requests (>=2.0)",
+      'Requires-Dist: tomli ; python_version < "3.11"',
+      "Requires-Dist: evil @ file:///work/dist/demo-1.0.tar.gz",
+      "Requires-Dist: other @ https://files.pythonhosted.org/packages/x/other-1.0.tar.gz",
+      "Requires-Dist: --index-url=https://evil.invalid",
+      'Requires-Dist: pytest ; extra == "test"',
+      "",
+      "Requires-Dist: in-the-description",
+    ].join("\n");
+    expect(harness.requiresDist(metadata)).toEqual({
+      requirements: ["requests (>=2.0)", 'tomli ; python_version < "3.11"'],
+      dropped: 3,
+    });
   });
 });
 
