@@ -3,12 +3,15 @@
 // detonates it with fake canaries. Approximates the Worker flow, where the
 // parent sinkholes egress during detonation.
 //
-// Usage: node scripts/detonation-local.mjs <path-to.tgz> [--cap-add-ptrace | --no-ptrace]
+// Usage:
+//   node scripts/detonation-local.mjs <path-to.tgz> [--cap-add-ptrace | --no-ptrace]
+//   node scripts/detonation-local.mjs --pypi <wheel.whl> [<sdist.tar.gz>] [...]
 //
 // `--no-ptrace` blocks ptrace with a seccomp profile to exercise the harness's
-// runtime-hooks-only fallback.
+// runtime-hooks-only fallback. `--pypi` sends a wheel and/or sdist the way the
+// parent does for a PyPI workflow-gate scan.
 //
-// This runs the tarball's code inside Docker. Only point it at packages you are
+// This runs the package's code inside Docker. Only point it at packages you are
 // willing to execute in a container on this machine.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,22 +24,44 @@ const image = "drydock-detonation:dev";
 const args = process.argv.slice(2);
 const capAddPtrace = args.includes("--cap-add-ptrace");
 const noPtrace = args.includes("--no-ptrace");
-const tarballPath = args.find((arg) => !arg.startsWith("--"));
+const pypi = args.includes("--pypi");
+const inputPaths = args.filter((arg) => !arg.startsWith("--"));
 
-if (!tarballPath) {
+if (inputPaths.length === 0 || (!pypi && inputPaths.length !== 1)) {
   process.stderr.write(
-    "usage: node scripts/detonation-local.mjs <path-to.tgz> [--cap-add-ptrace | --no-ptrace]\n",
+    "usage: node scripts/detonation-local.mjs <path-to.tgz> [--cap-add-ptrace | --no-ptrace]\n" +
+      "       node scripts/detonation-local.mjs --pypi <wheel.whl> [<sdist.tar.gz>]\n",
   );
   process.exit(2);
+}
+
+/** Same framing as `encodePyPiPrepareBundle` in server/lib/detonation/pypi.ts. */
+function pypiBundle(paths) {
+  const files = paths.map((file) => ({
+    name: path.basename(file),
+    kind: file.endsWith(".whl") ? "wheel" : "sdist",
+    bytes: readFileSync(file),
+  }));
+  const header = Buffer.from(
+    JSON.stringify({
+      version: 1,
+      files: files.map(({ name, kind, bytes }) => ({ name, kind, size: bytes.length })),
+    }),
+  );
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(header.length);
+  return Buffer.concat([length, header, ...files.map((file) => file.bytes)]);
 }
 
 // Obviously fake values: they exist only so the report can show them being read.
 const FAKE_NPM_TOKEN = "npm_DRYDOCKFAKECANARY0000000000000000000";
 const FAKE_GITHUB_TOKEN = "ghp_DRYDOCKFAKECANARY000000000000000000000";
+const FAKE_PYPI_TOKEN = "pypi-AgEIcHlwaS5vcmcDRYDOCKFAKECANARY0000000000";
 const detonateRequest = {
   version: 1,
   canaryEnv: {
     NPM_TOKEN: FAKE_NPM_TOKEN,
+    PYPI_API_TOKEN: FAKE_PYPI_TOKEN,
     GITHUB_TOKEN: FAKE_GITHUB_TOKEN,
     CI: "true",
     GITHUB_ACTIONS: "true",
@@ -45,6 +70,16 @@ const detonateRequest = {
     {
       path: "/home/pkg/.npmrc",
       content: `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`,
+      mode: 0o600,
+    },
+    {
+      path: "/home/pkg/.pypirc",
+      content: `[pypi]\nusername = __token__\npassword = ${FAKE_PYPI_TOKEN}\n`,
+      mode: 0o600,
+    },
+    {
+      path: "/home/pkg/.git-credentials",
+      content: `https://release-bot:${FAKE_GITHUB_TOKEN}@github.com\n`,
       mode: 0o600,
     },
     {
@@ -77,7 +112,7 @@ async function waitForHealth(baseUrl) {
 }
 
 async function main() {
-  const tarball = readFileSync(tarballPath);
+  const body = pypi ? pypiBundle(inputPaths) : readFileSync(inputPaths[0]);
   const build = spawnSync(
     "docker",
     ["build", "-t", image, path.join(repoRoot, "containers/detonation")],
@@ -109,10 +144,10 @@ async function main() {
     const baseUrl = `http://127.0.0.1:${hostPort}`;
     await waitForHealth(baseUrl);
 
-    const prepareResponse = await fetch(`${baseUrl}/prepare`, {
+    const prepareResponse = await fetch(`${baseUrl}${pypi ? "/prepare-pypi" : "/prepare"}`, {
       method: "POST",
       headers: { "content-type": "application/octet-stream" },
-      body: tarball,
+      body,
     });
     const prepared = await prepareResponse.json();
     process.stderr.write(`prepare: ${prepareResponse.status} ${JSON.stringify(prepared)}\n`);

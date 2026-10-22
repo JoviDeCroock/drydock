@@ -1,0 +1,2 @@
+[console_scripts]
+startup-hook-thief = startup_hook_thief.cli:main

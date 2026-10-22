@@ -22,7 +22,8 @@ import type {
  * The run happens in a fresh container whose only package is the one under
  * review, so the bar is "would a benign install script do this?". Lifecycle
  * scripts run without npm in the process tree, so a credential read is the
- * package's own, not npm loading its config.
+ * package's own, not npm loading its config. PyPI steps start an interpreter
+ * with no pip in the tree for the same reason.
  */
 
 const APP_ROOT = "/work/app";
@@ -42,7 +43,7 @@ const TITLES: Record<DetonationSignalId, string> = {
   "dynamic.network-egress": "Made network requests while installing or loading",
   "dynamic.credential-file-read": "Read credential files",
   "dynamic.persistence-write": "Wrote to a startup, CI, or credential location",
-  "dynamic.package-tampering": "Modified another installed package",
+  "dynamic.package-tampering": "Modified installed packages",
   "dynamic.suspicious-process": "Launched a download, network, or secret-scanning tool",
   "dynamic.sensitive-file-read": "Read process environments or browser and wallet data",
 };
@@ -52,6 +53,7 @@ const TITLES: Record<DetonationSignalId, string> = {
 const CREDENTIAL_PATHS = [
   ".npmrc",
   ".yarnrc.yml",
+  ".pypirc",
   ".git-credentials",
   ".netrc",
   ".docker/config.json",
@@ -66,6 +68,7 @@ const PERSISTENCE_PATHS = [
   ".zshrc",
   ".zprofile",
   ".npmrc",
+  ".pypirc",
   ".ssh/authorized_keys",
   ".gitconfig",
 ];
@@ -77,6 +80,14 @@ const SYSTEM_PERSISTENCE = [
   /^\/etc\/profile/,
 ];
 const REPO_PERSISTENCE = [/\/\.github\/workflows\//, /\/\.git\/hooks\//];
+// Every Python interpreter runs these from any site directory at startup, with
+// no import of the package (the LiteLLM 1.107.0 `cook.pth` shape). A build
+// copying a `.pth` into its own build tree is not in a site directory.
+const PYTHON_STARTUP_HOOK =
+  /\/(site|dist)-packages\/([^/]+\.pth|sitecustomize\.py|usercustomize\.py)$/;
+
+/** The PyPI run's interpreter environment, which the harness alone installs. */
+const PYTHON_ENV_ROOT = "/work/venv/";
 
 const SENSITIVE_READS = [
   /^\/etc\/shadow$/,
@@ -169,6 +180,9 @@ function isWrite(event: HarnessEvent): boolean {
 function isTampering(event: HarnessEvent): boolean {
   if (!isWrite(event) || event.kind !== "file") return false;
   if (event.path === `${APP_ROOT}/package.json`) return true;
+  // pip compiled every module at install, so runtime bytecode caches are the
+  // only expected writes into the installed environment.
+  if (event.path.startsWith(PYTHON_ENV_ROOT)) return !event.path.includes("/__pycache__/");
   const owner = packageOfPath(event.path);
   if (owner === null) return false;
   // A build step writing into its own directory is how native addons install.
@@ -180,7 +194,8 @@ function isPersistence(event: HarnessEvent): boolean {
   return (
     isUnder(event.path, PERSISTENCE_PATHS, PERSISTENCE_DIRS) ||
     SYSTEM_PERSISTENCE.some((pattern) => pattern.test(event.path)) ||
-    REPO_PERSISTENCE.some((pattern) => pattern.test(event.path))
+    REPO_PERSISTENCE.some((pattern) => pattern.test(event.path)) ||
+    PYTHON_STARTUP_HOOK.test(event.path)
   );
 }
 
@@ -324,7 +339,8 @@ export function classifyDetonation(
   const signals = new SignalBuilder(canaryNeedles(canaries));
 
   for (const event of egress) {
-    // Prepare-phase traffic is npm resolving dependencies with scripts disabled.
+    // Prepare-phase traffic is npm or pip resolving dependencies with no
+    // package code running.
     if (event.phase !== "detonate") continue;
     const description = describeEgress(event);
     if (event.canaryHits.length > 0) {

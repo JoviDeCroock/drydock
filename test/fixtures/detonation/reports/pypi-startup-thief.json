@@ -1,0 +1,624 @@
+{
+  "version": 1,
+  "coverage": {
+    "ecosystem": "pypi",
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
+  },
+  "steps": [
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 255
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 270
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 268
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 823
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 278
+    }
+  ],
+  "events": [
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "pid": 45,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.pypirc"
+    },
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "pid": 45,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.aws/credentials"
+    },
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "pid": 45,
+      "via": "syscall",
+      "kind": "connect",
+      "family": "inet",
+      "address": "192.168.65.7",
+      "port": 53
+    },
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "pid": 45,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "exfil.drydock-test.invalid"
+    },
+    {
+      "step": "startup",
+      "target": "startup-hook-thief:startup",
+      "pid": 45,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "stage2.drydock-test.invalid"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "pid": 53,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.pypirc"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "pid": 53,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.aws/credentials"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "pid": 53,
+      "via": "syscall",
+      "kind": "connect",
+      "family": "inet",
+      "address": "192.168.65.7",
+      "port": 53
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "pid": 53,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "exfil.drydock-test.invalid"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:startup_hook_thief",
+      "pid": 53,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "stage2.drydock-test.invalid"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "pid": 57,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.pypirc"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "pid": 57,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.aws/credentials"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "pid": 57,
+      "via": "syscall",
+      "kind": "connect",
+      "family": "inet",
+      "address": "192.168.65.7",
+      "port": 53
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "pid": 57,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "exfil.drydock-test.invalid"
+    },
+    {
+      "step": "import",
+      "target": "startup-hook-thief:import:cook",
+      "pid": 57,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "stage2.drydock-test.invalid"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.git-credentials"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/lib/startup_hook_thief/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/tmpy0aotgna"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/tmpy0aotgna"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "rename",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/startup_hook_thief.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/METADATA"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/METADATA"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0-py3.11.egg-info"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel/startup_hook_thief-1.0.0.dist-info/WHEEL"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/build-out/.tmp-qpgpqt6v/startup_hook_thief-1.0.0-py3-none-any.whl"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "startup_hook_thief-1.0.0.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "METADATA"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "WHEEL"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "startup_hook_thief-1.0.0.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "startup_hook_thief"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "startup_hook_thief"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/startup_hook_thief-1.0.0/build/bdist.linux-aarch64/wheel"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/work/build-out/.tmp-qpgpqt6v"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "rename",
+      "path": "/work/build-out/startup_hook_thief-1.0.0-py3-none-any.whl"
+    },
+    {
+      "step": "build",
+      "target": "startup-hook-thief:build",
+      "pid": 61,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/build-out/.tmp-qpgpqt6v"
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "pid": 65,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.pypirc"
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "pid": 65,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.aws/credentials"
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "pid": 65,
+      "via": "syscall",
+      "kind": "connect",
+      "family": "inet",
+      "address": "192.168.65.7",
+      "port": 53
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "pid": 65,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "exfil.drydock-test.invalid"
+    },
+    {
+      "step": "bin",
+      "target": "startup-hook-thief:bin:startup-hook-thief",
+      "pid": 65,
+      "via": "runtime-hook",
+      "kind": "dns",
+      "hostname": "stage2.drydock-test.invalid"
+    }
+  ],
+  "truncated": false
+}

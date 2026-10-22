@@ -189,17 +189,8 @@ function resolveBundleClassifier(
   releaseTarget: { ecosystem: string | null; artifactName: string | null },
   input: PrepareForGateInput,
 ): { classify: ClassifyArtifact; artifactName?: string; artifactNamePrefix?: string } {
-  const override = input.artifactName ?? releaseTarget.artifactName ?? undefined;
-  if (releaseTarget.ecosystem === null) {
-    return {
-      classify: classifyBundleArtifact,
-      ...(override ? { artifactName: override } : {}),
-    };
-  }
-
-  let adapter: WorkflowGateAdapter;
   try {
-    adapter = getWorkflowGateAdapter(releaseTarget.ecosystem);
+    return selectBundleClassifier(releaseTarget, input.artifactName);
   } catch (err) {
     if (err instanceof UnsupportedEcosystemError) {
       // A configuration/data problem, not an artifact verification failure: mark
@@ -214,6 +205,27 @@ function resolveBundleClassifier(
     }
     throw err;
   }
+}
+
+/**
+ * The classifier and upload-name narrowing a release target selects, with no
+ * side effects on the gate. Throws `UnsupportedEcosystemError` for a pinned
+ * ecosystem with no adapter. Shared with the detonation sandbox, which must
+ * fetch the same release set again without touching gate state.
+ */
+export function selectBundleClassifier(
+  releaseTarget: { ecosystem: string | null; artifactName: string | null },
+  artifactNameOverride?: string,
+): { classify: ClassifyArtifact; artifactName?: string; artifactNamePrefix?: string } {
+  const override = artifactNameOverride ?? releaseTarget.artifactName ?? undefined;
+  if (releaseTarget.ecosystem === null) {
+    return {
+      classify: classifyBundleArtifact,
+      ...(override ? { artifactName: override } : {}),
+    };
+  }
+
+  const adapter: WorkflowGateAdapter = getWorkflowGateAdapter(releaseTarget.ecosystem);
   return {
     classify: (path) => {
       const kind = adapter.classifyArtifact(path);

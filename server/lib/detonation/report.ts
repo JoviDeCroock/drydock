@@ -24,7 +24,14 @@ const MAX_STRING = 512;
 const MAX_ARGV = 16;
 const MAX_ARG = 256;
 
-const STEPS = new Set<DetonationStep>(["lifecycle", "require", "import", "bin"]);
+const STEPS = new Set<DetonationStep>([
+  "lifecycle",
+  "require",
+  "import",
+  "bin",
+  "startup",
+  "build",
+]);
 const FILE_OPS = new Set<HarnessFileOp>(["read", "write", "create", "delete", "chmod", "rename"]);
 const SOURCES = new Set<HarnessEventSource>(["syscall", "runtime-hook"]);
 const INSTALL_STATES = new Set<HarnessCoverage["dependencyInstall"]>([
@@ -108,6 +115,8 @@ function parseCoverage(value: unknown): HarnessCoverage | null {
   const dependencyInstall = value.dependencyInstall as HarnessCoverage["dependencyInstall"];
   if (!INSTALL_STATES.has(dependencyInstall)) return null;
   return {
+    // Absent means npm, as on every result stored before PyPI runs existed.
+    ...(value.ecosystem === "pypi" ? { ecosystem: "pypi" as const } : {}),
     syscallTracing: value.syscallTracing === true,
     runtimeHooks: value.runtimeHooks === true,
     dependencyInstall,

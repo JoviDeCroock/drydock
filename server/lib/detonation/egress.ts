@@ -6,15 +6,31 @@ import {
   type CanaryNeedle,
   type CanarySet,
 } from "./canaries";
-import type { CanaryKind, DetonationEgressEvent, DetonationPhase } from "./types";
+import type {
+  CanaryKind,
+  DetonationEcosystem,
+  DetonationEgressEvent,
+  DetonationPhase,
+} from "./types";
 
 /**
- * The only registry origin the prepare phase may reach. Dependencies resolve
- * anonymously from the public registry; the organization's npm token never
- * enters this path (staged bytes arrive through `NpmStageGateway` before the
- * container starts).
+ * The only registry origin an npm prepare phase may reach. Dependencies
+ * resolve anonymously from the public registry; the organization's npm token
+ * never enters this path (staged bytes arrive through `NpmStageGateway` before
+ * the container starts).
  */
 const DETONATION_REGISTRY_ORIGIN = "https://registry.npmjs.org";
+
+/**
+ * What a PyPI prepare phase may read: the simple index and the file host pip
+ * downloads wheels from, by origin and path prefix. The release's own bytes
+ * arrive from the gate's GitHub artifact before the container starts, so no
+ * GitHub or PyPI credential is ever on this path.
+ */
+const PYPI_PREPARE_READS: ReadonlyArray<{ origin: string; pathPrefix: string }> = [
+  { origin: "https://pypi.org", pathPrefix: "/simple/" },
+  { origin: "https://files.pythonhosted.org", pathPrefix: "/packages/" },
+];
 
 /**
  * How much of a request body the canary scan reads. Scanned as a stream with
@@ -28,27 +44,37 @@ const MAX_RECORDED_PATH_CHARS = 256;
 export type DetonationEgressAction = "forward" | "sinkhole";
 
 /**
- * Prepare installs the tarball with `--ignore-scripts`, so no package code is
- * running yet and anonymous registry reads are the only traffic expected.
+ * Prepare installs with scripts disabled (npm `--ignore-scripts`; pip with
+ * binary wheels only), so no package code is running yet and anonymous
+ * registry reads for the run's own ecosystem are the only traffic expected.
  * Once detonation starts, nothing leaves: every request is recorded and
  * answered locally, including ones to the registry (a second-stage download
- * from npm is still a second-stage download).
+ * from npm or PyPI is still a second-stage download).
  */
 export function evaluateDetonationEgress(
   phase: DetonationPhase,
   method: string,
   url: string,
+  ecosystem: DetonationEcosystem = "npm",
 ): DetonationEgressAction {
   if (phase !== "prepare") return "sinkhole";
   const normalized = method.toUpperCase();
   if (normalized !== "GET" && normalized !== "HEAD") return "sinkhole";
-  let origin: string;
+  let parsed: URL;
   try {
-    origin = new URL(url).origin;
+    parsed = new URL(url);
   } catch {
     return "sinkhole";
   }
-  return origin === DETONATION_REGISTRY_ORIGIN ? "forward" : "sinkhole";
+  if (ecosystem === "pypi") {
+    return PYPI_PREPARE_READS.some(
+      ({ origin, pathPrefix }) =>
+        parsed.origin === origin && parsed.pathname.startsWith(pathPrefix),
+    )
+      ? "forward"
+      : "sinkhole";
+  }
+  return parsed.origin === DETONATION_REGISTRY_ORIGIN ? "forward" : "sinkhole";
 }
 
 // npm only needs content negotiation to resolve and download; everything else
@@ -59,6 +85,8 @@ export interface DetonationEgressProps {
   /** `DurableObjectId.toString()` of the `DetonationSandbox` that owns this container. */
   sandboxId: string;
   canaries: CanarySet["values"];
+  /** Selects the prepare-phase registry reads; absent means npm. */
+  ecosystem?: DetonationEcosystem;
 }
 
 interface BodyScan {
@@ -122,6 +150,11 @@ export function isRegistryWrite(event: Pick<DetonationEgressEvent, "host" | "met
 const REGISTRY_HOSTS = new Set([
   new URL(DETONATION_REGISTRY_ORIGIN).hostname,
   "registry.yarnpkg.com",
+  // twine uploads to `upload.pypi.org/legacy/`; token and project management
+  // live on `pypi.org` itself.
+  "upload.pypi.org",
+  "pypi.org",
+  "test.pypi.org",
 ]);
 
 /**
@@ -132,12 +165,12 @@ const REGISTRY_HOSTS = new Set([
  */
 export class DetonationEgress extends WorkerEntrypoint<Cloudflare.Env, DetonationEgressProps> {
   async fetch(request: Request): Promise<Response> {
-    const { sandboxId, canaries } = this.ctx.props;
+    const { sandboxId, canaries, ecosystem } = this.ctx.props;
     const namespace = this.env.DETONATION_SANDBOX;
     if (!namespace) return new Response("detonation egress unavailable", { status: 503 });
     const sandbox = namespace.get(namespace.idFromString(sandboxId));
     const phase = await sandbox.currentPhase();
-    const action = evaluateDetonationEgress(phase, request.method, request.url);
+    const action = evaluateDetonationEgress(phase, request.method, request.url, ecosystem);
 
     const needles = canaryNeedles(canaries);
     // Hostnames arrive lowercased, so a token smuggled in a subdomain is

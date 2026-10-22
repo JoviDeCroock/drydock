@@ -212,6 +212,66 @@ describe("worm-shaped behavior", () => {
   });
 });
 
+describe("PyPI behavior", () => {
+  const at = (step: "startup" | "import" | "build") => ({
+    step,
+    target: `pkg:${step}`,
+    via: "syscall" as const,
+    pid: 9,
+  });
+  const site = "/work/venv/lib/python3.11/site-packages";
+
+  test("dropping a startup hook into a site directory is persistence and tampering", () => {
+    expect(
+      ids([{ ...at("import"), kind: "file", op: "create", path: `${site}/zz-loader.pth` }]),
+    ).toEqual([
+      ["dynamic.persistence-write", "high"],
+      ["dynamic.package-tampering", "high"],
+    ]);
+    expect(
+      ids([
+        {
+          ...at("startup"),
+          kind: "file",
+          op: "write",
+          path: `${HOME}/.local/lib/python3.11/site-packages/sitecustomize.py`,
+        },
+      ]),
+    ).toEqual([["dynamic.persistence-write", "high"]]);
+  });
+
+  test("bytecode caches and a build writing its own tree raise nothing", () => {
+    expect(
+      ids([
+        {
+          ...at("import"),
+          kind: "file",
+          op: "create",
+          path: `${site}/pkg/__pycache__/a.cpython-311.pyc`,
+        },
+        {
+          ...at("build"),
+          kind: "file",
+          op: "create",
+          path: "/work/sdist/pkg-1.0/build/lib/pkg/x.pth",
+        },
+        {
+          ...at("build"),
+          kind: "file",
+          op: "create",
+          path: "/work/build-out/pkg-1.0-py3-none-any.whl",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("a PyPI token canary file is a credential", () => {
+    expect(ids([{ ...at("startup"), kind: "file", op: "read", path: `${HOME}/.pypirc` }])).toEqual([
+      ["dynamic.credential-file-read", "high"],
+    ]);
+  });
+});
+
 describe("review regressions", () => {
   const pkg = postinstall("evasive");
 
@@ -363,6 +423,44 @@ describe("captured harness reports", () => {
     ]);
   });
 
+  test("a LiteLLM-shaped .pth stealer is caught at interpreter start", async () => {
+    // `pypi-startup-thief`: `cook.pth` reads the planted credentials and
+    // posts them to a `.invalid` host on every interpreter start, before
+    // anything imports the package; its sdist's setup.py reads one too.
+    const { readFile } = await import("node:fs/promises");
+    const raw = JSON.parse(
+      await readFile(
+        new URL("./fixtures/detonation/reports/pypi-startup-thief.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const parsed = parseHarnessReport(raw);
+    expect(parsed?.coverage).toMatchObject({ ecosystem: "pypi", syscallTracing: true });
+    const signals = classifyDetonation(parsed, []);
+    expect(signals.map((signal) => [signal.id, signal.severity, signal.step])).toEqual([
+      ["dynamic.credential-file-read", "high", "startup"],
+      ["dynamic.network-egress", "medium", "startup"],
+    ]);
+    const evidence = signals.flatMap((signal) => signal.evidence);
+    expect(evidence).toContain("startup-hook-thief:startup: read /home/pkg/.pypirc");
+    expect(evidence).toContain("startup-hook-thief:startup: resolved exfil.drydock-test.invalid");
+    // Every later interpreter start repeats the startup reads and fills the
+    // evidence cap, so the build's own read is checked on its own.
+    const build = parsed && {
+      ...parsed,
+      events: parsed.events.filter((event) => event.step === "build"),
+    };
+    expect(classifyDetonation(build, []).map((signal) => [signal.id, signal.step])).toEqual([
+      ["dynamic.credential-file-read", "build"],
+    ]);
+  });
+
+  test("a benign PyPI wheel and sdist build raise nothing", async () => {
+    // Captured from the public requests 2.32.3 wheel (with its dependencies
+    // from PyPI) and sdist (built with setuptools).
+    expect(await classifyFixture("pypi-requests")).toEqual([]);
+  });
+
   test("the synthetic canary thief raises its behaviors", async () => {
     expect(await classifyFixture("canary-thief")).toEqual([
       ["dynamic.credential-file-read", "high"],
@@ -496,6 +594,17 @@ describe("harness signal-category mirror", () => {
     write("/work/app/node_modules/pkg/build/addon.node"),
     write("/work/app/node_modules/.cache/x"),
     write("/tmp/x"),
+    read(`${HOME}/.pypirc`),
+    write(`${HOME}/.pypirc`),
+    write("/work/venv/lib/python3.11/site-packages/evil.pth"),
+    write("/work/venv/lib/python3.11/site-packages/sitecustomize.py"),
+    write(`${HOME}/.local/lib/python3.11/site-packages/usercustomize.py`),
+    write("/usr/lib/python3/dist-packages/x.pth"),
+    write("/work/venv/lib/python3.11/site-packages/other/__init__.py"),
+    write("/work/venv/lib/python3.11/site-packages/pkg/__pycache__/x.cpython-311.pyc"),
+    write("/work/sdist/pkg-1.0/build/lib/pkg/data.pth"),
+    write("/work/build-out/pkg-1.0-py3-none-any.whl"),
+    read("/work/venv/lib/python3.11/site-packages/other/__init__.py"),
     exec("/usr/bin/curl", ["curl", "x"]),
     exec("/usr/bin/dig", ["dig", "x"]),
     exec("/bin/sh", ["sh", "-c", "wget x | sh"]),

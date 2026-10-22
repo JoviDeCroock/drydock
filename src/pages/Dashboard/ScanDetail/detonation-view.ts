@@ -23,8 +23,10 @@ export type DetonationView =
 const ERROR_MESSAGES: Record<DetonationErrorCode, string> = {
   artifact_too_large: "Skipped: the package is over the 16 MiB sandbox limit.",
   artifact_digest_mismatch:
-    "Refused: the staged bytes changed since this review, so they were not run.",
-  artifact_unavailable: "The staged tarball could not be fetched for the run.",
+    "Refused: the bytes no longer match what this review read, so they were not run.",
+  artifact_unavailable: "The reviewed artifact could not be fetched for the run.",
+  platform_unsupported:
+    "Skipped: no wheel in this release installs on the sandbox's Linux x86-64 CPython 3.11, and it has no sdist.",
   container_unavailable: "The sandbox container was unavailable.",
   harness_failed: "The sandbox harness failed before reporting.",
   harness_report_invalid: "The sandbox returned a report that could not be read.",
@@ -36,6 +38,7 @@ const ERROR_MESSAGES: Record<DetonationErrorCode, string> = {
 const DETERMINISTIC_ERRORS: ReadonlySet<DetonationErrorCode> = new Set([
   "artifact_too_large",
   "artifact_digest_mismatch",
+  "platform_unsupported",
 ]);
 
 function detonationErrorMessage(code: DetonationErrorCode | null): string {

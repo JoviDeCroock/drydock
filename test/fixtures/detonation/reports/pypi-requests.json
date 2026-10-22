@@ -1,0 +1,1145 @@
+{
+  "version": 1,
+  "coverage": {
+    "ecosystem": "pypi",
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
+  },
+  "steps": [
+    {
+      "step": "startup",
+      "target": "requests:startup",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 652
+    },
+    {
+      "step": "import",
+      "target": "requests:import:requests",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 2569
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 6162
+    }
+  ],
+  "events": [
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/status_codes.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/sessions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/hooks.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/auth.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/adapters.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/certs.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/models.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/_internal_utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/__version__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/packages.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/exceptions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/structures.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/help.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/api.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/compat.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/lib/requests/cookies.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/tmpepm2udl_"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/tmpepm2udl_"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "rename",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/requires.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/src/requests.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/status_codes.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/status_codes.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/sessions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/sessions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/hooks.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/hooks.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/auth.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/auth.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/adapters.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/adapters.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/certs.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/certs.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/models.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/models.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/_internal_utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/_internal_utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/__version__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/__version__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/packages.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/packages.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/exceptions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/exceptions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/structures.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/structures.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/help.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/help.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/api.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/api.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/compat.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/compat.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/cookies.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests/cookies.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/not-zip-safe"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/not-zip-safe"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/requires.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info/requires.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/METADATA"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/METADATA"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/licenses/LICENSE"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "chmod",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/licenses/LICENSE"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "dependency_links.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "SOURCES.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "not-zip-safe"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "PKG-INFO"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "top_level.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "requires.txt"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3-py3.11.egg-info"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel/requests-2.32.3.dist-info/WHEEL"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/work/build-out/.tmp-z8reik5u/requests-2.32.3-py3-none-any.whl"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "requests"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "status_codes.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "sessions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "hooks.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "auth.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "adapters.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "certs.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "models.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "_internal_utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "__version__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "__init__.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "packages.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "exceptions.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "structures.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "utils.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "help.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "api.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "compat.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "cookies.py"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "requests"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "requests-2.32.3.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "METADATA"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "licenses"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "LICENSE"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "licenses"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "WHEEL"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "requests-2.32.3.dist-info"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/sdist/requests-2.32.3/build/bdist.linux-aarch64/wheel"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/work/build-out/.tmp-z8reik5u"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "rename",
+      "path": "/work/build-out/requests-2.32.3-py3-none-any.whl"
+    },
+    {
+      "step": "build",
+      "target": "requests:build",
+      "pid": 58,
+      "via": "syscall",
+      "kind": "file",
+      "op": "delete",
+      "path": "/work/build-out/.tmp-z8reik5u"
+    }
+  ],
+  "truncated": false
+}

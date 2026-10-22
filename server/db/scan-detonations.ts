@@ -1,4 +1,5 @@
 import { and, eq, inArray, lt, or } from "drizzle-orm";
+import { readPyPiProvenance } from "../lib/detonation/pypi";
 import type {
   DetonationErrorCode,
   DetonationResult,
@@ -13,18 +14,29 @@ import { scanDetonations, scans } from "./schema";
  */
 const DETONATION_STALE_AFTER_MS = 20 * 60 * 1000;
 
-export interface DetonationTarget {
-  scanId: string;
-  organizationId: string;
-  stageId: string;
-  registryUrl: string | null;
-  summaryJson: unknown;
-}
+export type DetonationTarget =
+  | {
+      kind: "npm_stage";
+      scanId: string;
+      organizationId: string;
+      stageId: string;
+      registryUrl: string | null;
+      summaryJson: unknown;
+    }
+  | {
+      kind: "pypi_gate";
+      scanId: string;
+      organizationId: string;
+      gateId: string;
+      summaryJson: unknown;
+    };
 
 /**
- * The scan a detonation would run against: completed, an npm staged review
- * (published pairs and workflow-gate uploads have no npm stage to fetch), and
- * owned by the organization.
+ * The scan a detonation would run against: completed, owned by the
+ * organization, and either an npm staged review (bytes fetched again from the
+ * stage) or a PyPI workflow-gate review (bytes fetched again from the gate's
+ * GitHub Actions artifact). Published pairs, and npm or VS Code gate uploads,
+ * are not eligible.
  */
 export async function getDetonationTarget(
   db: AppDb,
@@ -34,8 +46,9 @@ export async function getDetonationTarget(
   const [row] = await db
     .select({
       scanId: scans.id,
-      organizationId: scans.organizationId,
       stageId: scans.stageId,
+      source: scans.source,
+      gateId: scans.gateId,
       registryUrl: scans.registryUrl,
       summaryJson: scans.summaryJson,
     })
@@ -45,13 +58,39 @@ export async function getDetonationTarget(
         eq(scans.id, scanId),
         eq(scans.organizationId, organizationId),
         eq(scans.status, "complete"),
-        // A workflow-gate scan's stage id names the gate, not an npm stage,
-        // so there are no staged bytes to fetch again.
-        inArray(scans.source, ["manual", "auto_discovery"]),
+        inArray(scans.source, ["manual", "auto_discovery", "workflow_gate"]),
       ),
     )
     .limit(1);
-  return row ? { ...row, organizationId } : null;
+  if (!row) return null;
+  if (row.source !== "workflow_gate") {
+    return {
+      kind: "npm_stage",
+      scanId: row.scanId,
+      organizationId,
+      stageId: row.stageId,
+      registryUrl: row.registryUrl,
+      summaryJson: row.summaryJson,
+    };
+  }
+  // The gate runner names each package scan `workflow-gate:<gate>:<ecosystem>:<name>`
+  // from trusted state, and the pipeline records the reviewed digests in a
+  // PyPI provenance block. Both must agree before the gate's artifact counts
+  // as this scan's bytes.
+  if (
+    row.gateId === null ||
+    !row.stageId.startsWith(`workflow-gate:${row.gateId}:pypi:`) ||
+    readPyPiProvenance(row.summaryJson) === null
+  ) {
+    return null;
+  }
+  return {
+    kind: "pypi_gate",
+    scanId: row.scanId,
+    organizationId,
+    gateId: row.gateId,
+    summaryJson: row.summaryJson,
+  };
 }
 
 /**

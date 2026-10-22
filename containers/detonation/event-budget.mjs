@@ -73,6 +73,7 @@ const CREDENTIAL_FILES = new Set(
   [
     ".npmrc",
     ".yarnrc.yml",
+    ".pypirc",
     ".git-credentials",
     ".netrc",
     ".docker/config.json",
@@ -88,16 +89,19 @@ const PERSISTENCE_FILES = new Set(
     ".zshrc",
     ".zprofile",
     ".npmrc",
+    ".pypirc",
     ".ssh/authorized_keys",
     ".gitconfig",
   ].map(home),
 );
 const PERSISTENCE_DIRS = [".config/autostart/", ".config/systemd/", ".local/bin/"].map(home);
+const PYTHON_ENV_ROOT = "/work/venv/";
 const PERSISTENCE_PATTERNS = [
   /^\/etc\/cron/,
   /^\/var\/spool\/cron\//,
   /^\/etc\/ld\.so\.preload$/,
   /^\/etc\/profile/,
+  /\/(site|dist)-packages\/([^/]+\.pth|sitecustomize\.py|usercustomize\.py)$/,
   /\/\.github\/workflows\//,
   /\/\.git\/hooks\//,
 ];
@@ -228,6 +232,9 @@ function signalCategory(event, managers) {
         return "persistence";
       }
       if (path === `${APP_ROOT}/package.json`) return "tampering";
+      if (path.startsWith(PYTHON_ENV_ROOT)) {
+        return path.includes("/__pycache__/") ? null : "tampering";
+      }
       const owner = packageOfPath(path);
       if (owner === null) return null;
       return event.step !== "lifecycle" || owner !== packageOfTarget(event.target)
