@@ -61,7 +61,9 @@ export function publishedReleaseOutcomeCondition() {
  *   `npm stage publish`, which leaves the bytes in a private npm stage. They
  *   need npm evidence that these bytes shipped: this organization's staged
  *   review bound to this gate review by matching digests and published by npm,
- *   or its publication monitor matching the published tarball to an approval.
+ *   or its publication monitor matching the published tarball to this review.
+ *   A match to another approval of the same version is not enough: two gate
+ *   reviews can carry different bytes under one version, and only one ships.
  *   A gate review with an unknown ecosystem takes this stricter branch.
  *
  * Correlated on the outer `scans` row, so callers must select from `scans`
@@ -92,6 +94,7 @@ export function publicDisclosureAllowedCondition() {
       and disclosure_observation.organization_id = ${scans.organizationId}
       and disclosure_observation.version = ${scans.stagedVersion}
       and disclosure_observation.status = 'approved_match'
+      and disclosure_observation.scan_id = ${scans.id}
   ))`;
   return sql`(case
     when ${scans.source} in ('manual', 'auto_discovery') then coalesce(${publishedReleaseOutcomeCondition()}, 0)

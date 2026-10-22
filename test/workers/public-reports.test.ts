@@ -1142,6 +1142,30 @@ describe("public disclosure waits for the release to be public", () => {
     await expectDark(app, share.token);
   });
 
+  test("the monitor matching another review's bytes for the version keeps an npm gate review dark", async () => {
+    const owner = await seedUser();
+    const shippedGate = await seedWorkflowGate(owner, { ecosystem: "npm" });
+    const shipped = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId: shippedGate },
+      summary: gateProvenance("npm"),
+    });
+    const unshippedGate = await seedWorkflowGate(owner, { ecosystem: "npm" });
+    const unshipped = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId: unshippedGate },
+      summary: gateProvenance("npm"),
+    });
+    await seedApprovedPublication(owner, {
+      packageName: "@org/pkg",
+      version: "1.1.0",
+      scanId: shipped,
+    });
+    const app = publicApp(owner);
+    await expectLive(app, (await shareScan(app, shipped)).token);
+    await expectDark(app, (await shareScan(app, unshipped)).token);
+  });
+
   test("the publication monitor matching the published tarball releases an npm gate review", async () => {
     const owner = await seedUser();
     const gateId = await seedWorkflowGate(owner, { ecosystem: "npm" });

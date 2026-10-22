@@ -47,12 +47,12 @@ a shields.io badge per package and an opt-in public threat feed.
   fails closed, so an unknown status or an unclassified source counts as
   unreleased:
 
-  | Review                                             | Public once                                                                                                                                                                                                                                  |
-  | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | npm staged (`manual`, `auto_discovery`)            | npm reports the version `published`, or `deleted` after publishing (see [`registry-version-status.md`](./registry-version-status.md)). `staged`, `validating`, `blocked`, and no answer are all unreleased.                                  |
-  | Published-pair (`published`)                       | Always: the bytes were read from a public registry.                                                                                                                                                                                          |
-  | PyPI or VS Code workflow gate                      | The gate approved the protected publish job. These registries hold no private stage, and nothing later is observable.                                                                                                                        |
-  | npm workflow gate (or a gate of unknown ecosystem) | The gate approved **and** npm evidence shows these bytes shipped: the organization's staged review bound to this gate review with `matched` gate continuity and published by npm, or a publication-monitor `approved_match` for the version. |
+  | Review                                             | Public once                                                                                                                                                                                                                                         |
+  | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | npm staged (`manual`, `auto_discovery`)            | npm reports the version `published`, or `deleted` after publishing (see [`registry-version-status.md`](./registry-version-status.md)). `staged`, `validating`, `blocked`, and no answer are all unreleased.                                         |
+  | Published-pair (`published`)                       | Always: the bytes were read from a public registry.                                                                                                                                                                                                 |
+  | PyPI or VS Code workflow gate                      | The gate approved the protected publish job. These registries hold no private stage, and nothing later is observable.                                                                                                                               |
+  | npm workflow gate (or a gate of unknown ecosystem) | The gate approved **and** npm evidence shows these bytes shipped: the organization's staged review bound to this gate review with `matched` gate continuity and published by npm, or a publication-monitor `approved_match` that names this review. |
 
   An approved npm gate is not enough on its own because gated staging runs
   `npm stage publish`, which leaves the reviewed bytes in a private npm stage
@@ -60,6 +60,8 @@ a shields.io badge per package and an opt-in public threat feed.
   to npm goes live once the publication monitor sees the release, so the
   package needs a watch. A link goes live on the next status sweep (every 15
   minutes, or right away with **Check npm**) without being re-shared. The
+  sweep stops asking npm about reviews older than 30 days, so a release that
+  ships later than that keeps its link dark; review it again to get a live one. The
   share response carries `awaitingPublication`, the scan detail carries
   `publicShareAwaitingPublication`, and the share dialog says the link and its
   listing go live once the release is published. The public route itself never
