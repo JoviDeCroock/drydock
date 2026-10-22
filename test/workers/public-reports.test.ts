@@ -11,10 +11,32 @@ import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
-import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
+import {
+  type ScanOwner,
+  type SeedCompletedScanOptions,
+  seedApprovedPublication,
+  seedCompletedScan,
+  seedWorkflowGate,
+} from "./helpers/seed";
 
-function seedReportScan(owner: ScanOwner, options: { withAiReview?: boolean } = {}) {
+// npm's status for the reviewed version. A share serves nothing until the
+// release is public, so the suite defaults to a release npm already published.
+type RegistryStatus = "published" | "deleted" | "staged" | "validating" | "blocked" | null;
+
+function seedReportScan(
+  owner: ScanOwner,
+  options: {
+    withAiReview?: boolean;
+    registryStatus?: RegistryStatus;
+    job?: SeedCompletedScanOptions["job"];
+    summary?: Record<string, unknown>;
+  } = {},
+) {
+  const registryStatus =
+    options.registryStatus === undefined ? "published" : options.registryStatus;
   return seedCompletedScan(owner, {
+    job: options.job,
+    jobColumns: { registryVersionStatus: registryStatus },
     risk: "high",
     summary: {
       report: {
@@ -26,6 +48,7 @@ function seedReportScan(owner: ScanOwner, options: { withAiReview?: boolean } = 
       },
       baseline: { kind: "registry", version: "1.0.0" },
       diff: [{ path: "package.json", status: "modified" }],
+      ...options.summary,
     },
     ai: options.withAiReview ? AI_REVIEW : null,
     findings: [
@@ -460,6 +483,7 @@ describe("public report sharing", () => {
     const owner = await seedUser();
     const gatedDigest = "e".repeat(64);
     const scanId = await seedCompletedScan(owner, {
+      jobColumns: { registryVersionStatus: "published" },
       summary: {
         gateContinuity: {
           status: "matched",
@@ -878,5 +902,263 @@ describe("public report attestations", () => {
     expect(
       (await request(app, `/public/reports/${share.token}/attestation`, {}, signer)).status,
     ).toBe(404);
+  });
+});
+
+// A staged security fix is embargoed until it ships, and its review is the
+// patch. Links can be minted early, but nothing anonymous answers until the
+// release is public, and the answer before then is a bad token's answer.
+describe("public disclosure waits for the release to be public", () => {
+  const PUBLIC_PATHS = ["", "/file?path=package.json", "/attestation"] as const;
+
+  async function snapshot(res: Response) {
+    return {
+      status: res.status,
+      body: await res.text(),
+      headers: [...res.headers.entries()].filter(([name]) => name !== "date").sort(),
+    };
+  }
+
+  async function expectDark(app: TestApp, token: string) {
+    const signing = await signingEnv();
+    const unknown = "Z".repeat(43);
+    for (const suffix of PUBLIC_PATHS) {
+      const dark = await snapshot(
+        await request(app, `/public/reports/${token}${suffix}`, {}, signing),
+      );
+      const bad = await snapshot(
+        await request(app, `/public/reports/${unknown}${suffix}`, {}, signing),
+      );
+      expect(dark.status, suffix || "report").toBe(404);
+      expect(dark, suffix || "report").toEqual(bad);
+    }
+  }
+
+  async function expectLive(app: TestApp, token: string) {
+    const signing = await signingEnv();
+    for (const suffix of PUBLIC_PATHS) {
+      const res = await request(app, `/public/reports/${token}${suffix}`, {}, signing);
+      expect(res.status, suffix || "report").toBe(200);
+    }
+  }
+
+  async function shareScan(app: TestApp, scanId: string) {
+    const res = await enableShare(app, scanId);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { share: { token: string; awaitingPublication: boolean } }).share;
+  }
+
+  async function detailAwaiting(app: TestApp, scanId: string) {
+    const detail = (await (await request(app, `/api/v1/scans/${scanId}`)).json()) as {
+      scan: { publicShareAwaitingPublication: boolean };
+    };
+    return detail.scan.publicShareAwaitingPublication;
+  }
+
+  async function setRegistryStatus(scanId: string, status: RegistryStatus) {
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ registryVersionStatus: status, registryVersionStatusAt: new Date() })
+      .where(eq(schema.scans.id, scanId));
+  }
+
+  test.each([null, "staged", "validating", "blocked"] as const)(
+    "a staged review npm reports as %s answers exactly like an unknown token",
+    async (status) => {
+      const owner = await seedUser();
+      const scanId = await seedReportScan(owner, { registryStatus: status });
+      const app = publicApp(owner);
+
+      const share = await shareScan(app, scanId);
+      expect(share.awaitingPublication).toBe(true);
+      expect(await detailAwaiting(app, scanId)).toBe(true);
+      await expectDark(app, share.token);
+    },
+  );
+
+  test("the same link goes live once npm publishes, and stays live after npm deletes it", async () => {
+    const owner = await seedUser();
+    const scanId = await seedReportScan(owner, { registryStatus: "staged" });
+    const app = publicApp(owner);
+    const share = await shareScan(app, scanId);
+    await expectDark(app, share.token);
+
+    await setRegistryStatus(scanId, "published");
+    await expectLive(app, share.token);
+    const again = await shareScan(app, scanId);
+    expect(again.token).toBe(share.token);
+    expect(again.awaitingPublication).toBe(false);
+    expect(await detailAwaiting(app, scanId)).toBe(false);
+
+    await setRegistryStatus(scanId, "deleted");
+    await expectLive(app, share.token);
+  });
+
+  test("a superseded review stays dark even though its version was published", async () => {
+    const owner = await seedUser();
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
+    const share = await shareScan(app, scanId);
+    await expectLive(app, share.token);
+
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ registryStatusSupersededAt: new Date() })
+      .where(eq(schema.scans.id, scanId));
+    await expectDark(app, share.token);
+  });
+
+  test("a published-pair review is public as soon as it is shared", async () => {
+    const owner = await seedUser();
+    const scanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "published" },
+    });
+    const app = publicApp(owner);
+    const share = await shareScan(app, scanId);
+    expect(share.awaitingPublication).toBe(false);
+    await expectLive(app, share.token);
+  });
+
+  function gateProvenance(ecosystem: "npm" | "pypi" | "vscode") {
+    return {
+      stagedPublish: {
+        provenance: {
+          ecosystem,
+          mode: "workflow_gate",
+          artifacts: [{ path: "pkg.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+        },
+      },
+    };
+  }
+
+  async function setGateDecision(gateId: string, decision: "approved" | "rejected") {
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({ status: decision, decision, decidedAt: new Date() })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+  }
+
+  test.each(["pypi", "vscode"] as const)(
+    "a %s gate review goes live when its gate approves the publish job",
+    async (ecosystem) => {
+      const owner = await seedUser();
+      const gateId = await seedWorkflowGate(owner, { ecosystem, decision: null });
+      const scanId = await seedReportScan(owner, {
+        registryStatus: null,
+        job: { source: "workflow_gate", gateId },
+        summary: gateProvenance(ecosystem),
+      });
+      const app = publicApp(owner);
+      const share = await shareScan(app, scanId);
+      expect(share.awaitingPublication).toBe(true);
+      await expectDark(app, share.token);
+
+      await setGateDecision(gateId, "approved");
+      await expectLive(app, share.token);
+    },
+  );
+
+  test("a rejected gate review never goes live", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: "rejected" });
+    const scanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId },
+      summary: gateProvenance("pypi"),
+    });
+    const app = publicApp(owner);
+    const share = await shareScan(app, scanId);
+    await expectDark(app, share.token);
+  });
+
+  test("an approved npm gate review waits for npm to publish the bytes it reviewed", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { ecosystem: "npm" });
+    const gateScanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId },
+      summary: gateProvenance("npm"),
+    });
+    const app = publicApp(owner);
+    const share = await shareScan(app, gateScanId);
+    // Gated staging: the approved job ran `npm stage publish`, so the reviewed
+    // bytes now sit in a private npm stage.
+    expect(share.awaitingPublication).toBe(true);
+    await expectDark(app, share.token);
+
+    const stagedScanId = await seedReportScan(owner, {
+      registryStatus: "staged",
+      job: {
+        source: "auto_discovery",
+        registryUrl: "https://registry.npmjs.org",
+        packageName: "@org/pkg",
+        stagedVersion: "1.1.0",
+      },
+      summary: {
+        gateContinuity: {
+          status: "matched",
+          reason: null,
+          algorithm: "sha256",
+          stagedDigest: "a".repeat(64),
+          review: { scanId: gateScanId, gateId, sha256: "a".repeat(64) },
+        },
+      },
+    });
+    await expectDark(app, share.token);
+
+    await setRegistryStatus(stagedScanId, "published");
+    await expectLive(app, share.token);
+  });
+
+  test("an npm gate review bound to another gate's bytes stays dark", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { ecosystem: "npm" });
+    const gateScanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId },
+      summary: gateProvenance("npm"),
+    });
+    await seedReportScan(owner, {
+      registryStatus: "published",
+      job: {
+        source: "auto_discovery",
+        registryUrl: "https://registry.npmjs.org",
+        packageName: "@org/pkg",
+        stagedVersion: "1.1.0",
+      },
+      summary: {
+        gateContinuity: {
+          status: "digest-mismatch",
+          reason: null,
+          algorithm: "sha256",
+          stagedDigest: "b".repeat(64),
+          review: { scanId: gateScanId, gateId, sha256: "a".repeat(64) },
+        },
+      },
+    });
+    const app = publicApp(owner);
+    const share = await shareScan(app, gateScanId);
+    await expectDark(app, share.token);
+  });
+
+  test("the publication monitor matching the published tarball releases an npm gate review", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { ecosystem: "npm" });
+    const gateScanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId },
+      summary: gateProvenance("npm"),
+    });
+    const app = publicApp(owner);
+    const share = await shareScan(app, gateScanId);
+    await expectDark(app, share.token);
+
+    await seedApprovedPublication(owner, {
+      packageName: "@org/pkg",
+      version: "1.1.0",
+      scanId: gateScanId,
+    });
+    await expectLive(app, share.token);
   });
 });

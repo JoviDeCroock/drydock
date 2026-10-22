@@ -140,7 +140,9 @@ export function ShareDialog({
             <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
           ) : null}
           <EmptyLine>
-            Anyone with the link can read the report; revoking invalidates it immediately.
+            {share.awaitingPublication
+              ? "This link and its listing go live once this release is published; until then they answer as not found."
+              : "Anyone with the link can read the report; revoking invalidates it immediately."}
           </EmptyLine>
           <label class="flex items-start gap-2 text-[13px] text-ink-muted cursor-pointer">
             <input

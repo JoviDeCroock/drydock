@@ -270,7 +270,9 @@ agent attempt can report zero steps when the provider supplies no usage, so use
 AI Gateway request metrics as the exact RPM source and Analytics Engine as the
 privacy-preserving routing/fallback source. Keep Gateway metadata logging and
 the per-request one-attempt override enabled, but keep payload collection off so
-private package evidence is never retained in request or response logs.
+private package evidence is never retained in request or response logs. Every
+request enforces that itself with `cf-aig-collect-log-payload: false`, so a
+dashboard setting cannot turn payload logging back on.
 
 ## Optional binding
 
