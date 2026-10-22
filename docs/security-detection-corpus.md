@@ -179,7 +179,7 @@ versions (see the invariant below).
 
 A PyPI review runs two rule families over the staged artifacts:
 
-- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
+- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
   `DETERMINISTIC_RULES_VERSION` (currently `1.52.0`).
 
@@ -284,6 +284,13 @@ broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On
 provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
 or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
+PyPI `0.5.0` resolves the site-packages root the way an installer does before the startup-hook
+rules run: the wheel `.data/data/lib/pythonX.Y/site-packages/` (and `lib64`, `dist-packages`, Windows
+`Lib/site-packages`) subtree now counts alongside `.data/{purelib,platlib}/`, and `pypi.startup-hook`
+matches `sitecustomize`/`usercustomize` in any importable form (package `__init__`, sourceless
+`.pyc`, native extension). Both shapes were complete misses (risk low, no findings) and are pinned by
+`16-wheel-data-scheme-site-packages-pth` and `17-wheel-sitecustomize-package`; the benign control
+`18-benign-wheel-data-scheme-non-site-files` keeps Jupyter config and `.data/scripts` silent.
 `1.18.0` closes the plain-dependency-addition gap: a newly added runtime or required
 peer dependency with an ordinary registry spec raises `dependency.added` (medium), while a peer
 marked optional through `peerDependenciesMeta` does not because npm will not install it
@@ -862,8 +869,10 @@ top-level `os.system`/`urllib.request` produces `pypi.setup-install-command` at
 `dist/…tar.gz/setup.py` (Scheme A) **and** `code.process-execution`/`code.network-access` at
 `sdist/setup.py` (Scheme B). List both tuples.
 For startup-hook fixtures, only files installed at Python's site root are expected to fire:
-top-level wheel files and wheel `.data/{purelib,platlib}/` files count; package-internal files such as
-`demo_package/sitecustomize.py` or `demo_package/inject.pth` do not.
+top-level wheel files, wheel `.data/{purelib,platlib}/` files, and files under the `.data/data/`
+scheme's `lib/pythonX.Y/site-packages/` subtree count; package-internal files such as
+`demo_package/sitecustomize.py` or `demo_package/inject.pth`, and other `.data/` schemes
+(`scripts`, `headers`, `data/share`), do not.
 
 ### Known coverage gaps (PyPI)
 

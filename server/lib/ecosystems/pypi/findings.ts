@@ -133,7 +133,8 @@ export function pyPiReleaseFindings(
   for (const artifact of artifacts) {
     for (const file of artifact.files) {
       const filePath = namespacedPath(artifact.path, file.path);
-      if (/\.pth$/i.test(file.path) && isPythonInstallRootFile(artifact, file.path)) {
+      const siteRootPath = pythonSiteRootPath(artifact, file.path);
+      if (siteRootPath !== null && /^[^/]+\.pth$/i.test(siteRootPath)) {
         const hasImportLine = Boolean(
           file.textSample?.split(/\r?\n/).some((line) => /^\s*import\s+/.test(line)),
         );
@@ -150,15 +151,14 @@ export function pyPiReleaseFindings(
           }),
         );
       }
-      if (
-        /(^|\/)(sitecustomize|usercustomize)\.py$/i.test(file.path) &&
-        isPythonInstallRootFile(artifact, file.path)
-      ) {
+      const startupModule =
+        siteRootPath === null ? undefined : STARTUP_HOOK_MODULE_RE.exec(siteRootPath)?.[1];
+      if (startupModule) {
         findings.push(
           tag("startupHook", {
             severity: "high",
             file: filePath,
-            evidence: `${file.path.split("/").at(-1)} runs automatically on interpreter startup`,
+            evidence: `${startupModule.toLowerCase()} module runs automatically on interpreter startup`,
             reason:
               "sitecustomize.py and usercustomize.py execute on every Python startup once installed, a common persistence hook",
           }),
@@ -281,11 +281,26 @@ function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string
   return artifact.files.filter((file) => !declared.has(file.path));
 }
 
-function isPythonInstallRootFile(artifact: PyPiPreparedArtifact, filePath: string): boolean {
+// `site` imports these by module name, so any importable form counts: source,
+// sourceless bytecode, a native extension, or a package directory.
+const STARTUP_HOOK_MODULE_RE =
+  /^(sitecustomize|usercustomize)(?:\.pyc?|(?:\.[^/]*)?\.(?:so|pyd)|\/__init__\.pyc?)$/i;
+
+// The `.data/data/` scheme installs relative to the environment prefix, so a
+// `lib/pythonX.Y/site-packages/` subtree under it lands in site-packages just
+// like purelib/platlib do (LiteLLM 1.107.0 used `.data/` to plant its hooks).
+const WHEEL_SITE_ROOT_PREFIX_RE =
+  /^[^/]+\.data\/(?:purelib|platlib|data\/(?:lib|lib64)\/python[^/]*\/(?:site|dist)-packages|data\/Lib\/site-packages)\//i;
+
+/** Path relative to the site-packages root a wheel file installs into, or null if it installs elsewhere. */
+function pythonSiteRootPath(artifact: PyPiPreparedArtifact, filePath: string): string | null {
+  if (artifact.kind !== "wheel") return null;
   const normalized = filePath.replace(/^\/+/, "");
-  if (artifact.kind !== "wheel") return false;
-  if (!normalized.includes("/")) return true;
-  return /^[^/]+\.data\/(?:purelib|platlib)\/[^/]+$/i.test(normalized);
+  const prefix = WHEEL_SITE_ROOT_PREFIX_RE.exec(normalized)?.[0];
+  if (prefix) return normalized.slice(prefix.length);
+  // Other `.data/` schemes (scripts, headers, data outside site-packages) never reach the import path.
+  if (/^[^/]+\.data\//i.test(normalized)) return null;
+  return normalized;
 }
 
 function tag(

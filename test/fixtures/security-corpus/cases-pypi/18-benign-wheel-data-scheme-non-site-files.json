@@ -1,0 +1,83 @@
+{
+  "id": "pypi-benign-wheel-data-scheme-non-site-files",
+  "title": "benign wheel installs Jupyter config and a script through .data schemes",
+  "category": "benign",
+  "intent": "Jupyter extensions and CLIs routinely ship .data/data/share, .data/data/etc and .data/scripts files; none of them reach the import path, so no startup-hook finding may fire",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package/__init__.py",
+          "size": 22,
+          "sha256": "e75a7f1c3bf1e838cebefd8b565be2cccdafb3ad9106aa4eef1e029c61fcb82a",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0.data/data/share/jupyter/labextensions/demo-package/package.json",
+          "size": 45,
+          "sha256": "65fb7c2eaba187959bcb2d063549903f62dc5d8a9f4907d6fa53f70f840026ab",
+          "flags": [],
+          "textSample": "{\"name\": \"demo-package\", \"version\": \"1.2.0\"}\n"
+        },
+        {
+          "path": "demo_package-1.2.0.data/data/etc/jupyter/jupyter_server_config.d/demo_package.json",
+          "size": 63,
+          "sha256": "9aa98d2cf3c0a38909356abcc0502aabcfc2b472a908904c6a68079257553a64",
+          "flags": [],
+          "textSample": "{\"ServerApp\": {\"jpserver_extensions\": {\"demo_package\": true}}}\n"
+        },
+        {
+          "path": "demo_package-1.2.0.data/data/share/demo-package/sitecustomize.py",
+          "size": 40,
+          "sha256": "cb22aff684247a4b55984acd2f4dc64cbc60421e5a1a41d0f9da0c48b5d3e1cb",
+          "flags": [],
+          "textSample": "# example configuration copied by users\n"
+        },
+        {
+          "path": "demo_package-1.2.0.data/scripts/demo-package-cli",
+          "size": 65,
+          "sha256": "14793bb11a94e3e070e8274d48b1d1a4f53a2eea6bbc6b0e874cb0efab1e4156",
+          "flags": [],
+          "textSample": "#!python\nfrom demo_package import __version__\nprint(__version__)\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 56,
+          "sha256": "3326980447c702787585a871d39e12be37479def5f3436e7181c71d4f7453cb1",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 59,
+          "sha256": "4aa4462c0334f23f2f9da9bce4c4731976fa23f22eb18d26358e480ee9acb79e",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 794,
+          "sha256": "c982d2ce27b0be0b0fdd431be22f2e7e39f5aace08e095ec67f4bc0e2eddc599",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,sha256=8d69837768900fcb266e7053c7da030ce67fa56ba41,10\ndemo_package-1.2.0.data/data/share/jupyter/labextensions/demo-package/package.json,sha256=dae98e54123efa666c0f81062b654f9fc5c53f3e184,10\ndemo_package-1.2.0.data/data/etc/jupyter/jupyter_server_config.d/demo_package.json,sha256=386610b754064ed2505aa4780912bd03178c93c54d5,10\ndemo_package-1.2.0.data/data/share/demo-package/sitecustomize.py,sha256=e2af7d54998b37117d77444e654b5400dc02b537b23,10\ndemo_package-1.2.0.data/scripts/demo-package-cli,sha256=7e30c3f5400c8bd136dc3e7616bc24b402343a4d121,10\ndemo_package-1.2.0.dist-info/METADATA,sha256=971138f6a6441f56ccf90992dc8dfd5d5bf53f9358c,10\ndemo_package-1.2.0.dist-info/WHEEL,sha256=7a51d3909d946b5ea6b8c6579d9ff02d062cdbc8c6e,10\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}
