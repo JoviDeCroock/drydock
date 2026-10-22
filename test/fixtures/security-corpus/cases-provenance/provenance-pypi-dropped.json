@@ -1,0 +1,78 @@
+{
+  "id": "provenance-pypi-dropped",
+  "title": "PyPI release drops the PEP 740 provenance its baseline carried",
+  "category": "provenance-regression",
+  "intent": "Every baseline file was uploaded by a Trusted Publisher with attestations; every candidate file affirmatively has none (PyPI's JSON 404).",
+  "ecosystem": "pypi",
+  "registryProvenance": {
+    "packageName": "example-sdk",
+    "baseline": {
+      "version": "2.0.0",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.0.tar.gz",
+          "status": 200,
+          "body": {
+            "version": 1,
+            "attestation_bundles": [
+              {
+                "publisher": {
+                  "kind": "GitHub",
+                  "repository": "example-org/example-sdk",
+                  "workflow": "release.yml",
+                  "environment": "pypi"
+                },
+                "attestations": []
+              }
+            ]
+          }
+        },
+        {
+          "filename": "example_sdk-2.0.0-py3-none-any.whl",
+          "status": 200,
+          "body": {
+            "version": 1,
+            "attestation_bundles": [
+              {
+                "publisher": {
+                  "kind": "GitHub",
+                  "repository": "example-org/example-sdk",
+                  "workflow": "release.yml",
+                  "environment": "pypi"
+                },
+                "attestations": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "2.0.1",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.1.tar.gz",
+          "status": 404,
+          "body": {
+            "message": "No provenance available for example_sdk-2.0.1.tar.gz"
+          }
+        },
+        {
+          "filename": "example_sdk-2.0.1-py3-none-any.whl",
+          "status": 404,
+          "body": {
+            "message": "No provenance available for example_sdk-2.0.1-py3-none-any.whl"
+          }
+        }
+      ]
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "release.provenance-dropped",
+      "severity": "medium",
+      "file": "<release-process>"
+    }
+  ]
+}

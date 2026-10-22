@@ -1,0 +1,29 @@
+{
+  "id": "provenance-npm-dropped-identity-unread",
+  "title": "npm drop still fires when the baseline's attested identity could not be read",
+  "category": "provenance-regression",
+  "intent": "Presence comes from the packument; an unreadable or unfetched attestations document on the baseline must not hide a drop.",
+  "ecosystem": "npm",
+  "registryProvenance": {
+    "packageName": "example-widget",
+    "baseline": {
+      "version": "1.0.0",
+      "packumentProvenance": true,
+      "attestations": {
+        "attestations": "not-a-list"
+      }
+    },
+    "candidate": {
+      "version": "1.0.1",
+      "packumentProvenance": false
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "release.provenance-dropped",
+      "severity": "medium",
+      "file": "<release-process>"
+    }
+  ]
+}
