@@ -127,6 +127,8 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 | `package-json.parse-failed`               | deterministic | anchor               | no              |
 | `propagation.package-mutation`            | deterministic | anchor               | yes             |
 | `propagation.registry-publish`            | deterministic | anchor               | yes             |
+| `release.provenance-dropped`              | deterministic | anchor               | no              |
+| `release.provenance-publisher-changed`    | deterministic | anchor               | no              |
 | `release.source-drift`                    | deterministic | anchor               | no              |
 | `stage.metadata-mismatch`                 | deterministic | anchor               | no              |
 | `stage.tarball-digest-mismatch`           | deterministic | anchor               | no              |
@@ -879,6 +881,15 @@ letters, backslashes and NUL stay unrepresentable too. Zip disclosures now carry
 Their reason describes pip for wheels and zip extractors in general for VSIX, instead of node-tar
 and `npm install`. Rule ID and severity are unchanged.
 
+`1.56.0` adds registry provenance continuity for published-pair reviews (npm and PyPI `/diff`,
+and authenticated published-pair reviews): `release.provenance-dropped` (medium) when the registry
+lists build provenance for the baseline and affirmatively none for the candidate, and
+`release.provenance-publisher-changed` (medium for a different attested repository or repository
+id, low for a different workflow in the same repository). Unknown provenance never fires. See
+[`provenance-continuity.md`](./provenance-continuity.md). Goldens live in `cases-provenance/`;
+hard negatives (`legit-provenance-*` in `cases-benign/`) pin transfers that keep the repository id,
+the SLSA v0.2→v1 format change, first adoption, unknown candidates, PyPI's HTML 404, and letter case.
+
 ### Fixture format
 
 Required fields:
@@ -984,3 +995,21 @@ Run the atpm corpus alone with:
 ```sh
 pnpm test -- test/security-corpus-atpm.test.mjs --project node
 ```
+
+## Registry provenance corpus
+
+`release.provenance-dropped` and `release.provenance-publisher-changed` compare two registry records
+rather than package files, so their golden cases under `test/fixtures/security-corpus/cases-provenance/`
+are registry-record projections, evaluated by `test/security-corpus-provenance.test.mjs`.
+`test/helpers/provenance-security-corpus.mjs` feeds them through the production readers
+(`npmRegistryProvenance`, `classifyPyPiProvenanceResponse` + `combinePyPiFileProvenance`) and
+`provenanceContinuityFindings`. The detection eval routes any fixture with `registryProvenance`
+(including `legit-provenance-*` hard negatives in `cases-benign/`) through the same helper.
+
+Fields: `id`, `title`, `category`, `intent`, `ecosystem` (`npm` or `pypi`), `expectedRisk`,
+`expectedFindings`, and `registryProvenance: { packageName, baseline, candidate }`. An npm side is
+`{ version, packumentProvenance?, statements? | attestations? }`: `packumentProvenance` is the
+packument's `dist.attestations.provenance` marker (omitted means unknown), `statements` are decoded
+in-toto statements the helper wraps in DSSE envelopes, and `attestations` is a raw attestations
+document for malformed shapes. A PyPI side is `{ version, files: [{ filename, status, body }] }`, one
+integrity-API response per selected file. Keep repositories and ids synthetic.

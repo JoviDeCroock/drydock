@@ -25,6 +25,7 @@ const corpusDirs = [
   "cases-atpm",
   "cases-benign",
   "cases-frontier",
+  "cases-provenance",
   "cases-pypi",
   "cases-vscode",
 ];

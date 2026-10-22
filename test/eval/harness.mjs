@@ -9,6 +9,8 @@
 //   - npm:  createPackageDiff + deterministicFindings + packageJsonDiffFindings
 //   - pypi: createPyPiReleaseCandidateReview
 //   - atpm: atpmRecordFindings
+//   - registry provenance (npm/pypi, `registryProvenance` fixtures):
+//     the production provenance readers + provenanceContinuityFindings
 //   - vscode: createVscodeExtensionReview
 //
 // See docs/detection-eval.md for the design and the fixture v2 schema.
@@ -35,6 +37,7 @@ import {
 } from "../../server/lib/ecosystems/vscode";
 import { computeScanRiskBreakdown } from "../../server/lib/review/risk";
 import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
+import { createProvenanceCorpusReview } from "../helpers/provenance-security-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");
@@ -54,7 +57,9 @@ const SIGNIFICANT_SEVERITY = SEVERITY_RANK.medium;
 // tracks what the product actually surfaces. Clean regression controls are held
 // to the stricter "no significant finding at all" bar below.
 const SIGNIFICANT_RISK = RISK_RANK.medium;
-const SUPPORTED_ECOSYSTEMS = new Set(["npm", "pypi", "atpm", "vscode"]);
+// `registry-provenance` holds npm and PyPI registry-record fixtures (no package
+// bytes), kept apart so byte-level passes and the AI live eval skip them.
+const SUPPORTED_ECOSYSTEMS = new Set(["npm", "pypi", "atpm", "vscode", "registry-provenance"]);
 const SUPPORTED_VERDICTS = new Set(["malicious", "benign"]);
 
 const riskRank = (level) => RISK_RANK[level] ?? 0;
@@ -70,7 +75,8 @@ function readCases(dir) {
 // Derive eval labels. v2 fixtures set verdict/threatClass/expectMinRisk/
 // expectAnyRule explicitly; legacy golden fixtures (cases/, cases-pypi/) infer
 // them from the existing expectedRisk/expectedFindings fields.
-function normalize(fx, kind, ecosystem) {
+function normalize(fx, kind, fixtureEcosystem) {
+  const ecosystem = fx.registryProvenance ? "registry-provenance" : fixtureEcosystem;
   const expectedFindings = fx.expectedFindings ?? [];
   const significant = expectedFindings.some(
     (f) => severityRank(f.severity) >= SIGNIFICANT_SEVERITY,
@@ -111,6 +117,9 @@ export function loadCorpus() {
     ...readCases(join(CORPUS_DIR, "cases")).map((fx) => normalize(fx, "regression", "npm")),
     ...readCases(join(CORPUS_DIR, "cases-pypi")).map((fx) => normalize(fx, "regression", "pypi")),
     ...readCases(join(CORPUS_DIR, "cases-atpm")).map((fx) => normalize(fx, "regression", "atpm")),
+    ...readCases(join(CORPUS_DIR, "cases-provenance")).map((fx) =>
+      normalize(fx, "regression", fx.ecosystem),
+    ),
     ...readCases(join(CORPUS_DIR, "cases-vscode")).map((fx) =>
       normalize(fx, "regression", "vscode"),
     ),
@@ -133,6 +142,7 @@ export function loadCorpus() {
 
 function detect(record, fxOverride) {
   const fx = fxOverride ?? record.fx;
+  if (record.ecosystem === "registry-provenance") return createProvenanceCorpusReview(fx);
   if (record.ecosystem === "atpm") return createAtpmCorpusReview(fx);
   if (record.ecosystem === "vscode") {
     const path = fx.artifactPath ?? `dist/${fx.extensionId}-${fx.version}.vsix`;

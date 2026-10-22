@@ -103,12 +103,14 @@ describe("buildLiveCases", () => {
     for (const entry of skipped) expect(ids.has(entry.id)).toBe(false);
   });
 
-  test("builds every staged ecosystem and only skips unsupported atpm fixtures", () => {
+  test("builds every staged ecosystem and skips only atpm and registry-record fixtures", () => {
     const { cases, skipped } = buildLiveCases();
     expect(new Set(cases.map((testCase) => testCase.options.ecosystem))).toEqual(
       new Set(["npm", "pypi", "vscode"]),
     );
-    expect(new Set(skipped.map((entry) => entry.ecosystem))).toEqual(new Set(["atpm"]));
+    expect(new Set(skipped.map((entry) => entry.ecosystem))).toEqual(
+      new Set(["atpm", "registry-provenance"]),
+    );
   });
 
   test("carries the deterministic risk alongside each case", () => {
