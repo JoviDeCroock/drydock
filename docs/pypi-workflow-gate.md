@@ -119,6 +119,17 @@ no evidence supports. The gate's advisory recommendation becomes
 `manual_review`: neither approval nor rejection is supported when nothing was
 compared. The gate stays pending for a maintainer either way.
 
+## Detonation (beta)
+
+For organizations in the `detonation-sandbox` beta, each reviewed PyPI package
+is also run in the detonation container once its review is attached to the
+gate: the parent Worker downloads the run's artifact again, refuses any wheel or
+sdist whose digest differs from the provenance block, and runs interpreter
+startup (`.pth`, `sitecustomize`), imports, the sdist build, and entry points
+with planted canaries. The run is advisory and queued separately, so the gate
+never waits on it and its result never changes the recommendation or the
+decision. See [`detonation-sandbox.md`](./detonation-sandbox.md).
+
 ## Code sharing
 
 PyPI review is deterministic-only and shares the package diff, risk model, and
