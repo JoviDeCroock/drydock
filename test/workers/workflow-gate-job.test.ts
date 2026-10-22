@@ -1341,7 +1341,13 @@ describe("PyPI gate detonation", () => {
     ]);
     expect(await sha256Hex(files[0].bytes)).toBe(wheelSha);
     expect(await sha256Hex(files[1].bytes)).toBe(sdistSha);
-    expect(JSON.stringify(files.map((file) => file.name))).not.toContain("ghs_");
+    // The RPC payload is exactly name, kind, and the reviewed bytes: the
+    // installation token the refetch used appears nowhere in it.
+    for (const file of files) {
+      expect(Object.keys(file).sort()).toEqual(["bytes", "kind", "name"]);
+      const text = `${file.name}${file.kind}${new TextDecoder().decode(file.bytes)}`;
+      expect(text).not.toContain("ghs_install_token");
+    }
 
     expect(row?.status).toBe("complete");
     expect(row?.artifactSha256).toBe(wheelSha);
@@ -1442,6 +1448,78 @@ describe("PyPI gate detonation", () => {
     expect(row?.status).toBe("complete");
     expect(row?.requestedByUserId).toBeNull();
     expect(row?.artifactSha256).toBe(scenario.declaredSha);
+  });
+
+  test("a failing run or flag service leaves the reviewed gate as it was", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9306",
+      repositoryId: 73006,
+      runId: 30306,
+    });
+    const scenario = await buildScenario(30306, { digestMatches: true });
+    const ctx = buildCtxWithGateway();
+    const brokenSandbox = {
+      idFromName: (name: string) => ({ name }),
+      get: () => ({
+        detonatePyPi: async () => {
+          throw new Error("container exploded");
+        },
+      }),
+    };
+    const testEnv = {
+      ...buildEnv(buildConfigBindings(), buildPypiLoader().binding),
+      FLAGS: detonationFlagOnly,
+      DETONATION_SANDBOX: brokenSandbox,
+    } as unknown as Cloudflare.Env;
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      testEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
+    expect(scenario.decisionCalls).toHaveLength(0);
+    const row = await readDetonationRow(gate!.scanId!);
+    expect(row?.status).toBe("failed");
+    expect(row?.errorCode).toBe("container_unavailable");
+    const reviewed = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.reviewed",
+    );
+    expect(reviewed?.recommendation).toBe("approved");
+
+    // A flag service that throws reads as "off" and requests nothing.
+    const second = await seedGateForTest({
+      installationExternalId: "9307",
+      repositoryId: 73007,
+      runId: 30307,
+    });
+    await buildScenario(30307, { digestMatches: true });
+    const ctx2 = buildCtxWithGateway();
+    await executeWorkflowGateJob(
+      {
+        ...testEnv,
+        FLAGS: {
+          getBooleanValue: async () => {
+            throw new Error("flag service down");
+          },
+        },
+      } as unknown as Cloudflare.Env,
+      ctx2,
+      { kind: "workflow_gate", organizationId: second.organizationId, gateId: second.gateId },
+      db,
+    );
+    await waitOnExecutionContext(ctx2);
+    const secondGate = await getGateForOrganization(db, second.organizationId, second.gateId);
+    expect(secondGate?.status).toBe("pending");
+    expect(await readDetonationRow(secondGate!.scanId!)).toBeUndefined();
   });
 
   test("a reviewed gate requests nothing while the beta flag is off", async () => {

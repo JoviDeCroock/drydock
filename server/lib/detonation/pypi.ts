@@ -66,9 +66,12 @@ interface WheelTags {
 }
 
 // `{name}-{version}(-{build})?-{python}-{abi}-{platform}.whl` (PEP 427); the
-// name and version are escaped so they never contain `-`.
+// name and version are escaped so they never contain `-`. These two patterns
+// match the harness's (`containers/detonation/pypi.mjs`), which refuses the
+// whole bundle on a name it does not accept, so nothing else is selected.
 const WHEEL_FILENAME_RE =
-  /^[A-Za-z0-9_.]+-[A-Za-z0-9_.!+]+(?:-[0-9][A-Za-z0-9_.]*)?-([A-Za-z0-9_.]+)-([A-Za-z0-9_.]+)-([A-Za-z0-9_.]+)\.whl$/;
+  /^[A-Za-z0-9][A-Za-z0-9_.]*-[A-Za-z0-9_.!+]+(?:-[0-9][A-Za-z0-9_.]*)?-([A-Za-z0-9_.]+)-([A-Za-z0-9_.]+)-([A-Za-z0-9_.]+)\.whl$/;
+const SDIST_FILENAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.+!-]*\.(?:tar\.gz|tgz)$/;
 
 function parseWheelTags(filename: string): WheelTags | null {
   const match = WHEEL_FILENAME_RE.exec(filename);
@@ -148,7 +151,7 @@ export function selectPyPiDetonationArtifacts(
   const sorted = [...artifacts].sort((a, b) => a.path.localeCompare(b.path));
   for (const artifact of sorted) {
     if (artifact.kind === "sdist") {
-      sdist ??= artifact;
+      if (SDIST_FILENAME_RE.test(distributionFilename(artifact.path))) sdist ??= artifact;
       continue;
     }
     const score = wheelScore(distributionFilename(artifact.path));
