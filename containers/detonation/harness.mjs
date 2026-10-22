@@ -80,8 +80,14 @@ const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // `strace -u` needs CAP_SYS_PTRACE because it seizes a child that already has
 // another uid. Tracing a root `setpriv` that then drops to `pkg` does not, and
 // the tracer stays attached across the uid change and every later fork.
+//
+// Root-run binaries are absolute paths: a step's env carries the package's
+// PATH (`node_modules/.bin` first), which the package fills through its own
+// `bin` entries, so a bare name would let it plant a `setpriv` or `strace`
+// that runs as root.
+const STRACE = "/usr/bin/strace";
 const DROP_PRIVILEGES = [
-  "setpriv",
+  "/usr/bin/setpriv",
   `--reuid=${PKG_UID}`,
   `--regid=${PKG_GID}`,
   "--init-groups",
@@ -197,7 +203,7 @@ async function readBody(req, cap) {
 
 function probeTracing() {
   const result = spawnSync(
-    "strace",
+    STRACE,
     [...STRACE_ARGS, "-o", "/dev/null", ...DROP_PRIVILEGES, "/bin/true"],
     { stdio: "ignore", timeout: 10_000 },
   );
@@ -654,7 +660,7 @@ async function runStep(plan, timeoutMs) {
   if (traceFile !== null) fs.writeFileSync(traceFile, "", { mode: 0o600 });
 
   const command = [...DROP_PRIVILEGES, ...plan.argv];
-  if (traceFile !== null) command.unshift("strace", ...STRACE_ARGS, "-o", traceFile);
+  if (traceFile !== null) command.unshift(STRACE, ...STRACE_ARGS, "-o", traceFile);
 
   const started = Date.now();
   const child = spawn(command[0], command.slice(1), {
