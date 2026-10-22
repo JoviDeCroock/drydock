@@ -3472,3 +3472,36 @@ describe("listing waits for the release to be public", () => {
     });
   });
 });
+
+describe("a listed rejection is a threat disclosure", () => {
+  test("an unpublished rejected stage appears in the feed and the listed badge once listed", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `rejected-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "6.6.6",
+      risk: "high",
+      releaseRisk: "high",
+      registryUrl: "https://registry.npmjs.org",
+      released: false,
+    });
+    await decide(app, scanId, "no_publish");
+    await share(app, scanId);
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+
+    const listed = await share(app, scanId, { threatFeed: true });
+    const entry = (await fetchFeed(app)).entries.find((e) => e.package === packageName);
+    expect(entry).toMatchObject({ version: "6.6.6", decision: "no_publish" });
+    // The entry's report link resolves for the partners polling the feed.
+    const token = listed.share.token;
+    expect(entry?.reportUrl.endsWith(`/reports/${token}`)).toBe(true);
+    expect((await request(app, `/public/reports/${token}`)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("6.6.6 rejected");
+
+    await share(app, scanId, { threatFeed: false });
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await request(app, `/public/reports/${token}`)).status).toBe(404);
+  });
+});

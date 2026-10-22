@@ -1186,3 +1186,103 @@ describe("public disclosure waits for the release to be public", () => {
     await expectLive(app, share.token);
   });
 });
+
+// A rejection the owner lists in the threat feed is a threat disclosure: the
+// bytes were refused, so there is no release to wait for, and the feed entry's
+// reportUrl must resolve.
+describe("a listed rejection is public at once", () => {
+  const PATHS = ["", "/file?path=package.json", "/attestation"] as const;
+
+  async function statuses(app: TestApp, token: string) {
+    const signing = await signingEnv();
+    const out: number[] = [];
+    for (const suffix of PATHS) {
+      out.push((await request(app, `/public/reports/${token}${suffix}`, {}, signing)).status);
+    }
+    return out;
+  }
+
+  async function setDecision(scanId: string, decision: "publish" | "no_publish" | null) {
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ decision, decidedAt: decision ? new Date() : null })
+      .where(eq(schema.scans.id, scanId));
+  }
+
+  async function postShare(app: TestApp, scanId: string, body: Record<string, unknown>) {
+    const res = await request(app, `/api/v1/scans/${scanId}/share`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { share: { token: string; awaitingPublication: boolean } }).share;
+  }
+
+  test("an unpublished staged rejection is dark while shared, live once listed, dark again when unlisted", async () => {
+    const owner = await seedUser();
+    const scanId = await seedReportScan(owner, { registryStatus: "staged" });
+    await setDecision(scanId, "no_publish");
+    const app = publicApp(owner);
+
+    const shared = await postShare(app, scanId, {});
+    expect(shared.awaitingPublication).toBe(true);
+    expect(await statuses(app, shared.token)).toEqual([404, 404, 404]);
+
+    const listed = await postShare(app, scanId, { threatFeed: true });
+    expect(listed.token).toBe(shared.token);
+    expect(listed.awaitingPublication).toBe(false);
+    expect(await statuses(app, shared.token)).toEqual([200, 200, 200]);
+
+    const unlisted = await postShare(app, scanId, { threatFeed: false });
+    expect(unlisted.awaitingPublication).toBe(true);
+    expect(await statuses(app, shared.token)).toEqual([404, 404, 404]);
+  });
+
+  test("listing an approved or undecided unreleased review does not open it", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    for (const decision of ["publish", null] as const) {
+      const scanId = await seedReportScan(owner, { registryStatus: "staged" });
+      await setDecision(scanId, decision);
+      const listed = await postShare(app, scanId, { threatFeed: true });
+      expect(listed.awaitingPublication, String(decision)).toBe(true);
+      expect(await statuses(app, listed.token), String(decision)).toEqual([404, 404, 404]);
+    }
+  });
+
+  test("approving a listed rejection puts it back under the publication rule", async () => {
+    const owner = await seedUser();
+    const scanId = await seedReportScan(owner, { registryStatus: "staged" });
+    await setDecision(scanId, "no_publish");
+    const app = publicApp(owner);
+    const listed = await postShare(app, scanId, { threatFeed: true });
+    expect(await statuses(app, listed.token)).toEqual([200, 200, 200]);
+
+    await setDecision(scanId, "publish");
+    expect(await statuses(app, listed.token)).toEqual([404, 404, 404]);
+  });
+
+  test("a listed rejected npm gate review is public although its gate never let anything ship", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { ecosystem: "npm", decision: "rejected" });
+    const scanId = await seedReportScan(owner, {
+      registryStatus: null,
+      job: { source: "workflow_gate", gateId },
+      summary: {
+        stagedPublish: {
+          provenance: {
+            ecosystem: "npm",
+            mode: "workflow_gate",
+            artifacts: [{ path: "pkg.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+          },
+        },
+      },
+    });
+    await setDecision(scanId, "no_publish");
+    const app = publicApp(owner);
+    const shared = await postShare(app, scanId, {});
+    expect(await statuses(app, shared.token)).toEqual([404, 404, 404]);
+    await postShare(app, scanId, { threatFeed: true });
+    expect(await statuses(app, shared.token)).toEqual([200, 200, 200]);
+  });
+});

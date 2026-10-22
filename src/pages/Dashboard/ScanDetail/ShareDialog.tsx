@@ -22,6 +22,7 @@ export function ShareDialog({
   packageName,
   badgeTag,
   badgePublic,
+  rejected,
   npmPackageClaimOwned,
   npmPackageManagementAllowed,
   npmBadgeNote,
@@ -47,6 +48,8 @@ export function ShareDialog({
    * whether the snippet is worth handing over before anything is shared.
    */
   badgePublic: boolean;
+  /** A rejected review goes public when listed, without waiting for a release. */
+  rejected: boolean;
   npmPackageClaimOwned?: boolean;
   npmPackageManagementAllowed?: boolean;
   /** Why this review cannot answer the npm badge (`npmBadgeAuthorityNote`). */
@@ -140,9 +143,11 @@ export function ShareDialog({
             <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
           ) : null}
           <EmptyLine>
-            {share.awaitingPublication
-              ? "This link and its listing go live once this release is published; until then they answer as not found."
-              : "Anyone with the link can read the report; revoking invalidates it immediately."}
+            {!share.awaitingPublication
+              ? "Anyone with the link can read the report; revoking invalidates it immediately."
+              : rejected
+                ? "This link answers as not found until you list the rejection publicly or the release is published."
+                : "This link and its listing go live once this release is published; until then they answer as not found."}
           </EmptyLine>
           <label class="flex items-start gap-2 text-[13px] text-ink-muted cursor-pointer">
             <input

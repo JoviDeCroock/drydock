@@ -66,8 +66,22 @@ a shields.io badge per package and an opt-in public threat feed.
   `publicShareAwaitingPublication`, and the share dialog says the link and its
   listing go live once the release is published. The public route itself never
   says so: a distinct answer would tell anyone holding a link that a release is
-  pending. One consequence: a review whose release never ships, such as a
-  rejected stage, is never public.
+  pending.
+
+  **A listed rejection is public at once.** A review decided `no_publish` and
+  listed in the threat feed (with its share link live) is a deliberate threat
+  disclosure: the bytes were refused, so there is no release to wait for, and
+  the feed entry's `reportUrl` must resolve. It appears in the feed, its
+  report, file, and attestation routes answer, and the listed badge reads
+  `<version> rejected`; the default-on badge never shows rejections, so it is
+  unchanged. This holds for every source. A gate review is equivalent: each
+  package review in a gate carries its own decision, and the gate rejects when
+  any of them is `no_publish`. A rejection that is only shared stays under the
+  publication rule, and unlisting it, or approving it later, takes it dark
+  again on the next request. The cost: a maintainer who rejects their own
+  embargoed fix and then lists the rejection discloses the fix. That takes two
+  explicit owner/admin opt-ins, sharing and listing, and the dialog says the
+  link goes live when the rejection is listed.
 
 - That button only appears once the release is decided `publish` — a public
   report is the organization vouching for a release, and an undecided or rejected
@@ -721,7 +735,8 @@ them. Read until you reach a listing you have already seen, not until the first
 response ends.
 
 A listed review appears only once its release is public (see the share flow
-above); listing before then is accepted and takes effect on its own.
+above); listing before then is accepted and takes effect on its own. A listed
+rejection is the exception and appears at once.
 
 Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
 share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):

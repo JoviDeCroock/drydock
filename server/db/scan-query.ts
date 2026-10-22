@@ -65,6 +65,10 @@ export function publishedReleaseOutcomeCondition() {
  *   A match to another approval of the same version is not enough: two gate
  *   reviews can carry different bytes under one version, and only one ships.
  *   A gate review with an unknown ecosystem takes this stricter branch.
+ * - Any source: a review rejected (`no_publish`) and listed in the threat
+ *   feed is public at once. Each package review in a gate carries its own
+ *   decision, and the gate rejects when any of them does, so a rejected gate
+ *   review is the same refusal as a rejected stage.
  *
  * Correlated on the outer `scans` row, so callers must select from `scans`
  * unaliased. Subquery tables are aliased and named by hand.
@@ -96,14 +100,21 @@ export function publicDisclosureAllowedCondition() {
       and disclosure_observation.status = 'approved_match'
       and disclosure_observation.scan_id = ${scans.id}
   ))`;
-  return sql`(case
+  // A rejection the organization deliberately listed is a threat disclosure,
+  // not a release review: publishing it is the point of the feed, and the
+  // bytes were refused, so there is no release to wait for. Listing needs a
+  // live share token, and unlisting or a later approval re-applies the rule.
+  const listedRejection = sql`coalesce(${scans.decision} = 'no_publish'
+    and ${scans.publicFeedListedAt} is not null
+    and ${scans.publicShareToken} is not null, 0)`;
+  return sql`(${listedRejection} or case
     when ${scans.source} in ('manual', 'auto_discovery') then coalesce(${publishedReleaseOutcomeCondition()}, 0)
     when ${scans.source} = 'published' then 1
     when ${scans.source} = 'workflow_gate' then ${gateApproved} and (
       coalesce(${scanEcosystemSql} in ('pypi', 'vscode'), 0) or ${npmShippedGateBytes}
     )
     else 0
-  end) = 1`;
+  end = 1)`;
 }
 
 /**
