@@ -1,8 +1,16 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { createDb } from "../../server/db/client";
+import { requestScanDetonation } from "../../server/db/scan-detonations";
 import { createScanJob, getScan } from "../../server/db/scans";
+import { executeDetonationJob } from "../../server/lib/detonation/job";
+import type { DetonationRunOutput } from "../../server/lib/detonation/sandbox-do";
+import type {
+  DetonationResult,
+  HarnessReport,
+  PyPiDetonationFile,
+} from "../../server/lib/detonation/types";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
@@ -22,7 +30,7 @@ import worker from "../../server";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
 import type { GithubAppEnv } from "../../server/lib/github-app/config";
-import { seedPersonalOrganization } from "./helpers/seed";
+import { seedCompletedScan, seedPersonalOrganization } from "./helpers/seed";
 
 function buildPypiLoader(opts: LoaderMockOptions = {}) {
   const metadataName = opts.metadataName ?? "demo-package";
@@ -1118,5 +1126,346 @@ describe("executeWorkflowGateJob", () => {
       "github_workflow_gate.notification_sent",
     );
     expect(sentMeta).toMatchObject({ channel: "email", trigger: "timeout_missed" });
+  });
+});
+
+// ── Beta detonation of reviewed PyPI distributions ──────────────────────────
+
+describe("PyPI gate detonation", () => {
+  const WHEEL_PATH = "dist/demo_package-1.2.0-py3-none-any.whl";
+  const SDIST_PATH = "dist/demo_package-1.2.0.tar.gz";
+  const WHEEL_BYTES = buildZip([
+    { path: "demo_package/__init__.py", body: "# inert in this test\n" },
+  ]);
+  const SDIST_BYTES = new TextEncoder().encode("sdist bytes; inert in this test");
+
+  // Only the detonation flag is on: AI review and every other flag keep the
+  // values an unflagged test environment gives them.
+  const detonationFlagOnly = {
+    getBooleanValue: async (flag: string) => flag === "detonation-sandbox",
+  };
+
+  const startupThiefReport: HarnessReport = {
+    version: 1,
+    coverage: {
+      syscallTracing: true,
+      runtimeHooks: true,
+      dependencyInstall: "complete",
+      stepsSkipped: 0,
+      exercise: "load",
+      browserTargeted: false,
+    },
+    steps: [
+      {
+        step: "startup",
+        target: "demo-package:startup",
+        exitCode: 0,
+        timedOut: false,
+        durationMs: 200,
+      },
+    ],
+    events: [
+      {
+        step: "startup",
+        target: "demo-package:startup",
+        pid: 45,
+        via: "syscall",
+        kind: "file",
+        op: "read",
+        path: "/home/pkg/.pypirc",
+      },
+    ],
+    truncated: false,
+  };
+
+  function fakePyPiSandbox() {
+    const received: PyPiDetonationFile[][] = [];
+    const npmCalls: unknown[] = [];
+    const namespace = {
+      idFromName: (name: string) => ({ name }),
+      get: () => ({
+        detonate: async (bytes: unknown) => {
+          npmCalls.push(bytes);
+          throw new Error("a PyPI gate scan must not take the npm path");
+        },
+        detonatePyPi: async (files: PyPiDetonationFile[]): Promise<DetonationRunOutput> => {
+          received.push(files);
+          return {
+            reportJson: JSON.stringify(startupThiefReport),
+            prepareJson: JSON.stringify({ ok: true, dependencyInstall: "complete" }),
+            egress: [],
+            forwardedRegistryReads: 2,
+            egressTruncated: false,
+            canaryValues: [],
+            errorCode: null,
+          };
+        },
+      }),
+    } as unknown as NonNullable<Cloudflare.Env["DETONATION_SANDBOX"]>;
+    return { namespace, received, npmCalls };
+  }
+
+  /** Serves a gate run whose only artifact bundle holds `files`, as GitHub would. */
+  async function stubReleaseBundle(
+    runId: number,
+    files: { path: string; bytes: Uint8Array<ArrayBuffer> }[],
+  ) {
+    const manifest = JSON.stringify({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: await Promise.all(
+        files.map(async (file) => ({ path: file.path, sha256: await sha256Hex(file.bytes) })),
+      ),
+    });
+    const bundleZip = buildZip([
+      { path: "drydock-manifest.json", body: manifest },
+      ...files.map((file) => ({ path: file.path, body: file.bytes })),
+    ]);
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.includes(`/actions/runs/${runId}/artifacts`)) {
+        return Response.json({
+          total_count: 1,
+          artifacts: [
+            {
+              id: 77777,
+              name: "pypi-release-candidate",
+              size_in_bytes: bundleZip.length,
+              expired: false,
+            },
+          ],
+        });
+      }
+      if (request.url.includes("/actions/artifacts/")) {
+        return new Response(new Uint8Array(bundleZip), {
+          headers: { "content-type": "application/zip" },
+        });
+      }
+      throw new Error(`unexpected fetch in test: ${request.url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    return fetchSpy;
+  }
+
+  type SeededGate = Awaited<ReturnType<typeof seedGateForTest>>;
+
+  async function seedPyPiGateScan(
+    seeded: SeededGate,
+    artifacts: { path: string; kind: "wheel" | "sdist"; sha256: string }[],
+  ) {
+    return seedCompletedScan(
+      { organizationId: seeded.organizationId, userId: seeded.userId },
+      {
+        stageId: `workflow-gate:${seeded.gateId}:pypi:demo-package`,
+        packageJson: { name: "demo-package", version: "1.2.0" },
+        job: { source: "workflow_gate" },
+        jobColumns: { gateId: seeded.gateId },
+        summary: {
+          diff: [{ path: "demo_package/__init__.py", status: "added" }],
+          stagedPublish: { provenance: { ecosystem: "pypi", mode: "workflow_gate", artifacts } },
+        },
+      },
+    );
+  }
+
+  function detonationEnv(sandbox: ReturnType<typeof fakePyPiSandbox>, flags: unknown) {
+    return {
+      ...buildEnv(buildConfigBindings(), buildPypiLoader().binding),
+      FLAGS: flags,
+      DETONATION_SANDBOX: sandbox.namespace,
+    } as unknown as Cloudflare.Env;
+  }
+
+  async function readDetonationRow(scanId: string) {
+    const [row] = await createDb(env.DB)
+      .select()
+      .from(schema.scanDetonations)
+      .where(eq(schema.scanDetonations.scanId, scanId));
+    return row;
+  }
+
+  async function runQueued(
+    seeded: SeededGate,
+    scanId: string,
+    sandbox: ReturnType<typeof fakePyPiSandbox>,
+  ) {
+    const db = createDb(env.DB);
+    const runId = crypto.randomUUID();
+    await requestScanDetonation(db, {
+      scanId,
+      organizationId: seeded.organizationId,
+      runId,
+      requestedByUserId: seeded.userId,
+      now: new Date(),
+    });
+    await executeDetonationJob(
+      detonationEnv(sandbox, detonationFlagOnly),
+      createExecutionContext(),
+      { kind: "detonation", scanId, organizationId: seeded.organizationId, runId },
+      db,
+    );
+    return readDetonationRow(scanId);
+  }
+
+  test("runs the digest-bound wheel and sdist without handing the container a GitHub token", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9301",
+      repositoryId: 73001,
+      runId: 30301,
+    });
+    const wheelSha = await sha256Hex(WHEEL_BYTES);
+    const sdistSha = await sha256Hex(SDIST_BYTES);
+    const scanId = await seedPyPiGateScan(seeded, [
+      { path: WHEEL_PATH, kind: "wheel", sha256: wheelSha },
+      { path: SDIST_PATH, kind: "sdist", sha256: sdistSha },
+    ]);
+    await stubReleaseBundle(30301, [
+      { path: WHEEL_PATH, bytes: WHEEL_BYTES },
+      { path: SDIST_PATH, bytes: SDIST_BYTES },
+    ]);
+    const sandbox = fakePyPiSandbox();
+
+    const row = await runQueued(seeded, scanId, sandbox);
+
+    expect(sandbox.npmCalls).toHaveLength(0);
+    expect(sandbox.received).toHaveLength(1);
+    const [files] = sandbox.received;
+    expect(files.map(({ name, kind }) => ({ name, kind }))).toEqual([
+      { name: "demo_package-1.2.0-py3-none-any.whl", kind: "wheel" },
+      { name: "demo_package-1.2.0.tar.gz", kind: "sdist" },
+    ]);
+    expect(await sha256Hex(files[0].bytes)).toBe(wheelSha);
+    expect(await sha256Hex(files[1].bytes)).toBe(sdistSha);
+    expect(JSON.stringify(files.map((file) => file.name))).not.toContain("ghs_");
+
+    expect(row?.status).toBe("complete");
+    expect(row?.artifactSha256).toBe(wheelSha);
+    const result = row?.resultJson as DetonationResult;
+    expect(result.artifacts).toEqual([
+      { path: WHEEL_PATH, sha256: wheelSha, role: "wheel" },
+      { path: SDIST_PATH, sha256: sdistSha, role: "sdist" },
+    ]);
+    expect(result.coverage?.ecosystem).toBe("pypi");
+    expect(result.signals).toContainEqual(
+      expect.objectContaining({ id: "dynamic.credential-file-read", step: "startup" }),
+    );
+
+    // Advisory: neither the gate nor the scan it reviewed moves.
+    const db = createDb(env.DB);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
+    const scan = await getScan(db, scanId, seeded.organizationId);
+    expect(scan?.scan.risk).toBe("low");
+  });
+
+  test("refuses to run when the refetched wheel is not the one the review read", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9302",
+      repositoryId: 73002,
+      runId: 30302,
+    });
+    const scanId = await seedPyPiGateScan(seeded, [
+      { path: WHEEL_PATH, kind: "wheel", sha256: await sha256Hex(WHEEL_BYTES) },
+    ]);
+    // A self-consistent bundle, but not the bytes the scan recorded.
+    await stubReleaseBundle(30302, [
+      { path: WHEEL_PATH, bytes: buildZip([{ path: "demo_package/__init__.py", body: "x\n" }]) },
+    ]);
+    const sandbox = fakePyPiSandbox();
+
+    const row = await runQueued(seeded, scanId, sandbox);
+
+    expect(sandbox.received).toHaveLength(0);
+    expect(row?.status).toBe("failed");
+    expect(row?.errorCode).toBe("artifact_digest_mismatch");
+  });
+
+  test("skips a release that ships nothing the Linux CPython 3.11 sandbox can run", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9303",
+      repositoryId: 73003,
+      runId: 30303,
+    });
+    const fetchSpy = await stubReleaseBundle(30303, []);
+    const scanId = await seedPyPiGateScan(seeded, [
+      {
+        path: "dist/demo_package-1.2.0-cp311-cp311-win_amd64.whl",
+        kind: "wheel",
+        sha256: "a".repeat(64),
+      },
+    ]);
+    const sandbox = fakePyPiSandbox();
+
+    const row = await runQueued(seeded, scanId, sandbox);
+
+    expect(sandbox.received).toHaveLength(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(row?.status).toBe("skipped");
+    expect(row?.errorCode).toBe("platform_unsupported");
+  });
+
+  test("a reviewed gate requests a run without holding the gate", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9304",
+      repositoryId: 73004,
+      runId: 30304,
+    });
+    const scenario = await buildScenario(30304, { digestMatches: true });
+    const sandbox = fakePyPiSandbox();
+    const ctx = buildCtxWithGateway();
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      detonationEnv(sandbox, detonationFlagOnly),
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.decision).toBeNull();
+    expect(scenario.decisionCalls).toHaveLength(0);
+
+    expect(sandbox.received).toHaveLength(1);
+    expect(sandbox.received[0].map(({ name, kind }) => ({ name, kind }))).toEqual([
+      { name: "demo_package-1.2.0-py3-none-any.whl", kind: "wheel" },
+    ]);
+    const row = await readDetonationRow(gate!.scanId!);
+    expect(row?.status).toBe("complete");
+    expect(row?.requestedByUserId).toBeNull();
+    expect(row?.artifactSha256).toBe(scenario.declaredSha);
+  });
+
+  test("a reviewed gate requests nothing while the beta flag is off", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9305",
+      repositoryId: 73005,
+      runId: 30305,
+    });
+    await buildScenario(30305, { digestMatches: true });
+    const sandbox = fakePyPiSandbox();
+    const ctx = buildCtxWithGateway();
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      detonationEnv(sandbox, { getBooleanValue: async () => false }),
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.scanId).toBeTruthy();
+    expect(sandbox.received).toHaveLength(0);
+    expect(await readDetonationRow(gate!.scanId!)).toBeUndefined();
   });
 });

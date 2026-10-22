@@ -20,6 +20,29 @@ import {
 } from "./event-budget.mjs";
 import { isBrowserTargeted } from "./manifest.mjs";
 import {
+  BUILD_ENV,
+  BUILD_OUT,
+  BUILD_SYSTEM_READER,
+  decodePyPiBundle,
+  DIST_DIR,
+  findDistInfo,
+  INSTALLER_PYTHON,
+  narrowBuildSystem,
+  OBSERVER_PTH,
+  OBSERVER_PTH_NAME,
+  parseEntryPoints,
+  PIP_CACHE,
+  planPyPiSteps,
+  PYPI_INDEX,
+  RUN_DIR,
+  SDIST_DIR,
+  SYSTEM_PYTHON,
+  topLevelModules,
+  VENV_DIR,
+  VENV_PYTHON,
+  wheelIdentity,
+} from "./pypi.mjs";
+import {
   boundEvent,
   createTraceReader,
   HOOK_LOG_DIR,
@@ -108,7 +131,36 @@ const STRACE_ARGS = [
   "trace=execve,execveat,open,openat,creat,unlink,unlinkat,rename,renameat,renameat2,chmod,fchmodat,connect,chdir,fchdir,clone,clone3,fork,vfork",
 ];
 
+// pip runs from the root-owned installer venv with `--target` into the run's
+// site directory, so the installer's own interpreter never processes a `.pth`
+// the package installed there. Budgets keep the whole PyPI prepare inside the
+// parent's 150 s window.
+const VENV_CREATE_TIMEOUT_MS = 10_000;
+const PIP_INSTALL_TIMEOUT_MS = 60_000;
+const PIP_NO_DEPS_TIMEOUT_MS = 15_000;
+const SDIST_EXTRACT_TIMEOUT_MS = 10_000;
+const BUILD_SYSTEM_TIMEOUT_MS = 5_000;
+const BUILD_ENV_TIMEOUT_MS = 25_000;
+const SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+const PYPI_BASE_PATH = `${VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin`;
+
+/**
+ * @typedef {{
+ *   distribution: string,
+ *   installed: boolean,
+ *   siteDir: string | null,
+ *   modules: string[],
+ *   entryPoints: { name: string, module: string, attr: string }[],
+ *   build: { root: string, backend: string, backendPath: string[] } | null,
+ *   buildUnplanned: boolean,
+ * }} PyPiState
+ */
+
 const state = {
+  /** @type {"npm" | "pypi"} */
+  ecosystem: "npm",
+  /** @type {PyPiState | null} */
+  pypi: null,
   prepareStarted: false,
   prepared: false,
   detonateStarted: false,
@@ -151,6 +203,17 @@ async function handle(req, res) {
     const body = await readBody(req, MAX_TARBALL_BYTES);
     if (body === null) return sendJson(res, 413, { error: "too_large" });
     sendJson(res, 200, prepare(body));
+    return;
+  }
+  if (req.method === "POST" && url === "/prepare-pypi") {
+    if (state.prepareStarted) return sendJson(res, 409, { error: "already_prepared" });
+    state.prepareStarted = true;
+    state.ecosystem = "pypi";
+    const body = await readBody(req, MAX_TARBALL_BYTES);
+    if (body === null) return sendJson(res, 413, { error: "too_large" });
+    const files = decodePyPiBundle(body);
+    if (files === null) return sendJson(res, 400, { error: "invalid_bundle" });
+    sendJson(res, 200, preparePyPi(files));
     return;
   }
   if (req.method === "POST" && url === "/detonate") {
@@ -303,6 +366,294 @@ function prepare(tarball) {
   return { ok: installed, packageName, dependencyInstall };
 }
 
+/**
+ * Installs the reviewed wheel into a fresh venv's site directory and unpacks
+ * the sdist, with no package code running: pip takes binary wheels only (an
+ * sdist dependency would run its build backend), runs from the installer venv
+ * so the target's `.pth` files never load into it, and the venv's own
+ * interpreter is only started once, before anything is installed.
+ *
+ * @param {import("./pypi.mjs").BundleFile[]} files
+ * @returns {import("../../server/lib/detonation/types.ts").HarnessPrepareResponse}
+ */
+function preparePyPi(files) {
+  installCloudflareCa();
+  fs.mkdirSync(WORK_DIR, { recursive: true, mode: 0o755 });
+  fs.mkdirSync(TRACE_DIR, { recursive: true, mode: 0o700 });
+  fs.chmodSync(TRACE_DIR, 0o700);
+  fs.mkdirSync(DIST_DIR, { recursive: true, mode: 0o755 });
+  // Root-owned and empty: steps start here, so the package cannot plant a
+  // module that shadows another in the working directory.
+  fs.mkdirSync(RUN_DIR, { recursive: true, mode: 0o755 });
+  for (const dir of [VENV_DIR, PIP_CACHE, BUILD_ENV, BUILD_OUT, SDIST_DIR]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chownSync(dir, PKG_UID, PKG_GID);
+  }
+  fs.chownSync(PKG_HOME, PKG_UID, PKG_GID);
+  for (const file of files) {
+    fs.writeFileSync(path.join(DIST_DIR, file.name), file.bytes, { mode: 0o644 });
+  }
+  const wheel = files.find((file) => file.kind === "wheel") ?? null;
+  const sdist = files.find((file) => file.kind === "sdist") ?? null;
+  const identity = wheel ? wheelIdentity(wheel.name) : null;
+
+  /** @type {PyPiState} */
+  const info = {
+    distribution: identity?.name ?? sdistDistribution(sdist?.name ?? "") ?? "package",
+    installed: false,
+    siteDir: null,
+    modules: [],
+    entryPoints: [],
+    build: null,
+    buildUnplanned: false,
+  };
+  state.pypi = info;
+  state.packageName = info.distribution;
+  state.installName = info.distribution;
+
+  /** @type {HarnessCoverage["dependencyInstall"]} */
+  let dependencyInstall = "failed";
+  const siteDir = createVenv();
+  if (wheel && identity && siteDir) {
+    info.siteDir = siteDir;
+    const wheelPath = path.join(DIST_DIR, wheel.name);
+    const full = runPip(["--only-binary", ":all:", wheelPath], siteDir, PIP_INSTALL_TIMEOUT_MS);
+    // A dependency with no binary wheel fails the whole resolution; the
+    // reviewed wheel alone still runs its own startup and import code.
+    const partial =
+      full === 0 ? 0 : runPip(["--no-deps", wheelPath], siteDir, PIP_NO_DEPS_TIMEOUT_MS);
+    const distInfo = findDistInfo(safeReaddir(siteDir), identity);
+    info.installed = distInfo !== null;
+    if (distInfo !== null) {
+      dependencyInstall = full === 0 ? "complete" : partial === 0 ? "partial" : "failed";
+      info.modules = topLevelModules(
+        readSmallText(path.join(siteDir, distInfo, "RECORD")),
+        identity.name,
+      );
+      info.entryPoints = parseEntryPoints(
+        readSmallText(path.join(siteDir, distInfo, "entry_points.txt")),
+      );
+    }
+  }
+
+  if (sdist) {
+    const root = extractSdist(path.join(DIST_DIR, sdist.name));
+    if (root !== null) {
+      const buildSystem = narrowBuildSystem(readBuildSystem(path.join(root, "pyproject.toml")));
+      if (buildSystem.backend) {
+        const requirementsReady =
+          buildSystem.requires.length === 0 ||
+          runPip(
+            ["--only-binary", ":all:", ...buildSystem.requires],
+            BUILD_ENV,
+            BUILD_ENV_TIMEOUT_MS,
+          ) === 0;
+        info.build = {
+          root,
+          backend: buildSystem.backend,
+          backendPath: buildSystem.backendPath,
+        };
+        // Without a wheel the build is the whole run, so its environment is
+        // what "dependency install" describes.
+        if (!wheel) dependencyInstall = requirementsReady ? "complete" : "partial";
+      } else {
+        info.buildUnplanned = true;
+      }
+    } else {
+      info.buildUnplanned = true;
+    }
+  }
+  killPackageUser();
+
+  state.dependencyInstall = dependencyInstall;
+  state.prepared = true;
+  const ok = info.installed || info.build !== null;
+  return { ok, packageName: info.distribution, dependencyInstall };
+}
+
+/**
+ * Root writes the observer's `.pth` into the site directory after prepare and
+ * before any step. `O_EXCL` refuses a name the wheel already installed.
+ *
+ * @param {string} siteDir
+ */
+function installPythonObserver(siteDir) {
+  try {
+    fs.writeFileSync(path.join(siteDir, OBSERVER_PTH_NAME), OBSERVER_PTH, {
+      mode: 0o644,
+      flag: "wx",
+    });
+  } catch {
+    // Observation is best effort; strace remains the record.
+  }
+}
+
+/** `name-1.0.tar.gz` → `name` (the version is everything after the last dash). @param {string} filename */
+function sdistDistribution(filename) {
+  const stem = filename.replace(/\.(tar\.gz|tgz)$/, "");
+  const dash = stem.lastIndexOf("-");
+  return dash > 0 ? stem.slice(0, dash) : null;
+}
+
+/** Creates the run's venv and returns its site directory. Nothing is installed in it yet. */
+function createVenv() {
+  const created = spawnSync(
+    DROP_PRIVILEGES[0],
+    [...DROP_PRIVILEGES.slice(1), SYSTEM_PYTHON, "-I", "-m", "venv", "--without-pip", VENV_DIR],
+    {
+      cwd: WORK_DIR,
+      env: pythonPrepareEnv(),
+      stdio: "ignore",
+      timeout: VENV_CREATE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    },
+  );
+  if (created.status !== 0) return null;
+  const purelib = spawnSync(
+    DROP_PRIVILEGES[0],
+    [
+      ...DROP_PRIVILEGES.slice(1),
+      VENV_PYTHON,
+      "-I",
+      "-c",
+      "import sys, sysconfig; sys.stdout.write(sysconfig.get_path('purelib'))",
+    ],
+    {
+      cwd: WORK_DIR,
+      env: pythonPrepareEnv(),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: VENV_CREATE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    },
+  );
+  const siteDir = purelib.status === 0 ? purelib.stdout.toString("utf8").trim() : "";
+  return siteDir.startsWith(`${VENV_DIR}/`) && path.normalize(siteDir) === siteDir ? siteDir : null;
+}
+
+function pythonPrepareEnv() {
+  return {
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    HOME: PKG_HOME,
+    USER: "pkg",
+    LANG: "C.UTF-8",
+    PIP_CONFIG_FILE: "/dev/null",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+    PIP_NO_INPUT: "1",
+    // pip ships its own CA bundle, which does not hold Cloudflare's
+    // interception CA; the system bundle does once it is installed.
+    ...(state.extraCaCerts ? { PIP_CERT: SYSTEM_CA_BUNDLE, SSL_CERT_FILE: SYSTEM_CA_BUNDLE } : {}),
+  };
+}
+
+/**
+ * pip as the package user from the installer venv, into `target`, resolving
+ * only from the public index. Returns the exit status.
+ *
+ * @param {string[]} args
+ * @param {string} target
+ * @param {number} timeoutMs
+ */
+function runPip(args, target, timeoutMs) {
+  const result = spawnSync(
+    DROP_PRIVILEGES[0],
+    [
+      ...DROP_PRIVILEGES.slice(1),
+      INSTALLER_PYTHON,
+      "-I",
+      "-m",
+      "pip",
+      "install",
+      "--no-input",
+      "--disable-pip-version-check",
+      "--no-warn-script-location",
+      "--progress-bar",
+      "off",
+      "--cache-dir",
+      PIP_CACHE,
+      "--index-url",
+      PYPI_INDEX,
+      "--target",
+      target,
+      ...args,
+    ],
+    {
+      cwd: WORK_DIR,
+      env: pythonPrepareEnv(),
+      stdio: "ignore",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    },
+  );
+  killPackageUser();
+  return result.status;
+}
+
+/**
+ * Unpacks the sdist as the package user (GNU tar refuses `..` members and
+ * defers symlinks) and returns its single top-level directory, or null.
+ *
+ * @param {string} archive
+ */
+function extractSdist(archive) {
+  const result = spawnSync(
+    DROP_PRIVILEGES[0],
+    [
+      ...DROP_PRIVILEGES.slice(1),
+      "tar",
+      "-xzf",
+      archive,
+      "-C",
+      SDIST_DIR,
+      "--no-same-owner",
+      "--no-same-permissions",
+    ],
+    { stdio: "ignore", timeout: SDIST_EXTRACT_TIMEOUT_MS, killSignal: "SIGKILL" },
+  );
+  killPackageUser();
+  if (result.status !== 0) return null;
+  const roots = safeReaddir(SDIST_DIR).filter((entry) => {
+    const stat = fs.lstatSync(path.join(SDIST_DIR, entry), { throwIfNoEntry: false });
+    return stat?.isDirectory() ?? false;
+  });
+  return roots.length === 1 ? path.join(SDIST_DIR, roots[0]) : null;
+}
+
+/** @param {string} pyproject @returns {unknown} */
+function readBuildSystem(pyproject) {
+  const stat = fs.lstatSync(pyproject, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (!stat.isFile()) return {};
+  const result = spawnSync(
+    DROP_PRIVILEGES[0],
+    [...DROP_PRIVILEGES.slice(1), SYSTEM_PYTHON, "-I", BUILD_SYSTEM_READER, pyproject],
+    {
+      cwd: WORK_DIR,
+      env: pythonPrepareEnv(),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: BUILD_SYSTEM_TIMEOUT_MS,
+      maxBuffer: MAX_MANIFEST_BYTES,
+      killSignal: "SIGKILL",
+    },
+  );
+  if (result.status !== 0) return {};
+  try {
+    return JSON.parse(result.stdout.toString("utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** A bounded read of an installed metadata file; missing or oversized reads as empty. @param {string} file */
+function readSmallText(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) return "";
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 // npm records the tarball under the dependency name it installed it as; that
 // directory, not the manifest `name`, is how the parent attributes writes.
 // Only npm has run so far (with --ignore-scripts), so the app manifest is
@@ -409,29 +760,57 @@ async function detonate(request) {
 
   let stepsSkipped = 0;
 
-  if (state.installName !== null && state.dependencyInstall !== "failed") {
+  const pypi = state.ecosystem === "pypi" ? state.pypi : null;
+  const runnable = pypi
+    ? pypi.installed || pypi.build !== null
+    : state.installName !== null && state.dependencyInstall !== "failed";
+  if (runnable) {
     plantCanaries(request.canaryFiles);
     fs.mkdirSync(HOOK_LOG_DIR, { recursive: true, mode: 0o755 });
     fs.chmodSync(HOOK_LOG_DIR, 0o755);
 
-    /** @type {Record<string, string>} */
-    const baseEnv = {
-      ...request.canaryEnv,
-      PATH: BASE_PATH,
-      HOME: PKG_HOME,
-      USER: "pkg",
-      NODE_OPTIONS: `--require ${OBSERVER}`,
-      ...(state.extraCaCerts ? { NODE_EXTRA_CA_CERTS: state.extraCaCerts } : {}),
-    };
+    /** @type {StepPlan[]} */
+    let plans;
+    if (pypi) {
+      if (pypi.siteDir !== null && pypi.installed) installPythonObserver(pypi.siteDir);
+      /** @type {Record<string, string>} */
+      const pypiEnv = {
+        ...request.canaryEnv,
+        PATH: PYPI_BASE_PATH,
+        HOME: PKG_HOME,
+        USER: "pkg",
+        LANG: "C.UTF-8",
+        VIRTUAL_ENV: VENV_DIR,
+        // Python's ssl and requests' certifi must trust Cloudflare's
+        // interception CA, or an exfiltration attempt dies in the TLS
+        // handshake before the egress boundary can read what it carried.
+        ...(state.extraCaCerts
+          ? { SSL_CERT_FILE: SYSTEM_CA_BUNDLE, REQUESTS_CA_BUNDLE: SYSTEM_CA_BUNDLE }
+          : {}),
+      };
+      plans = planPyPiSteps(pypi, pypiEnv);
+      if (pypi.buildUnplanned) stepsSkipped += 1;
+    } else {
+      /** @type {Record<string, string>} */
+      const baseEnv = {
+        ...request.canaryEnv,
+        PATH: BASE_PATH,
+        HOME: PKG_HOME,
+        USER: "pkg",
+        NODE_OPTIONS: `--require ${OBSERVER}`,
+        ...(state.extraCaCerts ? { NODE_EXTRA_CA_CERTS: state.extraCaCerts } : {}),
+      };
+      plans = planSteps(
+        /** @type {string} */ (state.installName),
+        state.packageName ?? /** @type {string} */ (state.installName),
+        baseEnv,
+      );
+    }
 
     const dependencyDeadline =
       Date.now() + Math.floor(request.totalTimeoutMs * DEPENDENCY_BUDGET_SHARE);
     let dependencySteps = 0;
-    for (const plan of planSteps(
-      state.installName,
-      state.packageName ?? state.installName,
-      baseEnv,
-    )) {
+    for (const plan of plans) {
       // The reviewed package's steps always start while any budget remains;
       // dependencies only within their share.
       const limit = plan.reviewed ? deadline : Math.min(deadline, dependencyDeadline);
@@ -456,6 +835,7 @@ async function detonate(request) {
   const report = {
     version: VERSION,
     coverage: {
+      ...(state.ecosystem === "pypi" ? { ecosystem: /** @type {const} */ ("pypi") } : {}),
       syscallTracing,
       runtimeHooks,
       dependencyInstall: state.dependencyInstall,

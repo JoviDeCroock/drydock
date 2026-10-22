@@ -36,6 +36,9 @@ export function generateCanaries(): CanarySet {
   const awsSecret = randomFrom(ALNUM, 40);
   const oidcToken = randomFrom(ALNUM, 40);
   const sshMarker = randomFrom(ALNUM, 48);
+  // PyPI API tokens are macaroons whose base64 always opens with the encoded
+  // `pypi.org` location, which is the prefix stealers grep for.
+  const pypiToken = `pypi-AgEIcHlwaS5vcmc${randomFrom(ALNUM, 64)}`;
 
   return {
     env: {
@@ -49,6 +52,9 @@ export function generateCanaries(): CanarySet {
       RUNNER_OS: "Linux",
       NPM_TOKEN: npmToken,
       NODE_AUTH_TOKEN: npmToken,
+      PYPI_API_TOKEN: pypiToken,
+      TWINE_USERNAME: "__token__",
+      TWINE_PASSWORD: pypiToken,
       GITHUB_TOKEN: githubToken,
       AWS_ACCESS_KEY_ID: awsKeyId,
       AWS_SECRET_ACCESS_KEY: awsSecret,
@@ -82,9 +88,15 @@ export function generateCanaries(): CanarySet {
         content: `-----BEGIN OPENSSH PRIVATE KEY-----\n${sshMarker}\n-----END OPENSSH PRIVATE KEY-----\n`,
         mode: 0o600,
       },
+      {
+        path: `${DETONATION_HOME}/.pypirc`,
+        content: `[distutils]\nindex-servers =\n    pypi\n\n[pypi]\nusername = __token__\npassword = ${pypiToken}\n`,
+        mode: 0o600,
+      },
     ],
     values: [
       { kind: "npm-token", value: npmToken },
+      { kind: "pypi-token", value: pypiToken },
       { kind: "github-token", value: githubToken },
       { kind: "aws-key", value: awsKeyId },
       { kind: "aws-key", value: awsSecret },

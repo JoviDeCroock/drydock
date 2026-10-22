@@ -32,6 +32,15 @@ describe("canary needles", () => {
     expect(npmrc?.content).toContain(npmToken);
   });
 
+  test("plant the same PyPI token in the environment and ~/.pypirc", () => {
+    const pypiToken = canaries.env.PYPI_API_TOKEN;
+    const pypirc = canaries.files.find((file) => file.path.endsWith("/.pypirc"));
+    expect(pypiToken).toMatch(/^pypi-AgEIcHlwaS5vcmc[A-Za-z0-9]{64}$/);
+    expect(canaries.env.TWINE_PASSWORD).toBe(pypiToken);
+    expect(pypirc?.content).toContain(pypiToken);
+    expect(findCanaryKinds(base64(`{"password":"${pypiToken}"}`), needles)).toEqual(["pypi-token"]);
+  });
+
   test.each([
     ["raw", (payload: string) => payload],
     ["URL-encoded", (payload: string) => encodeURIComponent(payload)],
@@ -78,6 +87,24 @@ describe("detonation egress policy", () => {
 
   test("forwards nothing once package code runs", () => {
     expect(evaluateDetonationEgress("detonate", "GET", "https://registry.npmjs.org/left-pad")).toBe(
+      "sinkhole",
+    );
+  });
+
+  test("forwards only the PyPI simple index and file host during a PyPI prepare", () => {
+    const pypi = (method: string, url: string, phase: "prepare" | "detonate" = "prepare") =>
+      evaluateDetonationEgress(phase, method, url, "pypi");
+    expect(pypi("GET", "https://pypi.org/simple/requests/")).toBe("forward");
+    expect(
+      pypi("GET", "https://files.pythonhosted.org/packages/ab/cd/x-1.0-py3-none-any.whl"),
+    ).toBe("forward");
+    expect(pypi("POST", "https://upload.pypi.org/legacy/")).toBe("sinkhole");
+    expect(pypi("GET", "https://pypi.org/pypi/requests/json")).toBe("sinkhole");
+    expect(pypi("GET", "https://pypi.org.evil.example/simple/x/")).toBe("sinkhole");
+    expect(pypi("GET", "https://registry.npmjs.org/left-pad")).toBe("sinkhole");
+    expect(pypi("GET", "https://pypi.org/simple/requests/", "detonate")).toBe("sinkhole");
+    // An npm run does not gain PyPI's origins.
+    expect(evaluateDetonationEgress("prepare", "GET", "https://pypi.org/simple/requests/")).toBe(
       "sinkhole",
     );
   });
@@ -204,6 +231,11 @@ describe("isRegistryWrite", () => {
   test("treats a fully qualified registry host as the registry", () => {
     expect(isRegistryWrite({ host: "registry.npmjs.org.", method: "PUT" })).toBe(true);
     expect(isRegistryWrite({ host: "registry.npmjs.org", method: "GET" })).toBe(false);
+  });
+
+  test("treats a twine upload as a registry write", () => {
+    expect(isRegistryWrite({ host: "upload.pypi.org", method: "POST" })).toBe(true);
+    expect(isRegistryWrite({ host: "pypi.org", method: "GET" })).toBe(false);
   });
 });
 
