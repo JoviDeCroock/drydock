@@ -26,7 +26,7 @@ export interface AttestedPublisher {
   repository: string;
   /** Provider's stable repository id when attested; survives renames and transfers. */
   repositoryId: string | null;
-  /** Workflow path or file as attested (`.github/workflows/release.yml`, `release.yml`). */
+  /** Workflow as attested: a repository-relative path on npm, a bare file name on PyPI. */
   workflow: string | null;
 }
 
@@ -66,10 +66,22 @@ export function attestedField(value: unknown): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > MAX_ATTESTED_FIELD_LENGTH) return null;
   for (let i = 0; i < trimmed.length; i++) {
-    const code = trimmed.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return null;
+    if (isInvisibleOrControl(trimmed.charCodeAt(i))) return null;
   }
   return trimmed;
+}
+
+// C0/C1 controls plus zero-width and bidi formatting characters, which could
+// make a publisher-chosen workflow name render as a different one in evidence.
+function isInvisibleOrControl(code: number): boolean {
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069) ||
+    code === 0xfeff
+  );
 }
 
 /** A stable numeric id (GitHub repository_id, GitLab project id) or null. */
@@ -122,7 +134,7 @@ export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Fi
       {
         severity: "medium",
         file: RELEASE_PROCESS_FINDING_FILE,
-        evidence: `${args.registry} reports build provenance for ${baseline.version}${from ? ` (${from})` : ""} and none for ${candidate.version}`,
+        evidence: `${args.registry} reports build provenance for ${baseline.version}${from ? ` (${from})` : ""} and none for the checked files of ${candidate.version}`,
         reason:
           "the previous release was published from an attested CI build and this one carries no provenance; a release published around CI with a stolen token has exactly this shape, but so does a maintainer publishing from their own machine or moving to CI that does not attest — confirm how this release was published",
         ruleId: DETERMINISTIC_RULE_IDS.releaseProvenanceDropped,

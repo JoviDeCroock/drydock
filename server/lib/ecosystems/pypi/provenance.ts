@@ -74,12 +74,14 @@ async function readFileProvenance(
   version: string,
   filename: string,
 ): Promise<FileProvenance> {
-  const url = `${PYPI_INTEGRITY_ORIGIN}/${encodeURIComponent(normalizePyPiProjectName(projectName))}/${encodeURIComponent(version)}/${encodeURIComponent(filename)}/provenance`;
   try {
+    // Inside the try: the name and filenames come from registry metadata, and
+    // a malformed one (lone surrogate, non-string) must not fail the diff.
+    const url = `${PYPI_INTEGRITY_ORIGIN}/${encodeURIComponent(normalizePyPiProjectName(projectName))}/${encodeURIComponent(version)}/${encodeURIComponent(filename)}/provenance`;
     const response = await reliableFetch(url, {
       headers: { accept: INTEGRITY_ACCEPT },
       redirect: "manual",
-      attempts: 2,
+      attempts: 1,
       timeoutMs: FETCH_TIMEOUT_MS,
     });
     const body = await readBoundedJson(response, {

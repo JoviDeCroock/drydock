@@ -41,7 +41,7 @@ import type {
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { DETERMINISTIC_RULES_VERSION, deterministicFindings, type Finding } from "../../review";
 import { downloadInSandbox } from "../../sandbox";
-import { provenanceContinuityFindings } from "../../provenance-continuity";
+import { PROVENANCE_UNKNOWN, provenanceContinuityFindings } from "../../provenance-continuity";
 import { readPyPiRegistryProvenance } from "./provenance";
 
 // PyPI side of the anonymous public package diff. Like the npm path it only
@@ -523,19 +523,24 @@ async function acquirePublicPyPiDiff(
   const selection = limitPublicPyPiDiffArtifacts(
     selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion),
   );
-  const projectName = metadata.info?.name ?? input.packageName;
+  const projectName =
+    typeof metadata.info?.name === "string" ? metadata.info.name : input.packageName;
+  // Continuity reads forward; a reversed or unparseable pair is not evaluated.
+  const fromParsed = parsePyPiVersion(input.fromVersion);
+  const toParsed = parsePyPiVersion(input.toVersion);
+  const forward = !!fromParsed && !!toParsed && compareParsedPyPiVersions(toParsed, fromParsed) > 0;
+  const readProvenance = (version: string, artifacts: PyPiRemoteArtifact[]) =>
+    forward
+      ? readPyPiRegistryProvenance(
+          projectName,
+          version,
+          artifacts.map((artifact) => artifact.filename),
+        )
+      : Promise.resolve(PROVENANCE_UNKNOWN);
   const [downloads, fromProvenance, toProvenance] = await Promise.all([
     downloadPublicPyPiArtifacts(env, ctx, selection),
-    readPyPiRegistryProvenance(
-      projectName,
-      input.fromVersion,
-      selection.from.map((artifact) => artifact.filename),
-    ),
-    readPyPiRegistryProvenance(
-      projectName,
-      input.toVersion,
-      selection.to.map((artifact) => artifact.filename),
-    ),
+    readProvenance(input.fromVersion, selection.from),
+    readProvenance(input.toVersion, selection.to),
   ]);
   const resolved = resolvePublicPyPiDownloads(downloads.from, downloads.to);
   const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
