@@ -58,7 +58,7 @@ belong to the release delta. A lifecycle warning alone cannot pass. A benign
 control counts as a false positive when release risk reaches at least `medium`.
 Every declared fixture stays in the denominator, including a miss.
 
-Version 1.0.0 with deterministic rules 1.55.0 catches **2/2 malicious models**
+Version 1.0.0 with deterministic rules 1.56.0 catches **2/2 malicious models**
 and keeps **both benign controls at low release risk**, with **0/2 false positives**.
 The attack and control fixture bytes are identical to the first report. The
 [archived rules 1.47.0 report](../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json)
