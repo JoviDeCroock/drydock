@@ -57,7 +57,7 @@
     "better-auth": "^1.7.7",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.7",
+    "hono": "^4.13.13",
     "hoofd": "^1.7.3",
     "multiformats": "14.0.5",
     "preact": "^11.0.0",
@@ -85,8 +85,8 @@
     "oxlint": "^1.83.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1",
-    "vitest": "^4.1.11",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12",
     "wrangler": "4.142.0"
   },
   "engines": {
