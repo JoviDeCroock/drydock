@@ -489,6 +489,28 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
+  test("reads a `./` entry as its collapsed path", async () => {
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    stubArtifacts({ bundleZip: buildZip([{ path: `./${wheel.path}`, body: wheel.bytes }]) });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
+
+    expect(bundle.artifacts.map((artifact) => artifact.path)).toEqual([wheel.path]);
+  });
+
+  test("fails closed when a `./` alias carries different bytes for the same path", async () => {
+    const wheel = makeWheelBytes("demo-package", "1.2.0");
+    const bundleZip = buildZip([
+      { path: wheel.path, body: wheel.bytes },
+      { path: `./${wheel.path}`, body: concatBytes([wheel.bytes, new Uint8Array([0])]) },
+    ]);
+    stubArtifacts({ bundleZip });
+
+    await expect(fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact)).rejects.toThrow(
+      /appears in more than one artifact upload/,
+    );
+  });
+
   test("artifact_path_unsafe when the bundle includes a traversal path", async () => {
     const sneaky = makeWheelBytes("demo-package", "1.2.0");
     const bundle = buildZip([{ path: "../../etc/passwd", body: sneaky.bytes }]);
