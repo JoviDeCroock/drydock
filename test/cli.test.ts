@@ -227,6 +227,48 @@ describe("drydock CLI", () => {
     expect(stuck.stderr).toContain("still running");
   });
 
+  test("scans wait gates on release risk, not pre-existing package risk", async () => {
+    const complete = (releaseRisk: string) => () =>
+      json({
+        scan: {
+          id: "scan_1",
+          packageName: "pkg",
+          stagedVersion: "2.0.0",
+          status: "complete",
+          risk: "high",
+        },
+        riskSummary: { artifactRisk: "high", releaseRisk, contextRisk: "high" },
+      });
+    const quiet = harness(complete("low"));
+    expect(await quiet.run("scans", "wait", "scan_1", "--fail-on", "high")).toBe(0);
+    expect(quiet.stdout).toContain("release risk low · package risk high");
+    expect(
+      await harness(complete("high")).run("scans", "wait", "scan_1", "--fail-on", "high"),
+    ).toBe(3);
+  });
+
+  test("scans wait retries rate limits and server errors until the deadline", async () => {
+    const replies = [
+      () => json({ error: "slow down" }, { status: 429, headers: { "retry-after": "7" } }),
+      () => json({ error: "unavailable" }, { status: 503 }),
+      () => json({ scan: { id: "scan_1", status: "complete", risk: "low" }, riskSummary: null }),
+    ];
+    let index = 0;
+    const flaky = harness(() => replies[index++]!());
+    expect(await flaky.run("scans", "wait", "scan_1", "--interval", "1")).toBe(0);
+    expect(flaky.calls).toHaveLength(3);
+    // Retry-After (7s) outranks the 1s backoff; the 503 then backs off 2s.
+    expect(flaky.io.now()).toBe(9_000);
+
+    const down = harness(() => json({ error: "unavailable" }, { status: 503 }));
+    expect(await down.run("scans", "wait", "scan_1", "--timeout", "10", "--interval", "1")).toBe(4);
+    expect(down.stderr).toContain("could not read review scan_1 before the timeout");
+
+    const missing = harness(() => json({ error: "not found" }, { status: 404 }));
+    expect(await missing.run("scans", "wait", "scan_1")).toBe(1);
+    expect(missing.calls).toHaveLength(1);
+  });
+
   test("an unexpected response is a one-line error, not a stack trace", async () => {
     const cli = harness(() => json(null));
     expect(await cli.run("scans", "wait", "scan_1")).toBe(1);

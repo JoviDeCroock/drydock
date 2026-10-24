@@ -35,6 +35,7 @@ export {
 
 export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT } from "./scan-query";
 export { listScans } from "./scan-list";
+export { readScanRiskBreakdown } from "./scan-risk";
 
 export { getScanOverview, type ScanOverview } from "./scan-overview";
 export { listPackageReleases } from "./scan-package-releases";

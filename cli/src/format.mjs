@@ -159,9 +159,14 @@ export function formatScan(body) {
   return lines.join("\n");
 }
 
-/** @param {any} scan */
-export function formatScanStatus(scan) {
-  return `${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}  risk ${clean(scan.risk)}`;
+/** @param {any} body */
+export function formatScanStatus(body) {
+  const scan = body.scan ?? {};
+  const releaseRisk = body.riskSummary?.releaseRisk;
+  const risk = releaseRisk
+    ? `release risk ${clean(releaseRisk)} · package risk ${clean(scan.risk)}`
+    : `risk ${clean(scan.risk)}`;
+  return `${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}  ${risk}`;
 }
 
 /** @param {any} body */
