@@ -82,23 +82,35 @@ export function signalSourceHint(source: DetonationSignal["source"]): string {
   return "seen by an in-process hook the package can disable";
 }
 
-/** Badges are reserved for the severities that need attention. */
-export function signalNeedsBadge(severity: DetonationSignal["severity"]): boolean {
-  return severity === "critical" || severity === "high";
+/**
+ * Detonation is advisory, so the red Badge deterministic findings use is kept
+ * for the two signals that are unambiguous on their own: a planted credential
+ * leaving the machine, or a write to the registry. Everything else (a
+ * telemetry ping is a `high` network-egress signal) reads as plain text.
+ */
+const BADGED_SIGNALS: ReadonlySet<DetonationSignal["id"]> = new Set([
+  "dynamic.canary-exfiltration",
+  "dynamic.registry-publish-attempt",
+]);
+
+export function signalNeedsBadge(id: DetonationSignal["id"]): boolean {
+  return BADGED_SIGNALS.has(id);
 }
 
+/**
+ * Only the ways a run fell short of full coverage. The intro already says the
+ * package is installed and loaded, so a fully covered run has no parts.
+ */
 export function coverageParts(coverage: HarnessCoverage | null, truncated: boolean): string[] {
   const parts = coverage
     ? [
-        `syscall tracing ${coverage.syscallTracing ? "on" : "off"}`,
+        coverage.syscallTracing ? null : "syscall tracing off",
         coverage.runtimeHooks ? null : "runtime hooks off",
-        `dependency install ${coverage.dependencyInstall}`,
+        coverage.dependencyInstall === "complete"
+          ? null
+          : `dependency install ${coverage.dependencyInstall}`,
         coverage.stepsSkipped > 0
           ? `${coverage.stepsSkipped} ${coverage.stepsSkipped === 1 ? "step" : "steps"} not run`
-          : null,
-        // Results stored before the field existed were load-only too.
-        coverage.exercise === "load" || coverage.exercise === undefined
-          ? "loaded only, no exports called"
           : null,
       ].filter((part): part is string => part !== null)
     : ["coverage not reported"];

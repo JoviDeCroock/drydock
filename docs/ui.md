@@ -228,11 +228,14 @@ source binding shows one unverified repository link; only an exact duplicate
 manifest declaration is omitted, preserving additional or conflicting evidence.
 The detonation section (`ScanDetail/DetonationSection.tsx`) renders nothing
 outside the beta (its endpoint answers `eligible: false`). It states once that
-it is advisory, keeps Badges for critical/high signals, puts Run/Run again
-beside the state line, and folds the egress and step log under **Sandbox log**.
-Coverage always says the package was loaded only, and a clean run carries one
-caveat line: the browser build never ran (for a browser-targeted manifest), or
-limited coverage.
+it is advisory and that exports are not called. A red Badge marks only canary
+exfiltration and registry publish attempts; other signals show their severity as
+mono text, since a telemetry ping is a `high` egress signal. A canary hit does
+not auto-expand the collapsed Review notes card: the result is advisory. Run/Run
+again sits beside the state line, which is a polite live region; the egress and
+step log fold under **Sandbox log**. A coverage line appears only for gaps, and
+a clean run carries one caveat line: the browser build never ran (for a
+browser-targeted manifest), or limited coverage.
 
 ## Dashboard overview strip
 
