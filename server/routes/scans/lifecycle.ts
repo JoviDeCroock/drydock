@@ -288,8 +288,10 @@ scanLifecycleRoutes.get("/", async (c) => {
   });
 
   const cursor = parseListScansCursor(c.req.query("cursor"));
+  const stageId = c.req.query("stageId")?.trim() || undefined;
+  if (stageId && stageId.length > 200) return c.json({ error: "stageId is too long" }, 400);
 
-  const result = await listScans(db, organizationId, { cursor, limit, decisionFilter });
+  const result = await listScans(db, organizationId, { cursor, limit, decisionFilter, stageId });
   return c.json({
     scans: result.scans,
     nextCursor: encodeListScansCursor(result.nextCursor),

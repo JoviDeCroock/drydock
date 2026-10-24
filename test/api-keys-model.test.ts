@@ -33,11 +33,28 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     expect(model.atLimit.value).toBe(false);
 
     model.keys.value = [...model.keys.value, apiKey("second-live", DAY_MS)];
     expect(model.atLimit.value).toBe(true);
+  });
+
+  test("counts only the viewer's own keys against the limit", async () => {
+    const others = { userId: "user-2", email: "admin@example.com", name: null };
+    stubFetchRoutes({
+      "/api/v1/api-keys": () =>
+        jsonResponse({
+          keys: [apiKey("mine", DAY_MS), { ...apiKey("theirs", DAY_MS), createdBy: others }],
+          viewerUserId: "user-1",
+          limit: 2,
+          expiryDays: [30, 90, 365],
+        }),
+    });
+
+    const model = new ApiKeysModel();
+    await model.load();
+    expect(model.atLimit.value).toBe(false);
   });
 
   test("marks only the key being revoked", async () => {
@@ -56,7 +73,7 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     const revoke = model.revoke("one");
     expect(model.revokingKeyId.value).toBe("one");
 
@@ -74,9 +91,9 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     void model.revoke("one");
-    await model.load(true);
+    await model.load();
     expect(model.revokingKeyId.value).toBeNull();
     expect(model.busy.value).toBe(false);
   });

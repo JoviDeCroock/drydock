@@ -180,6 +180,11 @@ export const organizationApiKeys = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    // The creator's step-up on a key decision (docs/api-keys.md): wrong codes in
+    // a row, which revoke the key at the limit, and the last TOTP time step
+    // accepted, so no code is accepted twice.
+    failedTotpAttempts: integer("failed_totp_attempts").notNull().default(0),
+    lastTotpStep: integer("last_totp_step"),
   },
   (table) => ({
     keyHashUniqueIdx: uniqueIndex("organization_api_keys_key_hash_unique_idx").on(table.keyHash),

@@ -48,6 +48,7 @@
     "drydock": "node cli/bin/drydock.mjs"
   },
   "dependencies": {
+    "@better-auth/utils": "0.4.2",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@ipld/dag-cbor": "10.0.2",

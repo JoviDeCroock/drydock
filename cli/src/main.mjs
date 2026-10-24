@@ -1,5 +1,6 @@
 // @ts-check
 import { parseArguments } from "./args.mjs";
+import { approve } from "./approve.mjs";
 import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } from "./client.mjs";
 import {
   terminalSafeJson,
@@ -16,12 +17,13 @@ import {
   formatWhoami,
 } from "./format.mjs";
 import { CLI_VERSION } from "./version.mjs";
+import { waitForReview } from "./wait.mjs";
 
 const USAGE = `Usage: drydock <command> [options]
 
 Read an organization's Drydock reviews from scripts and CI, and start new ones
-with a key that has scan access. Release decisions stay with signed-in
-maintainers.
+with a key that has scan access. "approve" records your own decision on a staged
+publish, with your Drydock authenticator code, then runs your npm.
 
 Commands:
   whoami                          The API key's organization, expiry, and access
@@ -48,6 +50,13 @@ Commands:
   gate <review-id>                The GitHub workflow gate a review belongs to
   diff <package> <from> <to>      Diff two published releases (no API key needed)
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
+  approve <stage-id | package@version>
+                                  Show the review of a staged npm publish, record
+                                  your publish or reject decision in Drydock
+                                  (asks for your authenticator code), then run
+                                  "npm stage approve" or offer "npm stage reject"
+                                  (decide_staged access)
+      [--timeout S] [--interval S] [--otp CODE, only when stdin is not a terminal]
 
 Options:
   --url URL        Drydock origin (default: $DRYDOCK_URL or https://drydock.org)
@@ -64,14 +73,13 @@ Environment:
 findings the release introduces, as the workflow gate does. Every wait retries
 rate limits, server errors, and network errors until --timeout.
 
-Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 release risk at or above --fail-on, 4 a wait timed out before the review
-finished (or before its status could be read).
+Exit codes: 0 success, 1 request or review failed (or approve recorded no
+decision), 2 usage error, 3 release risk at or above --fail-on, 4 a wait timed
+out before the review finished (or before its status could be read), 5 approve
+recorded the decision in Drydock but npm did not complete it.
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
-const EXIT_TIMEOUT = 4;
-const MAX_RETRY_DELAY_MS = 60_000;
 const SCAN_FILTERS = [
   "undecided",
   "published_without_decision",
@@ -92,6 +100,10 @@ const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
  * @property {(path: string, data: string) => Promise<void>} writeFile
  * @property {(ms: number) => Promise<void>} sleep
  * @property {() => number} now
+ * @property {boolean} [stdinIsTerminal] `approve` asks for the authenticator code on a terminal, and reads `--otp` otherwise
+ * @property {(question: string) => Promise<string | null>} [prompt] one line from the user; null when input ends
+ * @property {(args: string[]) => Promise<import("./approve.mjs").NpmResult>} [runNpm]
+ *   runs `npm` on the user's own terminal (inherited stdio) and reports how it exited
  */
 
 /**
@@ -115,6 +127,7 @@ export async function main(argv, io) {
       ecosystem: { type: "string" },
       output: { type: "string", short: "o" },
       timeout: { type: "string" },
+      otp: { type: "string" },
       interval: { type: "string" },
       "fail-on": { type: "string" },
       stage: { type: "string" },
@@ -146,7 +159,7 @@ export async function main(argv, io) {
       apiKey: command.anonymous ? null : requireApiKey(io.env.DRYDOCK_API_KEY),
       fetch: io.fetch,
     });
-    return await command.run({ client, io, values, positionals });
+    return await command.run({ client, io, values, positionals, baseUrl });
   } catch (err) {
     // Error text can quote the server, which can quote a package under review.
     if (err instanceof CliError) {
@@ -194,6 +207,10 @@ function resolveCommand(positionals) {
     releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
     gate: { run: gate, options: [] },
     diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
+    approve: {
+      run: (ctx) => approve(ctx, () => waitSettings(ctx)),
+      options: ["timeout", "interval", "otp"],
+    },
   };
   const name = first === "scans" ? `scans ${second ?? ""}`.trim() : first;
   const command = commands[name];
@@ -224,6 +241,7 @@ function rejectForeignOptions(command, values) {
  * @property {CliIo} io
  * @property {Record<string, string | boolean | undefined>} values
  * @property {string[]} positionals
+ * @property {string} baseUrl the Drydock origin requests go to
  */
 
 /**
@@ -365,52 +383,6 @@ function optionalWaitSettings(ctx) {
     if (ctx.values[flag] !== undefined) throw new CliError(`--${flag} needs --wait`, 2);
   }
   return null;
-}
-
-/**
- * Polls one review until it completes or fails, or the shared deadline passes.
- * @param {CommandContext} ctx
- * @param {string} id
- * @param {{ intervalMs: number; deadline: number }} waiting
- * @returns {Promise<any>} the final `GET /scans/:id/status` body
- */
-async function waitForReview(ctx, id, { intervalMs, deadline }) {
-  const path = `/api/v1/scans/${pathSegment(id, "review id")}/status`;
-  let failures = 0;
-  for (;;) {
-    let body;
-    try {
-      // A hung request must not outlive the deadline.
-      body = await ctx.client.json(path, {
-        timeoutMs: Math.max(1000, deadline - ctx.io.now()),
-      });
-      failures = 0;
-    } catch (err) {
-      if (!(err instanceof CliError) || !err.retryable) throw err;
-      // A rate limit or an outage says nothing about the review, so it is
-      // retried with backoff until the deadline instead of exiting as a failure.
-      failures++;
-      const backoffMs = Math.min(intervalMs * 2 ** (failures - 1), MAX_RETRY_DELAY_MS);
-      const delayMs = Math.max(backoffMs, err.retryAfterMs ?? 0);
-      if (ctx.io.now() + delayMs > deadline) {
-        throw new CliError(
-          `could not read review ${id} before the timeout: ${err.message}`,
-          EXIT_TIMEOUT,
-        );
-      }
-      await ctx.io.sleep(delayMs);
-      continue;
-    }
-    const { scan } = body;
-    if (scan?.status === "complete" || scan?.status === "failed") return body;
-    if (ctx.io.now() + intervalMs > deadline) {
-      throw new CliError(
-        `review ${id} is still ${scan?.status ?? "pending"} after the timeout`,
-        EXIT_TIMEOUT,
-      );
-    }
-    await ctx.io.sleep(intervalMs);
-  }
 }
 
 /**

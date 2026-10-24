@@ -1,8 +1,11 @@
 import { computed, createModel, signal } from "@preact/signals";
 import { apiFetch, apiJson, errorMessage } from "./api";
 
-/** `read` reaches the read-only routes; `scan` can also start reviews and check npm. */
-export type ApiKeyAccess = "read" | "scan";
+/**
+ * `read` reaches the read-only routes; `scan` can also start reviews and check
+ * npm; `decide_staged` can also record decisions on staged publishes.
+ */
+export type ApiKeyAccess = "read" | "scan" | "decide_staged";
 
 export interface OrganizationApiKey {
   id: string;
@@ -17,6 +20,10 @@ export interface OrganizationApiKey {
 
 interface ListResponse {
   keys: OrganizationApiKey[];
+  /** False for a member, who sees only the keys they created. */
+  manageAll?: boolean;
+  /** The limit counts this member's own unexpired keys. */
+  viewerUserId?: string;
   limit: number;
   expiryDays: number[];
 }
@@ -45,14 +52,21 @@ export const ApiKeysModel = createModel(() => {
   // stays on screen until dismissed or the organization changes.
   const revealed = signal<{ name: string; token: string } | null>(null);
   const revokingKeyId = signal<string | null>(null);
+  // Owners and admins see every key; a member only their own.
+  const manageAll = signal(true);
+  const viewerUserId = signal<string | null>(null);
   let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
-  // Matches the server, which counts only unexpired keys against the limit.
+  // Matches the server, which counts only the member's own unexpired keys.
   const atLimit = computed(() => {
     if (limit.value === null) return false;
     const now = Date.now();
-    const active = keys.value.filter((key) => new Date(key.expiresAt).getTime() > now);
+    const viewer = viewerUserId.value;
+    const active = keys.value.filter(
+      (key) =>
+        new Date(key.expiresAt).getTime() > now && (!viewer || key.createdBy.userId === viewer),
+    );
     return active.length >= limit.value;
   });
 
@@ -68,26 +82,25 @@ export const ApiKeysModel = createModel(() => {
     draftAccess,
     revealed,
     revokingKeyId,
+    manageAll,
+    viewerUserId,
     busy,
     atLimit,
 
-    async load(canManage: boolean): Promise<void> {
+    async load(): Promise<void> {
       const requestId = ++loadRequestId;
       this.keys.value = [];
       this.revealed.value = null;
       this.revokingKeyId.value = null;
       this.loaded.value = false;
       this.error.value = null;
-      if (!canManage) {
-        this.loaded.value = true;
-        this.status.value = "idle";
-        return;
-      }
       this.status.value = "loading";
       try {
         const data = await apiFetch<ListResponse>("/api/v1/api-keys");
         if (requestId !== loadRequestId) return;
         this.keys.value = data.keys;
+        this.manageAll.value = data.manageAll !== false;
+        this.viewerUserId.value = data.viewerUserId ?? null;
         this.limit.value = data.limit;
         if (data.expiryDays.length) this.expiryChoices.value = data.expiryDays;
       } catch (err) {

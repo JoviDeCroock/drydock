@@ -34,11 +34,16 @@ Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
 `organization.*` (including `organization.api_key_created` and
 `organization.api_key_revoked`, shown with the key's name, display prefix, and
-access), and notification-delivery events. Individual API-key reads are not
+access, and `organization.api_key_revoked_wrong_codes` when five wrong
+authenticator codes in a row revoke a `decide_staged` key), and notification-delivery events. Individual API-key reads are not
 recorded, but every review a `scan` key starts is:
 `organization.api_key_review_started` (with the package and version) and
 `organization.api_key_discovery_ran` (with how many reviews it started), both
-attributed to the key's creator. See [`api-keys.md`](./api-keys.md).
+attributed to the key's creator. A decision a `decide_staged` key records is
+the usual `scan.decided`, attributed to the key's creator and carrying the key's
+name and display prefix (`apiKeyName`, `apiKeyPrefix`) and the creator's TOTP
+step-up (`twoFactor: true`, never the code); the audit view reads it as
+"approved publish with API key …". See [`api-keys.md`](./api-keys.md).
 
 A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view

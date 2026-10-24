@@ -1,11 +1,13 @@
 /**
- * Organization API key management (owners and admins, session only) and the
- * key's own introspection endpoint (API key only). See docs/api-keys.md.
+ * Organization API key management (session only) and the key's own
+ * introspection endpoint (API key only). Every member creates keys for
+ * themselves and sees and revokes their own; owners and admins see and revoke
+ * every key in the organization. See docs/api-keys.md.
  */
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { eq } from "drizzle-orm";
 import {
-  countActiveOrganizationApiKeys,
+  countActiveMemberApiKeys,
   deleteOrganizationApiKey,
   getApiKeyDescription,
   insertOrganizationApiKey,
@@ -14,12 +16,13 @@ import {
 } from "../db/api-keys";
 import { recordScanEvent } from "../db/events";
 import { organizations } from "../db/schema";
-import { requireOrganizationRole } from "../lib/auth/active-organization";
+import { requireActiveOrganizationContext } from "../lib/auth/active-organization";
+import { userHasTwoFactor } from "../lib/auth";
 import { API_KEY_ACCESS_LEVELS } from "../db/enums";
 import {
   API_KEY_EXPIRY_DAYS,
   API_KEY_NAME_MAX_LENGTH,
-  MAX_API_KEYS_PER_ORGANIZATION,
+  MAX_API_KEYS_PER_MEMBER,
   generateApiKey,
   parseApiKeyAccess,
   parseApiKeyExpiry,
@@ -60,13 +63,31 @@ apiKeyRoutes.get("/current", async (c) => {
   });
 });
 
+/**
+ * Owners and admins manage every key; any other member only the keys they
+ * created, which act as them alone.
+ */
+async function keyManagementScope(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
+  const db = c.var.db;
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  const manageAll = roleCanManageIntegrations(role);
+  return {
+    organizationId,
+    manageAll,
+    scope: manageAll ? {} : { createdByUserId: c.get("authSession").userId },
+  };
+}
+
 apiKeyRoutes.get("/", async (c) => {
   const db = c.var.db;
-  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
-  const keys = await listOrganizationApiKeys(db, organizationId);
+  const { organizationId, manageAll, scope } = await keyManagementScope(c);
+  const keys = await listOrganizationApiKeys(db, organizationId, scope);
   return c.json({
     keys: keys.map(publicApiKey),
-    limit: MAX_API_KEYS_PER_ORGANIZATION,
+    manageAll,
+    // The cap counts the viewer's own unexpired keys.
+    viewerUserId: c.get("authSession").userId,
+    limit: MAX_API_KEYS_PER_MEMBER,
     expiryDays: API_KEY_EXPIRY_DAYS,
     accessLevels: API_KEY_ACCESS_LEVELS,
   });
@@ -96,7 +117,19 @@ apiKeyRoutes.post("/", async (c) => {
 
   const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+  const { organizationId } = await keyManagementScope(c);
+  // A decide_staged key's every decision needs its creator's TOTP code, so only
+  // a member who can produce one may create it (docs/api-keys.md).
+  if (access === "decide_staged" && !(await userHasTwoFactor(db, session.userId))) {
+    return c.json(
+      {
+        error:
+          "Turn on two-factor authentication in your account settings to create a key that records decisions.",
+        code: "two_factor_enrollment_required",
+      },
+      403,
+    );
+  }
   const limited = await guardRateLimit(
     c,
     { key: `api-keys:create:${session.userId}`, limit: 20, windowMs: 60 * 60 * 1000 },
@@ -106,11 +139,12 @@ apiKeyRoutes.post("/", async (c) => {
 
   const now = new Date();
   if (
-    (await countActiveOrganizationApiKeys(db, organizationId, now)) >= MAX_API_KEYS_PER_ORGANIZATION
+    (await countActiveMemberApiKeys(db, organizationId, session.userId, now)) >=
+    MAX_API_KEYS_PER_MEMBER
   ) {
     return c.json(
       {
-        error: `an organization can hold at most ${MAX_API_KEYS_PER_ORGANIZATION} unexpired API keys`,
+        error: `you can hold at most ${MAX_API_KEYS_PER_MEMBER} unexpired API keys in an organization`,
       },
       409,
     );
@@ -163,8 +197,8 @@ apiKeyRoutes.post("/", async (c) => {
 apiKeyRoutes.delete("/:keyId", async (c) => {
   const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
-  const removed = await deleteOrganizationApiKey(db, organizationId, c.req.param("keyId"));
+  const { organizationId, scope } = await keyManagementScope(c);
+  const removed = await deleteOrganizationApiKey(db, organizationId, c.req.param("keyId"), scope);
   if (!removed) return c.json({ error: "not found" }, 404);
   await recordScanEvent(db, {
     organizationId,

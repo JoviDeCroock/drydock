@@ -857,24 +857,25 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Automate</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Start and read reviews from scripts and CI. Decide them in Drydock.
+                Start and read reviews from scripts and CI. Decide them yourself.
               </h2>
               <Prose>
                 An organization API key reads the same reviews, report exports, and release receipts
-                the dashboard shows. A key created with <strong>Read and start reviews</strong> can
-                also start reviews and check npm for staged publishes. No key can approve a gate,
-                record a decision, or change settings.
+                the dashboard shows. A key created with <strong>Start reviews</strong> can also
+                start reviews and check npm for staged publishes. A key created with{" "}
+                <strong>Record decisions</strong> also lets <InlineCode>drydock approve</InlineCode>{" "}
+                record your decision on a staged publish, with your authenticator code. No key can
+                decide a workflow gate or change settings.
               </Prose>
             </div>
 
             <Subsection id="api-keys" title="API keys">
               <Prose>
-                Owners and admins create keys in Organization settings → Integrations → API keys.
-                The key is shown once; Drydock keeps only its hash. Every key expires after 30, 90,
-                or 365 days, and a key stops working when the member who created it leaves the
-                organization. Choose <strong>Read and start reviews</strong> for a key that CI uses
-                to start reviews; reviews it starts belong to the member who created it, and each
-                one is recorded in the audit log.
+                Create your own keys in Organization settings → Integrations → API keys; a key acts
+                as you. The key is shown once; Drydock keeps only its hash. Every key expires after
+                30, 90, or 365 days, and a key stops working when you leave the organization. Choose{" "}
+                <strong>Start reviews</strong> for a key that CI uses to start reviews; each review
+                it starts is recorded in the audit log.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
                 {`curl -H "Authorization: Bearer $DRYDOCK_API_KEY" \\
@@ -910,6 +911,18 @@ node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, 
                 {`node cli/bin/drydock.mjs check-npm                                            # discover staged publishes now
 node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
 node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+              </CodeBlock>
+              <Prose>
+                On your own machine, <InlineCode>drydock approve</InlineCode> shows the review at
+                npm&apos;s approval moment: new install-time scripts, new dependencies, new
+                executables, and the top findings. It records your publish or reject decision, which
+                needs your authenticator code, then runs your own{" "}
+                <InlineCode>npm stage approve</InlineCode>, which asks for npm&apos;s one-time
+                password; Drydock never sees that one. It is a convenience and a record, not
+                enforcement: approving on npmjs.com skips it.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI

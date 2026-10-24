@@ -61,11 +61,13 @@ export function terminalSafeLine(value) {
 }
 
 /**
+ * One field of package- or server-controlled text for a table or summary,
+ * shortened to `max` characters; `-` when empty.
  * @param {unknown} value
  * @param {number} [max]
  * @returns {string}
  */
-function clean(value, max = 200) {
+export function clean(value, max = 200) {
   if (value === null || value === undefined) return "-";
   const text = String(value).replace(UNSAFE_TEXT, " ").trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text || "-";

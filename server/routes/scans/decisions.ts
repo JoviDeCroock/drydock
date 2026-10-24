@@ -1,10 +1,32 @@
 /**
  * The publish / no-publish verdict on a scanned release.
  */
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { requireVerifiedEmail } from "../../lib/auth/email-verification";
-import { SCAN_DECISIONS, type ScanDecision, getScan, recordScanDecision } from "../../db/scans";
-import { requireActiveOrganization } from "../../lib/auth/active-organization";
+import {
+  EMAIL_VERIFICATION_REQUIRED_CODE,
+  requireVerifiedEmail,
+} from "../../lib/auth/email-verification";
+import { emailVerificationAvailable, matchUserTotpStep, userHasTwoFactor } from "../../lib/auth";
+import { API_KEY_TOTP_FAILURE_LIMIT, type ApiKeyPrincipal } from "../../lib/auth/api-keys";
+import {
+  acceptApiKeyTotpStep,
+  deleteOrganizationApiKey,
+  recordApiKeyTotpFailure,
+} from "../../db/api-keys";
+import { recordScanEvent } from "../../db/events";
+import { guardRateLimit } from "../../lib/rate-limit";
+import {
+  API_KEY_DECIDABLE_SCAN_SOURCES,
+  SCAN_DECISIONS,
+  type ScanDecision,
+  getScan,
+  getScanStatus,
+  recordScanDecision,
+} from "../../db/scans";
+import { user } from "../../db/schema";
+import type { AppDb } from "../../db/client";
+import { requestActorUserId, requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
@@ -23,12 +45,139 @@ export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Vari
 export const DECISION_REASON_MAX = 500;
 const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
 
+type DecisionContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * The session check reads Better Auth's session flag; a `decide_staged` API key
+ * has no session, so the same rule is applied to the key's creator, the member
+ * the decision is attributed to.
+ */
+async function requireVerifiedDecider(c: DecisionContext, db: AppDb): Promise<Response | null> {
+  const apiKey = c.get("apiKey");
+  if (!apiKey) return requireVerifiedEmail(c);
+  if (!emailVerificationAvailable(c.env)) return null;
+  const [creator] = await db
+    .select({ emailVerified: user.emailVerified })
+    .from(user)
+    .where(eq(user.id, apiKey.userId))
+    .limit(1);
+  if (creator?.emailVerified) return null;
+  return c.json(
+    {
+      error: "The API key's creator must verify their email address before it records decisions.",
+      code: EMAIL_VERIFICATION_REQUIRED_CODE,
+    },
+    403,
+  );
+}
+
+const KEY_DECIDABLE_SOURCES = new Set<string>(API_KEY_DECIDABLE_SCAN_SOURCES);
+
+/**
+ * A session records a staged decision without a step-up, but a key is a bearer
+ * secret that can sit in a shell environment where a later `npm install`'s
+ * lifecycle script can read it. With an npm token beside it, a worm could
+ * record "publish" on its own stage and become the approved baseline. So every
+ * key decision needs a TOTP code from the key's creator, checked as the gate
+ * decision's step-up is; a creator who has turned two-factor off can no longer
+ * decide with any key. A code is accepted once, and a key that sends
+ * `API_KEY_TOTP_FAILURE_LIMIT` wrong codes in a row is revoked, so a stolen key
+ * cannot guess for its whole life. The code is read from the body only; it is
+ * never logged or stored.
+ */
+async function requireKeyCreatorStepUp(
+  c: DecisionContext,
+  db: AppDb,
+  organizationId: string,
+  apiKey: ApiKeyPrincipal,
+  totpCode: unknown,
+): Promise<Response | null> {
+  if (!(await userHasTwoFactor(db, apiKey.userId))) {
+    return c.json(
+      {
+        error:
+          "Recording a decision with an API key needs two-factor authentication on the account that created the key, and it is turned off.",
+        code: "two_factor_enrollment_required",
+      },
+      403,
+    );
+  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `api-key-decision-2fa:${apiKey.userId}`, limit: 10, windowMs: 15 * 60 * 1000 },
+    "too many two-factor attempts",
+  );
+  if (limited) return limited;
+  const code = typeof totpCode === "string" ? totpCode.trim() : "";
+  if (!code) {
+    return c.json(
+      {
+        error: "Recording a decision with an API key needs a code from your authenticator app.",
+        code: "two_factor_required",
+      },
+      401,
+    );
+  }
+  const step = await matchUserTotpStep(c.get("auth"), db, apiKey.userId, code);
+  if (step === "unavailable") {
+    return c.json(
+      {
+        error:
+          "Drydock cannot check authenticator codes for the account that created this key right now (two-factor is locked after failed sign-in codes, or not confirmed); try again later",
+        code: "two_factor_unavailable",
+      },
+      401,
+    );
+  }
+  if (step === "mismatch") {
+    const failures = await recordApiKeyTotpFailure(db, apiKey.id);
+    if (failures !== null && failures >= API_KEY_TOTP_FAILURE_LIMIT) {
+      const removed = await deleteOrganizationApiKey(db, organizationId, apiKey.id);
+      // Concurrent wrong codes can all reach the limit; only the request that
+      // deleted the key records it.
+      if (removed) {
+        await recordScanEvent(db, {
+          organizationId,
+          actorUserId: apiKey.userId,
+          type: "organization.api_key_revoked_wrong_codes",
+          metadata: { name: removed.name, prefix: removed.prefix, failedCodes: failures },
+        });
+      }
+      return c.json(
+        {
+          error: `${API_KEY_TOTP_FAILURE_LIMIT} wrong authenticator codes in a row, so Drydock revoked this API key. Create a new one in Organization settings.`,
+          code: "api_key_revoked",
+        },
+        401,
+      );
+    }
+    return c.json(
+      {
+        error: `invalid two-factor code; after ${API_KEY_TOTP_FAILURE_LIMIT} wrong codes in a row the key is revoked`,
+        code: "two_factor_invalid",
+      },
+      401,
+    );
+  }
+  if (!(await acceptApiKeyTotpStep(db, apiKey.id, apiKey.userId, step))) {
+    return c.json(
+      {
+        error: "that code was already used; wait for the next one",
+        code: "two_factor_invalid",
+      },
+      401,
+    );
+  }
+  return null;
+}
+
 scanDecisionRoutes.post("/:id/decision", async (c) => {
-  const unverified = requireVerifiedEmail(c);
+  const unverified = await requireVerifiedDecider(c, c.var.db);
   if (unverified) return unverified;
   const body = await readJsonObject<{
     decision: string;
     reason: string;
+    totpCode: unknown;
   }>(c);
   if (!DECISION_SET.has(body.decision as ScanDecision)) {
     return c.json({ error: "decision must be 'publish' or 'no_publish'" }, 400);
@@ -39,17 +188,38 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
   }
 
   const db = c.var.db;
-  const session = c.get("authSession");
+  const apiKey = c.get("apiKey");
   const organizationId = await requireActiveOrganization(c, db);
+
+  if (apiKey) {
+    // A clear refusal for a key on a gate package or a published-release
+    // review. `recordScanDecision` re-checks the same thing in its update, so
+    // this is the message, not the guarantee.
+    const existing = await getScanStatus(db, c.req.param("id"), organizationId);
+    if (!existing) return c.json({ error: "not found" }, 404);
+    if (!KEY_DECIDABLE_SOURCES.has(existing.source) || existing.gateId) {
+      return c.json(
+        {
+          error:
+            "API keys record decisions on staged npm publishes only; decide workflow gates and published-release reviews in Drydock",
+          code: "api_key_staged_decisions_only",
+        },
+        403,
+      );
+    }
+    const refused = await requireKeyCreatorStepUp(c, db, organizationId, apiKey, body.totpCode);
+    if (refused) return refused;
+  }
 
   const updated = await recordScanDecision(
     db,
     {
       scanId: c.req.param("id"),
       organizationId,
-      actorUserId: session.userId,
+      actorUserId: requestActorUserId(c),
       decision: body.decision as ScanDecision,
       reason,
+      apiKey: apiKey ? { name: apiKey.name, prefix: apiKey.prefix } : null,
     },
     scanArtifactReadBucket(c.env),
     c.env,
@@ -94,7 +264,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
       ? await getPublicationMonitor(ecosystem)?.resolvePostReleaseReview(db, c.env, {
           organizationId,
           scanId: updated.scan.id,
-          actorUserId: session.userId,
+          actorUserId: requestActorUserId(c),
         })
       : null;
     for (const tag of resolved?.badgeTags ?? []) {

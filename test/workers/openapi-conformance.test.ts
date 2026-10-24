@@ -14,7 +14,7 @@ import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff
 import { OPENAPI_OPERATIONS } from "../../server/lib/openapi/document";
 import { computePublicDiffCacheKey, writePublicDiffCache } from "../../server/lib/public-diff";
 import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
-import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
+import { type Jar, PASSWORD, callWorker, signUpUserId, totpFor } from "./helpers/auth-http";
 import { seedCompletedScan } from "./helpers/seed";
 
 // Every documented response schema is checked against what the Worker actually
@@ -203,13 +203,25 @@ describe("OpenAPI response schemas match the Worker", () => {
       },
     );
     await seedGate(organizationId, scanId);
+    // The gate's package above is not one a key may decide.
+    const stagedScanId = await seedCompletedScan({ userId, organizationId });
     const publicPackage = `documented-${crypto.randomUUID()}`;
     await seedPublicDiff(publicPackage);
 
     await connectNpm(organizationId, userId);
+    // A decide_staged key needs a creator with two-factor, and each decision a code.
+    const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
+      body: { password: PASSWORD },
+      jar,
+    });
+    const totpURI = enable.json?.totpURI as string;
+    await callWorker("POST", "/api/auth/two-factor/verify-totp", {
+      body: { code: totpFor(totpURI) },
+      jar,
+    });
     const created = await callWorker("POST", "/api/v1/api-keys", {
       jar,
-      body: { name: "spec", access: "scan" },
+      body: { name: "spec", access: "decide_staged" },
     });
     const token = created.json?.token as string;
     const auth = { headers: { authorization: `Bearer ${token}` } };
@@ -228,6 +240,10 @@ describe("OpenAPI response schemas match the Worker", () => {
       getPublicPackageDiff: `/api/public/v1/package-diff?package=${publicPackage}&from=1.0.0&to=1.0.1`,
       startScan: { path: "/api/v1/scans", body: { stageId: "stage-documented-000001" } },
       checkNpmForStagedPublishes: { path: "/api/v1/staged-publishes/scan" },
+      recordStagedDecision: {
+        path: `/api/v1/scans/${stagedScanId}/decision`,
+        body: { decision: "publish", reason: "read the diff", totpCode: totpFor(totpURI) },
+      },
     };
     // Starting work runs against a stubbed npm; queue sends go nowhere.
     const startEnv = {

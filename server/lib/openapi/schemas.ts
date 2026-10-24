@@ -96,7 +96,9 @@ export const ApiKeyIdentity = z
     }),
     access: z
       .enum(API_KEY_ACCESS_LEVELS)
-      .describe("`read` keys only read; `scan` keys can also start reviews"),
+      .describe(
+        "`read` keys only read; `scan` keys can also start reviews; `decide_staged` keys can also record staged-publish decisions",
+      ),
   })
   .register(openApiSchemas, { id: "ApiKeyIdentity" });
 
@@ -118,6 +120,18 @@ export const StartScanRequest = z
       .describe("Review an already-published release"),
   ])
   .register(openApiSchemas, { id: "StartScanRequest" });
+
+export const StagedDecisionRequest = z
+  .looseObject({
+    decision: z.enum(SCAN_DECISIONS),
+    reason: z.string().max(500).optional().describe("Shown with the decision in Drydock"),
+    totpCode: z
+      .string()
+      .describe(
+        "Current 6-digit code from the key creator's authenticator app, accepted once; never stored",
+      ),
+  })
+  .register(openApiSchemas, { id: "StagedDecisionRequest" });
 
 export const StartedScan = z
   .looseObject({

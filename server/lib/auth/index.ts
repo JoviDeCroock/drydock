@@ -1,9 +1,11 @@
-import { hexEncode, sha256Hex } from "../platform/crypto-utils";
+import { hexEncode, sha256Hex, timingSafeEqual } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
+import { symmetricDecrypt } from "better-auth/crypto";
+import { createOTP } from "@better-auth/utils/otp";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
@@ -771,6 +773,62 @@ export async function verifyTotpStepUp(
     return false;
   }
 }
+
+/**
+ * The step-up for a request with no session: an organization API key acting as
+ * its creator. `verifyTotpStepUp` asks Better Auth's endpoint to check a code
+ * for the session's own user, which needs that user's session cookie. This
+ * checks the creator's code against the same stored secret, decrypted with
+ * Better Auth's own secret configuration, with the same TOTP parameters that
+ * endpoint uses (6 digits, 30-second period, one period either side; the
+ * plugin's defaults, which `twoFactor()` above keeps). An enrollment that was
+ * never confirmed, or one Better Auth has locked after failed sign-in codes,
+ * cannot be checked.
+ *
+ * Returns the matched time step, so the caller can refuse a code it has
+ * already accepted; "mismatch" for a wrong code; "unavailable" when no code
+ * could have matched, which the caller must not count as a guess. Callers
+ * rate-limit attempts, as for the session.
+ */
+export async function matchUserTotpStep(
+  auth: Auth,
+  db: AppDb,
+  userId: string,
+  code: string,
+): Promise<number | "mismatch" | "unavailable"> {
+  if (!/^\d{6}$/.test(code)) return "mismatch";
+  const [row] = await db
+    .select({
+      secret: schema.twoFactor.secret,
+      verified: schema.twoFactor.verified,
+      lockedUntil: schema.twoFactor.lockedUntil,
+      enabled: schema.user.twoFactorEnabled,
+    })
+    .from(schema.twoFactor)
+    .innerJoin(schema.user, eq(schema.user.id, schema.twoFactor.userId))
+    .where(eq(schema.twoFactor.userId, userId))
+    .limit(1);
+  if (!row?.enabled || row.verified === false) return "unavailable";
+  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return "unavailable";
+  try {
+    const context = await auth.$context;
+    const secret = await symmetricDecrypt({ key: context.secretConfig, data: row.secret });
+    const otp = createOTP(secret, { digits: TOTP_DIGITS, period: TOTP_PERIOD_SECONDS });
+    const current = Math.floor(Date.now() / (TOTP_PERIOD_SECONDS * 1000));
+    const given = new TextEncoder().encode(code);
+    let matched: number | "mismatch" = "mismatch";
+    // Every window is computed and compared, so timing says nothing about which matched.
+    for (const step of [current - 1, current, current + 1]) {
+      if (timingSafeEqual(given, new TextEncoder().encode(await otp.hotp(step)))) matched = step;
+    }
+    return matched;
+  } catch {
+    return "unavailable";
+  }
+}
+
+const TOTP_DIGITS = 6;
+const TOTP_PERIOD_SECONDS = 30;
 
 function normalizeSession(data: unknown): AuthSession | null {
   if (!data || typeof data !== "object") return null;

@@ -140,6 +140,11 @@ in npm with npm's own 2FA. That checkbox is sticky per browser
 (`drydock:open-npm-after-decision` in localStorage, `src/models/publish-preferences.ts`)
 so reviewers who always finish in npm opt in once — it is a UI convenience with no
 server state and no bearing on the step-up rules.
+An organization API key with `decide_staged` access records the same staged
+decision for `drydock approve`, but unlike a session it needs a fresh TOTP code
+from the key's creator on every decision, and only a member with two-factor can
+create one. It is refused on any workflow-gate package (see
+[`api-keys.md`](./api-keys.md#recording-staged-decisions)).
 Maintainers without 2FA enabled decide gates without a code, as before.
 
 When that npm tab is _not_ opened (the checkbox is off, or the browser blocked the
