@@ -123,6 +123,28 @@ async function installSettingsMocks(page: Page, channelsReady: Promise<void>) {
       await fulfillJson(route, { events: [], nextCursor: null });
       return;
     }
+    if (path === "/api/v1/dependency-reviews") {
+      await fulfillJson(route, {
+        settings: {
+          enabled: false,
+          policy: {
+            holdOnInstallScripts: true,
+            holdOnNativeBinaries: true,
+            holdOnNewDependencies: true,
+            holdOnNewBinCommands: true,
+            holdAtReleaseRisk: "high",
+            holdOnUninspectedFiles: true,
+            holdOnUnreviewed: true,
+            holdOnNewPackages: false,
+          },
+          extraBotLogins: [],
+        },
+        githubAppInstalled: false,
+        reviews: [],
+        viewer: { canManage: true },
+      });
+      return;
+    }
 
     await fulfillJson(route, { error: `unexpected request: ${path}` }, 404);
   });

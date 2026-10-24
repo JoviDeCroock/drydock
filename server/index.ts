@@ -14,6 +14,7 @@ import { attachDb } from "./middleware/db";
 import { handleAppError } from "./middleware/errors";
 import { securityHeaders } from "./middleware/security-headers";
 import { auditRoutes } from "./routes/audit";
+import { dependencyReviewRoutes } from "./routes/dependency-reviews";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { publicReportsRoutes } from "./routes/public-reports";
@@ -213,6 +214,7 @@ app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
+app.route("/api/v1/dependency-reviews", dependencyReviewRoutes);
 
 app.notFound(staticAssetFallback);
 
