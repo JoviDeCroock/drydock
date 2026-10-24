@@ -68,6 +68,7 @@ export const ApiKeysModel = createModel(() => {
       const requestId = ++loadRequestId;
       this.keys.value = [];
       this.revealed.value = null;
+      this.revokingKeyId.value = null;
       this.loaded.value = false;
       this.error.value = null;
       if (!canManage) {
