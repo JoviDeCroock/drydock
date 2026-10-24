@@ -13,6 +13,7 @@ const entry: PublicationAlertLogEntry = {
   packageName: "@scope/package",
   version: "1.0.1",
   status: "published_without_approval",
+  reason: null,
   createdAt: "2026-09-02T00:00:00.000Z",
   acknowledgedAt: null,
   reviewScanId: null,

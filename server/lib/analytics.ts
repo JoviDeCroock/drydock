@@ -5,7 +5,14 @@
 import { emitOperationalEvent } from "./platform/observability";
 
 export type AnalyticsEvent =
-  | { name: "publication.discrepancy"; organizationId: string; ecosystem: string; status: string }
+  | {
+      name: "publication.discrepancy";
+      organizationId: string;
+      ecosystem: string;
+      status: string;
+      /** The observation's reason code, or "" when it has none. */
+      reason: string;
+    }
   | {
       name: "scan.queued";
       organizationId: string;
@@ -187,6 +194,12 @@ export type AnalyticsEvent =
       packageName: string;
       cache: string;
       risk: string;
+      /**
+       * `dependency-pr` when the dependency-PR comment workflow fetched the
+       * pair from CI, `other` otherwise. Self-reported by the caller, so it
+       * separates traffic shapes; it is not an authority.
+       */
+      client: "dependency-pr" | "other";
       durationMs: number;
     };
 
@@ -256,7 +269,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
 
   switch (event.name) {
     case "publication.discrepancy":
-      return base(event.organizationId, event.ecosystem, [event.status], [0]);
+      return base(event.organizationId, event.ecosystem, [event.status, event.reason], [0]);
     case "scan.queued":
       return base(event.organizationId, event.ecosystem, [event.source], [0]);
     case "scan.completed":
@@ -373,7 +386,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       return base(
         "",
         event.ecosystem,
-        [event.packageName, event.cache, event.risk],
+        [event.packageName, event.cache, event.risk, event.client],
         [event.durationMs],
       );
   }

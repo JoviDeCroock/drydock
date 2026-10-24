@@ -19,7 +19,9 @@ Two hold contracts, and the difference between them is load-bearing:
 
 - **Workflow Gate — enforced.** A GitHub Environment protection rule pauses the
   configured protected publish job after CI uploads the built artifacts. Approve
-  and the job continues with its own credential; reject and it never publishes.
+  and GitHub lets the job continue with its own credential; reject and GitHub
+  keeps it from publishing. GitHub enforces the hold, not Drydock, and a repo
+  admin can remove or bypass the rule.
   Covers npm, PyPI, and VS Code. This is the default path we lead with.
 - **Stage Watchtower — advisory.** npm parks a private staged tarball; Drydock
   reviews it and records a decision. The maintainer approves or rejects in npm
@@ -88,7 +90,10 @@ Only these, and only as written. Everything here is verifiable.
 These are not style preferences. Breaking one is a product-accuracy bug.
 
 1. **Never blur advisory and enforced.** Stage Watchtower does not block a publish.
-   Workflow Gate blocks only the *configured protected job*. Say which, every time.
+   On a Workflow Gate, GitHub blocks only the *configured protected job*, on
+   Drydock's decision. Say which, and who enforces it, every time. Stage-only
+   trusted publishing and "disallow tokens" are npm settings Drydock recommends,
+   not Drydock controls.
 2. **Never claim we prevent an attack, detect malware, or make a release safe.**
    We surface evidence; a human decides.
 3. **No invented metrics, customers, testimonials, or logos.** No "trusted by N

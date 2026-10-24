@@ -153,8 +153,9 @@ npm ever receives it.
 What this buys:
 
 - **The gate is the enforced checkpoint.** A malicious candidate built by CI
-  never reaches npm's stage queue; Drydock rejects the job and the OIDC
-  exchange never happens.
+  never reaches npm's stage queue: on a Drydock rejection GitHub keeps the job
+  from running, so the OIDC exchange never happens. GitHub enforces that hold,
+  for the configured job only.
 - **The stage is npm holding exactly the reviewed bytes.** The `.tgz` the gate
   hashed is the `.tgz` npm stages, and npm publishes what it staged.
 - **The stage becomes the receipt.** Drydock still discovers and scans the
@@ -232,7 +233,7 @@ They put the candidate in different places and give Drydock different authority.
 | CI credential         | Can stage; can never publish            | Exists only after the review passes                              |
 | Reviewed vs shipped   | Same artifact by construction           | Proven by `sha256sum --check` against the reviewed digests       |
 | Drydock mode          | Stage Watchtower — advisory             | Workflow Gate — enforced                                         |
-| Final approval        | Independently in npm, with 2FA          | In Drydock for the configured protected job                      |
+| Final approval        | Independently in npm, with 2FA          | In Drydock; GitHub enforces it for the configured protected job  |
 
 Stage-only is the shorter setup for a maintainer already running
 `npm stage publish`. The gate is the one that generalizes past npm and past a

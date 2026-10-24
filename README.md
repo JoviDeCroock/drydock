@@ -2,7 +2,7 @@
 
 Drydock is pre-publish package security for maintainers. It reviews the exact npm, PyPI, or VS Code artifact before publication, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
 
-It has two release modes with different authority. **Workflow Gate — enforced** can approve or reject the configured protected GitHub publish job. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject them and can still publish manually. Drydock never publishes and never collects npm approval codes.
+It has two release modes with different authority. With **Workflow Gate — enforced**, a GitHub deployment-protection rule holds the configured protected publish job until you approve or reject it in Drydock. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject them and can still publish manually. Drydock never publishes and never collects npm approval codes.
 
 Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
 
@@ -33,17 +33,19 @@ The dependency-PR integrations add plain links, so Drydock is contacted only whe
 **If you publish from GitHub Actions, use a workflow gate.** It is the path for npm, PyPI, and VS Code
 alike, and it is what the example repositories below use. `npm stage publish` is a shortcut for npm
 maintainers who already publish that way from a terminal — if you don't, skip it. Both paths produce
-the same review report, but they differ in authority: the gate controls its protected job, while the
-watchtower only records advice about npm's stage.
+the same review report, but they differ in authority: GitHub holds the gate's protected job for your
+decision, while the watchtower only records advice about npm's stage.
 
 ### Workflow Gate — enforced (npm, PyPI, VS Code)
 
 CI builds the release and uploads it. A GitHub Environment pauses the publish job until you accept
 the review in Drydock, then the same job publishes the exact reviewed bytes.
 
-Enforcement is scoped to this configured protected job. For npm, trusted-publisher and token settings
-can narrow automated publishing to that path, but npm still permits an account holder to publish
-interactively with password, 2FA, and an OTP.
+GitHub enforces the hold, through the protection rule on that environment, and only for jobs that
+target it. Repository admins can remove the rule, and GitHub lets administrators bypass it unless
+you uncheck that option on the environment. For npm,
+npm's trusted-publisher and token settings can narrow automated publishing to that path, but npm still
+permits an account holder to publish interactively with password, 2FA, and an OTP.
 
 1. Sign in at [drydock.org](https://drydock.org) and create the organization that owns the release.
 2. In `Organization settings → GitHub App`, install the Drydock GitHub App on the account that hosts
@@ -70,7 +72,7 @@ interactively with password, 2FA, and an OTP.
 
      publish:
        needs: pack
-       environment: production # Drydock holds this job
+       environment: production # GitHub holds this job for Drydock's decision
        permissions: { id-token: write, contents: read }
        steps:
          - uses: actions/download-artifact@v4
@@ -79,14 +81,15 @@ interactively with password, 2FA, and an OTP.
          - run: npm publish dist/*.tgz --access public --provenance
    ```
 
-6. Push a release. The publish job pauses, Drydock reviews the uploaded artifacts, and accepting the
-   review releases the job. Rejecting it keeps that configured protected job blocked.
+6. Push a release. GitHub pauses the publish job, Drydock reviews the uploaded artifacts, and accepting
+   the review tells GitHub to let the job continue. Rejecting it tells GitHub to keep that configured
+   protected job blocked.
 
 There is no Drydock manifest to maintain: package name, version, and ecosystem are read from metadata
 inside the uploaded `.tgz`, `.whl`, `.tar.gz`, or `.vsix`. A monorepo upload becomes one report per
 package, and the job continues only once every package is accepted. The publish job must publish the
-bytes it downloaded — rebuilding after approval breaks the review boundary, which is what the
-`SHA256SUMS` record/check pair enforces.
+bytes it downloaded — rebuilding after approval breaks the review boundary. The `SHA256SUMS`
+record/check pair catches that drift, in a job your repository controls.
 
 Full workflows for each ecosystem: [PyPI CI example](https://github.com/JoviDeCroock/drydock-ci-example),
 [npm monorepo CI example](https://github.com/JoviDeCroock/drydock-npm-monorepo-ci-example), and

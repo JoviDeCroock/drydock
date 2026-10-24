@@ -348,6 +348,41 @@ describe("public package-diff routes", () => {
     expect(validate).toHaveBeenCalledWith(env, expect.anything(), input);
   });
 
+  test("records dependency-PR workflow fetches apart from other diff views", async () => {
+    const payload = cachedPayload("left-pad-client");
+    const input = {
+      ecosystem: "npm",
+      registryUrl: PUBLIC_NPM_REGISTRY,
+      packageName: payload.packageName,
+      fromVersion: payload.fromVersion,
+      toVersion: payload.toVersion,
+    };
+    await writePublicDiffCache(env, await computePublicDiffCacheKey(input), payload);
+    const points: Array<{ blobs: string[] }> = [];
+    const analyticsEnv = {
+      ...env,
+      PRODUCT_ANALYTICS: { writeDataPoint: (point: { blobs: string[] }) => points.push(point) },
+    } as unknown as Cloudflare.Env;
+
+    for (const client of ["dependency-pr", undefined, "something-else"]) {
+      const headers = new Headers({ "cf-connecting-ip": "10.99.7.1" });
+      if (client) headers.set("x-drydock-client", client);
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        new Request(
+          "http://example.com/api/public/v1/package-diff?package=left-pad-client&from=1.0.0&to=1.0.1",
+          { headers },
+        ),
+        analyticsEnv,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      expect(res.status).toBe(200);
+    }
+
+    expect(points.map((point) => point.blobs.at(-1))).toEqual(["dependency-pr", "other", "other"]);
+  });
+
   test("the anonymous surface reaches D1 on no request path", async () => {
     // Rate limiting used to be an unconditional D1 upsert plus select on every
     // request — ahead of the cache read, so a cache hit still cost two writes to

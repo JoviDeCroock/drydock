@@ -56,6 +56,7 @@ export interface PublicationObservation {
     | "published_without_approval"
     | "published_despite_rejection"
     | "artifact_mismatch"
+    | "undecided_low_risk"
     | "unknown";
   /** Why an `unknown` observation is unknown, or what refines an alert. */
   reason: string | null;
