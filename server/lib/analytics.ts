@@ -187,6 +187,12 @@ export type AnalyticsEvent =
       packageName: string;
       cache: string;
       risk: string;
+      /**
+       * `dependency-pr` when the dependency-PR comment workflow fetched the
+       * pair from CI, `other` otherwise. Self-reported by the caller, so it
+       * separates traffic shapes; it is not an authority.
+       */
+      client: "dependency-pr" | "other";
       durationMs: number;
     };
 
@@ -373,7 +379,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
       return base(
         "",
         event.ecosystem,
-        [event.packageName, event.cache, event.risk],
+        [event.packageName, event.cache, event.risk, event.client],
         [event.durationMs],
       );
   }
