@@ -428,7 +428,8 @@ async function acquirePyPiGateFiles(
   const selected: PyPiProvenanceArtifact[] = [];
   let total = 0;
   for (const file of files) {
-    const size = fetched.files.get(file.path)?.byteLength ?? Number.POSITIVE_INFINITY;
+    const bytes = fetched.oversized.has(file.path) ? undefined : fetched.files.get(file.path);
+    const size = bytes?.byteLength ?? Number.POSITIVE_INFINITY;
     if (total + size > MAX_DETONATION_TARBALL_BYTES) {
       if (selected.length === 0) return refusedFor("too_large");
       continue;
