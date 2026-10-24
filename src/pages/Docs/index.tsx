@@ -820,10 +820,10 @@ export default function DocsPage() {
                 {DEPENDENCY_PR_WORKFLOW}
               </CodeBlock>
               <Prose>
-                The job calls the reusable workflow at <InlineCode>{REUSABLE_WORKFLOW}</InlineCode>{" "}
-                on <InlineCode>main</InlineCode>, so it picks up fixes without a PR. To review each
-                change before it runs with write access, replace <InlineCode>main</InlineCode> with
-                a commit SHA, or copy that file into your repository.
+                The job calls the reusable workflow at <InlineCode>{REUSABLE_WORKFLOW}</InlineCode>,
+                pinned to the commit that last changed it, so nothing changes in your repository
+                until you change the hash. To pick up later fixes, copy the hash from this page
+                again.
               </Prose>
             </Subsection>
 

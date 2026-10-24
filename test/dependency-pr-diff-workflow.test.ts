@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 import {
@@ -202,16 +203,22 @@ function proseOutsideCode(markdown: string): string {
 }
 
 describe("published workflow snippet", () => {
-  test("is the repository caller pointed at the reusable workflow on main", () => {
-    expect(DEPENDENCY_PR_WORKFLOW).toBe(publishedDependencyPrWorkflow(REPO_CALLER));
+  test("is the repository caller pinned to the reusable workflow's last commit", () => {
+    const sha = execFileSync(
+      "git",
+      ["log", "-1", "--format=%H", "--", ".github/workflows/drydock-diff-link.yml"],
+      { encoding: "utf8" },
+    ).trim();
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(DEPENDENCY_PR_WORKFLOW).toBe(publishedDependencyPrWorkflow(REPO_CALLER, sha));
     expect(DEPENDENCY_PR_WORKFLOW).toBe(
       REPO_CALLER.trimEnd().replace(
         "uses: ./.github/workflows/drydock-diff-link.yml",
-        "uses: JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@main",
+        `uses: JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@${sha}`,
       ),
     );
     expect(DEPENDENCY_PR_WORKFLOW).not.toMatch(/this\s+repo/i);
-    expect(() => publishedDependencyPrWorkflow("jobs: {}\n")).toThrow();
+    expect(() => publishedDependencyPrWorkflow("jobs: {}\n", sha)).toThrow();
   });
 
   test("pins every action in the reusable workflow", () => {
@@ -244,7 +251,7 @@ describe("published workflow snippet", () => {
   });
 
   test("holds the published snippet to the docs snippet width", () => {
-    // The reusable workflow's path is fixed at 76 characters with its indent.
+    // The reusable workflow's path and pinned commit are fixed.
     const long = DEPENDENCY_PR_WORKFLOW.split("\n").filter(
       (line) => line.length > 71 && !line.trimStart().startsWith("uses: "),
     );

@@ -70,10 +70,10 @@ reusable workflow `.github/workflows/drydock-diff-link.yml`:
 `dependabot/fetch-metadata` for Dependabot PRs, then one `actions/github-script`
 step that derives the version pairs, fetches each pair's summary from the public
 diff API, and upserts one comment. Adopters paste a ~20-line caller from the Docs
-page that references it at `JoviDeCroock/drydock/...@main`; there is still no
-Drydock-owned action. Floating on `main` means adopters run our latest workflow
-with `pull-requests: write` in their repository, so the Docs page tells them how
-to pin a commit SHA or vendor the file instead. The caller's trigger is
+page that references it at `JoviDeCroock/drydock/...@<sha>`; there is still no
+Drydock-owned action. The hash is the last commit that changed the reusable
+workflow, so adopters run exactly the version they copied with
+`pull-requests: write`, and pick up changes by copying a new hash. The caller's trigger is
 `pull_request_target`; a called workflow runs under its caller's event, so
 GitHub runs the caller, this workflow, and the action commits it pins as they
 are on the base branch. Under `pull_request`, the
@@ -216,8 +216,12 @@ is the caller, and it calls `.github/workflows/drydock-diff-link.yml` locally, w
 actions are pinned to commits per the `.github/workflows/ci.yml` convention. The
 Docs page doesn't keep a second copy: `src/pages/Docs/dependency-pr-workflow.ts`
 imports the caller and swaps the local path for
-`JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@main`. That is the
-only intended difference. `test/dependency-pr-diff-workflow.test.ts`
+`JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@<sha>`. That is the
+only intended difference. `scripts/lib/workflow-ref.mjs` resolves `<sha>` at
+build time to the last commit that touched the reusable workflow, not `HEAD`, so
+the published hash moves only when the workflow does. Deploy from `main`: a
+build on an unmerged branch whose workflow changed would publish a branch
+commit. `test/dependency-pr-diff-workflow.test.ts`
 checks the transformation, then runs the inline script under a stubbed
 `github`/`fetch` against grouped and single Dependabot PRs, each supported
 lockfile, hostile API responses, API failures, and the caps.
