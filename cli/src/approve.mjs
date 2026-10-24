@@ -76,7 +76,7 @@ export async function approve(ctx, startWaiting) {
         `waiting for review ${clean(id)}: ${clean(scan?.status ?? "pending")} (${seconds}s)\n`,
       );
     });
-    if (final.status === "failed") {
+    if (final.scan?.status === "failed") {
       throw new CliError(`review ${id} failed, so there is nothing to decide on yet`);
     }
   }

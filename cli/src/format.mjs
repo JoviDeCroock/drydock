@@ -161,15 +161,22 @@ export function formatScan(body) {
   return lines.join("\n");
 }
 
-/** @param {any} scan */
-export function formatScanStatus(scan) {
-  return `${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}  risk ${clean(scan.risk)}`;
+/** @param {any} body */
+export function formatScanStatus(body) {
+  const scan = body.scan ?? {};
+  const releaseRisk = body.riskSummary?.releaseRisk;
+  const risk = releaseRisk
+    ? `release risk ${clean(releaseRisk)} · package risk ${clean(scan.risk)}`
+    : `risk ${clean(scan.risk)}`;
+  return `${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}  ${risk}`;
 }
 
 /** @param {any} body the `POST /api/v1/scans` response */
 export function formatStartedScan(body) {
   const scan = body.scan ?? {};
-  return `started review ${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}`;
+  // `existing`: the stage already had a review, and the request started nothing.
+  const lead = body.existing === true ? "already reviewing" : "started review";
+  return `${lead} ${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}`;
 }
 
 /** @param {any} body the `POST /api/v1/staged-publishes/scan` response */

@@ -28,18 +28,18 @@ A key belongs to exactly one organization. It ignores the dashboard's active-org
 
 Every key reaches these routes, all reads a plain member can already make (`API_KEY_ROUTES` in `server/lib/auth/api-keys.ts`):
 
-| Route                                                   | Returns                                       |
-| ------------------------------------------------------- | --------------------------------------------- |
-| `GET /api/v1/api-keys/current`                          | the calling key and its organization          |
-| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface         |
-| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`) |
-| `GET /api/v1/scans/overview`                            | dashboard counts                              |
-| `GET /api/v1/scans/:id`                                 | one review                                    |
-| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status, for polling      |
-| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                   |
-| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                           |
-| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`) |
-| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to         |
+| Route                                                   | Returns                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `GET /api/v1/api-keys/current`                          | the calling key and its organization                    |
+| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface                   |
+| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`)           |
+| `GET /api/v1/scans/overview`                            | dashboard counts                                        |
+| `GET /api/v1/scans/:id`                                 | one review                                              |
+| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status and risk split, for polling |
+| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                             |
+| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                                     |
+| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`)           |
+| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to                   |
 
 A `scan` key also reaches these (`API_KEY_SCAN_ROUTES`):
 
@@ -48,7 +48,10 @@ A `scan` key also reaches these (`API_KEY_SCAN_ROUTES`):
 | `POST /api/v1/scans`                 | starts one review: `{ stageId }`, or `{ ecosystem, packageName, version }` |
 | `POST /api/v1/staged-publishes/scan` | checks npm with the organization's npm token and starts any new reviews    |
 
-Both are actions any member can take from the dashboard, and both run the same handlers with the same checks: the npm token must be connected and valid, package claims apply, and the per-organization scan and discovery rate limits are shared with the dashboard. The review is created as the key's creator (`requestActorUserId`), the way a cron-discovered review belongs to whoever connected npm, so notifications and ownership behave as if that member had clicked the button.
+Both are actions any member can take from the dashboard, and both run the same handlers with the same checks: the npm token must be connected and valid, and package claims apply (an answer with an existing review, below, returns a review the organization already has without repeating them). The review is created as the key's creator (`requestActorUserId`), the way a cron-discovered review belongs to whoever connected npm, so notifications and ownership behave as if that member had clicked the button.
+
+- **Starting a stage twice starts one review.** When the organization already has a review of the `stageId` that has not failed, `POST /api/v1/scans` answers `200` with that review and `existing: true` instead of `202`, and queues nothing. A re-run CI job, or one racing the cron or "Check npm", therefore neither pays for a second review nor supersedes one a person already decided. The check is repeated inside the batch that creates the review (`createScanJob`), so simultaneous starts also create one. A start that fails after creating its row (the queue send throws) deletes the row, so the retry starts a fresh review instead of finding one that never runs. This applies to session requests too. A failed review does not count, so "Review again" still restarts it.
+- **Keys have their own budgets.** Reviews and npm checks started with any of the organization's keys spend budgets apart from the dashboard's: 10 reviews per hour (`scan:<org>:api-keys`) and 12 npm checks per 10 minutes (`staged-publishes:scan:<org>:api-keys`), against the dashboard's `scan:<org>` and `staged-publishes:scan:<org>` (`requestBudgetKey`). A looping CI job is refused with `429` without locking members out of starting reviews. A repeated start that finds the existing review before it reaches the budget spends none.
 
 A `decide_staged` key also reaches this (`API_KEY_DECIDE_ROUTES`):
 

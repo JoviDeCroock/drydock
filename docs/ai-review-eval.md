@@ -241,7 +241,11 @@ cannot escape a minute quota. An invalid completed run also moves to the next
 model without re-running the same model. Do not add AI Gateway retries on top of
 this loop: each request pins Gateway attempts to one so account-level retry
 settings cannot multiply requests invisibly. Dynamic routing at individual
-inference-step granularity can also mix models inside one review.
+inference-step granularity can also mix models inside one review. The same
+per-request policy turns off Gateway payload collection, including for live
+harness runs, so Gateway logs show request metadata and token counts but never
+a prompt or a completion; debug from recorded outputs and the harness instead
+(see `docs/security-model.md`).
 
 Cloudflare's queue consumer already limits scan concurrency to ten and processes
 one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation

@@ -26,6 +26,7 @@ import {
   publicationObservations,
   publicationWatchCandidates,
   publicationWatches,
+  scans,
 } from "./schema";
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
@@ -155,7 +156,20 @@ export async function getPublicationOwnershipConflict(
   return Boolean(result?.conflict);
 }
 
-const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
+/**
+ * Whether a publication alert is settled by its post-release review: approved,
+ * and the reviewed bytes are the published ones. Anything else (a decline,
+ * no decision yet, or approving bytes that differ or were never compared)
+ * leaves it open: only a decision on the published bytes speaks for them.
+ * `alias` names the `publication_alerts` row in the enclosing query.
+ */
+export function publicationAlertSettled(alias: "a" | "publication_alerts") {
+  return sql.raw(
+    `(coalesce(${alias}.resolution, '') = 'approved_after_release' and coalesce(${alias}.reviewed_bytes, '') = 'match')`,
+  );
+}
+
+const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and not ${publicationAlertSettled("a")} and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
 
 /**
  * How long a problem must last before it counts as a coverage gap: shorter
@@ -407,6 +421,15 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ...getTableColumns(publicationObservations),
       acknowledgedAt: publicationAlerts.acknowledgedAt,
       coverageGap: sql<boolean>`coalesce(${releaseCoverageGap(new Date())}, 0)`.mapWith(Boolean),
+      // The post-release review started from this release's alert, and what
+      // the organization decided on it. `status` above stays the verdict.
+      reviewScanId: publicationAlerts.reviewScanId,
+      reviewStatus: scans.status,
+      reviewDecision: scans.decision,
+      resolution: publicationAlerts.resolution,
+      resolvedAt: publicationAlerts.resolvedAt,
+      resolutionBadge: publicationAlerts.resolutionBadge,
+      reviewedBytes: publicationAlerts.reviewedBytes,
     })
     .from(publicationObservations)
     .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
@@ -418,6 +441,13 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
         eq(publicationAlerts.version, publicationObservations.version),
       ),
     )
+    .leftJoin(
+      scans,
+      and(
+        eq(scans.id, publicationAlerts.reviewScanId),
+        eq(scans.organizationId, publicationObservations.organizationId),
+      ),
+    )
     .where(
       and(
         eq(publicationObservations.organizationId, organizationId),
@@ -425,7 +455,8 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ),
     )
     .orderBy(
-      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null then 0 else 1 end`,
+      // Open alerts first, a release the AI reviewer flagged ahead of the rest.
+      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and not ${publicationAlertSettled("publication_alerts")} then (case when ${publicationObservations.reason} = 'ai_flagged_without_decision' then 0 else 1 end) else 2 end`,
       desc(publicationObservations.firstSeenAt),
       desc(publicationObservations.id),
     )
@@ -555,6 +586,37 @@ export async function releaseReleaseCoverageNotice(
         eq(publicationObservations.id, input.observationId),
         eq(publicationObservations.organizationId, input.organizationId),
         eq(publicationObservations.coverageNotifiedAt, claimedAt),
+      ),
+    );
+}
+
+/**
+ * Hand a quiet release back to the monitor once someone decides a review of
+ * its version. `undecided_low_risk` settles like any verdict, so without this
+ * a rejection recorded after publication would never become the alert (and
+ * the post-release decline) it is for. Marked unknown, the next check
+ * re-reads it from its stored digests; observations of any other status are
+ * never touched.
+ */
+export async function reopenQuietPublicationObservations(
+  db: AppDb,
+  organizationId: string,
+  scanIds: readonly string[],
+) {
+  if (!scanIds.length) return;
+  // Qualified by hand: the subquery's tables share column names with the
+  // updated one.
+  await db
+    .update(publicationObservations)
+    .set({ status: "unknown", reason: "decided_after_observation" })
+    .where(
+      and(
+        eq(publicationObservations.organizationId, organizationId),
+        eq(publicationObservations.status, "undecided_low_risk"),
+        sql`exists (select 1 from publication_watches w join scans s on s.organization_id = w.organization_id and s.package_name = w.package_name where w.id = publication_observations.watch_id and w.organization_id = publication_observations.organization_id and s.staged_version = publication_observations.version and s.id in (${sql.join(
+          scanIds.map((id) => sql`${id}`),
+          sql`, `,
+        )}))`,
       ),
     );
 }

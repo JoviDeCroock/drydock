@@ -69,9 +69,13 @@ Environment:
                    so it stays out of shell history and process listings
   DRYDOCK_URL      Drydock origin
 
+--fail-on RISK (low, medium, high, or critical) gates on release risk: the
+findings the release introduces, as the workflow gate does. Every wait retries
+rate limits, server errors, and network errors until --timeout.
+
 Exit codes: 0 success, 1 request or review failed (or approve recorded no
-decision), 2 usage error, 3 risk at or above --fail-on (RISK is low, medium,
-high, or critical), 4 a wait timed out before the review finished, 5 approve
+decision), 2 usage error, 3 release risk at or above --fail-on, 4 a wait timed
+out before the review finished (or before its status could be read), 5 approve
 recorded the decision in Drydock but npm did not complete it.
 `;
 
@@ -351,9 +355,9 @@ async function scansWait(ctx) {
     "scans wait <review-id> [--timeout S] [--interval S] [--fail-on RISK]",
   );
   const waiting = waitSettings(ctx);
-  const scan = await waitForReview(ctx, id, waiting);
-  print(ctx, scan, formatScanStatus);
-  return reviewExitCode([scan], waiting.threshold);
+  const status = await waitForReview(ctx, id, waiting);
+  print(ctx, status, formatScanStatus);
+  return reviewExitCode([status], waiting.threshold);
 }
 
 /**
@@ -383,15 +387,18 @@ function optionalWaitSettings(ctx) {
 /**
  * 3 when any review reaches the threshold, else 1 when any failed, else 0. A
  * review at the threshold is the decisive signal for a release gate; a failed
- * one only says that review has no verdict.
- * @param {any[]} scans final statuses
+ * one only says that review has no verdict. Gates on release risk; without a
+ * breakdown (no baseline compared, or an older review) it falls back to the
+ * overall risk, which is never lower.
+ * @param {any[]} statuses final `GET /scans/:id/status` bodies
  * @param {number | null} threshold
  */
-function reviewExitCode(scans, threshold) {
-  if (scans.some((scan) => scan.status !== "failed" && meetsThreshold(threshold, scan.risk))) {
-    return 3;
-  }
-  return scans.some((scan) => scan.status === "failed") ? 1 : 0;
+function reviewExitCode(statuses, threshold) {
+  const reachesThreshold = (/** @type {any} */ body) =>
+    body?.scan?.status !== "failed" &&
+    meetsThreshold(threshold, body?.riskSummary?.releaseRisk ?? body?.scan?.risk);
+  if (statuses.some(reachesThreshold)) return 3;
+  return statuses.some((body) => body?.scan?.status === "failed") ? 1 : 0;
 }
 
 /**
@@ -408,7 +415,7 @@ async function waitAndReport(ctx, ids, waiting, started) {
   if (ctx.values.json) {
     ctx.io.stdout(`${terminalSafeJson({ .../** @type {object} */ (started), results })}\n`);
   } else {
-    for (const scan of results) ctx.io.stdout(`${formatScanStatus(scan)}\n`);
+    for (const status of results) ctx.io.stdout(`${formatScanStatus(status)}\n`);
   }
   return reviewExitCode(results, waiting.threshold);
 }

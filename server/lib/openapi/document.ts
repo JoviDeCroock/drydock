@@ -17,6 +17,7 @@ import {
   StartScanRequest,
   StartedScan,
   WorkflowGate,
+  openApiSchemas,
 } from "./schemas";
 
 // The OpenAPI 3.1 description of Drydock's automation surface: every route an
@@ -53,6 +54,8 @@ interface OperationSpec {
   startsWork?: boolean;
   /** Records a staged-publish decision; reachable only by a `decide_staged` key. */
   decidesStaged?: boolean;
+  /** A `startsWork` route that answers 200 with work already under way, described here. */
+  existingWork?: string;
   response: ZodSchema;
   /** Media type of the success response, when it is not plain JSON. */
   download?: boolean;
@@ -146,10 +149,11 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     operationId: "startScan",
     summary: "Start a review",
     description:
-      "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. Starting a review never records a release decision.",
+      "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. A stage the organization already has a review of (one that has not failed) is answered 200 with that review and `existing: true`, so a retried request starts nothing. Starting a review never records a release decision.",
     tag: "Reviews",
     requestBody: StartScanRequest,
     startsWork: true,
+    existingWork: "The stage already has a review in this organization; nothing was started",
     response: StartedScan,
     errors: [400, 401, 403, 404, 409, 413, 422, 429, 502, 503],
   },
@@ -277,19 +281,33 @@ export function openApiPath(route: string): string {
   return route.replace(/:([A-Za-z_][\w]*)(\{[^}]*\})?/g, "{$1}");
 }
 
-function jsonSchema(schema: ZodSchema): Record<string, unknown> {
-  const { $schema: _dialect, ...rest } = z.toJSONSchema(schema, {
+const COMPONENT_REF_PREFIX = "#/components/schemas/";
+
+/**
+ * Every registered schema in one conversion, so a schema used inside another
+ * renders as a `$ref` to its own component. Converting schemas one at a time
+ * inlines a per-schema `$defs` block whose refs `components.schemas` cannot
+ * resolve.
+ */
+function componentSchemas(): Record<string, unknown> {
+  const { schemas } = z.toJSONSchema(openApiSchemas, {
     target: "draft-2020-12",
     io: "output",
     unrepresentable: "any",
-  }) as Record<string, unknown>;
-  return rest;
+    uri: (id) => `${COMPONENT_REF_PREFIX}${id}`,
+  }) as { schemas: Record<string, Record<string, unknown>> };
+  if ("__shared" in schemas) {
+    throw new Error("an OpenAPI schema references an id'd schema outside openApiSchemas");
+  }
+  return Object.fromEntries(
+    Object.entries(schemas).map(([id, { $schema: _dialect, $id: _uri, ...rest }]) => [id, rest]),
+  );
 }
 
-function componentName(schema: ZodSchema): string {
-  const id = z.globalRegistry.get(schema)?.id;
-  if (typeof id !== "string") throw new Error("every OpenAPI response schema needs a meta id");
-  return id;
+function componentRef(schema: ZodSchema): { $ref: string } {
+  const id = openApiSchemas.get(schema)?.id;
+  if (typeof id !== "string") throw new Error("every OpenAPI response schema needs a registry id");
+  return { $ref: `${COMPONENT_REF_PREFIX}${id}` };
 }
 
 const STATUS_TEXT: Record<number, string> = {
@@ -314,17 +332,25 @@ export function openApiDocument(): Record<string, unknown> {
 }
 
 export function buildOpenApiDocument(): Record<string, unknown> {
-  const schemas: Record<string, unknown> = { Error: jsonSchema(ErrorResponse) };
+  const schemas = componentSchemas();
   const paths: Record<string, Record<string, unknown>> = {};
 
+  const errorRef = componentRef(ErrorResponse);
+
   for (const operation of OPENAPI_OPERATIONS) {
-    const name = componentName(operation.response);
-    schemas[name] = jsonSchema(operation.response);
     const responses: Record<string, unknown> = {
       [operation.startsWork ? "202" : "200"]: {
         description: operation.download ? "Download" : operation.startsWork ? "Accepted" : "OK",
-        content: { "application/json": { schema: { $ref: `#/components/schemas/${name}` } } },
+        content: { "application/json": { schema: componentRef(operation.response) } },
       },
+      ...(operation.existingWork
+        ? {
+            "200": {
+              description: operation.existingWork,
+              content: { "application/json": { schema: componentRef(operation.response) } },
+            },
+          }
+        : {}),
     };
     // Every key request is charged to a per-IP and a per-key budget before its
     // route runs, so each key operation can answer 429.
@@ -334,18 +360,14 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     for (const status of errors) {
       responses[String(status)] = {
         description: STATUS_TEXT[status],
-        content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+        content: { "application/json": { schema: errorRef } },
       };
     }
     let requestBody: Record<string, unknown> | undefined;
     if (operation.requestBody) {
-      const bodyName = componentName(operation.requestBody);
-      schemas[bodyName] = jsonSchema(operation.requestBody);
       requestBody = {
         required: true,
-        content: {
-          "application/json": { schema: { $ref: `#/components/schemas/${bodyName}` } },
-        },
+        content: { "application/json": { schema: componentRef(operation.requestBody) } },
       };
     }
     paths[openApiPath(operation.route)] = {

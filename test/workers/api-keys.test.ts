@@ -19,6 +19,7 @@ import {
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
+import { ORGANIZATION_SCAN_LIMIT, ORGANIZATION_SCAN_WINDOW_MS } from "../../server/lib/rate-limit";
 import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
 import { seedCompletedScan, seedUser } from "./helpers/seed";
 import {
@@ -700,6 +701,166 @@ describe("API keys with scan access", () => {
     // A second check finds the same stage already under review.
     const again = await postWithoutOrigin("/api/v1/staged-publishes/scan", key.token);
     expect(again.json).toMatchObject({ found: 1, created: 0, skipped: 1 });
+  });
+
+  test("a repeated start of a stage answers with its review instead of starting another", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    stubStagedRegistry("stage-rerun-000001", "@acme/rerun", "1.2.0");
+
+    const first = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-rerun-000001",
+    });
+    expect(first.status, JSON.stringify(first.json)).toBe(202);
+    expect(first.json?.existing).toBe(false);
+    const scanId = (first.json!.scan as { id: string }).id;
+
+    // A person decides the review before the CI job is re-run.
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ status: "complete", decision: "publish", decidedAt: new Date() })
+      .where(eq(schema.scans.id, scanId));
+
+    const rerun = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-rerun-000001",
+    });
+    expect(rerun.status).toBe(200);
+    expect(rerun.json).toMatchObject({ existing: true, queued: false, scan: { id: scanId } });
+    expect(rerun.queue).toEqual([]);
+
+    const rows = await db
+      .select()
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, "stage-rerun-000001"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decision: "publish", registryStatusSupersededAt: null });
+    expect(
+      await auditEvents(owner.organizationId, "organization.api_key_review_started"),
+    ).toHaveLength(1);
+  });
+
+  test("starts of one stage that race each other create a single review", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    stubStagedRegistry("stage-race-000001", "@acme/race", "4.0.0");
+
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        postWithoutOrigin("/api/v1/scans", key.token, { stageId: "stage-race-000001" }),
+      ),
+    );
+    const rows = await createDb(env.DB)
+      .select({ id: schema.scans.id })
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, "stage-race-000001"));
+    expect(rows).toHaveLength(1);
+    expect(results.map((result) => result.status).sort()).toEqual([200, 200, 202]);
+    for (const result of results) {
+      expect((result.json!.scan as { id: string }).id).toBe(rows[0].id);
+    }
+    expect(results.flatMap((result) => result.queue)).toHaveLength(1);
+  });
+
+  test("a start whose queue send fails leaves no review behind, so a retry starts one", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    stubStagedRegistry("stage-queue-down-000001", "@acme/queue-down", "1.0.0");
+
+    const ctx = createExecutionContext();
+    const failing = await worker.fetch(
+      new Request("http://example.com/api/v1/scans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${key.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ stageId: "stage-queue-down-000001" }),
+      }),
+      {
+        ...env,
+        SCAN_QUEUE: {
+          send: async () => {
+            throw new Error("queue unavailable");
+          },
+        },
+      },
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(failing.status).toBe(500);
+    const rows = await createDb(env.DB)
+      .select({ id: schema.scans.id })
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, "stage-queue-down-000001"));
+    expect(rows).toEqual([]);
+
+    const retry = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-queue-down-000001",
+    });
+    expect(retry.status).toBe(202);
+    expect(retry.queue).toHaveLength(1);
+  });
+
+  test("a stage whose review failed can be started again", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    stubStagedRegistry("stage-retry-000001", "@acme/retry", "1.0.1");
+
+    const first = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-retry-000001",
+    });
+    const failedId = (first.json!.scan as { id: string }).id;
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ status: "failed" })
+      .where(eq(schema.scans.id, failedId));
+
+    const retry = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-retry-000001",
+    });
+    expect(retry.status).toBe(202);
+    expect((retry.json!.scan as { id: string }).id).not.toBe(failedId);
+  });
+
+  test("reviews started with keys spend a budget apart from the dashboard's", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    const db = createDb(env.DB);
+    const exhaust = async (budget: string) => {
+      const bucket = Math.floor(Date.now() / ORGANIZATION_SCAN_WINDOW_MS);
+      await db.insert(schema.rateLimits).values({
+        key: `${budget}:${bucket}`,
+        count: ORGANIZATION_SCAN_LIMIT,
+        expiresAt: new Date((bucket + 1) * ORGANIZATION_SCAN_WINDOW_MS),
+        updatedAt: new Date(),
+      });
+    };
+
+    // People spent the organization's budget; CI still starts its review.
+    await exhaust(`scan:${owner.organizationId}`);
+    stubStagedRegistry("stage-budget-000001", "@acme/budget", "1.0.0");
+    const keyStart = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-budget-000001",
+    });
+    expect(keyStart.status, JSON.stringify(keyStart.json)).toBe(202);
+
+    // A looping CI job spent the keys' budget; it is refused, and people are not.
+    await db.delete(schema.rateLimits);
+    await exhaust(`scan:${owner.organizationId}:api-keys`);
+    stubStagedRegistry("stage-budget-000002", "@acme/budget", "1.0.1");
+    const looping = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-budget-000002",
+    });
+    expect(looping.status).toBe(429);
+    const person = await callWorker("POST", "/api/v1/scans", {
+      jar: owner.jar,
+      body: { stageId: "stage-budget-000002" },
+      env: { ...env, SCAN_QUEUE: { send: async () => {} } } as unknown as Cloudflare.Env,
+    });
+    expect(person.res.status, person.text).toBe(202);
   });
 
   test("scan access adds nothing beyond starting reviews, and no decision", async () => {

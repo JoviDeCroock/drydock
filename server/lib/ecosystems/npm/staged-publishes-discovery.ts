@@ -10,6 +10,7 @@ import {
   createScanJob,
   deletePendingScanJob,
   listExistingScanStageIds,
+  StageReviewExistsError,
 } from "../../../db/scans";
 import {
   decryptNpmToken,
@@ -333,6 +334,8 @@ export async function discoverAndQueueStagedPublishes(
           stageAccessStatus: access.status,
         }).catch((err: unknown) => {
           if (err instanceof PackageClaimConflictError) return CLAIM_BLOCKED;
+          // A concurrent start (the CLI, the cron, or another click) got there first.
+          if (err instanceof StageReviewExistsError) return null;
           throw err;
         });
         if (detail === CLAIM_BLOCKED) return CLAIM_BLOCKED;

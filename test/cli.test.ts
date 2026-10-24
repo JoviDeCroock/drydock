@@ -231,6 +231,52 @@ describe("drydock CLI", () => {
     expect(stuck.stderr).toContain("still running");
   });
 
+  test("scans wait gates on release risk, not pre-existing package risk", async () => {
+    const complete = (releaseRisk: string) => () =>
+      json({
+        scan: {
+          id: "scan_1",
+          packageName: "pkg",
+          stagedVersion: "2.0.0",
+          status: "complete",
+          risk: "high",
+        },
+        riskSummary: { artifactRisk: "high", releaseRisk, contextRisk: "high" },
+      });
+    const quiet = harness(complete("low"));
+    expect(await quiet.run("scans", "wait", "scan_1", "--fail-on", "high")).toBe(0);
+    expect(quiet.stdout).toContain("release risk low · package risk high");
+    expect(
+      await harness(complete("high")).run("scans", "wait", "scan_1", "--fail-on", "high"),
+    ).toBe(3);
+  });
+
+  test("scans wait retries rate limits and server errors until the deadline", async () => {
+    const replies: Responder[] = [
+      () => {
+        throw new TypeError("fetch failed");
+      },
+      () => json({ error: "slow down" }, { status: 429, headers: { "retry-after": "7" } }),
+      () => json({ error: "unavailable" }, { status: 503 }),
+      () => json({ scan: { id: "scan_1", status: "complete", risk: "low" }, riskSummary: null }),
+    ];
+    let index = 0;
+    const flaky = harness((url) => replies[index++]!(url));
+    expect(await flaky.run("scans", "wait", "scan_1", "--interval", "1")).toBe(0);
+    expect(flaky.calls).toHaveLength(4);
+    // 1s after the network error, then Retry-After (7s) outranks the 2s
+    // backoff, then the 503 backs off 4s.
+    expect(flaky.io.now()).toBe(12_000);
+
+    const down = harness(() => json({ error: "unavailable" }, { status: 503 }));
+    expect(await down.run("scans", "wait", "scan_1", "--timeout", "10", "--interval", "1")).toBe(4);
+    expect(down.stderr).toContain("could not read review scan_1 before the timeout");
+
+    const missing = harness(() => json({ error: "not found" }, { status: 404 }));
+    expect(await missing.run("scans", "wait", "scan_1")).toBe(1);
+    expect(missing.calls).toHaveLength(1);
+  });
+
   test("an unexpected response is a one-line error, not a stack trace", async () => {
     const cli = harness(() => json(null));
     expect(await cli.run("scans", "wait", "scan_1")).toBe(1);
@@ -356,6 +402,12 @@ describe("drydock CLI", () => {
     const staged = harness(() => json({ scan: { id: "scan_11" } }, { status: 202 }));
     expect(await staged.run("scans", "start", "--stage", "stage-abc")).toBe(0);
     expect(JSON.parse(staged.calls[0].body ?? "")).toEqual({ stageId: "stage-abc" });
+
+    const rerun = harness(() =>
+      json({ scan: { id: "scan_11", status: "complete" }, existing: true }, { status: 200 }),
+    );
+    expect(await rerun.run("scans", "start", "--stage", "stage-abc")).toBe(0);
+    expect(rerun.stdout).toContain("already reviewing scan_11");
   });
 
   test("a read-only key is told it needs scan access, without echoing the key", async () => {

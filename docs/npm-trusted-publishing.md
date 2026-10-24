@@ -1,4 +1,4 @@
-# npm trusted publishing: enforcing the configured workflow path
+# npm trusted publishing: narrowing publication to the configured workflow path
 
 The [npm workflow gate](./workflow-gates.md#npm-workflow-gate-notes) pauses a
 publish while Drydock reviews the exact bytes. On its own it is a checkpoint on
@@ -16,6 +16,10 @@ trusted publisher to `npm stage publish` and let npm hold the candidate instead
 of GitHub holding the job. See
 [`npm-staged-publishing.md`](./npm-staged-publishing.md) for that recipe and a
 comparison of **Workflow Gate — enforced** with **Stage Watchtower — advisory**.
+The two compose: a stage-only publisher pinned to the gate environment, with
+the protected job running `npm stage publish`, gives an enforced review before
+npm holds the bytes and a staged review that is bound back to the gate
+([gated staging](./npm-staged-publishing.md#gated-staging-compose-both)).
 
 This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in
@@ -89,7 +93,7 @@ are the `id-token: write` permission and the absence of any token secret.
 | `npm publish` with any token — laptop, CI secret, stolen token | Publishing access disallows tokens                                                                                                                      |
 | OIDC publish from another repository, workflow file, or a fork | Trusted publisher claim mismatch; npm refuses the exchange                                                                                              |
 | Editing the workflow to drop `environment: production`         | Environment is pinned in the trusted publisher config; the OIDC exchange fails                                                                          |
-| Running the publish job without (or against) a gate decision   | The deployment-protection rule holds the job; a Drydock rejection fails the run closed                                                                  |
+| Running the publish job without (or against) a gate decision   | GitHub's deployment-protection rule holds the job; GitHub fails the run on a Drydock rejection                                                          |
 | Rebuilding or swapping the tarball after approval              | The recommended publish job rejects changed bytes with `sha256sum --check --strict`; this assumes the publish job and its checksum check remain trusted |
 | A repo admin approving the deployment past the rule in the UI  | Admin bypass unchecked on the environment                                                                                                               |
 

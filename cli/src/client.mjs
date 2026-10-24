@@ -10,15 +10,21 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export class CliError extends Error {
   /**
+   * `retryable` marks a failure a later identical request may not repeat: the
+   * origin was unreachable, rate limited (429), or failed (5xx).
    * @param {string} message
    * @param {number} [exitCode]
-   * @param {number} [status] the HTTP status, when the server answered with an error
+   * @param {{ retryable?: boolean; retryAfterMs?: number | null; status?: number; code?: string }} [details]
+   *   `status` and `code` are the HTTP status and the error body's `code`, when the server answered
    */
-  constructor(message, exitCode = 1, status) {
+  constructor(message, exitCode = 1, { retryable = false, retryAfterMs = null, status, code } = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -87,6 +93,7 @@ export function pathSegment(value, label) {
  * @property {boolean} [authenticated]
  * @property {"GET" | "POST"} [method]
  * @property {unknown} [body] sent as JSON; omitted entirely when undefined
+ * @property {number} [timeoutMs]
  */
 
 /**
@@ -98,7 +105,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
    * @param {RequestOptions} [options]
    * @returns {Promise<ApiResponse>}
    */
-  async function request(path, { authenticated = true, method = "GET", body } = {}) {
+  async function request(path, { authenticated = true, method = "GET", body, timeoutMs } = {}) {
     /** @type {Record<string, string>} */
     const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
     if (authenticated) {
@@ -112,16 +119,27 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
       init.body = JSON.stringify(body);
     }
     let res;
+    let text;
     try {
-      res = await send(`${baseUrl}${path}`, init);
+      res = await send(`${baseUrl}${path}`, {
+        ...init,
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
+      text = await res.text();
     } catch (err) {
-      throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`);
+      throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`, 1, { retryable: true });
     }
-    const text = await res.text();
     if (res.status >= 300 && res.status < 400) {
       throw new CliError(`${baseUrl} answered with a redirect; check the Drydock URL`);
     }
-    if (!res.ok) throw new CliError(errorMessage(res.status, text, res.headers), 1, res.status);
+    if (!res.ok) {
+      throw new CliError(errorMessage(res.status, text, res.headers), 1, {
+        retryable: res.status === 429 || res.status >= 500,
+        retryAfterMs: retryAfterMs(res.headers.get("retry-after")),
+        status: res.status,
+        code: errorCode(text),
+      });
+    }
     return { status: res.status, headers: res.headers, text };
   }
 
@@ -143,6 +161,20 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
 }
 
 /**
+ * The error body's stable `code`, for callers that act on it.
+ * @param {string} text
+ * @returns {string | undefined}
+ */
+function errorCode(text) {
+  try {
+    const body = JSON.parse(text);
+    return typeof body?.code === "string" ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * @param {number} status
  * @param {string} text
  * @param {Headers} headers
@@ -157,6 +189,9 @@ function errorMessage(status, text, headers) {
   }
   const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
   const code = typeof body.code === "string" ? ` (${body.code})` : "";
+  // The decision route's two-factor step-up answers 401 like the session one;
+  // the key itself was accepted.
+  if (typeof body.code === "string" && body.code.startsWith("two_factor_")) return detail;
   if (status === 401) return `the API key was rejected: ${detail}${code}`;
   if (body.code === "api_key_access_insufficient" && body.requiredAccess === "decide_staged") {
     return "this API key cannot record decisions; drydock approve needs a key with decide_staged access (Organization settings → Integrations → API keys)";
@@ -169,6 +204,19 @@ function errorMessage(status, text, headers) {
     return `rate limited${retry ? `; retry after ${retry}s` : ""}: ${detail}`;
   }
   return `${detail}${code}`;
+}
+
+/**
+ * `Retry-After` as delta-seconds or an HTTP date, in milliseconds from now.
+ * @param {string | null} value
+ * @returns {number | null}
+ */
+function retryAfterMs(value, now = Date.now()) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? null : Math.max(0, date - now);
 }
 
 /** @param {unknown} err */

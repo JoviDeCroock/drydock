@@ -12,6 +12,13 @@ import {
 // Objects are loose on purpose: they pin the fields scripts may rely on, and
 // any field not listed here is not part of the public contract.
 
+/**
+ * Every schema here with an id becomes a reusable `components.schemas` entry,
+ * and references to it render as `$ref`s. A dedicated registry keeps ids that
+ * any other module tags on zod's global registry out of the document.
+ */
+export const openApiSchemas = z.registry<{ id: string }>();
+
 const isoDateTime = z.string().describe("ISO 8601 timestamp");
 const nullableIsoDateTime = isoDateTime.nullable();
 
@@ -32,7 +39,8 @@ const riskSummary = z
     contextFindingCount: z.number().int(),
     unknownFindingCount: z.number().int(),
   })
-  .describe("Risk split into the release delta and pre-existing package context");
+  .describe("Risk split into the release delta and pre-existing package context")
+  .register(openApiSchemas, { id: "RiskSummary" });
 
 const scanIdentity = {
   id: z.string(),
@@ -55,25 +63,27 @@ const scanIdentity = {
   updatedAt: isoDateTime,
 };
 
-const finding = z.looseObject({
-  severity,
-  file: z.string(),
-  line: z.number().int().nullable().optional(),
-  ruleId: z.string().nullable().optional(),
-  ruleVersion: z.string().nullable().optional(),
-  source: z.enum(["rule", "ai"]).optional(),
-  diffStatus: z.string().nullable().optional(),
-  releaseDelta: z.boolean().nullable().optional(),
-  evidence: z.string(),
-  reason: z.string(),
-});
+const finding = z
+  .looseObject({
+    severity,
+    file: z.string(),
+    line: z.number().int().nullable().optional(),
+    ruleId: z.string().nullable().optional(),
+    ruleVersion: z.string().nullable().optional(),
+    source: z.enum(["rule", "ai"]).optional(),
+    diffStatus: z.string().nullable().optional(),
+    releaseDelta: z.boolean().nullable().optional(),
+    evidence: z.string(),
+    reason: z.string(),
+  })
+  .register(openApiSchemas, { id: "Finding" });
 
 export const ErrorResponse = z
   .looseObject({
     error: z.string(),
     code: z.string().optional().describe("Stable reason a client can act on"),
   })
-  .meta({ id: "Error" });
+  .register(openApiSchemas, { id: "Error" });
 
 export const ApiKeyIdentity = z
   .looseObject({
@@ -90,15 +100,15 @@ export const ApiKeyIdentity = z
         "`read` keys only read; `scan` keys can also start reviews; `decide_staged` keys can also record staged-publish decisions",
       ),
   })
-  .meta({ id: "ApiKeyIdentity" });
+  .register(openApiSchemas, { id: "ApiKeyIdentity" });
 
 export const StartScanRequest = z
   .union([
     z
-      .object({ stageId: z.string().describe("npm stage id from `npm stage publish`") })
+      .looseObject({ stageId: z.string().describe("npm stage id from `npm stage publish`") })
       .describe("Review a staged npm publish; needs the organization's npm token"),
     z
-      .object({
+      .looseObject({
         ecosystem: z.enum(["npm", "pypi", "vscode", "atpm"]),
         packageName: z.string(),
         version: z.string(),
@@ -109,14 +119,14 @@ export const StartScanRequest = z
       })
       .describe("Review an already-published release"),
   ])
-  .meta({ id: "StartScanRequest" });
+  .register(openApiSchemas, { id: "StartScanRequest" });
 
 export const StagedDecisionRequest = z
-  .object({
+  .looseObject({
     decision: z.enum(SCAN_DECISIONS),
     reason: z.string().max(500).optional().describe("Shown with the decision in Drydock"),
   })
-  .meta({ id: "StagedDecisionRequest" });
+  .register(openApiSchemas, { id: "StagedDecisionRequest" });
 
 export const StartedScan = z
   .looseObject({
@@ -129,8 +139,11 @@ export const StartedScan = z
       status: scanStatus,
     }),
     queued: z.boolean(),
+    existing: z
+      .boolean()
+      .describe("True when the stage already had a review and this request started nothing"),
   })
-  .meta({ id: "StartedScan" });
+  .register(openApiSchemas, { id: "StartedScan" });
 
 export const StagedPublishDiscovery = z
   .looseObject({
@@ -146,7 +159,7 @@ export const StagedPublishDiscovery = z
       }),
     ),
   })
-  .meta({ id: "StagedPublishDiscovery" });
+  .register(openApiSchemas, { id: "StagedPublishDiscovery" });
 
 export const ScanList = z
   .looseObject({
@@ -161,7 +174,7 @@ export const ScanList = z
     filter: z.enum(SCAN_DECISION_FILTERS),
     limit: z.number().int(),
   })
-  .meta({ id: "ScanList" });
+  .register(openApiSchemas, { id: "ScanList" });
 
 export const ScanOverview = z
   .looseObject({
@@ -177,7 +190,7 @@ export const ScanOverview = z
       medianDecisionMs: z.number().nullable(),
     }),
   })
-  .meta({ id: "ScanOverview" });
+  .register(openApiSchemas, { id: "ScanOverview" });
 
 export const ScanDetail = z
   .looseObject({
@@ -186,11 +199,18 @@ export const ScanDetail = z
     findings: z.array(finding),
     riskSummary: riskSummary.nullable(),
   })
-  .meta({ id: "ScanDetail" });
+  .register(openApiSchemas, { id: "ScanDetail" });
 
 export const ScanStatus = z
-  .looseObject({ scan: z.looseObject(scanIdentity) })
-  .meta({ id: "ScanStatus" });
+  .looseObject({
+    scan: z.looseObject(scanIdentity),
+    riskSummary: riskSummary
+      .nullable()
+      .describe(
+        "Null until the review completes, and when no release delta was graded (no baseline compared, or a review recorded before the split); fall back to `scan.risk` then",
+      ),
+  })
+  .register(openApiSchemas, { id: "ScanStatus" });
 
 export const ReportExport = z
   .looseObject({
@@ -214,7 +234,7 @@ export const ReportExport = z
     findings: z.array(finding),
   })
   .describe("Canonical, stable-ordered export of a completed review (`drydock.report.v2`)")
-  .meta({ id: "ReportExport" });
+  .register(openApiSchemas, { id: "ReportExport" });
 
 export const ReleaseReceipt = z
   .looseObject({
@@ -243,7 +263,7 @@ export const ReleaseReceipt = z
     }),
   })
   .describe("Release Receipt v1; see docs/release-receipts.md")
-  .meta({ id: "ReleaseReceipt" });
+  .register(openApiSchemas, { id: "ReleaseReceipt" });
 
 export const PackageReleases = z
   .looseObject({
@@ -275,7 +295,7 @@ export const PackageReleases = z
     nextCursor: z.string().nullable(),
     limit: z.number().int(),
   })
-  .meta({ id: "PackageReleases" });
+  .register(openApiSchemas, { id: "PackageReleases" });
 
 export const WorkflowGate = z
   .looseObject({
@@ -301,7 +321,7 @@ export const WorkflowGate = z
       decidedAt: nullableIsoDateTime,
     }),
   })
-  .meta({ id: "WorkflowGate" });
+  .register(openApiSchemas, { id: "WorkflowGate" });
 
 export const PublicPackageVersions = z
   .looseObject({
@@ -311,7 +331,7 @@ export const PublicPackageVersions = z
     versions: z.array(z.unknown()),
     suggested: z.unknown(),
   })
-  .meta({ id: "PublicPackageVersions" });
+  .register(openApiSchemas, { id: "PublicPackageVersions" });
 
 export const PublicPackageDiff = z
   .looseObject({
@@ -325,8 +345,8 @@ export const PublicPackageDiff = z
     notices: z.array(z.string()),
     cachedAt: isoDateTime,
   })
-  .meta({ id: "PublicPackageDiff" });
+  .register(openApiSchemas, { id: "PublicPackageDiff" });
 
 export const OpenApiDocument = z
   .looseObject({ openapi: z.string(), info: z.looseObject({}), paths: z.looseObject({}) })
-  .meta({ id: "OpenApiDocument" });
+  .register(openApiSchemas, { id: "OpenApiDocument" });

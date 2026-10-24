@@ -769,6 +769,9 @@ export const publicationObservations = sqliteTable(
         "published_without_approval",
         "published_despite_rejection",
         "artifact_mismatch",
+        // The published bytes match a completed review nobody decided, which
+        // graded the release low risk: recorded, but never an alert.
+        "undecided_low_risk",
         "unknown",
       ],
     }).notNull(),
@@ -887,6 +890,47 @@ export const publicationAlerts = sqliteTable(
     // Claimed by the check delivering it, so overlapping checks cannot send it
     // twice; a claim older than the delivery lease may be taken over.
     deliveryClaimedAt: integer("delivery_claimed_at", { mode: "timestamp_ms" }),
+    /**
+     * The post-release review of the published bytes (a published-pair scan)
+     * started from this alert, and what the organization decided on it. The
+     * observation's status stays the historical verdict — the release was
+     * published without prior approval — and the decision is recorded here,
+     * alongside it, never over it. On the alert rather than the observation
+     * because the ledger outlives a stopped watch, and so must the decision.
+     */
+    reviewScanId: text("review_scan_id").references(() => scans.id, { onDelete: "set null" }),
+    reviewRequestedAt: integer("review_requested_at", { mode: "timestamp_ms" }),
+    reviewRequestedBy: text("review_requested_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    resolution: text("resolution", {
+      enum: ["approved_after_release", "declined_after_release"],
+    }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    resolvedBy: text("resolved_by").references(() => user.id, { onDelete: "set null" }),
+    /**
+     * Whether the resolution may speak on the public badge (`applied`), or why
+     * not. Decided when the review is decided: the organization must be a
+     * registry-verified publisher of the name, and the reviewed tarball's
+     * digest must equal the one the monitor recorded for the release. The
+     * badge re-checks the publisher rule when it reads this.
+     */
+    resolutionBadge: text("resolution_badge", {
+      enum: [
+        "applied",
+        "not_public_npm",
+        "not_a_verified_publisher",
+        "digests_unavailable",
+        "digests_differ",
+      ],
+    }),
+    /**
+     * Whether the reviewed tarball's digests equal the ones the monitor
+     * recorded for the release, compared whatever the badge decides. Only an
+     * approval of a `match` settles the alert: approving other bytes, or bytes
+     * that could not be compared, says nothing about what npm published.
+     */
+    reviewedBytes: text("reviewed_bytes", { enum: ["match", "differ", "unavailable"] }),
   },
   (table) => [
     uniqueIndex("publication_alerts_org_release").on(
@@ -894,5 +938,10 @@ export const publicationAlerts = sqliteTable(
       table.packageName,
       table.version,
     ),
+    index("publication_alerts_review_scan").on(table.reviewScanId),
+    // The anonymous badge reads post-release decisions by package name alone.
+    index("publication_alerts_package_badge").on(table.packageName, table.resolutionBadge),
+    index("publication_alerts_review_requested_by").on(table.reviewRequestedBy),
+    index("publication_alerts_resolved_by").on(table.resolvedBy),
   ],
 );

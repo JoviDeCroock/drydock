@@ -5,6 +5,7 @@ const dbMock = vi.hoisted(() => ({
   createDb: vi.fn(() => ({})),
   createScanJob: vi.fn(),
   enforceRateLimit: vi.fn(),
+  findLiveStageReviewId: vi.fn(),
   getNpmConnection: vi.fn(),
   recordScanEvent: vi.fn(),
 }));

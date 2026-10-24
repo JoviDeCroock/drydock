@@ -14,7 +14,7 @@ import {
   reconcileDuePublicationEnrollments,
   reconcilePublicationWatches,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
-import { npmPublicationMonitor } from "../../server/lib/ecosystems/npm/publication-monitor";
+import { npmPublicationMonitor } from "../../server/lib/ecosystems/npm/publication";
 import worker from "../../server";
 import { seedPublicationWatches, seedUser } from "./helpers/seed";
 
