@@ -14,6 +14,7 @@ import {
   enablePublicShare,
   readPublicShare,
   revokePublicShare,
+  scanPublicDisclosureAllowed,
   setThreatFeedListing,
 } from "../../db/scans";
 import {
@@ -101,7 +102,11 @@ scanSharingRoutes.post("/:id/share", async (c) => {
       share = updated;
     }
   }
-  return c.json({ share: publicShareResponse(c, share) });
+  const awaitingPublication = !(await scanPublicDisclosureAllowed(db, {
+    scanId: c.req.param("id"),
+    organizationId,
+  }));
+  return c.json({ share: publicShareResponse(c, share, awaitingPublication) });
 });
 
 scanSharingRoutes.delete("/:id/share", async (c) => {
@@ -136,6 +141,7 @@ function publicShareResponse(
     publicFeedListedAt: Date | null;
     publicShareIncludesFiles: boolean;
   },
+  awaitingPublication: boolean,
 ) {
   return {
     token: share.publicShareToken,
@@ -143,6 +149,9 @@ function publicShareResponse(
     sharedAt: share.publicSharedAt,
     threatFeedListedAt: share.publicFeedListedAt,
     includesFiles: share.publicShareIncludesFiles,
+    // The link answers 404 to everyone until the release is public; the
+    // public route cannot say so without becoming a pending-release oracle.
+    awaitingPublication,
   };
 }
 

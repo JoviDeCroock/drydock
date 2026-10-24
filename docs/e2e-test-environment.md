@@ -46,7 +46,11 @@ starts the same harness and then runs `scripts/e2e-seed.mjs`, which signs up a
 throwaway account, connects the fake registry, runs the implicit node-gyp
 fixture through a full scan, and shares the completed review — all over the
 app's own HTTP API, with no real credentials. It prints the login
-email/password, the scan URL, and the public report URL. Against an
+email/password, the scan URL, and the public report URL. That URL answers
+`404` until npm's status for the version is read, because no public route
+serves a review before its release is public; the fixture registry reports
+the implicit node-gyp version `published`, so **Check npm** on the dashboard
+makes it live. Against an
 already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
 fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
 arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
