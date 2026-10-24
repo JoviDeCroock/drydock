@@ -2,7 +2,6 @@ import { Hono, type Context } from "hono";
 import { guardRateLimit } from "../lib/rate-limit";
 import { escapeHtmlText } from "../lib/platform/html-escape";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
-import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
@@ -10,6 +9,7 @@ import { recordProductEvent } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
+  publicDiffEgressAllowed,
   PublicDiffError,
   readPublicDiffCache,
   remainingCacheTtlSeconds,
@@ -49,12 +49,8 @@ export function publicDiffVersionCacheControl(
     : `public, max-age=${maxAge}, stale-while-revalidate=${VERSION_LIST_STALE_TTL_SECONDS}`;
 }
 
-// A custom NPM_REGISTRY signals a private/self-hosted deployment, so the whole
-// anonymous surface stays off there — including PyPI and atpm, which would
-// otherwise still reach out to the public internet from a private install.
 publicDiffRoutes.use("*", async (c, next) => {
-  const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
-  if (configuredRegistry !== PUBLIC_NPM_REGISTRY) {
+  if (!publicDiffEgressAllowed(c.env)) {
     return c.json({ error: "public package diff is disabled for custom registries" }, 404);
   }
   await next();

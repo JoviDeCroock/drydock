@@ -48,3 +48,17 @@ export function settingsUrl(env: Cloudflare.Env, organizationId?: string): strin
 export function inviteAcceptUrl(env: Cloudflare.Env, token: string): string | null {
   return appUrl(env, "/dashboard/invite", { token });
 }
+
+export function dependencyReviewUrl(
+  env: Cloudflare.Env,
+  reviewId: string,
+  organizationId: string,
+): string | null {
+  return appUrl(env, `/dashboard/dependency-reviews/${encodeURIComponent(reviewId)}`, {
+    org: organizationId,
+  });
+}
+
+export function publicDiffUrl(env: Cloudflare.Env, path: string): string | null {
+  return appUrl(env, path, {});
+}

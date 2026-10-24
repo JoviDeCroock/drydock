@@ -8,16 +8,16 @@ import type { OrganizationModel } from "../../models/organization";
 
 type OrganizationModelInstance = InstanceType<typeof OrganizationModel>;
 
-export type AppSection = "reviews" | "settings";
+export type AppSection = "reviews" | "dependencies" | "settings";
 
 /**
  * The one header every signed-in page carries: where you can go (reviews,
- * settings), which organization you are in, and who you are. Pages differ only
- * in which section is current and in what switching organizations means for
- * them — a list reloads, a review that belongs to one organization leaves for
- * the new organization's reviews — so those are the inputs. A page without an
- * organization scope (account) omits the switcher rather than showing one that
- * changes nothing on it.
+ * dependency reviews, settings), which organization you are in, and who you
+ * are. Pages differ only in which section is current and in what switching
+ * organizations means for them — a list reloads, a review that belongs to one
+ * organization leaves for the new organization's reviews — so those are the
+ * inputs. A page without an organization scope (account) omits the switcher
+ * rather than showing one that changes nothing on it.
  */
 export function AppHeaderActions({
   current,
@@ -41,6 +41,9 @@ export function AppHeaderActions({
       <nav aria-label="Workspace" class="flex items-center gap-1">
         <SectionLink href="/dashboard" current={current === "reviews"}>
           Reviews
+        </SectionLink>
+        <SectionLink href="/dashboard/dependency-reviews" current={current === "dependencies"}>
+          Dependencies
         </SectionLink>
         <SectionLink href="/dashboard/settings" current={current === "settings"}>
           Settings

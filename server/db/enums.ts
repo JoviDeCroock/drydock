@@ -28,4 +28,8 @@ export type GithubAppInstallationStatus = "active" | "suspended" | "uninstalled"
 
 export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 
+export type DependencyReviewStatus = "queued" | "running" | "completed" | "failed" | "superseded";
+
+export type DependencyReviewConclusionValue = "clear" | "held" | "approved";
+
 export type WorkflowGateDecision = "approved" | "rejected";

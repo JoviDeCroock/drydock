@@ -243,6 +243,16 @@ publish the reviewed artifact bundle after approval. See
 [`workflow-gates.md`](workflow-gates.md) and
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
 
+## Dependency review
+
+Dependency review uses the same GitHub App. Add the **Checks: read and write**,
+**Pull requests: read**, and **Contents: read** repository permissions and
+subscribe to the **Pull request** and **Check run** events. GitHub then asks
+each installation's owner to accept the new permissions; reviews in an
+installation that hasn't accepted fail to create their check run. Turn the
+feature on per organization in Settings → Integrations. See
+[`dependency-review.md`](dependency-review.md).
+
 ## Slack notifications
 
 Slack notifications require a Slack OAuth app. Register the redirect URL:
