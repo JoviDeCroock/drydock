@@ -154,8 +154,9 @@ export default function LandingPage() {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <RegistryCard title="Workflow Gate — enforced: npm, PyPI & VS Code">
             Configure a GitHub Environment to hold your publish job after CI builds and uploads the
-            artifacts. Approval lets that job continue with its own credentials; rejection blocks
-            it. Other publication paths remain outside this gate.
+            artifacts. GitHub lets that job continue with its own credentials when you approve, and
+            blocks it when you reject. Your repository admins control that rule, and other
+            publication paths remain outside this gate.
           </RegistryCard>
           <RegistryCard title="Stage Watchtower — advisory: npm">
             A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}

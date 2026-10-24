@@ -68,8 +68,11 @@ plan against it, as a view count.
 What it does answer well: how many distinct packages have a live badge, what
 share of them are green versus grey (so "maintainers are not approving" is
 visible as a number), and how much of it comes from the no-opt-in `default`
-route versus a deliberate `listed` one. The `outcome` and `route` blobs are
-there for exactly those two questions.
+route versus a deliberate `listed` one, or a publisher's decision after release
+(`post_release`). The `outcome` and `route` blobs are there for exactly those two
+questions; `superseded_blocked` is a release its publisher declined after npm
+published it, or rejected before npm published it anyway, and `superseded_unapproved` is a release its publisher's own
+monitor saw npm publish without the publisher's approval, not yet decided.
 
 Positionally, `blob5` is the package name, `blob6` the dist-tag, `blob7` the
 outcome, and `blob8` the route. The name, tag, and route are recorded only when
@@ -195,6 +198,14 @@ through the same loader and is called once per file the visitor opens, so
 counting it would report one page view as thirty and skew the cache column
 toward `hit` (only the first request of a session can miss).
 
+**`blob8` on `public_diff.viewed` is the client.** `dependency-pr` is the
+dependency-PR comment workflow fetching a pair from CI, once per PR push
+(`docs/dependency-pr-diff-links.md`). Everything else is `other`. Filter
+`blob8 != 'dependency-pr'` for people reading diffs. The value comes from the
+caller's `x-drydock-client` header, so it separates traffic shapes and proves
+nothing. Rows written before the dimension existed have no `blob8`, and the
+workflow did not fetch summaries then.
+
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at
 medium and `displayedAiResult` refuses to render it as "low risk / nothing
@@ -267,7 +278,9 @@ agent attempt can report zero steps when the provider supplies no usage, so use
 AI Gateway request metrics as the exact RPM source and Analytics Engine as the
 privacy-preserving routing/fallback source. Keep Gateway metadata logging and
 the per-request one-attempt override enabled, but keep payload collection off so
-private package evidence is never retained in request or response logs.
+private package evidence is never retained in request or response logs. Every
+request enforces that itself with `cf-aig-collect-log-payload: false`, so a
+dashboard setting cannot turn payload logging back on.
 
 ## Optional binding
 
@@ -278,6 +291,7 @@ emits one. Local dev, the test suite, and self-hosted deployments that omit the
 block in `docs/examples/wrangler.self-host.jsonc` behave exactly as they did before.
 
 `publication.discrepancy` counts first-created publication alerts. Its positional
-payload is organization, ecosystem, discrepancy status, and zero duration; it contains
+payload is organization, ecosystem, discrepancy status, the observation's reason code
+(empty when none, e.g. `ai_flagged_without_decision`), and zero duration; it contains
 no package name, tarball content, or credentials. Rechecks and acknowledgments do not
 increment it.

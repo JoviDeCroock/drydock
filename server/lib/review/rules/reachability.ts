@@ -1,6 +1,6 @@
 import type { PackageJsonSummary } from "../serialize";
 import type { CodePatternSet, FileRecord } from "../types";
-import { tokenizeJs } from "../../platform/js-lexer";
+import { tokenizeJsWithinBudget } from "../../platform/js-lexer";
 import { isTestPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
@@ -60,6 +60,7 @@ export function installReachablePaths(
   implicitScripts: Record<string, string>,
   codePatternSet: CodePatternSet | undefined = "javascript",
   executionEvidenceOnly = false,
+  lexing?: ReachabilityLexing,
 ): Set<string> {
   if (codePatternSet === "python") {
     // pip executes an sdist's setup.py to install it; there is no manifest-
@@ -70,13 +71,21 @@ export function installReachablePaths(
     ? lifecycleExecutionSeedPaths(files, scripts, implicitScripts)
     : lifecycleScriptSeedPaths(files, scripts, implicitScripts);
   if (!seeds.length) return new Set();
-  return javascriptReachableFrom(files, seeds, executionEvidenceOnly);
+  return javascriptReachableFrom(files, seeds, executionEvidenceOnly, lexing);
+}
+
+// Set when an execution-evidence walk could not lex a file and so counted
+// every specifier-shaped match in it: the graph is then a superset, which is
+// the safe reading for "reachable" but not for "already reachable before".
+export interface ReachabilityLexing {
+  gaveUp: boolean;
 }
 
 export function javascriptReachableFrom(
   files: FileRecord[],
   seedCandidates: string[],
   executionEvidenceOnly = false,
+  lexing?: ReachabilityLexing,
 ): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
@@ -99,8 +108,12 @@ export function javascriptReachableFrom(
     // String-piece imports are statically resolvable just like the capability
     // patterns that scan their normalized source. Runtime expressions stay unknown.
     const specifiers = new Set([
-      ...relativeSpecifiers(file.textSample, executionEvidenceOnly),
-      ...relativeSpecifiers(normalizeCodeForScanning(file.textSample), executionEvidenceOnly),
+      ...relativeSpecifiers(file.textSample, executionEvidenceOnly, lexing),
+      ...relativeSpecifiers(
+        normalizeCodeForScanning(file.textSample),
+        executionEvidenceOnly,
+        lexing,
+      ),
     ]);
     for (const specifier of specifiers) {
       const resolved = resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
@@ -196,7 +209,9 @@ function pythonModuleCandidate(sourcePath: string, moduleName: string): string |
     segments = [...rootSegments];
     remainder = moduleName;
   }
-  if (remainder) segments.push(...remainder.split(".").filter(Boolean));
+  if (remainder) {
+    for (const segment of remainder.split(".")) if (segment) segments.push(segment);
+  }
   return normalizePathSegments(segments.join("/"));
 }
 
@@ -241,7 +256,7 @@ function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] 
       if (typeof target === "string") candidates.push(target);
     }
   }
-  candidates.push(...exportTargets(packageJson.exports));
+  for (const target of exportTargets(packageJson.exports)) candidates.push(target);
   if (typeof packageJson.browser === "string") candidates.push(packageJson.browser);
   return candidates;
 }
@@ -304,14 +319,17 @@ export function scriptCommandTokens(command: string): string[] {
   );
 }
 
-function relativeSpecifiers(text: string, executionEvidenceOnly = false): string[] {
+function relativeSpecifiers(
+  text: string,
+  executionEvidenceOnly = false,
+  lexing?: ReachabilityLexing,
+): string[] {
   const specifiers: string[] = [];
-  const codeStarts = executionEvidenceOnly
-    ? new Set(
-        tokenizeJs(text)
-          .filter((token) => token.type === "ident")
-          .map((token) => token.start),
-      )
+  // A source the lexer gives up on keeps every match.
+  const tokens = executionEvidenceOnly ? tokenizeJsWithinBudget(text) : null;
+  if (executionEvidenceOnly && !tokens && lexing) lexing.gaveUp = true;
+  const codeStarts = tokens
+    ? new Set(tokens.filter((token) => token.type === "ident").map((token) => token.start))
     : null;
   for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;

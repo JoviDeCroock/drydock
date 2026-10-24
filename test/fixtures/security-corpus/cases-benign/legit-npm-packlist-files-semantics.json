@@ -1,0 +1,154 @@
+{
+  "id": "legit-npm-packlist-files-semantics",
+  "title": "Files allowlist written with npm-packlist syntax the matcher must read like npm (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-build-infrastructure",
+  "source": "benign-popular",
+  "intent": "Modeled on manifests in the 2026-10 npm sweep (tsup, ts-node, lit, rxjs, better-sqlite3, knex, yargs, npm itself): leading-slash entries, `/dist/` directory entries with a `!` exclusion, `bin/*` (npm widens it to `bin/**`), brace sets, `[ch]` classes, a `!(...)` extglob, a literal file that a later negation cannot drop, a ./-prefixed bin target, bundled dependencies under node_modules, a nested README, and a root CHANGELOG. Every file here is one npm pack emits, so file.outside-files-list must stay quiet for all of them. The one file outside the list, an unreferenced readme-template.md (nx 23.3.0 ships one), is documentation nothing loads and is disclosed at low severity only.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "packlist-shapes",
+    "version": "4.0.0",
+    "main": "dist/index.js",
+    "bin": { "packlist-shapes": "./cli.js" },
+    "bundleDependencies": ["tiny-dep"],
+    "files": [
+      "/dist/",
+      "!/dist/test",
+      "bin/*",
+      "/index.{d.ts,js}",
+      "src/**/*.[ch]pp",
+      "lib/cjs/**/!(*.tsbuildinfo)",
+      "browser.d.ts",
+      "!*.d.ts"
+    ]
+  },
+  "stagedPackageJson": {
+    "name": "packlist-shapes",
+    "version": "4.1.0",
+    "main": "dist/index.js",
+    "bin": { "packlist-shapes": "./cli.js" },
+    "bundleDependencies": ["tiny-dep"],
+    "files": [
+      "/dist/",
+      "!/dist/test",
+      "bin/*",
+      "/index.{d.ts,js}",
+      "src/**/*.[ch]pp",
+      "lib/cjs/**/!(*.tsbuildinfo)",
+      "browser.d.ts",
+      "!*.d.ts"
+    ]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 300,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"packlist-shapes\",\"version\":\"4.0.0\",\"main\":\"dist/index.js\",\"bin\":{\"packlist-shapes\":\"./cli.js\"},\"bundleDependencies\":[\"tiny-dep\"],\"files\":[\"/dist/\",\"!/dist/test\",\"bin/*\",\"/index.{d.ts,js}\",\"src/**/*.[ch]pp\",\"lib/cjs/**/!(*.tsbuildinfo)\",\"browser.d.ts\",\"!*.d.ts\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 27,
+      "sha256": "dist-index-v1",
+      "flags": [],
+      "textSample": "module.exports = () => 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 300,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"packlist-shapes\",\"version\":\"4.1.0\",\"main\":\"dist/index.js\",\"bin\":{\"packlist-shapes\":\"./cli.js\"},\"bundleDependencies\":[\"tiny-dep\"],\"files\":[\"/dist/\",\"!/dist/test\",\"bin/*\",\"/index.{d.ts,js}\",\"src/**/*.[ch]pp\",\"lib/cjs/**/!(*.tsbuildinfo)\",\"browser.d.ts\",\"!*.d.ts\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 27,
+      "sha256": "dist-index-v1",
+      "flags": [],
+      "textSample": "module.exports = () => 1;\n"
+    },
+    {
+      "path": "dist/chunk-6IOGQ2V3.js",
+      "size": 22,
+      "sha256": "dist-chunk",
+      "flags": [],
+      "textSample": "exports.chunk = true;\n"
+    },
+    {
+      "path": "dist/README.md",
+      "size": 18,
+      "sha256": "dist-readme",
+      "flags": [],
+      "textSample": "# Build output\n"
+    },
+    {
+      "path": "bin/utils/constants.js",
+      "size": 24,
+      "sha256": "bin-constants",
+      "flags": [],
+      "textSample": "exports.NAME = 'shapes';\n"
+    },
+    {
+      "path": "index.js",
+      "size": 39,
+      "sha256": "root-index",
+      "flags": [],
+      "textSample": "module.exports = require('./dist');\n"
+    },
+    {
+      "path": "src/util/binder.cpp",
+      "size": 20,
+      "sha256": "binder-cpp",
+      "flags": [],
+      "textSample": "int bind() { return 0; }\n"
+    },
+    {
+      "path": "lib/cjs/internal/Action.js",
+      "size": 24,
+      "sha256": "lib-action",
+      "flags": [],
+      "textSample": "exports.Action = class {};\n"
+    },
+    {
+      "path": "browser.d.ts",
+      "size": 25,
+      "sha256": "browser-dts",
+      "flags": [],
+      "textSample": "export declare const x: 1;\n"
+    },
+    {
+      "path": "cli.js",
+      "size": 34,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nrequire('./dist');\n"
+    },
+    {
+      "path": "node_modules/tiny-dep/index.js",
+      "size": 23,
+      "sha256": "tiny-dep",
+      "flags": [],
+      "textSample": "module.exports = 'dep';\n"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "size": 14,
+      "sha256": "changelog",
+      "flags": [],
+      "textSample": "## 4.1.0\n- x\n"
+    },
+    {
+      "path": "readme-template.md",
+      "size": 22,
+      "sha256": "readme-template",
+      "flags": [],
+      "textSample": "# <%= projectName %>\n"
+    }
+  ]
+}

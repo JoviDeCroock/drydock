@@ -8,6 +8,12 @@ fully derivable URL — `/diff/<name>/<from>/<to>` for npm,
 call. This is a consumer-side distribution surface: it puts "Read the diff" in
 front of reviewers at the moment they are deciding whether to merge a bump.
 
+The PR comment workflow goes one step further and puts the diff itself in the
+PR: for each bumped npm or PyPI dependency, Drydock's headline (release risk;
+files added, removed, and changed; new install scripts, dependencies, and native
+binaries) and the top release findings with their rule ids, next to the link.
+Review already happens in the PR, so that is where the diff should be.
+
 The user-facing setup instructions live on the Docs page
 (`src/pages/Docs/index.tsx`, "Diffs in dependency PRs"). This file documents the
 contracts and the operational posture.
@@ -56,22 +62,44 @@ Shape notes, so edits keep the links correct:
 - Triple-stash (`{{{…}}}`) follows upstream preset convention for URLs; Renovate
   compiles templates with `noEscape`, so it is stylistic, not load-bearing.
 
-## Dependabot
+## PR comment workflow (Dependabot and Renovate)
 
-Dependabot has no PR-body templating. The documented path is a small workflow
-using `dependabot/fetch-metadata` plus a comment upsert — copy-paste YAML on the
-Docs page, no Drydock-owned action required. The workflow never checks out or
-executes PR code, so granting `pull-requests: write` to the Dependabot-triggered
-run is safe. Note that Dependabot-triggered `pull_request` runs honor the
-workflow-level `permissions` key (GitHub changelog 2022-02-10); the
-`dependabot/fetch-metadata` README still recommends `pull_request_target` for
-write access, but GitHub's own Dependabot automation tutorial uses exactly this
-`pull_request` + `permissions` shape.
+Dependabot has no PR-body templating, and a Renovate PR body is rendered by
+Renovate without any chance to fetch. The documented path for both is the
+reusable workflow `.github/workflows/drydock-diff-link.yml`:
+`dependabot/fetch-metadata` for Dependabot PRs, then one `actions/github-script`
+step that derives the version pairs, fetches each pair's summary from the public
+diff API, and upserts one comment. Adopters paste a ~20-line caller from the Docs
+page that references it at `JoviDeCroock/drydock/...@<sha>`; there is still no
+Drydock-owned action. The hash is the last commit that changed the reusable
+workflow, so adopters run exactly the version they copied with
+`pull-requests: write`, and pick up changes by copying a new hash. The caller's trigger is
+`pull_request_target`; a called workflow runs under its caller's event, so
+GitHub runs the caller, this workflow, and the action commits it pins as they
+are on the base branch. Under `pull_request`, the
+file came from the PR's merge ref. Dependabot and Renovate both bump GitHub
+Actions, so a PR that bumped `fetch-metadata` or `github-script` would have run
+the bumped, unreviewed action with write access. `pull_request_target` is also
+what the `dependabot/fetch-metadata` README recommends for write access.
+`pull_request_target`'s usual hazard is checking out and running the PR head
+with the base repository's token. This workflow never checks out or executes PR
+code. It reads PR lockfiles as data through the API, so granting
+`pull-requests: write` to the run is safe. `contents: read` is the only other
+scope, for those lockfile and registry-config reads. Dependabot-triggered runs
+honor the workflow-level `permissions` key (GitHub changelog 2022-02-10), and a
+called workflow can only narrow what its caller grants. The
+cost is that a change to the workflow itself takes effect only after it merges,
+so a PR editing the file is not exercised against itself.
 
-`fetch-metadata` runs first for its own sake, not only for its outputs: it fails
-the job unless the PR's first commit is an authentic, signed Dependabot commit.
-That verification is what makes it safe for the next step to parse that commit
-message, so nothing may be reordered ahead of it.
+The job runs only for PRs whose author is `dependabot[bot]` or `renovate[bot]`.
+That login is GitHub's own record of who opened the PR, not something a fork
+can claim, which matters because `pull_request_target` also fires for fork PRs. Self-hosted Renovate opens PRs under its own account, so it needs
+that login added to the `if:`.
+
+For Dependabot PRs, `fetch-metadata` runs first for its own sake, not only for
+its outputs: it fails the job unless the PR's first commit is an authentic,
+signed Dependabot commit. That verification is what makes it safe for the next
+step to parse that commit message, so nothing may be reordered ahead of it.
 
 ### Grouped PRs and where the versions come from
 
@@ -107,27 +135,163 @@ Because a grouped PR is rewritten in place as its contents change, the workflow
 triggers on `synchronize` as well as `opened` and upserts one comment keyed by a
 `<!-- drydock:diff-link -->` marker, rather than stacking a new comment under
 each stale one — the same marker convention
-`scripts/comment-detection-eval.mjs` uses for its PR comment. A per-PR
-`concurrency` group keeps two quick pushes from racing the read-then-write into
-duplicate comments.
+`scripts/comment-detection-eval.mjs` uses for its PR comment. Only a comment
+written by `github-actions[bot]` is a candidate, since anyone can paste the
+marker into their own comment. A per-PR `concurrency` group keeps two quick
+pushes from racing the read-then-write into duplicate comments.
 
-Unlike that script, this logic stays inline in the workflow rather than moving
-under `scripts/`: the published artifact is copy-paste YAML for repositories
-that cannot reference anything in this one, so a shared script would be
-reachable only by us and would end the dogfooding below.
+### Renovate PRs and where the versions come from
 
-This repository runs the documented workflow against its own Dependabot PRs in
-`.github/workflows/drydock-diff-link.yml`, pinned to a `fetch-metadata` commit
-per the `.github/workflows/ci.yml` convention where the published snippet floats
-on `@v3`. That pin is the only intended difference; keep the two otherwise in
-step, since the repository copy is the only place the snippet is exercised.
+Renovate has nothing like Dependabot's signed commit. Its PR title, body, branch
+name, and commit message are unauthenticated text, and the body embeds upstream
+release notes, so a hostile package's changelog could write a lookalike
+`from → to` row or a Drydock link to a benign pair. The workflow reads none of
+them. It lists the PR's changed files through the API and, for each supported
+lockfile, reads the file at the merge base and at the head with
+`repos.getContent`, parses both as data, and reports each direct dependency
+whose resolved version changed. Those are the versions the PR merges. The merge
+base, not the base branch tip, is the "before" side, so commits that landed on
+the base branch after the PR was opened don't show up as bumps. Whoever can
+write those lockfile bytes can already push to the repository and edit any
+workflow, so reading them adds no trust. An upstream author controls only its
+own package's name and version, and both must pass the same strict name and
+version check before they reach a URL or the comment.
+
+Supported lockfiles, all for direct dependencies only (transitive churn is not a
+bump the PR names):
+
+- `package-lock.json` / `npm-shrinkwrap.json` v2 and v3: each importer's
+  declared dependencies, resolved through its `node_modules` path. Aliases
+  (`npm:real@^1`) report the real package. Entries resolved from anywhere but
+  the public registry are skipped. v1 does not mark direct dependencies.
+- `pnpm-lock.yaml` v5 through v9: the `importers` (or single-project top-level)
+  dependency sections, with peer suffixes stripped and aliases resolved;
+  `link:`, `file:`, and git references are skipped.
+- `yarn.lock` v1 and Berry: the direct dependencies of the `package.json` beside
+  it, looked up by descriptor. A v1 entry whose `resolved` URL is not the public
+  registry is skipped.
+- `uv.lock`: pypi.org packages a workspace member depends on directly. A name
+  with two entries (a marker-split resolution) is skipped.
+- `requirements*.txt` and `requirements/*.txt`: exact `==` pins. A name pinned
+  twice in one file is skipped.
+
+Renovate PRs that change no supported lockfile (`poetry.lock`, `bun.lock`,
+`Pipfile.lock`, or no lockfile) get no comment. The preset column above still
+links them. A PR whose head branch lives in another repository is skipped.
+
+### What the comment says
+
+Each entry is the existing link plus, when the summary fetch succeeds, the
+release risk, file counts, a flags line (new or changed install scripts, new
+dependencies, new native binaries, new `bin` commands), and up to three release
+findings by severity (severity, rule id, file, reason), with a count of the rest.
+Context findings, which describe code the previous release already shipped,
+are left out.
+
+A single-dependency PR, the common case, gets that one entry in full. A grouped
+PR leads with what needs reading and states each shared outcome once:
+
+1. Summaries with a finding, a flag, or a risk above `low`, riskiest first. Risk
+   is only known after the fetch, so the per-run cap still takes the group's
+   first 10 pairs, and the sort applies to those.
+2. One `Summary unavailable (<reason>):` line per reason, listing its links.
+3. One `No release findings:` line listing the clean bumps' links.
+4. Pairs past the per-run cap, as bare links inside a collapsed
+   `<details>` block titled `N more updates without a summary (10 per run)`.
+
+Every string from the API describes a package someone else published, so it is
+untrusted. Package names, rule ids, file paths, and finding reasons render
+inside code spans, which GitHub never turns into links, mentions, images, or
+HTML. The fence is always longer than any backtick run in the text. Control,
+bidi, and zero-width characters and newlines collapse to spaces, and each field
+is truncated (paths at 120 characters, reasons at 200). Severity and risk render
+only when they are one of the known values, and a rule id only when it matches
+the rule-id shape. The comment is bounded by construction: at most 50 entries
+(the rest are counted), three findings each, and a 60,000-character hard cap
+below GitHub's 65,536 limit.
+
+A pair whose summary cannot be fetched keeps its link with "summary
+unavailable" and the reason: an HTTP status, `rate limited`, `timed out`,
+`request failed`, or `unreadable response`. The job never fails on a Drydock
+API problem. Calling the workflow `with: summaries: false` turns the fetch off
+and posts links only.
+
+### Keeping the snippet and the repository copy in step
+
+The logic stays inline in the reusable workflow rather than moving under
+`scripts/`: a called workflow runs in the caller's repository, so a script here
+would not be on disk, and a vendored copy of the file must keep working alone.
+
+This repository dogfoods the published path. `.github/workflows/dependency-pr-diff.yml`
+is the caller, and it calls `.github/workflows/drydock-diff-link.yml` locally, whose
+actions are pinned to commits per the `.github/workflows/ci.yml` convention. The
+Docs page doesn't keep a second copy: `src/pages/Docs/dependency-pr-workflow.ts`
+imports the caller and swaps the local path for
+`JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@<sha>`. That is the
+only intended difference. `scripts/lib/workflow-ref.mjs` resolves `<sha>` at
+build time to the last commit that touched the reusable workflow, not `HEAD`, so
+the published hash moves only when the workflow does. Deploy from `main`: a
+build on an unmerged branch whose workflow changed would publish a branch
+commit. `test/dependency-pr-diff-workflow.test.ts`
+checks the transformation, then runs the inline script under a stubbed
+`github`/`fetch` against grouped and single Dependabot PRs, each supported
+lockfile, hostile API responses, API failures, and the caps.
 
 ## Operational posture
 
-The Renovate column and the Dependabot comment are plain markdown links, not
-badge images: nothing contacts Drydock when a PR is rendered, only when a human
-clicks through. There is no new anonymous-traffic amplification to reason about
-— clicks land on the existing `/api/public/v1/package-diff` endpoints with
-their IP rate limits and colo cache (`docs/security-model.md`). Do not "upgrade"
-the column to a per-PR badge image without revisiting that math: registry-scale
-PR volume would fetch on every page view instead of every click.
+The Renovate column is a plain markdown link, not a badge image: nothing
+contacts Drydock when a PR is rendered, only when a human clicks through. Do not
+"upgrade" the column to a per-PR badge image without revisiting the math below:
+registry-scale PR volume would fetch on every page view.
+
+The PR comment workflow does contact Drydock, from CI, once per PR `opened` or
+`synchronize` event and never per view. One run sends at most one
+`GET /api/public/v1/package-diff` per bumped pair, bounded by the group size and
+capped at 10 per run (later pairs keep their links in a collapsed block). Requests are sequential, with a 30-second timeout each and a
+150-second budget per run, and the first `429` stops the remaining fetches.
+Ten is the endpoint's own per-IP budget: the version-pair route charges the
+`fetch` bucket at 10 requests a minute per client IP (`docs/security-model.md`),
+so one run on one runner fits and never 429s on its own requests. Runs that
+share an egress IP (self-hosted runners behind one NAT, several PRs pushed in
+the same minute) can hit 429. Those entries degrade to the link.
+
+The aggregate is bounded by adopters' PR events, not page views. A popular
+release produces one PR per adopting repository, and every request after the
+first for that pair is served from the versioned colo/KV result cache. Cold
+computation runs once per pair in the common case, under the same sandbox caps
+as a browser visit. Requests for the same cold pair that arrive at the same
+moment can each compute it. A rebased or revised PR fetches the same pairs
+again, all cache hits. The requests carry no credentials, and the route writes
+only the result cache it already writes for browsers. Nothing reaches D1, so
+the anonymous surface's properties in `docs/security-model.md` are unchanged.
+
+What the workflow sends is each bumped package's name and version pair. A
+private package would also be summarized wrongly: when a public package has the
+same name, the comment would describe that package instead. So the workflow
+drops a pair, link included, whenever the repository's own config says the name
+may resolve somewhere else:
+
+- npm, both bots: a non-public `registry=` or `@scope:registry=` in `.npmrc`, or
+  `npmRegistryServer` (top-level or under `npmScopes`) in `.yarnrc.yml`. Config
+  is read at the PR head from the lockfile's directory (for Dependabot, the
+  `directory` it updated) and the repository root. A custom default registry, or
+  `npmScopes` written in flow style, drops every npm pair. A custom scope drops
+  that scope. If the config can't be read, a Dependabot run posts nothing
+  rather than guess.
+- npm lockfiles: a `package-lock.json` or yarn v1 entry whose `resolved` URL is
+  not the public registry.
+- PyPI, Renovate only: a requirements file with `-i`, `--index-url`, or
+  `--extra-index-url` contributes no pairs, and `uv.lock` counts only pypi.org
+  packages.
+
+Those checks see only committed config. Registries set through environment
+variables, CI-only config, user-level `.npmrc`, `pip.conf`, or a Dependabot
+`registries:` block are invisible to the workflow. Dependabot's pip and uv bumps
+in particular are sent as they are. Drydock answers 404 for a name it can't find. If a
+repository's private package names are themselves confidential, call the
+workflow `with: summaries: false`.
+
+The workflow sends `x-drydock-client: dependency-pr`, which `public_diff.viewed`
+records in its `client` dimension (`docs/product-analytics.md`), so CI fetches
+are not counted as people reading a diff. The header is self-reported and
+selects nothing but that label.

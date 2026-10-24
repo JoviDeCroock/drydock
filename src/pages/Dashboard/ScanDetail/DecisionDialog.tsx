@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, ScanDecision, ScanListItem } from "../../../models/scan";
+import type { PostReleaseReviewLink } from "../../../models/scan-api";
 import { openNpmAfterDecision, setOpenNpmAfterDecision } from "../../../models/publish-preferences";
 import { showStageCommandPrompt } from "../../../models/stage-command-prompt";
 import { npmStageCommandFor } from "../../../lib/npm-stage-command";
@@ -23,6 +24,7 @@ export function DecisionDialog({
   error,
   npmStagedPackagesUrl,
   scan,
+  postRelease = null,
   onSubmit,
 }: {
   // Signals are read here rather than by the page: opening the dialog and the
@@ -47,6 +49,12 @@ export function DecisionDialog({
     | "registryVersionStatus"
     | "registryStatusSupersededAt"
   >;
+  /**
+   * Set when this review answers a publication alert: the release is already
+   * public, so the decision is about it after release, and there is no stage
+   * to finish on npm.
+   */
+  postRelease?: PostReleaseReviewLink | null;
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
@@ -54,7 +62,7 @@ export function DecisionDialog({
   const saving = readSignalProp(status) === "saving";
   const message = readSignalProp(error);
   const stagedUrl =
-    npmStagedPackagesUrl === undefined ? null : readSignalProp(npmStagedPackagesUrl);
+    postRelease || npmStagedPackagesUrl === undefined ? null : readSignalProp(npmStagedPackagesUrl);
 
   useEffect(() => {
     if (isOpen) {
@@ -80,7 +88,7 @@ export function DecisionDialog({
     // Nobody is going to npm's web UI for us: either the reviewer finishes in a
     // terminal, or the tab we tried to open was blocked. Both cases end with the
     // same open question — what exactly do I run — so answer it.
-    const command = npmStageCommandFor(next, scan);
+    const command = postRelease ? null : npmStageCommandFor(next, scan);
     if (command) {
       showStageCommandPrompt({
         decision: next,
@@ -101,13 +109,17 @@ export function DecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Review decision"
-      description={`Record an advisory review decision.${
-        // Published-pair reviews are not release records the monitor reads.
-        scan.source === "manual" || scan.source === "auto_discovery"
-          ? " Confirm the staged-release decision separately in npm with 2FA. Record approval here before publication so the publication monitor can compare released bytes with your earlier decision."
-          : ""
-      }`}
+      title={postRelease ? "Decision after release" : "Review decision"}
+      description={
+        postRelease
+          ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert when the reviewed bytes match the published ones, declining keeps the alert open with next steps. If this organization is a registry-verified publisher of the package and the reviewed bytes match the published ones, the public badge shows it as approved or rejected. Nothing changes on npm.`
+          : `Record an advisory review decision.${
+              // Published-pair reviews are not release records the monitor reads.
+              scan.source === "manual" || scan.source === "auto_discovery"
+                ? " Confirm the staged-release decision separately in npm with 2FA. Record approval here before publication so the publication monitor can compare released bytes with your earlier decision."
+                : ""
+            }`
+      }
     >
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
@@ -159,10 +171,10 @@ export function DecisionDialog({
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>
-          {saving ? "Saving…" : "Record approval"}
+          {saving ? "Saving…" : postRelease ? "Approve after release" : "Record approval"}
         </Button>
         <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-          {saving ? "Saving…" : "Record rejection"}
+          {saving ? "Saving…" : postRelease ? "Decline after release" : "Record rejection"}
         </Button>
       </div>
       {message ? <Alert tone="critical">{message}</Alert> : null}

@@ -1,15 +1,37 @@
 // Publication-monitor wording shared by the dashboard card and the package
 // page, so the same watch or observation never reads two different ways.
 import { formatDateTime, pluralize } from "../../lib/format";
-import type { PublicationObservation, PublicationWatch } from "../../models/publication-watches";
+import type {
+  PostReleaseBadgeEffect,
+  PostReleaseResolution,
+  PublicationObservation,
+  PublicationWatch,
+} from "../../models/publication-watches";
+import type { PublicationAlertLogEntry } from "../../models/publication-alert-log";
 
 export const observationStatusLabels: Record<PublicationObservation["status"], string> = {
   approved_match: "Approved bytes published",
   published_without_approval: "Published with no approval in this organization",
   published_despite_rejection: "Published despite a rejection in this organization",
   artifact_mismatch: "Published bytes differ from what this organization reviewed",
+  undecided_low_risk: "Reviewed, no decision in this organization",
   unknown: "Evidence unknown",
 };
+
+const AI_FLAGGED_REASON = "ai_flagged_without_decision";
+
+/**
+ * The label of an observation or alert. A release the AI reviewer flagged is
+ * named as such: it is the most pressing kind of unapproved publish.
+ */
+export function observationLabel(
+  observation: Pick<PublicationObservation, "status" | "reason">,
+): string {
+  return observation.status === "published_without_approval" &&
+    observation.reason === AI_FLAGGED_REASON
+    ? "Published with no approval, flagged by the AI reviewer"
+    : observationStatusLabels[observation.status];
+}
 
 // Why a release is `unknown`: the monitor records one specific reason. A
 // decision recorded only after publication is the organization's own act, so
@@ -18,6 +40,7 @@ const unknownReasonLabels: Record<string, string> = {
   publication_time_unavailable: "npm reports no publication time",
   review_pending: "a Drydock review of this version is still running",
   review_failed: "the Drydock review of this version failed",
+  decided_after_observation: "a review of it was decided since; the next check re-reads it",
   reviewed_without_decision: "reviewed these bytes, no decision recorded before publication",
   decision_history_unavailable: "decided only after publication",
   review_digest_unavailable: "npm's record matches, but the review could not confirm these bytes",
@@ -28,9 +51,23 @@ const unknownReasonLabels: Record<string, string> = {
   artifact_identity_invalid: "npm metadata names no valid tarball",
 };
 
+// Why an undecided review kept a release from reading low risk. Mirrors the
+// alert email and Slack copy in server/lib/notify/publication-alerts.ts.
+const undecidedReviewCauses: Record<string, string> = {
+  reviewed_ungated_without_decision: "found the stage not bound to an approved gate review",
+  reviewed_risk_without_decision: "graded the release above low risk",
+  reviewed_ai_concern_without_decision: "has an AI review asking for a closer look",
+  reviewed_ai_unfinished_without_decision: "has an AI review that did not finish",
+  reviewed_diverged_without_decision: "found findings new since the last approved release",
+  reviewed_ungraded_without_decision: "could not grade the release risk",
+};
+
 // What refines an alert. An undecided review of the published bytes is most
 // often the owner's own release promoted before anyone decided, so it asks for
 // the decision first and never accuses whoever published it.
+// `reviewed_without_decision` claims nothing about risk: it is a low-risk
+// review that could not vouch for the bytes alone, or an alert raised before
+// undecided reviews were tiered by risk.
 const alertReasonLabels: Record<string, string> = {
   review_pending:
     "a Drydock review of these exact bytes is still undecided: decide it, or investigate if nobody here published it",
@@ -38,6 +75,15 @@ const alertReasonLabels: Record<string, string> = {
     "the Drydock review of these exact bytes failed and nothing approved them: investigate if nobody here published it",
   reviewed_without_decision:
     "a Drydock review of these exact bytes is undecided: decide it, or investigate if nobody here published it",
+  ...Object.fromEntries(
+    Object.entries(undecidedReviewCauses).map(([reason, cause]) => [
+      reason,
+      `an undecided Drydock review of these exact bytes ${cause}: decide it, or investigate if nobody here published it`,
+    ]),
+  ),
+  [AI_FLAGGED_REASON]:
+    // The label already says the AI reviewer flagged it.
+    "the Drydock review of these exact bytes is undecided: investigate whether someone here published it, then decide it",
   rejected_after_publication: "these exact bytes were rejected after they were published",
   review_history_limit: "matches none of the latest 100 Drydock records of this version",
 };
@@ -52,13 +98,16 @@ export function observationReasonLabel(
   observation: Pick<PublicationObservation, "status" | "reason">,
 ): string | null {
   if (observation.status === "unknown") return unknownReasonLabel(observation.reason);
+  if (observation.status === "undecided_low_risk") {
+    return "its review graded these exact bytes low release risk, so no alert was raised";
+  }
   if (observation.status === "approved_match" || !observation.reason) return null;
   return alertReasonLabels[observation.reason] ?? null;
 }
 
 export function observationTone(status: PublicationObservation["status"]) {
   if (status === "approved_match") return "ok";
-  if (status === "unknown") return "neutral";
+  if (status === "unknown" || status === "undecided_low_risk") return "neutral";
   return "critical";
 }
 
@@ -68,6 +117,95 @@ export function isPublicationAlert(status: PublicationObservation["status"]): bo
     status === "published_despite_rejection" ||
     status === "artifact_mismatch"
   );
+}
+
+export const resolutionLabels: Record<PostReleaseResolution, string> = {
+  approved_after_release: "Approved after release",
+  declined_after_release: "Declined after release",
+};
+
+type PostReleaseOutcome = Pick<PublicationObservation, "resolution" | "reviewedBytes">;
+
+/**
+ * An alert approved after release is resolved, but only when the review read
+ * the bytes npm published: nothing is left to acknowledge. A decline keeps it
+ * open, because the release is still on npm, and so does approving bytes that
+ * differ from the published ones or could not be compared with them.
+ */
+export function isAlertResolved(outcome: PostReleaseOutcome): boolean {
+  return outcome.resolution === "approved_after_release" && outcome.reviewedBytes === "match";
+}
+
+export function resolutionTone(outcome: PostReleaseOutcome) {
+  if (outcome.resolution === "declined_after_release") return "critical";
+  return isAlertResolved(outcome) ? "ok" : "medium";
+}
+
+/**
+ * The state of an alert's post-release review before anyone decided it, or
+ * null once it is decided (the resolution says the rest) or when none exists.
+ */
+export function postReleaseReviewState(
+  observation: Pick<
+    PublicationObservation,
+    "reviewScanId" | "reviewStatus" | "reviewDecision" | "resolution"
+  >,
+): { label: string; tone: "neutral" | "medium" } | null {
+  if (!observation.reviewScanId || observation.resolution || observation.reviewDecision) {
+    return null;
+  }
+  if (observation.reviewStatus === "failed") return { label: "review failed", tone: "medium" };
+  if (observation.reviewStatus === "complete") return { label: "ready to decide", tone: "medium" };
+  return { label: "reviewing", tone: "neutral" };
+}
+
+/** What to do about a release this organization declined after npm published it. */
+export function declinedRemediation(packageName: string, version: string): string {
+  return `Next steps: deprecate or unpublish ${packageName}@${version} on npm, rotate the npm tokens that can publish it, and check its trusted publishers and who has publish rights.`;
+}
+
+const badgeUnchangedReasons: Record<Exclude<PostReleaseBadgeEffect, "applied">, string> = {
+  not_a_verified_publisher:
+    "this organization has no registry-verified staged review of the package",
+  digests_unavailable: "the published bytes could not be hashed to compare with the reviewed ones",
+  digests_differ: "the reviewed bytes differ from the published ones",
+  not_public_npm: "the release was not read from the public npm registry",
+};
+
+/**
+ * What a post-release decision did beyond the alert's own row: whether an
+ * approval left the alert open because the review did not read the published
+ * bytes, and whether the decision moves the public README badge. Only a
+ * registry-verified publisher whose review read the exact published bytes
+ * moves the badge; anything else speaks for this organization alone.
+ */
+export function resolutionBadgeMessage(
+  observation: Pick<
+    PublicationObservation,
+    "resolution" | "resolutionBadge" | "reviewedBytes" | "version"
+  >,
+): string | null {
+  if (!observation.resolution) return null;
+  const badge = observation.resolutionBadge;
+  if (observation.resolution === "approved_after_release" && !isAlertResolved(observation)) {
+    const bytes =
+      observation.reviewedBytes === "differ"
+        ? "the reviewed bytes differ from the published ones"
+        : "the reviewed bytes could not be compared with the published ones";
+    // A digest reason for the badge is the same fact; say it once.
+    const other =
+      badge === "not_a_verified_publisher" || badge === "not_public_npm"
+        ? `: ${badgeUnchangedReasons[badge]}`
+        : "";
+    return `This approval leaves the alert open: ${bytes}. The public badge is unchanged${other}.`;
+  }
+  if (!badge) return null;
+  if (badge === "applied") {
+    const verdict = observation.resolution === "approved_after_release" ? "approved" : "rejected";
+    return `The public badge counts this decision as ${observation.version} ${verdict}.`;
+  }
+  const reason = badgeUnchangedReasons[badge];
+  return reason ? `The public badge is unchanged: ${reason}.` : null;
 }
 
 const watchProblems: Record<string, string> = {
@@ -186,4 +324,31 @@ export function watchMetaLine(watch: PublicationWatch): string {
   if (watch.ownershipConflict)
     return "Monitoring inactive · package assigned to another organization";
   return `watching since ${formatDateTime(watch.createdAt)} · ${releaseSummary(watch)} · ${sourceLabels[watch.source]}`;
+}
+
+/**
+ * The metadata line of an entry in the unapproved-publish log: when it was
+ * raised, where it stands, and whether the package is still watched.
+ */
+export function alertLogMetaLine(
+  entry: Pick<
+    PublicationAlertLogEntry,
+    "createdAt" | "acknowledgedAt" | "resolution" | "resolvedAt" | "reviewedBytes" | "watched"
+  >,
+): string {
+  const parts = [`raised ${formatDateTime(entry.createdAt)}`];
+  if (entry.resolution && entry.resolvedAt) {
+    parts.push(`decided ${formatDateTime(entry.resolvedAt)}`);
+  }
+  // A decision that left the alert open (a decline, or approving bytes that
+  // are not the published ones) still wants acknowledging, as on its watch row.
+  if (!isAlertResolved(entry)) {
+    parts.push(
+      entry.acknowledgedAt
+        ? `acknowledged ${formatDateTime(entry.acknowledgedAt)}`
+        : "not acknowledged",
+    );
+  }
+  if (!entry.watched) parts.push("no longer watched");
+  return parts.join(" · ");
 }

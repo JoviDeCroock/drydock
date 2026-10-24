@@ -1,0 +1,72 @@
+{
+  "id": "arrow-padding-folded-child-process",
+  "title": "Arrow-chain padding ahead of an assembled child_process call",
+  "category": "obfuscation-assembly",
+  "intent": "A thousand chained `(a)=>` arrows grew the lexer's expression-mode list, whose scans were quadratic and exhausted a linear work budget in a 5 KB file; the constant folder gave up and `require('chi'+'ld_process')['exec'+'Sync']` stayed unassembled. Mode lookups are now O(1) and folding lexes unbounded. Safe: the command is decoded from a variable that is never set.",
+  "previousPackageJson": {
+    "name": "arrow-padding-folded-child-process",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "arrow-padding-folded-child-process",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 63,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"arrow-padding-folded-child-process\",\"version\":\"1.0.0\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 20,
+      "sha256": "before",
+      "flags": [],
+      "textSample": "module.exports = 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 63,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"arrow-padding-folded-child-process\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 5066,
+      "sha256": "after",
+      "flags": [],
+      "textSample": "const f = (a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>(a)=>0;\nrequire('chi'+'ld_process')['exec'+'Sync'](atob(p));\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "index.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "index.js"
+    }
+  ]
+}

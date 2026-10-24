@@ -153,6 +153,7 @@ function parseDiffEntries(value: unknown): DiffEntry[] | null {
       ...(typeof item.stagedSize === "number" ? { stagedSize: item.stagedSize } : {}),
       ...(typeof item.previousSha256 === "string" ? { previousSha256: item.previousSha256 } : {}),
       ...(typeof item.stagedSha256 === "string" ? { stagedSha256: item.stagedSha256 } : {}),
+      ...(typeof item.renamedFrom === "string" ? { renamedFrom: item.renamedFrom } : {}),
       flags: Array.isArray(item.flags)
         ? item.flags.filter((flag): flag is string => typeof flag === "string")
         : [],

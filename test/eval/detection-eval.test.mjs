@@ -48,16 +48,32 @@ describe("detection eval (gated thresholds)", () => {
   // lone capabilities (a benign build script's child_process), so the benign
   // hard-negative roll-up FP rate now stays under 10%.
   test("a payload spliced into an existing module still raises release risk", () => {
-    // Pinned known miss: the environment is read through a computed key
-    // (`globalThis['proc' + 'ess'][e]`), which no rule sees, so only the lone
-    // process spawn lands on the release delta. A detection gap, not a
-    // classification one: the added-file original is caught by co-occurrence.
-    expect(result.releaseInjection.lines.misses.map((miss) => miss.id)).toEqual([
-      "npm-assembled-require-exfil",
-    ]);
+    // `npm-assembled-require-exfil` reads the environment through a computed
+    // member of `process` (`globalThis['proc' + 'ess'][e]`), which the
+    // credential rule now counts as a runtime-chosen key.
+    expect(result.releaseInjection.lines.misses).toEqual([]);
     expect(result.releaseInjection.minified.misses).toEqual([]);
     expect(result.releaseInjection.lines.samples).toBeGreaterThanOrEqual(20);
     expect(result.releaseInjection.minified.samples).toBeGreaterThanOrEqual(20);
+  });
+
+  test("a payload spliced into a renamed bundler chunk still raises release risk", () => {
+    // A renamed chunk is attributed against its predecessor like a modified
+    // file, so it may miss only what an in-place edit of the same padded
+    // carrier misses. Pinned: minifying `module-html-comment-template-eval`
+    // strips its `// fetch(...)` line, leaving a lone eval. The short minified
+    // carrier still catches it only because that whole line is under the
+    // narrowing threshold, so the carrier's own fetch counts as changed.
+    const expectedMisses = {
+      renamed: [],
+      "renamed-minified": ["module-html-comment-template-eval"],
+    };
+    for (const [shape, misses] of Object.entries(expectedMisses)) {
+      const stats = result.releaseInjection[shape];
+      expect(stats.samples).toBeGreaterThanOrEqual(20);
+      expect(stats.paired).toBe(stats.samples);
+      expect(stats.misses.map((miss) => miss.id)).toEqual(misses);
+    }
   });
 
   test("benign hard-negative false-positive rate stays under the ratchet target", () => {

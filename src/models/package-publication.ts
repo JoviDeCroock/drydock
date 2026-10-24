@@ -10,7 +10,10 @@ import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import {
   MANAGEMENT_REQUIRED,
+  publicationReviewApiPath,
   type EnrollOutcome,
+  type PostReleaseResolution,
+  type PostReleaseReviewedBytes,
   type PublicationObservation,
   type PublicationWatch,
 } from "./publication-watches";
@@ -26,11 +29,21 @@ export type PublicationEnrollment =
 /** One entry of the organization's alert ledger for the package, across watches. */
 export interface PublicationAlertRecord {
   version: string;
-  status: Exclude<PublicationObservation["status"], "approved_match" | "unknown">;
+  status: Exclude<
+    PublicationObservation["status"],
+    "approved_match" | "undecided_low_risk" | "unknown"
+  >;
+  /** The reason on its observation in the current watch window; null outside it. */
+  reason: string | null;
   createdAt: string;
   acknowledgedAt: string | null;
   /** Raised in the current watch's observation window rather than an earlier one. */
   inCurrentWatch: boolean;
+  /** The post-release review linked to the alert, and how it resolved it. */
+  reviewScanId: string | null;
+  resolution: PostReleaseResolution | null;
+  resolvedAt: string | null;
+  reviewedBytes: PostReleaseReviewedBytes | null;
 }
 
 export interface PackagePublication {
@@ -152,6 +165,27 @@ export const PackagePublicationModel = createModel((packageName: string) => {
           ),
         ),
       );
+    },
+    /**
+     * Start the alert's post-release review, or find the one already linked to
+     * it. Resolves to the review's scan id, or null when it failed (the error
+     * signal says why) or the organization changed meanwhile.
+     */
+    async review(observationId: string): Promise<string | null> {
+      const id = watchId();
+      if (!id) return null;
+      const current = generation;
+      let scanId: string | null = null;
+      await run(async () => {
+        const data = await apiFetch<{ scanId: string }>(
+          publicationReviewApiPath(id, observationId),
+          {
+            method: "POST",
+          },
+        );
+        if (current === generation) scanId = data.scanId;
+      });
+      return scanId;
     },
     /** See `PublicationWatchesModel.enroll` for the personal-workspace flag. */
     async start(options: { confirmPersonalOrganization?: boolean } = {}): Promise<EnrollOutcome> {

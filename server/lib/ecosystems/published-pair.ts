@@ -22,6 +22,7 @@ import type {
   StagedDetails,
 } from "./package-adapter";
 import type { Finding } from "../review";
+import { normalizeArchiveDigests, type ArchiveDigests } from "./artifact-integrity";
 import type { PublicDiffAcquiredSources, PublicDiffAdapter } from "../public-diff/types";
 
 /** A resolved published pair. Every field is registry-confirmed before it is queued. */
@@ -73,6 +74,7 @@ class PublishedPairBroker implements AdapterBroker {
 interface PublishedPairDetails extends PublishedPairRef {
   registryUrl: string;
   notices: string[];
+  artifactDigest: ArchiveDigests | null;
   // Carried on the details object because `runFindings` is handed no broker,
   // and the builder closes over the acquired artifacts. `summarizeDetails`
   // deliberately does not return it — only its own fields are persisted.
@@ -116,7 +118,12 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
         return { ok: false, error: "invalid baseline version", status: 400 };
       }
 
-      const listing = await diff.listVersions(env, executionCtx, packageName);
+      const listing = await diff.listVersions(
+        env,
+        executionCtx,
+        packageName,
+        diff.publishedRegistryUrl?.(env) ?? diff.registryUrl,
+      );
       const index = listing.versions.findIndex((entry) => entry.version === version);
       if (index < 0) {
         return { ok: false, error: "that version is not published", status: 404 };
@@ -150,18 +157,22 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
       input: PublishedPairRef,
       broker: PublishedPairBroker,
     ): Promise<{ artifact: AcquiredArtifact; details: StagedDetails }> {
+      const registryUrl = diff.publishedRegistryUrl?.(ctx.env) ?? diff.registryUrl;
       const sources = await diff.acquire(ctx.env, ctx.executionCtx, {
         ecosystem: diff.ecosystem,
         packageName: input.packageName,
         fromVersion: input.baselineVersion,
         toVersion: input.version,
-        registryUrl: diff.registryUrl,
+        registryUrl,
+        // Only ever true for the local-development loopback registry.
+        allowInsecureLocalhost: registryUrl !== diff.registryUrl,
       });
       broker.sources = sources;
       const details: PublishedPairDetails = {
         ...input,
-        registryUrl: diff.registryUrl,
+        registryUrl,
         notices: sources.notices ?? [],
+        artifactDigest: sources.toDigests ?? null,
         buildFindings: sources.buildFindings,
         releaseSources: () => {
           broker.sources = null;
@@ -231,6 +242,9 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
         baselineVersion: d.baselineVersion,
         registryUrl: d.registryUrl,
         notices: d.notices,
+        // The reviewed release's wire bytes, so a decision on this review can
+        // be bound to the bytes the publication monitor hashed for it.
+        artifactDigest: normalizeArchiveDigests(d.artifactDigest),
       };
     },
   };
