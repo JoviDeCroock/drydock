@@ -1,0 +1,67 @@
+{
+  "id": "legit-wallet-sdk-sign-and-send",
+  "title": "Wallet SDK signs with the secret key and sends only signatures and public keys over RPC",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-key-handling",
+  "source": "synthetic",
+  "intent": "Distilled from Solana and EVM wallet SDK shapes (@solana/web3.js Keypair and Connection, ethers Wallet): the same module holds keypair.secretKey and a privateKey parameter, signs with nacl.sign.detached and wallet.signTransaction, and posts JSON-RPC bodies carrying the signature, the base58 public key, the wallet address and a transaction receipt. Key material and the network share every release of these files, so code.key-material-exfiltration must stay quiet: signing, public-key and address reads, and transaction methods end the flow. The module is unchanged in this patch, so the release rolls up low.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-wallet-sdk-sign-and-send",
+    "version": "1.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "legit-wallet-sdk-sign-and-send",
+    "version": "1.4.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 77,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-wallet-sdk-sign-and-send\",\"version\":\"1.4.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 1530,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const nacl = require('tweetnacl');\nconst bs58 = require('bs58');\nconst { Wallet } = require('ethers');\n\nclass Keypair {\n  constructor(secretKey) {\n    this._keypair = nacl.sign.keyPair.fromSecretKey(secretKey);\n  }\n  static generate() {\n    return new Keypair(nacl.sign.keyPair().secretKey);\n  }\n  get publicKey() {\n    return bs58.encode(this._keypair.publicKey);\n  }\n  get secretKey() {\n    return this._keypair.secretKey;\n  }\n}\n\nasync function rpc(url, method, params) {\n  const res = await fetch(url, {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),\n  });\n  return res.json();\n}\n\nasync function sendTransfer(url, keypair, message) {\n  const signature = nacl.sign.detached(message, keypair.secretKey);\n  return rpc(url, 'sendTransaction', [bs58.encode(message), bs58.encode(signature), keypair.publicKey]);\n}\n\nasync function requestAirdrop(url, keypair, lamports) {\n  return rpc(url, 'requestAirdrop', [keypair.publicKey, lamports]);\n}\n\nasync function sendEvmTransaction(provider, privateKey, tx) {\n  const wallet = new Wallet(privateKey, provider);\n  const signed = await wallet.signTransaction(tx);\n  const receipt = await provider.send('eth_sendRawTransaction', [signed]);\n  await fetch('https://indexer.example.invalid/track', {\n    method: 'POST',\n    body: JSON.stringify({ from: wallet.address, hash: receipt }),\n  });\n  return receipt;\n}\n\nmodule.exports = { Keypair, rpc, sendTransfer, requestAirdrop, sendEvmTransaction };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-before",
+      "flags": [],
+      "textSample": "module.exports = '1.4.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 77,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-wallet-sdk-sign-and-send\",\"version\":\"1.4.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 1530,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const nacl = require('tweetnacl');\nconst bs58 = require('bs58');\nconst { Wallet } = require('ethers');\n\nclass Keypair {\n  constructor(secretKey) {\n    this._keypair = nacl.sign.keyPair.fromSecretKey(secretKey);\n  }\n  static generate() {\n    return new Keypair(nacl.sign.keyPair().secretKey);\n  }\n  get publicKey() {\n    return bs58.encode(this._keypair.publicKey);\n  }\n  get secretKey() {\n    return this._keypair.secretKey;\n  }\n}\n\nasync function rpc(url, method, params) {\n  const res = await fetch(url, {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),\n  });\n  return res.json();\n}\n\nasync function sendTransfer(url, keypair, message) {\n  const signature = nacl.sign.detached(message, keypair.secretKey);\n  return rpc(url, 'sendTransaction', [bs58.encode(message), bs58.encode(signature), keypair.publicKey]);\n}\n\nasync function requestAirdrop(url, keypair, lamports) {\n  return rpc(url, 'requestAirdrop', [keypair.publicKey, lamports]);\n}\n\nasync function sendEvmTransaction(provider, privateKey, tx) {\n  const wallet = new Wallet(privateKey, provider);\n  const signed = await wallet.signTransaction(tx);\n  const receipt = await provider.send('eth_sendRawTransaction', [signed]);\n  await fetch('https://indexer.example.invalid/track', {\n    method: 'POST',\n    body: JSON.stringify({ from: wallet.address, hash: receipt }),\n  });\n  return receipt;\n}\n\nmodule.exports = { Keypair, rpc, sendTransfer, requestAirdrop, sendEvmTransaction };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-after",
+      "flags": [],
+      "textSample": "module.exports = '1.4.1';\n"
+    }
+  ]
+}

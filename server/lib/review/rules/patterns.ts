@@ -358,6 +358,17 @@ const JS_INSTALL_WRITE_PATTERNS = [
   /\bcreateWriteStream\s*\(/,
   /\bcpSync\s*\(/,
 ];
+// Links and renames put a path into the install root without writing bytes, and
+// a link is how a later in-package write lands in a neighbour. They count as
+// the write side of `propagation.package-mutation` only; the decoded-payload
+// sink keeps `installWrite`, since a link stages nothing to load.
+const JS_INSTALL_LINK_PATTERNS = [
+  /\b(?:symlink|ensureSymlink|ensureLink)(?:Sync)?\s*\(/,
+  /\b(?:link|rename)Sync\s*\(/,
+  /\b(?:fs|fsp|fse|promises)\s*\.\s*(?:link|rename)\s*\(/,
+  /\bln\s+-[a-zA-Z]*s/,
+  /\bmklink\b/i,
+];
 const PYTHON_INSTALL_WRITE_PATTERNS = [
   /\bopen\s*\([^)\n]*["'][wax]b?\+?["']/,
   /\bshutil\.(?:copy|copy2|copyfile|copytree|move)\s*\(/,
@@ -378,6 +389,7 @@ export const JS_PATTERN_SET = {
   registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: JS_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: JS_INSTALL_WRITE_PATTERNS,
+  installLink: JS_INSTALL_LINK_PATTERNS,
 };
 export const PYTHON_PATTERN_SET = {
   processExecution: PYTHON_PROCESS_EXECUTION_PATTERNS,
@@ -393,6 +405,7 @@ export const PYTHON_PATTERN_SET = {
   registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
   installRootPath: PYTHON_INSTALL_ROOT_PATH_PATTERNS,
   installWrite: PYTHON_INSTALL_WRITE_PATTERNS,
+  installLink: [] as RegExp[],
 };
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.

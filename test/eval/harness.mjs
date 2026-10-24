@@ -218,9 +218,64 @@ const AI_REVIEW_OFF = {
   reviewerVersion: null,
 };
 
+// Joins a payload onto one line without changing what it does. Line comments
+// are dropped (they would swallow everything after them), but only in code: a
+// `//` inside a string or template literal is data an eval can still run, and
+// a template's own line breaks become `\n` escapes rather than spaces. Not a
+// lexer: a quote inside a regex literal would desync it, which no corpus
+// payload does.
 function minifyLines(code) {
-  // Line comments would swallow everything after them once lines are joined.
-  return code.replace(/(^|[\s;{}])\/\/[^\n]*/gm, "$1").replace(/\n/g, " ");
+  let out = "";
+  let quote = null;
+  // "`" for an open template, "${" for its substitution, "{" for a brace
+  // nested in a substitution.
+  const stack = [];
+  for (let i = 0; i < code.length; i += 1) {
+    const c = code[i];
+    if (quote) {
+      if (c === "\\") {
+        out += c + (code[i + 1] ?? "");
+        i += 1;
+        continue;
+      }
+      if (c === quote || c === "\n") quote = null;
+      out += c === "\n" ? " " : c;
+      continue;
+    }
+    if (stack.at(-1) === "`") {
+      if (c === "\\") {
+        out += c + (code[i + 1] ?? "");
+        i += 1;
+      } else if (c === "`") {
+        stack.pop();
+        out += c;
+      } else if (c === "$" && code[i + 1] === "{") {
+        stack.push("${");
+        out += "${";
+        i += 1;
+      } else {
+        out += c === "\n" ? "\\n" : c;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === "`") {
+      stack.push("`");
+    } else if (c === "{" && stack.length) {
+      stack.push("{");
+    } else if (c === "}" && stack.length) {
+      stack.pop();
+    } else if (c === "/" && code[i + 1] === "/" && /^[\s;{}]?$/.test(code[i - 1] ?? "")) {
+      const end = code.indexOf("\n", i);
+      if (end < 0) break;
+      i = end;
+      out += " ";
+      continue;
+    }
+    out += c === "\n" ? " " : c;
+  }
+  return out;
 }
 
 // The renamed shapes model a bundler chunk that changed content hash: the
@@ -370,9 +425,13 @@ const EVASION_TRANSFORMS = {
   pushPastWindow,
 };
 
+// The transforms rewrite JavaScript; wrapping a README or a binding.gyp in
+// `eval(atob(…))` would not be the same attack, so other files keep their bytes.
 function applyTransform(fx, transform) {
   const stagedFiles = (fx.stagedFiles ?? []).map((file) => {
-    if (file.path === "package.json" || typeof file.textSample !== "string") return file;
+    if (!RELEASE_INJECTION_CODE_FILE.test(file.path) || typeof file.textSample !== "string") {
+      return file;
+    }
     return { ...file, textSample: transform(file.textSample) };
   });
   return { ...fx, stagedFiles };
@@ -380,7 +439,7 @@ function applyTransform(fx, transform) {
 
 function hasScannableCodeFile(record) {
   return (record.fx.stagedFiles ?? []).some(
-    (file) => file.path !== "package.json" && typeof file.textSample === "string",
+    (file) => RELEASE_INJECTION_CODE_FILE.test(file.path) && typeof file.textSample === "string",
   );
 }
 
@@ -559,7 +618,7 @@ function renderMarkdown(result) {
     lines.push(`- FALSE POSITIVE \`${fp.id}\` (${fp.threatClass})`);
   }
   lines.push("");
-  lines.push("## Evasion robustness (reported)");
+  lines.push("## Evasion robustness (blocked gated, retention reported)");
   lines.push("");
   lines.push("| transform | samples | still blocked | code rules retained |");
   lines.push("| --- | --- | --- | --- |");

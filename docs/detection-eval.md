@@ -122,8 +122,10 @@ or regressed attestations plus a matching-provenance control.
   multi-signal scoring (`computeRisk`, issue #193) is what keeps the roll-up low.
   Promoted from reported to gated once that scoring brought the rate under the
   ratchet target.
-- **Evasion robustness (reported).** For each transform, over npm malicious cases
-  we currently catch:
+- **Evasion robustness (blocked rate gated, retention reported).** For each
+  transform, over npm malicious cases we currently catch that ship a JavaScript
+  file (the transforms rewrite only `.js`/`.cjs`/`.mjs` files: a README wrapped
+  in `eval(atob(…))` is not the same attack):
   - `blockedRate` — would the product still treat it as risky? (often high,
     because manifest signals like `preinstall` survive code obfuscation)
   - `codeRetention` — how many of the original `code.*` rules still fire? (the
@@ -152,9 +154,11 @@ or regressed attestations plus a matching-provenance control.
   `codeRetention` is back to baseline.
 - `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`. Also folded
   back (concat → `process['env']` → member access → `process.env`).
-- `base64Wrap` — wrap the payload in `eval(atob("…"))`. Note this _trips_ the
-  dynamic-evaluation rule, so the file stays "blocked" while the specific
-  network/process/credential rules are lost — the report shows that split.
+- `base64Wrap` — wrap the payload in `eval(atob("…"))`. The constant folder
+  decodes literal `atob`/`Buffer.from`/`String.fromCharCode`/URI decodes as
+  data and splices a decode consumed by a code-running call back in as code,
+  so the specific network/process/credential rules fire on the decoded payload
+  (marked obfuscated) instead of only dynamic evaluation.
 - `pushPastWindow` — prepend >64KB of filler so the payload sits past the old
   per-file sandbox window. This is the acceptance test for the "scan full bytes,
   persist a bounded sample" refactor (issue #191), and it now passes: the sandbox
@@ -192,15 +196,18 @@ Gated metrics (`detection-eval.test.mjs`):
 - every `expectMinRisk: critical` case caught (100%)
 - benign regression positives exactly match the acknowledged fixture ids
 - benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
-- release injection: no misses in either the lines or the minified shape, over
-  at least 20 cases each
+- release injection: no misses in any of the four shapes (lines, minified,
+  renamed, renamed-minified), over at least 20 cases each, and every renamed
+  sample paired
+- evasion: every transform leaves 100% of samples blocked, over at least 20
+  samples each
 
-Frontier recall and evasion robustness are reported, not gated, so they can start
-red. The benign FP gate was the first ratchet step and landed with weighted
+Frontier recall and evasion code-rule retention are reported, not gated, so they
+can start red. Evasion blocked rate is gated at 100% now that every transform
+reaches it. The benign FP gate was the first ratchet step and landed with weighted
 multi-signal scoring (issue #193). Full-bytes scanning has now landed too (issue
 #191), so `pushPastWindow` already sits at 100% blocked/retained. Remaining
-ratchet plan as the corpus and detector improve: gate frontier recall, then gate
-`pushPastWindow` survival to lock that in.
+ratchet plan as the corpus and detector improve: gate frontier recall.
 
 ## Corpus expansion
 

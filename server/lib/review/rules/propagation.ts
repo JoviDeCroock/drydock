@@ -3,6 +3,12 @@ import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
+import {
+  jsInstallRootWrite,
+  packageDepth,
+  shellInstallRootWrite,
+  type InstallRootWrite,
+} from "./install-root-reach";
 import { normalizeCodeForScanning } from "./normalize";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
@@ -48,6 +54,8 @@ interface PropagationSource {
   normalized: string;
   prefix: string;
   line?: number;
+  // A lifecycle command, read as shell rather than JavaScript.
+  shell?: boolean;
 }
 
 function lifecycleCommandFindings(ctx: RuleContext): Finding[] {
@@ -63,6 +71,7 @@ function lifecycleCommandFindings(ctx: RuleContext): Finding[] {
         normalized: ctx.codePatternSet === "python" ? command : normalizeCodeForScanning(command),
         prefix: changedPrefix(ctx, file),
         line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, script, command),
+        shell: true,
       }),
     );
   }
@@ -87,21 +96,57 @@ function propagationSourceFindings(ctx: RuleContext, source: PropagationSource):
   }
 
   const installRoot = matchLine(ctx.patterns.installRootPath, source.sample, source.normalized);
-  const write = matchLine(ctx.patterns.installWrite, source.sample, source.normalized);
-  if (installRoot && write) {
+  const write = matchLine(
+    [...ctx.patterns.installWrite, ...ctx.patterns.installLink],
+    source.sample,
+    source.normalized,
+  );
+  const reach =
+    installRoot && write
+      ? { line: installRoot.line, obfuscated: installRoot.obfuscated || write.obfuscated }
+      : ctx.codePatternSet === "python"
+        ? null
+        : writeOutOfPackage(source);
+  if (reach) {
     findings.push(
       tag("propagationPackageMutation", {
         severity: "high",
         file: source.file,
-        line: source.line ?? installRoot.line,
+        line: source.line ?? reach.line,
         evidence: `${source.prefix}install-time write into the dependency install root`,
         reason:
           "code that runs during a consumer's install writes into the directory the package manager unpacks dependencies into, so it can add hooks or payloads to packages the consumer already trusts",
-        ...(installRoot.obfuscated || write.obfuscated ? { obfuscated: true } : {}),
+        ...(reach.obfuscated ? { obfuscated: true } : {}),
       }),
     );
   }
   return findings;
+}
+
+// The install root reached without naming it: a write, copy, rename or link
+// whose own destination climbs out of the package (`path.dirname(__dirname)`
+// at the root, `cd ..` before a `cp`, a symlink whose relative target leaves
+// it). Same literal-then-folded order as `matchLine`.
+function writeOutOfPackage(
+  source: PropagationSource,
+): { line: number; obfuscated: boolean } | null {
+  const views: Array<[string, boolean]> = [[source.sample, false]];
+  if (!source.shell && source.normalized !== source.sample) views.push([source.normalized, true]);
+  for (const [text, folded] of views) {
+    let write: InstallRootWrite | null = null;
+    try {
+      write = source.shell
+        ? shellInstallRootWrite(text)
+        : jsInstallRootWrite(text, packageDepth(source.file));
+    } catch {
+      // A bug in the analysis must cost only its own evidence: nothing above
+      // deterministicFindings catches, so a throw here would drop every
+      // finding for the package.
+      write = null;
+    }
+    if (write) return { line: write.line, obfuscated: folded };
+  }
+  return null;
 }
 
 // Matches the capability rules' contract: scan the literal text first so the

@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "Model local propagation that never names node_modules or a parent-escape literal: a root-level install script takes path.dirname(__dirname), which is the directory its dependencies are unpacked into, and walks it. Inert fixture; the target is a fixture path, not a real tree. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "intent": "Model local propagation that never names node_modules or a parent-escape literal: a root-level install script takes path.dirname(__dirname), which is the directory its dependencies are unpacked into, and walks it. Inert fixture; the target is a fixture path, not a real tree. The source never names the install root, so the node_modules co-occurrence missed it; the position analysis in install-root-reach.ts now reaches it, and it stays here as the truth-labeled miss that motivated that analysis.",
   "expectMinRisk": "high",
   "expectAnyRule": ["propagation.package-mutation"],
   "category": "install-time-self-propagation",

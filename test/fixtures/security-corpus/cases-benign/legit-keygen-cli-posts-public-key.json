@@ -1,0 +1,73 @@
+{
+  "id": "legit-keygen-cli-posts-public-key",
+  "title": "Key generation CLI writes the private key to disk and registers only the public key",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-key-handling",
+  "source": "synthetic",
+  "intent": "Distilled from SSH/deploy-key generators: the CLI destructures publicKey and privateKey from crypto.generateKeyPairSync, writes the private key to a 0600 file, logs its length, and posts only the public key to a registration endpoint over https.request. code.key-material-exfiltration must keep the destructured public key untainted and must not treat a file write or a length read as egress. The script is unchanged in this patch, so the release rolls up low.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-keygen-cli-posts-public-key",
+    "version": "1.4.0",
+    "main": "bin/keygen",
+    "bin": {
+      "keygen": "bin/keygen"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "legit-keygen-cli-posts-public-key",
+    "version": "1.4.1",
+    "main": "bin/keygen",
+    "bin": {
+      "keygen": "bin/keygen"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 112,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-keygen-cli-posts-public-key\",\"version\":\"1.4.0\",\"main\":\"bin/keygen\",\"bin\":{\"keygen\":\"bin/keygen\"}}"
+    },
+    {
+      "path": "bin/keygen",
+      "size": 886,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nconst fs = require('fs');\nconst path = require('path');\nconst https = require('https');\nconst { generateKeyPairSync } = require('crypto');\n\nfunction main(outDir) {\n  const { publicKey, privateKey } = generateKeyPairSync('ed25519', {\n    publicKeyEncoding: { type: 'spki', format: 'pem' },\n    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },\n  });\n  fs.writeFileSync(path.join(outDir, 'deploy_key'), privateKey, { mode: 0o600 });\n  fs.writeFileSync(path.join(outDir, 'deploy_key.pub'), publicKey);\n  const body = JSON.stringify({ name: path.basename(outDir), publicKey });\n  const req = https.request({ hostname: 'keys.example.invalid', path: '/register', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => res.resume());\n  req.end(body);\n  console.log(`wrote a ${privateKey.length} byte private key`);\n}\n\nmain(process.argv[2] || '.');\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-before",
+      "flags": [],
+      "textSample": "module.exports = '1.4.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 112,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-keygen-cli-posts-public-key\",\"version\":\"1.4.1\",\"main\":\"bin/keygen\",\"bin\":{\"keygen\":\"bin/keygen\"}}"
+    },
+    {
+      "path": "bin/keygen",
+      "size": 886,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nconst fs = require('fs');\nconst path = require('path');\nconst https = require('https');\nconst { generateKeyPairSync } = require('crypto');\n\nfunction main(outDir) {\n  const { publicKey, privateKey } = generateKeyPairSync('ed25519', {\n    publicKeyEncoding: { type: 'spki', format: 'pem' },\n    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },\n  });\n  fs.writeFileSync(path.join(outDir, 'deploy_key'), privateKey, { mode: 0o600 });\n  fs.writeFileSync(path.join(outDir, 'deploy_key.pub'), publicKey);\n  const body = JSON.stringify({ name: path.basename(outDir), publicKey });\n  const req = https.request({ hostname: 'keys.example.invalid', path: '/register', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => res.resume());\n  req.end(body);\n  console.log(`wrote a ${privateKey.length} byte private key`);\n}\n\nmain(process.argv[2] || '.');\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-after",
+      "flags": [],
+      "textSample": "module.exports = '1.4.1';\n"
+    }
+  ]
+}

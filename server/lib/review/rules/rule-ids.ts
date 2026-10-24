@@ -54,6 +54,14 @@ export const DETERMINISTIC_RULES = {
   codeNetworkAccess: { id: "code.network-access", risk: "capability" },
   codeDynamicEvaluation: { id: "code.dynamic-evaluation", risk: "capability" },
   codeCredentialAccess: { id: "code.credential-access", risk: "capability" },
+  // An anchor, not a capability: it is a traced source-to-sink flow of wallet
+  // key material into a network call, not a capability that needs a second
+  // signal beside it to mean anything.
+  codeKeyMaterialExfiltration: {
+    id: "code.key-material-exfiltration",
+    risk: "anchor",
+    standingDanger: true,
+  },
   fileSecretContent: { id: "file.secret-content", risk: "anchor", standingDanger: true },
   filePromptInjection: { id: "file.prompt-injection", risk: "anchor" },
   fileReviewManipulation: {

@@ -5,10 +5,12 @@ import type { FileRecord, Finding } from "../types";
 import { buildRuleContext, type DeterministicFindingOptions } from "./context";
 import { metadataFindings } from "./metadata";
 import { scriptFindings } from "./scripts";
+import { keyMaterialFindings } from "./key-material";
 import { binaryFindings } from "./binaries";
 import { dependencyDiffFindings } from "./deps";
 import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 import { propagationFindings } from "./propagation";
+import { withNormalizeMemo } from "./normalize";
 import { promptInjectionFindings } from "./prompt-injection";
 import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 
@@ -16,7 +18,7 @@ import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.53.0";
+export const DETERMINISTIC_RULES_VERSION = "1.54.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export { safeJson } from "./helpers";
@@ -34,15 +36,18 @@ export function deterministicFindings(
   packageJsonSummary?: PackageJsonSummary | null,
   options: DeterministicFindingOptions = {},
 ): Finding[] {
-  const ctx = buildRuleContext(files, diff, packageJsonSummary, options);
-  return stampVersion([
-    ...metadataFindings(ctx),
-    ...scriptFindings(ctx),
-    ...binaryFindings(ctx),
-    ...promptInjectionFindings(ctx),
-    ...entrypointPresenceFindings(ctx),
-    ...propagationFindings(ctx),
-  ]);
+  return withNormalizeMemo(() => {
+    const ctx = buildRuleContext(files, diff, packageJsonSummary, options);
+    return stampVersion([
+      ...metadataFindings(ctx),
+      ...scriptFindings(ctx),
+      ...keyMaterialFindings(ctx),
+      ...binaryFindings(ctx),
+      ...promptInjectionFindings(ctx),
+      ...entrypointPresenceFindings(ctx),
+      ...propagationFindings(ctx),
+    ]);
+  });
 }
 
 export function packageJsonDiffFindings(

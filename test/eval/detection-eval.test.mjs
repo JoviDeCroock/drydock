@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { runEval, writeReport } from "./harness.mjs";
 
-// Frontier recall and evasion robustness are deliberately *reported* (written to
-// the report), not asserted here — they start red and ratchet as detection
-// improves. The benign hard-negative FP rate was promoted to a gated threshold
-// once weighted multi-signal scoring (issue #193) brought it under the ratchet
-// target. See docs/detection-eval.md for the threshold ladder.
+// Frontier recall and evasion code-rule retention are deliberately *reported*
+// (written to the report), not asserted here — they ratchet as detection
+// improves. The benign hard-negative FP rate and the evasion blocked rate were
+// promoted to gated thresholds once detection reached them. See
+// docs/detection-eval.md for the threshold ladder.
 const result = runEval();
 writeReport(result);
 
@@ -58,21 +58,18 @@ describe("detection eval (gated thresholds)", () => {
   });
 
   test("a payload spliced into a renamed bundler chunk still raises release risk", () => {
-    // A renamed chunk is attributed against its predecessor like a modified
-    // file, so it may miss only what an in-place edit of the same padded
-    // carrier misses. Pinned: minifying `module-html-comment-template-eval`
-    // strips its `// fetch(...)` line, leaving a lone eval. The short minified
-    // carrier still catches it only because that whole line is under the
-    // narrowing threshold, so the carrier's own fetch counts as changed.
-    const expectedMisses = {
-      renamed: [],
-      "renamed-minified": ["module-html-comment-template-eval"],
-    };
-    for (const [shape, misses] of Object.entries(expectedMisses)) {
+    for (const shape of ["renamed", "renamed-minified"]) {
       const stats = result.releaseInjection[shape];
       expect(stats.samples).toBeGreaterThanOrEqual(20);
       expect(stats.paired).toBe(stats.samples);
-      expect(stats.misses.map((miss) => miss.id)).toEqual(misses);
+      expect(stats.misses).toEqual([]);
+    }
+  });
+
+  test("every evasion transform still leaves the payload blocked", () => {
+    for (const [transform, stats] of Object.entries(result.evasion)) {
+      expect({ transform, blockedRate: stats.blockedRate }).toEqual({ transform, blockedRate: 1 });
+      expect(stats.samples).toBeGreaterThanOrEqual(20);
     }
   });
 

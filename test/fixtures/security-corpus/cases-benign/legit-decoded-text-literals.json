@@ -1,0 +1,70 @@
+{
+  "id": "legit-decoded-text-literals",
+  "title": "Text constants shipped as base64, hex, percent and char-code literals decode to data, not code",
+  "category": "control",
+  "intent": "Synthetic regression for the literal decode folds. A UI string table that ships its constants encoded (base64 greeting and JSON defaults, a hex label, a percent-encoded separator, char codes, a base64 PNG header) beside the bundler global shim decodes to plain text or bytes: no capability may appear and nothing may be marked obfuscated. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "decoded-text-literals",
+    "version": "3.1.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "decoded-text-literals",
+    "version": "3.2.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 68,
+      "sha256": "package.json-68",
+      "flags": [],
+      "textSample": "{\"name\":\"decoded-text-literals\",\"version\":\"3.1.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 30,
+      "sha256": "index.js-30",
+      "flags": [],
+      "textSample": "export * from './strings.js';\n"
+    },
+    {
+      "path": "strings.js",
+      "size": 60,
+      "sha256": "strings.js-60",
+      "flags": [],
+      "textSample": "export function format(parts) {\n  return parts.join('/');\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 68,
+      "sha256": "package.json-68",
+      "flags": [],
+      "textSample": "{\"name\":\"decoded-text-literals\",\"version\":\"3.2.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 30,
+      "sha256": "index.js-30",
+      "flags": [],
+      "textSample": "export * from './strings.js';\n"
+    },
+    {
+      "path": "strings.js",
+      "size": 588,
+      "sha256": "strings.js-588",
+      "flags": [],
+      "textSample": "const GREETING = atob('SGVsbG8sIHdvcmxk');\nconst DEFAULTS = JSON.parse(Buffer.from('eyJyZXRyaWVzIjozLCJsb2NhbGUiOiJlbiJ9', 'base64').toString('utf8'));\nconst LABEL = Buffer.from('53657474696e6773', 'hex').toString();\nconst SEPARATOR = decodeURIComponent('%2F');\nconst BULLET = String.fromCharCode(0x2022, 32);\nconst ICON = Uint8Array.from(atob('iVBORw0KGgo='), (c) => c.charCodeAt(0));\nvar g = g || new Function('return this')();\nexport function format(parts) {\n  return GREETING + SEPARATOR + parts.map((p) => BULLET + p).join(SEPARATOR) + LABEL;\n}\nexport { DEFAULTS, ICON, g as root };\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-byte-codec",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

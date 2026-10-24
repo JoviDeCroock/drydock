@@ -8,7 +8,7 @@ import {
 } from "../../review";
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import { JS_PATTERN_SET, omitGlobalObjectShims } from "../../review/rules/patterns";
-import { normalizeCodeForScanning } from "../../review/rules/normalize";
+import { normalizeCodeForScanning, withNormalizeMemo } from "../../review/rules/normalize";
 import { firstMatchingLine } from "../../platform/text-utils";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
@@ -81,7 +81,7 @@ export function buildVscodeFindings(args: {
   stagedManifestText: string | null;
 }): Finding[] {
   const extensionManifest = parseVscodeExtensionManifest(args.staged.files).manifest;
-  return [
+  return withNormalizeMemo(() => [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
       entrypointResolution: "vscode",
@@ -93,7 +93,7 @@ export function buildVscodeFindings(args: {
       stagedFiles: args.staged.files,
     }),
     ...vscodeManifestFindings(args.details, extensionManifest, args.staged.files),
-  ];
+  ]);
 }
 
 function vscodeManifestFindings(
@@ -199,11 +199,20 @@ function startupRemoteCommandFinding(
       matches(JS_PATTERN_SET.remoteShell, sample, normalized);
     const networkAccess = matches(JS_PATTERN_SET.networkAccess, sample, normalized);
     // The bundler global-object shim is not a decode or eval of a payload.
-    const dynamicEvaluation = matches(
-      JS_PATTERN_SET.dynamicEvaluation,
-      omitGlobalObjectShims(sample),
-      omitGlobalObjectShims(normalized),
-    );
+    // A literal decode folds to what it decodes to, so the decode call itself
+    // is also looked for in text folded without decoding.
+    const dynamicEvaluation =
+      matches(
+        JS_PATTERN_SET.dynamicEvaluation,
+        omitGlobalObjectShims(sample),
+        omitGlobalObjectShims(normalized),
+      ) ||
+      (normalized !== sample &&
+        matches(
+          JS_PATTERN_SET.payloadDecoding,
+          sample,
+          normalizeCodeForScanning(sample, { decode: false }),
+        ));
     if (!processExecution || !networkAccess || !dynamicEvaluation) continue;
     return vscodeTag("startupRemoteCommand", {
       severity: "critical",

