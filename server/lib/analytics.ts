@@ -4,6 +4,9 @@
 // Never add PII or package evidence.
 import { emitOperationalEvent } from "./platform/observability";
 
+export const PUBLIC_DIFF_CLIENTS = ["dependency-pr", "cli", "mcp"] as const;
+export type PublicDiffClient = (typeof PUBLIC_DIFF_CLIENTS)[number] | "other";
+
 export type AnalyticsEvent =
   | {
       name: "publication.discrepancy";
@@ -196,10 +199,11 @@ export type AnalyticsEvent =
       risk: string;
       /**
        * `dependency-pr` when the dependency-PR comment workflow fetched the
-       * pair from CI, `other` otherwise. Self-reported by the caller, so it
-       * separates traffic shapes; it is not an authority.
+       * pair from CI, `cli`/`mcp` for the Drydock CLI and the hosted MCP
+       * tools, `other` otherwise (the browser /diff page). Self-reported by
+       * the caller, so it separates traffic shapes; it is not an authority.
        */
-      client: "dependency-pr" | "other";
+      client: PublicDiffClient;
       durationMs: number;
     };
 

@@ -190,6 +190,22 @@ One read resolves ownership by membership instead of the active organization: `G
 
 One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only public release data — the public npm registry for `ecosystem=npm` (plus public `pkg.pr.new` preview tarballs), for `ecosystem=pypi` the `pypi.org` JSON API with artifact bytes only from `files.pythonhosted.org`, and for `ecosystem=atpm` the publisher's own AT Protocol identity and PDS (see [`atpm-public-diff.md`](./atpm-public-diff.md)) — never organization resources. They attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin (the PyPI mode included), persist no review data to D1, and never run AI review. With the Rate Limiting bindings configured they reach D1 on no request path at all — locked by a test that hands the routes a D1 binding which throws on use. Their abuse controls are per-IP rate limits enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session. Which mounts are anonymous is not a per-route decision: Hono runs middleware in registration order, so anything mounted above the `/api/*` session guard in `server/index.ts` is served without a session, and `test/api-auth-boundary-invariants.test.mjs` fails when that set changes.
 
+The `/api/public/v1/mcp` endpoint is a second deliberate anonymous surface,
+limited to tools over that same public package-diff router. It accepts no
+organization selectors, credentials, or arbitrary fetch targets. Its
+in-process route dispatch is a fresh request on the canonical app origin that
+carries only the caller's IP and a constant `x-drydock-client: mcp` analytics
+tag. Cookies, Authorization, and Origin headers never reach public analysis. It inherits the custom
+registry 404, allowed public artifact hosts, no package execution, no AI review,
+cache, archive caps, and shared analysis budgets above. MCP additionally limits
+all protocol requests to 120/minute per IP, caps request bodies at 16 KiB, and
+rejects a present Origin unless it exactly matches the canonical app origin.
+It creates no auth session and persists no review data. With native rate-limit
+bindings it needs no D1; absent bindings retain the existing rate-limit
+fallback. Tool failures remain explicit errors with status/retry metadata;
+package samples remain untrusted evidence. See
+[`agent-package-review.md`](./agent-package-review.md) and the Worker boundary tests.
+
 ### Email verification
 
 A verified email address is not a condition of signing in. Blocking sign-in put a mail round-trip in front of a product an account cannot evaluate without signing in, so an unverified account can sign in, open the dashboard, and run published-pair reviews — which are credential-free and touch nothing but public registry data.

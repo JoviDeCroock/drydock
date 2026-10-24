@@ -42,8 +42,10 @@ overrides:
   ip-address: ^10.7.4
   # agents pins MCP SDK releases whose OAuth client can send credentials to an
   # authorization server the MCP server picks (GHSA-6qxp-vccf-f47h). Drydock
-  # imports only agents/observability/ai, which loads no MCP code. Keep server
-  # on the client's line so both share one @modelcontextprotocol/core.
+  # imports only agents/observability/ai from agents, which loads no MCP code.
+  # The Worker imports @modelcontextprotocol/server directly for the public MCP
+  # endpoint, and tests use the client. Keep server on the client's line so
+  # both share one @modelcontextprotocol/core.
   "@modelcontextprotocol/sdk": ^1.31.0
   "@modelcontextprotocol/client": ^2.2.0
   "@modelcontextprotocol/server": ^2.2.0

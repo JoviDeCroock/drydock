@@ -403,7 +403,7 @@ describe("public package-diff routes", () => {
     expect(new URL(body.reviewUrl).pathname).toBe(`/diff/atpm/${didName}/1.0.0/1.0.1`);
   });
 
-  test("records dependency-PR workflow fetches apart from other diff views", async () => {
+  test("records dependency-PR, CLI, and MCP fetches apart from browser diff views", async () => {
     const payload = cachedPayload("left-pad-client");
     const input = {
       ecosystem: "npm",
@@ -419,7 +419,7 @@ describe("public package-diff routes", () => {
       PRODUCT_ANALYTICS: { writeDataPoint: (point: { blobs: string[] }) => points.push(point) },
     } as unknown as Cloudflare.Env;
 
-    for (const client of ["dependency-pr", undefined, "something-else"]) {
+    for (const client of ["dependency-pr", undefined, "something-else", "cli", "mcp"]) {
       const headers = new Headers({ "cf-connecting-ip": "10.99.7.1" });
       if (client) headers.set("x-drydock-client", client);
       const ctx = createExecutionContext();
@@ -435,7 +435,13 @@ describe("public package-diff routes", () => {
       expect(res.status).toBe(200);
     }
 
-    expect(points.map((point) => point.blobs.at(-1))).toEqual(["dependency-pr", "other", "other"]);
+    expect(points.map((point) => point.blobs.at(-1))).toEqual([
+      "dependency-pr",
+      "other",
+      "other",
+      "cli",
+      "mcp",
+    ]);
   });
 
   test("the anonymous surface reaches D1 on no request path", async () => {

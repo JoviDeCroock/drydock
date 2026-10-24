@@ -95,8 +95,13 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
    * @returns {Promise<ApiResponse>}
    */
   async function request(path, { authenticated = true, timeoutMs } = {}) {
+    // `x-drydock-client` keeps CLI calls apart from /diff page views in analytics.
     /** @type {Record<string, string>} */
-    const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
+    const headers = {
+      accept: "application/json",
+      "user-agent": `drydock-cli/${CLI_VERSION}`,
+      "x-drydock-client": "cli",
+    };
     if (authenticated) {
       if (!apiKey) throw new CliError("this command needs DRYDOCK_API_KEY", 2);
       headers.authorization = `Bearer ${apiKey}`;

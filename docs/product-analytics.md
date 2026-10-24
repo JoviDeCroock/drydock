@@ -200,11 +200,20 @@ toward `hit` (only the first request of a session can miss).
 
 **`blob8` on `public_diff.viewed` is the client.** `dependency-pr` is the
 dependency-PR comment workflow fetching a pair from CI, once per PR push
-(`docs/dependency-pr-diff-links.md`). Everything else is `other`. Filter
-`blob8 != 'dependency-pr'` for people reading diffs. The value comes from the
-caller's `x-drydock-client` header, so it separates traffic shapes and proves
-nothing. Rows written before the dimension existed have no `blob8`, and the
-workflow did not fetch summaries then.
+(`docs/dependency-pr-diff-links.md`). `cli` is the Drydock CLI's `diff`
+command and `mcp` is a `compare_package_versions` call on the hosted MCP
+endpoint, one row per tool call (each changed-file page is a call).
+Everything else is `other`: mostly the browser `/diff` page, plus any API
+caller that does not send the header. Filter `blob8 NOT IN ('dependency-pr',
+'cli', 'mcp')` for people reading diffs, which keeps `other` and the older rows
+with an empty `blob8` (rows from before the `cli`/`mcp` values existed counted
+those calls as `other`), and `blob8 IN ('cli', 'mcp')` for agent and script
+use. They are tagged rather than dropped because agent adoption is a
+signal worth measuring, and a separate value keeps it out of the page-view
+number. The value comes from the caller's `x-drydock-client` header (the MCP
+route sets it on its in-process dispatch), so it separates traffic shapes and
+proves nothing. Rows written before the dimension existed have no `blob8`, and
+the workflow did not fetch summaries then.
 
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at

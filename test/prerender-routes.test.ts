@@ -157,6 +157,8 @@ describe("public route parity", () => {
     expect(result.html).toContain('href="/diff/react/18.2.0/18.3.1"');
     expect(result.html).toContain('href="/diff/pypi/requests/2.31.0/2.32.3"');
     expect(result.html).toContain("textSamplesOmitted");
+    expect(result.html).toContain('id="mcp"');
+    expect(result.html).toContain("https://drydock.org/api/public/v1/mcp");
     expect(result.html).not.toContain("Page not found");
   });
 

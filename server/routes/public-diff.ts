@@ -6,7 +6,7 @@ import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
-import { recordProductEvent } from "../lib/analytics";
+import { PUBLIC_DIFF_CLIENTS, recordProductEvent, type PublicDiffClient } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
@@ -203,11 +203,16 @@ function recordPublicDiffView(
     packageName: payload.packageName,
     cache: cacheHit === null ? "unknown" : cacheHit ? "hit" : "miss",
     risk: payload.risk?.artifactRisk ?? "unknown",
-    // The dependency-PR workflow fetches once per PR push, not per reader, so
-    // its requests are kept apart from people opening the diff.
-    client: c.req.header("x-drydock-client") === "dependency-pr" ? "dependency-pr" : "other",
+    client: publicDiffClient(c.req.header("x-drydock-client")),
     durationMs: Math.max(0, Date.now() - startedAtMs),
   });
+}
+
+// The dependency-PR workflow fetches once per PR push, and CLI and MCP calls
+// come from agents and scripts, so each keeps its own value and `other` stays
+// people opening the /diff page.
+function publicDiffClient(header: string | undefined): PublicDiffClient {
+  return PUBLIC_DIFF_CLIENTS.find((client) => client === header) ?? "other";
 }
 
 /**
