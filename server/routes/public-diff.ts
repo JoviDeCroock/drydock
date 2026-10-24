@@ -16,6 +16,7 @@ import {
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
+import { packageDiffPath, type DiffEcosystem } from "../../src/lib/package-diff-path";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
@@ -362,6 +363,18 @@ publicDiffRoutes.get("/", async (c) => {
       attestation: payload.attestation ?? null,
       displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
+      // The site's own path helper, so API clients link the URL the site
+      // renders instead of re-deriving its encoding.
+      reviewUrl: new URL(
+        packageDiffPath(
+          // Payloads come only from registry adapters, each with a /diff route.
+          payload.ecosystem as DiffEcosystem,
+          payload.packageName,
+          payload.fromVersion,
+          payload.toVersion,
+        ),
+        canonicalOrigin(c),
+      ).href,
     },
     200,
     analyzedPairHeaders(payload.ecosystem, payload.packageName),

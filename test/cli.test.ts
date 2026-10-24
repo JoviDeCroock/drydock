@@ -162,7 +162,7 @@ describe("drydock CLI", () => {
     expect(cli.stdout).toContain("release risk high");
   });
 
-  test("public diff preserves review evidence and uses canonical identity for its link", async () => {
+  test("public diff preserves review evidence and prints the server review link", async () => {
     const body = {
       ecosystem: "npm",
       packageName: "@canonical/name",
@@ -221,6 +221,7 @@ describe("drydock CLI", () => {
       risk: { artifactRisk: "high", releaseRisk: "medium" },
       notices: ["Baseline coverage is limited"],
       textSamplesOmitted: true,
+      reviewUrl: "https://drydock.test/diff/@canonical/name/1.0.0%2Bold/2.0.0%2Bnew",
     };
     const cli = harness(() => json(body));
     expect(await cli.run("diff", "@input/name", "1", "2")).toBe(0);
@@ -233,8 +234,6 @@ describe("drydock CLI", () => {
       "modified",
       "added",
       "removed",
-      "same.bin: binary",
-      "index.js: truncated",
       "Baseline coverage is limited",
       "text samples omitted",
       "new in release",
@@ -246,9 +245,13 @@ describe("drydock CLI", () => {
     ]) {
       expect(cli.stdout).toContain(text);
     }
-    expect(cli.stdout).toContain(
-      "https://drydock.test/diff/%40canonical/name/1.0.0%2Bold/2.0.0%2Bnew",
-    );
+    const fileRow = (path: string) =>
+      cli.stdout.split("\n").find((line) => line.split(/\s+/).includes(path));
+    expect(fileRow("index.js")).toMatch(/modified\s+index\.js\s+truncated/);
+    expect(fileRow("new.js")).toMatch(/added\s+new\.js\s+-$/);
+    expect(cli.stdout).not.toContain("same.bin");
+    expect(cli.stdout).not.toContain("flags:");
+    expect(cli.stdout).toContain(`review: ${body.reviewUrl}`);
     const releaseFinding = cli.stdout.split("\n").find((line) => line.includes("release-rule"));
     expect(releaseFinding).toContain("release finding");
     expect(releaseFinding).not.toContain("new in release");
@@ -257,25 +260,13 @@ describe("drydock CLI", () => {
     expect(JSON.parse(raw.stdout)).toEqual(body);
   });
 
-  test("public review links use returned PyPI and atpm identities on the configured origin", async () => {
-    for (const [ecosystem, packageName, path] of [
-      ["pypi", "my-package", "/diff/pypi/my-package"],
-      ["atpm", "did:plc:publisher/pkg", "/diff/atpm/did%3Aplc%3Apublisher/pkg"],
-    ]) {
-      const cli = harness(() => json({ ecosystem, packageName, fromVersion: "1", toVersion: "2" }));
-      expect(
-        await cli.run(
-          "diff",
-          "input-name",
-          "1",
-          "2",
-          "--ecosystem",
-          ecosystem,
-          "--url",
-          "https://self.example",
-        ),
-      ).toBe(0);
-      expect(cli.stdout).toContain(`review: https://self.example${path}/1/2`);
+  test("public diff omits the review link when the server returns no web URL", async () => {
+    for (const reviewUrl of [undefined, "javascript:alert(1)", 42]) {
+      const cli = harness(() =>
+        json({ ecosystem: "npm", packageName: "x", fromVersion: "1", toVersion: "2", reviewUrl }),
+      );
+      expect(await cli.run("diff", "x", "1", "2")).toBe(0);
+      expect(cli.stdout).not.toContain("review:");
     }
   });
 

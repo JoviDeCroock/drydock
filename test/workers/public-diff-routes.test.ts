@@ -348,6 +348,28 @@ describe("public package-diff routes", () => {
     expect(validate).toHaveBeenCalledWith(env, expect.anything(), input);
   });
 
+  test("diff response links the site's canonical review URL", async () => {
+    const payload = cachedPayload("@scope/review-link");
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "npm",
+        registryUrl: PUBLIC_NPM_REGISTRY,
+        packageName: payload.packageName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=%40scope%2Freview-link&from=1.0.0&to=1.0.1",
+      "10.99.8.1",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reviewUrl: string };
+    expect(new URL(body.reviewUrl).pathname).toBe("/diff/@scope/review-link/1.0.0/1.0.1");
+  });
+
   test("records dependency-PR workflow fetches apart from other diff views", async () => {
     const payload = cachedPayload("left-pad-client");
     const input = {

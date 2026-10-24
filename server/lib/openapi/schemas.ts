@@ -277,6 +277,7 @@ export const PublicPackageDiff = z
     textSamplesOmitted: z.boolean(),
     notices: z.array(z.string()),
     cachedAt: isoDateTime,
+    reviewUrl: z.url().describe("Canonical human review page for this release pair"),
   })
   .register(openApiSchemas, { id: "PublicPackageDiff" });
 
