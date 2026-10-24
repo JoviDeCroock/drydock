@@ -46,19 +46,19 @@ export function DependencyPrIntegrations({ compact = false }: { compact?: boolea
         </Card>
 
         <Card as="article" padding="compact" class="min-w-0 flex flex-col gap-3">
-          <h3 class="m-0 text-base font-medium">Dependabot workflow</h3>
+          <h3 class="m-0 text-base font-medium">PR comment workflow</h3>
           <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
-            Add a workflow that verifies Dependabot&apos;s signed commit and posts package diff
-            links. When Dependabot revises a grouped update, the workflow updates the same comment.
+            Add a workflow that comments each update&apos;s release risk, top findings, and diff
+            link. When the PR changes, the workflow updates the same comment.
           </p>
-          <MonoDetail parts={["npm + PyPI", "grouped PRs supported"]} />
+          <MonoDetail parts={["npm + PyPI", "Dependabot + Renovate"]} />
           <LinkButton
             href={DEPENDABOT_GUIDE}
             variant="secondary"
             size="sm"
             class="mt-auto self-start"
           >
-            Add to Dependabot
+            Add the workflow
           </LinkButton>
         </Card>
       </div>
@@ -82,15 +82,15 @@ function DependencyPrPromotion() {
             Put package diffs in your dependency PRs.
           </h2>
           <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
-            Add a Renovate preset or Dependabot workflow. Every linked npm or PyPI update opens the
-            published package diff, without a Drydock account.
+            Add a Renovate preset or the PR comment workflow. Every linked npm or PyPI update opens
+            the published package diff, without a Drydock account.
           </p>
           <div class="flex flex-wrap gap-3 mt-1">
             <LinkButton href={RENOVATE_GUIDE} variant="secondary" size="sm">
               Add to Renovate
             </LinkButton>
             <LinkButton href={DEPENDABOT_GUIDE} variant="secondary" size="sm">
-              Add to Dependabot
+              Add the PR comment
             </LinkButton>
           </div>
         </div>
@@ -134,7 +134,7 @@ function DependencyPrPromotion() {
             </table>
           </div>
           <p class="m-0 text-[12px] text-ink-muted leading-[1.55]">
-            Dependabot puts these links in a PR comment.
+            The PR comment workflow adds each diff&apos;s release risk and top findings.
           </p>
         </div>
       </Card>

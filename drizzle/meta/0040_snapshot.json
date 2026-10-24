@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f588aa21-666e-45cc-a42a-c7ab06551eb9",
-  "prevId": "e7860bf4-36cf-4621-9d24-961e2d9df99e",
+  "id": "206e1761-ed45-42d7-8fd2-1ee90f330849",
+  "prevId": "9cc66e30-b430-4357-bcdc-af6b74464605",
   "tables": {
     "account": {
       "name": "account",
@@ -964,14 +964,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "access": {
-          "name": "access",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'read'"
-        },
         "created_by_user_id": {
           "name": "created_by_user_id",
           "type": "text",
@@ -1766,6 +1758,62 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "review_scan_id": {
+          "name": "review_scan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "review_requested_at": {
+          "name": "review_requested_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "review_requested_by": {
+          "name": "review_requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolution": {
+          "name": "resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolution_badge": {
+          "name": "resolution_badge",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reviewed_bytes": {
+          "name": "reviewed_bytes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1777,6 +1825,35 @@
             "version"
           ],
           "isUnique": true
+        },
+        "publication_alerts_review_scan": {
+          "name": "publication_alerts_review_scan",
+          "columns": [
+            "review_scan_id"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_package_badge": {
+          "name": "publication_alerts_package_badge",
+          "columns": [
+            "package_name",
+            "resolution_badge"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_review_requested_by": {
+          "name": "publication_alerts_review_requested_by",
+          "columns": [
+            "review_requested_by"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_resolved_by": {
+          "name": "publication_alerts_resolved_by",
+          "columns": [
+            "resolved_by"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -1799,6 +1876,45 @@
           "tableTo": "user",
           "columnsFrom": [
             "acknowledged_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_review_scan_id_scans_id_fk": {
+          "name": "publication_alerts_review_scan_id_scans_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "scans",
+          "columnsFrom": [
+            "review_scan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_review_requested_by_user_id_fk": {
+          "name": "publication_alerts_review_requested_by_user_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "review_requested_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_resolved_by_user_id_fk": {
+          "name": "publication_alerts_resolved_by_user_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "resolved_by"
           ],
           "columnsTo": [
             "id"

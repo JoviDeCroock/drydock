@@ -86,7 +86,7 @@ export function ApiKeysSection({
                 key={key.id}
                 apiKey={key}
                 busy={busy}
-                revoking={status === "revoking"}
+                revoking={apiKeys.revokingKeyId.value === key.id}
                 onRevoke={() => void apiKeys.revoke(key.id)}
               />
             ))}
@@ -156,8 +156,8 @@ export function ApiKeysSection({
         ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
-            This organization holds the maximum of {apiKeys.limit.value} keys. Revoke one to create
-            another.
+            This organization holds the maximum of {apiKeys.limit.value} unexpired keys. Revoke one
+            to create another.
           </Muted>
         ) : null}
 
@@ -190,8 +190,10 @@ function ApiKeyRow({
         </div>
         <Muted class="text-[12px] m-0">
           {apiKey.access === "scan" ? "can start reviews" : "read only"} · created by {creator} ·{" "}
-          {expired ? "expired" : "expires"} {formatDateTime(apiKey.expiresAt)} ·{" "}
-          {apiKey.lastUsedAt ? `last used ${formatDateTime(apiKey.lastUsedAt)}` : "never used"}
+          {expired
+            ? formatDateTime(apiKey.expiresAt)
+            : `expires ${formatDateTime(apiKey.expiresAt)}`}{" "}
+          · {apiKey.lastUsedAt ? `last used ${formatDateTime(apiKey.lastUsedAt)}` : "never used"}
         </Muted>
       </div>
       <Button variant="ghost" size="sm" onClick={onRevoke} disabled={busy} class="shrink-0">

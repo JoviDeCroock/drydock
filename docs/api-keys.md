@@ -27,18 +27,18 @@ A key belongs to exactly one organization. It ignores the dashboard's active-org
 
 Every key reaches these routes, all reads a plain member can already make (`API_KEY_ROUTES` in `server/lib/auth/api-keys.ts`):
 
-| Route                                                   | Returns                                       |
-| ------------------------------------------------------- | --------------------------------------------- |
-| `GET /api/v1/api-keys/current`                          | the calling key and its organization          |
-| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface         |
-| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`) |
-| `GET /api/v1/scans/overview`                            | dashboard counts                              |
-| `GET /api/v1/scans/:id`                                 | one review                                    |
-| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status, for polling      |
-| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                   |
-| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                           |
-| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`) |
-| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to         |
+| Route                                                   | Returns                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `GET /api/v1/api-keys/current`                          | the calling key and its organization                    |
+| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface                   |
+| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`)           |
+| `GET /api/v1/scans/overview`                            | dashboard counts                                        |
+| `GET /api/v1/scans/:id`                                 | one review                                              |
+| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status and risk split, for polling |
+| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                             |
+| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                                     |
+| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`)           |
+| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to                   |
 
 A `scan` key also reaches these (`API_KEY_SCAN_ROUTES`):
 

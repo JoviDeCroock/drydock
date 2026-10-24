@@ -1146,6 +1146,119 @@
       }
     },
     "schemas": {
+      "RiskSummary": {
+        "type": "object",
+        "properties": {
+          "artifactRisk": {
+            "type": "string"
+          },
+          "releaseRisk": {
+            "type": "string"
+          },
+          "contextRisk": {
+            "type": "string"
+          },
+          "releaseFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "contextFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "unknownFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "artifactRisk",
+          "releaseRisk",
+          "contextRisk",
+          "releaseFindingCount",
+          "contextFindingCount",
+          "unknownFindingCount"
+        ],
+        "additionalProperties": {},
+        "description": "Risk split into the release delta and pre-existing package context"
+      },
+      "Finding": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ruleId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruleVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "rule",
+              "ai"
+            ]
+          },
+          "diffStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releaseDelta": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "file",
+          "evidence",
+          "reason"
+        ],
+        "additionalProperties": {}
+      },
       "Error": {
         "type": "object",
         "properties": {
@@ -1223,298 +1336,54 @@
         ],
         "additionalProperties": {}
       },
-      "OpenApiDocument": {
-        "type": "object",
-        "properties": {
-          "openapi": {
-            "type": "string"
-          },
-          "info": {
+      "StartScanRequest": {
+        "anyOf": [
+          {
             "type": "object",
-            "properties": {},
-            "additionalProperties": {}
+            "properties": {
+              "stageId": {
+                "type": "string",
+                "description": "npm stage id from `npm stage publish`"
+              }
+            },
+            "required": [
+              "stageId"
+            ],
+            "additionalProperties": {},
+            "description": "Review a staged npm publish; needs the organization's npm token"
           },
-          "paths": {
+          {
             "type": "object",
-            "properties": {},
-            "additionalProperties": {}
-          }
-        },
-        "required": [
-          "openapi",
-          "info",
-          "paths"
-        ],
-        "additionalProperties": {}
-      },
-      "ScanList": {
-        "type": "object",
-        "properties": {
-          "scans": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "stageId": {
-                  "type": "string"
-                },
-                "source": {
-                  "type": "string",
-                  "enum": [
-                    "manual",
-                    "auto_discovery",
-                    "workflow_gate",
-                    "published"
-                  ]
-                },
-                "packageName": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "stagedVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "previousVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "risk": {
-                  "type": "string",
-                  "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
-                },
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "pending",
-                    "running",
-                    "complete",
-                    "failed"
-                  ]
-                },
-                "decision": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "publish",
-                        "no_publish"
-                      ]
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "decisionReason": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "decidedAt": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "description": "ISO 8601 timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "changedFileCount": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                },
-                "findingCount": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                },
-                "reportDigest": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "startedAt": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "description": "ISO 8601 timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "completedAt": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "description": "ISO 8601 timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "createdAt": {
-                  "type": "string",
-                  "description": "ISO 8601 timestamp"
-                },
-                "updatedAt": {
-                  "type": "string",
-                  "description": "ISO 8601 timestamp"
-                },
-                "ecosystem": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "riskSummary": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "artifactRisk": {
-                          "type": "string"
-                        },
-                        "releaseRisk": {
-                          "type": "string"
-                        },
-                        "contextRisk": {
-                          "type": "string"
-                        },
-                        "releaseFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "contextFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "unknownFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "artifactRisk",
-                        "releaseRisk",
-                        "contextRisk",
-                        "releaseFindingCount",
-                        "contextFindingCount",
-                        "unknownFindingCount"
-                      ],
-                      "additionalProperties": {},
-                      "description": "Risk split into the release delta and pre-existing package context"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
+            "properties": {
+              "ecosystem": {
+                "type": "string",
+                "enum": [
+                  "npm",
+                  "pypi",
+                  "vscode",
+                  "atpm"
+                ]
               },
-              "required": [
-                "id",
-                "stageId",
-                "source",
-                "packageName",
-                "stagedVersion",
-                "previousVersion",
-                "risk",
-                "status",
-                "decision",
-                "decisionReason",
-                "decidedAt",
-                "changedFileCount",
-                "findingCount",
-                "reportDigest",
-                "startedAt",
-                "completedAt",
-                "createdAt",
-                "updatedAt",
-                "ecosystem",
-                "riskSummary"
-              ],
-              "additionalProperties": {}
-            }
-          },
-          "nextCursor": {
-            "anyOf": [
-              {
+              "packageName": {
                 "type": "string"
               },
-              {
-                "type": "null"
+              "version": {
+                "type": "string"
+              },
+              "baselineVersion": {
+                "description": "Version to diff against; defaults to the previous release",
+                "type": "string"
               }
+            },
+            "required": [
+              "ecosystem",
+              "packageName",
+              "version"
             ],
-            "description": "Pass as `cursor` for the next page"
-          },
-          "filter": {
-            "type": "string",
-            "enum": [
-              "undecided",
-              "published_without_decision",
-              "decided",
-              "publish",
-              "no_publish",
-              "all"
-            ]
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+            "additionalProperties": {},
+            "description": "Review an already-published release"
           }
-        },
-        "required": [
-          "scans",
-          "nextCursor",
-          "filter",
-          "limit"
-        ],
-        "additionalProperties": {}
+        ]
       },
       "StartedScan": {
         "type": "object",
@@ -1538,23 +1407,15 @@
                 ]
               },
               "packageName": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "stagedVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
@@ -1586,55 +1447,6 @@
           "queued"
         ],
         "additionalProperties": {}
-      },
-      "StartScanRequest": {
-        "anyOf": [
-          {
-            "type": "object",
-            "properties": {
-              "stageId": {
-                "type": "string",
-                "description": "npm stage id from `npm stage publish`"
-              }
-            },
-            "required": [
-              "stageId"
-            ],
-            "additionalProperties": false,
-            "description": "Review a staged npm publish; needs the organization's npm token"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "ecosystem": {
-                "type": "string",
-                "enum": [
-                  "npm",
-                  "pypi",
-                  "vscode",
-                  "atpm"
-                ]
-              },
-              "packageName": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "baselineVersion": {
-                "description": "Version to diff against; defaults to the previous release",
-                "type": "string"
-              }
-            },
-            "required": [
-              "ecosystem",
-              "packageName",
-              "version"
-            ],
-            "additionalProperties": false,
-            "description": "Review an already-published release"
-          }
-        ]
       },
       "StagedPublishDiscovery": {
         "type": "object",
@@ -1669,23 +1481,15 @@
                   "type": "string"
                 },
                 "packageName": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "version": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
@@ -1704,6 +1508,211 @@
           "created",
           "skipped",
           "scans"
+        ],
+        "additionalProperties": {}
+      },
+      "ScanList": {
+        "type": "object",
+        "properties": {
+          "scans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "stageId": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "auto_discovery",
+                    "workflow_gate",
+                    "published"
+                  ]
+                },
+                "packageName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stagedVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previousVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "risk": {
+                  "type": "string",
+                  "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "complete",
+                    "failed"
+                  ]
+                },
+                "decision": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "publish",
+                        "no_publish"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "decisionReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "decidedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "changedFileCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "findingCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reportDigest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "startedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "completedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp"
+                },
+                "ecosystem": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "riskSummary": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RiskSummary"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "stageId",
+                "source",
+                "packageName",
+                "stagedVersion",
+                "previousVersion",
+                "risk",
+                "status",
+                "decision",
+                "decisionReason",
+                "decidedAt",
+                "changedFileCount",
+                "findingCount",
+                "reportDigest",
+                "startedAt",
+                "completedAt",
+                "createdAt",
+                "updatedAt",
+                "ecosystem",
+                "riskSummary"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "nextCursor": {
+            "description": "Pass as `cursor` for the next page",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filter": {
+            "type": "string",
+            "enum": [
+              "undecided",
+              "published_without_decision",
+              "decided",
+              "publish",
+              "no_publish",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "scans",
+          "nextCursor",
+          "filter",
+          "limit"
         ],
         "additionalProperties": {}
       },
@@ -1799,13 +1808,9 @@
                 "maximum": 9007199254740991
               },
               "medianDecisionMs": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "number",
+                  "null"
                 ]
               }
             },
@@ -1850,33 +1855,21 @@
                 ]
               },
               "packageName": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "stagedVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "previousVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "risk": {
@@ -1907,13 +1900,9 @@
                 ]
               },
               "decisionReason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "decidedAt": {
@@ -1938,13 +1927,9 @@
                 "maximum": 9007199254740991
               },
               "reportDigest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "startedAt": {
@@ -1978,13 +1963,9 @@
                 "description": "ISO 8601 timestamp"
               },
               "decidedByName": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },
@@ -2029,136 +2010,13 @@
           "findings": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "severity": {
-                  "type": "string",
-                  "enum": [
-                    "info",
-                    "low",
-                    "medium",
-                    "high",
-                    "critical"
-                  ]
-                },
-                "file": {
-                  "type": "string"
-                },
-                "line": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleId": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "source": {
-                  "type": "string",
-                  "enum": [
-                    "rule",
-                    "ai"
-                  ]
-                },
-                "diffStatus": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "releaseDelta": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "evidence": {
-                  "type": "string"
-                },
-                "reason": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "severity",
-                "file",
-                "evidence",
-                "reason"
-              ],
-              "additionalProperties": {}
+              "$ref": "#/components/schemas/Finding"
             }
           },
           "riskSummary": {
             "anyOf": [
               {
-                "type": "object",
-                "properties": {
-                  "artifactRisk": {
-                    "type": "string"
-                  },
-                  "releaseRisk": {
-                    "type": "string"
-                  },
-                  "contextRisk": {
-                    "type": "string"
-                  },
-                  "releaseFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "contextFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "unknownFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "artifactRisk",
-                  "releaseRisk",
-                  "contextRisk",
-                  "releaseFindingCount",
-                  "contextFindingCount",
-                  "unknownFindingCount"
-                ],
-                "additionalProperties": {},
-                "description": "Risk split into the release delta and pre-existing package context"
+                "$ref": "#/components/schemas/RiskSummary"
               },
               {
                 "type": "null"
@@ -2196,33 +2054,21 @@
                 ]
               },
               "packageName": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "stagedVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "previousVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "risk": {
@@ -2253,13 +2099,9 @@
                 ]
               },
               "decisionReason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "decidedAt": {
@@ -2284,13 +2126,9 @@
                 "maximum": 9007199254740991
               },
               "reportDigest": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "startedAt": {
@@ -2345,10 +2183,22 @@
               "updatedAt"
             ],
             "additionalProperties": {}
+          },
+          "riskSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until the review completes, and when no release delta was graded (no baseline compared, or a review recorded before the split); fall back to `scan.risk` then"
           }
         },
         "required": [
-          "scan"
+          "scan",
+          "riskSummary"
         ],
         "additionalProperties": {}
       },
@@ -2443,33 +2293,21 @@
             "type": "object",
             "properties": {
               "name": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "stagedVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "previousVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               }
             },
@@ -2483,43 +2321,7 @@
           "riskSummary": {
             "anyOf": [
               {
-                "type": "object",
-                "properties": {
-                  "artifactRisk": {
-                    "type": "string"
-                  },
-                  "releaseRisk": {
-                    "type": "string"
-                  },
-                  "contextRisk": {
-                    "type": "string"
-                  },
-                  "releaseFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "contextFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "unknownFindingCount": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "artifactRisk",
-                  "releaseRisk",
-                  "contextRisk",
-                  "releaseFindingCount",
-                  "contextFindingCount",
-                  "unknownFindingCount"
-                ],
-                "additionalProperties": {},
-                "description": "Risk split into the release delta and pre-existing package context"
+                "$ref": "#/components/schemas/RiskSummary"
               },
               {
                 "type": "null"
@@ -2529,94 +2331,7 @@
           "findings": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "severity": {
-                  "type": "string",
-                  "enum": [
-                    "info",
-                    "low",
-                    "medium",
-                    "high",
-                    "critical"
-                  ]
-                },
-                "file": {
-                  "type": "string"
-                },
-                "line": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleId": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "source": {
-                  "type": "string",
-                  "enum": [
-                    "rule",
-                    "ai"
-                  ]
-                },
-                "diffStatus": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "releaseDelta": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "evidence": {
-                  "type": "string"
-                },
-                "reason": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "severity",
-                "file",
-                "evidence",
-                "reason"
-              ],
-              "additionalProperties": {}
+              "$ref": "#/components/schemas/Finding"
             }
           }
         },
@@ -2717,33 +2432,21 @@
                     "type": "object",
                     "properties": {
                       "name": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "stagedVersion": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       },
                       "previousVersion": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "type": "null"
-                          }
+                        "type": [
+                          "string",
+                          "null"
                         ]
                       }
                     },
@@ -2874,33 +2577,21 @@
                   ]
                 },
                 "stagedVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "previousVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "tag": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "risk": {
@@ -2910,43 +2601,7 @@
                 "riskSummary": {
                   "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "artifactRisk": {
-                          "type": "string"
-                        },
-                        "releaseRisk": {
-                          "type": "string"
-                        },
-                        "contextRisk": {
-                          "type": "string"
-                        },
-                        "releaseFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "contextFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "unknownFindingCount": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "artifactRisk",
-                        "releaseRisk",
-                        "contextRisk",
-                        "releaseFindingCount",
-                        "contextFindingCount",
-                        "unknownFindingCount"
-                      ],
-                      "additionalProperties": {},
-                      "description": "Risk split into the release delta and pre-existing package context"
+                      "$ref": "#/components/schemas/RiskSummary"
                     },
                     {
                       "type": "null"
@@ -2968,23 +2623,15 @@
                   ]
                 },
                 "decisionReason": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "decidedByName": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "decidedAt": {
@@ -3035,13 +2682,9 @@
             }
           },
           "nextCursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "limit": {
@@ -3075,13 +2718,9 @@
                 "type": "string"
               },
               "runId": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "number",
+                  "null"
                 ]
               },
               "status": {
@@ -3089,23 +2728,15 @@
                 "description": "`pending` until every package is decided"
               },
               "decision": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "scanId": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "packages": {
@@ -3117,46 +2748,30 @@
                       "type": "string"
                     },
                     "packageName": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "version": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "status": {
                       "type": "string"
                     },
                     "releaseRisk": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     },
                     "decision": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
+                      "type": [
+                        "string",
+                        "null"
                       ]
                     }
                   },
@@ -3207,6 +2822,36 @@
         ],
         "additionalProperties": {}
       },
+      "PublicPackageVersions": {
+        "type": "object",
+        "properties": {
+          "ecosystem": {
+            "type": "string"
+          },
+          "packageName": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "versions": {
+            "type": "array",
+            "items": {}
+          },
+          "suggested": {}
+        },
+        "required": [
+          "ecosystem",
+          "packageName",
+          "displayName",
+          "versions",
+          "suggested"
+        ],
+        "additionalProperties": {}
+      },
       "PublicPackageDiff": {
         "type": "object",
         "properties": {
@@ -3244,94 +2889,7 @@
           "findings": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "severity": {
-                  "type": "string",
-                  "enum": [
-                    "info",
-                    "low",
-                    "medium",
-                    "high",
-                    "critical"
-                  ]
-                },
-                "file": {
-                  "type": "string"
-                },
-                "line": {
-                  "anyOf": [
-                    {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleId": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "ruleVersion": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "source": {
-                  "type": "string",
-                  "enum": [
-                    "rule",
-                    "ai"
-                  ]
-                },
-                "diffStatus": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "releaseDelta": {
-                  "anyOf": [
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "evidence": {
-                  "type": "string"
-                },
-                "reason": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "severity",
-                "file",
-                "evidence",
-                "reason"
-              ],
-              "additionalProperties": {}
+              "$ref": "#/components/schemas/Finding"
             }
           },
           "risk": {
@@ -3374,37 +2932,27 @@
         ],
         "additionalProperties": {}
       },
-      "PublicPackageVersions": {
+      "OpenApiDocument": {
         "type": "object",
         "properties": {
-          "ecosystem": {
+          "openapi": {
             "type": "string"
           },
-          "packageName": {
-            "type": "string"
+          "info": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
           },
-          "displayName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "versions": {
-            "type": "array",
-            "items": {}
-          },
-          "suggested": {}
+          "paths": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
         },
         "required": [
-          "ecosystem",
-          "packageName",
-          "displayName",
-          "versions",
-          "suggested"
+          "openapi",
+          "info",
+          "paths"
         ],
         "additionalProperties": {}
       }

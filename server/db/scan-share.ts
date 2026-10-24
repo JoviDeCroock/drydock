@@ -19,6 +19,8 @@ import {
   PUBLIC_NPM_REGISTRY_URLS,
   REGISTRY_VERIFIED_SCAN_SOURCES,
   badgeLookupKey,
+  badgePickKey,
+  badgeRowTag,
   publicPackageLookupKey,
   scanDistTag,
   type SharedScanRow,
@@ -28,6 +30,7 @@ export type { SharedScanRow };
 import type { AppDb } from "./client";
 import { npmPackageManagementAllowed } from "./package-claims";
 import { recordScanEvent } from "./events";
+import { publicDisclosureAllowedCondition } from "./scan-query";
 import { scans } from "./schema";
 
 // 256 bits of entropy, base64url (43 chars). The token is the whole capability
@@ -356,7 +359,7 @@ export async function setThreatFeedListing(
 
 export const THREAT_FEED_MAX_ENTRIES = 100;
 
-const SHARED_SCAN_COLUMNS = {
+export const SHARED_SCAN_COLUMNS = {
   scanId: scans.id,
   // The registry's own version string for this release, as opposed to
   // `stagedVersion`, which the scan replaces with the inspected tarball's
@@ -428,6 +431,7 @@ export async function listThreatFeedScans(
         isNotNull(scans.publicShareToken),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
         after
           ? or(
               sql`${scans.publicFeedListedAt} < ${after.listedAtMs}`,
@@ -538,6 +542,7 @@ export async function listBadgeCandidateScans(
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
         ecosystemMatches,
         ecosystem === "npm"
           ? and(canonicalNpmBadgeOwner, eq(scans.registryPackageName, packageName))
@@ -572,6 +577,16 @@ export function compareBadgeCandidates(a: SharedScanRow, b: SharedScanRow): numb
   if (versionA && versionB && versionA !== versionB) {
     const order = compareSemver(versionB, versionA);
     if (order !== 0) return order;
+  }
+  // For the same version, a publisher's decision on the bytes npm actually
+  // published outranks a review of the bytes that were staged, which may not
+  // be the ones consumers install.
+  if (Boolean(a.postRelease) !== Boolean(b.postRelease)) return a.postRelease ? -1 : 1;
+  // Two publishers' decisions after release on the same version: a decline
+  // wins, whichever came last, so one publisher cannot answer green over
+  // another's warning by deciding again.
+  if (a.postRelease && b.postRelease && a.decision !== b.decision) {
+    return a.decision === "no_publish" ? -1 : 1;
   }
   return (
     (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0) ||
@@ -667,14 +682,14 @@ export async function findNewerPublishedRelease(
   limit = 20,
 ): Promise<string | null> {
   if (!pick.organizationId) return null;
-  const packageKey = badgeLookupKey(pick);
+  const packageKey = badgePickKey(pick);
   if (!packageKey) return null;
   // The pick's own place in the version order. Its registry version is the
   // trustworthy one for the comparison; a row without one (a gate review, or
   // one predating the column) can only be placed by its manifest version.
   const pickVersion = pick.registryVersion ?? pick.stagedVersion;
   if (!pickVersion) return null;
-  const tag = scanDistTag(pick.summaryJson) ?? DEFAULT_BADGE_TAG;
+  const tag = badgeRowTag(pick) ?? DEFAULT_BADGE_TAG;
   const rows = await db
     .select({ registryVersion: scans.registryVersion })
     .from(scans)
@@ -729,6 +744,10 @@ export async function findNewerPublishedRelease(
  * re-reads the full detail through `getScan` with the resolved organization so
  * the public path shares the exact read pipeline (R2 artifacts, digest checks)
  * used by authenticated reads.
+ *
+ * A token whose release is not public yet resolves to null, exactly like an
+ * unknown one: the link can be minted before publication, but answering it
+ * differently would tell anyone holding it that the release is pending.
  */
 export async function resolvePublicShareToken(
   db: AppDb,
@@ -743,7 +762,13 @@ export async function resolvePublicShareToken(
       includesFiles: scans.publicShareIncludesFiles,
     })
     .from(scans)
-    .where(and(eq(scans.publicShareToken, token), isNull(scans.registryStatusSupersededAt)))
+    .where(
+      and(
+        eq(scans.publicShareToken, token),
+        isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
+      ),
+    )
     .limit(1);
   if (!row || row.status !== "complete" || !row.organizationId) return null;
   return {
@@ -751,4 +776,27 @@ export async function resolvePublicShareToken(
     organizationId: row.organizationId,
     includesFiles: row.includesFiles,
   };
+}
+
+/**
+ * Whether this scan's release is public yet, so its share link, listing, and
+ * listed badge are live (`publicDisclosureAllowedCondition`). The share dialog
+ * reads it to say the link is waiting rather than broken.
+ */
+export async function scanPublicDisclosureAllowed(
+  db: AppDb,
+  input: { scanId: string; organizationId: string },
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        publicDisclosureAllowedCondition(),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }

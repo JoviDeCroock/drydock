@@ -1,5 +1,6 @@
 import type { CodePatternSet, DiffEntry, Finding, PackageJsonDiff } from "../review";
 import type { FileRecord, PackageJsonSummary } from "../review";
+import type { ArchiveDigests } from "../ecosystems/artifact-integrity";
 
 export interface PublicDiffAcquiredSide {
   files: FileRecord[];
@@ -44,6 +45,12 @@ export interface PublicDiffAttestation {
 export interface PublicDiffAcquiredSources {
   from: PublicDiffAcquiredSide;
   to: PublicDiffAcquiredSide;
+  /**
+   * The `to` archive's digests, when it came from the registry rather than a
+   * mutable preview. A published-pair review persists them so its decision can
+   * be bound to the bytes the publication monitor hashed for the release.
+   */
+  toDigests?: ArchiveDigests;
   buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
   notices?: string[];
   provenance?: PublicDiffProvenanceEntry[];
@@ -103,10 +110,19 @@ export interface PublicDiffAdapter {
     input: PublicDiffInput,
   ): Promise<void>;
 
+  /**
+   * The registry an authenticated published-pair review reads. Public by
+   * default; npm returns the loopback fake registry only when the explicit
+   * local-development override is on, the same rule the publication monitor
+   * uses, so the local harness can review what it published.
+   */
+  publishedRegistryUrl?(env: Cloudflare.Env): string;
+
   listVersions(
     env: Cloudflare.Env,
     ctx: ExecutionContext,
     packageName: string,
+    registryUrl?: string,
   ): Promise<PublicDiffVersionListing>;
 
   acquire(

