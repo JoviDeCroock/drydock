@@ -18,6 +18,7 @@ import {
   MAX_REPORT_BYTES,
   MAX_REPORT_EVENTS,
 } from "./event-budget.mjs";
+import { plantCanaryFiles } from "./canary-files.mjs";
 import { isBrowserTargeted } from "./manifest.mjs";
 import {
   boundEvent,
@@ -330,7 +331,7 @@ function readTarballPackageName() {
       maxBuffer: MAX_MANIFEST_BYTES,
       killSignal: "SIGKILL",
     });
-  let manifest = read(["-xzOf", TARBALL, "package/package.json"]);
+  let manifest = read(["-xzOf", TARBALL, "--", "package/package.json"]);
   if (manifest.status !== 0) {
     // npm accepts any single top-level directory, not only `package/`.
     const listing = read(["-tzf", TARBALL]);
@@ -339,7 +340,8 @@ function readTarballPackageName() {
       .split("\n")
       .find((line) => /^[^/]+\/package\.json$/.test(line));
     if (!entry) return null;
-    manifest = read(["-xzOf", TARBALL, entry]);
+    // The member name is tarball-derived and may start with `-`.
+    manifest = read(["-xzOf", TARBALL, "--", entry]);
   }
   if (manifest.status !== 0 || !manifest.stdout) return null;
   try {
@@ -384,21 +386,6 @@ function parseDetonateRequest(body) {
   return { version: VERSION, canaryEnv, canaryFiles, stepTimeoutMs, totalTimeoutMs };
 }
 
-/** @param {DetonateRequest["canaryFiles"]} files */
-function plantCanaries(files) {
-  for (const file of files) {
-    const parents = [];
-    for (let dir = path.dirname(file.path); !fs.existsSync(dir); dir = path.dirname(dir)) {
-      parents.push(dir);
-    }
-    fs.mkdirSync(path.dirname(file.path), { recursive: true, mode: 0o700 });
-    for (const dir of parents) fs.chownSync(dir, PKG_UID, PKG_GID);
-    fs.writeFileSync(file.path, file.content, { mode: file.mode });
-    fs.chownSync(file.path, PKG_UID, PKG_GID);
-    fs.chmodSync(file.path, file.mode);
-  }
-}
-
 /** @param {DetonateRequest} request @returns {Promise<HarnessReport>} */
 async function detonate(request) {
   const deadline = Date.now() + request.totalTimeoutMs;
@@ -410,7 +397,7 @@ async function detonate(request) {
   let stepsSkipped = 0;
 
   if (state.installName !== null && state.dependencyInstall !== "failed") {
-    plantCanaries(request.canaryFiles);
+    plantCanaryFiles(request.canaryFiles, { home: PKG_HOME, uid: PKG_UID, gid: PKG_GID });
     fs.mkdirSync(HOOK_LOG_DIR, { recursive: true, mode: 0o755 });
     fs.chmodSync(HOOK_LOG_DIR, 0o755);
 

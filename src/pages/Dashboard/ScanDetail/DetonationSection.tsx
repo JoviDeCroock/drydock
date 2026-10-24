@@ -43,6 +43,7 @@ export function DetonationSection({ scanId }: { scanId: string }) {
     view.kind === "complete" && !view.signals.length
       ? cleanRunCaveat(view.coverage, view.truncated)
       : null;
+  const coverageGaps = view.kind === "complete" ? coverageParts(view.coverage, view.truncated) : [];
 
   const runButton =
     "canRun" in view && view.canRun ? (
@@ -62,27 +63,30 @@ export function DetonationSection({ scanId }: { scanId: string }) {
         Detonation
       </SectionLabel>
       <p class="m-0 text-[12px] leading-[1.5] text-ink-muted max-w-[680px]">
-        Installs and loads the package in an isolated sandbox with planted fake credentials.
-        Advisory: it does not change the risk or the decision.
+        Installs and loads the package, without calling its exports, in an isolated sandbox with
+        planted fake credentials. Advisory: it does not change the risk or the decision.
       </p>
 
-      {view.kind === "pending" ? (
-        <LoadingLine size="inline">{view.label}</LoadingLine>
-      ) : (
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <p
-            class={
-              view.kind === "complete"
-                ? "m-0 text-[14px] font-medium text-ink"
-                : "m-0 text-[13px] leading-[1.55] text-ink-muted"
-            }
-          >
-            {headline(view)}
-          </p>
-          {runButton}
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        {/* Stays mounted across states so a run finishing is announced. */}
+        <div role="status" class="flex flex-col gap-1 min-w-0">
+          {view.kind === "pending" ? (
+            <LoadingLine size="inline">{view.label}</LoadingLine>
+          ) : (
+            <p
+              class={
+                view.kind === "complete"
+                  ? "m-0 text-[14px] font-medium text-ink"
+                  : "m-0 text-[13px] leading-[1.55] text-ink-muted"
+              }
+            >
+              {headline(view)}
+            </p>
+          )}
+          {requestError ? <p class="m-0 text-[12px] text-danger-text">{requestError}</p> : null}
         </div>
-      )}
-      {requestError ? <p class="m-0 text-[12px] text-danger-text">{requestError}</p> : null}
+        {runButton}
+      </div>
       {loadError && data ? (
         <p class="m-0 text-[12px] text-ink-muted">Could not refresh: {loadError}</p>
       ) : null}
@@ -94,12 +98,8 @@ export function DetonationSection({ scanId }: { scanId: string }) {
           ))}
         </ul>
       ) : null}
-      {view.kind === "complete" ? (
-        <>
-          <MonoDetail parts={coverageParts(view.coverage, view.truncated)} />
-          {caveat ? <p class="m-0 text-[12px] text-ink-muted">{caveat}</p> : null}
-        </>
-      ) : null}
+      {coverageGaps.length ? <MonoDetail parts={coverageGaps} /> : null}
+      {caveat ? <p class="m-0 text-[12px] text-ink-muted">{caveat}</p> : null}
       {result && (result.egress.length || result.steps.length) ? (
         <SandboxLog result={result} />
       ) : null}
@@ -130,7 +130,7 @@ function SignalItem({ signal }: { signal: DetonationSignal }) {
   return (
     <li class="flex flex-col gap-1 min-w-0">
       <p class="m-0 flex flex-wrap items-center gap-x-2 gap-y-1">
-        {signalNeedsBadge(signal.severity) ? (
+        {signalNeedsBadge(signal.id) ? (
           <Badge tone={signal.severity}>{signal.severity}</Badge>
         ) : (
           <MonoLabel>{signal.severity}</MonoLabel>
@@ -153,6 +153,7 @@ function SignalItem({ signal }: { signal: DetonationSignal }) {
       {signal.evidence.length > EVIDENCE_PREVIEW_LINES ? (
         <button
           type="button"
+          aria-expanded={expanded.value}
           onClick={() => (expanded.value = !expanded.peek())}
           class="self-start p-0 border-0 bg-transparent text-[12px] text-accent hover:underline cursor-pointer"
         >
@@ -183,9 +184,7 @@ function SandboxLog({ result }: { result: DetonationResult }) {
                   </span>
                   {` · ${event.phase} · ${event.bodyBytes} B · ${event.action}`}
                   {event.canaryHits.length ? (
-                    <span class="text-danger-text">
-                      {` · canary ${event.canaryHits.join(", ")}`}
-                    </span>
+                    <span class="text-ink">{` · canary ${event.canaryHits.join(", ")}`}</span>
                   ) : null}
                 </li>
               ))}
