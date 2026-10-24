@@ -1,0 +1,77 @@
+{
+  "id": "files-allowlist-escape-negated-dir",
+  "title": "Payloads sit where npm-packlist semantics exclude them: a negated directory and a loaded doc file",
+  "category": "tarball-manifest-mismatch",
+  "intent": "The files allowlist is matched the way npm-packlist reads it (root-anchored entries, `/dist` with a leading slash, `!` negations that drop a directory). A hook file inside the negated dist/test directory and a JavaScript payload disguised as notes.md are files npm pack would never have emitted. The disguised doc is required by the entrypoint, so the documentation demotion must not apply and both keep high severity on an added file.",
+  "previousPackageJson": {
+    "name": "files-allowlist-escape-negated-dir",
+    "version": "2.0.0",
+    "main": "dist/index.js",
+    "files": ["/dist", "!/dist/test"]
+  },
+  "stagedPackageJson": {
+    "name": "files-allowlist-escape-negated-dir",
+    "version": "2.0.1",
+    "main": "dist/index.js",
+    "files": ["/dist", "!/dist/test"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 120,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"files-allowlist-escape-negated-dir\",\"version\":\"2.0.0\",\"main\":\"dist/index.js\",\"files\":[\"/dist\",\"!/dist/test\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 27,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "module.exports = () => 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 120,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"files-allowlist-escape-negated-dir\",\"version\":\"2.0.1\",\"main\":\"dist/index.js\",\"files\":[\"/dist\",\"!/dist/test\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 56,
+      "sha256": "index-v2",
+      "flags": [],
+      "textSample": "require('../notes.md');\nmodule.exports = () => 1;\n"
+    },
+    {
+      "path": "dist/test/hook.js",
+      "size": 40,
+      "sha256": "hook-js",
+      "flags": [],
+      "textSample": "module.exports = 'staged outside files';\n"
+    },
+    {
+      "path": "notes.md",
+      "size": 44,
+      "sha256": "notes-md",
+      "flags": [],
+      "textSample": "module.exports = 'javascript named as a doc';\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.outside-files-list",
+      "severity": "high",
+      "file": "dist/test/hook.js"
+    },
+    {
+      "ruleId": "file.outside-files-list",
+      "severity": "high",
+      "file": "notes.md"
+    }
+  ]
+}

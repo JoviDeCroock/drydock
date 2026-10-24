@@ -162,7 +162,8 @@ export default function PublicReportPage() {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">
-          This report link is invalid or has been revoked by the publisher.
+          This report link is invalid, revoked by the publisher, or waiting for its release to be
+          published.
         </Alert>
       </PageShell>
     );

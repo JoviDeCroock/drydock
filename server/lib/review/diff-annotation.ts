@@ -1,6 +1,6 @@
 import { hasImplicitNodeGypInstall, normalizeStringRecord } from "../tar-parser.js";
 import { isRecord } from "../platform/guards";
-import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
+import { jsTokenText, tokenizeJsWithinBudget } from "../platform/js-lexer";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
@@ -13,12 +13,13 @@ import {
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
-import { normalizeCodeForScanning } from "./rules/normalize";
+import { codeViewsForScanning, normalizeCodeForScanning } from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
 import {
   installReachablePaths,
   javascriptReachableFrom,
   normalizeReachabilityPath,
+  type ReachabilityLexing,
 } from "./rules/reachability";
 import {
   changedRegions,
@@ -63,7 +64,7 @@ export function annotateFindingsWithDiffStatus<
   },
 >(
   findings: T[],
-  diff: Array<{ path: string; status?: unknown }>,
+  diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
   options: FindingAnnotationOptions = {},
 ): Array<T & FindingDiffAnnotation> {
   const diffByPath = new Map(
@@ -71,23 +72,37 @@ export function annotateFindingsWithDiffStatus<
   );
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const stagedByPath = new Map((options.stagedFiles ?? []).map((file) => [file.path, file]));
+  // An added file renamed from a removed one (a bundler chunk under a new
+  // content hash) is attributed as that predecessor modified: changed spans,
+  // baseline findings and `expanded` all read the predecessor's bytes. Its
+  // reported diffStatus stays `added`. Without the predecessor's text it keeps
+  // the full added-file treatment.
+  const predecessors = renamedPredecessors(diff, diffByPath, previousByPath);
+  const attributionStatus = (path: string, status: FindingDiffStatus): FindingDiffStatus =>
+    status === "added" && predecessors.has(path) ? "modified" : status;
+  const comparedByPath = new Map([...previousByPath, ...predecessors]);
   const newlyInstallReachable = lazyNewlyInstallReachablePaths(
     options.previousFiles ?? [],
     options.stagedFiles ?? [],
     options.codePatternSet,
-    diffByPath,
+    (path) => attributionStatus(path, diffByPath.get(path) ?? "unknown"),
+    predecessors,
   );
   const changesCache = new Map<string, FileChanges | null>();
   const changesFor = (path: string) =>
-    fileChangesForPath(path, previousByPath, stagedByPath, changesCache, options.codePatternSet);
+    fileChangesForPath(path, comparedByPath, stagedByPath, changesCache, options.codePatternSet);
   // Both readers of the baseline finding set ask only about modified files, so
   // the rules re-run over those and the manifests that give them context.
   // Fewer baseline files can only mean fewer baseline fingerprints, which
   // classifies more findings as new — never fewer.
   const baselineFingerprints = lazyBaselineFingerprints(
-    (options.previousFiles ?? []).filter(
-      (file) => diffByPath.get(file.path) === "modified" || isManifestPath(file.path),
-    ),
+    [
+      ...(options.previousFiles ?? []).filter(
+        (file) => diffByPath.get(file.path) === "modified" || isManifestPath(file.path),
+      ),
+      // A predecessor's findings are keyed by the path that replaced it.
+      ...[...predecessors].map(([path, file]) => ({ ...file, path })),
+    ],
     options.codePatternSet,
   );
   const annotated = findings.map((finding) => {
@@ -115,7 +130,7 @@ export function annotateFindingsWithDiffStatus<
             newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
           isFindingOnReleaseDelta(
             finding,
-            diffStatus,
+            attributionStatus(finding.file, diffStatus),
             changesFor,
             options.codePatternSet,
             baselineFingerprints,
@@ -124,12 +139,34 @@ export function annotateFindingsWithDiffStatus<
   });
   if (options.baselineComparisonSkipped) return annotated;
   return markExpandedCapabilities(annotated, {
+    modified: (finding) => attributionStatus(finding.file, finding.diffStatus) === "modified",
     persisted: (finding) => Boolean(finding.id && options.persistedAnnotations?.has(finding.id)),
     changesFor,
     baselineFingerprints,
     baselineHosts: lazyBaselineHosts(options.previousFiles ?? []),
     codePatternSet: options.codePatternSet,
   });
+}
+
+function renamedPredecessors(
+  diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
+  diffByPath: Map<string, FindingDiffStatus>,
+  previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
+): Map<string, Pick<FileRecord, "path" | "textSample" | "flags">> {
+  const predecessors = new Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>();
+  const claimed = new Set<string>();
+  for (const entry of diff) {
+    if (entry.status !== "added" || typeof entry.renamedFrom !== "string") continue;
+    // The diff is data that may have round-tripped through storage: honour a
+    // pairing only onto a file this release removed, and only once.
+    if (claimed.has(entry.renamedFrom) || diffByPath.get(entry.renamedFrom) !== "removed") continue;
+    if (previousByPath.has(entry.path)) continue;
+    const predecessor = previousByPath.get(entry.renamedFrom);
+    if (!predecessor?.textSample || predecessor.flags.includes("binary")) continue;
+    claimed.add(entry.renamedFrom);
+    predecessors.set(entry.path, predecessor);
+  }
+  return predecessors;
 }
 
 function lifecycleCommandReleaseDelta(
@@ -173,25 +210,50 @@ function lazyNewlyInstallReachablePaths(
   previousFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   stagedFiles: Array<Pick<FileRecord, "path" | "textSample" | "flags">>,
   codePatternSet: CodePatternSet | undefined,
-  diffByPath: Map<string, FindingDiffStatus>,
+  statusOf: (path: string) => FindingDiffStatus,
+  predecessors: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
 ): () => Set<string> {
   let computed: Set<string> | undefined;
   return () => {
     if (computed) return computed;
-    const reachable = (files: typeof previousFiles, executionEvidenceOnly = true) => {
+    const reachable = (
+      files: typeof previousFiles,
+      executionEvidenceOnly = true,
+      lexing?: ReachabilityLexing,
+    ) => {
       const scripts = lifecycleScripts(files.find((file) => file.path === "package.json"));
       if (!scripts) return new Set<string>();
       const records = files.map((file) => ({ ...file, size: 0, sha256: "" }));
-      return installReachablePaths(records, scripts, {}, codePatternSet, executionEvidenceOnly);
+      return installReachablePaths(
+        records,
+        scripts,
+        {},
+        codePatternSet,
+        executionEvidenceOnly,
+        lexing,
+      );
     };
-    const previous = reachable(previousFiles);
+    // A previous graph built past a lexer give-up over-counts, which would
+    // shrink "newly reachable"; credit nothing as already reachable instead.
+    const previousLexing: ReachabilityLexing = { gaveUp: false };
+    const previousReachable = reachable(previousFiles, true, previousLexing);
+    const previous = previousLexing.gaveUp ? new Set<string>() : previousReachable;
+    // A renamed file was reachable before when its predecessor was.
+    for (const [path, predecessor] of predecessors) {
+      if (previous.has(normalizeReachabilityPath(predecessor.path))) {
+        previous.add(normalizeReachabilityPath(path));
+      }
+    }
     const staged = reachable(stagedFiles);
     const possiblyInstalled = reachable(stagedFiles, false);
-    const previousSource = new Map(previousFiles.map((file) => [file.path, file.textSample]));
+    const previousSource = new Map([
+      ...previousFiles.map((file) => [file.path, file.textSample] as const),
+      ...[...predecessors].map(([path, file]) => [path, file.textSample] as const),
+    ]);
     const changedInstallFiles = stagedFiles
       .filter(
         (file) =>
-          diffByPath.get(file.path) === "modified" &&
+          statusOf(file.path) === "modified" &&
           possiblyInstalled.has(normalizeReachabilityPath(file.path)) &&
           installCodeChanged(previousSource.get(file.path), file.textSample),
       )
@@ -216,9 +278,9 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
   if (previous === undefined || staged === undefined) return true;
   const codeTokens = (source: string) => {
     const normalized = normalizeCodeForScanning(source);
-    const tokens = tokenizeJs(normalized).filter(
-      (token) => token.type !== "ws" && token.type !== "comment",
-    );
+    const lexed = tokenizeJsWithinBudget(normalized);
+    if (!lexed) return null;
+    const tokens = lexed.filter((token) => token.type !== "ws" && token.type !== "comment");
     return tokens.map((token, index) => [
       token.type,
       token.type === "string" ? token.value : jsTokenText(normalized, token),
@@ -227,7 +289,11 @@ function installCodeChanged(previous: string | undefined, staged: string | undef
       index > 0 && /[\r\n\u2028\u2029]/.test(normalized.slice(tokens[index - 1].end, token.start)),
     ]);
   };
-  return JSON.stringify(codeTokens(previous)) !== JSON.stringify(codeTokens(staged));
+  // A source the lexer gives up on counts as changed.
+  const before = codeTokens(previous);
+  const after = codeTokens(staged);
+  if (!before || !after) return true;
+  return JSON.stringify(before) !== JSON.stringify(after);
 }
 
 /**
@@ -329,6 +395,8 @@ interface FileChanges {
   stagedText: string;
   raw: ChangedRegions;
   folded: () => { text: string; regions: ChangedRegions } | null;
+  // Comment-blind views of the staged and folded texts (same offsets).
+  code: (text: string) => string;
 }
 
 function fileChangesForPath(
@@ -354,7 +422,16 @@ function fileChangesForPath(
   const stagedText = staged.textSample;
   const foldable = codePatternSet !== "python" && !path.endsWith(".py");
   let folded: { text: string; regions: ChangedRegions } | null | undefined;
+  const codeViews = new Map<string, string>();
   const changes: FileChanges = {
+    code: (text) => {
+      let view = codeViews.get(text);
+      if (view === undefined) {
+        view = codeViewsForScanning(path, text).code;
+        codeViews.set(text, view);
+      }
+      return view;
+    },
     stagedText,
     raw: changedRegions(previousText, stagedText),
     folded: () => {
@@ -394,10 +471,24 @@ function findingPatternMatchesChanges(
         : [],
     );
   }
-  if (patternsTouchChangedRegions(changes.stagedText, changes.raw, patterns)) return true;
+  // Detection reads these rules comment-blind in JavaScript, so an edited
+  // comment beside an older call is not that call arriving. Blanking keeps
+  // offsets, so the changed regions still apply.
+  const view = COMMENT_BLIND_RULE_IDS.has(finding.ruleId ?? "")
+    ? changes.code
+    : (text: string) => text;
+  if (patternsTouchChangedRegions(view(changes.stagedText), changes.raw, patterns)) return true;
   const folded = changes.folded();
-  return Boolean(folded && patternsTouchChangedRegions(folded.text, folded.regions, patterns));
+  return Boolean(
+    folded && patternsTouchChangedRegions(view(folded.text), folded.regions, patterns),
+  );
 }
+
+const COMMENT_BLIND_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.codeNetworkAccess,
+  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
+  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
+]);
 
 // Whether the file's changes match some capability pattern only once string
 // pieces are joined (`'chi' + 'ld_process'`), even where a sibling pattern
@@ -516,6 +607,7 @@ function markExpandedCapabilities<
 >(
   findings: T[],
   ctx: {
+    modified: (finding: T) => boolean;
     persisted: (finding: T) => boolean;
     changesFor: (path: string) => FileChanges | null;
     baselineFingerprints: () => Set<string> | null;
@@ -525,7 +617,7 @@ function markExpandedCapabilities<
 ): T[] {
   const deltasByFile = new Map<string, T[]>();
   for (const finding of findings) {
-    if (!finding.releaseDelta || finding.diffStatus !== "modified" || ctx.persisted(finding)) {
+    if (!finding.releaseDelta || !ctx.modified(finding) || ctx.persisted(finding)) {
       continue;
     }
     const deltas = deltasByFile.get(finding.file) ?? [];
@@ -614,7 +706,9 @@ function introducesHost(changes: FileChanges | null, baselineHosts: () => Set<st
   if (!changes) return true;
   const texts = changedRegionTexts(changes.stagedText, changes.raw);
   const folded = changes.folded();
-  if (folded) texts.push(...changedRegionTexts(folded.text, folded.regions));
+  if (folded) {
+    for (const text of changedRegionTexts(folded.text, folded.regions)) texts.push(text);
+  }
   const known = baselineHosts();
   return texts.some((text) => hostsIn(text).some((host) => !known.has(host)));
 }

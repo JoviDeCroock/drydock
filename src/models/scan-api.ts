@@ -124,6 +124,8 @@ export interface PersistedScanDetail {
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;
     publicShareIncludesFiles?: boolean;
+    /** The share link exists but answers 404 until the release is public. */
+    publicShareAwaitingPublication?: boolean;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
     /**
@@ -355,6 +357,8 @@ export interface PublicShareInfo {
   sharedAt: string | number | Date;
   threatFeedListedAt: string | number | Date | null;
   includesFiles: boolean;
+  /** The link and its listing serve nothing until the release is public. */
+  awaitingPublication: boolean;
 }
 
 export function enableScanShare(

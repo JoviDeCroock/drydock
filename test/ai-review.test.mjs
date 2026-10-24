@@ -338,11 +338,16 @@ describe("ai review orchestration", () => {
     });
   });
 
-  test("disables hidden Gateway retries and keeps request/response logging on", () => {
+  test("disables hidden Gateway retries and never lets the Gateway store prompts or completions", () => {
     const headers = aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1);
 
-    expect(headers).toMatchObject({ "cf-aig-max-attempts": "1" });
-    expect(headers).not.toHaveProperty("cf-aig-collect-log-payload");
+    expect(headers).toMatchObject({
+      "cf-aig-max-attempts": "1",
+      "cf-aig-collect-log-payload": "false",
+    });
+    // Metadata logging stays on: skipping the whole log entry would also lose
+    // the token counts and ids the RPM alerts and log joins rely on.
+    expect(headers).not.toHaveProperty("cf-aig-collect-log");
   });
 
   test("Agent Trace metadata is versioned and excludes review-record identifiers", () => {

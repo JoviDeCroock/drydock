@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { jsTokenText, tokenizeJs } from "../server/lib/platform/js-lexer";
+import { jsTokenText, tokenizeJs, tokenizeJsWithinBudget } from "../server/lib/platform/js-lexer";
 
 // `/` is the one character whose meaning a lexer cannot read off the preceding
 // character alone, and both consumers are hurt by getting it wrong: the constant
@@ -339,4 +339,107 @@ describe("tokenizeJs regex vs division", () => {
     expect(tokens).toHaveLength(depth * 4 + 3);
     expect(performance.now() - start).toBeLessThan(1_500);
   }, 5_000);
+});
+
+// `catch(await){` binds `await` at a new depth; every `${` then copies the
+// bindings visible at its depth into the substitution's state.
+function contextualBindingTemplates(size: number): string {
+  const depth = 2_000;
+  const template = `\`${"${0}".repeat(1_000)}\`;`;
+  const repeats = Math.ceil((size - depth * 14) / template.length);
+  return `${"catch(await){".repeat(depth)}${template.repeat(repeats)}${"}".repeat(depth)}`;
+}
+
+// `{let await;` binds `await` at a new depth; every `yield` asks whether it is
+// a bound name.
+function contextualBindingLookups(size: number): string {
+  const depth = 5_000;
+  const repeats = Math.ceil((size - depth * 12) / 6);
+  return `${"{let await;".repeat(depth)}${"yield;".repeat(repeats)}${"}".repeat(depth)}`;
+}
+
+describe("tokenizeJsWithinBudget", () => {
+  test("returns the same tokens as tokenizeJs on ordinary code", () => {
+    const source =
+      "async function f(a, b = (c) => c * 2) {\n  // note\n  return `${a}` + /x/.test(b);\n}\n";
+    expect(tokenizeJsWithinBudget(source)).toEqual(tokenizeJs(source));
+    const large = "export const f = (a) => a.map((x) => x * 2).filter(Boolean);\n".repeat(30_000);
+    expect(tokenizeJsWithinBudget(large)).not.toBeNull();
+  });
+
+  test("lexes deep nesting and long arrow chains in linear time, within the budget", () => {
+    for (const source of [
+      `fetch(u)\n${"[".repeat(20_000)}${"]".repeat(20_000)}`,
+      `fetch(u)\n${"(".repeat(20_000)}${")".repeat(20_000)}`,
+      `fetch(u)\n${"{".repeat(20_000)}${"}".repeat(20_000)}`,
+      `fetch(u)\n${"(a)=>".repeat(120_000)}`,
+      `fetch(u)\n${"async (a)=>".repeat(60_000)}`,
+      `fetch(u)\n${"let a: (b) => ".repeat(50_000)}`,
+    ]) {
+      const start = performance.now();
+      const tokens = tokenizeJs(source);
+      expect(tokenizeJsWithinBudget(source)).toEqual(tokens);
+      // Generous: about 0.1 s here, against minutes when bracket and mode
+      // lookups scanned their stacks.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+  }, 120_000);
+
+  test("lexes unterminated `\\u{` escapes in linear time", () => {
+    const size = 1024 * 1024;
+    for (const source of [
+      `"${"\\u{".repeat(size / 3)}"`,
+      "a\\u{".repeat(size / 4),
+      `"${"\\u{0041".repeat(size / 7)}"`,
+    ]) {
+      const start = performance.now();
+      tokenizeJs(source);
+      // Generous: tens of milliseconds here, against 15 s when each escape
+      // searched to the end of the file for its `}`.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+    // Long leading-zero runs still decode.
+    const string = tokenizeJs(`"\\u{${"0".repeat(10_000)}41}"`).find(
+      (token) => token.type === "string",
+    );
+    expect(string?.value).toBe("A");
+    expect(kinds(`\\u{${"0".repeat(10_000)}61}b = 1`)).toBe(
+      `ident:\\u{${"0".repeat(10_000)}61}b punct:= number:1`,
+    );
+  }, 60_000);
+
+  test("lexes many contextual bindings in linear time, within the budget", () => {
+    for (const source of [
+      `${"(function(yield){".repeat(2_000)}${"`${a}`;".repeat(5_000)}`,
+      contextualBindingTemplates(512 * 1024),
+      contextualBindingLookups(512 * 1024),
+    ]) {
+      const start = performance.now();
+      const tokens = tokenizeJs(source);
+      expect(tokenizeJsWithinBudget(source)).toEqual(tokens);
+      // Generous: well under a second here, against tens of seconds when every
+      // `${` and every `await` / `yield` scanned all bound depths.
+      expect(performance.now() - start).toBeLessThan(10_000);
+    }
+  }, 120_000);
+
+  test("with rejectJsx, gives up at a `<` where an expression may start", () => {
+    for (const source of [
+      "const A = () => <p>/*</p>;\n",
+      "return <div />;\n",
+      "render(<App />);\n",
+      "const s = `${<b>x</b>}`;\n",
+      "const f = <T,>(x: T) => x;\n",
+    ]) {
+      expect(tokenizeJsWithinBudget(source, { rejectJsx: true }), source).toBeNull();
+      expect(tokenizeJsWithinBudget(source), source).not.toBeNull();
+    }
+    for (const source of [
+      "if (a < b) f();\n",
+      "const m = new Map<string, number>();\n",
+      "x = i<n;\n",
+    ]) {
+      expect(tokenizeJsWithinBudget(source, { rejectJsx: true }), source).not.toBeNull();
+    }
+  });
 });
