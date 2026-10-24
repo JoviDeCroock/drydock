@@ -257,7 +257,7 @@ describe("drydock CLI", () => {
       () => json({ scan: { id: "scan_1", status: "complete", risk: "low" }, riskSummary: null }),
     ];
     let index = 0;
-    const flaky = harness(() => replies[index++]!());
+    const flaky = harness((url) => replies[index++]!(url));
     expect(await flaky.run("scans", "wait", "scan_1", "--interval", "1")).toBe(0);
     expect(flaky.calls).toHaveLength(4);
     // 1s after the network error, then Retry-After (7s) outranks the 2s
