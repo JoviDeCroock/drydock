@@ -26,6 +26,7 @@ import {
   getScanFile,
   getScanStatus,
   listScans,
+  readScanRiskBreakdown,
   scanPublicDisclosureAllowed,
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
@@ -289,7 +290,11 @@ scanLifecycleRoutes.get("/:id/status", async (c) => {
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
-  return c.json({ scan });
+  // The same release/context split the list and detail reads return, so a
+  // poller can gate on release risk as the workflow gate does.
+  const riskSummary =
+    scan.status === "complete" ? readScanRiskBreakdown(scan.riskSummaryJson) : null;
+  return c.json({ scan, riskSummary });
 });
 
 // The one scan read that does not resolve the active organization: a link

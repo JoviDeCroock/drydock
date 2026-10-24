@@ -1800,10 +1800,22 @@
               "updatedAt"
             ],
             "additionalProperties": {}
+          },
+          "riskSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until the review completes, and for reviews without a breakdown"
           }
         },
         "required": [
-          "scan"
+          "scan",
+          "riskSummary"
         ],
         "additionalProperties": {}
       },

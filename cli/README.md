@@ -25,7 +25,11 @@ The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out 
 | `gate <review-id>`                            | The GitHub workflow gate a review belongs to                                                      |
 | `diff <package> <from> <to> [--fail-on RISK]` | Diff two published releases through the anonymous public diff; needs no key                       |
 
-`--json` prints the API response instead of a table. A flag the command does not take is a usage error. Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` risk at or above `--fail-on` (`low`, `medium`, `high`, `critical`; `scans wait` compares the review's risk, `diff` its release risk; a risk the CLI does not recognize counts as at the threshold), `4` `scans wait` timed out before the review finished.
+`--json` prints the API response instead of a table. A flag the command does not take is a usage error.
+
+`--fail-on RISK` (`low`, `medium`, `high`, `critical`) compares the release risk: the findings the release introduces, not ones already in the previous version. That is the risk the workflow gate decides on. A review recorded without a release/context breakdown is compared on its overall risk, and a risk the CLI does not recognize counts as at the threshold. `scans wait` retries rate limits (honouring `Retry-After`), server errors, and network errors with backoff until `--timeout`.
+
+Exit codes: `0` success, `1` request or review failed, `2` usage error, `3` release risk at or above `--fail-on`, `4` `scans wait` timed out before the review finished (or before its status could be read).
 
 ## In CI
 

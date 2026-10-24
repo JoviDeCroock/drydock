@@ -134,7 +134,12 @@ export const ScanDetail = z
   .register(openApiSchemas, { id: "ScanDetail" });
 
 export const ScanStatus = z
-  .looseObject({ scan: z.looseObject(scanIdentity) })
+  .looseObject({
+    scan: z.looseObject(scanIdentity),
+    riskSummary: riskSummary
+      .nullable()
+      .describe("Null until the review completes, and for reviews without a breakdown"),
+  })
   .register(openApiSchemas, { id: "ScanStatus" });
 
 export const ReportExport = z

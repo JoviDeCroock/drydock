@@ -49,13 +49,18 @@ Environment:
                    so it stays out of shell history and process listings
   DRYDOCK_URL      Drydock origin
 
+--fail-on RISK (low, medium, high, or critical) gates on release risk: the
+findings the release introduces, as the workflow gate does. scans wait retries
+rate limits, server errors, and network errors until --timeout.
+
 Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 risk at or above --fail-on (RISK is low, medium, high, or critical),
-4 scans wait timed out before the review finished.
+3 release risk at or above --fail-on, 4 scans wait timed out before the
+review finished (or before its status could be read).
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
 const EXIT_TIMEOUT = 4;
+const MAX_RETRY_DELAY_MS = 60_000;
 const SCAN_FILTERS = [
   "undecided",
   "published_without_decision",
@@ -318,12 +323,35 @@ async function scansWait(ctx) {
   const intervalMs = positiveNumber(ctx.values.interval, "--interval", 5) * 1000;
   const deadline = ctx.io.now() + timeoutMs;
   const path = `/api/v1/scans/${pathSegment(id, "review id")}/status`;
+  let failures = 0;
   for (;;) {
-    const { scan } = await ctx.client.json(path);
+    let body;
+    try {
+      body = await ctx.client.json(path);
+      failures = 0;
+    } catch (err) {
+      if (!(err instanceof CliError) || !err.retryable) throw err;
+      // A rate limit or an outage says nothing about the review, so it is
+      // retried with backoff until the deadline instead of exiting as a failure.
+      failures++;
+      const backoffMs = Math.min(intervalMs * 2 ** (failures - 1), MAX_RETRY_DELAY_MS);
+      const delayMs = Math.max(backoffMs, err.retryAfterMs ?? 0);
+      if (ctx.io.now() + delayMs > deadline) {
+        throw new CliError(
+          `could not read review ${id} before the timeout: ${err.message}`,
+          EXIT_TIMEOUT,
+        );
+      }
+      await ctx.io.sleep(delayMs);
+      continue;
+    }
+    const { scan } = body;
     if (scan?.status === "complete" || scan?.status === "failed") {
-      print(ctx, scan, formatScanStatus);
+      print(ctx, body, formatScanStatus);
       if (scan.status === "failed") return 1;
-      return meetsThreshold(threshold, scan.risk) ? 3 : 0;
+      // A review without a release/context breakdown falls back to its
+      // overall risk, which is never lower than its release risk.
+      return meetsThreshold(threshold, body.riskSummary?.releaseRisk ?? scan.risk) ? 3 : 0;
     }
     if (ctx.io.now() + intervalMs > deadline) {
       throw new CliError(
