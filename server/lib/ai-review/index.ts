@@ -23,6 +23,7 @@ import type {
   SelectiveAiReviewOptions,
 } from "./types";
 import { errorMessage } from "../platform/errors";
+import { AI_GATEWAY_ID, AI_GATEWAY_POLICY_HEADERS } from "./gateway";
 import { recordProductEvent } from "../analytics";
 import { durationMsSince } from "../platform/observability";
 
@@ -152,7 +153,7 @@ export async function analyzeWithAi(
           resolveLanguageModelOverride(languageModelOverride, candidateModel) ??
           createWorkersAI({
             binding: traceIsolatedAiBinding(env.AI),
-            gateway: { id: "drydock-gateway" },
+            gateway: { id: AI_GATEWAY_ID },
           })(candidateModel, {
             extraHeaders: aiReviewRequestHeaders(env, options, candidateModel, attempt),
             ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
@@ -518,9 +519,7 @@ export function aiReviewRequestHeaders(
   return {
     "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
     "cf-aig-metadata": aiGatewayMetadataHeader(options, model, attempt),
-    // Account-level Gateway retries would be invisible to per-attempt usage
-    // accounting. One Gateway attempt leaves retry/fallback ownership here.
-    "cf-aig-max-attempts": "1",
+    ...AI_GATEWAY_POLICY_HEADERS,
   };
 }
 

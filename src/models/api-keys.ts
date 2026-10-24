@@ -38,10 +38,17 @@ export const ApiKeysModel = createModel(() => {
   // The secret of the key created last. It exists only in this response, so it
   // stays on screen until dismissed or the organization changes.
   const revealed = signal<{ name: string; token: string } | null>(null);
+  const revokingKeyId = signal<string | null>(null);
   let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
-  const atLimit = computed(() => limit.value !== null && keys.value.length >= limit.value);
+  // Matches the server, which counts only unexpired keys against the limit.
+  const atLimit = computed(() => {
+    if (limit.value === null) return false;
+    const now = Date.now();
+    const active = keys.value.filter((key) => new Date(key.expiresAt).getTime() > now);
+    return active.length >= limit.value;
+  });
 
   return {
     keys,
@@ -53,6 +60,7 @@ export const ApiKeysModel = createModel(() => {
     draftName,
     draftExpiryDays,
     revealed,
+    revokingKeyId,
     busy,
     atLimit,
 
@@ -120,6 +128,7 @@ export const ApiKeysModel = createModel(() => {
     async revoke(keyId: string): Promise<void> {
       const requestId = loadRequestId;
       this.status.value = "revoking";
+      this.revokingKeyId.value = keyId;
       this.error.value = null;
       try {
         await apiFetch<{ ok: boolean }>(`/api/v1/api-keys/${encodeURIComponent(keyId)}`, {
@@ -130,7 +139,10 @@ export const ApiKeysModel = createModel(() => {
       } catch (err) {
         if (requestId === loadRequestId) this.error.value = errorMessage(err);
       } finally {
-        if (requestId === loadRequestId) this.status.value = "idle";
+        if (requestId === loadRequestId) {
+          this.status.value = "idle";
+          this.revokingKeyId.value = null;
+        }
       }
     },
 

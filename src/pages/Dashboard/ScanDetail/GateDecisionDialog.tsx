@@ -107,7 +107,7 @@ export function GatePackagesPanel({
       </div>
       <p class="m-0 max-w-[760px] text-[13px] leading-[1.55] text-ink-muted">
         This release publishes {packages.length} packages. Every one must be approved before the
-        held deployment releases; rejecting any single package blocks the whole release.
+        held deployment releases; rejecting any single package blocks the whole job.
       </p>
       <ul class="m-0 p-0 list-none flex flex-col">
         {packages.map((pkg) => {

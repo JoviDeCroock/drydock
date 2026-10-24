@@ -3,7 +3,11 @@ import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
-import { OBSERVATION_WINDOW } from "../../server/db/badge-publication-evidence";
+import {
+  OBSERVATION_WINDOW,
+  findBadgeSupersession,
+} from "../../server/db/badge-publication-evidence";
+import { SHARED_SCAN_COLUMNS } from "../../server/db/scan-share";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
@@ -15,7 +19,14 @@ import { packagesRoutes } from "../../server/routes/packages";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp, type TestSession } from "./helpers/app";
-import { type ScanOwner, type SeededUser, seedCompletedScan, seedUser } from "./helpers/seed";
+import {
+  type ScanOwner,
+  type SeededUser,
+  seedApprovedPublication,
+  seedCompletedScan,
+  seedUser,
+  seedWorkflowGate,
+} from "./helpers/seed";
 import backfillBadgeKeysSql from "../../scripts/backfill-badge-package-key.sql?raw";
 
 // The digest seeded scans verified their staged bytes against.
@@ -46,8 +57,14 @@ async function seedBadgeScan(
     // The SHA-1 the scan verified the staged bytes against, or null for a
     // scan that could not verify them.
     artifactSha1?: string | null;
+    // Whether the release is public yet, which nothing anonymous discloses a
+    // review before. Defaults to public: a staged review npm reports as
+    // published, a gate review whose gate approved (and, for npm, whose bytes
+    // the publication monitor saw npm publish).
+    released?: boolean;
   } = {},
 ): Promise<string> {
+  const released = options.released ?? true;
   const packageName = options.packageName ?? "@org/pkg";
   const version = options.version ?? "1.1.0";
   const risk = options.risk ?? "low";
@@ -91,9 +108,17 @@ async function seedBadgeScan(
         managementConfirmedAt: new Date(),
       })
       .onConflictDoNothing();
-  return seedCompletedScan(owner, {
+  const gateId =
+    source === "workflow_gate"
+      ? await seedWorkflowGate(owner, {
+          ecosystem: gateEcosystem ?? "npm",
+          decision: released ? "approved" : null,
+        })
+      : null;
+  const scanId = await seedCompletedScan(owner, {
     job: {
       source,
+      gateId,
       packageName:
         source === "published" || (source !== "workflow_gate" && options.registryUrl)
           ? packageName
@@ -114,6 +139,7 @@ async function seedBadgeScan(
           registryPackageName:
             options.registryPackageName === undefined ? packageName : options.registryPackageName,
           registryUrl: options.registryUrl ?? "https://registry.npmjs.org",
+          registryVersionStatus: released ? "published" : null,
         }
       : undefined,
     packageJson: { name: packageName, version },
@@ -172,6 +198,13 @@ async function seedBadgeScan(
       },
     },
   });
+  // Gate approval alone does not make npm bytes public (gated staging leaves
+  // them in a private stage), and a gate review of unknown ecosystem is held
+  // to the npm rule.
+  if (released && source === "workflow_gate" && (gateEcosystem ?? "npm") === "npm") {
+    await seedApprovedPublication(owner, { packageName, version, scanId });
+  }
+  return scanId;
 }
 
 // Anonymous `/public` is always mounted; the session (and the signed-in APIs) only when signed in.
@@ -1929,6 +1962,7 @@ describe("an OSS package needs no opt-in", () => {
       packageName,
       version: "3.0.1",
       registryUrl: "https://registry.npmjs.org",
+      released: false,
     });
     await decide(app, scanId, "publish");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
@@ -2581,7 +2615,19 @@ type ObservationStatus =
   | "published_without_approval"
   | "published_despite_rejection"
   | "artifact_mismatch"
+  | "undecided_low_risk"
   | "unknown";
+
+// What the monitor evidence says about a scan as the badge's pick, read
+// directly: no npm pick can answer without the package claim, so this is the
+// only way to reach the evidence's own guards for one that has none.
+async function supersessionOf(scanId: string) {
+  const [pick] = await createDb(env.DB)
+    .select(SHARED_SCAN_COLUMNS)
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  return findBadgeSupersession(createDb(env.DB), pick!);
+}
 
 async function recordObservation(
   organizationId: string,
@@ -2688,20 +2734,68 @@ async function seedApprovedDefaultRelease(
 }
 
 describe("the badge reads the organization's publication monitor", () => {
-  test.each([
-    "artifact_mismatch",
-    "published_despite_rejection",
-    "published_without_approval",
-  ] as const)("%s for the quoted version takes the green off it", async (status) => {
+  test.each(["artifact_mismatch", "published_without_approval"] as const)(
+    "%s for the quoted version takes the green off it",
+    async (status) => {
+      const owner = await seedUser();
+      const app = publicApp(owner);
+      const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+      await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+      await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+      expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+        message: "3.0.0 published without approval",
+        color: "orange",
+      });
+    },
+  );
+
+  test("a release npm published despite the publisher's rejection reads rejected", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
 
-    await recordObservation(owner.organizationId, packageName, "3.0.0", status);
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.0 not reviewed",
+      label: "drydock",
+      message: "3.0.1 rejected",
+      color: "red",
+    });
+  });
+
+  test("anyone but a registry-verified publisher gets grey for a rejection npm published over", async () => {
+    const claimant = await seedUser();
+    const app = publicApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+
+    await recordObservation(
+      claimant.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
       color: "lightgrey",
+    });
+    // The flag's own guard, should such a pick ever answer: grey, not red.
+    expect(await supersessionOf(gate)).toEqual({
+      version: "3.0.1",
+      blocked: false,
+      unapproved: false,
     });
   });
 
@@ -2719,8 +2813,8 @@ describe("the badge reads the organization's publication monitor", () => {
       "published_without_approval",
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.1 not reviewed",
-      color: "lightgrey",
+      message: "3.0.1 published without approval",
+      color: "orange",
     });
   });
 
@@ -2778,6 +2872,23 @@ describe("the badge reads the organization's publication monitor", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
   });
 
+  test("an undecided low-risk review is no alert: never orange, but still not an approval", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // About the quoted version itself, it leaves the approval standing.
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "undecided_low_risk");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    // A newer one takes the badge off the quote, grey rather than orange.
+    await recordObservation(owner.organizationId, packageName, "3.0.1", "undecided_low_risk");
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.1 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
   test("an approved match leaves the newer version to the scans", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
@@ -2820,7 +2931,7 @@ describe("the badge reads the organization's publication monitor", () => {
       "published_without_approval",
     );
     expect((await fetchBadge(app, "npm", packageName, { tag: "v1" })).body.message).toBe(
-      "1.9.1 not reviewed",
+      "1.9.1 published without approval",
     );
   });
 
@@ -2883,7 +2994,9 @@ describe("the badge reads the organization's publication monitor", () => {
 
     // Stopping a watch deletes its observations; the alert ledger stays.
     await recordAlertOnly(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.0 published without approval",
+    );
   });
 
   test("a deliberately listed review is held to the same evidence", async () => {
@@ -2896,7 +3009,43 @@ describe("the badge reads the organization's publication monitor", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.0 published without approval",
+    );
+  });
+
+  test("only a registry-verified publisher's own alert flags the badge; anyone else's greys it", async () => {
+    // A workflow gate only claims the name in its tarball manifest, so the
+    // organization that listed it has no tie to the package's releases, and
+    // no claim: its review never answers the npm badge at all.
+    const claimant = await seedUser();
+    const app = publicApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await recordObservation(
+      claimant.organizationId,
+      packageName,
+      "3.0.1",
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
+      color: "lightgrey",
+    });
+    // The flag's own guard, should such a pick ever answer: grey, not orange.
+    expect(await supersessionOf(gate)).toEqual({
+      version: "3.0.1",
+      blocked: false,
+      unapproved: false,
+    });
   });
 
   test("a blocked review stays red: a discrepancy does not make it less true", async () => {
@@ -2936,8 +3085,8 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       { distTags: ["latest"] },
     );
     expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
-      message: "3.0.1-0 not reviewed",
-      color: "lightgrey",
+      message: "3.0.1-0 published without approval",
+      color: "orange",
     });
   });
 
@@ -2959,7 +3108,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     // Recorded tags only add supersessions; the version-shape floor still
     // counts a newer stable release on `latest`'s line.
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 
   test("the tag's own badge is superseded by the release npm points it at", async () => {
@@ -2994,7 +3145,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: ["latest"] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("2.9.9 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "2.9.9 published without approval",
+    );
   });
 
   test("moving the tag back to the quote does not clear a newer unapproved release", async () => {
@@ -3015,7 +3168,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     // Whoever can publish 3.0.1 can also point `latest` back at 3.0.0; that
     // must not turn the badge green while 3.0.1 is still published.
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.1 published without approval",
+    );
   });
 
   test("a recorded tag holder never clears an alert", async () => {
@@ -3026,12 +3181,16 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
 
     // Its watch is gone, so the alert has no tags of its own.
     await recordAlertOnly(owner.organizationId, packageName, "4.0.0", "published_without_approval");
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
 
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 
   test("`latest` moved to an older approved release leaves the quote approved", async () => {
@@ -3087,7 +3246,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       Array.from({ length: OBSERVATION_WINDOW }, (_, index) => `0.0.${index}`),
       "published_without_approval",
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1-0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.1-0 published without approval",
+    );
   });
 
   test("a missing tag is never read as off the line", async () => {
@@ -3114,14 +3275,18 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: ["next"] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
 
     // Seeing `latest` on the quote does not take it back: a recorded tag is
     // a snapshot, and the newer unapproved release is still published.
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.0 published without approval",
+    );
   });
 });
 
@@ -3241,4 +3406,120 @@ test("a provisional personal claim cannot answer listed or default badges until 
     .set({ managementConfirmedAt: new Date() })
     .where(eq(schema.npmPackageClaims.packageName, packageName));
   expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("1.0.0 approved");
+});
+
+// Listing is consent to publish a review, not to publish it early: an
+// unreleased staged fix in the feed is the patch, indexed for pollers.
+describe("listing waits for the release to be public", () => {
+  async function approveGateOf(scanId: string) {
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select({ gateId: schema.scans.gateId })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    expect(row?.gateId).toBeTruthy();
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "approved", decision: "approved", decidedAt: new Date() })
+      .where(eq(schema.githubWorkflowGates.id, row?.gateId ?? ""));
+  }
+
+  test("a listed staged review stays out of the feed and badge until npm publishes it", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `embargo-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "4.0.1",
+      registryUrl: "https://registry.npmjs.org",
+      released: false,
+    });
+
+    const listed = await share(app, scanId, { threatFeed: true });
+    expect(listed.share.threatFeedListedAt).not.toBeNull();
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await markRegistryPublished(scanId, "4.0.1");
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toMatchObject({
+      version: "4.0.1",
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "4.0.1 reviewed · low risk",
+    );
+  });
+
+  test("a listed PyPI gate review appears once its gate approves", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `embargo-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "2.0.0",
+      ecosystem: "pypi",
+      released: false,
+    });
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+    expect((await fetchBadge(app, "pypi", packageName)).body.message).toBe("not reviewed");
+
+    await approveGateOf(scanId);
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toMatchObject({
+      ecosystem: "pypi",
+    });
+    expect((await fetchBadge(app, "pypi", packageName)).body.message).toContain("2.0.0");
+  });
+
+  test("an approved npm gate review stays unlisted until npm publishes its bytes", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `embargo-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "5.0.0",
+      source: "workflow_gate",
+      released: false,
+    });
+    await approveGateOf(scanId);
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+
+    await seedApprovedPublication(owner, { packageName, version: "5.0.0", scanId });
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toMatchObject({
+      packageIdentity: "manifest-claimed",
+    });
+  });
+});
+
+describe("a listed rejection is a threat disclosure", () => {
+  test("an unpublished rejected stage appears in the feed and the listed badge once listed", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `rejected-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedBadgeScan(owner, {
+      packageName,
+      version: "6.6.6",
+      risk: "high",
+      releaseRisk: "high",
+      registryUrl: "https://registry.npmjs.org",
+      released: false,
+    });
+    await decide(app, scanId, "no_publish");
+    await share(app, scanId);
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+
+    const listed = await share(app, scanId, { threatFeed: true });
+    const entry = (await fetchFeed(app)).entries.find((e) => e.package === packageName);
+    expect(entry).toMatchObject({ version: "6.6.6", decision: "no_publish" });
+    // The entry's report link resolves for the partners polling the feed.
+    const token = listed.share.token;
+    expect(entry?.reportUrl.endsWith(`/reports/${token}`)).toBe(true);
+    expect((await request(app, `/public/reports/${token}`)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("6.6.6 rejected");
+
+    await share(app, scanId, { threatFeed: false });
+    expect((await fetchFeed(app)).entries.find((e) => e.package === packageName)).toBeUndefined();
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await request(app, `/public/reports/${token}`)).status).toBe(404);
+  });
 });

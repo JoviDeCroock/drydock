@@ -84,13 +84,14 @@ describe("recordProductEvent", () => {
       packageName: "requests",
       cache: "hit",
       risk: "low",
+      client: "dependency-pr",
       durationMs: 12,
     });
 
     // Anonymous by construction — the /diff endpoints have no session, and
     // nothing about the visitor may be recorded.
     expect(points[0].blobs[2]).toBe("");
-    expect(points[0].blobs).toContain("requests");
+    expect(points[0].blobs.slice(4)).toEqual(["requests", "hit", "low", "dependency-pr"]);
   });
 
   test("is a no-op without the binding", () => {
@@ -142,7 +143,8 @@ describe("recordProductEvent", () => {
         name: "publication.discrepancy",
         organizationId: "org",
         ecosystem: "npm",
-        status: "artifact_mismatch",
+        status: "published_without_approval",
+        reason: "ai_flagged_without_decision",
       },
       {
         name: "scan.completed",
@@ -163,6 +165,7 @@ describe("recordProductEvent", () => {
         packageName: "left-pad",
         cache: "miss",
         risk: "low",
+        client: "other",
         durationMs: 3,
       },
       {

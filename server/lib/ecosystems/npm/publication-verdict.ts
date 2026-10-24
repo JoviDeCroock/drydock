@@ -21,6 +21,8 @@ export type ReviewEvidence = Pick<
   | "decidedAt"
   | "summaryJson"
   | "status"
+  | "riskSummaryJson"
+  | "aiJson"
 >;
 export type Verdict = Pick<PublicationObservation, "status" | "reason" | "scanId">;
 export interface PublishedDigests {
@@ -184,13 +186,162 @@ function unmatchedVerdict(records: readonly ReviewEvidence[], historyLimited: bo
 }
 
 /**
+ * What a completed review nobody decided says about the release it reviewed:
+ *
+ * - `ai_flagged`: the AI reviewer judged it `suspicious` or `blocked`.
+ * - a cause that keeps it from reading low, the first that applies:
+ *   - `ungated`: the stage is not bound to an approved gate review of a gated
+ *     package (one that skipped the gate is the account-takeover path).
+ *   - `risk`: release risk (not artifact or context risk: those describe the
+ *     package, not this release) medium or above.
+ *   - `ai_concern`: the AI review asked for a look (`review_recommended`,
+ *     manual review); `ai_unfinished`: it was attempted and did not finish.
+ *   - `diverged`: findings new since the last approved release.
+ *   - `ungraded`: release risk unreadable, or no published baseline compared
+ *     (so release risk graded nothing).
+ * - `low_risk`: release risk low and the AI reviewer raised nothing, or no AI
+ *   review ran.
+ *
+ * AI review is advisory and only escalates: a clean AI review never lowers a
+ * deterministic grade, since the release risk it is checked against already
+ * carries the deterministic score. With the organization's `ai-review`
+ * killswitch engaged (`aiReview: false`) the AI result is not read at all, so
+ * nothing is `ai_flagged` and the tier rests on the persisted grades alone
+ * (which keep any escalation the AI added while the review ran).
+ */
+type UndecidedReviewCause =
+  | "ungated"
+  | "risk"
+  | "ai_concern"
+  | "ai_unfinished"
+  | "diverged"
+  | "ungraded";
+export type UndecidedReviewTier = "low_risk" | "ai_flagged" | UndecidedReviewCause;
+
+type AiSignal = "none" | "clean" | "concern" | "unfinished" | "flagged";
+
+function aiSignal(aiJson: unknown): AiSignal {
+  if (!isRecord(aiJson)) return "none";
+  const attempted = aiJson.model !== null && aiJson.model !== undefined;
+  if (aiJson.status !== "complete" || aiJson.releaseAssessment === "not_assessed") {
+    // The disabled placeholder records no model: no reviewer ran. An attempt
+    // that did not finish must not read as clean, as in release scoring.
+    return attempted || (aiJson.status !== "unavailable" && aiJson.status !== "invalid")
+      ? "unfinished"
+      : "none";
+  }
+  if (aiJson.releaseAssessment === "suspicious" || aiJson.releaseAssessment === "blocked") {
+    return "flagged";
+  }
+  return aiJson.releaseAssessment === "nothing_unusual" && aiJson.requiresManualReview === false
+    ? "clean"
+    : "concern";
+}
+
+const ELEVATED_RISK = new Set(["medium", "high", "critical"]);
+
+export function undecidedReviewTier(
+  scan: Pick<ReviewEvidence, "status" | "riskSummaryJson" | "aiJson" | "summaryJson">,
+  options: { aiReview: boolean },
+): UndecidedReviewTier {
+  const ai = options.aiReview ? aiSignal(scan.aiJson) : "none";
+  if (ai === "flagged") return "ai_flagged";
+  if (scan.status !== "complete") return "ungraded";
+  const summary = isRecord(scan.summaryJson) ? scan.summaryJson : {};
+  // Gate continuity and release consistency are signals batch approval also
+  // refuses to read as likely safe. Neither moves risk, so neither shows in it.
+  const gate = summarizedStatus(summary.gateContinuity);
+  if (gate !== null && gate !== "none" && gate !== "matched") return "ungated";
+  const releaseRisk = isRecord(scan.riskSummaryJson) ? scan.riskSummaryJson.releaseRisk : null;
+  if (typeof releaseRisk === "string" && ELEVATED_RISK.has(releaseRisk)) return "risk";
+  if (ai === "concern") return "ai_concern";
+  if (ai === "unfinished") return "ai_unfinished";
+  if (summarizedStatus(summary.releaseConsistency) === "diverged") return "diverged";
+  if (releaseRisk !== "low") return "ungraded";
+  if (isRecord(summary.baseline) && summary.baseline.comparisonSkipped != null) return "ungraded";
+  return "low_risk";
+}
+
+// Null when the summary has no such record; anything unreadable is not null.
+function summarizedStatus(value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  return isRecord(value) ? (value.status ?? "malformed") : "malformed";
+}
+
+/**
+ * The published bytes match only records nobody decided. npm reports a
+ * version as published the same way whether it was promoted from a stage
+ * (which needs the maintainer's 2FA) or published directly, so such a record
+ * cannot tell the owner's release from a bypass: an attacker who can stage can
+ * create one for the very bytes they then publish. A review in flight or
+ * failed stays an alert. A completed review is tiered by what it found: one
+ * that graded the release low risk is recorded without an alert, accepting
+ * that a bypass of bytes Drydock graded low risk goes unannounced, because
+ * owners who approve on npm and never decide here made that alert mostly
+ * noise. Quiet needs every matching record to read low, both sides hashed by
+ * Drydock (the published tarball here, the reviewed one in the sandbox), every
+ * record of the version compared, and no record of it (of any bytes) decided
+ * or superseded by a restage: an organization that decides here, or a
+ * restage, is not the noise this answers. When the review reads low but quiet
+ * is refused for one of those, the alert says only that the review is
+ * undecided (`reviewed_without_decision`), never that it found risk.
+ */
+function undecidedVerdict(
+  matching: readonly { scan: ReviewEvidence; reviewed: boolean }[],
+  records: readonly ReviewEvidence[],
+  unhashed: ArtifactUnavailableReason | null,
+  options: { aiReview: boolean; historyLimited: boolean },
+): Verdict {
+  const scans = matching.map(({ scan }) => scan);
+  const owner = scans.find((scan) => !scan.registryStatusSupersededAt) ?? scans[0]!;
+  if (owner.status === "pending" || owner.status === "running") {
+    return { status: "published_without_approval", reason: "review_pending", scanId: owner.id };
+  }
+  if (owner.status === "failed") {
+    return { status: "published_without_approval", reason: "review_failed", scanId: owner.id };
+  }
+  // A record still in flight (or failed) beside the owner graded nothing: it
+  // cannot vouch, but it does not say the release is risky either.
+  const tiers = matching
+    .filter(({ scan }) => scan.status === "complete")
+    .map(({ scan, reviewed }) => ({ scan, reviewed, tier: undecidedReviewTier(scan, options) }));
+  const allComplete = tiers.length === matching.length;
+  const flagged = tiers.find(({ tier }) => tier === "ai_flagged");
+  if (flagged) {
+    return {
+      status: "published_without_approval",
+      reason: "ai_flagged_without_decision",
+      scanId: flagged.scan.id,
+    };
+  }
+  const alert = (reason: string): Verdict => ({
+    status: "published_without_approval",
+    reason,
+    scanId: owner.id,
+  });
+  // The alert names one cause: the owner's when it has one.
+  const raised =
+    tiers.find(({ scan, tier }) => scan === owner && tier !== "low_risk") ??
+    tiers.find(({ tier }) => tier !== "low_risk");
+  if (raised) return alert(`reviewed_${raised.tier}_without_decision`);
+  const vouched =
+    allComplete &&
+    !unhashed &&
+    !options.historyLimited &&
+    tiers.every(({ reviewed }) => reviewed) &&
+    !records.some(
+      (scan) =>
+        (scan.decision !== null && scan.decidedAt !== null) || scan.registryStatusSupersededAt,
+    );
+  return vouched
+    ? { status: "undecided_low_risk", reason: null, scanId: owner.id }
+    : alert("reviewed_without_decision");
+}
+
+/**
  * The published bytes match these records. Only a decision someone in the
- * organization made can soften the verdict: a record alone proves nothing,
- * because an attacker who can stage can create one for the very bytes they
- * then publish directly. npm reports a version as published the same way
- * whether it was promoted from a stage (which needs the maintainer's 2FA) or
- * published directly, so an undecided review of these bytes cannot be told
- * apart from a bypass and stays an alert, pointing at that review.
+ * organization made can settle the verdict: a record alone proves nothing
+ * (see `undecidedVerdict`).
  *
  * `unhashed` is set when the match rests on npm's own shasum because the
  * tarball could not be hashed here: an approval then stays `unknown`.
@@ -199,22 +350,13 @@ function matchedVerdict(
   matching: readonly { scan: ReviewEvidence; reviewed: boolean }[],
   publishedAt: Date,
   unhashed: ArtifactUnavailableReason | null,
+  options: { aiReview: boolean; historyLimited: boolean; records: readonly ReviewEvidence[] },
 ): Verdict {
   const scansOfTheseBytes = matching.map(({ scan }) => scan);
   const decided = scansOfTheseBytes.filter(
     (scan) => scan.decision !== null && scan.decidedAt !== null,
   );
-  if (decided.length === 0) {
-    const owner =
-      scansOfTheseBytes.find((scan) => !scan.registryStatusSupersededAt) ?? scansOfTheseBytes[0]!;
-    const reason =
-      owner.status === "pending" || owner.status === "running"
-        ? "review_pending"
-        : owner.status === "failed"
-          ? "review_failed"
-          : "reviewed_without_decision";
-    return { status: "published_without_approval", reason, scanId: owner.id };
-  }
+  if (decided.length === 0) return undecidedVerdict(matching, options.records, unhashed, options);
   const before = decided.filter((scan) => scan.decidedAt! < publishedAt);
   const late = decided.filter((scan) => scan.decidedAt! >= publishedAt);
   // A rejection of these exact bytes with no approval of them anywhere alerts,
@@ -258,7 +400,10 @@ function matchedVerdict(
  * When the bytes cannot be hashed and every record that carries a digest
  * carries a SHA-1, npm's own `dist.shasum` identifies them one-sidedly: it can
  * raise an alert but never establish an approval. `historyLimited` says the
- * records are only the newest of more than were read.
+ * records are only the newest of more than were read. `aiReview` says AI
+ * review is on for the organization: it is by default, and the `ai-review`
+ * flag is its killswitch. When false, or omitted, the AI result of an
+ * undecided review is not read.
  */
 export function classifyPublication(
   name: string,
@@ -266,11 +411,17 @@ export function classifyPublication(
   publishedAt: Date | null,
   artifact: PublishedDigests | ArtifactUnavailableReason | null,
   reviews: readonly ReviewEvidence[],
-  options: { registry?: string; declaredSha1?: unknown; historyLimited?: boolean } = {},
+  options: {
+    registry?: string;
+    declaredSha1?: unknown;
+    historyLimited?: boolean;
+    aiReview?: boolean;
+  } = {},
 ): Verdict {
   if (!publishedAt) return unknown("publication_time_unavailable");
   const historyLimited = options.historyLimited ?? false;
   const records = releaseRecords(name, version, reviews, options.registry);
+  const tiering = { aiReview: options.aiReview ?? false, historyLimited, records };
   if (records.length === 0)
     return {
       status: "published_without_approval",
@@ -295,7 +446,7 @@ export function classifyPublication(
       return hits.length ? [{ scan, reviewed: false }] : [];
     });
     return matching.length
-      ? matchedVerdict(matching, publishedAt, reason)
+      ? matchedVerdict(matching, publishedAt, reason, tiering)
       : unmatchedVerdict(records, historyLimited);
   }
 
@@ -310,6 +461,6 @@ export function classifyPublication(
     return hits.length ? [{ scan, reviewed: hits.some((entry) => entry.reviewed) }] : [];
   });
   return matching.length
-    ? matchedVerdict(matching, publishedAt, null)
+    ? matchedVerdict(matching, publishedAt, null, tiering)
     : unmatchedVerdict(records, historyLimited);
 }
