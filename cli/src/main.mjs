@@ -327,7 +327,10 @@ async function scansWait(ctx) {
   for (;;) {
     let body;
     try {
-      body = await ctx.client.json(path);
+      // A hung request must not outlive the deadline.
+      body = await ctx.client.json(path, {
+        timeoutMs: Math.max(1000, deadline - ctx.io.now()),
+      });
       failures = 0;
     } catch (err) {
       if (!(err instanceof CliError) || !err.retryable) throw err;
@@ -349,8 +352,8 @@ async function scansWait(ctx) {
     if (scan?.status === "complete" || scan?.status === "failed") {
       print(ctx, body, formatScanStatus);
       if (scan.status === "failed") return 1;
-      // A review without a release/context breakdown falls back to its
-      // overall risk, which is never lower than its release risk.
+      // No breakdown (no baseline compared, or an older review) falls back to
+      // the overall risk, which is never lower than the release risk.
       return meetsThreshold(threshold, body.riskSummary?.releaseRisk ?? scan.risk) ? 3 : 0;
     }
     if (ctx.io.now() + intervalMs > deadline) {

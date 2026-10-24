@@ -248,7 +248,10 @@ describe("drydock CLI", () => {
   });
 
   test("scans wait retries rate limits and server errors until the deadline", async () => {
-    const replies = [
+    const replies: Responder[] = [
+      () => {
+        throw new TypeError("fetch failed");
+      },
       () => json({ error: "slow down" }, { status: 429, headers: { "retry-after": "7" } }),
       () => json({ error: "unavailable" }, { status: 503 }),
       () => json({ scan: { id: "scan_1", status: "complete", risk: "low" }, riskSummary: null }),
@@ -256,9 +259,10 @@ describe("drydock CLI", () => {
     let index = 0;
     const flaky = harness(() => replies[index++]!());
     expect(await flaky.run("scans", "wait", "scan_1", "--interval", "1")).toBe(0);
-    expect(flaky.calls).toHaveLength(3);
-    // Retry-After (7s) outranks the 1s backoff; the 503 then backs off 2s.
-    expect(flaky.io.now()).toBe(9_000);
+    expect(flaky.calls).toHaveLength(4);
+    // 1s after the network error, then Retry-After (7s) outranks the 2s
+    // backoff, then the 503 backs off 4s.
+    expect(flaky.io.now()).toBe(12_000);
 
     const down = harness(() => json({ error: "unavailable" }, { status: 503 }));
     expect(await down.run("scans", "wait", "scan_1", "--timeout", "10", "--interval", "1")).toBe(4);

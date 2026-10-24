@@ -895,7 +895,7 @@ export default function DocsPage() {
               <CodeBlock name="terminal" lang="bash">
                 {`node cli/bin/drydock.mjs whoami
 node cli/bin/drydock.mjs scans list --filter undecided
-node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high risk or above
+node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
 node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
 node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
               </CodeBlock>

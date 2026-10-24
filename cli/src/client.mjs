@@ -91,10 +91,10 @@ export function pathSegment(value, label) {
 export function createClient({ baseUrl, apiKey, fetch: send }) {
   /**
    * @param {string} path absolute path with an encoded query string
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
    * @returns {Promise<ApiResponse>}
    */
-  async function request(path, { authenticated = true } = {}) {
+  async function request(path, { authenticated = true, timeoutMs } = {}) {
     /** @type {Record<string, string>} */
     const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
     if (authenticated) {
@@ -102,12 +102,17 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
       headers.authorization = `Bearer ${apiKey}`;
     }
     let res;
+    let text;
     try {
-      res = await send(`${baseUrl}${path}`, { headers, redirect: "manual" });
+      res = await send(`${baseUrl}${path}`, {
+        headers,
+        redirect: "manual",
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
+      text = await res.text();
     } catch (err) {
       throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`, 1, { retryable: true });
     }
-    const text = await res.text();
     if (res.status >= 300 && res.status < 400) {
       throw new CliError(`${baseUrl} answered with a redirect; check the Drydock URL`);
     }
@@ -122,7 +127,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
 
   /**
    * @param {string} path
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
    * @returns {Promise<any>}
    */
   async function json(path, options) {

@@ -288,12 +288,16 @@ scanLifecycleRoutes.get("/:id", async (c) => {
 scanLifecycleRoutes.get("/:id/status", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
-  if (!scan) return c.json({ error: "not found" }, 404);
-  // The same release/context split the list and detail reads return, so a
-  // poller can gate on release risk as the workflow gate does.
+  const status = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!status) return c.json({ error: "not found" }, 404);
+  const { baselineComparisonSkipped, ...scan } = status;
+  // The release/context split, so a poller can gate on release risk as the
+  // workflow gate does. With no baseline compared there is no release delta,
+  // and the gate asks for manual review; null sends a poller to overall risk.
   const riskSummary =
-    scan.status === "complete" ? readScanRiskBreakdown(scan.riskSummaryJson) : null;
+    scan.status === "complete" && !baselineComparisonSkipped
+      ? readScanRiskBreakdown(scan.riskSummaryJson)
+      : null;
   return c.json({ scan, riskSummary });
 });
 

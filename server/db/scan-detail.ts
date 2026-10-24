@@ -155,6 +155,12 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
       changedFileCount: scans.changedFileCount,
       findingCount: scans.findingCount,
       riskSummaryJson: scans.riskSummaryJson,
+      // Without a downloaded baseline every finding scores as context, so the
+      // release risk grades nothing. Read in SQL so polling never loads summary_json.
+      baselineComparisonSkipped:
+        sql<number>`json_extract(${scans.summaryJson}, '$.baseline.comparisonSkipped') is not null`.mapWith(
+          Boolean,
+        ),
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,
