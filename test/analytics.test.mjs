@@ -143,7 +143,8 @@ describe("recordProductEvent", () => {
         name: "publication.discrepancy",
         organizationId: "org",
         ecosystem: "npm",
-        status: "artifact_mismatch",
+        status: "published_without_approval",
+        reason: "ai_flagged_without_decision",
       },
       {
         name: "scan.completed",

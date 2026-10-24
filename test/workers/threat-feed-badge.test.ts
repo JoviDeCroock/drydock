@@ -2615,6 +2615,7 @@ type ObservationStatus =
   | "published_without_approval"
   | "published_despite_rejection"
   | "artifact_mismatch"
+  | "undecided_low_risk"
   | "unknown";
 
 // What the monitor evidence says about a scan as the badge's pick, read
@@ -2869,6 +2870,23 @@ describe("the badge reads the organization's publication monitor", () => {
     // Observed at all means npm published it; nothing says anyone approved it.
     await recordObservation(owner.organizationId, packageName, "3.0.1", "unknown");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+
+  test("an undecided low-risk review is no alert: never orange, but still not an approval", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // About the quoted version itself, it leaves the approval standing.
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "undecided_low_risk");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    // A newer one takes the badge off the quote, grey rather than orange.
+    await recordObservation(owner.organizationId, packageName, "3.0.1", "undecided_low_risk");
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "3.0.1 not reviewed",
+      color: "lightgrey",
+    });
   });
 
   test("an approved match leaves the newer version to the scans", async () => {

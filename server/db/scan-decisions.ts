@@ -11,8 +11,10 @@ import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
 import { scanEcosystem } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/analytics";
+import { emitOperationalEvent } from "../lib/platform/observability";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
+import { reopenQuietPublicationObservations } from "./publication-watches";
 import { getScan } from "./scan-detail";
 import { undecidedQueueConditions } from "./scan-query";
 import { readScanRiskBreakdown } from "./scan-risk";
@@ -72,6 +74,7 @@ export async function recordScanDecision(
     type: "scan.decided",
     metadata: { decision: input.decision, reason },
   });
+  await reopenQuietObservations(db, input.organizationId, [input.scanId]);
 
   // Staged publishes are npm-only, but a published-pair review reaches this
   // route for any ecosystem with a public-diff adapter, so the counter reads
@@ -86,6 +89,20 @@ export async function recordScanDecision(
   });
 
   return getScan(db, input.scanId, input.organizationId, artifactBucket);
+}
+
+// The decision is already written; a monitor observation that stays quiet is
+// recoverable (deciding again retries), so its failure never fails the request.
+async function reopenQuietObservations(
+  db: AppDb,
+  organizationId: string,
+  scanIds: readonly string[],
+): Promise<void> {
+  try {
+    await reopenQuietPublicationObservations(db, organizationId, scanIds);
+  } catch {
+    emitOperationalEvent("warn", "publication_monitor.reopen_failed", { organizationId });
+  }
 }
 
 function toEpochMs(value: Date | number | string | null): number {
@@ -255,6 +272,11 @@ export async function recordBatchApproval(
     ...row,
     summaryJson: { stagedPublish: parseStagedPublish(stagedPublish) },
   }));
+  await reopenQuietObservations(
+    db,
+    input.organizationId,
+    approved.map((row) => row.id),
+  );
   for (const row of approved) {
     recordDecisionEvent(
       env,
@@ -339,6 +361,7 @@ export async function recordGatePackageDecision(
     type: "scan.decided",
     metadata: { decision: input.decision, reason },
   });
+  await reopenQuietObservations(db, input.organizationId, [input.scanId]);
 
   // Gated releases decide here rather than through `recordScanDecision`, so
   // without this the decision counter saw only the npm staged path — the

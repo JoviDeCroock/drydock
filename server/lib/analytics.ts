@@ -5,7 +5,14 @@
 import { emitOperationalEvent } from "./platform/observability";
 
 export type AnalyticsEvent =
-  | { name: "publication.discrepancy"; organizationId: string; ecosystem: string; status: string }
+  | {
+      name: "publication.discrepancy";
+      organizationId: string;
+      ecosystem: string;
+      status: string;
+      /** The observation's reason code, or "" when it has none. */
+      reason: string;
+    }
   | {
       name: "scan.queued";
       organizationId: string;
@@ -262,7 +269,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
 
   switch (event.name) {
     case "publication.discrepancy":
-      return base(event.organizationId, event.ecosystem, [event.status], [0]);
+      return base(event.organizationId, event.ecosystem, [event.status, event.reason], [0]);
     case "scan.queued":
       return base(event.organizationId, event.ecosystem, [event.source], [0]);
     case "scan.completed":

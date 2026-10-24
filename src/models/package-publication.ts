@@ -29,7 +29,12 @@ export type PublicationEnrollment =
 /** One entry of the organization's alert ledger for the package, across watches. */
 export interface PublicationAlertRecord {
   version: string;
-  status: Exclude<PublicationObservation["status"], "approved_match" | "unknown">;
+  status: Exclude<
+    PublicationObservation["status"],
+    "approved_match" | "undecided_low_risk" | "unknown"
+  >;
+  /** The reason on its observation in the current watch window; null outside it. */
+  reason: string | null;
   createdAt: string;
   acknowledgedAt: string | null;
   /** Raised in the current watch's observation window rather than an earlier one. */

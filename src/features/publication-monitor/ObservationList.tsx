@@ -11,8 +11,8 @@ import {
   emptyObservationsMessage,
   isAlertResolved,
   isPublicationAlert,
+  observationLabel,
   observationReasonLabel,
-  observationStatusLabels,
   observationTone,
   postReleaseReviewState,
   resolutionBadgeMessage,
@@ -70,7 +70,7 @@ export function ObservationList({
           <li key={observation.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span class="font-mono text-[13px] font-medium break-all">{observation.version}</span>
             <Badge tone={observationTone(observation.status)}>
-              {observationStatusLabels[observation.status]}
+              {observationLabel(observation)}
             </Badge>
             {observation.coverageGap ? (
               // A coverage gap, not a discrepancy: the comparison could not be made.

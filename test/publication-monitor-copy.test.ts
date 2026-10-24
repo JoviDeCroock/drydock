@@ -4,8 +4,11 @@ import {
   declinedRemediation,
   emptyObservationsMessage,
   isAlertResolved,
+  isPublicationAlert,
+  observationLabel,
   observationReasonLabel,
   observationStatusLabels,
+  observationTone,
   postReleaseReviewState,
   resolutionBadgeMessage,
   resolutionLabels,
@@ -99,8 +102,48 @@ describe("publication monitor copy", () => {
     );
   });
 
+  test("undecided reviews read by tier: quiet when low risk, named when the AI flagged them", () => {
+    const quiet = { status: "undecided_low_risk", reason: null } as const;
+    expect(observationLabel(quiet)).toBe("Reviewed, no decision in this organization");
+    expect(observationTone(quiet.status)).toBe("neutral");
+    expect(isPublicationAlert(quiet.status)).toBe(false);
+    expect(observationReasonLabel(quiet)).toMatch(/low release risk, so no alert was raised/);
+
+    const flagged = {
+      status: "published_without_approval",
+      reason: "ai_flagged_without_decision",
+    } as const;
+    expect(observationLabel(flagged)).toBe(
+      "Published with no approval, flagged by the AI reviewer",
+    );
+    expect(observationTone(flagged.status)).toBe("critical");
+    // The label names the AI reviewer; the reason does not repeat it.
+    expect(observationReasonLabel(flagged)).not.toMatch(/AI/);
+    expect(observationReasonLabel(flagged)).toMatch(/these exact bytes is undecided/);
+    // Any other reason keeps the status label.
+    expect(
+      observationLabel({
+        status: "published_without_approval",
+        reason: "reviewed_risk_without_decision",
+      }),
+    ).toBe("Published with no approval in this organization");
+    expect(
+      observationLabel({ status: "artifact_mismatch", reason: "ai_flagged_without_decision" }),
+    ).toBe("Published bytes differ from what this organization reviewed");
+  });
+
   test("an alert's reason asks for the decision first and accuses no one", () => {
-    for (const reason of ["review_pending", "review_failed", "reviewed_without_decision"]) {
+    for (const reason of [
+      "review_pending",
+      "review_failed",
+      "reviewed_without_decision",
+      "reviewed_risk_without_decision",
+      "reviewed_ungated_without_decision",
+      "reviewed_ai_concern_without_decision",
+      "reviewed_ai_unfinished_without_decision",
+      "reviewed_diverged_without_decision",
+      "reviewed_ungraded_without_decision",
+    ]) {
       const label = observationReasonLabel({ status: "published_without_approval", reason });
       expect(label).toMatch(/these exact bytes/);
       expect(label).toMatch(/investigate if nobody here published it/);
