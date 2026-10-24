@@ -72,6 +72,9 @@ describe("askClef", () => {
       operation: "injection-screen",
     });
     expect(options.extraHeaders["cf-aig-max-attempts"]).toBe("1");
+    // Spans are changed text of a release that may still be embargoed.
+    expect(options.extraHeaders["cf-aig-collect-log-payload"]).toBe("false");
+    expect(options.extraHeaders).not.toHaveProperty("cf-aig-collect-log");
   });
 
   test("sends empty gateway metadata when the caller passes none", async () => {

@@ -32,13 +32,14 @@ overrides:
   # resolver on the patched line.
   proxy-addr: ^2.0.8
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
-  # retry, cookie, header, decompression, WebSocket, and TLS handling (7.29.1)
-  # until its dependency floor catches up.
-  undici: ^7.29.1
+  # retry, cookie, header, decompression, WebSocket, and TLS handling (7.29.1),
+  # plus the DoS and SRI fixes (7.30.1), until its dependency floor catches up.
+  undici: ^7.30.1
   # express-rate-limit (via @modelcontextprotocol/sdk) permits ip-address
   # releases whose subnet checks mis-compare addresses and whose IPv6 parse
-  # diagnostics grow with input (GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw).
-  ip-address: ^10.7.1
+  # diagnostics grow with input (GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw,
+  # GHSA-rxp7-6hxx-x8q5).
+  ip-address: ^10.7.4
   # agents pins MCP SDK releases whose OAuth client can send credentials to an
   # authorization server the MCP server picks (GHSA-6qxp-vccf-f47h). Drydock
   # imports only agents/observability/ai from agents, which loads no MCP code.

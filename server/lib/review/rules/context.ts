@@ -55,7 +55,23 @@ export function buildRuleContext(
   packageJsonSummary: PackageJsonSummary | null | undefined,
   options: DeterministicFindingOptions,
 ): RuleContext {
+  const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
+  const claimed = new Set<string>();
+  for (const entry of diff) {
+    // A file renamed from a predecessor is judged as that predecessor modified:
+    // file-scoped rules see `modified` and diff against its bytes. `ctx.diff`
+    // keeps the real `added` status for rules about the tree itself.
+    if (entry.status !== "added" || !entry.renamedFrom || claimed.has(entry.renamedFrom)) continue;
+    const predecessor = previousByPath.get(entry.renamedFrom);
+    // Same conditions as release attribution (diff-annotation.ts), so a file
+    // is never graded modified while attributed as added.
+    if (!predecessor?.textSample || predecessor.flags.includes("binary")) continue;
+    if (diffByPath.get(entry.renamedFrom)?.status !== "removed") continue;
+    claimed.add(entry.renamedFrom);
+    diffByPath.set(entry.path, { ...entry, status: "modified" });
+    previousByPath.set(entry.path, predecessor);
+  }
   const packageJsonFile = files.find((file) => file.path === "package.json" && file.textSample);
   const rawPackageJson = packageJsonFile?.textSample
     ? (safeJson(packageJsonFile.textSample) as PackageJsonSummary | null)
@@ -66,7 +82,7 @@ export function buildRuleContext(
   const implicitScripts = normalizeStringRecord(packageJson?.implicitScripts);
   return {
     files,
-    previousByPath: new Map((options.previousFiles ?? []).map((file) => [file.path, file])),
+    previousByPath,
     diff,
     diffByPath,
     packageJson,

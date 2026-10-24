@@ -10,13 +10,18 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export class CliError extends Error {
   /**
+   * `retryable` marks a failure a later identical request may not repeat: the
+   * origin was unreachable, rate limited (429), or failed (5xx).
    * @param {string} message
    * @param {number} [exitCode]
+   * @param {{ retryable?: boolean; retryAfterMs?: number | null }} [transient]
    */
-  constructor(message, exitCode = 1) {
+  constructor(message, exitCode = 1, { retryable = false, retryAfterMs = null } = {}) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -86,10 +91,10 @@ export function pathSegment(value, label) {
 export function createClient({ baseUrl, apiKey, fetch: send }) {
   /**
    * @param {string} path absolute path with an encoded query string
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
    * @returns {Promise<ApiResponse>}
    */
-  async function request(path, { authenticated = true } = {}) {
+  async function request(path, { authenticated = true, timeoutMs } = {}) {
     /** @type {Record<string, string>} */
     const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
     if (authenticated) {
@@ -97,22 +102,32 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
       headers.authorization = `Bearer ${apiKey}`;
     }
     let res;
+    let text;
     try {
-      res = await send(`${baseUrl}${path}`, { headers, redirect: "manual" });
+      res = await send(`${baseUrl}${path}`, {
+        headers,
+        redirect: "manual",
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
+      text = await res.text();
     } catch (err) {
-      throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`);
+      throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`, 1, { retryable: true });
     }
-    const text = await res.text();
     if (res.status >= 300 && res.status < 400) {
       throw new CliError(`${baseUrl} answered with a redirect; check the Drydock URL`);
     }
-    if (!res.ok) throw new CliError(errorMessage(res.status, text, res.headers));
+    if (!res.ok) {
+      throw new CliError(errorMessage(res.status, text, res.headers), 1, {
+        retryable: res.status === 429 || res.status >= 500,
+        retryAfterMs: retryAfterMs(res.headers.get("retry-after")),
+      });
+    }
     return { status: res.status, headers: res.headers, text };
   }
 
   /**
    * @param {string} path
-   * @param {{ authenticated?: boolean }} [options]
+   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
    * @returns {Promise<any>}
    */
   async function json(path, options) {
@@ -148,6 +163,19 @@ function errorMessage(status, text, headers) {
     return `rate limited${retry ? `; retry after ${retry}s` : ""}: ${detail}`;
   }
   return `${detail}${code}`;
+}
+
+/**
+ * `Retry-After` as delta-seconds or an HTTP date, in milliseconds from now.
+ * @param {string | null} value
+ * @returns {number | null}
+ */
+function retryAfterMs(value, now = Date.now()) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? null : Math.max(0, date - now);
 }
 
 /** @param {unknown} err */

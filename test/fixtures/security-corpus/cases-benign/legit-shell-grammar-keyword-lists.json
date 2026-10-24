@@ -1,0 +1,67 @@
+{
+  "id": "legit-shell-grammar-keyword-lists",
+  "title": "Syntax highlighter ships shell grammars that list curl, wget and bash as keywords",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-documentation",
+  "source": "benign-popular",
+  "intent": "Observed in prismjs (components/prism-bash.js), storybook's bundled syntax highlighter and nx's graph client: a bash grammar's builtin regex is an alternation `(?:…|bash|…|curl|cut|…|wget|…|zsh)`, and highlight.js keyword tables are space-separated (`cp cpp curl cvpa`). Neither downloads anything, so the download-and-execute pattern must not read `curl|…|zsh` as a pipeline and the shell-tool pattern needs an operand.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-shell-grammar-keyword-lists",
+    "version": "2.3.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "legit-shell-grammar-keyword-lists",
+    "version": "2.4.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-shell-grammar-keyword-lists\",\"version\":\"2.3.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 53,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./components/prism-bash');\n"
+    },
+    {
+      "path": "components/prism-bash.js",
+      "size": 21,
+      "sha256": "bash-before",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-shell-grammar-keyword-lists\",\"version\":\"2.4.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 53,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./components/prism-bash');\n"
+    },
+    {
+      "path": "components/prism-bash.js",
+      "size": 355,
+      "sha256": "bash-after",
+      "flags": [],
+      "textSample": "var commandAfterHeredoc = {\n  pattern: /(^|[\\s;|&]|[<>]\\()(?:add|apt|awk|basename|bash|cat|chmod|cp|curl|cut|date|echo|grep|sh|sudo|tar|wget|which|xargs|zsh)(?=$|[)\\s;|&])/,\n  lookbehind: true\n};\nvar keywords = { built_in: 'ac cat cd cp cpp curl cvpa dbp del diff echo|0 sleep sort wget where write' };\nmodule.exports = { commandAfterHeredoc, keywords };\n"
+    }
+  ]
+}

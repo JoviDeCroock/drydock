@@ -17,7 +17,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — **Workflow Gate — enforced**: the shared GitHub Environment gate flow for PyPI, npm, and VS Code releases, scoped to the configured protected job.
 - [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) — the PyPI specifics of that gate: PyPI has no registry-staged artifact, so the workflow gate is its only review-before-publish path.
-- [`npm-staged-publishing.md`](./npm-staged-publishing.md) — **Stage Watchtower — advisory**: reviewing npm staged artifacts and narrowing CI to `npm stage publish` without claiming control over npm's independent approval or interactive publish paths.
+- [`npm-staged-publishing.md`](./npm-staged-publishing.md) — **Stage Watchtower — advisory**: reviewing npm staged artifacts and narrowing CI to `npm stage publish` without claiming control over npm's independent approval or interactive publish paths; also gated staging, where the workflow gate runs in front of `npm stage publish` and the staged review is bound back to it (gate continuity).
 - [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) — pinning npm trusted publishing (OIDC) to the gate environment so automated publishing uses the reviewed workflow, plus the interactive 2FA path npm still permits.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
@@ -53,7 +53,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, the read-only public MCP endpoint, and machine-readable discovery.
-- [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset and Dependabot workflow that link dependency-update PRs to public `/diff` pages; the preset path is a public contract.
+- [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset that links dependency-update PRs to public `/diff` pages, and the Dependabot/Renovate PR comment workflow that adds each bump's Drydock headline and findings; the preset path is a public contract.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
