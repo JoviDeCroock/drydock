@@ -138,10 +138,6 @@ export interface PersistedScanDetail {
     decidedByName?: string | null;
     /** npm's own publication time, when this organization's publication monitor saw it. */
     registryPublishedAt?: string | number | Date | null;
-    /** Earliest recorded report load by an organization member. Opened, not reviewed. */
-    reportFirstViewedAt?: string | number | Date | null;
-    /** Null for reviews older than view tracking, whose earlier loads went unrecorded. */
-    reportViewCount?: number | null;
     reportOpenedBeforePublication?: "opened" | "not_opened" | "unknown" | null;
   };
   riskSummary?: ScanRiskSummary | null;
