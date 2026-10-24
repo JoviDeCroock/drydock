@@ -323,6 +323,11 @@ another. It takes the same role and the same per-organization scan budget as
 starting any review. The alert shows the review's state and links to it ("Open
 post-release review"); a review that failed can be deleted on its page, which unlinks
 it and offers Scan again. Starting it is audited (`publication.review_started`).
+Like every published-pair review, it compares npm's provenance record for the two
+versions, so a direct publish that dropped the provenance the predecessor carried, or
+was attested from a different repository, is a release finding on that review (see
+[`provenance-continuity.md`](./provenance-continuity.md)); the alert itself does not
+read provenance.
 
 A release with no Drydock record was decided from metadata alone, so its bytes were
 never hashed. Starting the review asks the monitor to hash them now, with the same

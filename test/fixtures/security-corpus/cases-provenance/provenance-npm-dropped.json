@@ -1,0 +1,85 @@
+{
+  "id": "provenance-npm-dropped",
+  "title": "npm release drops the build provenance its baseline carried",
+  "category": "provenance-regression",
+  "intent": "The stolen-token shape: the baseline and the two releases before it came from attested CI, this one was published with no provenance. Pins the medium severity: a legitimate local or non-attesting publish after an established attested history looks identical.",
+  "ecosystem": "npm",
+  "registryProvenance": {
+    "packageName": "example-widget",
+    "history": [
+      {
+        "version": "0.9.0",
+        "packumentProvenance": true
+      },
+      {
+        "version": "0.9.1",
+        "packumentProvenance": true
+      }
+    ],
+    "baseline": {
+      "version": "1.0.0",
+      "packumentProvenance": true,
+      "statements": [
+        {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "pkg:npm/example-widget@1.0.0",
+              "digest": {
+                "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "refs/tags/v1.0.0",
+                  "repository": "https://github.com/example-org/widget",
+                  "path": ".github/workflows/release.yml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "push",
+                  "repository_id": "1001",
+                  "repository_owner_id": "1"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/example-org/widget@refs/tags/v1.0.0",
+                  "digest": {
+                    "gitCommit": "0000000000000000000000000000000000000000"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/actions/runner/github-hosted"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/example-org/widget/actions/runs/1/attempts/1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "1.0.1",
+      "packumentProvenance": false
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    {
+      "ruleId": "release.provenance-dropped",
+      "severity": "medium",
+      "file": "<release-process>"
+    }
+  ]
+}
