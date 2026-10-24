@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "`ln -s ../react ../h` runs with a cwd inside the package, so the link lands in the package root and points at a sibling package, and a later write goes through it. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "intent": "`ln -s ../react ../h` runs with a cwd inside the package, so the link lands in the package root and points at a sibling package, and a later write goes through it. Inert fixture. The source never names the install root, so the node_modules co-occurrence missed it; the position analysis in install-root-reach.ts now reaches it, and it stays here as the truth-labeled miss that motivated that analysis.",
   "expectMinRisk": "high",
   "expectAnyRule": ["propagation.package-mutation"],
   "category": "install-time-self-propagation",

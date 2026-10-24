@@ -5,7 +5,7 @@
   "verdict": "malicious",
   "threatClass": "self-propagating-worm",
   "source": "synthetic",
-  "intent": "The write destination in install.js is inside the package, but a module it requires links that directory to a sibling package. Inert fixture. The source never names the install root, so co-occurrence scoring misses it; reported as a frontier case for propagation.package-mutation.",
+  "intent": "The write destination in install.js is inside the package, but a module it requires links that directory to a sibling package. Inert fixture. The source never names the install root, so the node_modules co-occurrence missed it; the position analysis in install-root-reach.ts now reaches it, and it stays here as the truth-labeled miss that motivated that analysis.",
   "expectMinRisk": "high",
   "expectAnyRule": ["propagation.package-mutation"],
   "category": "install-time-self-propagation",

@@ -65,8 +65,9 @@ const ROTATING_STRING_TABLE_SIGNALS = [
   /\bfunction\s+_0x[\da-f]{3,}\s*\(/i,
   /\bwhile\s*\(\s*!!\[\]\s*\)/,
   /\bparseInt\s*\(\s*_0x[\da-f]+\s*\(/i,
-  /\[['"]push['"]\]\s*\(/,
-  /\[['"]shift['"]\]\s*\(\s*\)/,
+  // The folded text reads `_0x9f['pu' + 'sh']` as `_0x9f.push`.
+  /\[['"]push['"]\]\s*\(|\b_0x[\da-f]+\.push\s*\(/i,
+  /\[['"]shift['"]\]\s*\(\s*\)|\b_0x[\da-f]+\.shift\s*\(\s*\)/i,
 ];
 const ROTATING_STRING_TABLE_SIGNAL_THRESHOLD = 5;
 
@@ -153,7 +154,9 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // normalizer is JS-flavored and Python evasion is out of scope.
     const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
     const packedObfuscation =
-      ctx.codePatternSet !== "python" && hasRotatingStringTableObfuscation(sample);
+      ctx.codePatternSet !== "python" &&
+      (hasRotatingStringTableObfuscation(sample) ||
+        (normalized !== sample && hasRotatingStringTableObfuscation(normalized)));
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
@@ -277,6 +280,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
                 dynamicNormalized,
                 dynamicCodeView,
               ],
+              ...undecodedPayloadDecodingGroup(file.path, sample, normalized, ctx, dynamicSample),
             ],
             packedObfuscation,
             true,
@@ -563,6 +567,30 @@ function lazyCodeViews(
       normalizedCodeNoStrings: folded.codeNoStrings,
     });
   };
+}
+
+// Folding a literal decode replaces the call with what it decodes to, so the
+// decode itself is matched in text folded without decoding: an assembled
+// `Buffer.from(…, 'bas' + 'e64')` stays a decode.
+function undecodedPayloadDecodingGroup(
+  path: string,
+  sample: string,
+  normalized: string,
+  ctx: RuleContext,
+  dynamicSample: string,
+): ViewGroup[] {
+  if (ctx.codePatternSet === "python" || normalized === sample) return [];
+  const undecoded = omitGlobalObjectShims(normalizeCodeForScanning(sample, { decode: false }));
+  if (undecoded === omitGlobalObjectShims(normalized)) return [];
+  const views = lazyCodeViews(path, dynamicSample, undecoded);
+  return [
+    [
+      ctx.patterns.payloadDecoding,
+      dynamicSample,
+      undecoded,
+      () => [views().code, views().normalizedCode],
+    ],
+  ];
 }
 
 function hasRotatingStringTableObfuscation(source: string): boolean {

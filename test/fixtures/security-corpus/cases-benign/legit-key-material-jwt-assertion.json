@@ -1,0 +1,67 @@
+{
+  "id": "legit-key-material-jwt-assertion",
+  "title": "Service auth signs a JWT assertion with the private key before calling the API",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-key-handling",
+  "source": "synthetic",
+  "intent": "Distilled from APNs/Google service-account auth: a same-file helper (generateToken, makeAssertion) signs a JWT with the private key and the request carries the signature, never the key. A same-file helper that returns a signature must sanitize by what it returns, not be trusted or distrusted by its name.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-key-material-jwt-assertion",
+    "version": "1.2.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "legit-key-material-jwt-assertion",
+    "version": "1.2.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-key-material-jwt-assertion\",\"version\":\"1.2.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 568,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const jwt = require('jsonwebtoken');\nfunction generateToken(privateKey) {\n  return jwt.sign({ iss: 'svc' }, privateKey, { algorithm: 'ES256', expiresIn: '1h' });\n}\nfunction makeAssertion(claims, pk) {\n  return jwt.sign(claims, pk, { algorithm: 'RS256' });\n}\nasync function push(creds, payload) {\n  return fetch('https://push.example.invalid/notify', {\n    method: 'POST',\n    headers: { authorization: 'bearer ' + generateToken(creds.privateKey) },\n    body: JSON.stringify({ assertion: makeAssertion(payload, creds.private_key) }),\n  });\n}\nmodule.exports = { push };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-before",
+      "flags": [],
+      "textSample": "module.exports = '1.2.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-key-material-jwt-assertion\",\"version\":\"1.2.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 568,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const jwt = require('jsonwebtoken');\nfunction generateToken(privateKey) {\n  return jwt.sign({ iss: 'svc' }, privateKey, { algorithm: 'ES256', expiresIn: '1h' });\n}\nfunction makeAssertion(claims, pk) {\n  return jwt.sign(claims, pk, { algorithm: 'RS256' });\n}\nasync function push(creds, payload) {\n  return fetch('https://push.example.invalid/notify', {\n    method: 'POST',\n    headers: { authorization: 'bearer ' + generateToken(creds.privateKey) },\n    body: JSON.stringify({ assertion: makeAssertion(payload, creds.private_key) }),\n  });\n}\nmodule.exports = { push };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-after",
+      "flags": [],
+      "textSample": "module.exports = '1.2.1';\n"
+    }
+  ]
+}

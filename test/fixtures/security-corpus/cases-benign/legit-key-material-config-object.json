@@ -1,0 +1,67 @@
+{
+  "id": "legit-key-material-config-object",
+  "title": "Client config object holds a key field but sends only its non-key fields",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-key-handling",
+  "source": "synthetic",
+  "intent": "Distilled from SDK client setup: an object literal collects a privateKey alongside timeout and apiKey, and only the non-key fields are read into requests. code.key-material-exfiltration must taint only the key-material field of an object literal, so reads of config.timeout / config.apiKey stay clean and the module stays low.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-key-material-config-object",
+    "version": "1.2.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "legit-key-material-config-object",
+    "version": "1.2.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-key-material-config-object\",\"version\":\"1.2.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 439,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const DEFAULT = 'https://api.example.invalid';\nfunction createClient(creds) {\n  const config = { privateKey: creds.privateKey, timeout: 30000, apiKey: creds.apiKey };\n  return {\n    call(path, body) {\n      return fetch(DEFAULT + path, {\n        method: 'POST',\n        body: JSON.stringify(body),\n        headers: { 'x-api-key': config.apiKey },\n        timeout: config.timeout,\n      });\n    },\n  };\n}\nmodule.exports = { createClient };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-before",
+      "flags": [],
+      "textSample": "module.exports = '1.2.0';\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 79,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-key-material-config-object\",\"version\":\"1.2.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 439,
+      "sha256": "code",
+      "flags": [],
+      "textSample": "const DEFAULT = 'https://api.example.invalid';\nfunction createClient(creds) {\n  const config = { privateKey: creds.privateKey, timeout: 30000, apiKey: creds.apiKey };\n  return {\n    call(path, body) {\n      return fetch(DEFAULT + path, {\n        method: 'POST',\n        body: JSON.stringify(body),\n        headers: { 'x-api-key': config.apiKey },\n        timeout: config.timeout,\n      });\n    },\n  };\n}\nmodule.exports = { createClient };\n"
+    },
+    {
+      "path": "lib/version.js",
+      "size": 26,
+      "sha256": "version-after",
+      "flags": [],
+      "textSample": "module.exports = '1.2.1';\n"
+    }
+  ]
+}

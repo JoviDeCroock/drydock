@@ -6,9 +6,9 @@
   "threatClass": "network-exfil",
   "source": "real-sanitized",
   "provenance": "@solana/web3.js 1.95.6-1.95.7 (Dec 2024) account-takeover: an added function captured keypair secret-key material and exfiltrated it to a hardcoded C2 via crafted request headers. Defanged: C2 host replaced with example.invalid, no real key.",
-  "intent": "Models runtime key theft injected into an existing module: a function reads secret-key bytes passed in by the caller and ships them out over fetch. This is a KNOWN MISS — the file is modified (not added) and the only signal is a network call, so the deterministic rules land it at medium while the truth is critical key exfiltration. The secret is read from a function argument, not process.env or a known credential path, so no credential rule fires — the gap this case documents. Safe: host is example.invalid, the key is an in-memory placeholder.",
+  "intent": "Models runtime key theft injected into an existing module: a function reads secret-key bytes passed in by the caller and ships them out over fetch. The secret is read from a function argument, not process.env or a known credential path, so no credential rule fires and the capability rules alone land it at medium; code.key-material-exfiltration traces keypair.secretKey through Array.from(…).join into the fetch header and must carry it to high. Safe: host is example.invalid, the key is an in-memory placeholder.",
   "expectMinRisk": "high",
-  "expectAnyRule": [],
+  "expectAnyRule": ["code.key-material-exfiltration"],
   "previousPackageJson": { "name": "@solana/web3.js", "version": "1.95.5" },
   "stagedPackageJson": { "name": "@solana/web3.js", "version": "1.95.6" },
   "previousFiles": [

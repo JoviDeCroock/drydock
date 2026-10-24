@@ -13,7 +13,11 @@ import {
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
-import { codeViewsForScanning, normalizeCodeForScanning } from "./rules/normalize";
+import {
+  codeViewsForScanning,
+  normalizeCodeForScanning,
+  withNormalizeMemo,
+} from "./rules/normalize";
 import { deterministicRuleIds } from "./rules/rule-ids";
 import {
   installReachablePaths,
@@ -66,6 +70,23 @@ export function annotateFindingsWithDiffStatus<
   findings: T[],
   diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
   options: FindingAnnotationOptions = {},
+): Array<T & FindingDiffAnnotation> {
+  return withNormalizeMemo(() => annotateFindings(findings, diff, options));
+}
+
+function annotateFindings<
+  T extends {
+    id?: string;
+    file: string;
+    line?: number | null;
+    ruleId?: string | null;
+    severity?: string | null;
+    evidence?: string | null;
+  },
+>(
+  findings: T[],
+  diff: Array<{ path: string; status?: unknown; renamedFrom?: unknown }>,
+  options: FindingAnnotationOptions,
 ): Array<T & FindingDiffAnnotation> {
   const diffByPath = new Map(
     diff.map((entry) => [entry.path, normalizeFindingDiffStatus(entry.status)]),
@@ -559,7 +580,7 @@ function patternsForFinding(
     case DETERMINISTIC_RULE_IDS.propagationRegistryPublish:
       return patterns.registryPublish;
     case DETERMINISTIC_RULE_IDS.propagationPackageMutation:
-      return [...patterns.installRootPath, ...patterns.installWrite];
+      return [...patterns.installRootPath, ...patterns.installWrite, ...patterns.installLink];
     case DETERMINISTIC_RULE_IDS.fileSecretContent:
       // The finding-side set, so line matching agrees with what detection
       // actually flagged (placeholder URL credentials are not secrets).

@@ -880,8 +880,23 @@ function decodeEscape(src: string, p: number): { text: string; len: number } {
       return { text: "\f", len: 2 };
     case "v":
       return { text: "\v", len: 2 };
+    // Annex B legacy octal escapes: `\143` is "c". Up to three digits when
+    // the first is 0-3, two otherwise; `\0` before a non-octal digit is NUL.
     case "0":
-      return isDigit(src[p + 2]) ? { text: "0", len: 2 } : { text: "\0", len: 2 };
+    case "1":
+    case "2":
+    case "3":
+    case "4":
+    case "5":
+    case "6":
+    case "7": {
+      const max = c <= "3" ? 3 : 2;
+      let digits = c;
+      while (digits.length < max && isOctalDigit(src[p + 1 + digits.length])) {
+        digits += src[p + 1 + digits.length];
+      }
+      return { text: String.fromCharCode(parseInt(digits, 8)), len: 1 + digits.length };
+    }
     case "x": {
       const hex = src.slice(p + 2, p + 4);
       if (/^[0-9a-fA-F]{2}$/.test(hex)) {
@@ -2798,6 +2813,10 @@ function isWhitespace(c: string | undefined): boolean {
 
 function isDigit(c: string | undefined): boolean {
   return c !== undefined && c >= "0" && c <= "9";
+}
+
+function isOctalDigit(c: string | undefined): boolean {
+  return c !== undefined && c >= "0" && c <= "7";
 }
 
 function isIdentStart(c: string): boolean {

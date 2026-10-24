@@ -1,0 +1,58 @@
+{
+  "id": "install-root-lifecycle-cp",
+  "title": "Postinstall command copies a hook over a sibling package directly",
+  "category": "install-time-self-propagation",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "intent": "Model local propagation with no script file at all: the lifecycle command itself copies a file to a relative destination outside the package. The command never names node_modules. Inert fixture; the paths are fixture paths.",
+  "previousPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "tinyfmt",
+    "version": "2.3.1",
+    "scripts": {
+      "postinstall": "cp hook.js ../left-pad/index.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 36,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 96,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinyfmt\",\"version\":\"2.3.1\",\"scripts\":{\"postinstall\":\"cp hook.js ../left-pad/index.js\"}}"
+    },
+    {
+      "path": "hook.js",
+      "size": 27,
+      "sha256": "hook-js",
+      "flags": [],
+      "textSample": "require('tinyfmt/loader');\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ]
+}
