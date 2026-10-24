@@ -10,13 +10,13 @@ import { dependencyDiffFindings } from "./deps";
 import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 import { propagationFindings } from "./propagation";
 import { promptInjectionFindings } from "./prompt-injection";
-import { tarEntryFindings } from "./tar-entries";
+import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 
 // Bump when deterministic rule semantics, severities, or coverage change in a
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.48.0";
+export const DETERMINISTIC_RULES_VERSION = "1.52.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export { safeJson } from "./helpers";
@@ -57,10 +57,7 @@ export function packageJsonDiffFindings(
 
 export function tarSuspiciousEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
-  options: {
-    dialect?: "npm" | "pypi";
-    fileDiff?: Array<Pick<DiffEntry, "status" | "flags">>;
-  } = {},
+  options: TarEntryFindingOptions = {},
 ): Finding[] {
   return stampVersion(tarEntryFindings(entries, options));
 }

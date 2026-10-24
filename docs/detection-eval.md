@@ -133,7 +133,11 @@ or regressed attestations plus a matching-provenance control.
   findings include a `code.*` rule is replayed as a payload spliced into an
   existing module: each code file becomes a modification of a carrier that
   already uses the network, process, environment and dynamic-code primitives,
-  once as ordinary lines and once as a single minified line. The payload must
+  once as ordinary lines and once as a single minified line. The `renamed`
+  shapes replay the same splice into a bundler chunk that changed content hash:
+  the carrier, padded with a module body, shipped last release under a hashed
+  sibling name, so the payload's file is added and pairs with it as a rename
+  (`paired` counts samples that did). The payload must
   still raise `releaseRisk` (the score the workflow gate reads) to its
   `expectMinRisk`, through the real annotation and risk-breakdown path. This
   guards release-delta classification, which the other metrics never exercise:
@@ -160,6 +164,26 @@ or regressed attestations plus a matching-provenance control.
   is kept in the report as a regression guard against re-introducing a scan-time
   window.
 
+## Real-package false-positive sweep
+
+The benign hard-negatives are distilled by hand. `pnpm run eval:npm-sweep`
+measures the same thing against what maintainers actually ship: it pulls
+consecutive releases of a curated list of popular packages
+(`test/eval/npm-fp-sweep-packages.json`) from the public registry and runs
+each pair through the production public-diff path — the rendered sandbox
+parser, `buildNpmFindings`, redaction, release-delta annotation, and the risk
+breakdown with AI review off. A pair whose `releaseRisk` reaches medium (or
+whose `artifactRisk` reaches high) is listed in
+`.context/npm-fp-sweep/report.md` with the finding, its line and an excerpt.
+
+It is network-bound and report-only, so `pnpm test` never runs it, and a
+flagged pair is a triage candidate rather than a proven false positive.
+Tarballs are cached compressed under `.context/npm-fp-sweep/tarballs` and are
+only ever parsed as data. `NPM_FP_SWEEP_DEPTH` sets release pairs per package,
+`NPM_FP_SWEEP_PACKAGES` replaces the list, and `NPM_FP_SWEEP_CACHE` moves the
+cache. A false positive it finds becomes a distilled `cases-benign/` fixture
+before the rule changes, so the gated eval keeps the fix.
+
 ## Gated thresholds (and the ratchet)
 
 Gated metrics (`detection-eval.test.mjs`):
@@ -168,10 +192,8 @@ Gated metrics (`detection-eval.test.mjs`):
 - every `expectMinRisk: critical` case caught (100%)
 - benign regression positives exactly match the acknowledged fixture ids
 - benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
-- release injection: no misses beyond the pinned `npm-assembled-require-exfil`
-  (lines shape; the environment is read through a computed key no rule sees, a
-  detection gap rather than a classification one) and none in the minified
-  shape, over at least 20 cases each
+- release injection: no misses in either the lines or the minified shape, over
+  at least 20 cases each
 
 Frontier recall and evasion robustness are reported, not gated, so they can start
 red. The benign FP gate was the first ratchet step and landed with weighted

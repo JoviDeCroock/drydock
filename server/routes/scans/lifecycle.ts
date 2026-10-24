@@ -26,6 +26,7 @@ import {
   getScanFile,
   getScanStatus,
   listScans,
+  scanPublicDisclosureAllowed,
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
@@ -276,6 +277,9 @@ scanLifecycleRoutes.get("/:id", async (c) => {
         ? `${canonicalOrigin(c)}/reports/${scan.scan.publicShareToken}`
         : null,
       publicShareIncludesFiles: scan.scan.publicShareIncludesFiles,
+      publicShareAwaitingPublication: scan.scan.publicShareToken
+        ? !(await scanPublicDisclosureAllowed(db, { scanId: scan.scan.id, organizationId }))
+        : false,
     },
   });
 });

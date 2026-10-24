@@ -26,7 +26,8 @@ a shields.io badge per package and an opt-in public threat feed.
 - `/reports` with no token is not an error state: there is no public index to
   land on, so the page skips the lookup entirely and explains what a public
   report is, why reports are unlisted, and points at `/diff` and the docs. Only
-  a token that is present and rejected gets the "invalid or revoked" message.
+  a token that is present and rejected gets the "invalid, revoked, or waiting
+  for its release to be published" message.
   The explainer renders after mount, because the prerendered `/reports`
   document is also the shell served for every `/reports/:token` request.
 - Restaging the same registry package/version retires the older stage identity
@@ -34,6 +35,54 @@ a shields.io badge per package and an opt-in public threat feed.
   and threat feed; already-cached derived responses may remain visible for the
   documented 300-second cache window, but their report link returns `404`
   immediately and the superseded scan cannot be shared again.
+- **Nothing anonymous answers before the release is public.** A link can be
+  created as soon as the review completes, so a maintainer can paste it into
+  release notes, but the report, its file samples, and its attestation answer
+  with the same `404` as an unknown token until the release is public, and a
+  listed review stays out of the threat feed and the listed badge until then.
+  A staged security fix is embargoed information, and its review is the patch
+  itself. The rule is `publicDisclosureAllowedCondition` in
+  `server/db/scan-query.ts`, applied by `resolvePublicShareToken` (report,
+  file, attestation), `listThreatFeedScans`, and `listBadgeCandidateScans`. It
+  fails closed, so an unknown status or an unclassified source counts as
+  unreleased:
+
+  | Review                                             | Public once                                                                                                                                                                                                                                         |
+  | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | npm staged (`manual`, `auto_discovery`)            | npm reports the version `published`, or `deleted` after publishing (see [`registry-version-status.md`](./registry-version-status.md)). `staged`, `validating`, `blocked`, and no answer are all unreleased.                                         |
+  | Published-pair (`published`)                       | Always: the bytes were read from a public registry.                                                                                                                                                                                                 |
+  | PyPI or VS Code workflow gate                      | The gate approved the protected publish job. These registries hold no private stage, and nothing later is observable.                                                                                                                               |
+  | npm workflow gate (or a gate of unknown ecosystem) | The gate approved **and** npm evidence shows these bytes shipped: the organization's staged review bound to this gate review with `matched` gate continuity and published by npm, or a publication-monitor `approved_match` that names this review. |
+
+  An approved npm gate is not enough on its own because gated staging runs
+  `npm stage publish`, which leaves the reviewed bytes in a private npm stage
+  until a maintainer runs `npm stage approve`. A gate that publishes straight
+  to npm goes live once the publication monitor sees the release, so the
+  package needs a watch. A link goes live on the next status sweep (every 15
+  minutes, or right away with **Check npm**) without being re-shared. The
+  sweep stops asking npm about reviews older than 30 days, so a release that
+  ships later than that keeps its link dark; review it again to get a live one. The
+  share response carries `awaitingPublication`, the scan detail carries
+  `publicShareAwaitingPublication`, and the share dialog says the link and its
+  listing go live once the release is published. The public route itself never
+  says so: a distinct answer would tell anyone holding a link that a release is
+  pending.
+
+  **A listed rejection is public at once.** A review decided `no_publish` and
+  listed in the threat feed (with its share link live) is a deliberate threat
+  disclosure: the bytes were refused, so there is no release to wait for, and
+  the feed entry's `reportUrl` must resolve. It appears in the feed, its
+  report, file, and attestation routes answer, and the listed badge reads
+  `<version> rejected`; the default-on badge never shows rejections, so it is
+  unchanged. This holds for every source. A gate review is equivalent: each
+  package review in a gate carries its own decision, and the gate rejects when
+  any of them is `no_publish`. A rejection that is only shared stays under the
+  publication rule, and unlisting it, or approving it later, takes it dark
+  again on the next request. The cost: a maintainer who rejects their own
+  embargoed fix and then lists the rejection discloses the fix. That takes two
+  explicit owner/admin opt-ins, sharing and listing, and the dialog says the
+  link goes live when the rejection is listed.
+
 - That button only appears once the release is decided `publish` — a public
   report is the organization vouching for a release, and an undecided or rejected
   one has nothing to vouch for yet. A release that already has a link keeps the
@@ -46,7 +95,8 @@ a shields.io badge per package and an opt-in public threat feed.
 
 Mounted at `/public` ahead of the Better Auth middleware, like `/webhooks`.
 The unguessable 256-bit share token is the capability; all endpoints are
-rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
+rate-limited per IP and return `404` for unknown, malformed, or revoked tokens,
+and for a token whose release is not public yet (see the share flow above).
 
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
@@ -83,8 +133,9 @@ re-shares them.
   a public route never holds one. A `modified` file therefore renders
   single-sided on the public page — the File diff label says `staged side only`
   once for the whole panel — with findings still pinned to their staged lines. A `removed` file has no staged body at all.
-- **Uniform 404.** An unknown token, a revoked token, a superseded scan, and a
-  path the shared review does not contain are one indistinguishable
+- **Uniform 404.** An unknown token, a revoked token, a superseded scan, a
+  review whose release is not public yet, and a path the shared review does
+  not contain are one indistinguishable
   `{"error":"not found"}`. Anything else would make the route an oracle for
   either the token space or a package's file list.
 - **No caching.** `no-store`, like the report itself, so a revoke takes effect
@@ -181,7 +232,8 @@ to list. `isDefaultBadgePublic` decides that at write time, and every part of
 it fails closed (see "Default-on" below).
 
 Everything else keeps the second opt-in the threat feed takes: a report shared
-privately by link never becomes queryable by package name. **A published-pair
+privately by link never becomes queryable by package name, and a listed review
+answers only once its release is public, under the same rule as the share link. **A published-pair
 review never answers the badge on its own** — see package identity below — only
 as the guarded post-release decision below.
 
@@ -685,6 +737,10 @@ releases. A poller that reads only page one after such a burst silently misses
 them. Read until you reach a listing you have already seen, not until the first
 response ends.
 
+A listed review appears only once its release is public (see the share flow
+above); listing before then is accepted and takes effect on its own. A listed
+rejection is the exception and appears at once.
+
 Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
 share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):
 holding a link is capability, appearing in an index is publication, and the two
@@ -826,6 +882,9 @@ issued with.
 
 - Sharing is an explicit, elevated (owner/admin) opt-in per scan; there is no
   org-wide "share everything" switch.
+- No anonymous route discloses a review before its release is public, whatever
+  the opt-ins say. The default-on badge already keyed on npm's `published`
+  status; share links, the feed, and the listed badge follow the same rule.
 - The public payload is the canonical export only — redaction is inherited from
   the report contract, not re-implemented on the public path.
 - Public routes carry the locked-down API CSP and permissive CORS (`*`) — the
@@ -848,13 +907,19 @@ issued with.
   authenticated workbench uses.
 - Tests: `test/workers/public-reports.test.ts` (routes, roles, revocation,
   redaction, rate limit, CORS on failures, concurrent enables, signature
-  verification, degraded/malformed key handling).
+  verification, degraded/malformed key handling, and the publication rule per
+  review source) and `test/workers/threat-feed-badge.test.ts` (the feed and
+  listed badge under the same rule).
 
 ## Verifying a share link locally
 
 `pnpm run e2e:dev:seed` scans a fixture release, shares it, and prints the
-`/reports/:token` URL. The local harness routes `/public/*` to the Worker and
+`/reports/:token` URL, which goes live once **Check npm** reads the fixture's
+`published` status. The local harness routes `/public/*` to the Worker and
 configures a throwaway signing key, so the report, its file samples, and its
 attestation are the real responses rather than the SPA shell — see
 [`e2e-test-environment.md`](./e2e-test-environment.md). The anonymous read path
-is covered end to end by `test/e2e/local-registry.spec.ts`.
+is covered end to end by `test/e2e/local-registry.spec.ts`: the smoke test
+shares the approved review before npm's status is read and checks that every
+public route answers like an unknown token, and the public-report test reads
+the same link once **Check npm** has recorded `published`.

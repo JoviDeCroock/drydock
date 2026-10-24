@@ -28,7 +28,7 @@
 
 import {
   jsTokenText,
-  tokenizeJs,
+  tokenizeJsWithinBudget,
   type JsSourceGoal,
   type JsToken,
 } from "../../server/lib/platform/js-lexer";
@@ -148,6 +148,8 @@ function attemptFormatSource(
   if (!text) return { formatted: null, accepted: true };
   if (text.length > FORMAT_MAX_CHARS) return { formatted: null, accepted: false };
   const jsTokens = language === "css" ? null : significantJsTokens(text, sourceGoal);
+  // Past the lexer's work budget the shipped bytes are shown as they are.
+  if (language !== "css" && !jsTokens) return { formatted: null, accepted: false };
   let alternateGoalTokens: JsToken[] | null = null;
   if (
     jsTokens !== null &&
@@ -156,6 +158,7 @@ function attemptFormatSource(
     containsGoalSensitiveKeyword(text, jsTokens)
   ) {
     alternateGoalTokens = significantJsTokens(text, "script");
+    if (!alternateGoalTokens) return { formatted: null, accepted: false };
   }
   // `.js` and `.ts` do not identify whether top-level `await` / `yield` are
   // keywords or identifiers. If Script and Module goals disagree, choosing one
@@ -274,8 +277,9 @@ function looksLikeJsxClosingTag(src: string, start: number): boolean {
   return src[index] === ">";
 }
 
-function significantJsTokens(src: string, sourceGoal?: JsSourceGoal): JsToken[] {
-  return tokenizeJs(src, { sourceGoal }).filter((token) => token.type !== "ws");
+function significantJsTokens(src: string, sourceGoal?: JsSourceGoal): JsToken[] | null {
+  const tokens = tokenizeJsWithinBudget(src, { sourceGoal });
+  return tokens && tokens.filter((token) => token.type !== "ws");
 }
 
 function containsGoalSensitiveKeyword(src: string, tokens: JsToken[]): boolean {
@@ -293,7 +297,7 @@ function preservesJsTokenStream(
   sourceGoal?: JsSourceGoal,
 ): boolean {
   const formattedTokens = significantJsTokens(formatted, sourceGoal);
-  return sameJsTokenStream(src, tokens, formatted, formattedTokens);
+  return formattedTokens !== null && sameJsTokenStream(src, tokens, formatted, formattedTokens);
 }
 
 function sameJsTokenStream(
