@@ -23,7 +23,7 @@ const USAGE = `Usage: drydock <command> [options]
 
 Read an organization's Drydock reviews from scripts and CI, and start new ones
 with a key that has scan access. "approve" records your own decision on a staged
-publish and then runs your npm; it needs a terminal and a decide_staged key.
+publish, with your Drydock authenticator code, then runs your npm.
 
 Commands:
   whoami                          The API key's organization, expiry, and access
@@ -52,11 +52,11 @@ Commands:
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
   approve <stage-id | package@version>
                                   Show the review of a staged npm publish, record
-                                  your publish or reject decision in Drydock, then
-                                  run "npm stage approve" (or offer "npm stage
-                                  reject"), which asks you for your one-time
-                                  password. Interactive only (decide_staged access)
-      [--timeout S] [--interval S]
+                                  your publish or reject decision in Drydock
+                                  (asks for your authenticator code), then run
+                                  "npm stage approve" or offer "npm stage reject"
+                                  (decide_staged access)
+      [--timeout S] [--interval S] [--otp CODE, only when stdin is not a terminal]
 
 Options:
   --url URL        Drydock origin (default: $DRYDOCK_URL or https://drydock.org)
@@ -100,7 +100,7 @@ const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
  * @property {(path: string, data: string) => Promise<void>} writeFile
  * @property {(ms: number) => Promise<void>} sleep
  * @property {() => number} now
- * @property {boolean} [interactive] stdin and stdout are a terminal; `approve` refuses to run otherwise
+ * @property {boolean} [stdinIsTerminal] `approve` asks for the authenticator code on a terminal, and reads `--otp` otherwise
  * @property {(question: string) => Promise<string | null>} [prompt] one line from the user; null when input ends
  * @property {(args: string[]) => Promise<import("./approve.mjs").NpmResult>} [runNpm]
  *   runs `npm` on the user's own terminal (inherited stdio) and reports how it exited
@@ -127,6 +127,7 @@ export async function main(argv, io) {
       ecosystem: { type: "string" },
       output: { type: "string", short: "o" },
       timeout: { type: "string" },
+      otp: { type: "string" },
       interval: { type: "string" },
       "fail-on": { type: "string" },
       stage: { type: "string" },
@@ -208,7 +209,7 @@ function resolveCommand(positionals) {
     diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
     approve: {
       run: (ctx) => approve(ctx, () => waitSettings(ctx)),
-      options: ["timeout", "interval"],
+      options: ["timeout", "interval", "otp"],
     },
   };
   const name = first === "scans" ? `scans ${second ?? ""}`.trim() : first;

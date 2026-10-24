@@ -27,9 +27,11 @@ export interface ApiKeyAuthRecord {
   lastUsedAt: Date | null;
 }
 
+/** `createdByUserId` narrows the list to one member's own keys. */
 export async function listOrganizationApiKeys(
   db: AppDb,
   organizationId: string,
+  options: { createdByUserId?: string } = {},
 ): Promise<OrganizationApiKey[]> {
   const rows = await db
     .select({
@@ -46,7 +48,14 @@ export async function listOrganizationApiKeys(
     })
     .from(organizationApiKeys)
     .leftJoin(user, eq(user.id, organizationApiKeys.createdByUserId))
-    .where(eq(organizationApiKeys.organizationId, organizationId))
+    .where(
+      and(
+        eq(organizationApiKeys.organizationId, organizationId),
+        options.createdByUserId
+          ? eq(organizationApiKeys.createdByUserId, options.createdByUserId)
+          : undefined,
+      ),
+    )
     .orderBy(asc(organizationApiKeys.createdAt), asc(organizationApiKeys.id));
   return rows.map((row) => ({
     id: row.id,
@@ -100,10 +109,12 @@ export async function insertOrganizationApiKey(
 }
 
 /** The deleted key's name, or null when no such key belongs to the organization. */
+/** `createdByUserId` limits the revocation to that member's own key. */
 export async function deleteOrganizationApiKey(
   db: AppDb,
   organizationId: string,
   keyId: string,
+  options: { createdByUserId?: string } = {},
 ): Promise<{ name: string; prefix: string } | null> {
   const [removed] = await db
     .delete(organizationApiKeys)
@@ -111,6 +122,9 @@ export async function deleteOrganizationApiKey(
       and(
         eq(organizationApiKeys.organizationId, organizationId),
         eq(organizationApiKeys.id, keyId),
+        options.createdByUserId
+          ? eq(organizationApiKeys.createdByUserId, options.createdByUserId)
+          : undefined,
       ),
     )
     .returning({ name: organizationApiKeys.name, prefix: organizationApiKeys.prefix });

@@ -119,9 +119,16 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     route: "/api/v1/scans",
     operationId: "listScans",
     summary: "List the organization's reviews",
-    description: "Newest first. `filter` defaults to `undecided`.",
+    description:
+      "Newest first. `filter` defaults to `undecided`. `stageId` narrows the list to the reviews of one npm stage.",
     tag: "Reviews",
     parameters: [
+      {
+        name: "stageId",
+        in: "query",
+        description: "Only the reviews of this npm stage id (from `npm stage publish`)",
+        schema: { type: "string", maxLength: 200 },
+      },
       {
         name: "filter",
         in: "query",
@@ -175,13 +182,13 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     operationId: "recordStagedDecision",
     summary: "Record a decision on a staged publish",
     description:
-      "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review.",
+      "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review. Every decision needs `totpCode`, a current code from the authenticator of the member who created the key: missing is `401 two_factor_required`, wrong is `401 two_factor_invalid`, and a creator without two-factor authentication is `403 two_factor_enrollment_required`. Attempts are limited to 10 per 15 minutes per creator.",
     tag: "Reviews",
     parameters: [SCAN_ID],
     requestBody: StagedDecisionRequest,
     decidesStaged: true,
     response: ScanDetail,
-    errors: [400, 401, 403, 404, 409],
+    errors: [400, 401, 403, 404, 409, 429],
   },
   {
     route: "/api/v1/scans/overview",

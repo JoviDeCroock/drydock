@@ -17,7 +17,11 @@ export class CliError extends Error {
    * @param {{ retryable?: boolean; retryAfterMs?: number | null; status?: number; code?: string }} [details]
    *   `status` and `code` are the HTTP status and the error body's `code`, when the server answered
    */
-  constructor(message, exitCode = 1, { retryable = false, retryAfterMs = null, status, code } = {}) {
+  constructor(
+    message,
+    exitCode = 1,
+    { retryable = false, retryAfterMs = null, status, code } = {},
+  ) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;

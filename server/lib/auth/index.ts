@@ -4,6 +4,8 @@ import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
+import { symmetricDecrypt } from "better-auth/crypto";
+import { createOTP } from "@better-auth/utils/otp";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
@@ -767,6 +769,46 @@ export async function verifyTotpStepUp(
       }
     ).verifyTOTP({ body: { code }, headers: request.headers });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The step-up for a request with no session: an organization API key acting as
+ * its creator. `verifyTotpStepUp` asks Better Auth's endpoint to check a code
+ * for the session's own user, which needs that user's session cookie. This
+ * checks the creator's code against the same stored secret, decrypted with
+ * Better Auth's own secret configuration, with the same TOTP check that
+ * endpoint runs (`createOTP`: 6 digits, 30-second period, one period either
+ * side; the plugin's defaults, which `twoFactor()` above keeps). An enrollment
+ * that was never confirmed, or one Better Auth has locked after failed sign-in
+ * codes, verifies nothing. Callers rate-limit attempts, as for the session.
+ */
+export async function verifyUserTotp(
+  auth: Auth,
+  db: AppDb,
+  userId: string,
+  code: string,
+): Promise<boolean> {
+  if (!/^\d{6}$/.test(code)) return false;
+  const [row] = await db
+    .select({
+      secret: schema.twoFactor.secret,
+      verified: schema.twoFactor.verified,
+      lockedUntil: schema.twoFactor.lockedUntil,
+      enabled: schema.user.twoFactorEnabled,
+    })
+    .from(schema.twoFactor)
+    .innerJoin(schema.user, eq(schema.user.id, schema.twoFactor.userId))
+    .where(eq(schema.twoFactor.userId, userId))
+    .limit(1);
+  if (!row?.enabled || row.verified === false) return false;
+  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return false;
+  try {
+    const context = await auth.$context;
+    const secret = await symmetricDecrypt({ key: context.secretConfig, data: row.secret });
+    return await createOTP(secret, { digits: 6, period: 30 }).verify(code);
   } catch {
     return false;
   }

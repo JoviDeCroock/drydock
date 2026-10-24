@@ -67,9 +67,10 @@ in-app guide at `/docs#staged-publishing` covers that setup.
    that can complete this step. From a terminal,
    [`drydock approve <stage-id>`](../cli/README.md#approving-a-staged-publish)
    shows the review's install-time scripts, new dependencies, new executables,
-   and top findings, records your publish or reject decision in Drydock, and
-   then runs your own `npm stage approve`, which asks you for the one-time
-   password directly; Drydock never sees it. That is a convenience and a
+   and top findings, records your publish or reject decision in Drydock (the
+   decision needs your Drydock authenticator code), and then runs your own
+   `npm stage approve`, which asks for npm's one-time password directly;
+   Drydock never sees that one. That is a convenience and a
    record, not enforcement: approving on npmjs.com or with npm directly skips
    it.
 

@@ -7,7 +7,8 @@ import {
   EMAIL_VERIFICATION_REQUIRED_CODE,
   requireVerifiedEmail,
 } from "../../lib/auth/email-verification";
-import { emailVerificationAvailable } from "../../lib/auth";
+import { emailVerificationAvailable, userHasTwoFactor, verifyUserTotp } from "../../lib/auth";
+import { guardRateLimit } from "../../lib/rate-limit";
 import {
   API_KEY_DECIDABLE_SCAN_SOURCES,
   SCAN_DECISIONS,
@@ -65,12 +66,61 @@ async function requireVerifiedDecider(c: DecisionContext, db: AppDb): Promise<Re
 
 const KEY_DECIDABLE_SOURCES = new Set<string>(API_KEY_DECIDABLE_SCAN_SOURCES);
 
+/**
+ * A session records a staged decision without a step-up, but a key is a bearer
+ * secret that can sit in a shell environment where a later `npm install`'s
+ * lifecycle script can read it. With an npm token beside it, a worm could
+ * record "publish" on its own stage and become the approved baseline. So every
+ * key decision needs a fresh TOTP code from the key's creator, checked as the
+ * gate decision's step-up is, and a creator who has turned two-factor off can
+ * no longer decide with any key. The code is read from the body only; it is
+ * never logged or stored.
+ */
+async function requireKeyCreatorStepUp(
+  c: DecisionContext,
+  db: AppDb,
+  creatorUserId: string,
+  totpCode: unknown,
+): Promise<Response | null> {
+  if (!(await userHasTwoFactor(db, creatorUserId))) {
+    return c.json(
+      {
+        error:
+          "Recording a decision with an API key needs two-factor authentication on the account that created the key, and it is turned off.",
+        code: "two_factor_enrollment_required",
+      },
+      403,
+    );
+  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `api-key-decision-2fa:${creatorUserId}`, limit: 10, windowMs: 15 * 60 * 1000 },
+    "too many two-factor attempts",
+  );
+  if (limited) return limited;
+  const code = typeof totpCode === "string" ? totpCode.trim() : "";
+  if (!code) {
+    return c.json(
+      {
+        error: "Recording a decision with an API key needs a code from your authenticator app.",
+        code: "two_factor_required",
+      },
+      401,
+    );
+  }
+  if (!(await verifyUserTotp(c.get("auth"), db, creatorUserId, code))) {
+    return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+  }
+  return null;
+}
+
 scanDecisionRoutes.post("/:id/decision", async (c) => {
   const unverified = await requireVerifiedDecider(c, c.var.db);
   if (unverified) return unverified;
   const body = await readJsonObject<{
     decision: string;
     reason: string;
+    totpCode: unknown;
   }>(c);
   if (!DECISION_SET.has(body.decision as ScanDecision)) {
     return c.json({ error: "decision must be 'publish' or 'no_publish'" }, 400);
@@ -100,6 +150,8 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
         403,
       );
     }
+    const refused = await requireKeyCreatorStepUp(c, db, apiKey.userId, body.totpCode);
+    if (refused) return refused;
   }
 
   const updated = await recordScanDecision(

@@ -20,7 +20,7 @@ import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { ORGANIZATION_SCAN_LIMIT, ORGANIZATION_SCAN_WINDOW_MS } from "../../server/lib/rate-limit";
-import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
+import { type Jar, PASSWORD, callWorker, signUpUserId, totpFor } from "./helpers/auth-http";
 import { seedCompletedScan, seedUser } from "./helpers/seed";
 import {
   exhaustedRateLimitBindings,
@@ -40,6 +40,27 @@ async function signedUpAccount(): Promise<Account> {
   // The personal organization is created on the first organization-scoped read.
   expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
   return { jar, userId, organizationId: personalOrganizationId(userId) };
+}
+
+/** Enrolls the account in TOTP two-factor; returns the URI that mints its codes. */
+async function enrollTwoFactor(account: Account): Promise<string> {
+  const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
+    body: { password: PASSWORD },
+    jar: account.jar,
+  });
+  expect(enable.res.status).toBe(200);
+  const totpURI = enable.json?.totpURI as string;
+  const verify = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
+    body: { code: totpFor(totpURI) },
+    jar: account.jar,
+  });
+  expect(verify.res.status).toBe(200);
+  return totpURI;
+}
+
+/** A code from the same authenticator that is not currently valid. */
+function wrongCode(totpURI: string): string {
+  return String((Number(totpFor(totpURI)) + 500_000) % 1_000_000).padStart(6, "0");
 }
 
 function orgHeaders(organizationId: string): Record<string, string> {
@@ -133,7 +154,7 @@ describe("organization API key management", () => {
     expect(res.res.status).toBe(409);
   });
 
-  test("plain members cannot list, create, or revoke keys", async () => {
+  test("members create, list, and revoke only their own keys; owners manage every key", async () => {
     const owner = await signedUpAccount();
     const member = await signedUpAccount();
     const db = createDb(env.DB);
@@ -142,25 +163,49 @@ describe("organization API key management", () => {
       userId: member.userId,
       role: "member",
     });
-    const key = await createKey(owner);
+    const ownerKey = await createKey(owner);
     const headers = orgHeaders(owner.organizationId);
+    const memberAccount = { ...member, organizationId: owner.organizationId };
+    const memberKey = await createKey(memberAccount, owner.organizationId, {
+      name: "member-ci",
+      access: "scan",
+    });
 
+    const memberList = await callWorker("GET", "/api/v1/api-keys", { jar: member.jar, headers });
+    expect(memberList.res.status).toBe(200);
+    expect(memberList.json?.manageAll).toBe(false);
+    expect((memberList.json!.keys as Array<{ id: string }>).map((key) => key.id)).toEqual([
+      memberKey.id,
+    ]);
+
+    // Another member's key is not the member's to revoke, and looks absent.
     expect(
-      (await callWorker("GET", "/api/v1/api-keys", { jar: member.jar, headers })).res.status,
-    ).toBe(403);
+      (await callWorker("DELETE", `/api/v1/api-keys/${ownerKey.id}`, { jar: member.jar, headers }))
+        .res.status,
+    ).toBe(404);
+    expect((await callWorker("GET", "/api/v1/scans", withKey(ownerKey.token))).res.status).toBe(
+      200,
+    );
+
+    // The member's key acts as the member.
+    const whoami = await callWorker("GET", "/api/v1/scans", withKey(memberKey.token));
+    expect(whoami.res.status).toBe(200);
+
+    const ownerList = await callWorker("GET", "/api/v1/api-keys", { jar: owner.jar });
+    expect(ownerList.json?.manageAll).toBe(true);
+    expect((ownerList.json!.keys as Array<{ id: string }>).map((key) => key.id).sort()).toEqual(
+      [ownerKey.id, memberKey.id].sort(),
+    );
     expect(
-      (
-        await callWorker("POST", "/api/v1/api-keys", {
-          jar: member.jar,
-          headers,
-          body: { name: "sneaky" },
-        })
-      ).res.status,
-    ).toBe(403);
-    expect(
-      (await callWorker("DELETE", `/api/v1/api-keys/${key.id}`, { jar: member.jar, headers })).res
+      (await callWorker("DELETE", `/api/v1/api-keys/${memberKey.id}`, { jar: owner.jar })).res
         .status,
-    ).toBe(403);
+    ).toBe(200);
+
+    const own = await createKey(memberAccount, owner.organizationId, { name: "again" });
+    expect(
+      (await callWorker("DELETE", `/api/v1/api-keys/${own.id}`, { jar: member.jar, headers })).res
+        .status,
+    ).toBe(200);
   });
 
   test("revoking a key stops it immediately and is audited", async () => {
@@ -802,6 +847,26 @@ describe("API keys with scan access", () => {
     expect(retry.queue).toHaveLength(1);
   });
 
+  test("the review list narrows to one stage", async () => {
+    const owner = await signedUpAccount();
+    const wanted = await seedCompletedScan(
+      { userId: owner.userId, organizationId: owner.organizationId },
+      { stageId: "stage-filter-wanted-01" },
+    );
+    await seedCompletedScan(
+      { userId: owner.userId, organizationId: owner.organizationId },
+      { stageId: "stage-filter-other-001" },
+    );
+    const key = await createKey(owner);
+    const listed = await callWorker(
+      "GET",
+      "/api/v1/scans?filter=all&stageId=stage-filter-wanted-01",
+      withKey(key.token),
+    );
+    expect(listed.res.status).toBe(200);
+    expect((listed.json!.scans as Array<{ id: string }>).map((scan) => scan.id)).toEqual([wanted]);
+  });
+
   test("a stage whose review failed can be started again", async () => {
     const owner = await signedUpAccount();
     await connectNpm(owner);
@@ -991,6 +1056,7 @@ async function scanDecision(scanId: string) {
 describe("API keys with decide_staged access", () => {
   test("a decide_staged key records a staged decision as its creator, and the key is named in the audit", async () => {
     const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan({
       userId: owner.userId,
       organizationId: owner.organizationId,
@@ -1000,9 +1066,11 @@ describe("API keys with decide_staged access", () => {
       access: "decide_staged",
     });
 
+    const totpCode = totpFor(totpURI);
     const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
       decision: "publish",
       reason: "read the diff",
+      totpCode,
     });
     expect(res.status, JSON.stringify(res.json)).toBe(200);
     expect(res.json?.scan).toMatchObject({ id: scanId, decision: "publish" });
@@ -1018,16 +1086,144 @@ describe("API keys with decide_staged access", () => {
       reason: "read the diff",
       apiKeyName: "laptop",
       apiKeyPrefix: key.prefix,
+      twoFactor: true,
+      twoFactorMethod: "totp",
     });
     expect(JSON.stringify(event.metadataJson)).not.toContain(key.token);
+    expect(JSON.stringify(event)).not.toContain(totpCode);
 
     // A decide_staged key keeps everything a scan key reads.
     const read = await callWorker("GET", `/api/v1/scans/${scanId}`, withKey(key.token));
     expect(read.res.status).toBe(200);
   });
 
+  test("every key decision needs a fresh code from the key creator's authenticator", async () => {
+    const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const decide = (extra: Record<string, unknown>) =>
+      postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+        decision: "publish",
+        ...extra,
+      });
+
+    const missing = await decide({});
+    expect(missing.status).toBe(401);
+    expect(missing.json).toMatchObject({ code: "two_factor_required" });
+    const wrong = await decide({ totpCode: wrongCode(totpURI) });
+    expect(wrong.status).toBe(401);
+    expect(wrong.json).toMatchObject({ code: "two_factor_invalid" });
+    expect((await scanDecision(scanId)).decision).toBeNull();
+
+    const right = await decide({ totpCode: totpFor(totpURI) });
+    expect(right.status, JSON.stringify(right.json)).toBe(200);
+    expect((await scanDecision(scanId)).decision).toBe("publish");
+  });
+
+  test("only a member with two-factor creates a decide_staged key, and turning it off stops the key", async () => {
+    const owner = await signedUpAccount();
+    const refused = await callWorker("POST", "/api/v1/api-keys", {
+      jar: owner.jar,
+      body: { name: "laptop", access: "decide_staged" },
+    });
+    expect(refused.res.status).toBe(403);
+    expect(refused.json).toMatchObject({ code: "two_factor_enrollment_required" });
+
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const disable = await callWorker("POST", "/api/auth/two-factor/disable", {
+      body: { password: PASSWORD },
+      jar: owner.jar,
+    });
+    expect(disable.res.status).toBe(200);
+
+    const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "publish",
+      totpCode: totpFor(totpURI),
+    });
+    expect(res.status).toBe(403);
+    expect(res.json).toMatchObject({ code: "two_factor_enrollment_required" });
+    expect((await scanDecision(scanId)).decision).toBeNull();
+  });
+
+  test("key decision codes are rate limited per creator", async () => {
+    const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const windowMs = 15 * 60 * 1000;
+    const bucket = Math.floor(Date.now() / windowMs);
+    await createDb(env.DB)
+      .insert(schema.rateLimits)
+      .values({
+        key: `api-key-decision-2fa:${owner.userId}:${bucket}`,
+        count: 10,
+        expiresAt: new Date((bucket + 1) * windowMs),
+        updatedAt: new Date(),
+      });
+    const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "publish",
+      totpCode: totpFor(totpURI),
+    });
+    expect(res.status).toBe(429);
+    expect((await scanDecision(scanId)).decision).toBeNull();
+  });
+
+  test("a member creates a decide_staged key for themselves, and its decisions are theirs", async () => {
+    const owner = await signedUpAccount();
+    const member = await signedUpAccount();
+    await addOrganizationMember(createDb(env.DB), {
+      organizationId: owner.organizationId,
+      userId: member.userId,
+      role: "member",
+    });
+    const totpURI = await enrollTwoFactor(member);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(
+      { ...member, organizationId: owner.organizationId },
+      owner.organizationId,
+      {
+        name: "member laptop",
+        access: "decide_staged",
+      },
+    );
+    const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+      decision: "no_publish",
+      totpCode: totpFor(totpURI),
+    });
+    expect(res.status, JSON.stringify(res.json)).toBe(200);
+    expect(await scanDecision(scanId)).toEqual({
+      decision: "no_publish",
+      decidedByUserId: member.userId,
+    });
+  });
+
   test("where verification is enforced, a decide_staged key needs a verified creator", async () => {
     const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan({
       userId: owner.userId,
       organizationId: owner.organizationId,
@@ -1049,7 +1245,7 @@ describe("API keys with decide_staged access", () => {
         new Request(`http://example.com/api/v1/scans/${scanId}/decision`, {
           method: "POST",
           headers: { authorization: `Bearer ${key.token}`, "content-type": "application/json" },
-          body: JSON.stringify({ decision: "publish" }),
+          body: JSON.stringify({ decision: "publish", totpCode: totpFor(totpURI) }),
         }),
         enforcing,
         ctx,
@@ -1077,6 +1273,7 @@ describe("API keys with decide_staged access", () => {
 
   test("read and scan keys are refused the decision route, and nothing is recorded", async () => {
     const owner = await signedUpAccount();
+    await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan({
       userId: owner.userId,
       organizationId: owner.organizationId,
@@ -1100,6 +1297,7 @@ describe("API keys with decide_staged access", () => {
 
   test("a decide_staged key can never decide a workflow gate or one of its packages", async () => {
     const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
     const gateScanId = await seedCompletedScan(
       { userId: owner.userId, organizationId: owner.organizationId },
       { job: { source: "workflow_gate" } },
@@ -1123,6 +1321,7 @@ describe("API keys with decide_staged access", () => {
       for (const decision of ["publish", "no_publish"]) {
         const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
           decision,
+          totpCode: totpFor(totpURI),
         });
         expect(res.status, `${scanId} ${decision}`).toBe(403);
         expect(res.json).toMatchObject({ code: "api_key_staged_decisions_only" });
@@ -1157,6 +1356,7 @@ describe("API keys with decide_staged access", () => {
 
   test("a decide_staged key is refused published-release reviews", async () => {
     const owner = await signedUpAccount();
+    await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan(
       { userId: owner.userId, organizationId: owner.organizationId },
       { job: { source: "published" } },
@@ -1175,6 +1375,7 @@ describe("API keys with decide_staged access", () => {
 
   test("decide_staged access adds only the staged decision", async () => {
     const owner = await signedUpAccount();
+    await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan({
       userId: owner.userId,
       organizationId: owner.organizationId,

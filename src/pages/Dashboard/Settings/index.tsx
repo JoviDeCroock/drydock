@@ -83,7 +83,7 @@ export default function SettingsPage() {
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
-        apiKeys.load(canManageIntegrations(organizations)),
+        apiKeys.load(),
       ]);
     },
   });
@@ -96,7 +96,7 @@ export default function SettingsPage() {
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
-    loaders.push(apiKeys.load(canManageIntegrations(organizations)));
+    loaders.push(apiKeys.load());
     await Promise.all(loaders);
   };
 
@@ -210,9 +210,7 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
                 </div>
-                {canManageIntegrations(organizations) ? (
-                  <ApiKeysSection apiKeys={apiKeys} defaultOpen />
-                ) : null}
+                <ApiKeysSection apiKeys={apiKeys} defaultOpen />
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? (

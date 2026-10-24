@@ -12,9 +12,16 @@ import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
 import { formatDateTime } from "../../../lib/format";
 
 const ACCESS_LABELS: Record<ApiKeyAccess, string> = {
-  read: "Read only",
-  scan: "Read and start reviews",
-  decide_staged: "Read, start reviews, and record staged decisions",
+  read: "Read",
+  scan: "Start reviews",
+  decide_staged: "Record decisions",
+};
+
+const ACCESS_NOTES: Record<ApiKeyAccess, string> = {
+  read: "Reads reviews, reports, release receipts, and gate status.",
+  scan: "Also starts reviews and checks npm. It never records a decision.",
+  decide_staged:
+    "Also records publish or reject on staged npm publishes, for drydock approve. Needs two-factor on your account, and every decision asks for your authenticator code. It never decides a workflow gate or approves anything on npm.",
 };
 
 const ACCESS_ROW_TEXT: Record<ApiKeyAccess, string> = {
@@ -38,6 +45,7 @@ export function ApiKeysSection({
   const atLimit = apiKeys.atLimit.value;
   const draftName = apiKeys.draftName.value;
   const draftAccess = apiKeys.draftAccess.value;
+  const manageAll = apiKeys.manageAll.value;
 
   const onCreate = async (event: Event) => {
     event.preventDefault();
@@ -58,12 +66,9 @@ export function ApiKeysSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Keys for scripts and the Drydock CLI. A key reads this organization's reviews, reports,
-          release receipts, and gate status. A key created with "Read and start reviews" can also
-          start reviews and check npm, and one created with "Read, start reviews, and record staged
-          decisions" can also record decisions on staged publishes for drydock approve. No key can
-          decide a workflow gate or change settings. Keys expire, and a key is deleted when the
-          member who created it leaves the organization.
+          Keys let scripts and the Drydock CLI act in this organization as the member who creates
+          them. They expire, and are deleted when that member leaves.
+          {manageAll ? "" : " You see and revoke the keys you created."}
         </Muted>
 
         {revealed ? (
@@ -157,18 +162,8 @@ export function ApiKeysSection({
             {status === "creating" ? "Creating…" : "Create key"}
           </Button>
         </form>
-        {draftAccess === "scan" && !atLimit ? (
-          <Muted class="text-[13px] m-0">
-            This key can also start reviews and check npm, as the member who creates it. It never
-            approves a release.
-          </Muted>
-        ) : null}
-        {draftAccess === "decide_staged" && !atLimit ? (
-          <Muted class="text-[13px] m-0">
-            For <code>drydock approve</code> on your own machine. This key can also record publish
-            or reject on staged npm publishes, as the member who creates it, without a two-factor
-            step-up. It never decides a workflow gate and never approves anything on npm.
-          </Muted>
+        {!atLimit ? (
+          <Muted class="text-[13px] m-0">{ACCESS_NOTES[draftAccess as ApiKeyAccess]}</Muted>
         ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
