@@ -417,8 +417,9 @@ async function acquirePyPiGateFiles(
     organizationId: target.organizationId,
     gateId: target.gateId,
     wanted: new Map(files.map((file) => [file.path, file.sha256])),
-    // Both distributions are held at once, then trimmed to the run's cap below.
-    maxBytes: 2 * MAX_DETONATION_TARBALL_BYTES,
+    // A file over the run's cap could never be selected below, so it is not
+    // held; an oversize sdist must not cost the wheel its run.
+    maxFileBytes: MAX_DETONATION_TARBALL_BYTES,
   }).catch(() => ({ status: "unavailable" as const }));
   if (fetched.status !== "ok") return refusedFor(fetched.status);
 

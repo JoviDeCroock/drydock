@@ -427,3 +427,67 @@ export function planPyPiSteps(info, baseEnv) {
   }
   return plans;
 }
+
+/**
+ * The whole PyPI prepare (venv, pip, sdist unpack, build environment) shares
+ * one budget, so a slow step leaves the rest less time instead of the sum
+ * overrunning the parent's prepare window (`DETONATION_PREPARE_TIMEOUT_MS`).
+ * The margin covers the CA install, process kills, and the response.
+ */
+export const PYPI_PREPARE_BUDGET_MS = 110_000;
+
+/**
+ * @param {number} totalMs
+ * @param {() => number} [now]
+ * @returns {(capMs: number) => number} the next step's timeout, 0 once spent
+ */
+export function createPrepareBudget(totalMs, now = Date.now) {
+  const deadline = now() + totalMs;
+  return (capMs) => Math.max(0, Math.min(capMs, deadline - now()));
+}
+
+/**
+ * argv (after the privilege drop) for every pip call. `-I` keeps the installer
+ * interpreter off the environment and the working directory; `--only-binary
+ * :all:` means no sdist is ever built, so no package code runs during prepare;
+ * the index is the public one only. Caller arguments go last and are either
+ * the reviewed wheel's path or requirements `isSafeRequirement` accepted, which
+ * cannot start with `-`.
+ *
+ * @param {string} target
+ * @param {string[]} args
+ */
+export function pipInstallArgv(target, args) {
+  return [
+    INSTALLER_PYTHON,
+    "-I",
+    "-m",
+    "pip",
+    "install",
+    "--no-input",
+    "--disable-pip-version-check",
+    "--no-warn-script-location",
+    "--progress-bar",
+    "off",
+    "--only-binary",
+    ":all:",
+    "--cache-dir",
+    PIP_CACHE,
+    "--index-url",
+    PYPI_INDEX,
+    "--target",
+    target,
+    ...args,
+  ];
+}
+
+/**
+ * The reviewed wheel goes in alone: pip would otherwise resolve its
+ * `Requires-Dist`, including direct references it builds even with
+ * `--only-binary` (see `requiresDist`).
+ *
+ * @param {string} wheelPath
+ */
+export function reviewedWheelPipArgs(wheelPath) {
+  return ["--no-deps", wheelPath];
+}
