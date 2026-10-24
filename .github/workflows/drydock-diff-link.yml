@@ -641,7 +641,7 @@ jobs:
             function renderSummary(entry) {
               const s = entry.summary;
               const found = s.findings.length ? "" : ", no release findings";
-              const files = `${s.added} files added, ${s.removed} removed, ${s.changed} changed`;
+              const files = `${s.added} ${s.added === 1 ? "file" : "files"} added, ${s.removed} removed, ${s.changed} changed`;
               const lines = [`- ${linkTo(entry)}: release risk **${s.risk}**${found}, ${files}`];
               if (s.flags.length)
                 lines.push(`  - ${s.flags.join(", ").replace(/^./, (c) => c.toUpperCase())}`);
