@@ -22,8 +22,6 @@ function scan(overrides: Partial<Parameters<typeof buildReleaseTimeline>[0]> = {
     registryVersionStatusAt: null,
     registryStatusSupersededAt: null,
     registryPublishedAt: null,
-    reportFirstViewedAt: null,
-    reportViewCount: 0,
     ...overrides,
   };
 }
@@ -61,12 +59,10 @@ describe("buildReleaseTimeline", () => {
     expect(events.find((event) => event.key === "decided")?.detail).toBe("publish · by Jane");
   });
 
-  test("places the first report load against npm's own publication time", () => {
+  test("shows npm's own publication time before the status observation that bounds it", () => {
     const events = buildReleaseTimeline(
       scan({
         completedAt: T0 + minutes(5),
-        reportFirstViewedAt: T0 + minutes(8),
-        reportViewCount: 3,
         registryPublishedAt: T0 + minutes(20),
         registryVersionStatus: "published",
         registryVersionStatusAt: T0 + minutes(25),
@@ -76,18 +72,9 @@ describe("buildReleaseTimeline", () => {
     expect(events.map((event) => [event.key, event.label, event.detail])).toEqual([
       ["queued", "Review queued", null],
       ["completed", "Review completed", null],
-      ["opened", "Report first opened", null],
       ["published", "Published on npm", null],
       ["registry_status", "npm status observed", "published"],
     ]);
-  });
-
-  test("a review older than view tracking shows its earliest recorded load, not a first one", () => {
-    const opened = buildReleaseTimeline(
-      scan({ reportFirstViewedAt: T0 + minutes(8), reportViewCount: null }),
-      {},
-    ).find((event) => event.key === "opened");
-    expect(opened).toMatchObject({ label: "Report opened", detail: "earliest recorded" });
   });
 
   test("a superseded review does not show the publication of a stage it did not review", () => {
