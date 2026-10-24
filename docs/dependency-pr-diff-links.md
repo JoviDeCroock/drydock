@@ -188,6 +188,17 @@ findings by severity (severity, rule id, file, reason), with a count of the rest
 Context findings, which describe code the previous release already shipped,
 are left out.
 
+A single-dependency PR, the common case, gets that one entry in full. A grouped
+PR leads with what needs reading and states each shared outcome once:
+
+1. Summaries with a finding, a flag, or a risk above `low`, riskiest first. Risk
+   is only known after the fetch, so the per-run cap still takes the group's
+   first 10 pairs, and the sort applies to those.
+2. One `Summary unavailable (<reason>):` line per reason, listing its links.
+3. One `No release findings:` line listing the clean bumps' links.
+4. Pairs past the per-run cap, as bare links inside a collapsed
+   `<details>` block titled `N more updates without a summary (10 per run)`.
+
 Every string from the API describes a package someone else published, so it is
 untrusted. Package names, rule ids, file paths, and finding reasons render
 inside code spans, which GitHub never turns into links, mentions, images, or
@@ -199,7 +210,7 @@ the rule-id shape. The comment is bounded by construction: at most 50 entries
 (the rest are counted), three findings each, and a 60,000-character hard cap
 below GitHub's 65,536 limit.
 
-A pair whose summary cannot be fetched keeps today's link, followed by "summary
+A pair whose summary cannot be fetched keeps its link with "summary
 unavailable" and the reason: an HTTP status, `rate limited`, `timed out`,
 `request failed`, or `unreadable response`. The job never fails on a Drydock
 API problem. Calling the workflow `with: summaries: false` turns the fetch off
@@ -236,8 +247,7 @@ registry-scale PR volume would fetch on every page view.
 The PR comment workflow does contact Drydock, from CI, once per PR `opened` or
 `synchronize` event and never per view. One run sends at most one
 `GET /api/public/v1/package-diff` per bumped pair, bounded by the group size and
-capped at 10 per run (later pairs keep the link and say they are over the
-per-run limit). Requests are sequential, with a 30-second timeout each and a
+capped at 10 per run (later pairs keep their links in a collapsed block). Requests are sequential, with a 30-second timeout each and a
 150-second budget per run, and the first `429` stops the remaining fetches.
 Ten is the endpoint's own per-IP budget: the version-pair route charges the
 `fetch` bucket at 10 requests a minute per client IP (`docs/security-model.md`),

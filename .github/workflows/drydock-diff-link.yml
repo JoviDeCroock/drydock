@@ -619,10 +619,8 @@ jobs:
             async function attachSummaries(entries) {
               const deadline = Date.now() + RUN_BUDGET_MS;
               let stopped = null;
-              for (const [index, entry] of entries.entries()) {
-                if (index >= MAX_SUMMARIES)
-                  entry.reason = `over the ${MAX_SUMMARIES}-per-run limit`;
-                else if (stopped) entry.reason = stopped;
+              for (const entry of entries.slice(0, MAX_SUMMARIES)) {
+                if (stopped) entry.reason = stopped;
                 else if (Date.now() > deadline) entry.reason = stopped = "timed out";
                 else {
                   const result = await fetchSummary(entry);
@@ -633,16 +631,18 @@ jobs:
               }
             }
 
-            function renderEntry(entry, summaries) {
-              const link = `[${code(entry.name, 214)} ${entry.from} → ${entry.to}](${entry.url})`;
-              if (!summaries) return [`- ${link}`];
+            const linkTo = (entry) =>
+              `[${code(entry.name, 214)} ${entry.from} → ${entry.to}](${entry.url})`;
+            const RISK_RANK = new Map([...SEVERITY_RANK, ["unknown", 0]]);
+            const topSeverity = (s) => SEVERITY_RANK.get(s.findings[0]?.severity) ?? 0;
+            // Nothing to point at: low risk, no release findings, no flags.
+            const isClean = (s) => s.risk === "low" && !s.findings.length && !s.flags.length;
+
+            function renderSummary(entry) {
               const s = entry.summary;
-              if (!s)
-                return [
-                  `- ${link}: summary unavailable (${entry.reason ?? "unknown"}), open the diff.`,
-                ];
+              const found = s.findings.length ? "" : ", no release findings";
               const files = `${s.added} files added, ${s.removed} removed, ${s.changed} changed`;
-              const lines = [`- ${link}: release risk **${s.risk}**, ${files}`];
+              const lines = [`- ${linkTo(entry)}: release risk **${s.risk}**${found}, ${files}`];
               if (s.flags.length)
                 lines.push(`  - ${s.flags.join(", ").replace(/^./, (c) => c.toUpperCase())}`);
               for (const f of s.findings.slice(0, MAX_FINDINGS)) {
@@ -653,7 +653,56 @@ jobs:
               }
               const more = s.findings.length - MAX_FINDINGS;
               if (more > 0) lines.push(`  - ${plural(more, "more release finding")} in the diff`);
-              if (!s.findings.length) lines.push("  - No release findings");
+              return lines;
+            }
+
+            // A single update renders in full. A group leads with the summaries
+            // that have something to read, riskiest first (risk is only known
+            // after the fetch), then states each shared outcome once over its
+            // links, and folds what the per-run limit left unsummarized.
+            function renderEntries(shown, hidden, summaries) {
+              const overflow = hidden ? [`- and ${plural(hidden, "more update")}`] : [];
+              if (!summaries) return [...shown.map((entry) => `- ${linkTo(entry)}`), ...overflow];
+              if (shown.length === 1) {
+                const [entry] = shown;
+                return entry.summary
+                  ? renderSummary(entry)
+                  : [`- ${linkTo(entry)}: summary unavailable (${entry.reason ?? "unknown"})`];
+              }
+              const fetched = shown.slice(0, MAX_SUMMARIES);
+              const notable = fetched
+                .filter((entry) => entry.summary && !isClean(entry.summary))
+                .sort(
+                  (a, b) =>
+                    RISK_RANK.get(b.summary.risk) - RISK_RANK.get(a.summary.risk) ||
+                    topSeverity(b.summary) - topSeverity(a.summary),
+                );
+              const unavailable = new Map();
+              for (const entry of fetched) {
+                if (entry.summary) continue;
+                const reason = entry.reason ?? "unknown";
+                unavailable.set(reason, [...(unavailable.get(reason) ?? []), entry]);
+              }
+              const clean = fetched.filter((entry) => entry.summary && isClean(entry.summary));
+              const links = (group) => group.map(linkTo).join(", ");
+              const lines = notable.flatMap(renderSummary);
+              for (const [reason, group] of unavailable)
+                lines.push(`- Summary unavailable (${reason}): ${links(group)}`);
+              if (clean.length) lines.push(`- No release findings: ${links(clean)}`);
+              const rest = shown.slice(MAX_SUMMARIES);
+              if (rest.length) {
+                lines.push(
+                  "",
+                  `<details><summary>${plural(rest.length, "more update")} without a summary ` +
+                    `(${MAX_SUMMARIES} per run)</summary>`,
+                  "",
+                  ...rest.map((entry) => `- ${linkTo(entry)}`),
+                  // MAX_ENTRIES exceeds MAX_SUMMARIES, so any overflow lands here.
+                  ...overflow,
+                  "",
+                  "</details>",
+                );
+              }
               return lines;
             }
 
@@ -704,10 +753,8 @@ jobs:
                 ? "Read the diff of each update in this group:"
                 : "Read the diff this PR merges:",
               "",
-              ...shown.flatMap((entry) => renderEntry(entry, summaries)),
+              ...renderEntries(shown, entries.length - shown.length, summaries),
             ];
-            if (entries.length > shown.length)
-              lines.push(`- and ${plural(entries.length - shown.length, "more update")}`);
             if (summaries) {
               lines.push(
                 "",
@@ -718,7 +765,11 @@ jobs:
             let body = lines.join("\n");
             if (body.length > MAX_COMMENT_CHARS) {
               const cut = body.lastIndexOf("\n", MAX_COMMENT_CHARS - 40);
-              body = `${body.slice(0, cut)}\n\n(Comment truncated.)`;
+              const kept = body.slice(0, cut);
+              // API text is collapsed to one line, so only our own tag starts one.
+              const open = kept.includes("\n<details>") && !kept.includes("\n</details>");
+              const close = open ? "\n\n</details>" : "";
+              body = `${kept}${close}\n\n(Comment truncated.)`;
             }
 
             // Upsert, so a revised PR updates its comment instead of stacking a

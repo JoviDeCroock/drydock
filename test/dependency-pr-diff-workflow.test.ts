@@ -321,7 +321,9 @@ describe("Dependabot comment", () => {
     );
     expect(body).not.toContain("same");
     expect(body).not.toContain("evil");
-    expect(body).toContain("  - No release findings");
+    expect(body).toContain(
+      "(https://drydock.org/diff/left-pad/1.0.0/1.1.0): release risk **critical**, no release findings, 3 files added",
+    );
   });
 
   test("links PyPI bumps under /diff/pypi", async () => {
@@ -486,11 +488,16 @@ describe("Dependabot comment", () => {
     });
     const lines = posted[0].body.split("\n").filter((line) => line.startsWith("- "));
     expect(lines).toEqual([
-      "- [`a` 1.0.0 → 2.0.0](https://drydock.org/diff/a/1.0.0/2.0.0): summary unavailable (HTTP 404), open the diff.",
-      "- [`b` 1.0.0 → 2.0.0](https://drydock.org/diff/b/1.0.0/2.0.0): summary unavailable (request failed), open the diff.",
-      "- [`c` 1.0.0 → 2.0.0](https://drydock.org/diff/c/1.0.0/2.0.0): summary unavailable (unreadable response), open the diff.",
-      "- [`d` 1.0.0 → 2.0.0](https://drydock.org/diff/d/1.0.0/2.0.0): summary unavailable (timed out), open the diff.",
+      "- Summary unavailable (HTTP 404): [`a` 1.0.0 → 2.0.0](https://drydock.org/diff/a/1.0.0/2.0.0)",
+      "- Summary unavailable (request failed): [`b` 1.0.0 → 2.0.0](https://drydock.org/diff/b/1.0.0/2.0.0)",
+      "- Summary unavailable (unreadable response): [`c` 1.0.0 → 2.0.0](https://drydock.org/diff/c/1.0.0/2.0.0)",
+      "- Summary unavailable (timed out): [`d` 1.0.0 → 2.0.0](https://drydock.org/diff/d/1.0.0/2.0.0)",
     ]);
+
+    const alone = await runWorkflow({ env: single, fetch: () => json({}, 404) });
+    expect(alone.posted[0].body).toContain(
+      "\n- [`left-pad` 1.0.0 → 1.1.0](https://drydock.org/diff/left-pad/1.0.0/1.1.0): summary unavailable (HTTP 404)\n",
+    );
   });
 
   test("stops asking once rate limited, and never fetches more than ten pairs", async () => {
@@ -503,7 +510,9 @@ describe("Dependabot comment", () => {
       fetch: () => json(payload({ findings: [] })),
     });
     expect(capped.fetchUrls).toHaveLength(10);
-    expect(capped.posted[0].body.match(/over the 10-per-run limit/g)).toHaveLength(4);
+    expect(capped.posted[0].body).toContain(
+      "<details><summary>4 more updates without a summary (10 per run)</summary>",
+    );
 
     let call = 0;
     const limited = await runWorkflow({
@@ -513,7 +522,86 @@ describe("Dependabot comment", () => {
         call++ < 2 ? json(payload({ findings: [] })) : json({ error: "rate limit exceeded" }, 429),
     });
     expect(limited.fetchUrls).toHaveLength(3);
-    expect(limited.posted[0].body.match(/summary unavailable \(rate limited\)/g)).toHaveLength(8);
+    const rateLimited = limited.posted[0].body
+      .split("\n")
+      .filter((line) => line.includes("rate limited"));
+    expect(rateLimited).toHaveLength(1);
+    expect(rateLimited[0].startsWith("- Summary unavailable (rate limited): [`pkg-2`")).toBe(true);
+    expect(rateLimited[0].match(/\]\(https:\/\/drydock\.org\/diff\//g)).toHaveLength(8);
+  });
+
+  test("leads a large group with its riskiest summaries and states shared outcomes once", async () => {
+    const names = Array.from({ length: 30 }, (_, i) => `pkg-${i}`);
+    const clean = payload({
+      diff: [],
+      packageJsonDiff: {},
+      findings: [],
+      risk: { releaseRisk: "low" },
+    });
+    const finding = (severity: string) => ({
+      severity,
+      ruleId: `code.${severity}`,
+      file: "a.js",
+      reason: severity,
+      releaseDelta: true,
+    });
+    const responses: Record<string, () => Response> = {
+      "pkg-2": () => json(payload({ findings: [finding("high")], risk: { releaseRisk: "high" } })),
+      "pkg-5": () => json({}, 404),
+      "pkg-7": () =>
+        json(payload({ findings: [finding("critical")], risk: { releaseRisk: "critical" } })),
+    };
+    const { posted, fetchUrls } = await runWorkflow({
+      env: { ...single, NAMES: names.join(", ") },
+      commitMessage: names.map((n) => `Updates \`${n}\` from 1.0.0 to 2.0.0`).join("\n"),
+      fetch: (url) => (responses[url.searchParams.get("package")!] ?? (() => json(clean)))(),
+    });
+    expect(fetchUrls).toHaveLength(10);
+    const link = (n: string) =>
+      `[\`${n}\` 1.0.0 → 2.0.0](https://drydock.org/diff/${n}/1.0.0/2.0.0)`;
+    const body = posted[0].body;
+    const top = body.split("\n").filter((line) => line.startsWith("- "));
+    expect(top.slice(0, 4)).toEqual([
+      `- ${link("pkg-7")}: release risk **critical**, 3 files added, 1 removed, 1 changed`,
+      `- ${link("pkg-2")}: release risk **high**, 3 files added, 1 removed, 1 changed`,
+      `- Summary unavailable (HTTP 404): ${link("pkg-5")}`,
+      `- No release findings: ${["pkg-0", "pkg-1", "pkg-3", "pkg-4", "pkg-6", "pkg-8", "pkg-9"]
+        .map(link)
+        .join(", ")}`,
+    ]);
+    const folded = body.slice(body.indexOf("<details>"), body.indexOf("</details>"));
+    expect(
+      folded.startsWith(
+        "<details><summary>20 more updates without a summary (10 per run)</summary>\n\n",
+      ),
+    ).toBe(true);
+    expect(folded.split("\n").filter((line) => line.startsWith("- "))).toEqual(
+      names.slice(10).map((n) => `- ${link(n)}`),
+    );
+    expect(body.match(/release findings/gi)).toHaveLength(1);
+    expect(proseOutsideCode(body).match(/<[^>]*>/g)).toEqual([
+      MARKER,
+      "<details>",
+      "<summary>",
+      "</summary>",
+      "</details>",
+      "<sub>",
+      "</sub>",
+    ]);
+  });
+
+  test("renders a clean single bump in full on one line", async () => {
+    const { posted } = await runWorkflow({
+      env: single,
+      fetch: () =>
+        json(
+          payload({ packageJsonDiff: {}, diff: [], findings: [], risk: { releaseRisk: "low" } }),
+        ),
+    });
+    expect(posted[0].body.split("\n").filter((line) => line.startsWith("- "))).toEqual([
+      "- [`left-pad` 1.0.0 → 1.1.0](https://drydock.org/diff/left-pad/1.0.0/1.1.0): release risk **low**, no release findings, 0 files added, 0 removed, 0 changed",
+    ]);
+    expect(posted[0].body).not.toContain("<details>");
   });
 
   test("bounds the comment however many updates and findings there are", async () => {
@@ -533,7 +621,7 @@ describe("Dependabot comment", () => {
     const body = posted[0].body;
     expect(body.length).toBeLessThan(65536);
     expect(body).toContain("  - 37 more release findings in the diff");
-    expect(body).toContain("- and 30 more updates");
+    expect(body).toContain("- and 30 more updates\n\n</details>");
     expect(body.split("\n").filter((line) => line.startsWith("- [")).length).toBe(50);
   });
 
