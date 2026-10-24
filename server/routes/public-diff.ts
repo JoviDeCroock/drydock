@@ -369,7 +369,7 @@ publicDiffRoutes.get("/", async (c) => {
         packageDiffPath(
           // Payloads come only from registry adapters, each with a /diff route.
           payload.ecosystem as DiffEcosystem,
-          payload.packageName,
+          payload.canonicalPackageName ?? payload.packageName,
           payload.fromVersion,
           payload.toVersion,
         ),

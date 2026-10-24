@@ -34,9 +34,10 @@ route in the local harness.
 The recipe uses `GET /api/public/v1/package-diff` with `ecosystem`, `package`,
 `from`, and `to` query parameters, and `/file` with the same parameters plus
 `path`. Query values are URL-encoded. The diff response's `reviewUrl` is the
-canonical human review page, built by the site's own path helper from the
-returned package/version identity; clients link it as returned. Examples use React 18.2.0 → 18.3.1
-and requests 2.31.0 → 2.32.3. They illustrate the interface, not a safety claim.
+canonical human review page, built by the site's own path helper; an atpm
+handle request links the stable DID form. Clients link it as returned.
+Examples use React 18.2.0 → 18.3.1 and requests 2.31.0 → 2.32.3. They
+illustrate the interface, not a safety claim.
 
 The instruction preserves existing-vs-new finding attribution and distinguishes
 release risk from artifact risk. Coverage notices, omitted text, absent file
