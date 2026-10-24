@@ -96,9 +96,9 @@ export async function countActiveMemberApiKeys(
 /**
  * Accepts the TOTP time step of a key decision's step-up and clears the key's
  * failure count. A step is accepted once per creator: it is refused when any of
- * their keys has accepted it or a later one, so a code read from a process
- * listing cannot be replayed. One statement, so two requests carrying the same
- * code cannot both pass.
+ * their keys has accepted it or a later one, so an accepted code cannot be
+ * used again. One statement, so two requests carrying the same code cannot
+ * both pass.
  */
 export async function acceptApiKeyTotpStep(
   db: AppDb,

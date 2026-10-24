@@ -1227,7 +1227,7 @@ describe("API keys with decide_staged access", () => {
     expect(after.res.status).toBe(401);
   });
 
-  test("an unconfirmed or locked enrollment verifies no code", async () => {
+  test("an unconfirmed or locked enrollment verifies no code and costs the key nothing", async () => {
     const owner = await signedUpAccount();
     const totpURI = await enrollTwoFactor(owner);
     const scanId = await seedCompletedScan({
@@ -1249,9 +1249,15 @@ describe("API keys with decide_staged access", () => {
         totpCode: totpFor(totpURI),
       });
       expect(res.status, JSON.stringify(state)).toBe(401);
-      expect(res.json).toMatchObject({ code: "two_factor_invalid" });
+      expect(res.json).toMatchObject({ code: "two_factor_unavailable" });
     }
     expect((await scanDecision(scanId)).decision).toBeNull();
+    // A code that could not have matched is not a guess against the key.
+    const [row] = await db
+      .select({ failed: schema.organizationApiKeys.failedTotpAttempts })
+      .from(schema.organizationApiKeys)
+      .where(eq(schema.organizationApiKeys.id, key.id));
+    expect(row?.failed).toBe(0);
   });
 
   test("only a member with two-factor creates a decide_staged key, and turning it off stops the key", async () => {
