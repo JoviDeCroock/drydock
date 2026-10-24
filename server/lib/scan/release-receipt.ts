@@ -49,14 +49,7 @@ export async function buildReleaseReceipt(
       stageId: detail.scan.stageId,
       mode,
       source: detail.scan.source,
-      control: {
-        classification:
-          mode === "workflow_gate" ? ("workflow_enforced" as const) : ("advisory" as const),
-        scope:
-          mode === "workflow_gate"
-            ? ("configured_publish_workflow" as const)
-            : ("registry_stage_observation" as const),
-      },
+      control: buildControl(mode),
       package: {
         name: detail.scan.packageName ?? null,
         stagedVersion: detail.scan.stagedVersion ?? null,
@@ -94,6 +87,28 @@ export function serializeReleaseReceipt(document: ReleaseReceiptDocument): strin
 export function releaseReceiptFilename(scanId: string, documentSha256: string): string {
   const id = scanId.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "scan";
   return `drydock-release-receipt-${id}-${documentSha256}.json`;
+}
+
+// `classification`/`scope` are the original v1 values and must not change.
+// `enforcedBy`/`enforcementScope`, added within v1, name who holds the
+// release, because Drydock holds nothing itself: GitHub's protection rule, for
+// the jobs that target the configured Environment. Nobody enforces a staged
+// review's decision, so both are null there.
+function buildControl(mode: "workflow_gate" | "staged_publish") {
+  if (mode === "workflow_gate") {
+    return {
+      classification: "workflow_enforced" as const,
+      scope: "configured_publish_workflow" as const,
+      enforcedBy: "github_deployment_protection_rule" as const,
+      enforcementScope: "configured_environment_job" as const,
+    };
+  }
+  return {
+    classification: "advisory" as const,
+    scope: "registry_stage_observation" as const,
+    enforcedBy: null,
+    enforcementScope: null,
+  };
 }
 
 function buildReviewedArtifacts(
