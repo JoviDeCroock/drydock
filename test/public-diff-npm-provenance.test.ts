@@ -65,6 +65,20 @@ async function acquireFindings(registryUrl = PUBLIC, fromVersion = "1.0.0", toVe
   return sources.buildFindings(fileDiff, manifestDiff).map((f) => f.ruleId);
 }
 
+async function acquireSeverities(fromVersion: string, toVersion: string) {
+  const sources = await npmPublicDiff.acquire({} as Cloudflare.Env, {} as ExecutionContext, {
+    ecosystem: "npm",
+    packageName: "example-widget",
+    fromVersion,
+    toVersion,
+    registryUrl: PUBLIC,
+  });
+  return sources
+    .buildFindings([], summarizePackageJsonDiff(null, null))
+    .filter((f) => f.ruleId?.startsWith("release.provenance"))
+    .map((f) => `${f.ruleId}:${f.severity}`);
+}
+
 describe("npm public diff provenance continuity", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -117,7 +131,7 @@ describe("npm public diff provenance continuity", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("a stable is compared with the previous stable, not its CI-built prerelease", async () => {
+  test("a hand-published stable after a CI-built prerelease is low, not medium", async () => {
     const tarball = (version: string) => `${PUBLIC}/example-widget/-/example-widget-${version}.tgz`;
     mocks.fetchPublicPackageMetadata.mockResolvedValue({
       versions: {
@@ -133,9 +147,9 @@ describe("npm public diff provenance continuity", () => {
       "fetch",
       vi.fn(async () => new Response("unavailable", { status: 503 })),
     );
-    expect(await acquireFindings(PUBLIC, "2.0.0-rc.1", "2.0.0")).not.toContain(
-      "release.provenance-dropped",
-    );
+    expect(await acquireSeverities("2.0.0-rc.1", "2.0.0")).toEqual([
+      "release.provenance-dropped:low",
+    ]);
   });
 
   test("an undetermined provenance read keeps the cached diff short-lived", async () => {

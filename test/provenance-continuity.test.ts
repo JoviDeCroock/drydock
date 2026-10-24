@@ -267,14 +267,21 @@ describe("provenanceLineage", () => {
 
   test("a stable release is judged against earlier stable releases", () => {
     const expected = { baseline: "1.2.0", prior: ["1.1.0", "1.0.0"] };
-    expect(provenanceLineage(scheme(), versions, "2.0.0-rc.2", "2.0.0")).toEqual(expected);
-    expect(provenanceLineage(scheme(), versions, "1.2.0", "2.0.0")).toEqual(expected);
+    expect(provenanceLineage(scheme(), versions, "2.0.0-rc.2", "2.0.0")).toEqual({
+      ...expected,
+      prerelease: "2.0.0-rc.2",
+    });
+    expect(provenanceLineage(scheme(), versions, "1.2.0", "2.0.0")).toEqual({
+      ...expected,
+      prerelease: null,
+    });
   });
 
   test("a prerelease may follow a release of either channel", () => {
     expect(provenanceLineage(scheme(), versions, "2.0.0-rc.1", "2.0.0-rc.2")).toEqual({
       baseline: "2.0.0-rc.1",
       prior: ["1.2.0", "1.1.0"],
+      prerelease: null,
     });
     expect(provenanceLineage(scheme(), versions, "2.0.0", "2.1.0-beta.0")?.prior).toEqual([
       "2.0.0-rc.2",
@@ -295,14 +302,22 @@ describe("provenanceLineage", () => {
     expect(provenanceLineage(scheme(times), versions, "1.2.0", "2.0.0")).toEqual({
       baseline: "1.1.0",
       prior: ["1.0.0"],
+      prerelease: null,
     });
   });
 
-  test("reversed, unparseable, and baseline-less pairs are not evaluated", () => {
+  test("reversed and unparseable pairs are not evaluated", () => {
     expect(provenanceLineage(scheme(), versions, "2.0.0", "1.2.0")).toBeNull();
     expect(provenanceLineage(scheme(), versions, "2.0.0", "2.0.0")).toBeNull();
     expect(provenanceLineage(scheme(), versions, "latest", "2.0.0")).toBeNull();
-    expect(provenanceLineage(scheme(), ["1.0.0-rc.1", "1.0.0"], "1.0.0-rc.1", "1.0.0")).toBeNull();
+  });
+
+  test("a first stable after prereleases keeps the prerelease to speak for it", () => {
+    expect(provenanceLineage(scheme(), ["1.0.0-rc.1", "1.0.0"], "1.0.0-rc.1", "1.0.0")).toEqual({
+      baseline: null,
+      prior: [],
+      prerelease: "1.0.0-rc.1",
+    });
   });
 });
 
@@ -342,14 +357,48 @@ describe("npmProvenanceContinuity", () => {
     ]);
   });
 
-  test("a hand-published stable is not compared with its CI-built prerelease", async () => {
-    const metadata = packument({
+  test("a stable without provenance after attested prereleases is low, never medium", async () => {
+    // Stables were always hand-published: judged against 1.1.0, the attested
+    // rc only adds low context.
+    const handStables = packument({
       "1.0.0": false,
       "1.1.0": false,
       "2.0.0-rc.1": true,
       "2.0.0": false,
     });
-    expect(await run(metadata, "2.0.0-rc.1", "2.0.0")).toEqual({ findings: [], unsettled: false });
+    const outcome = await run(handStables, "2.0.0-rc.1", "2.0.0");
+    expect(outcome.findings.map((f) => `${f.ruleId}:${f.severity}`)).toEqual([
+      "release.provenance-dropped:low",
+    ]);
+    expect(outcome.findings[0].evidence).toBe(
+      "npm reports build provenance for prerelease 2.0.0-rc.1 and none for 2.0.0; the previous stable release 1.1.0 carries none",
+    );
+    // A project that adopted provenance during its betas, first stable unattested.
+    const betas = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`1.0.0-beta.${i + 1}`, true]),
+    );
+    expect(
+      await severities(packument({ ...betas, "1.0.0": false }), "1.0.0-beta.20", "1.0.0"),
+    ).toEqual(["release.provenance-dropped:low"]);
+    // An attested stable baseline takes precedence and keeps the history rule.
+    const attestedStables = packument({
+      "1.0.0": true,
+      "1.1.0": true,
+      "1.2.0": true,
+      "2.0.0-rc.1": true,
+      "2.0.0": false,
+    });
+    expect(await severities(attestedStables, "2.0.0-rc.1", "2.0.0")).toEqual([
+      "release.provenance-dropped:medium",
+    ]);
+    // An attested stable is quiet whatever its prerelease carried.
+    expect(
+      await severities(
+        packument({ "1.0.0": false, "2.0.0-rc.1": true, "2.0.0": true }),
+        "2.0.0-rc.1",
+        "2.0.0",
+      ),
+    ).toEqual([]);
   });
 
   test("a stale packument is unsettled; a custom registry is not evaluated", async () => {
@@ -426,11 +475,18 @@ describe("pypiProvenanceContinuity", () => {
   test("a stable after a CI-built rc is compared with the previous stable", async () => {
     const reads: string[] = [];
     const outcome = await evaluate("2.0.0rc1", new Set(["2.0.0rc1"]), reads);
-    expect(outcome).toEqual({ findings: [], unsettled: false });
+    expect(outcome.findings.map((f) => `${f.ruleId}:${f.severity}`)).toEqual([
+      "release.provenance-dropped:low",
+    ]);
+    // The rc is read from the diff's checked files, and only because 1.2.0 has none.
     expect(reads.sort()).toEqual([
       "1.2.0:example_sdk-1.2.0.tar.gz",
       "2.0.0:example_sdk-2.0.0.tar.gz",
+      "2.0.0rc1:example_sdk-2.0.0rc1.tar.gz",
     ]);
+    const quiet: string[] = [];
+    await evaluate("2.0.0rc1", new Set(["1.2.0", "2.0.0rc1", "2.0.0"]), quiet);
+    expect(quiet).toHaveLength(2);
   });
 });
 

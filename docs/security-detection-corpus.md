@@ -844,7 +844,7 @@ attested releases in a row, low otherwise), and `release.provenance-publisher-ch
 a different attested repository or repository id; low for a same-owner repository change when no
 repository id is recorded on both sides, or a different workflow in the same repository). The
 baseline is an earlier release in the candidate's channel that was already published when the
-candidate was. Unknown provenance never fires. See [`provenance-continuity.md`](./provenance-continuity.md).
+candidate was; a stable without provenance after an attested prerelease is a low drop when no earlier stable carries provenance. Unknown provenance never fires. See [`provenance-continuity.md`](./provenance-continuity.md).
 Goldens live in `cases-provenance/`; hard negatives (`legit-provenance-*` in `cases-benign/`) pin
 transfers that keep the repository id, the SLSA v0.2→v1 format change, first adoption, unknown
 candidates, PyPI's HTML 404, letter case, a local hotfix after two CI releases, a hand-published

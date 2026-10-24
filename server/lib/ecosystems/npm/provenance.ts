@@ -75,11 +75,32 @@ export async function npmProvenanceContinuity(args: {
     args.readProvenance ??
     ((version: string) =>
       readNpmRegistryProvenance(metadata, args.packageName, version, args.registryUrl));
-  const [baseline, candidate] = await Promise.all([read(lineage.baseline), read(args.toVersion)]);
+  const baselineVersion = lineage.baseline;
+  const [baseline, candidate] = await Promise.all([
+    baselineVersion === null ? null : read(baselineVersion),
+    read(args.toVersion),
+  ]);
+  const prerelease = lineage.prerelease;
   return evaluateProvenanceContinuity({
     registry: "npm",
-    baseline: { version: lineage.baseline, provenance: baseline },
+    baseline:
+      baselineVersion === null || !baseline
+        ? null
+        : { version: baselineVersion, provenance: baseline },
     candidate: { version: args.toVersion, provenance: candidate },
+    // Presence alone decides this side; its identity is never compared.
+    prereleaseBaseline:
+      prerelease === null
+        ? null
+        : {
+            version: prerelease,
+            provenance: npmRegistryProvenance({
+              hasProvenance: metadata.versions?.[prerelease]?.hasProvenance,
+              attestations: null,
+              packageName: args.packageName,
+              version: prerelease,
+            }),
+          },
     prior: lineage.prior.map((version) => npmPackumentProvenanceStatus(metadata, version)),
   });
 }

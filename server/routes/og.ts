@@ -260,7 +260,7 @@ ogRoutes.get("/diff/*", async (c) => {
   });
   if (
     !cacheExpiresAt ||
-    remainingCacheTtlSeconds(cacheExpiresAt, spec.adapter.cacheTtlSeconds ?? 0) > 0
+    remainingCacheTtlSeconds(cacheExpiresAt, spec.adapter.cacheTtlSeconds ?? 86400) > 0
   ) {
     c.executionCtx.waitUntil(coloCache().put(cacheKey, response.clone()));
   }

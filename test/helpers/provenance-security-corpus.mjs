@@ -88,19 +88,23 @@ export function createProvenanceCorpusReview(fixture) {
   const { packageName, baseline, candidate, history = [] } = fixture.registryProvenance;
   const sides = [...history, baseline, candidate];
   const byVersion = new Map(sides.map((side) => [side.version, side]));
+  const side = (version, provenance) => (version === null ? null : { version, provenance });
   let findings = [];
   if (fixture.ecosystem === "pypi") {
     const lineage = pypiProvenanceLineage(pypiMetadata(sides), baseline.version, candidate.version);
     if (lineage) {
-      const baselineProvenance = pypiSideProvenance(byVersion.get(lineage.baseline));
+      const base = lineage.baseline && pypiSideProvenance(byVersion.get(lineage.baseline));
       const candidateProvenance = pypiSideProvenance(candidate);
       // Production reads history only when the drop rule needs it.
-      const drop =
-        baselineProvenance.status === "present" && candidateProvenance.status === "absent";
+      const drop = base?.status === "present" && candidateProvenance.status === "absent";
       findings = provenanceContinuityFindings({
         registry: "PyPI",
-        baseline: { version: lineage.baseline, provenance: baselineProvenance },
+        baseline: side(lineage.baseline, base),
         candidate: { version: candidate.version, provenance: candidateProvenance },
+        prereleaseBaseline: side(
+          lineage.prerelease,
+          lineage.prerelease && pypiSideProvenance(byVersion.get(lineage.prerelease)),
+        ),
         prior: drop
           ? lineage.prior.map((version) => pypiSideProvenance(byVersion.get(version)).status)
           : [],
@@ -110,18 +114,22 @@ export function createProvenanceCorpusReview(fixture) {
   } else {
     const packument = npmPackument(packageName, sides);
     const lineage = npmProvenanceLineage(packument, baseline.version, candidate.version);
-    const read = (side) =>
+    const read = (entry) =>
       npmRegistryProvenance({
-        hasProvenance: packument.versions?.[side.version]?.hasProvenance,
-        attestations: npmAttestationsDocument(side),
+        hasProvenance: packument.versions?.[entry.version]?.hasProvenance,
+        attestations: npmAttestationsDocument(entry),
         packageName,
-        version: side.version,
+        version: entry.version,
       });
     if (lineage) {
       findings = provenanceContinuityFindings({
         registry: "npm",
-        baseline: { version: lineage.baseline, provenance: read(byVersion.get(lineage.baseline)) },
+        baseline: side(lineage.baseline, lineage.baseline && read(byVersion.get(lineage.baseline))),
         candidate: { version: candidate.version, provenance: read(candidate) },
+        prereleaseBaseline: side(
+          lineage.prerelease,
+          lineage.prerelease && read(byVersion.get(lineage.prerelease)),
+        ),
         prior: lineage.prior.map((version) => npmPackumentProvenanceStatus(packument, version)),
       });
     }
