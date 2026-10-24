@@ -32,17 +32,18 @@ publicMcpRoutes.on(["GET", "POST", "DELETE"], "/", async (c) => {
 
   const handler = createPublicMcpHandler(
     // In-process dispatch preserves the public router's validation, per-IP
-    // budgets and cache. No caller cookie, key, origin, or target URL crosses
-    // into it, and there is no network hop back to this Worker.
+    // budgets and cache. No caller cookie, key, origin header, or target URL
+    // crosses into it, and there is no network hop back to this Worker. The
+    // URL carries the canonical origin only so the router's reviewUrl matches
+    // the site; the client tag keeps tool calls out of the /diff page-view count.
     async (path) =>
       publicDiffRoutes.fetch(
-        new Request(`https://public-diff.internal${path}`, {
-          headers: { "cf-connecting-ip": ip },
+        new Request(new URL(path, origin), {
+          headers: { "cf-connecting-ip": ip, "x-drydock-client": "mcp" },
         }),
         c.env,
         c.executionCtx,
       ),
-    origin,
   );
   return handler.fetch(c.req.raw);
 });

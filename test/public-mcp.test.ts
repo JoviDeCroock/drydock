@@ -1,6 +1,7 @@
 import type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createPublicMcpHandler } from "../server/lib/public-mcp";
+import { supportedPublicDiffEcosystems } from "../server/lib/ecosystems";
+import { CHANGED_FILES_PAGE_SIZE, createPublicMcpHandler } from "../server/lib/public-mcp";
 import { emitOperationalEvent } from "../server/lib/platform/observability";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
@@ -13,7 +14,7 @@ afterEach(async () => {
 });
 
 function harness(invoke: (path: string) => Promise<Response>) {
-  const handler = createPublicMcpHandler(invoke, "https://drydock.example");
+  const handler = createPublicMcpHandler(invoke);
   handlers.push(handler);
   return async <T>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
     const headers = new Headers({
@@ -56,10 +57,13 @@ const pairPayload = {
   packageName: "demo-pkg",
   fromVersion: "1.0.0",
   toVersion: "1.1.0",
-  fromPackageJson: null,
-  toPackageJson: null,
-  diff: [{ path: "demo/main.py", status: "modified", beforeSize: 10, afterSize: 20 }],
-  packageJsonDiff: [],
+  diff: [
+    { path: "demo/main.py", status: "modified", beforeSize: 10, afterSize: 20 },
+    { path: "demo/same.py", status: "unchanged", beforeSize: 5, afterSize: 5 },
+  ],
+  fromPackageJson: { name: "demo-pkg", version: "1.0.0", description: "x".repeat(4000) },
+  toPackageJson: { name: "demo-pkg", version: "1.1.0", description: "x".repeat(4000) },
+  packageJsonDiff: { scripts: [{ key: "install", status: "added", staged: "node x.js" }] },
   findings: [
     {
       ruleId: "test.rule",
@@ -79,6 +83,7 @@ const pairPayload = {
   attestation: { status: "not-evaluated", reason: "No attestation available" },
   displayName: "Demo.Pkg",
   cachedAt: "2026-10-15T10:00:00.000Z",
+  reviewUrl: "https://drydock.example/diff/pypi/demo-pkg/1.0.0/1.1.0",
 };
 
 describe("anonymous public MCP tools", () => {
@@ -100,10 +105,20 @@ describe("anonymous public MCP tools", () => {
     expect(tools[1].outputSchema?.required).toEqual(
       expect.arrayContaining(["before", "after", "textSamplesOmitted"]),
     );
+    for (const tool of tools) {
+      const properties = tool.inputSchema.properties as Record<
+        string,
+        { description?: string; enum?: unknown[] }
+      >;
+      expect(properties.ecosystem.enum).toEqual(supportedPublicDiffEcosystems());
+      for (const [field, schema] of Object.entries(properties)) {
+        expect(schema.description, `${tool.name}.${field}`).toBeTruthy();
+      }
+    }
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  test("preserves full pair evidence and builds the review link from returned canonical identity", async () => {
+  test("leads with evidence and returns changed files without full manifests", async () => {
     const invoke = vi.fn<(path: string) => Promise<Response>>(async () =>
       Response.json(pairPayload),
     );
@@ -113,17 +128,123 @@ describe("anonymous public MCP tools", () => {
       arguments: pairArgs,
     });
     expect(result.isError).not.toBe(true);
-    const expected = {
-      ...pairPayload,
-      reviewUrl: "https://drydock.example/diff/pypi/demo-pkg/1.0.0/1.1.0",
-    };
-    expect(result.structuredContent).toEqual(expected);
-    expect(result.content).toEqual([{ type: "text", text: expect.any(String) }]);
-    expect(JSON.parse(result.content.find((item) => item.type === "text")!.text)).toEqual(expected);
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(Object.keys(structured).slice(0, 5)).toEqual([
+      "risk",
+      "findings",
+      "notices",
+      "textSamplesOmitted",
+      "reviewUrl",
+    ]);
+    expect(structured).toMatchObject({
+      risk: pairPayload.risk,
+      findings: pairPayload.findings,
+      notices: pairPayload.notices,
+      textSamplesOmitted: true,
+      reviewUrl: pairPayload.reviewUrl,
+      packageName: "demo-pkg",
+      displayName: "Demo.Pkg",
+      changedFileCount: 1,
+      unchangedFileCount: 1,
+      changedFiles: [pairPayload.diff[0]],
+      moreChangedFiles: 0,
+      nextChangedFilesOffset: null,
+      packageJsonDiff: pairPayload.packageJsonDiff,
+      provenance: pairPayload.provenance,
+      attestation: pairPayload.attestation,
+    });
+    expect(structured).not.toHaveProperty("fromPackageJson");
+    expect(structured).not.toHaveProperty("toPackageJson");
+    expect(structured).not.toHaveProperty("diff");
+
+    const text = result.content.find((item) => item.type === "text")!.text;
+    expect(() => JSON.parse(text)).toThrow();
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      "demo-pkg 1.0.0 → 1.1.0 (pypi)",
+      "release risk high · artifact risk high · 1 findings · 1 changed files, 1 unchanged",
+    ]);
+    for (const evidence of [
+      "coverage: text samples omitted",
+      "note: Some binary files could not be inspected",
+      "finding: high test.rule demo/main.py (new in release): A deterministic test finding",
+      "changed: modified demo/main.py",
+      `review: ${pairPayload.reviewUrl}`,
+      "untrusted evidence",
+    ]) {
+      expect(text).toContain(evidence);
+    }
+    expect(text).not.toContain("demo/same.py");
+
     expect(invoke).toHaveBeenCalledOnce();
     const target = new URL(invoke.mock.calls[0][0], "https://internal.example");
     expect(target.pathname).toBe("/");
     expect(Object.fromEntries(target.searchParams)).toEqual({ ...pairArgs, ecosystem: "npm" });
+  });
+
+  test("pages a large file list and keeps the result bounded with evidence first", async () => {
+    const changed = Array.from({ length: 1000 }, (_, i) => ({
+      path: `lib/generated/module-${i}.js`,
+      status: "modified",
+      flags: ["text-sample-truncated"],
+    }));
+    const unchanged = Array.from({ length: 5000 }, (_, i) => ({
+      path: `lib/static/asset-${i}.js`,
+      status: "unchanged",
+      flags: [],
+    }));
+    const findings = Array.from({ length: 40 }, (_, i) => ({
+      ...pairPayload.findings[0],
+      file: `lib/generated/module-${i}.js`,
+    }));
+    const large = { ...pairPayload, diff: [...unchanged, ...changed], findings };
+    const invoke = vi.fn<(path: string) => Promise<Response>>(async () => Response.json(large));
+    const request = harness(invoke);
+
+    const first = await request<CallToolResult>("tools/call", {
+      name: "compare_package_versions",
+      arguments: pairArgs,
+    });
+    expect(JSON.stringify(first).length).toBeLessThan(64 * 1024);
+    const structured = first.structuredContent as Record<string, unknown>;
+    expect(Object.keys(structured).slice(0, 5)).toEqual([
+      "risk",
+      "findings",
+      "notices",
+      "textSamplesOmitted",
+      "reviewUrl",
+    ]);
+    expect(structured.findings).toHaveLength(40);
+    expect(structured).toMatchObject({
+      changedFileCount: 1000,
+      unchangedFileCount: 5000,
+      changedFilesOffset: 0,
+      changedFiles: changed.slice(0, CHANGED_FILES_PAGE_SIZE),
+      moreChangedFiles: 1000 - CHANGED_FILES_PAGE_SIZE,
+      nextChangedFilesOffset: CHANGED_FILES_PAGE_SIZE,
+    });
+    const text = first.content.find((item) => item.type === "text")!.text;
+    expect(text.length).toBeLessThan(16 * 1024);
+    expect(text).toContain("15 more findings in structuredContent");
+    expect(text).toContain(
+      `975 more changed files (75 in structuredContent); call compare_package_versions with changedFilesOffset=${CHANGED_FILES_PAGE_SIZE} for the next page. Inspect any path with get_changed_file.`,
+    );
+    expect(text).not.toContain("asset-");
+
+    const last = await request<CallToolResult>("tools/call", {
+      name: "compare_package_versions",
+      arguments: { ...pairArgs, changedFilesOffset: 950 },
+    });
+    expect(last.structuredContent).toMatchObject({
+      changedFilesOffset: 950,
+      changedFiles: changed.slice(950),
+      moreChangedFiles: 0,
+      nextChangedFilesOffset: null,
+    });
+    expect(
+      new URL(invoke.mock.calls[1][0], "https://internal.example").searchParams.has(
+        "changedFilesOffset",
+      ),
+    ).toBe(false);
   });
 
   test("preserves file contents, omission flags, and additional evidence fields", async () => {
@@ -160,6 +281,8 @@ describe("anonymous public MCP tools", () => {
     { extra: { headers: { cookie: "session=secret-value" } } },
     { extra: { from: "x".repeat(2049) } },
     { extra: { package: "" } },
+    { extra: { ecosystem: "cargo" } },
+    { extra: { changedFilesOffset: -1 } },
   ])(
     "rejects invalid or authority-bearing arguments before dispatch: $extra",
     async ({ extra }) => {

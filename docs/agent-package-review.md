@@ -76,14 +76,25 @@ Client configuration syntax varies; the contract is the URL and Streamable
 HTTP transport. The official MCP SDK handles current protocol requests and
 stateless compatibility for the 2025-03-26, 2025-06-18, and 2025-11-25 clients.
 There are no persistent sessions, resumable streams, or server-initiated calls.
+Browser-based MCP clients cannot connect: the endpoint rejects any `Origin`
+other than the canonical app origin and sends no CORS headers.
 
 The server advertises two tools, each with `readOnlyHint: true`,
 `destructiveHint: false`, and `openWorldHint: true`:
 
-| Tool                       | Inputs                                                   | Output                                                                  |
-| -------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `compare_package_versions` | `ecosystem` (defaults to `npm`), `package`, `from`, `to` | Complete public diff response, plus canonical `reviewUrl`               |
-| `get_changed_file`         | The same pair plus exact `path`                          | Complete bounded file response, including null sides and coverage flags |
+| Tool                       | Inputs                                                                                        | Output                                                                                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compare_package_versions` | `ecosystem` (registry enum, defaults to `npm`), `package`, `from`, `to`, `changedFilesOffset` | `risk`, `findings`, `notices`, `textSamplesOmitted`, and `reviewUrl` first; then a page of changed files with counts, changed manifest fields, provenance |
+| `get_changed_file`         | The same pair plus an exact `path` from `changedFiles`                                        | Complete bounded file response, including null sides and coverage flags                                                                                   |
+
+`from` and `to` are exact versions, never ranges or tags. The `ecosystem` enum
+comes from `supportedPublicDiffEcosystems()`, so a registry entry is the only
+way to add one. A compare result lists 100 changed files per page, never
+unchanged ones, and states `unchangedFileCount`, `moreChangedFiles`, and the
+`nextChangedFilesOffset` to request next. It omits the full `package.json`
+objects; `packageJsonDiff` already carries the changed fields. Evidence leads
+so a client that truncates tool output loses the tail of the file list, not
+the findings.
 
 Only the existing ecosystem registry decides which public packages and
 versions are valid. Tools accept no credentials, organization selectors, or
@@ -105,8 +116,11 @@ budget. Native rate-limit bindings avoid D1; missing native tiers use the
 existing D1 rate-limit fallback. There is no review persistence, organization
 access, AI review, or new credentialed egress.
 
-Successful tool responses retain all evidence in `structuredContent` and a
-JSON text block. Findings remain advisory to the user: deterministic findings
+A compare result's `structuredContent` holds the page above; its text block is
+a bounded human summary (risk, coverage, up to 25 findings and 25 changed
+files, explicit "N more" counts, the review link) for clients that read only
+`content`. A file result keeps the full JSON in both, since the bounded sample
+is the evidence. Findings remain advisory to the user: deterministic findings
 cannot establish safety or authorize a release. Package text is untrusted
 input, never instructions, and is never executed or installed. Clients must
 retain coverage notices, omitted samples, file flags, and finding attribution.
@@ -119,9 +133,10 @@ with `Retry-After`; an analysis-budget error is a tool error with
 
 ## Measurement and verification
 
-This guide introduces no tracking. Existing `public_diff.viewed` aggregates
-count successful pair requests; they cannot identify agent readers or attribute
-adoption to this guide. See `product-analytics.md`.
+This guide introduces no new event. `public_diff.viewed` counts successful pair
+requests and tags CLI and MCP calls with their own `client` value (`cli`,
+`mcp`), so they stay out of the browser page-view number. It cannot identify
+agent readers or attribute adoption to this guide. See `product-analytics.md`.
 
 Route/sitemap/metadata parity and prerendered guide discovery are covered in
 `test/prerender-routes.test.ts`. Existing Worker tests own the anonymous API

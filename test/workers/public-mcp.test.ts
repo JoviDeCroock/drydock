@@ -203,7 +203,11 @@ describe("anonymous hosted public MCP", () => {
         textSamplesOmitted: true,
         risk: payload.risk,
         reviewUrl: `http://example.com/diff/${payload.packageName}/1.0.0/2.0.0`,
+        changedFileCount: 2,
+        unchangedFileCount: 0,
+        changedFiles: payload.diff,
       });
+      expect(pair.structuredContent).not.toHaveProperty("fromPackageJson");
       const file = await client.callTool({
         name: "get_changed_file",
         arguments: { ...pairArgs(payload), path: "index.js" },
@@ -232,6 +236,7 @@ describe("anonymous hosted public MCP", () => {
         expect(forwarded.headers.get("cookie")).toBeNull();
         expect(forwarded.headers.get("origin")).toBeNull();
         expect(forwarded.headers.get("cf-connecting-ip")).toBe("198.51.100.11");
+        expect(forwarded.headers.get("x-drydock-client")).toBe("mcp");
       }
     } finally {
       await client.close();
