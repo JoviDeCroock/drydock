@@ -20,6 +20,8 @@ export interface OrganizationApiKey {
 
 interface ListResponse {
   keys: OrganizationApiKey[];
+  /** False for a member, who sees only the keys they created. */
+  manageAll?: boolean;
   limit: number;
   expiryDays: number[];
 }
@@ -48,6 +50,8 @@ export const ApiKeysModel = createModel(() => {
   // stays on screen until dismissed or the organization changes.
   const revealed = signal<{ name: string; token: string } | null>(null);
   const revokingKeyId = signal<string | null>(null);
+  // Owners and admins see every key; a member only their own.
+  const manageAll = signal(true);
   let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
@@ -71,26 +75,23 @@ export const ApiKeysModel = createModel(() => {
     draftAccess,
     revealed,
     revokingKeyId,
+    manageAll,
     busy,
     atLimit,
 
-    async load(canManage: boolean): Promise<void> {
+    async load(): Promise<void> {
       const requestId = ++loadRequestId;
       this.keys.value = [];
       this.revealed.value = null;
       this.revokingKeyId.value = null;
       this.loaded.value = false;
       this.error.value = null;
-      if (!canManage) {
-        this.loaded.value = true;
-        this.status.value = "idle";
-        return;
-      }
       this.status.value = "loading";
       try {
         const data = await apiFetch<ListResponse>("/api/v1/api-keys");
         if (requestId !== loadRequestId) return;
         this.keys.value = data.keys;
+        this.manageAll.value = data.manageAll !== false;
         this.limit.value = data.limit;
         if (data.expiryDays.length) this.expiryChoices.value = data.expiryDays;
       } catch (err) {

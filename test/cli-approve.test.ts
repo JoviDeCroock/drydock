@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { main } from "../cli/src/main.mjs";
+import { resolveNpmCommand } from "../cli/src/npm-path.mjs";
 
 const KEY = `ddk_${"k".repeat(43)}`;
 const STAGE = "stage-approve-000001";
 const SCAN_ID = "scan-approve-1";
 const ORG = "org-approve";
+const OTP = "246810";
 // eslint-disable-next-line no-control-regex -- matching terminal controls is the point
 const TERMINAL_CONTROL = /[\u001b\u0007‮]/u;
 
@@ -105,8 +107,8 @@ function harness(
   {
     answers = [],
     npm = { code: 0 },
-    interactive = true,
-  }: { answers?: Array<string | null>; npm?: NpmResult; interactive?: boolean } = {},
+    stdinIsTerminal = true,
+  }: { answers?: Array<string | null>; npm?: NpmResult; stdinIsTerminal?: boolean } = {},
 ) {
   const calls: Call[] = [];
   const npmRuns: string[][] = [];
@@ -159,7 +161,7 @@ function harness(
     writeFile: async () => undefined,
     sleep: async (ms: number) => void (clock += ms),
     now: () => clock,
-    interactive,
+    stdinIsTerminal,
     prompt: async (question: string) => {
       prompts.push(question);
       return answers.length ? (answers.shift() ?? null) : null;
@@ -187,14 +189,75 @@ function harness(
 const listed = [{ id: SCAN_ID, stageId: STAGE, source: "auto_discovery", status: "complete" }];
 
 describe("drydock approve", () => {
-  test("refuses to run without a terminal, says why, and contacts nothing", async () => {
-    const cli = harness({ list: listed }, { interactive: false, answers: ["p", ""] });
-    expect(await cli.run("approve", STAGE)).toBe(2);
-    expect(cli.stderr).toContain("needs an interactive terminal");
-    expect(cli.stderr).toContain("no non-interactive mode on");
-    expect(cli.calls).toEqual([]);
-    expect(cli.prompts).toEqual([]);
-    expect(cli.npmRuns).toEqual([]);
+  test("reads the authenticator code from --otp only when stdin is not a terminal", async () => {
+    const missing = harness({ list: listed }, { stdinIsTerminal: false, answers: ["p", ""] });
+    expect(await missing.run("approve", STAGE)).toBe(2);
+    expect(missing.stderr).toContain("pass it with --otp CODE");
+    expect(missing.calls).toEqual([]);
+
+    const onTerminal = harness({ list: listed });
+    expect(await onTerminal.run("approve", STAGE, "--otp", OTP)).toBe(2);
+    expect(onTerminal.stderr).toContain("drop --otp so the code stays out of your shell history");
+    expect(onTerminal.calls).toEqual([]);
+
+    const malformed = harness({ list: listed }, { stdinIsTerminal: false });
+    expect(await malformed.run("approve", STAGE, "--otp", "12345")).toBe(2);
+    expect(malformed.calls).toEqual([]);
+
+    const piped = harness({ list: listed }, { stdinIsTerminal: false, answers: ["p", ""] });
+    expect(await piped.run("approve", STAGE, "--otp", OTP)).toBe(0);
+    expect(piped.decisionCalls()[0].body).toEqual({ decision: "publish", totpCode: OTP });
+    expect(piped.prompts.some((question) => question.includes("authenticator"))).toBe(false);
+    expect(piped.npmRuns.flat().join(" ")).not.toContain(OTP);
+  });
+
+  test("asks again for a code Drydock rejects on a terminal, and never with --otp", async () => {
+    const codes: string[] = [];
+    const decision = () => {
+      const code = codes.shift();
+      return code === OTP
+        ? json(stagedDetail({ decision: "publish" }))
+        : json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    };
+    const cli = harness({ list: listed, decision }, { answers: ["p", "", "111111", OTP] });
+    codes.push("111111", OTP);
+    expect(await cli.run("approve", STAGE)).toBe(0);
+    expect(cli.decisionCalls().map((call) => (call.body as { totpCode: string }).totpCode)).toEqual(
+      ["111111", OTP],
+    );
+    expect(cli.stderr).toContain("Drydock did not accept that code");
+    expect(cli.npmRuns).toHaveLength(1);
+
+    codes.push("111111");
+    const flagged = harness(
+      { list: listed, decision },
+      { stdinIsTerminal: false, answers: ["p", ""] },
+    );
+    expect(await flagged.run("approve", STAGE, "--otp", "111111")).toBe(1);
+    expect(flagged.stderr).toContain("invalid two-factor code");
+    expect(flagged.stderr).toContain("Drydock recorded nothing and npm was not run");
+    expect(flagged.decisionCalls()).toHaveLength(1);
+    expect(flagged.npmRuns).toEqual([]);
+    expect(flagged.stderr).not.toContain("the API key was rejected");
+
+    const disabled = harness(
+      {
+        list: listed,
+        decision: () =>
+          json(
+            {
+              error:
+                "Recording a decision with an API key needs two-factor authentication on the account that created the key, and it is turned off.",
+              code: "two_factor_enrollment_required",
+            },
+            403,
+          ),
+      },
+      { answers: ["p", "", OTP] },
+    );
+    expect(await disabled.run("approve", STAGE)).toBe(1);
+    expect(disabled.stderr).toContain("it is turned off");
+    expect(disabled.npmRuns).toEqual([]);
   });
 
   test("has no flag that skips the decision", async () => {
@@ -211,12 +274,13 @@ describe("drydock approve", () => {
     const cli = harness({ list: listed }, { answers: ["s"] });
     await cli.run("approve", STAGE);
     const summary = cli.stdout;
-    expect(summary).toContain("package           @acme/cli@2.1.0");
-    expect(summary).toContain("compared against  2.0.3");
-    expect(summary).toContain("release risk      high (package risk high)");
+    expect(summary.startsWith(`@acme/cli@2.1.0  stage ${STAGE}\n`)).toBe(true);
+    expect(summary).toContain("release risk   high (package risk high)");
     expect(summary).toContain("suspicious (AI risk high), asks for a manual review");
     expect(summary).toContain("The new postinstall downloads a script.");
     expect(summary).toContain("Since 2.0.3:");
+    // The baseline is named once.
+    expect(summary.split("2.0.3")).toHaveLength(2);
     expect(summary).toContain("install-time scripts   postinstall added: node setup.js");
     expect(summary).not.toContain("vitest run");
     expect(summary).toContain("new dependencies       left-pad ^1.3.0");
@@ -246,11 +310,11 @@ describe("drydock approve", () => {
       { answers: ["s"] },
     );
     await skipped.run("approve", STAGE);
-    expect(skipped.stdout).toContain(
-      "install-time scripts   unknown (the previous release 2.0.3 was not downloaded for comparison)",
-    );
+    expect(skipped.stdout).toContain("Since 2.0.3 (not downloaded for comparison):");
+    expect(skipped.stdout).toContain("install-time scripts   unknown\n");
     expect(skipped.stdout).toContain("new dependencies       unknown");
-    expect(skipped.stdout).toContain("AI review         not run");
+    expect(skipped.stdout.split("not downloaded")).toHaveLength(2);
+    expect(skipped.stdout).toContain("AI review      not run");
 
     // A review recorded before the bin map was diffed has no `bin` rows.
     const legacy = harness(
@@ -268,7 +332,7 @@ describe("drydock approve", () => {
     await legacy.run("approve", STAGE);
     expect(legacy.stdout).toContain("install-time scripts   none");
     expect(legacy.stdout).toContain("new executables        unknown");
-    expect(legacy.stdout).toContain("AI review         unavailable (unavailable)");
+    expect(legacy.stdout).toContain("AI review      unavailable (unavailable)");
     expect(legacy.stdout).not.toContain("nothing unusual");
   });
 
@@ -295,10 +359,8 @@ describe("drydock approve", () => {
       { answers: ["s"] },
     );
     await tooLarge.run("approve", STAGE);
-    expect(tooLarge.stdout).toContain("compared against  2.0.3 (not downloaded for comparison)");
-    expect(tooLarge.stdout).toContain(
-      "install-time scripts   unknown (the previous release 2.0.3 was not downloaded for comparison)",
-    );
+    expect(tooLarge.stdout).toContain("Since 2.0.3 (not downloaded for comparison):");
+    expect(tooLarge.stdout).toContain("install-time scripts   unknown\n");
     expect(tooLarge.stdout).not.toContain("first release");
     expect(tooLarge.stdout).not.toContain("postinstall added");
 
@@ -316,7 +378,7 @@ describe("drydock approve", () => {
       { answers: ["s"] },
     );
     await metadata.run("approve", STAGE);
-    expect(metadata.stdout).toContain("compared against  unknown");
+    expect(metadata.stdout).toContain("Against an unknown previous release:");
     expect(metadata.stdout).toContain("new dependencies       unknown");
 
     const first = harness(
@@ -330,7 +392,7 @@ describe("drydock approve", () => {
       { answers: ["s"] },
     );
     await first.run("approve", STAGE);
-    expect(first.stdout).toContain("compared against  none (first release)");
+    expect(first.stdout).toContain("First release, nothing before it:");
     expect(first.stdout).toContain("install-time scripts   postinstall added: node setup.js");
   });
 
@@ -357,32 +419,41 @@ describe("drydock approve", () => {
   });
 
   test("declining records nothing, runs no npm, and exits non-zero", async () => {
-    for (const answers of [["s"], [""], [null], ["p", null], ["maybe", "later", "no"]]) {
+    for (const answers of [
+      ["s"],
+      [""],
+      [null],
+      ["p", null],
+      ["maybe", "later", "no"],
+      ["p", "", null],
+    ]) {
       const cli = harness({ list: listed }, { answers });
       expect(await cli.run("approve", STAGE), JSON.stringify(answers)).toBe(1);
-      expect(cli.stderr).toContain(
-        "no decision made: Drydock recorded nothing and npm was not run",
+      expect(cli.stderr).toMatch(
+        /(no decision made|no authenticator code): Drydock recorded nothing and npm was not run/,
       );
       expect(cli.decisionCalls()).toEqual([]);
       expect(cli.npmRuns).toEqual([]);
     }
   });
 
-  test("publish records the decision, then hands the terminal to npm stage approve without an OTP", async () => {
-    const cli = harness({ list: listed }, { answers: ["publish", "read the diff"] });
+  test("publish records the decision with the authenticator code, then hands the terminal to npm stage approve", async () => {
+    const cli = harness({ list: listed }, { answers: ["publish", "read the diff", OTP] });
     expect(await cli.run("approve", STAGE)).toBe(0);
     expect(cli.decisionCalls()).toEqual([
       {
         url: `https://drydock.test/api/v1/scans/${SCAN_ID}/decision`,
         method: "POST",
-        body: { decision: "publish", reason: "read the diff" },
+        body: { decision: "publish", reason: "read the diff", totpCode: OTP },
       },
     ]);
+    expect(cli.prompts.at(-1)).toBe("Drydock authenticator code: ");
     expect(cli.npmRuns).toEqual([
       ["stage", "approve", STAGE, "--registry", "https://registry.npmjs.org"],
     ]);
     expect(cli.npmRuns.flat().some((arg) => arg.includes("otp"))).toBe(false);
-    expect(cli.stderr).toContain("npm asks for your one-time password itself");
+    expect(cli.stderr).toContain("npm asks for its own one-time password");
+    expect(cli.stdout + cli.stderr).not.toContain(OTP);
     expect(cli.stdout).toContain("Drydock recorded: publish (read the diff)");
     expect(cli.stdout).toContain("npm approved the stage: @acme/cli@2.1.0 is published.");
     expect(cli.stdout + cli.stderr).not.toContain(KEY);
@@ -394,15 +465,18 @@ describe("drydock approve", () => {
       { code: null, signal: "SIGINT" },
       { code: null, error: "spawn npm ENOENT" },
     ]) {
-      const cli = harness({ list: listed }, { answers: ["p", ""], npm });
+      const cli = harness({ list: listed }, { answers: ["p", "", OTP], npm });
       expect(await cli.run("approve", STAGE), JSON.stringify(npm)).toBe(5);
       expect(cli.decisionCalls()).toHaveLength(1);
-      expect(cli.decisionCalls()[0].body).toEqual({ decision: "publish" });
+      expect(cli.decisionCalls()[0].body).toEqual({ decision: "publish", totpCode: OTP });
       expect(cli.stderr).toContain(
         "Drydock recorded your publish decision, but npm did not approve the stage",
       );
       expect(cli.stderr).toContain("@acme/cli@2.1.0 is still staged on npm.");
       expect(cli.stderr).toContain(`Retry with: npm stage approve ${STAGE}`);
+      expect(cli.stderr).toContain(
+        `To replace the decision, run drydock approve ${STAGE} again or change it at https://drydock.test/dashboard/scans/${SCAN_ID}?org=${ORG}.`,
+      );
       expect(cli.stdout).not.toContain("is published");
     }
   });
@@ -421,7 +495,7 @@ describe("drydock approve", () => {
             403,
           ),
       },
-      { answers: ["p", ""] },
+      { answers: ["p", "", OTP] },
     );
     expect(await cli.run("approve", STAGE)).toBe(1);
     expect(cli.stderr).toContain("drydock approve needs a key with decide_staged access");
@@ -431,7 +505,7 @@ describe("drydock approve", () => {
     // A server error may follow a committed decision, so the CLI does not claim either way.
     const failed = harness(
       { list: listed, decision: () => json({ error: "internal error" }, 500) },
-      { answers: ["p", ""] },
+      { answers: ["p", "", OTP] },
     );
     expect(await failed.run("approve", STAGE)).toBe(1);
     expect(failed.stderr).toContain(
@@ -444,29 +518,30 @@ describe("drydock approve", () => {
   test("reject records the rejection and says how to reject on npm, running it only when asked", async () => {
     const declined = harness(
       { list: listed, decision: () => json(stagedDetail({ decision: "no_publish" })) },
-      { answers: ["r", "new postinstall", "n"] },
+      { answers: ["r", "new postinstall", OTP, "n"] },
     );
     expect(await declined.run("approve", STAGE)).toBe(0);
     expect(declined.decisionCalls()[0].body).toEqual({
       decision: "no_publish",
       reason: "new postinstall",
+      totpCode: OTP,
     });
     expect(declined.stdout).toContain("Drydock recorded: reject (new postinstall)");
     expect(declined.stdout).toContain(
       `@acme/cli@2.1.0 is still staged on npm. To remove it there, run: npm stage reject ${STAGE} --registry https://registry.npmjs.org`,
     );
-    expect(declined.stdout).toContain("npm asks for your one-time password");
+    expect(declined.stdout).toContain("npm asks for its own one-time password");
     expect(declined.stdout).toContain("permanently removes the staged version");
     expect(declined.npmRuns).toEqual([]);
 
-    const ran = harness({ list: listed }, { answers: ["reject", "", "y"] });
+    const ran = harness({ list: listed }, { answers: ["reject", "", OTP, "y"] });
     expect(await ran.run("approve", STAGE)).toBe(0);
     expect(ran.npmRuns).toEqual([
       ["stage", "reject", STAGE, "--registry", "https://registry.npmjs.org"],
     ]);
     expect(ran.stdout).toContain("npm rejected the stage");
 
-    const failed = harness({ list: listed }, { answers: ["r", "", "yes"], npm: { code: 1 } });
+    const failed = harness({ list: listed }, { answers: ["r", "", OTP, "yes"], npm: { code: 1 } });
     expect(await failed.run("approve", STAGE)).toBe(5);
     expect(failed.stderr).toContain(
       "Drydock recorded your reject decision, but npm did not reject the stage (npm exited with 1)",
@@ -481,7 +556,24 @@ describe("drydock approve", () => {
     expect(cli.stderr).toContain(`started review ${SCAN_ID}`);
     expect(cli.stderr).toContain(`waiting for review ${SCAN_ID}: pending (0s)`);
     expect(cli.stderr).toContain(`waiting for review ${SCAN_ID}: running (1s)`);
-    expect(cli.stdout).toContain("package           @acme/cli@2.1.0");
+    expect(cli.stdout).toContain(`@acme/cli@2.1.0  stage ${STAGE}`);
+  });
+
+  test("looks a stage up by its id in one request", async () => {
+    const cli = harness({ list: listed }, { answers: ["s"] });
+    await cli.run("approve", STAGE);
+    expect(cli.calls[0].url).toBe(
+      `https://drydock.test/api/v1/scans?limit=100&filter=all&stageId=${STAGE}`,
+    );
+    expect(cli.calls.filter((call) => call.url.includes("/api/v1/scans?"))).toHaveLength(1);
+  });
+
+  test("a package@version with no review yet starts nothing and names the command to run", async () => {
+    const cli = harness({ releases: [] }, { answers: ["p", "", OTP] });
+    expect(await cli.run("approve", "@acme/cli@2.1.0")).toBe(1);
+    expect(cli.stderr).toContain('Run "drydock approve <stage-id>"');
+    expect(cli.calls.every((call) => call.method === "GET")).toBe(true);
+    expect(cli.prompts).toEqual([]);
   });
 
   test("a review that does not finish in time exits 4 before asking anything", async () => {
@@ -538,5 +630,40 @@ describe("drydock approve", () => {
     const flag = harness({ list: listed });
     expect(await flag.run("approve", "--", "--registry=https://evil.test")).toBe(2);
     expect(flag.calls).toEqual([]);
+  });
+});
+
+describe("resolveNpmCommand", () => {
+  const files = (paths: string[]) => (path: string) => paths.includes(path);
+
+  test("never resolves npm from the current directory or a relative PATH entry", () => {
+    const windows = {
+      platform: "win32",
+      cwd: "C:\\repo",
+      execPath: "C:\\node\\node.exe",
+      path: ";.;C:\\repo;bin;C:\\Program Files\\nodejs",
+      isFile: files([
+        "C:\\repo\\npm.cmd",
+        "C:\\repo\\node_modules\\npm\\bin\\npm-cli.js",
+        "C:\\Program Files\\nodejs\\npm.cmd",
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
+        "C:\\Program Files\\nodejs\\node.exe",
+      ]),
+    };
+    expect(resolveNpmCommand(windows)).toEqual({
+      command: "C:\\Program Files\\nodejs\\node.exe",
+      args: ["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js"],
+    });
+    expect(resolveNpmCommand({ ...windows, path: "c:\\REPO" })).toBeNull();
+
+    const posix = {
+      platform: "darwin",
+      cwd: "/work/repo",
+      execPath: "/usr/local/bin/node",
+      path: ":.:/work/repo:node_modules/.bin:/usr/local/bin",
+      isFile: files(["/work/repo/npm", "/usr/local/bin/npm"]),
+    };
+    expect(resolveNpmCommand(posix)).toEqual({ command: "/usr/local/bin/npm", args: [] });
+    expect(resolveNpmCommand({ ...posix, path: "" })).toBeNull();
   });
 });

@@ -125,6 +125,9 @@ export const StagedDecisionRequest = z
   .looseObject({
     decision: z.enum(SCAN_DECISIONS),
     reason: z.string().max(500).optional().describe("Shown with the decision in Drydock"),
+    totpCode: z
+      .string()
+      .describe("Current 6-digit code from the key creator's authenticator app; never stored"),
   })
   .register(openApiSchemas, { id: "StagedDecisionRequest" });
 

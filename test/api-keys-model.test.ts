@@ -33,7 +33,7 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     expect(model.atLimit.value).toBe(false);
 
     model.keys.value = [...model.keys.value, apiKey("second-live", DAY_MS)];
@@ -56,7 +56,7 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     const revoke = model.revoke("one");
     expect(model.revokingKeyId.value).toBe("one");
 
@@ -74,9 +74,9 @@ describe("ApiKeysModel", () => {
     });
 
     const model = new ApiKeysModel();
-    await model.load(true);
+    await model.load();
     void model.revoke("one");
-    await model.load(true);
+    await model.load();
     expect(model.revokingKeyId.value).toBeNull();
     expect(model.busy.value).toBe(false);
   });

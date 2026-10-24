@@ -87,7 +87,15 @@ export async function recordScanDecision(
     metadata: {
       decision: input.decision,
       reason,
-      ...(input.apiKey ? { apiKeyName: input.apiKey.name, apiKeyPrefix: input.apiKey.prefix } : {}),
+      // A key decision always passed the creator's TOTP step-up.
+      ...(input.apiKey
+        ? {
+            apiKeyName: input.apiKey.name,
+            apiKeyPrefix: input.apiKey.prefix,
+            twoFactor: true,
+            twoFactorMethod: "totp",
+          }
+        : {}),
     },
   });
   await reopenQuietObservations(db, input.organizationId, [input.scanId]);

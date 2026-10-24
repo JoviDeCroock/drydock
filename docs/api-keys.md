@@ -1,6 +1,6 @@
 # Organization API keys
 
-Bearer credentials that let scripts, CI jobs, and the Drydock CLI read one organization's reviews, and optionally start them or record staged-publish decisions, without a browser session. Owners and admins manage them in **Organization settings → Integrations → API keys** (`GET/POST /api/v1/api-keys`, `DELETE /api/v1/api-keys/:keyId`).
+Bearer credentials that let scripts, CI jobs, and the Drydock CLI read one organization's reviews, and optionally start them or record staged-publish decisions, without a browser session. They live in **Organization settings → Integrations → API keys** (`GET/POST /api/v1/api-keys`, `DELETE /api/v1/api-keys/:keyId`). Every member creates keys for themselves and sees and revokes the keys they created (the list answers `manageAll: false`); owners and admins see and revoke every key in the organization. A key always acts as the member who created it.
 
 A key is the one authenticated exception to "every non-auth `/api/*` endpoint requires a Better Auth session". It never widens what a member can do, and no key decides a workflow gate.
 
@@ -10,7 +10,7 @@ Each key is created with one access level, fixed for its lifetime (`access` on `
 
 - **`read`** (the default) reaches only the reads below.
 - **`scan`** also starts reviews: `POST /api/v1/scans` for one staged npm publish or one published release, and `POST /api/v1/staged-publishes/scan`, the dashboard's "Check npm". This lets a release job stage, start the review, and wait for its risk without waiting for the 15-minute discovery cron.
-- **`decide_staged`** also records the publish / no-publish decision on a staged npm publish review (`POST /api/v1/scans/:id/decision`). It exists for [`drydock approve`](../cli/README.md#approving-a-staged-publish) on a maintainer's own machine. See [Recording staged decisions](#recording-staged-decisions).
+- **`decide_staged`** also records the publish / no-publish decision on a staged npm publish review (`POST /api/v1/scans/:id/decision`). It exists for [`drydock approve`](../cli/README.md#approving-a-staged-publish) on a maintainer's own machine. Only a member with two-factor authentication can create one (`403 two_factor_enrollment_required` otherwise), and every decision it records needs that member's authenticator code. See [Recording staged decisions](#recording-staged-decisions).
 
 Each level includes the ones before it. A key below the level a route needs gets `403 { code: "api_key_access_insufficient", requiredAccess }`.
 
@@ -28,18 +28,18 @@ A key belongs to exactly one organization. It ignores the dashboard's active-org
 
 Every key reaches these routes, all reads a plain member can already make (`API_KEY_ROUTES` in `server/lib/auth/api-keys.ts`):
 
-| Route                                                   | Returns                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------- |
-| `GET /api/v1/api-keys/current`                          | the calling key and its organization                    |
-| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface                   |
-| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`)           |
-| `GET /api/v1/scans/overview`                            | dashboard counts                                        |
-| `GET /api/v1/scans/:id`                                 | one review                                              |
-| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status and risk split, for polling |
-| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                             |
-| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                                     |
-| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`)           |
-| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to                   |
+| Route                                                   | Returns                                                  |
+| ------------------------------------------------------- | -------------------------------------------------------- |
+| `GET /api/v1/api-keys/current`                          | the calling key and its organization                     |
+| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface                    |
+| `GET /api/v1/scans`                                     | the review list (`filter`, `stageId`, `cursor`, `limit`) |
+| `GET /api/v1/scans/overview`                            | dashboard counts                                         |
+| `GET /api/v1/scans/:id`                                 | one review                                               |
+| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status and risk split, for polling  |
+| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                              |
+| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                                      |
+| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`)            |
+| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to                    |
 
 A `scan` key also reaches these (`API_KEY_SCAN_ROUTES`):
 
@@ -55,24 +55,26 @@ Both are actions any member can take from the dashboard, and both run the same h
 
 A `decide_staged` key also reaches this (`API_KEY_DECIDE_ROUTES`):
 
-| Route                             | Does                                                                          |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `POST /api/v1/scans/:id/decision` | records `{ decision: "publish" \| "no_publish", reason? }` on a staged review |
+| Route                             | Does                                                                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `POST /api/v1/scans/:id/decision` | records `{ decision: "publish" \| "no_publish", reason?, totpCode }` on a staged review |
 
 Every other `/api/*` route answers a key with `403 { code: "api_key_endpoint_not_allowed" }`: a key cannot decide a workflow gate, approve a batch, share a report, manage members or credentials, or read the audit log. Gate decisions stay with signed-in maintainers, behind the organization's two-factor policy.
 
 ## Recording staged decisions
 
-The staged-publish decision is an advisory record. It never publishes, rejects, or removes anything on npm, and a signed-in member records it without a two-factor step-up ([`two-factor-auth.md`](./two-factor-auth.md#step-up-deciding-a-workflow-gate-issue-162)). A `decide_staged` key records the same decision through the same handler, so it is no stronger than the session it stands in for. Its limits:
+The staged-publish decision is an advisory record. It never publishes, rejects, or removes anything on npm, and a signed-in member records it without a two-factor step-up ([`two-factor-auth.md`](./two-factor-auth.md#step-up-deciding-a-workflow-gate-issue-162)). A key is weaker than a session in one way that matters here: it is a bearer secret that tends to sit in `DRYDOCK_API_KEY`, where a later `npm install`'s lifecycle script can read it. A worm holding it and an npm token could review its own stage, record "publish", and publish the same bytes, and the monitor would then report `approved_match` and the approval would become the approved baseline. So a key decision carries a step-up a session decision does not. Its limits:
+
+- **A fresh authenticator code on every decision.** The body must carry `totpCode`, a current code from the authenticator of the member who created the key, checked against that member's stored TOTP secret the way the gate decision's step-up checks a session's (`verifyUserTotp` beside `verifyTotpStepUp` in `server/lib/auth/index.ts`). Missing is `401 two_factor_required`, wrong is `401 two_factor_invalid`, and attempts are limited to 10 per 15 minutes per creator (`api-key-decision-2fa:<userId>`), the gate step-up's budget. The code is read from the body only, never logged or stored, and the `scan.decided` event records only `twoFactor: true, twoFactorMethod: "totp"`. A creator who turns two-factor off can no longer decide with any key (`403 two_factor_enrollment_required`), and an account Better Auth has locked after failed sign-in codes verifies nothing.
 
 - **Staged reviews only.** The handler refuses a key with `403 { code: "api_key_staged_decisions_only" }` on any review that is not a staged npm publish (`manual` or `auto_discovery`), or that belongs to a workflow gate. The decision update repeats that condition in the statement that writes it (`recordScanDecision` with `apiKey`), so a review cannot change shape between the check and the write. A gate's aggregate approval reads each package's decision, and a key's decision there would count toward releasing a held GitHub job without the gate's step-up. The gate decision route (`POST /api/v1/github-app/workflow-gates/:gateId/decision`) and batch approval are on no allowlist.
-- **Attribution.** The decision is recorded as the key's creator, like every key action, and the `scan.decided` audit event carries the key's name and display prefix (`apiKeyName`, `apiKeyPrefix`). Anyone holding the key decides in that member's name. Only owners and admins create keys, so a key an admin creates for another maintainer still records that admin; the audit's key name is what tells them apart. Issue one per person, name it after them, and keep it on that person's machine.
+- **Attribution.** The decision is recorded as the key's creator, like every key action, and the `scan.decided` audit event carries the key's name and display prefix (`apiKeyName`, `apiKeyPrefix`). Holding the key is not enough to decide in that member's name; the decision also needs their authenticator code. Each member creates their own `decide_staged` key, so the decision is recorded under the maintainer who made it.
 - **Email verification.** Where verification is enforced, the key's creator must still have a verified address, as a session must.
 - **What it can change.** A recorded decision changes what the dashboard, the review's badge and feed entry, and the publication monitor say about the release (for example, a "publish" decision means a later npm publication is not reported as "published without a decision"). A "publish" decision also becomes the package's latest approved release for release memory, which later reviews of the package (gated ones included) compare against when they classify findings as already approved. It never changes what npm does, and it never moves a gate.
 
-`drydock approve` refuses to run without a terminal and has no `--yes`, but that is the CLI's behavior. The server cannot tell a prompt from a script, so treat a `decide_staged` key as able to record decisions unattended, and prefer a `read` or `scan` key for CI.
+`drydock approve` asks for the code on a terminal and reads `--otp` only when stdin is not one; there is no environment variable for it, so the code is never left where a later install can read it. A script that holds the key still cannot decide without a person's current code. Prefer a `read` or `scan` key for CI.
 
-The check matches the route that will answer the request, not the URL: `server/middleware/api-key-auth.ts` reads Hono's matched routes and compares the first method-bound route's registered path. `/api/v1/scans/batch-approval` therefore cannot pass as `/api/v1/scans/:id`. Adding a route to any allowlist is a security decision: it must be something a member can do without a step-up and must never decide a workflow gate, its handler must resolve the organization through `requireActiveOrganization*` and the actor through `requestActorUserId` rather than reading `authSession` (an API-key request has none), and `test/workers/api-keys.test.ts` must exercise it.
+The check matches the route that will answer the request, not the URL: `server/middleware/api-key-auth.ts` reads Hono's matched routes and compares the first method-bound route's registered path. `/api/v1/scans/batch-approval` therefore cannot pass as `/api/v1/scans/:id`. Adding a route to any allowlist is a security decision: it must be something a member can do (the staged decision additionally carries the creator's step-up above) and must never decide a workflow gate, its handler must resolve the organization through `requireActiveOrganization*` and the actor through `requestActorUserId` rather than reading `authSession` (an API-key request has none), and `test/workers/api-keys.test.ts` must exercise it.
 
 ## OpenAPI document
 

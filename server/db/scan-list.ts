@@ -25,6 +25,8 @@ export interface ListScansOptions {
   cursor?: { createdAtMs: number; id: string } | null;
   limit?: number;
   decisionFilter?: ScanDecisionFilter;
+  /** Only the reviews of this npm stage id, combined with the decision filter. */
+  stageId?: string;
   /** Clock for the `decided` window; tests pin it. */
   now?: Date;
 }
@@ -78,6 +80,7 @@ export async function listScans(
   const registryFailureCode = registryFailureCodeSql;
 
   const conditions = [eq(scans.organizationId, organizationId)];
+  if (options.stageId) conditions.push(eq(scans.stageId, options.stageId));
   if (decisionFilter === "undecided") {
     conditions.push(...undecidedQueueConditions());
   } else if (decisionFilter === "published_without_decision") {

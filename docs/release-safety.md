@@ -27,7 +27,8 @@ for the lifecycle behavior behind it.
   routes in `API_KEY_ROUTES`, the review-starting routes in `API_KEY_SCAN_ROUTES`, and
   the staged-publish decision in `API_KEY_DECIDE_ROUTES`, which also accept an
   organization API key of the matching access level ([`api-keys.md`](./api-keys.md)).
-  No key decides a workflow gate or one of its packages.
+  No key decides a workflow gate or one of its packages, and a key's staged decision
+  needs a fresh TOTP code from the key's creator.
 - Client-supplied organization IDs are only selectors; route handlers must verify
   membership through `requireActiveOrganization`.
 - Queue messages carry scan IDs and organization IDs, not npm tokens or decrypted

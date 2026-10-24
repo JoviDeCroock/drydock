@@ -6,9 +6,14 @@ import { waitForReview } from "./wait.mjs";
 // `drydock approve`: show the Drydock review at npm's approval moment, record
 // the maintainer's own decision, then hand the terminal to their own
 // `npm stage approve`. Drydock cannot approve on npm, and this command never
-// tries: npm asks for the one-time password on the inherited terminal, and the
-// CLI never reads, stores, forwards, or passes it (`--otp` is never sent). It
-// never reads npm configuration or tokens either; it only runs `npm`.
+// tries: npm asks for its one-time password on the inherited terminal, and the
+// CLI never reads, stores, forwards, or passes it. It never reads npm
+// configuration or tokens either; it only runs `npm`.
+//
+// The decision itself needs a Drydock code: the server refuses a key decision
+// without a fresh TOTP code from the key creator's authenticator, so a stolen
+// key cannot record "publish" on its own. That code is asked for on a terminal,
+// or read from `--otp` when stdin is not one; it goes only to Drydock.
 //
 // It is a convenience and a record, not enforcement: anyone who can approve on
 // npm can do so on npmjs.com or with npm directly and skip it.
@@ -30,17 +35,15 @@ const INSTALL_TIME_RULES = new Set([
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
 const LOOKUP_PAGES = 10;
 const PAGE_SIZE = 100;
+const OTP_RE = /^\d{6}$/;
+const OTP_ATTEMPTS = 3;
 const REASON_MAX = 500;
 const TOP_FINDINGS = 5;
 const LIST_ITEMS = 5;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-const NO_TERMINAL = [
-  "drydock approve needs an interactive terminal: it asks you for a decision, and",
-  "npm then asks you for your one-time password. It has no non-interactive mode on",
-  "purpose, so a script cannot approve a release in your name. In CI, gate on",
-  '"drydock scans start --stage <stage-id> --wait --fail-on RISK" instead.',
-].join("\n");
+const NO_PROMPT =
+  'drydock approve asks you for a decision. In CI, gate on "drydock scans start --stage <stage-id> --wait --fail-on RISK" instead.';
 
 /**
  * @typedef {{ code: number | null; signal?: string | null; error?: string }} NpmResult
@@ -61,7 +64,8 @@ export async function approve(ctx, startWaiting) {
   if (ctx.values.json) throw new CliError("approve is interactive and has no --json output", 2);
   const prompt = io.prompt;
   const runNpm = io.runNpm;
-  if (!io.interactive || !prompt || !runNpm) throw new CliError(NO_TERMINAL, 2);
+  if (!prompt || !runNpm) throw new CliError(NO_PROMPT, 2);
+  const flagOtp = otpFromFlag(ctx.values.otp, Boolean(io.stdinIsTerminal));
   const target = parseTarget(ctx.positionals[1]);
 
   let found = await findStagedReview(ctx, target);
@@ -92,7 +96,7 @@ export async function approve(ctx, startWaiting) {
   io.stdout(`${formatApprovalSummary(detail, link)}\n`);
   if (scan.decision) {
     io.stdout(
-      `\nAlready decided: ${scan.decision === "publish" ? "publish" : "reject"}${scan.decidedByName ? ` by ${clean(scan.decidedByName)}` : ""}. A new decision replaces it.\n`,
+      `Already decided: ${scan.decision === "publish" ? "publish" : "reject"}${scan.decidedByName ? ` by ${clean(scan.decidedByName)}` : ""}. A new decision replaces it.\n`,
     );
   }
   io.stdout("\n");
@@ -103,46 +107,28 @@ export async function approve(ctx, startWaiting) {
     throw new CliError("no decision made: Drydock recorded nothing and npm was not run");
   }
 
-  try {
-    await ctx.client.json(`/api/v1/scans/${pathSegment(id, "review id")}/decision`, {
-      method: "POST",
-      body: reason ? { decision, reason } : { decision },
-    });
-  } catch (err) {
-    if (err instanceof CliError) {
-      // Only a refusal proves nothing was written; a 5xx or a lost response
-      // may follow a committed decision.
-      const refused = typeof err.status === "number" && err.status >= 400 && err.status < 500;
-      throw new CliError(
-        refused
-          ? `${err.message}. Drydock recorded nothing and npm was not run.`
-          : `${err.message}. Drydock may have recorded the decision; check ${link}. npm was not run.`,
-        err.exitCode,
-      );
-    }
-    throw err;
-  }
+  await recordDecision(ctx, { id, decision, reason, link, flagOtp, prompt });
   const verdict = decision === "publish" ? "publish" : "reject";
   io.stdout(`Drydock recorded: ${verdict}${reason ? ` (${clean(reason)})` : ""}\n`);
 
   if (decision === "publish") {
     const args = ["stage", "approve", stageId, ...registry];
     io.stderr(
-      `Running npm ${args.join(" ")}. npm asks for your one-time password itself; Drydock never sees it.\n`,
+      `Running npm ${args.join(" ")}. npm asks for its own one-time password; Drydock never sees it.\n`,
     );
     const result = await runNpm(args);
     if (result.code === 0 && !result.error) {
       io.stdout(`npm approved the stage: ${label} is published.\n`);
       return 0;
     }
-    io.stderr(npmFailure("publish", "approve", result, label, args));
+    io.stderr(npmFailure("publish", "approve", result, { label, args, stageId, link }));
     return EXIT_NPM_FAILED;
   }
 
   const args = ["stage", "reject", stageId, ...registry];
   io.stdout(
     `${label} is still staged on npm. To remove it there, run: npm ${args.join(" ")}\n` +
-      "npm asks for your one-time password, and rejecting permanently removes the staged version.\n",
+      "npm asks for its own one-time password, and rejecting permanently removes the staged version.\n",
   );
   const runNow = await prompt("Run it now? [y/N] ");
   if (!/^(y|yes)$/i.test(runNow?.trim() ?? "")) return 0;
@@ -151,8 +137,89 @@ export async function approve(ctx, startWaiting) {
     io.stdout(`npm rejected the stage: ${label} is no longer staged.\n`);
     return 0;
   }
-  io.stderr(npmFailure("reject", "reject", result, label, args));
+  io.stderr(npmFailure("reject", "reject", result, { label, args, stageId, link }));
   return EXIT_NPM_FAILED;
+}
+
+/**
+ * `--otp` is only for a stdin that is not a terminal: on a terminal the code is
+ * asked for, so it stays out of shell history and process listings. There is
+ * deliberately no environment variable for it.
+ * @param {unknown} value
+ * @param {boolean} stdinIsTerminal
+ * @returns {string | null} the flag's code, or null when the code will be asked for
+ */
+function otpFromFlag(value, stdinIsTerminal) {
+  if (value === undefined) {
+    if (stdinIsTerminal) return null;
+    throw new CliError(
+      "stdin is not a terminal, so approve cannot ask for your Drydock authenticator code; pass it with --otp CODE",
+      2,
+    );
+  }
+  if (stdinIsTerminal) {
+    throw new CliError(
+      "approve asks for your authenticator code on a terminal; drop --otp so the code stays out of your shell history",
+      2,
+    );
+  }
+  const code = typeof value === "string" ? value.trim() : "";
+  if (!OTP_RE.test(code)) {
+    throw new CliError("--otp needs the 6-digit code from your authenticator app", 2);
+  }
+  return code;
+}
+
+/**
+ * Records the decision with a fresh authenticator code. On a terminal a code
+ * Drydock rejects is asked for again; a code from `--otp` is used once.
+ * @param {CommandContext} ctx
+ * @param {{ id: string; decision: string; reason: string; link: string; flagOtp: string | null; prompt: (question: string) => Promise<string | null> }} input
+ */
+async function recordDecision(ctx, { id, decision, reason, link, flagOtp, prompt }) {
+  const nothing = "Drydock recorded nothing and npm was not run.";
+  for (let attempt = 1; ; attempt += 1) {
+    const totpCode = flagOtp ?? (await askOtp(prompt, ctx.io));
+    if (totpCode === null) throw new CliError(`no authenticator code: ${nothing}`);
+    try {
+      await ctx.client.json(`/api/v1/scans/${pathSegment(id, "review id")}/decision`, {
+        method: "POST",
+        body: { decision, ...(reason ? { reason } : {}), totpCode },
+      });
+      return;
+    } catch (err) {
+      if (!(err instanceof CliError)) throw err;
+      if (err.code === "two_factor_invalid" && !flagOtp && attempt < OTP_ATTEMPTS) {
+        ctx.io.stderr("Drydock did not accept that code. Try the current one.\n");
+        continue;
+      }
+      // Only a refusal proves nothing was written; a 5xx or a lost response
+      // may follow a committed decision.
+      const refused = typeof err.status === "number" && err.status >= 400 && err.status < 500;
+      throw new CliError(
+        refused
+          ? `${err.message}. ${nothing}`
+          : `${err.message}. Drydock may have recorded the decision; check ${link}. npm was not run.`,
+        err.exitCode,
+      );
+    }
+  }
+}
+
+/**
+ * @param {(question: string) => Promise<string | null>} prompt
+ * @param {{ stderr: (text: string) => void }} io
+ * @returns {Promise<string | null>} null when input ends
+ */
+async function askOtp(prompt, io) {
+  for (let attempt = 0; attempt < OTP_ATTEMPTS; attempt += 1) {
+    const answer = await prompt("Drydock authenticator code: ");
+    if (answer === null) return null;
+    const code = answer.replace(/\s+/g, "");
+    if (OTP_RE.test(code)) return code;
+    io.stderr("Enter the 6 digits your authenticator app shows for Drydock.\n");
+  }
+  return null;
 }
 
 /**
@@ -189,6 +256,7 @@ async function findStagedReview(ctx, target) {
     let body;
     if ("stageId" in target) {
       params.set("filter", "all");
+      params.set("stageId", target.stageId);
       body = await ctx.client.json(`/api/v1/scans?${params}`);
       rows = (Array.isArray(body?.scans) ? body.scans : []).filter(
         (/** @type {any} */ scan) => scan?.stageId === target.stageId,
@@ -213,40 +281,32 @@ async function findStagedReview(ctx, target) {
 }
 
 /**
- * No usable review yet: start one through the scan-access routes, the same
- * way `scans start --stage` and `check-npm` do.
+ * No usable review yet. A stage id starts one through the scan-access route,
+ * which answers with the stage's existing review instead when a concurrent
+ * start won. A package and version name no stage, and discovering one would
+ * check npm for the whole organization, so that is refused with the command to
+ * run instead.
  * @param {CommandContext} ctx
  * @param {{ stageId: string } | { packageName: string; version: string }} target
  */
 async function startStagedReview(ctx, target) {
-  if ("stageId" in target) {
-    const started = await ctx.client.json("/api/v1/scans", {
-      method: "POST",
-      body: { stageId: target.stageId },
-    });
-    const scan = started?.scan;
-    if (typeof scan?.id !== "string" || !scan.id) {
-      throw new CliError("Drydock did not return a review id");
-    }
+  if (!("stageId" in target)) {
+    throw new CliError(
+      `this organization has no review of ${clean(target.packageName)}@${clean(target.version)} yet. Run "drydock approve <stage-id>" with the stage id "npm stage publish" printed; it starts the review.`,
+    );
+  }
+  const started = await ctx.client.json("/api/v1/scans", {
+    method: "POST",
+    body: { stageId: target.stageId },
+  });
+  const scan = started?.scan;
+  if (typeof scan?.id !== "string" || !scan.id) {
+    throw new CliError("Drydock did not return a review id");
+  }
+  if (started.existing !== true) {
     ctx.io.stderr(`no review of this stage yet; started review ${clean(scan.id)}\n`);
-    return scan;
   }
-  const result = await ctx.client.json("/api/v1/staged-publishes/scan", { method: "POST" });
-  const started = (Array.isArray(result?.scans) ? result.scans : []).find(
-    (/** @type {any} */ scan) =>
-      scan?.packageName === target.packageName && scan?.version === target.version,
-  );
-  if (typeof started?.id === "string" && started.id) {
-    ctx.io.stderr(`checked npm; started review ${clean(started.id)}\n`);
-    return { id: started.id, status: "pending" };
-  }
-  // Discovery skips a stage that already has a review, which may have been
-  // created since the lookup above.
-  const found = await findStagedReview(ctx, target);
-  if (found) return found;
-  throw new CliError(
-    `npm lists no staged publish of ${target.packageName}@${target.version} that this organization's npm token can see; pass the stage id from "npm stage publish"`,
-  );
+  return scan;
 }
 
 /** @param {string} name */
@@ -364,10 +424,9 @@ async function askReason(prompt, io) {
  * @param {"publish" | "reject"} verdict
  * @param {"approve" | "reject"} action
  * @param {NpmResult} result
- * @param {string} label
- * @param {string[]} args
+ * @param {{ label: string; args: string[]; stageId: string; link: string }} context
  */
-function npmFailure(verdict, action, result, label, args) {
+function npmFailure(verdict, action, result, { label, args, stageId, link }) {
   const why = result.error
     ? `npm could not be run: ${clean(result.error)}`
     : result.signal
@@ -376,6 +435,7 @@ function npmFailure(verdict, action, result, label, args) {
   return [
     `Drydock recorded your ${verdict} decision, but npm did not ${action} the stage (${why}).`,
     `${label} is still staged on npm. Retry with: npm ${args.join(" ")}`,
+    `To replace the decision, run drydock approve ${stageId} again or change it at ${link}.`,
     "",
   ].join("\n");
 }
@@ -515,12 +575,9 @@ function releaseFacts(detail) {
   return { scripts, dependencies, executables, unknown: null };
 }
 
-/**
- * @param {string[] | null} items
- * @param {string | null} unknown
- */
-function factText(items, unknown) {
-  if (items === null) return `unknown${unknown ? ` (${unknown})` : ""}`;
+/** @param {string[] | null} items */
+function factText(items) {
+  if (items === null) return "unknown";
   if (items.length === 0) return "none";
   const shown = items.slice(0, LIST_ITEMS).join("; ");
   return items.length > LIST_ITEMS ? `${shown}; +${items.length - LIST_ITEMS} more` : shown;
@@ -560,6 +617,9 @@ function severityRank(finding) {
 }
 
 /**
+ * What a maintainer needs at npm's approval moment, most important first, each
+ * fact once: what is being approved, how risky the release is, then what it
+ * changes on install against the release it was compared with.
  * @param {any} detail the `GET /api/v1/scans/:id` response
  * @param {string} link
  */
@@ -568,23 +628,25 @@ function formatApprovalSummary(detail, link) {
   const risk = detail?.riskSummary;
   const facts = releaseFacts(detail);
   const compared = comparedAgainst(detail);
-  const previous = compared.label;
-  const since = compared.version
-    ? `Since ${clean(compared.version)}`
-    : "Against the previous release";
   const ai = aiLines(scan.aiJson);
+  // The baseline is named once, in the heading; a reason it already gives is
+  // not repeated on every fact.
+  const heading = compared.version
+    ? `Since ${compared.label}`
+    : compared.label === "unknown"
+      ? "Against an unknown previous release"
+      : "First release, nothing before it";
+  const reason = facts.unknown && facts.unknown !== compared.unknown ? facts.unknown : null;
   const lines = [
-    `package           ${clean(scan.packageName)}@${clean(scan.stagedVersion)}`,
-    `stage             ${clean(scan.stageId)}`,
-    `compared against  ${previous}`,
-    `release risk      ${clean(risk?.releaseRisk ?? scan.risk)}${risk?.artifactRisk ? ` (package risk ${clean(risk.artifactRisk)})` : ""}`,
-    `AI review         ${ai[0]}`,
-    ...ai.slice(1).map((line) => `                  ${line}`),
+    `${clean(scan.packageName)}@${clean(scan.stagedVersion)}  stage ${clean(scan.stageId)}`,
+    `release risk   ${clean(risk?.releaseRisk ?? scan.risk)}${risk?.artifactRisk ? ` (package risk ${clean(risk.artifactRisk)})` : ""}`,
+    `AI review      ${ai[0]}`,
+    ...ai.slice(1).map((line) => `               ${line}`),
     "",
-    `${since}:`,
-    `  install-time scripts   ${factText(facts.scripts, facts.unknown)}`,
-    `  new dependencies       ${factText(facts.dependencies, facts.unknown)}`,
-    `  new executables        ${factText(facts.executables, facts.unknown)}`,
+    `${heading}${reason ? ` (unknown: ${reason})` : ""}:`,
+    `  install-time scripts   ${factText(facts.scripts)}`,
+    `  new dependencies       ${factText(facts.dependencies)}`,
+    `  new executables        ${factText(facts.executables)}`,
     "",
   ];
   const findings = (Array.isArray(detail?.findings) ? [...detail.findings] : []).sort(

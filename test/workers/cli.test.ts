@@ -10,7 +10,7 @@ import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import type { ScanQueueMessage } from "../../server/lib/scan/job";
 import { main } from "../../cli/src/main.mjs";
-import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
+import { type Jar, PASSWORD, callWorker, signUpUserId, totpFor } from "./helpers/auth-http";
 import { seedCompletedScan } from "./helpers/seed";
 import * as schema from "../../server/db/schema";
 import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
@@ -192,6 +192,19 @@ describe("drydock CLI against the Worker", () => {
     const userId = await signUpUserId(jar);
     expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
     const organizationId = personalOrganizationId(userId);
+    const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
+      body: { password: PASSWORD },
+      jar,
+    });
+    const totpURI = enable.json?.totpURI as string;
+    expect(
+      (
+        await callWorker("POST", "/api/auth/two-factor/verify-totp", {
+          body: { code: totpFor(totpURI) },
+          jar,
+        })
+      ).res.status,
+    ).toBe(200);
     const stageId = "stage-approve-e2e-0001";
     const scanId = await seedCompletedScan(
       { userId, organizationId },
@@ -233,7 +246,7 @@ describe("drydock CLI against the Worker", () => {
             writeFile: async () => undefined,
             sleep: async () => undefined,
             now: () => 0,
-            interactive: true,
+            stdinIsTerminal: true,
             prompt: async () => answers.shift() ?? null,
             runNpm: async (args: string[]) => {
               npmRuns.push(args);
@@ -250,20 +263,23 @@ describe("drydock CLI against the Worker", () => {
           .where(eq(schema.scans.id, scanId))
       )[0]?.decision;
 
-    const readOnly = session(await keyFor("read"), ["p", ""]);
+    const readOnly = session(await keyFor("read"), ["p", "", totpFor(totpURI)]);
     expect(await readOnly.run("approve", stageId)).toBe(1);
     expect(readOnly.err.join("")).toContain("decide_staged access");
     expect(readOnly.npmRuns).toEqual([]);
     expect(await decision()).toBeNull();
 
     const token = await keyFor("decide_staged");
-    const approve = session(token, ["publish", "read the diff"]);
+    // A wrong code is refused by the server and asked for again.
+    const wrong = String((Number(totpFor(totpURI)) + 500_000) % 1_000_000).padStart(6, "0");
+    const approve = session(token, ["publish", "read the diff", wrong, totpFor(totpURI)]);
     const code = await approve.run("approve", stageId);
     expect(code, approve.err.join("")).toBe(0);
     const summary = approve.out.join("");
     expect(summary).toContain("install-time scripts   postinstall added: node setup.js");
     expect(summary).toContain("new dependencies       left-pad ^1.3.0");
-    expect(summary).toContain("compared against  1.9.0");
+    expect(summary).toContain("Since 1.9.0:");
+    expect(approve.err.join("")).toContain("Drydock did not accept that code");
     expect(summary).toContain(
       `${CLI_ORIGIN}/dashboard/scans/${scanId}?org=${encodeURIComponent(organizationId)}`,
     );
