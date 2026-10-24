@@ -11,6 +11,8 @@ import {
   selectPyPiReleaseArtifacts,
 } from "../server/lib/ecosystems/pypi";
 import { createPackageDiff } from "../server/lib/review";
+import { readZipStream } from "../server/lib/tar-parser.js";
+import { buildZip } from "./helpers/archive-fixtures";
 
 function file(path, textSample, extra = {}) {
   return {
@@ -168,6 +170,48 @@ describe("PyPI artifact summaries and review", () => {
     expect(new Set(pth.map((finding) => finding.evidence))).toEqual(
       new Set([".pth file contains an import line"]),
     );
+  });
+
+  test("reads a `./x.pth` wheel member as the startup hook pip installs", async () => {
+    // Real wheel bytes through the streaming zip reader the sandbox uses, so
+    // the path normalization and the disclosure flag reach the review intact.
+    const wheel = buildZip([
+      ...wheelArtifactFiles("1.2.0").map((entry) => ({
+        path: entry.path,
+        body: entry.textSample,
+      })),
+      { path: "./evil.pth", body: "import demo_package.bootstrap\n" },
+      { path: "pkg/../usercustomize.py", body: "VALUE = 1\n" },
+    ]);
+    const parsed = await readZipStream(new Response(wheel).body, 100, 1 << 20, 1 << 20);
+    const path = "dist/demo_package-1.2.0-py3-none-any.whl";
+    const review = createPyPiReleaseCandidateReview({
+      manifest: parsePyPiReleaseManifest({
+        schema: "drydock.release-artifacts.v1",
+        ecosystem: "pypi",
+        package: "demo-package",
+        version: "1.2.0",
+        artifacts: [{ path, sha256: "a".repeat(64) }],
+      }),
+      artifacts: [{ path, files: parsed.files, suspiciousEntries: parsed.suspicious }],
+    });
+
+    expect(review.risk).toBe("high");
+    expect(review.ruleFindings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "pypi.pth-execution",
+        severity: "high",
+        file: `${path}/evil.pth`,
+        evidence: ".pth file contains an import line",
+      }),
+    );
+    const disclosures = review.ruleFindings.filter(
+      (finding) => finding.ruleId === "tar.suspicious-entry",
+    );
+    expect(disclosures).toEqual([
+      expect.objectContaining({ severity: "high", file: `${path}/pkg/../usercustomize.py` }),
+    ]);
+    expect(disclosures[0].reason).toContain("Zip extractors disagree");
   });
 
   test("creates deterministic PyPI findings for wheel startup hooks and setup.py install commands", () => {

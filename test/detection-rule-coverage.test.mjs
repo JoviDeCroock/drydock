@@ -37,9 +37,6 @@ const CORPUS_COVERAGE_EXCEPTIONS = new Map([
   // test/staged-artifact-integrity.test.mjs.
   ["stage.metadata-mismatch", "staged-artifact integrity comparison"],
   ["stage.tarball-digest-mismatch", "staged-artifact integrity comparison"],
-  // Emitted from tar parser structural metadata (TarSuspiciousEntry), which
-  // FileRecord fixtures cannot carry; covered by test/review.test.mjs.
-  ["tar.suspicious-entry", "tar parser structural metadata"],
   // Compares the release against the repository fingerprint; covered by
   // test/release-fingerprint.test.ts.
   ["release.source-drift", "release fingerprint comparison"],

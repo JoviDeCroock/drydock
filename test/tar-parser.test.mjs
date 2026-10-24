@@ -2498,6 +2498,8 @@ describe("rendered sandbox parser source", () => {
     "hasImplicitNodeGypInstall",
     "isSafePaxPath",
     "normalizeTarPath",
+    "normalizeZipPath",
+    "unrepresentableZipEntry",
     "parsePax",
     "describeNonRegularType",
     "sha256Hex",
@@ -2554,16 +2556,20 @@ return {
   safe: isSafePaxPath("clean/path.js"),
   unsafe: isSafePaxPath("nope" + String.fromCharCode(0) + "path"),
   normalized: normalizeTarPath("package/index.js"),
-  stripped: normalizeTarPath("dist/index.js", "strip1")
+  stripped: normalizeTarPath("dist/index.js", "strip1"),
+  zipPath: normalizeZipPath("./evil.pth"),
+  zipDisclosure: unrepresentableZipEntry("pkg/../evil.pth")
 };`,
     );
     // `stripped` also pins that the strip modes stay inline literals: a shared
     // constant would be a module-level dependency this rendered source lacks.
-    expect(run()).toEqual({
+    expect(run()).toMatchObject({
       safe: true,
       unsafe: false,
       normalized: "index.js",
       stripped: "index.js",
+      zipPath: "evil.pth",
+      zipDisclosure: { kind: "parser-differential", archive: "zip", path: "pkg/../evil.pth" },
     });
   });
 });

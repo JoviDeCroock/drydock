@@ -183,7 +183,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.54.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.55.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -870,6 +870,13 @@ minifies string- and template-aware. Goldens:
 `install-root-computed-exec-operand`, `install-root-chdir-relative-write`,
 `wallet-ctor-hook-privatekey-exfil`, `mnemonic-beacon-query-exfil`, `env-private-key-axios-exfil`.
 
+`1.55.0` makes the zip readers collapse pure `.` path segments the way the tar reader does, so
+`./evil.pth` is read as `evil.pth`: its content is inspected and reaches `pypi.pth-execution`
+rather than an uninspected disclosure. `..` segments, drive letters, backslashes and NUL stay
+unrepresentable. Those zip disclosures now carry `archive: "zip"`, and the finding's reason
+describes how pip and zip extractors resolve the name instead of node-tar and `npm install`. Rule
+ID and severity are unchanged.
+
 ### Fixture format
 
 Required fields:
@@ -885,6 +892,8 @@ Required fields:
 Optional fields:
 
 - `previousArtifacts` — previous-version `[{path, files}]`; enables `diff.*` findings.
+- `artifacts[].suspiciousEntries` — archive-reader disclosures (`{kind, path, detail, archive?}`);
+  they become `tar.suspicious-entry` findings at `<artifact path>/<entry path>`.
 - `coverageGaps` — documented-only blind spots (not asserted).
 
 `FileRecord = {path, size, sha256, flags[], textSample?}`. A wheel fixture should include a
