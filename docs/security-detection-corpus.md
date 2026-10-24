@@ -179,9 +179,9 @@ versions (see the invariant below).
 
 A PyPI review runs two rule families over the staged artifacts:
 
-- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
+- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.52.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.53.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -284,6 +284,19 @@ broad URL pattern; only the finding side (`FINDING_SECRET_PATTERNS`) narrows. On
 provenance signal there (requests alone produced 16 release-delta info findings). Unsafe, absolute,
 or Unicode-confusable directory records remain findings, and the remaining
 non-regular/suspicious-entry reasons use PyPI wording instead of npm's.
+PyPI `0.5.0` resolves where a wheel file lands on the import path the way an installer does
+before the startup-hook rules run. Under the `.data/data/` prefix scheme it models the
+site directories (`lib|lib64/pythonX.Y|pypyX.Y/site-packages`, Debian `dist-packages`, Windows
+`Lib/site-packages`, nt_user `PythonXY/site-packages`, and the Windows prefix root, which `site`
+treats as a site directory) plus the stdlib import directories (`lib/pythonX.Y`, `lib-dynload`,
+`Lib`, `DLLs`). `pypi.pth-execution` fires only in site directories; `pypi.startup-hook` matches
+`sitecustomize`/`usercustomize` in any importable form (package `__init__`, `.pyw`, sourceless
+`.pyc`, native extension) on any of them, and also flags a `pythonXY.zip` stdlib archive, which
+is searched before the stdlib. `.pth` import lines are read on every boundary `str.splitlines()`
+breaks on. The `.data/data` `.pth` and package-form hook were complete misses (risk low, no
+findings), pinned by `16-wheel-data-scheme-site-packages-pth` and `17-wheel-sitecustomize-package`;
+the benign control `18-benign-wheel-data-scheme-non-site-files` keeps Jupyter config and
+`.data/scripts` silent, and `test/pypi.test.mjs` tables every modeled layout.
 `1.18.0` closes the plain-dependency-addition gap: a newly added runtime or required
 peer dependency with an ordinary registry spec raises `dependency.added` (medium), while a peer
 marked optional through `peerDependenciesMeta` does not because npm will not install it
@@ -816,6 +829,12 @@ into a renamed chunk scores as it would in a modified file. Pairing work per dif
 capped and anything past the cap stays unpaired (added). Goldens:
 `renamed-chunk-capability-context`, `renamed-chunk-spliced-payload`.
 
+`1.53.0` stops the zip readers (wheels, VSIX) from silently dropping file entries whose names
+they cannot represent (`./x`, `a/../x`, backslash separators, drive letters). pip normalizes
+`./evil.pth` and installs it into site-packages, so the dropped entry was an invisible
+startup hook. Like the tar reader, both zip readers now record a high `parser-differential`
+`tar.suspicious-entry` with the content uninspected; directory markers stay silent.
+
 ### Fixture format
 
 Required fields:
@@ -861,13 +880,23 @@ A single file can fire findings from both families with different paths — e.g.
 top-level `os.system`/`urllib.request` produces `pypi.setup-install-command` at
 `dist/…tar.gz/setup.py` (Scheme A) **and** `code.process-execution`/`code.network-access` at
 `sdist/setup.py` (Scheme B). List both tuples.
-For startup-hook fixtures, only files installed at Python's site root are expected to fire:
-top-level wheel files and wheel `.data/{purelib,platlib}/` files count; package-internal files such as
-`demo_package/sitecustomize.py` or `demo_package/inject.pth` do not.
+For startup-hook fixtures, only files that land on Python's import path are expected to fire:
+top-level wheel files, wheel `.data/{purelib,platlib}/` files, and the `.data/data/` site and
+stdlib directories listed in the `0.5.0` changelog; package-internal files such as
+`demo_package/sitecustomize.py` or `demo_package/inject.pth`, and other `.data/` schemes
+(`scripts`, `headers`, `data/share`), do not.
 
 ### Known coverage gaps (PyPI)
 
 The corpus records these intentional blind spots rather than hiding them:
+
+- Startup-hook reach beyond the installed import path: a `.pth` path line that adds a
+  package-internal directory makes a nested `sitecustomize.py` importable (the `.pth` is
+  still flagged, at medium without an import line), and a `.data/scripts/` file named after a
+  stdlib module shadows it for that console script because `bin/` is `sys.path[0]`.
+- Only the CPython/PyPy install schemes Drydock models are resolved (posix_prefix, venv,
+  posix_user, macOS framework user, nt, nt venv, nt_user, Debian `dist-packages`); a custom
+  `--prefix`/`--root` layout outside them is not.
 
 - RECORD **hash** verification: only undeclared-file detection ships. RECORD digests are
   `sha256=<base64url-nopad>` while `FileRecord.sha256` is hex, so digest comparison needs a format

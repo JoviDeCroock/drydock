@@ -230,18 +230,19 @@ The first real-sanitized batch lives in `cases-frontier/` and is truth-labeled,
 so frontier recall now reflects real technique coverage rather than synthetic
 shapes only:
 
-| case                                  | technique               | provenance                         | caught today                                                                                                        |
-| ------------------------------------- | ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `npm-eslint-scope-npmrc-exfil`        | credential-steal        | eslint-scope 3.7.2 (2018)          | yes (postinstall + network)                                                                                         |
-| `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                                                            |
-| `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                                                                       |
-| `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                                                           |
-| `npm-miasma-phantom-gyp`              | phantom-gyp             | Miasma / Phantom Gyp (2026)        | yes (root `binding.gyp` command substitution)                                                                       |
-| `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                                                               |
-| `npm-dependency-confusion-beacon`     | dependency-confusion    | Birsan research (2021)             | yes (preinstall beacon)                                                                                             |
-| `npm-node-ipc-protestware-wiper`      | protestware             | node-ipc 10.1.x (2022)             | yes (rules >= 1.12.0) — modified-file network + dynamic-eval co-occur to high (fs wiping itself is still unmodeled) |
-| `npm-solana-web3js-keytheft`          | network-exfil           | @solana/web3.js (2024)             | **no** — key read from a function arg, modified-file network only medium                                            |
-| `npm-aws-credential-file-steal`       | credential-steal        | OpenSSF cloud-stealer family       | yes (rules >= 1.9.0) — file-path credential read + co-located network egress                                        |
+| case                                  | technique               | provenance                         | caught today                                                                                                                                  |
+| ------------------------------------- | ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm-eslint-scope-npmrc-exfil`        | credential-steal        | eslint-scope 3.7.2 (2018)          | yes (postinstall + network)                                                                                                                   |
+| `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                                                                                      |
+| `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                                                                                                 |
+| `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                                                                                     |
+| `npm-miasma-phantom-gyp`              | phantom-gyp             | Miasma / Phantom Gyp (2026)        | yes (root `binding.gyp` command substitution)                                                                                                 |
+| `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                                                                                         |
+| `npm-dependency-confusion-beacon`     | dependency-confusion    | Birsan research (2021)             | yes (preinstall beacon)                                                                                                                       |
+| `npm-node-ipc-protestware-wiper`      | protestware             | node-ipc 10.1.x (2022)             | yes (rules >= 1.12.0) — modified-file network + dynamic-eval co-occur to high (fs wiping itself is still unmodeled)                           |
+| `npm-solana-web3js-keytheft`          | network-exfil           | @solana/web3.js (2024)             | **no** — key read from a function arg, modified-file network only medium                                                                      |
+| `npm-aws-credential-file-steal`       | credential-steal        | OpenSSF cloud-stealer family       | yes (rules >= 1.9.0) — file-path credential read + co-located network egress                                                                  |
+| `pypi-litellm-pth-credential-stealer` | pth-injection           | LiteLLM 1.107.0 (2026)             | yes — `.data/purelib` `.pth` import + `sitecustomize.py` at the install root; PyPI rules 0.5.0 add the `.data/data` and package-form variants |
 
 The remaining misses are the point: each documents a concrete residual gap
 (function-argument secret flows) for the rules to ratchet against.
