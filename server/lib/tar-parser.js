@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier"|"parser-differential", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier"|"parser-differential", path: string, detail: string, archive?: "zip" }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   // POSIX tar fields are NUL-terminated bytes with no declared charset, but
@@ -181,18 +181,21 @@ export function normalizeTarPath(rawPath, rootStrip = "package-prefix") {
 }
 
 // A file entry whose name normalizeZipPath rejects used to vanish, deleting
-// the only evidence it exists. pip resolves `./x` and `a/../x` to a file inside
+// the only evidence it exists. pip resolves `a/../x` to a file inside
 // site-packages, and Windows extractors split on backslashes, so the entry is
 // disclosed (mirroring the tar reader) with its content left uninspected.
-function unrepresentableZipEntry(rawPath) {
+// `archive: "zip"` lets the review explain it in zip terms instead of the tar
+// reader's node-tar framing. Exported so the sandbox render includes it.
+export function unrepresentableZipEntry(rawPath) {
   if (!rawPath || rawPath.endsWith("/")) return null;
   return {
     kind: "parser-differential",
+    archive: "zip",
     path: clipTextSample(rawPath, 256) || "<unnamed>",
     detail:
       rawPath.length > 512
         ? "entry path exceeds the 512-character limit this reader records; the entry was not inspected"
-        : "entry path is not representable as a safe relative path (`.`/`..` segment, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here",
+        : "entry path is not representable as a safe relative path (`..` segment, `./` before a `.dist-info`/`.data` directory, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here",
   };
 }
 
@@ -202,9 +205,19 @@ export function normalizeZipPath(rawPath) {
   let path = rawPath.replace(/^\/+/, "");
   if (!path || path.endsWith("/") || path.startsWith("../") || path.includes("/../")) return null;
   if (/^[A-Za-z]:/.test(path)) return null;
-  const parts = path.split("/").filter(Boolean);
-  if (!parts.length || parts.some((part) => part === "." || part === "..")) return null;
+  // `.` segments are no-ops that pip and every zip extractor collapse
+  // (`./evil.pth` lands in site-packages as `evil.pth`), so they are dropped
+  // as the tar reader drops them; rejecting them left that file unread.
+  const parts = path.split("/").filter((part) => part && part !== ".");
+  if (!parts.length || parts.some((part) => part === "..")) return null;
+  // Except where pip reads the raw first segment: it finds `*.dist-info` and
+  // routes `*.data` schemes by the name as written, so `./x.dist-info/METADATA`
+  // is not the metadata pip reads and `./x.data/purelib/y` installs under
+  // `x.data/`. Collapsing those would merge a decoy onto the real path.
+  if (path.split("/")[0] === "." && /\.(?:dist-info|data)$/i.test(parts[0])) return null;
   path = parts.join("/");
+  // Collapsing can expose a drive letter the early check missed (`./C:x`).
+  if (/^[A-Za-z]:/.test(path)) return null;
   if (path.length > 512) return null;
   return path;
 }
