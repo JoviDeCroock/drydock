@@ -33,9 +33,12 @@ un-audited.
 Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
 `organization.*` (including `organization.api_key_created` and
-`organization.api_key_revoked`, shown with the key's name and display prefix), and
-notification-delivery events. Individual API-key requests are not recorded; see
-[`api-keys.md`](./api-keys.md).
+`organization.api_key_revoked`, shown with the key's name, display prefix, and
+access), and notification-delivery events. Individual API-key reads are not
+recorded, but every review a `scan` key starts is:
+`organization.api_key_review_started` (with the package and version) and
+`organization.api_key_discovery_ran` (with how many reviews it started), both
+attributed to the key's creator. See [`api-keys.md`](./api-keys.md).
 
 A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view

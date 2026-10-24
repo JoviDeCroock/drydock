@@ -21,6 +21,8 @@ import {
   SCAN_DECISION_FILTERS,
   type ScanDecisionFilter,
   deleteFailedScan,
+  deletePendingScanJob,
+  findLiveStageReviewId,
   findMemberScanOrganization,
   getScan,
   getScanFile,
@@ -28,10 +30,17 @@ import {
   listScans,
   readScanRiskBreakdown,
   scanPublicDisclosureAllowed,
+  StageReviewExistsError,
 } from "../../db/scans";
-import { requireActiveOrganization } from "../../lib/auth/active-organization";
+import { recordApiKeyAction } from "../../db/api-keys";
+import {
+  requestActorUserId,
+  requestBudgetKey,
+  requireActiveOrganization,
+} from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
+import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../lib/ecosystems/npm/connection";
 import {
   checkStagedPublishAccess,
@@ -58,12 +67,23 @@ scanLifecycleRoutes.post("/", async (c) => {
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
 
   const db = c.var.db;
-  const session = c.get("authSession");
+  // A `scan` API key acts as its creator (`requestActorUserId`).
+  const actorUserId = requestActorUserId(c);
   const organizationId = await requireActiveOrganization(c, db);
+
+  // A stage this organization already reviews is answered with that review: a
+  // re-run CI job, or one racing the cron or "Check npm", must not pay for a
+  // second review or supersede one a person already decided. `createScanJob`
+  // repeats the check atomically for requests that pass this one together.
+  if (parsed.kind === "staged") {
+    const existingId = await findLiveStageReviewId(db, organizationId, parsed.input.stageId);
+    if (existingId) return existingReview(c, db, organizationId, existingId);
+  }
+
   const limited = await guardRateLimit(
     c,
     {
-      key: `scan:${organizationId}`,
+      key: requestBudgetKey(c, `scan:${organizationId}`),
       limit: ORGANIZATION_SCAN_LIMIT,
       windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     },
@@ -81,12 +101,17 @@ scanLifecycleRoutes.post("/", async (c) => {
   const detail = await createPreparedScan(db, {
     scanId,
     organizationId,
-    ownerUserId: session.userId,
+    ownerUserId: actorUserId,
     prepared,
   }).catch((err: unknown) => {
-    if (err instanceof PackageClaimConflictError) return err;
+    if (err instanceof PackageClaimConflictError || err instanceof StageReviewExistsError) {
+      return err;
+    }
     throw err;
   });
+  if (detail instanceof StageReviewExistsError) {
+    return existingReview(c, db, organizationId, detail.scanId);
+  }
   if (detail instanceof PackageClaimConflictError) {
     // The caller already proved stage access; only its own history is described.
     const availability = await readNpmPackageClaimAvailability(db, {
@@ -101,24 +126,63 @@ scanLifecycleRoutes.post("/", async (c) => {
     return c.json({ error }, 409);
   }
   if (!detail) return c.json({ error: "failed to create scan" }, 500);
-  if (prepared.staged) {
-    await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
+  try {
+    if (prepared.staged) {
+      await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
+        organizationId,
+        registryUrl: prepared.registryUrl!,
+        releases: [prepared.staged],
+      });
+    }
+    await enqueuePreparedScan(c, db, {
+      scanId,
       organizationId,
-      registryUrl: prepared.registryUrl!,
-      releases: [prepared.staged],
+      actorUserId,
+      prepared,
+    });
+  } catch (err) {
+    // A pending row nothing will run would answer every retry of this stage as
+    // an existing review (see the check above), so the start is undone.
+    await deletePendingScanJob(db, scanId, organizationId);
+    throw err;
+  }
+
+  const apiKey = c.get("apiKey");
+  if (apiKey) {
+    // The review is already queued; a failed audit write must not answer 500
+    // and invite a CI retry that starts a second one.
+    await recordApiKeyAction(db, apiKey, {
+      type: "organization.api_key_review_started",
+      scanId,
+      metadata: {
+        ecosystem: prepared.ecosystem,
+        packageName: prepared.packageName,
+        stagedVersion: prepared.version,
+      },
+    }).catch((err: unknown) => {
+      emitOperationalEvent("error", "api_key.audit_failed", {
+        apiKeyId: apiKey.id,
+        scanId,
+        error: describeOperationalError(err),
+      });
     });
   }
-  await enqueuePreparedScan(c, db, {
-    scanId,
-    organizationId,
-    actorUserId: session.userId,
-    prepared,
-  });
 
-  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
+  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE), existing: false }, 202);
 });
 
 type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
+
+async function existingReview(
+  c: ScanRouteContext,
+  db: AppDb,
+  organizationId: string,
+  scanId: string,
+): Promise<Response> {
+  const existing = await getScan(db, scanId, organizationId);
+  if (!existing) return c.json({ error: "failed to create scan" }, 500);
+  return c.json({ scan: existing.scan, queued: false, existing: true }, 200);
+}
 
 async function prepareStagedScan(
   c: ScanRouteContext,

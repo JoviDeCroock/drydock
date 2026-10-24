@@ -169,6 +169,28 @@ export function formatScanStatus(body) {
   return `${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}  ${risk}`;
 }
 
+/** @param {any} body the `POST /api/v1/scans` response */
+export function formatStartedScan(body) {
+  const scan = body.scan ?? {};
+  // `existing`: the stage already had a review, and the request started nothing.
+  const lead = body.existing === true ? "already reviewing" : "started review";
+  return `${lead} ${clean(scan.id)}  ${packageLabel(scan)}  ${clean(scan.status)}`;
+}
+
+/** @param {any} body the `POST /api/v1/staged-publishes/scan` response */
+export function formatDiscovery(body) {
+  const scans = Array.isArray(body.scans) ? body.scans : [];
+  const created = Number(body.created ?? 0);
+  const summary = `npm: ${Number(body.found ?? 0)} staged, ${created} ${created === 1 ? "review" : "reviews"} started, ${Number(body.skipped ?? 0)} skipped`;
+  if (scans.length === 0) return summary;
+  const rows = scans.map((/** @type {any} */ scan) => [
+    clean(scan.id),
+    scan.version ? `${clean(scan.packageName)}@${clean(scan.version)}` : clean(scan.packageName),
+    clean(scan.stageId),
+  ]);
+  return `${summary}\n\n${table(["REVIEW", "PACKAGE", "STAGE"], rows)}`;
+}
+
 /** @param {any} body */
 export function formatReleases(body) {
   const releases = Array.isArray(body.releases) ? body.releases : [];

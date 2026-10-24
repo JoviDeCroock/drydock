@@ -5,29 +5,40 @@ import {
   terminalSafeJson,
   terminalSafeJsonText,
   terminalSafeLine,
+  formatDiscovery,
   formatDiff,
   formatGate,
   formatReleases,
   formatScan,
   formatScanList,
   formatScanStatus,
+  formatStartedScan,
   formatWhoami,
 } from "./format.mjs";
 import { CLI_VERSION } from "./version.mjs";
 
 const USAGE = `Usage: drydock <command> [options]
 
-Read an organization's Drydock reviews from scripts and CI. Every command is
-read-only: decisions stay with signed-in maintainers.
+Read an organization's Drydock reviews from scripts and CI, and start new ones
+with a key that has scan access. Release decisions stay with signed-in
+maintainers.
 
 Commands:
-  whoami                          The API key's organization and expiry
+  whoami                          The API key's organization, expiry, and access
   scans list                      Reviews, newest first
       [--filter undecided|published_without_decision|decided|publish|no_publish|all]
       [--limit N] [--cursor C]
   scans get <review-id>           One review and its findings
   scans wait <review-id>          Poll until the review completes
       [--timeout SECONDS] [--interval SECONDS] [--fail-on RISK]
+  scans start <package>@<version> Review a published version (scan access)
+      [--ecosystem npm|pypi|vscode|atpm] [--baseline VERSION]
+      [--wait [--timeout S] [--interval S] [--fail-on RISK]]
+  scans start --stage <stage-id>  Review an npm staged publish (scan access)
+      [--wait [--timeout S] [--interval S] [--fail-on RISK]]
+  check-npm                       Discover new npm staged publishes and start
+                                  their reviews, like "Check npm" (scan access)
+      [--wait [--timeout S] [--interval S]]
   report <review-id>              The canonical report export (drydock.report.v2)
       [--output FILE]
   receipt <review-id>             The Release Receipt, checked against its digest
@@ -50,12 +61,12 @@ Environment:
   DRYDOCK_URL      Drydock origin
 
 --fail-on RISK (low, medium, high, or critical) gates on release risk: the
-findings the release introduces, as the workflow gate does. scans wait retries
+findings the release introduces, as the workflow gate does. Every wait retries
 rate limits, server errors, and network errors until --timeout.
 
 Exit codes: 0 success, 1 request or review failed, 2 usage error,
-3 release risk at or above --fail-on, 4 scans wait timed out before the
-review finished (or before its status could be read).
+3 release risk at or above --fail-on, 4 a wait timed out before the review
+finished (or before its status could be read).
 `;
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
@@ -106,6 +117,9 @@ export async function main(argv, io) {
       timeout: { type: "string" },
       interval: { type: "string" },
       "fail-on": { type: "string" },
+      stage: { type: "string" },
+      baseline: { type: "string" },
+      wait: { type: "boolean" },
     });
   } catch (err) {
     io.stderr(`drydock: ${terminalSafeLine(err instanceof Error ? err.message : err)}\n\n${USAGE}`);
@@ -170,6 +184,11 @@ function resolveCommand(positionals) {
     "scans list": { run: scansList, options: ["filter", "limit", "cursor"] },
     "scans get": { run: scansGet, options: [] },
     "scans wait": { run: scansWait, options: ["timeout", "interval", "fail-on"] },
+    "scans start": {
+      run: scansStart,
+      options: ["stage", "ecosystem", "baseline", "wait", "timeout", "interval", "fail-on"],
+    },
+    "check-npm": { run: checkNpm, options: ["wait", "timeout", "interval", "fail-on"] },
     report: { run: (ctx) => download(ctx, "report.json"), options: ["output"] },
     receipt: { run: (ctx) => download(ctx, "release-receipt.json"), options: ["output"] },
     releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
@@ -318,10 +337,44 @@ async function scansWait(ctx) {
     2,
     "scans wait <review-id> [--timeout S] [--interval S] [--fail-on RISK]",
   );
+  const waiting = waitSettings(ctx);
+  const status = await waitForReview(ctx, id, waiting);
+  print(ctx, status, formatScanStatus);
+  return reviewExitCode([status], waiting.threshold);
+}
+
+/**
+ * @param {CommandContext} ctx
+ * @returns {{ threshold: number | null; intervalMs: number; deadline: number }}
+ */
+function waitSettings(ctx) {
   const threshold = failOnThreshold(ctx.values);
   const timeoutMs = positiveNumber(ctx.values.timeout, "--timeout", 600) * 1000;
   const intervalMs = positiveNumber(ctx.values.interval, "--interval", 5) * 1000;
-  const deadline = ctx.io.now() + timeoutMs;
+  return { threshold, intervalMs, deadline: ctx.io.now() + timeoutMs };
+}
+
+/**
+ * `--wait` settings for a command that starts reviews, or null without
+ * `--wait`, where a waiting flag would otherwise be silently ignored.
+ * @param {CommandContext} ctx
+ */
+function optionalWaitSettings(ctx) {
+  if (ctx.values.wait) return waitSettings(ctx);
+  for (const flag of ["fail-on", "timeout", "interval"]) {
+    if (ctx.values[flag] !== undefined) throw new CliError(`--${flag} needs --wait`, 2);
+  }
+  return null;
+}
+
+/**
+ * Polls one review until it completes or fails, or the shared deadline passes.
+ * @param {CommandContext} ctx
+ * @param {string} id
+ * @param {{ intervalMs: number; deadline: number }} waiting
+ * @returns {Promise<any>} the final `GET /scans/:id/status` body
+ */
+async function waitForReview(ctx, id, { intervalMs, deadline }) {
   const path = `/api/v1/scans/${pathSegment(id, "review id")}/status`;
   let failures = 0;
   for (;;) {
@@ -349,13 +402,7 @@ async function scansWait(ctx) {
       continue;
     }
     const { scan } = body;
-    if (scan?.status === "complete" || scan?.status === "failed") {
-      print(ctx, body, formatScanStatus);
-      if (scan.status === "failed") return 1;
-      // No breakdown (no baseline compared, or an older review) falls back to
-      // the overall risk, which is never lower than the release risk.
-      return meetsThreshold(threshold, body.riskSummary?.releaseRisk ?? scan.risk) ? 3 : 0;
-    }
+    if (scan?.status === "complete" || scan?.status === "failed") return body;
     if (ctx.io.now() + intervalMs > deadline) {
       throw new CliError(
         `review ${id} is still ${scan?.status ?? "pending"} after the timeout`,
@@ -364,6 +411,116 @@ async function scansWait(ctx) {
     }
     await ctx.io.sleep(intervalMs);
   }
+}
+
+/**
+ * 3 when any review reaches the threshold, else 1 when any failed, else 0. A
+ * review at the threshold is the decisive signal for a release gate; a failed
+ * one only says that review has no verdict. Gates on release risk; without a
+ * breakdown (no baseline compared, or an older review) it falls back to the
+ * overall risk, which is never lower.
+ * @param {any[]} statuses final `GET /scans/:id/status` bodies
+ * @param {number | null} threshold
+ */
+function reviewExitCode(statuses, threshold) {
+  const reachesThreshold = (/** @type {any} */ body) =>
+    body?.scan?.status !== "failed" &&
+    meetsThreshold(threshold, body?.riskSummary?.releaseRisk ?? body?.scan?.risk);
+  if (statuses.some(reachesThreshold)) return 3;
+  return statuses.some((body) => body?.scan?.status === "failed") ? 1 : 0;
+}
+
+/**
+ * Waits for each started review in turn under one deadline and prints their
+ * final statuses: one JSON object with `--json`, a status line each otherwise.
+ * @param {CommandContext} ctx
+ * @param {string[]} ids
+ * @param {ReturnType<typeof waitSettings>} waiting
+ * @param {unknown} started the start response, carried into `--json` output
+ */
+async function waitAndReport(ctx, ids, waiting, started) {
+  const results = [];
+  for (const id of ids) results.push(await waitForReview(ctx, id, waiting));
+  if (ctx.values.json) {
+    ctx.io.stdout(`${terminalSafeJson({ .../** @type {object} */ (started), results })}\n`);
+  } else {
+    for (const status of results) ctx.io.stdout(`${formatScanStatus(status)}\n`);
+  }
+  return reviewExitCode(results, waiting.threshold);
+}
+
+/**
+ * `<name>@<version>`, splitting at the last `@` so a scoped npm name keeps its
+ * leading one (`@scope/name@1.2.3`).
+ * @param {string} spec
+ */
+function parsePackageSpec(spec) {
+  const at = spec.lastIndexOf("@");
+  const packageName = at > 0 ? spec.slice(0, at).trim() : "";
+  const version = at > 0 ? spec.slice(at + 1).trim() : "";
+  if (!packageName || !version) {
+    throw new CliError(`expected <package>@<version>, got: ${spec}`, 2);
+  }
+  return { packageName, version };
+}
+
+const START_USAGE =
+  "scans start <package>@<version> [--ecosystem E] [--baseline V] | scans start --stage <stage-id> [--wait] [--fail-on RISK]";
+
+/** @param {CommandContext} ctx */
+async function scansStart(ctx) {
+  const { stage, ecosystem, baseline } = ctx.values;
+  /** @type {Record<string, string>} */
+  let body;
+  if (stage !== undefined) {
+    args(ctx, 0, 2, START_USAGE);
+    if (ecosystem !== undefined || baseline !== undefined) {
+      throw new CliError("--stage names an npm staged publish; drop --ecosystem and --baseline", 2);
+    }
+    if (typeof stage !== "string" || !stage.trim()) throw new CliError("--stage needs a value", 2);
+    body = { stageId: stage.trim() };
+  } else {
+    const [spec] = args(ctx, 1, 2, START_USAGE);
+    oneOf(ecosystem, ECOSYSTEMS, "--ecosystem");
+    const { packageName, version } = parsePackageSpec(spec);
+    body = { ecosystem: typeof ecosystem === "string" ? ecosystem : "npm", packageName, version };
+    if (typeof baseline === "string" && baseline.trim()) body.baselineVersion = baseline.trim();
+  }
+  const waiting = optionalWaitSettings(ctx);
+
+  const started = await ctx.client.json("/api/v1/scans", { method: "POST", body });
+  const id = started?.scan?.id;
+  if (typeof id !== "string" || !id) throw new CliError("Drydock did not return a review id");
+  if (!waiting) {
+    print(ctx, started, formatStartedScan);
+    return 0;
+  }
+  if (!ctx.values.json) ctx.io.stderr(`${formatStartedScan(started)}\n`);
+  return waitAndReport(ctx, [id], waiting, started);
+}
+
+/** @param {CommandContext} ctx */
+async function checkNpm(ctx) {
+  args(ctx, 0, 1, "check-npm [--wait [--timeout S] [--interval S]]");
+  // Discovery starts reviews only for stages nobody reviewed yet, so a stage the
+  // cron already picked up would pass any threshold: check-npm is not a gate.
+  if (ctx.values["fail-on"] !== undefined) {
+    throw new CliError(
+      'check-npm is not a gate; use "scans start --stage <stage-id> --wait --fail-on RISK"',
+      2,
+    );
+  }
+  const waiting = optionalWaitSettings(ctx);
+  const result = await ctx.client.json("/api/v1/staged-publishes/scan", { method: "POST" });
+  if (!waiting) {
+    print(ctx, result, formatDiscovery);
+    return 0;
+  }
+  if (!ctx.values.json) ctx.io.stderr(`${formatDiscovery(result)}\n`);
+  const ids = (Array.isArray(result?.scans) ? result.scans : [])
+    .map((/** @type {any} */ scan) => scan?.id)
+    .filter((/** @type {unknown} */ id) => typeof id === "string" && id);
+  return waitAndReport(ctx, ids, waiting, result);
 }
 
 /**

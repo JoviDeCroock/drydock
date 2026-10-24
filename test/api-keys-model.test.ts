@@ -9,6 +9,7 @@ function apiKey(id: string, expiresInMs: number): OrganizationApiKey {
     id,
     name: id,
     prefix: `dd_${id}`,
+    access: "read",
     createdAt: new Date(Date.now() - DAY_MS).toISOString(),
     expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
     lastUsedAt: null,
