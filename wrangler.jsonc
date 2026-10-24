@@ -139,8 +139,8 @@
 		}
 	],
 	// Beta detonation sandbox: runs a staged package's install scripts and
-	// entry points in a container with no internet; all HTTP(S) is
-	// intercepted by DetonationEgress. Gated per organization by the
+	// entry points in a container whose HTTP(S) all goes through
+	// DetonationEgress (DNS is only partly observed). Gated per organization by the
 	// `detonation-sandbox` flag. See docs/detonation-sandbox.md.
 	"containers": [
 		{

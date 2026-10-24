@@ -171,8 +171,9 @@
 	// Opt-in, beta: the detonation sandbox runs staged packages' install
 	// scripts in a Cloudflare Container (Workers Paid, Docker in the build).
 	// Off by default so a self-host never executes package code. To opt in,
-	// uncomment this block and the two DETONATION_QUEUE entries under `queues`,
-	// create that queue and its DLQ, and enable the `detonation-sandbox` flag.
+	// uncomment this block and the producer and consumer entries marked
+	// "Detonation opt-in" under `queues`, create that queue and its DLQ, and
+	// enable the `detonation-sandbox` flag.
 	// See docs/detonation-sandbox.md.
 	// "containers": [
 	// 	{

@@ -71,7 +71,9 @@ export function DetonationSection({ scanId }: { scanId: string }) {
         {/* Stays mounted across states so a run finishing is announced. */}
         <div role="status" class="flex flex-col gap-1 min-w-0">
           {view.kind === "pending" ? (
-            <LoadingLine size="inline">{view.label}</LoadingLine>
+            <LoadingLine size="inline" live={false}>
+              {view.label}
+            </LoadingLine>
           ) : (
             <p
               class={
