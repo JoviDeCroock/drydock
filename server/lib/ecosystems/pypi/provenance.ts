@@ -67,16 +67,29 @@ export async function pypiProvenanceContinuity(args: {
   const read: ReadReleaseProvenance =
     args.readProvenance ??
     ((version, filenames) => readPyPiRegistryProvenance(args.projectName, version, filenames));
-  const baselineFiles =
-    lineage.baseline === args.fromVersion
-      ? args.fromFilenames
-      : representativeFilenames(args.metadata, lineage.baseline);
+  const baselineVersion = lineage.baseline;
   const [baseline, candidate] = await Promise.all([
-    read(lineage.baseline, baselineFiles),
+    baselineVersion === null
+      ? null
+      : read(
+          baselineVersion,
+          baselineVersion === args.fromVersion
+            ? args.fromFilenames
+            : representativeFilenames(args.metadata, baselineVersion),
+        ),
     read(args.toVersion, args.toFilenames),
   ]);
+  // The set-aside prerelease is the requested baseline, so its checked files
+  // are the diff's. Read only when it could still speak.
+  const prerelease = lineage.prerelease;
+  const prereleaseProvenance =
+    prerelease !== null &&
+    candidate.status === "absent" &&
+    (!baseline || baseline.status === "absent")
+      ? await read(prerelease, args.fromFilenames)
+      : null;
   const prior =
-    baseline.status === "present" && candidate.status === "absent"
+    baseline?.status === "present" && candidate.status === "absent"
       ? await Promise.all(
           lineage.prior.map(async (version) => {
             const filenames = representativeFilenames(args.metadata, version);
@@ -86,8 +99,15 @@ export async function pypiProvenanceContinuity(args: {
       : [];
   return evaluateProvenanceContinuity({
     registry: "PyPI",
-    baseline: { version: lineage.baseline, provenance: baseline },
+    baseline:
+      baselineVersion === null || !baseline
+        ? null
+        : { version: baselineVersion, provenance: baseline },
     candidate: { version: args.toVersion, provenance: candidate },
+    prereleaseBaseline:
+      prerelease === null || !prereleaseProvenance
+        ? null
+        : { version: prerelease, provenance: prereleaseProvenance },
     prior,
     absenceScope: "checked-files",
   });
@@ -222,9 +242,15 @@ export function classifyPyPiProvenanceResponse(
   filename: string,
 ): FileProvenance {
   if (status === 404) {
-    return isRecord(body) && body.message === `No provenance available for ${filename}`
-      ? { status: "absent" }
-      : { status: "unknown" };
+    if (isRecord(body) && body.message === `No provenance available for ${filename}`) {
+      return { status: "absent" };
+    }
+    // Visible because every such pair is cached briefly: a changed message
+    // would quietly shorten every PyPI diff's cache lifetime.
+    emitOperationalEvent("warn", "public_diff.pypi_provenance.unavailable", {
+      status: "not_found_unrecognized",
+    });
+    return { status: "unknown" };
   }
   if (status !== 200) {
     emitOperationalEvent("warn", "public_diff.pypi_provenance.unavailable", { status });

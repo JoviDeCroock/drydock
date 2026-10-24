@@ -2,7 +2,7 @@
   "id": "legit-provenance-ci-prerelease-hand-stable",
   "title": "npm stable published by hand after a CI-attested prerelease",
   "category": "control",
-  "intent": "Prereleases come from an attested CI job; stable releases have always been published by hand. The stable is judged against the previous stable, which never had provenance, not against its own release candidate.",
+  "intent": "Prereleases come from an attested CI job; stable releases have always been published by hand. The stable is judged against the previous stable, which never had provenance, so the attested release candidate adds only low context, never release risk.",
   "ecosystem": "npm",
   "registryProvenance": {
     "packageName": "example-widget",
@@ -128,7 +128,13 @@
     }
   },
   "expectedRisk": "low",
-  "expectedFindings": [],
+  "expectedFindings": [
+    {
+      "ruleId": "release.provenance-dropped",
+      "severity": "low",
+      "file": "<release-process>"
+    }
+  ],
   "verdict": "benign",
   "threatClass": "legit-provenance-continuity",
   "source": "synthetic",

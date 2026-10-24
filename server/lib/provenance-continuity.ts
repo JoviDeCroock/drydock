@@ -55,8 +55,15 @@ interface ProvenanceSide {
 export interface ProvenanceContinuityArgs {
   /** Registry display name for evidence text, e.g. `npm`, `PyPI`. */
   registry: string;
-  baseline: ProvenanceSide;
+  /** Null when the candidate's channel has no earlier qualifying release. */
+  baseline: ProvenanceSide | null;
   candidate: ProvenanceSide;
+  /**
+   * The requested prerelease baseline of a stable candidate, set aside for its
+   * channel (`provenanceLineage().prerelease`). It only speaks when the
+   * channel baseline carries no provenance.
+   */
+  prereleaseBaseline?: ProvenanceSide | null;
   /**
    * Provenance of the releases before the baseline in the candidate's channel,
    * newest first (`provenanceLineage().prior`). A drop is medium only after
@@ -153,8 +160,15 @@ const ESTABLISHED_PROVENANCE_RELEASES = 3;
  * the history the drop rule reads.
  */
 export interface ProvenanceLineage {
-  baseline: string;
+  baseline: string | null;
   prior: string[];
+  /**
+   * The requested baseline when it was set aside only because it is a
+   * prerelease and the candidate is stable. A stable published without
+   * provenance after attested release candidates is still reported (at low)
+   * when no earlier stable carries provenance.
+   */
+  prerelease: string | null;
 }
 
 export interface ProvenanceVersionScheme<P> {
@@ -205,13 +219,23 @@ export function provenanceLineage<P>(
   const effective = qualifies(baseline, baselineParsed)
     ? { version: baseline, parsed: baselineParsed }
     : channel[0];
-  if (!effective) return null;
+  const baselineTime = scheme.publishedAt(baseline);
+  const prerelease =
+    stableOnly &&
+    scheme.isPrerelease(baselineParsed) &&
+    (candidateTime === null || baselineTime === null || baselineTime < candidateTime)
+      ? baseline
+      : null;
+  if (!effective && !prerelease) return null;
   return {
-    baseline: effective.version,
-    prior: channel
-      .filter((entry) => scheme.compare(entry.parsed, effective.parsed) < 0)
-      .slice(0, ESTABLISHED_PROVENANCE_RELEASES - 1)
-      .map((entry) => entry.version),
+    baseline: effective?.version ?? null,
+    prior: effective
+      ? channel
+          .filter((entry) => scheme.compare(entry.parsed, effective.parsed) < 0)
+          .slice(0, ESTABLISHED_PROVENANCE_RELEASES - 1)
+          .map((entry) => entry.version)
+      : [],
+    prerelease,
   };
 }
 
@@ -236,23 +260,24 @@ export function evaluateProvenanceContinuity(
   return {
     findings: provenanceContinuityFindings(args),
     unsettled:
-      args.baseline.provenance.status === "unknown" ||
+      args.baseline?.provenance.status === "unknown" ||
       args.candidate.provenance.status === "unknown" ||
+      args.prereleaseBaseline?.provenance.status === "unknown" ||
       args.prior.includes("unknown"),
   };
 }
 
 export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Finding[] {
   const { baseline, candidate } = args;
-  if (baseline.provenance.status !== "present") return [];
+  const scope =
+    args.absenceScope === "checked-files"
+      ? `for the checked files of ${candidate.version}`
+      : `for ${candidate.version}`;
+  if (baseline?.provenance.status !== "present") return prereleaseDrop(args, scope);
 
   if (candidate.provenance.status === "absent") {
     const from = describePublishers(baseline.provenance.publishers);
     const established = isEstablished(args.prior);
-    const scope =
-      args.absenceScope === "checked-files"
-        ? `for the checked files of ${candidate.version}`
-        : `for ${candidate.version}`;
     return [
       stamp(
         tag("releaseProvenanceDropped", {
@@ -312,6 +337,32 @@ export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Fi
       "low",
       `${args.registry} provenance for ${baseline.version} names ${describePublishers(before)}; ${candidate.version} names ${describePublishers(newWorkflow)}`,
       "this release was built by a different workflow in the same repository than the previous one; usually a renamed or reorganized release pipeline, but a workflow that was never part of the release process is also how a repository compromise publishes",
+    ),
+  ];
+}
+
+// A stable without provenance after attested release candidates, when no
+// earlier stable carries provenance. Projects often attest only prereleases
+// and publish stables by hand, so this is low; it keeps a project that adopted
+// provenance during a beta series from going silent at its first stable.
+function prereleaseDrop(args: ProvenanceContinuityArgs, scope: string): Finding[] {
+  const prerelease = args.prereleaseBaseline;
+  if (prerelease?.provenance.status !== "present") return [];
+  if (args.candidate.provenance.status !== "absent") return [];
+  if (args.baseline && args.baseline.provenance.status !== "absent") return [];
+  const from = describePublishers(prerelease.provenance.publishers);
+  const stable = args.baseline
+    ? `the previous stable release ${args.baseline.version} carries none`
+    : "there is no earlier stable release";
+  return [
+    stamp(
+      tag("releaseProvenanceDropped", {
+        severity: "low",
+        file: RELEASE_PROCESS_FINDING_FILE,
+        evidence: `${args.registry} reports build provenance for prerelease ${prerelease.version}${from ? ` (${from})` : ""} and none ${scope}; ${stable}`,
+        reason:
+          "the prereleases leading to this release were built by attested CI and this stable release carries no provenance; many projects attest prereleases and publish stables by hand, but a stable published around CI with a stolen token looks the same — context, not release risk",
+      }),
     ),
   ];
 }
