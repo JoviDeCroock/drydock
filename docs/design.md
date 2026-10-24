@@ -4,7 +4,7 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 
 ## Product Context
 
-- **What this is:** A second pair of eyes before a release is published, with authority stated by mode. **Workflow Gate — enforced** can approve or reject the configured protected GitHub publish job. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject and manual publication remains possible. Drydock never publishes.
+- **What this is:** A second pair of eyes before a release is published, with authority stated by mode. **Workflow Gate — enforced**: a GitHub deployment-protection rule holds the configured protected publish job until Drydock answers; GitHub enforces the hold, for that job only. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject and manual publication remains possible. Drydock never publishes.
 - **How releases reach it:** three paths, one review surface. **Stage Watchtower — advisory** reviews a private npm staged tarball; **atpm staging** reviews a public, content-addressed candidate with verified build provenance; **Workflow Gate — enforced** holds a configured GitHub Actions publish job behind a deployment-protection rule. All render the same report — ecosystem and release path change the evidence and authority, never the layout.
 - **Surfaces:** the authenticated scan workbench (dashboard, scan detail, settings), the public docs learning path, the marketing landing, and `/diff` — an anonymous, credential-free diff of two published npm, PyPI, or atpm versions that reuses the same review UI without an account.
 - **Who it's for:** Package authors, security-conscious maintainers, and reviewers at companies that publish to public registries.
@@ -334,7 +334,7 @@ Five patterns, picked by _what the user can do next_.
 
 - Lead with the reader's task and a concrete benefit. Name the package, file, command, or job involved instead of relying on slogans.
 - Give each sentence one main point. Cut filler, dramatic contrasts, and long lists of capabilities; keep technical detail where it helps the reader act.
-- Buttons say what the action does. Advisory review actions use `Record approval` and `Record rejection`; only a Workflow Gate decision can continue or block the configured protected job.
+- Buttons say what the action does. Advisory review actions use `Record approval` and `Record rejection`; only a Workflow Gate decision makes GitHub continue or block the configured protected job.
 - Use `approved` and `rejected` for recorded review decisions. Reserve `blocked` for an observed npm status or a protected GitHub job that cannot continue.
 - Keep public page titles and search descriptions aligned with the visible copy. Findings point to relevant evidence, with file and line context when available; a review does not guarantee a safe release.
 - Keep established mode names (`Workflow Gate — enforced`, `Stage Watchtower — advisory`) and useful technical terms. Remove decorative punctuation and unexplained jargon from surrounding prose.

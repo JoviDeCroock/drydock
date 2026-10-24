@@ -1,0 +1,68 @@
+{
+  "id": "pypi-wheel-sitecustomize-package",
+  "title": "wheel ships sitecustomize as a package directory",
+  "category": "startup-hook",
+  "intent": "site imports sitecustomize by module name, so a top-level sitecustomize/__init__.py runs on interpreter startup exactly like sitecustomize.py",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package/__init__.py",
+          "size": 22,
+          "sha256": "e75a7f1c3bf1e838cebefd8b565be2cccdafb3ad9106aa4eef1e029c61fcb82a",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "sitecustomize/__init__.py",
+          "size": 37,
+          "sha256": "808cb9c8c5bc665bc27439c75e60172145bd4f927d6b261eb211212e797eec41",
+          "flags": [],
+          "textSample": "from demo_package import __version__\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 56,
+          "sha256": "3326980447c702787585a871d39e12be37479def5f3436e7181c71d4f7453cb1",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 59,
+          "sha256": "4aa4462c0334f23f2f9da9bce4c4731976fa23f22eb18d26358e480ee9acb79e",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 378,
+          "sha256": "4fe20c7432c01eb6edd87bdde8f212ee9d5fb400c1316cb55631f73dfb528350",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,sha256=8d69837768900fcb266e7053c7da030ce67fa56ba41,10\nsitecustomize/__init__.py,sha256=e5adb47c903e05bc9db626d47f276ef2a6a0163c94f,10\ndemo_package-1.2.0.dist-info/METADATA,sha256=971138f6a6441f56ccf90992dc8dfd5d5bf53f9358c,10\ndemo_package-1.2.0.dist-info/WHEEL,sha256=7a51d3909d946b5ea6b8c6579d9ff02d062cdbc8c6e,10\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.startup-hook",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/sitecustomize/__init__.py"
+    }
+  ]
+}

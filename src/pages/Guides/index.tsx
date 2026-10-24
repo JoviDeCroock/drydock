@@ -114,7 +114,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       {
         label: "Configure the workflow",
         heading: "Keep publishing on the reviewed path.",
-        body: "Disallow token publication in npm's package settings and disable administrator bypass on the GitHub Environment. Use the recommended publish job to download the reviewed upload and verify its digest. The gate can then block the configured job on rejection, while the digest check rejects changed bytes.",
+        body: "Disallow token publication in npm's package settings and disable administrator bypass on the GitHub Environment. Use the recommended publish job to download the reviewed upload and verify its digest. GitHub then blocks the configured job when you reject, while the digest check in your publish job rejects changed bytes.",
       },
       {
         label: "Limits",
