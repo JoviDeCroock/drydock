@@ -12,6 +12,7 @@ import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
 import { ReleaseTargetsModel } from "../../../models/release-targets";
 import { MembersModel } from "../../../models/organization-members";
+import { DependencyReviewsModel } from "../../../models/dependency-review";
 import {
   normalizeRole,
   roleCanManageIntegrations,
@@ -26,6 +27,7 @@ import { Muted } from "../../../components/Typography";
 import { GeneralSection, OrganizationDangerZone } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
+import { DependencyReviewSection } from "./DependencyReviewSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
@@ -50,6 +52,7 @@ export default function SettingsPage() {
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
+  const dependencyReviews = useModel(DependencyReviewsModel);
   const activeTab = useSignal<SettingsTab>("general");
 
   useQuerySignal(activeTab, {
@@ -80,6 +83,7 @@ export default function SettingsPage() {
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
+        dependencyReviews.load(),
       ]);
     },
   });
@@ -92,6 +96,7 @@ export default function SettingsPage() {
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
+    loaders.push(dependencyReviews.load());
     await Promise.all(loaders);
   };
 
@@ -204,6 +209,9 @@ export default function SettingsPage() {
                 </div>
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
+                </div>
+                <div id={SETTINGS_SECTION.dependencyReview} class={SECTION_ANCHOR_CLASS}>
+                  <DependencyReviewSection model={dependencyReviews} defaultOpen />
                 </div>
               </>
             ) : null}

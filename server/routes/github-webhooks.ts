@@ -4,6 +4,7 @@ import { attachDb } from "../middleware/db";
 import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
 import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
+import { DEPENDENCY_REVIEW_LEASE_MS, type DependencyReviewRecord } from "../db/dependency-reviews";
 import {
   GithubAppConfigError,
   isGithubAppConfigured,
@@ -28,6 +29,17 @@ githubWebhookRoutes.use("*", attachDb);
 // GitHub deliveries are well under 256KB; anything bigger is either misconfigured
 // or hostile, so we don't want to spend Worker CPU on it.
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+const REENQUEUED_REVIEW_STATUSES: ReadonlySet<string> = new Set(["queued", "failed", "superseded"]);
+
+// A review the job never finished: its enqueue may be lost (queued), it failed
+// or was superseded (reopened PR), or its worker died mid-run (running past the
+// claim lease, which the job will take over).
+function reviewNeedsRun(review: DependencyReviewRecord, now = Date.now()): boolean {
+  if (REENQUEUED_REVIEW_STATUSES.has(review.status)) return true;
+  return (
+    review.status === "running" && now - review.updatedAt.getTime() > DEPENDENCY_REVIEW_LEASE_MS
+  );
+}
 
 // Per-minute budget per GitHub App installation, per event kind.
 //
@@ -42,9 +54,17 @@ const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 // A repository releasing many packages from one workflow run fans out one
 // delivery per environment; 240/min is far above any realistic matrix, and
 // tripping it is logged at error because it means we dropped work.
+//
+// `pull_request` fires for every PR event in every installed repository, not
+// only dependency bots'. 240/min is still far above a Renovate onboarding
+// burst, and every budget here must be a native tier (`NATIVE_TIERS`) or each
+// delivery falls back to a D1 write. `check_run` is human clicks on the
+// dependency review check.
 const WEBHOOK_RATE_LIMITS: Record<ParsedGithubEvent["kind"], number> = {
   deployment_protection_rule: 240,
   installation: 60,
+  pull_request: 240,
+  check_run: 120,
 };
 
 githubWebhookRoutes.post("/github", async (c) => {
@@ -179,7 +199,7 @@ githubWebhookRoutes.post("/github", async (c) => {
 
   const db = c.var.db;
   try {
-    const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId });
+    const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId, appId: config.appId });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
     // Hand a pending gate to the queue consumer that runs the PyPI review and
     // posts the deployment decision. Guarded because the binding is optional in
@@ -197,6 +217,34 @@ githubWebhookRoutes.post("/github", async (c) => {
         organizationId: outcome.gate.organizationId,
         gateId: outcome.gate.id,
       });
+    }
+    // A redelivered event re-enqueues only a review the job never finished;
+    // a completed one re-runs on the check's Re-run button.
+    const dependencyReviewMessage =
+      outcome.kind === "dependency_review_queued" &&
+      (outcome.created || reviewNeedsRun(outcome.review))
+        ? { reviewId: outcome.review.id, organizationId: outcome.review.organizationId }
+        : outcome.kind === "dependency_review_skipped"
+          ? { organizationId: outcome.organizationId, skip: outcome.skip }
+          : outcome.kind === "dependency_review_rerequested"
+            ? {
+                reviewId: outcome.review.id,
+                organizationId: outcome.review.organizationId,
+                rerun: true,
+              }
+            : outcome.kind === "dependency_review_approval_requested"
+              ? {
+                  reviewId: outcome.review.id,
+                  organizationId: outcome.review.organizationId,
+                  approver: {
+                    login: outcome.senderLogin,
+                    githubId: outcome.senderId,
+                    checkRunId: outcome.checkRunId,
+                  },
+                }
+              : null;
+    if (dependencyReviewMessage && c.env.SCAN_QUEUE) {
+      await c.env.SCAN_QUEUE.send({ kind: "dependency_review", ...dependencyReviewMessage });
     }
     return c.json({ ok: true, ...summarizeOutcome(outcome) });
   } catch (err) {
@@ -244,6 +292,20 @@ function summarizeOutcome(outcome: WebhookOutcome) {
   }
   if (outcome.kind === "installation_updated") {
     return { result: "installation_updated", action: outcome.action };
+  }
+  if (outcome.kind === "dependency_review_queued") {
+    return {
+      result: "dependency_review_queued",
+      reviewId: outcome.review.id,
+      created: outcome.created,
+    };
+  }
+  if (outcome.kind === "dependency_review_skipped") return { result: outcome.kind };
+  if (
+    outcome.kind === "dependency_review_rerequested" ||
+    outcome.kind === "dependency_review_approval_requested"
+  ) {
+    return { result: outcome.kind, reviewId: outcome.review.id };
   }
   return { result: "ignored", reason: outcome.reason };
 }

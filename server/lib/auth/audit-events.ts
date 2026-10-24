@@ -115,6 +115,23 @@ const REGISTRY: Record<string, AuditEventDef> = {
       return reason ? `${decision} · ${reason}` : decision;
     },
   },
+  "dependency_review.approved": {
+    category: "release_decision",
+    label: "Held dependency updates approved",
+    severity: "notice",
+    summarize: (m) => {
+      const repo = str(m.repositoryFullName);
+      const pull = typeof m.pullNumber === "number" ? `#${m.pullNumber}` : "";
+      const by = str(m.approvedByLogin);
+      return repo ? `${repo}${pull}${by ? ` by GitHub user ${by}` : ""}` : null;
+    },
+  },
+  "dependency_review.settings_updated": {
+    category: "security",
+    label: "Dependency review settings changed",
+    severity: "notice",
+    summarize: (m) => (m.enabled === true ? "on" : m.enabled === false ? "off" : null),
+  },
   "github_workflow_gate.requested": {
     category: "release_decision",
     label: "Release gate opened",

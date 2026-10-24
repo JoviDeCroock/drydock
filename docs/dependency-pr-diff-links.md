@@ -14,6 +14,11 @@ files added, removed, and changed; new install scripts, dependencies, and native
 binaries) and the top release findings with their rule ids, next to the link.
 Review already happens in the PR, so that is where the diff should be.
 
+To make the diff decide rather than inform, the GitHub App's dependency review
+check (`dependency-review.md`) holds bumps that add capabilities until someone
+with write access approves them, and a repository can require it. This
+workflow stays the no-install path.
+
 The user-facing setup instructions live on the Docs page
 (`src/pages/Docs/index.tsx`, "Diffs in dependency PRs"). This file documents the
 contracts and the operational posture.

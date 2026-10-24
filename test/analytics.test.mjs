@@ -275,6 +275,15 @@ describe("recordProductEvent", () => {
         decision: "approved",
         packageCount: 3,
       },
+      {
+        name: "dependency_review.completed",
+        organizationId: "org_1",
+        conclusion: "held",
+        bumpCount: 4,
+        heldCount: 1,
+        durationMs: 900,
+      },
+      { name: "dependency_review.approved", organizationId: "org_1", approvedCount: 1 },
     ];
     for (const event of events) recordProductEvent(env, event);
 

@@ -6,10 +6,10 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 - `server/index.ts` mounts the Hono Worker routes under `/api/*`, owns the session guard and the anonymous-mount order, and is the deploy target in `wrangler.jsonc`; it re-exports the `scheduled` and `queue` handlers.
 - `server/middleware/` holds the request middleware `server/index.ts` composes: security headers, canonical host and static-asset fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin check, auth IP rate limit, and the per-request `c.var.db` handle.
-- `server/scheduled.ts` is the cron handler (staged-publish discovery sweep plus audit, auth-row, and rate-limit pruning); `server/queue.ts` is the `SCAN_QUEUE` consumer for scan and workflow-gate messages.
+- `server/scheduled.ts` is the cron handler (staged-publish discovery sweep plus audit, auth-row, and rate-limit pruning); `server/queue.ts` is the `SCAN_QUEUE` consumer for scan, workflow-gate, and dependency-review messages.
 - `server/lib/rate-limit.ts` composes the domain-free limiter in `server/lib/platform/rate-limit.ts` with the D1 fallback (`server/db/rate-limits.ts`); routes call its `enforceRateLimit`/`guardRateLimit`.
 - `server/routes/scans/` owns scan HTTP behavior, split by caller intent into `lifecycle`, `decisions`, `sharing`, and `compare` and mounted by its `index.ts`.
-- `server/routes/github-webhooks.ts` is the signed GitHub App webhook. It persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `workflow-gates.md` and the npm, PyPI, and VS Code gate docs.
+- `server/routes/github-webhooks.ts` is the signed GitHub App webhook. It persists `deployment_protection_rule` deliveries into `github_workflow_gates` (see `workflow-gates.md` and the npm, PyPI, and VS Code gate docs) and `pull_request` / `check_run` deliveries into `dependency_reviews` (see `dependency-review.md`).
 - `server/lib/sandbox.ts` is the Dynamic Worker that downloads and parses package artifacts. `NpmStageGateway` is the only npm-token egress.
 - `server/lib/review/` owns deterministic findings, package and `package.json` diffs, redaction, serialization, risk, and shared UI types. Its public entry is `server/lib/review/index.ts`.
 - `server/lib/ai-review/` owns the Workers AI reviewer and the advisory Clef injection screen (`injection-screen.ts`, `clef.ts`), wired through `server/lib/scan/pipeline.ts`.
@@ -17,6 +17,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/public-diff/` owns anonymous `/diff` orchestration and `PublicDiffAdapter`. The atpm ecosystem resolves releases over AT Protocol; see `atpm-public-diff.md`.
 - `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.
+- `server/lib/dependency-review/` owns the dependency-update PR check: webhook parsing, lockfile snapshots (`lockfiles/`), the hold policy, check-run rendering, its GitHub REST calls, and the queue job. Persistence is `server/db/dependency-reviews.ts`; the API is `server/routes/dependency-reviews.ts`. See `dependency-review.md`.
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.

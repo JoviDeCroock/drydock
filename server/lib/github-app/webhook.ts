@@ -6,6 +6,16 @@ import type { GithubAppConfig } from "./config";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./persistence";
 import { recordGateRequest, type WorkflowGateRecord } from "./webhook-gates";
+import {
+  applyCheckRunEvent,
+  applyPullRequestEvent,
+  parseCheckRunEvent,
+  parsePullRequestEvent,
+  type DependencyReviewParseError,
+  type DependencyReviewWebhookOutcome,
+  type ParsedCheckRunEvent,
+  type ParsedPullRequestEvent,
+} from "../dependency-review/webhook";
 
 // ── Signature verification ───────────────────────────────────────────────────
 
@@ -42,7 +52,8 @@ export type WebhookParseError =
   | "missing_environment"
   | "missing_run"
   | "missing_callback_url"
-  | "invalid_callback_url";
+  | "invalid_callback_url"
+  | DependencyReviewParseError;
 
 export interface ParsedDeploymentProtectionEvent {
   kind: "deployment_protection_rule";
@@ -62,7 +73,11 @@ interface ParsedInstallationLifecycleEvent {
   installationId: string;
 }
 
-export type ParsedGithubEvent = ParsedDeploymentProtectionEvent | ParsedInstallationLifecycleEvent;
+export type ParsedGithubEvent =
+  | ParsedDeploymentProtectionEvent
+  | ParsedInstallationLifecycleEvent
+  | ParsedPullRequestEvent
+  | ParsedCheckRunEvent;
 
 /**
  * Parse a raw webhook body for the events we care about. Returns a discriminated
@@ -89,6 +104,12 @@ export function parseGithubWebhookEvent(
   }
   if (eventName === "installation") {
     return parseInstallationLifecycleEvent(payload as Record<string, unknown>);
+  }
+  if (eventName === "pull_request") {
+    return parsePullRequestEvent(payload as Record<string, unknown>);
+  }
+  if (eventName === "check_run") {
+    return parseCheckRunEvent(payload as Record<string, unknown>);
   }
   return { error: "unsupported_event" };
 }
@@ -205,10 +226,12 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export type WebhookOutcome =
   | { kind: "gate_pending"; gate: WorkflowGateRecord; created: boolean }
   | { kind: "installation_updated"; installationId: string; action: string }
-  | { kind: "ignored"; reason: string };
+  | DependencyReviewWebhookOutcome;
 
 export interface DispatchDeps {
   deliveryId: string;
+  // This deployment's GitHub App id; check-run actions for any other app are ignored.
+  appId: string;
 }
 
 /**
@@ -260,6 +283,9 @@ export async function applyGithubWebhookEvent(
       action: event.action,
     };
   }
+
+  if (event.kind === "pull_request") return applyPullRequestEvent(db, event);
+  if (event.kind === "check_run") return applyCheckRunEvent(db, event, deps.appId);
 
   return { kind: "ignored", reason: "unhandled event kind" };
 }

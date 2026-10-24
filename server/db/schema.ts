@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import type { OrganizationRole } from "../lib/auth/roles";
 import type {
+  DependencyReviewConclusionValue,
+  DependencyReviewStatus,
   GithubAppInstallationStatus,
   InvitationStatus,
   NpmConnectionValidationStatus,
@@ -603,6 +605,112 @@ export const githubWorkflowGates = sqliteTable(
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
     scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
+  }),
+);
+
+// One row per organization that turned dependency review on. The policy is
+// JSON parsed field-by-field with defaults (parseDependencyReviewPolicy), so a
+// new policy field needs no migration.
+export const dependencyReviewSettings = sqliteTable("dependency_review_settings", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  policyJson: text("policy_json").notNull().default("{}"),
+  // Logins besides dependabot[bot] and renovate[bot] whose PRs are reviewed,
+  // for self-hosted Renovate.
+  extraBotLoginsJson: text("extra_bot_logins_json").notNull().default("[]"),
+  updatedByUserId: text("updated_by_user_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+// One review per (repository, head commit): a check run belongs to a commit,
+// so a push to the PR starts a new review and supersedes the old one.
+export const dependencyReviews = sqliteTable(
+  "dependency_reviews",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    installationRowId: text("installation_row_id")
+      .notNull()
+      .references(() => githubAppInstallations.id, { onDelete: "cascade" }),
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    pullNumber: integer("pull_number").notNull(),
+    headSha: text("head_sha").notNull(),
+    authorLogin: text("author_login").notNull(),
+    checkRunId: integer("check_run_id"),
+    status: text("status").$type<DependencyReviewStatus>().notNull().default("queued"),
+    conclusion: text("conclusion").$type<DependencyReviewConclusionValue>(),
+    bumpCount: integer("bump_count").notNull().default(0),
+    heldCount: integer("held_count").notNull().default(0),
+    // Bounded ReviewedBump[] (names, versions, verdicts, evidence). Evidence is
+    // already redacted by the public-diff pipeline.
+    bumpsJson: text("bumps_json"),
+    // What the review couldn't see, kept so an approval re-renders the same notices.
+    unreadLockfilesJson: text("unread_lockfiles_json").notNull().default("[]"),
+    listingComplete: integer("listing_complete", { mode: "boolean" }).notNull().default(true),
+    failureReason: text("failure_reason"),
+    approvedByLogin: text("approved_by_login"),
+    approvedAt: integer("approved_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => ({
+    repoHeadUniqueIdx: uniqueIndex("dependency_reviews_repo_head_unique_idx").on(
+      table.installationRowId,
+      table.repositoryId,
+      table.headSha,
+    ),
+    orgCreatedIdx: index("dependency_reviews_org_created_idx").on(
+      table.organizationId,
+      table.createdAt,
+    ),
+    repoPullIdx: index("dependency_reviews_repo_pull_idx").on(
+      table.installationRowId,
+      table.repositoryId,
+      table.pullNumber,
+    ),
+  }),
+);
+
+// A human's approval of one exact version change in one repository. Keyed on
+// the change, not the review, so a rebased or regrouped PR that merges the same
+// change keeps its approval. `fromVersion` is "" for a package the PR adds.
+export const dependencyReviewApprovals = sqliteTable(
+  "dependency_review_approvals",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    repositoryId: integer("repository_id").notNull(),
+    ecosystem: text("ecosystem").notNull(),
+    packageName: text("package_name").notNull(),
+    fromVersion: text("from_version").notNull(),
+    toVersion: text("to_version").notNull(),
+    // "public" or "private": approving a change resolved from a private
+    // registry must not approve the same versions resolved from a public one.
+    source: text("source").notNull().default("public"),
+    approvedByLogin: text("approved_by_login").notNull(),
+    approvedByGithubId: integer("approved_by_github_id").notNull(),
+    reviewId: text("review_id").references(() => dependencyReviews.id, { onDelete: "set null" }),
+    approvedAt: integer("approved_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    changeUniqueIdx: uniqueIndex("dependency_review_approvals_change_unique_idx").on(
+      table.organizationId,
+      table.repositoryId,
+      table.ecosystem,
+      table.packageName,
+      table.fromVersion,
+      table.toVersion,
+      table.source,
+    ),
   }),
 );
 

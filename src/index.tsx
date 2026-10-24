@@ -25,6 +25,10 @@ const ResetPasswordPage = lazyRoute(() => import("./pages/Auth/ResetPassword"));
 const DashboardPage = lazyRoute(() => import("./pages/Dashboard"));
 const ScanDetailPage = lazyRoute(() => import("./pages/Dashboard/ScanDetail"));
 const PackageReleasesPage = lazyRoute(() => import("./pages/Dashboard/PackageReleases"));
+const DependencyReviewsPage = lazyRoute(() => import("./pages/Dashboard/DependencyReviews"));
+const DependencyReviewDetailPage = lazyRoute(
+  () => import("./pages/Dashboard/DependencyReviews/Detail"),
+);
 const SettingsPage = lazyRoute(() => import("./pages/Dashboard/Settings"));
 const AccountPage = lazyRoute(() => import("./pages/Dashboard/Account"));
 const InvitePage = lazyRoute(() => import("./pages/Dashboard/Invite"));
@@ -79,6 +83,11 @@ export function App() {
             <ScopedRoute path="/dashboard" component={DashboardPage} />
             <ScopedRoute path="/dashboard/scans/:id" component={ScanDetailPage} />
             <ScopedRoute path="/dashboard/packages/:name+" component={PackageReleasesPage} />
+            <ScopedRoute path="/dashboard/dependency-reviews" component={DependencyReviewsPage} />
+            <ScopedRoute
+              path="/dashboard/dependency-reviews/:id"
+              component={DependencyReviewDetailPage}
+            />
             <ScopedRoute path="/dashboard/settings" component={SettingsPage} />
             <ScopedRoute path="/dashboard/account" component={AccountPage} />
             <ScopedRoute path="/dashboard/invite" component={InvitePage} />
@@ -116,7 +125,8 @@ if (typeof window !== "undefined") {
   if (
     location.pathname.startsWith("/dashboard") &&
     !location.pathname.startsWith("/dashboard/packages/") &&
-    !location.pathname.startsWith("/dashboard/scans/")
+    !location.pathname.startsWith("/dashboard/scans/") &&
+    !location.pathname.startsWith("/dashboard/dependency-reviews/")
   ) {
     applyActiveOrganizationFromUrl();
   }
