@@ -164,7 +164,7 @@ function exportSelection(value: unknown, depth: number, root: boolean): ExportSe
     const paths: string[] = [];
     for (const entry of value) {
       const selected = exportSelection(entry, depth + 1, false);
-      paths.push(...selected.paths);
+      for (const path of selected.paths) paths.push(path);
       if (selected.terminal) return { paths, terminal: true };
     }
     return { paths, terminal: false };
@@ -186,7 +186,7 @@ function exportSelection(value: unknown, depth: number, root: boolean): ExportSe
     // target the top-level `types` field is excluded for.
     if (TOOLING_EXPORT_CONDITIONS.has(condition)) continue;
     const selected = exportSelection(target, depth + 1, false);
-    paths.push(...selected.paths);
+    for (const path of selected.paths) paths.push(path);
     // `default` always matches. Later condition keys are unreachable, while a
     // null/invalid default lets a surrounding fallback array continue.
     if (condition === "default") return { paths, terminal: selected.terminal };

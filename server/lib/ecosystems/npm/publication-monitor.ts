@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
@@ -13,16 +13,11 @@ import { publicationObservations, publicationWatches, scans } from "../../../db/
 import { recordProductEvent } from "../../analytics";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
-import type { PublicationMonitorAdapter } from "../types";
 import {
   createPackumentExtractor,
   type PackumentExtract,
   type PackumentVersion,
 } from "./packument-stream";
-import {
-  enrollStagedReleases,
-  reconcileDuePublicationEnrollments,
-} from "./publication-auto-enrollment";
 import {
   deliverPublicationAlert,
   notifyCoverageGaps,
@@ -246,6 +241,24 @@ function publicationMonitoringEnabled(env: Cloudflare.Env, organizationId: strin
   });
 }
 
+/**
+ * Whether AI review is on for the organization (by default; the `ai-review`
+ * flag is its killswitch), read as the scan pipeline reads it (off without a
+ * FLAGS binding). A failed read errs toward reading the stored
+ * AI result, which can only escalate an undecided review's alert.
+ */
+async function aiReviewEnabled(env: Cloudflare.Env, organizationId: string): Promise<boolean> {
+  if (!env.FLAGS) return false;
+  try {
+    return await env.FLAGS.getBooleanValue("ai-review", true, {
+      targetingKey: organizationId,
+      organizationId,
+    });
+  } catch {
+    return true;
+  }
+}
+
 function watchKey(watch: { id: string; organizationId: string }) {
   return and(
     eq(publicationWatches.id, watch.id),
@@ -448,6 +461,8 @@ const reviewEvidenceColumns = {
   decidedAt: scans.decidedAt,
   summaryJson: scans.summaryJson,
   status: scans.status,
+  riskSummaryJson: scans.riskSummaryJson,
+  aiJson: scans.aiJson,
 } satisfies Record<keyof ReviewEvidence, unknown>;
 
 /**
@@ -604,6 +619,7 @@ async function examineReleases(
   let lookups = 0;
   let downloads = 0;
   let downloadDeadline: number | null = null;
+  let aiReview: boolean | undefined;
   for (const item of pending) {
     if (await getPublicationWatchBlocked(db, watch.organizationId, watch.packageName, registry))
       break;
@@ -618,11 +634,9 @@ async function examineReleases(
     // Bytes matter only against a Drydock record of this release; a release
     // with none is decided without downloading it.
     let artifact = storedArtifact(item.previous);
-    if (
-      artifact === null &&
-      item.publishedAt &&
-      releaseRecords(watch.packageName, item.version, reviews, registry).length > 0
-    ) {
+    const records = releaseRecords(watch.packageName, item.version, reviews, registry);
+    const hasRecords = records.length > 0;
+    if (artifact === null && item.publishedAt && hasRecords) {
       downloadDeadline ??= Date.now() + DOWNLOAD_BUDGET_MS;
       const remainingMs = Math.min(TARBALL_DEADLINE_MS, downloadDeadline - Date.now());
       if (
@@ -650,6 +664,8 @@ async function examineReleases(
       }
     }
     if (artifact !== null && typeof artifact === "object") digests = artifact;
+    // Only an undecided review of the published bytes reads it.
+    if (hasRecords) aiReview ??= await aiReviewEnabled(env, watch.organizationId);
     const verdict: Verdict = classifyPublication(
       watch.packageName,
       item.version,
@@ -657,7 +673,7 @@ async function examineReleases(
       artifact,
       reviews,
       // npm's own `dist.shasum`, used only one-sidedly (never as an approval).
-      { registry, declaredSha1: entry?.shasum ?? null, historyLimited },
+      { registry, declaredSha1: entry?.shasum ?? null, historyLimited, aiReview },
     );
     examined++;
     const createdAlert = await savePublicationObservation(
@@ -678,13 +694,25 @@ async function examineReleases(
       },
       watch.packageName,
       registry,
+      records.map((record) => record.id),
     );
     if (createdAlert && isPublicationAlert(verdict.status)) {
+      // One line per new unapproved publish on a watched package, so operators
+      // can follow them in the logs. Name and version are npm's public record.
+      emitOperationalEvent("warn", "npm.publication_monitor.unapproved_publish", {
+        organizationId: watch.organizationId,
+        watchId: watch.id,
+        packageName: watch.packageName,
+        version: item.version,
+        status: verdict.status,
+        reason: verdict.reason,
+      });
       recordProductEvent(env, {
         name: "publication.discrepancy",
         organizationId: watch.organizationId,
         ecosystem: "npm",
         status: verdict.status,
+        reason: verdict.reason ?? "",
       });
       attempted.add(item.version);
       await deliverPublicationAlert(env, db, watch, {
@@ -695,6 +723,82 @@ async function examineReleases(
     }
   }
   return { lastError, attempted, watchGap: unconsidered ? "invalid_version_metadata" : null };
+}
+
+/**
+ * Hash one observed release's published tarball once someone starts a
+ * post-release review of it. A check decides a release with no Drydock record
+ * from metadata alone and never downloads it, so without this the review's
+ * decision would have no digest of the monitor's own to be bound to. Same
+ * credential-free, bounded collector as a check (and switched off with it);
+ * it fills only digests never recorded, and leaves the observation's status
+ * and reason alone: they stay the historical verdict. Best-effort — a failure
+ * leaves the digests absent, which the decision reports as such.
+ */
+export async function recordPublishedReleaseDigests(
+  db: AppDb,
+  env: Cloudflare.Env,
+  target: { organizationId: string; packageName: string; version: string },
+): Promise<void> {
+  try {
+    const [observation] = await db
+      .select({ id: publicationObservations.id })
+      .from(publicationObservations)
+      .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
+      .where(
+        and(
+          eq(publicationWatches.organizationId, target.organizationId),
+          eq(publicationWatches.packageName, target.packageName),
+          eq(publicationObservations.organizationId, target.organizationId),
+          eq(publicationObservations.version, target.version),
+          isNull(publicationObservations.sha1),
+          isNull(publicationObservations.sha256),
+          // A tarball already found too large to hash stays so; every
+          // re-decision must not download it again.
+          or(
+            isNull(publicationObservations.reason),
+            ne(publicationObservations.reason, "artifact_too_large"),
+          ),
+        ),
+      )
+      .limit(1);
+    if (!observation) return;
+    if (!(await publicationMonitoringEnabled(env, target.organizationId))) return;
+    const registry = npmPublicationRegistry(env);
+    const meter: ByteMeter = { bytes: 0 };
+    const metadata = await fetchMetadata(target.packageName, registry, meter);
+    const artifact = await hashPublishedArtifact(
+      metadata.versions.get(target.version),
+      target.packageName,
+      target.version,
+      registry,
+      { deadlineMs: TARBALL_DEADLINE_MS, meter },
+    );
+    if (typeof artifact === "string") {
+      emitOperationalEvent("warn", "npm.publication_monitor.review_digest_unavailable", {
+        organizationId: target.organizationId,
+        reason: artifact,
+      });
+      return;
+    }
+    await db
+      .update(publicationObservations)
+      .set({ sha1: artifact.sha1, sha256: artifact.sha256 })
+      .where(
+        and(
+          eq(publicationObservations.id, observation.id),
+          eq(publicationObservations.organizationId, target.organizationId),
+          isNull(publicationObservations.sha1),
+          isNull(publicationObservations.sha256),
+        ),
+      );
+  } catch (err) {
+    emitOperationalEvent("warn", "npm.publication_monitor.review_digest_unavailable", {
+      organizationId: target.organizationId,
+      reason: err instanceof MetadataError ? err.reason : "check_failed",
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 /**
@@ -818,9 +922,3 @@ export async function sweepNpmPublicationWatches(
     durationMs: Date.now() - startedAt,
   });
 }
-
-export const npmPublicationMonitor: PublicationMonitorAdapter = {
-  sweepWatches: (db, env) => sweepNpmPublicationWatches(db, env),
-  reconcileEnrollment: (db, env) => reconcileDuePublicationEnrollments(db, env),
-  registerStagedReleases: enrollStagedReleases,
-};

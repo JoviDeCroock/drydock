@@ -90,6 +90,7 @@ export function buildVscodeFindings(args: {
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {
       fileDiff: args.fileDiff,
+      stagedFiles: args.staged.files,
     }),
     ...vscodeManifestFindings(args.details, extensionManifest, args.staged.files),
   ];

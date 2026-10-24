@@ -1,0 +1,67 @@
+{
+  "id": "legit-comment-network-and-codegen",
+  "title": "Bundler module documents network APIs in comments and emits runtime code as strings",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-documentation",
+  "source": "benign-popular",
+  "intent": "Observed in undici, ky, mongodb, webpack, less, playwright-core and nx releases: JSDoc examples (`import { createServer } from 'node:http'`), prose comments naming fetch(), eval-shaped runtime templates emitted as string literals (`\"WebAssembly.compile(bytes)\"`, `\"eval()\"`; network calls inside strings still count, because code in a string can run through vm sinks that are not findings), a method named eval, the CommonJS dynamic-import shim and es6-promise's global shim. None is a network call or eval, so neither code.network-access nor code.dynamic-evaluation should fire.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "legit-comment-network-and-codegen",
+    "version": "2.3.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "legit-comment-network-and-codegen",
+    "version": "2.4.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-comment-network-and-codegen\",\"version\":\"2.3.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 43,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/runtime');\n"
+    },
+    {
+      "path": "lib/runtime.js",
+      "size": 21,
+      "sha256": "runtime-before",
+      "flags": [],
+      "textSample": "module.exports = {};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"legit-comment-network-and-codegen\",\"version\":\"2.4.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 43,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./lib/runtime');\n"
+    },
+    {
+      "path": "lib/runtime.js",
+      "size": 704,
+      "sha256": "runtime-after",
+      "flags": [],
+      "textSample": "/**\n * @example\n * import { createServer } from 'node:http';\n * const res = await fetch('https://example.invalid/');\n */\n// fetch() leaves them alone, and so does this interceptor.\n// It uses \"eval()\" calls to create a separate source file in devtools.\nconst templates = [\n  'var bytes = await res.arrayBuffer();',\n  \"WebAssembly.compile(bytes)\",\n];\nconst bailout = \"eval()\";\nclass Value {\n  eval(context) { return this; }\n}\nconst dynamicImport = new Function('specifier', 'return import(specifier)');\nconst loadVite = new Function('return import(\"vite\")');\nconst PromiseImpl = new Function('return this;')().Promise;\nmodule.exports = { templates, bailout, Value, dynamicImport, loadVite, PromiseImpl };\n"
+    }
+  ]
+}

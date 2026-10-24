@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e7860bf4-36cf-4621-9d24-961e2d9df99e",
+  "id": "9cc66e30-b430-4357-bcdc-af6b74464605",
   "prevId": "ae54bf1b-51be-490b-9fe6-cdbb619830ef",
   "tables": {
     "account": {
@@ -926,122 +926,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "organization_api_keys": {
-      "name": "organization_api_keys",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "prefix": {
-          "name": "prefix",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "key_hash": {
-          "name": "key_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_used_at": {
-          "name": "last_used_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "organization_api_keys_key_hash_unique_idx": {
-          "name": "organization_api_keys_key_hash_unique_idx",
-          "columns": [
-            "key_hash"
-          ],
-          "isUnique": true
-        },
-        "organization_api_keys_creator_idx": {
-          "name": "organization_api_keys_creator_idx",
-          "columns": [
-            "organization_id",
-            "created_by_user_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "organization_api_keys_organization_id_organizations_id_fk": {
-          "name": "organization_api_keys_organization_id_organizations_id_fk",
-          "tableFrom": "organization_api_keys",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "organization_api_keys_created_by_user_id_user_id_fk": {
-          "name": "organization_api_keys_created_by_user_id_user_id_fk",
-          "tableFrom": "organization_api_keys",
-          "tableTo": "user",
-          "columnsFrom": [
-            "created_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "organization_invitations": {
       "name": "organization_invitations",
       "columns": {
@@ -1758,6 +1642,62 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "review_scan_id": {
+          "name": "review_scan_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "review_requested_at": {
+          "name": "review_requested_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "review_requested_by": {
+          "name": "review_requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolution": {
+          "name": "resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolution_badge": {
+          "name": "resolution_badge",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reviewed_bytes": {
+          "name": "reviewed_bytes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1769,6 +1709,35 @@
             "version"
           ],
           "isUnique": true
+        },
+        "publication_alerts_review_scan": {
+          "name": "publication_alerts_review_scan",
+          "columns": [
+            "review_scan_id"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_package_badge": {
+          "name": "publication_alerts_package_badge",
+          "columns": [
+            "package_name",
+            "resolution_badge"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_review_requested_by": {
+          "name": "publication_alerts_review_requested_by",
+          "columns": [
+            "review_requested_by"
+          ],
+          "isUnique": false
+        },
+        "publication_alerts_resolved_by": {
+          "name": "publication_alerts_resolved_by",
+          "columns": [
+            "resolved_by"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -1791,6 +1760,45 @@
           "tableTo": "user",
           "columnsFrom": [
             "acknowledged_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_review_scan_id_scans_id_fk": {
+          "name": "publication_alerts_review_scan_id_scans_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "scans",
+          "columnsFrom": [
+            "review_scan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_review_requested_by_user_id_fk": {
+          "name": "publication_alerts_review_requested_by_user_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "review_requested_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "publication_alerts_resolved_by_user_id_fk": {
+          "name": "publication_alerts_resolved_by_user_id_fk",
+          "tableFrom": "publication_alerts",
+          "tableTo": "user",
+          "columnsFrom": [
+            "resolved_by"
           ],
           "columnsTo": [
             "id"

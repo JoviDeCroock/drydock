@@ -67,7 +67,10 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
   }
 
   for (const entry of ctx.diff) {
-    if (entry.status === "added" && entry.stagedSize && entry.stagedSize > 2 * 1024 * 1024) {
+    // A large bundle renamed from its predecessor (a new content hash) is not
+    // a new artifact; its changes are judged against that predecessor.
+    const isNew = ctx.diffByPath.get(entry.path)?.status === "added";
+    if (isNew && entry.stagedSize && entry.stagedSize > 2 * 1024 * 1024) {
       findings.push(
         tag("diffLargeNewFile", {
           severity: "medium",

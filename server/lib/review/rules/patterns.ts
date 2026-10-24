@@ -38,9 +38,14 @@ const PYTHON_PROCESS_EXECUTION_PATTERNS = [
 // whole release rolled up to low.
 //
 // Command strings are language-agnostic, so both ecosystems share these sets.
+// A download names something to fetch: a flag, a quoted or variable operand, a
+// number, or a host/URL with a dot, slash or colon. A bare word after the tool
+// name is prose ("curl is required", "retry with `vercel curl <url>`") or a
+// syntax highlighter's keyword table ("cp cpp curl cvpa …").
+const SHELL_TOOL_OPERAND = String.raw`(?=[-"'\x60$\\({[]|\d|[\w%@-]*[./:][\w%/.-])`;
 const SHELL_NETWORK_TOOL_PATTERNS = [
-  /\bcurl\s/,
-  /\bwget\s/,
+  new RegExp(String.raw`\bcurl\s+${SHELL_TOOL_OPERAND}`),
+  new RegExp(String.raw`\bwget\s+${SHELL_TOOL_OPERAND}`),
   // `nc` requires a flag. Bare `\bnc\s` reads a two-letter identifier as a
   // reverse shell: `nc` is a ubiquitous variable name in scientific Python
   // (`nc = netCDF4.Dataset(...)`), and no real netcat invocation omits flags.
@@ -63,9 +68,11 @@ const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
   // (`| base64 -d | bash`, `| gunzip | sh` — the standard obfuscated forms), an
   // absolute path (`| /bin/bash`), and a privilege/environment prefix
   // (`| sudo -E bash`, `| env bash`). The trailing `\b` is what keeps
-  // `| sha256sum` and `| shasum` out.
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
+  // `| sha256sum` and `| shasum` out. A tool name directly followed by `|` or
+  // `)` downloads nothing: that is an alternation keyword list
+  // (`(?:…|curl|cut|…|zsh)` in a shell grammar), not a pipeline.
+  /\b(?:curl|wget)\b(?!\s*[|)])[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
+  /\b(?:curl|wget)\b(?!\s*[|)])[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
   // Substitution captures data; only an execution consumer makes it remote
   // code execution. Bare $(curl ... | jq), <(curl ...), and backticks also
   // appear in generated docs and JavaScript template strings. Allow escaped
@@ -89,11 +96,20 @@ const SHELL_REMOTE_PATTERNS = [...SHELL_NETWORK_TOOL_PATTERNS, ...SHELL_DOWNLOAD
 // credential collect-and-exfiltrate chain exactly like `fetch()` is.
 export const SHELL_NETWORK_TOOL_PATTERN_SET = SHELL_NETWORK_TOOL_PATTERNS;
 export const SHELL_DOWNLOAD_EXECUTE_PATTERN_SET = SHELL_DOWNLOAD_EXECUTE_PATTERNS;
+// Egress modules: Node's sockets and HTTP stacks plus the two userland clients
+// (`undici`, `ws`) that bundles import by name, by `require`, `import … from`
+// or a literal dynamic `import()`.
+const NETWORK_MODULE = String.raw`(["'])(?:node:)?(?:https?|http2|net|dns|dgram|tls|undici|ws)\1`;
 const JS_NETWORK_ACCESS_PATTERNS = [
-  /\brequire\(["'](?:node:)?(?:http|https|net|dns)["']\)/,
-  /\bfrom\s+["'](?:node:)?(?:http|https|net|dns)["']/,
+  new RegExp(String.raw`\brequire\s*\(\s*${NETWORK_MODULE}\s*\)`),
+  new RegExp(String.raw`\bfrom\s*${NETWORK_MODULE}`),
+  new RegExp(String.raw`\bimport\s*\(\s*${NETWORK_MODULE}\s*[,)]`),
+  /\bnew\s+(?:WebSocket|EventSource)\s*\(/,
+  /\bsendBeacon\s*\(/,
   /\b(?:global|globalThis|self|window)\.fetch\s*\(/,
-  /(?<![\w$.])fetch\s*\((?![^\n;]*\)\s*\{)/,
+  // `fetch(input, init) {` on one line is a method definition, never a call;
+  // a parenthesis in between (`if (!fetch(u)) {`) means it is a call.
+  /(?<![\w$.])fetch\s*\((?![^()\n;]*\)[ \t]*\{)/,
   /\bXMLHttpRequest\b/,
   /\baxios\s*\./,
 ];
@@ -110,17 +126,49 @@ const PYTHON_NETWORK_ACCESS_PATTERNS = [
 // Primitives that run a string as code. A method named `eval` on some other
 // object is not one: Redis clients expose `client.eval(luaScript)`. Global
 // receivers and optional calls keep a member-shaped eval.
-const JS_DYNAMIC_EXECUTION_PATTERNS = [
-  /(?<![\w$.])eval\s*(?:\?\.\s*)?\(/,
+// A Function body that is exactly `return import(<name or literal>)` is the
+// CommonJS dynamic-import shim (`new Function('specifier', 'return
+// import(specifier)')`, playwright's `new Function('return import("vite")')`).
+// It runs no caller code, so it is not eval; the computed import it performs
+// stays a decoded-payload sink, which is why string-blind scanning erases it
+// (`omitDynamicImportShims`) instead of the sink patterns ignoring it.
+const DYNAMIC_IMPORT_SHIM_ARGUMENTS = String.raw`\s*(?:(["'\x60])[\w$]+\1\s*,\s*)?(["'\x60])return import\((?:[\w$]+|"[^"\\\n]*"|'[^'\\\n]*')\);?\2\s*\)`;
+const DYNAMIC_IMPORT_SHIM = new RegExp(
+  String.raw`\bnew\s+Function\s*\(${DYNAMIC_IMPORT_SHIM_ARGUMENTS}`,
+  "g",
+);
+
+export function omitDynamicImportShims(source: string): string {
+  return source.replace(DYNAMIC_IMPORT_SHIM, (shim) => shim.replace(/[^\n]+/g, ""));
+}
+
+// A same-line `eval(params) {` is a method definition (less's `eval(context)
+// { return this; }`), never a call; `if (eval(x)) {` keeps its inner `)`.
+const NOT_METHOD_DEFINITION = String.raw`(?![^()\n;]*\)[ \t]*\{)`;
+// Call-shaped primitives. Scanned with string literal bodies blanked (see
+// `codeViewsForScanning`): a code generator's `"WebAssembly.compile(bytes)"`
+// is output, and code inside a string only runs through a call or a staging
+// sink outside it.
+const JS_DYNAMIC_CALL_PATTERNS = [
+  new RegExp(String.raw`(?<![\w$.])eval\s*(?:\?\.\s*)?\(${NOT_METHOD_DEFINITION}`),
   /\b(?:globalThis|window|global|self|top|parent|frames)\s*\??\.\s*eval\s*(?:\?\.\s*)?\(/,
-  /\bnew\s+Function\s*\(/,
-  // `node -e` is an interpreter-backed eval even when launched through the
-  // child-process API instead of JavaScript's in-process eval primitives.
-  /\bspawn(?:Sync)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[\s*["'`](?:-e|--eval)["'`]/,
+  // The dynamic-import shim is not eval; see `DYNAMIC_IMPORT_SHIM_ARGUMENTS`.
+  new RegExp(String.raw`\bnew\s+Function\s*\((?!${DYNAMIC_IMPORT_SHIM_ARGUMENTS})`),
   // The whole compile/instantiate family: instantiate(Streaming) — not bare
   // compile — is the loader idiom packed wasm payloads actually use (typically
   // `WebAssembly.instantiateStreaming(fetch(...))`).
   /\bWebAssembly\.(?:compile|compileStreaming|instantiate|instantiateStreaming)\s*\(/,
+];
+// Shapes whose evidence is itself a string argument; scanned with only
+// comments blanked.
+const JS_DYNAMIC_STRING_ARGUMENT_PATTERNS = [
+  // `node -e` is an interpreter-backed eval even when launched through the
+  // child-process API instead of JavaScript's in-process eval primitives.
+  /\bspawn(?:Sync)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[\s*["'`](?:-e|--eval)["'`]/,
+];
+const JS_DYNAMIC_EXECUTION_PATTERNS = [
+  ...JS_DYNAMIC_CALL_PATTERNS,
+  ...JS_DYNAMIC_STRING_ARGUMENT_PATTERNS,
 ];
 // Ways a decoded string reaches execution that are too common in benign code to
 // be findings on their own: regenerator's `Function("r", …)`, core-js task
@@ -155,9 +203,11 @@ const JS_DECODED_PAYLOAD_SINK_PATTERNS = [
 // Bundlers resolve the global object with `new Function("return this")()`
 // (webpack's `__webpack_require__.g`, lodash's `Function('return this')()`).
 // That exact literal runs no caller data. A shim whose result is dereferenced
-// on the spot, even through closing parens or `?.` (`(…()).eval(x)`), is kept.
+// on the spot, even through closing parens or `?.` (`(…()).eval(x)`), is kept,
+// except a terminal read of `Promise` or `Symbol` (es6-promise's
+// `promiseImpl = new Function("return this;")().Promise`).
 const GLOBAL_OBJECT_SHIM =
-  /(?<![\w$.])(?:new\s+)?Function\s*\(\s*(["'`])return this;?\1\s*\)(?!\s*\(\s*\)(?:\s*\))*\s*(?:\?\.|\.|\[))/g;
+  /(?<![\w$.])(?:new\s+)?Function\s*\(\s*(["'`])return this;?\1\s*\)(?!\s*\(\s*\)(?:\s*\))*\s*(?:\?\.|\.|\[)(?!\s*(?:Promise|Symbol)\b(?!\s*(?:\?\.|\.|\[|\())))/g;
 
 // Erases the shim but keeps its newlines, so later findings keep their lines.
 export function omitGlobalObjectShims(source: string): string {
@@ -196,9 +246,63 @@ const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /\bcodecs\.decode\s*\(/,
   /\bbytes\.fromhex\s*\(/,
 ];
+// Credential access is reading a secret, not reading the environment. A named
+// read of a configuration variable (`PORT`, `HOME`,
+// `NAPI_RS_NATIVE_LIBRARY_PATH`, `npm_config_https_proxy`) is not one. Every
+// other use of the env object counts: a secret-shaped name, a key chosen at
+// runtime, and the object itself used as a value (bound, passed, spread,
+// copied, wrapped, serialized or enumerated), because once the whole
+// environment is a value no line regex can follow which variables leave with
+// it. `scripts.ts` exempts only uses that read nothing (presence tests and
+// guards), destructuring of named non-secret variables, and the `env` option of
+// a child-process call, which the child inherits anyway. Known secret names
+// anywhere and credential files on disk count too.
+//
+// Secret-shaped names: substrings that only occur in secrets, plus whole
+// `_`-delimited segments for words that are also substrings of ordinary names
+// (`KEY` not `KEYBOARD`, `AUTH` not `AUTHOR`, `PASS`/`PWD` only after a prefix
+// so the shell's `PWD` stays a path). `AWS_` is the one prefix that is all
+// credentials or credential selectors. `PRIVATE` alone is not used: every
+// private-key variable also says `KEY`, and Next.js' `NEXT_PRIVATE_*` flags
+// are configuration. Neither are CI descriptors such as `GITHUB_ACTIONS` or
+// `GITHUB_REF`; every GitHub credential name carries `TOKEN`, `PAT` or `KEY`.
+// `JWT` (GitLab's `CI_JOB_JWT`) is a credential; `KUBECONFIG`, `DOCKER_CONFIG`,
+// npm's `USERCONFIG` and `NETRC` name the file that holds one.
+// A handful of public names that bundles carry everywhere are carved out:
+// React's `__SECRET_INTERNALS_…`, Babel's `ALIAS_KEYS`/`VISITOR_KEYS`/
+// `BUILDER_KEYS` tables, and terminal ids (`WT_SESSION`, `TERM_SESSION_ID`).
+const SECRET_NAME_MARKER = String.raw`(?:TOKEN(?!IZ)|SECRET(?!_INTERNALS)|PASSW(?:OR)?D|PASSPHRASE|CREDENTIAL|COOKIE|AUTHORIZATION|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|(?<![A-Za-z0-9])(?:KEY|(?<!(?:ALIAS|VISITOR|BUILDER)_)KEYS|PAT|(?<!(?:WT|TERM)_)SESSION|DSN|WEBHOOK|O?AUTH|JWT|KUBECONFIG|DOCKER_CONFIG|USERCONFIG|NETRC)(?![A-Za-z0-9])|_(?:PASS|PWD)(?![A-Za-z0-9])|(?<![A-Za-z0-9])AWS_|(?<![A-Za-z0-9])(?:DATABASE|DB|MONGO(?:DB)?|REDIS|POSTGRES(?:QL)?|MYSQL)_UR[LI](?![A-Za-z0-9]))`;
+// `process?.env` and `globalThis.process.env` included; `process['env']` is
+// member-folded by the normalizer.
+const ENV_OBJECT = String.raw`(?:\bprocess\s*\??\.\s*env|\bimport\s*\.\s*meta\s*\.\s*env|\bBun\s*\.\s*env)\b`;
+// The env object used as a value: not followed by a member read.
+const ENV_OBJECT_VALUE = String.raw`${ENV_OBJECT}(?!\s*(?:\?\.|\.)\s*[\w$]|\s*(?:\?\.\s*)?\[)`;
 const JS_CREDENTIAL_ACCESS_PATTERNS = [
-  /\bprocess\.env\b/,
-  /\bnpm_config_/,
+  // The env object as a value. Destructuring is a value use too; `scripts.ts`
+  // exempts it when every name it pulls out is a plain non-secret one.
+  new RegExp(ENV_OBJECT_VALUE),
+  // Named reads of a secret-shaped variable: dot, bracket literal and Deno's
+  // getter.
+  new RegExp(String.raw`${ENV_OBJECT}\s*\??\.\s*[\w$]*?${SECRET_NAME_MARKER}`, "i"),
+  new RegExp(
+    String.raw`${ENV_OBJECT}\s*(?:\?\.\s*)?\[\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}[^"'\x60\n]*\1\s*\]`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\bDeno\s*\.\s*env\s*\.\s*get\s*\(\s*(["'\x60])[^"'\x60\n]*?${SECRET_NAME_MARKER}`,
+    "i",
+  ),
+  // A key chosen at runtime: anything but one plain literal. Which secret it
+  // reads is invisible to review, which is how a stealer hides its target.
+  // Assembled literals fold first (`["NPM_" + "TOKEN"]` reads as `.NPM_TOKEN`);
+  // a computed member of `process` itself (`globalThis.process[e]`) can reach
+  // `env` the same way.
+  new RegExp(
+    String.raw`${ENV_OBJECT}\s*(?:\?\.\s*)?\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*\x60[^\x60$\n\\]*\x60\s*\])`,
+  ),
+  /(?<![\w$.])(?:(?:globalThis|global|window|self)\s*\??\.\s*)?process\s*(?:\?\.\s*)?\[(?!\s*(["'])[^"'\n\\]*\1\s*\])(?!\s*`[^`$\n\\]*`\s*\])/,
+  /\bDeno\s*\.\s*env\s*\.\s*(?:get\s*\(\s*(?!["'`])|toObject\s*\()/,
+  /\bnpm_config_[\w\-./:@]*?(?:_auth|token|_password)/i,
   /\bNPM_TOKEN\b/,
   /\bGITHUB_TOKEN\b/,
   /\bAWS_SECRET\b/,
@@ -211,6 +315,10 @@ const JS_CREDENTIAL_ACCESS_PATTERNS = [
   /\.ssh\/id_/,
   /\.netrc/,
 ];
+// Global, for the exemption pass in `scripts.ts`.
+export const ENV_OBJECT_VALUE_USE = new RegExp(ENV_OBJECT_VALUE, "g");
+export const SECRET_NAME = new RegExp(SECRET_NAME_MARKER, "i");
+export const ENV_OBJECT_PATTERN = new RegExp(ENV_OBJECT);
 const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\bos\.environ\b/,
   /\bos\.getenv\s*\(/,
@@ -262,6 +370,9 @@ export const JS_PATTERN_SET = {
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
   dynamicExecution: JS_DYNAMIC_EXECUTION_PATTERNS,
+  dynamicCall: JS_DYNAMIC_CALL_PATTERNS,
+  dynamicStringArgument: JS_DYNAMIC_STRING_ARGUMENT_PATTERNS,
+  payloadDecoding: JS_PAYLOAD_DECODING_PATTERNS,
   decodedPayloadSink: [...JS_DECODED_PAYLOAD_SINK_PATTERNS, ...JS_INSTALL_WRITE_PATTERNS],
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
   registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
@@ -274,6 +385,9 @@ export const PYTHON_PATTERN_SET = {
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   dynamicExecution: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicCall: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
+  dynamicStringArgument: [] as RegExp[],
+  payloadDecoding: [] as RegExp[],
   decodedPayloadSink: [] as RegExp[],
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
   registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
@@ -446,19 +560,28 @@ const PLACEHOLDER_USERNAME_SEGMENT = [
   "test",
   "demo",
   "example",
+  "login",
+  "guest",
+  "johndoe",
 ].join("|");
 const WEAK_WORD_PASSWORD_SEGMENT = [
-  "pass(?:word|wd)?",
+  "(?:auth|db)?pass(?:word|wd)?",
+  "p%40ss(?:word)?",
   "pwd",
+  "psw",
   "secret",
   "token",
   "example",
   "admin",
+  "guest",
+  // The redis.conf / README example password.
+  "foobared",
 ].join("|");
 const STRUCTURAL_PLACEHOLDER_SEGMENT = [
   "changeme",
   "hunter2",
   "(?:your|my)[-_]?(?:password|token|secret|key)",
+  "(?:random|dummy|fake|example|sample)[-_]?pass(?:word|wd)?",
   "x{3,}",
   "\\*{3,}",
   "<[^>@\\s]*>",
@@ -467,8 +590,14 @@ const STRUCTURAL_PLACEHOLDER_SEGMENT = [
   "\\$[A-Za-z_][A-Za-z0-9_]*",
   "%[^%@\\s]+%",
 ].join("|");
+// Userinfo cannot contain quotes, brackets or braces, so the finding side
+// stops at them: in minified code `https://example.com",keywords:[…]…@scope`
+// would otherwise read a string boundary and a later `@` as credentials, and
+// `http://[user:pwd]@host` is a bracketed doc placeholder.
+const URL_USER_CHAR = String.raw`[^\s/@:'"\x60<>{}[\]\\,;()]`;
+const URL_PASSWORD_CHAR = String.raw`[^\s/@'"\x60<>{}[\]\\,;()]`;
 const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
-  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+`,
+  String.raw`\b(?:[A-Za-z]+:\/\/)(?!(?:${PLACEHOLDER_USERNAME_SEGMENT}):(?:${WEAK_WORD_PASSWORD_SEGMENT}|${STRUCTURAL_PLACEHOLDER_SEGMENT})@|[^\s/@:]+:(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})@)${URL_USER_CHAR}+:${URL_PASSWORD_CHAR}+@[^\s'"\\]+`,
   "gi",
 );
 
@@ -481,8 +610,58 @@ const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
 // `KEY=value`, including `P@ssw0rd!` style values, but not `x=n.token!==void 0`.
 const GENERIC_SECRET_REDACTION_PATTERN =
   /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi;
-const GENERIC_SECRET_FINDING_PATTERN =
-  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)(?:(['"])[^'"\s]{12,}\2|[^'"\s,;:(){}[\]=]{12,}={0,2}(?=$|\s))/gi;
+//
+// Code names its secrets far more often than it holds them. A real sweep of
+// popular packages found the generic key/value shape matching, never a leak:
+//   - identifier-shaped constants: `TOKEN = "__WEBPACK_MODULE_REFERENCE__"`,
+//     `SECRET: "MF-Proxy-Shared-Secret"`, Monaco's `token: "delimiter.curly"`,
+//     error codes like `'auth/invalid-api-key'`. A value made only of letter
+//     words (≤16 letters) joined by `-_.:/` is a name, not key material, so
+//     neither branch accepts one. A word may carry digits only as a short
+//     tag (`ec2`, `x509`, Monaco's `type.$0`), so a CamelCase word with a
+//     trailing year or counter (`AcmeCorp2024`) stays credential-shaped.
+//   - unquoted expressions: `password: options.password`, `token = this.ctx`,
+//     `exports.Token = exports.Location`. An unquoted value is a secret only in
+//     `.env`/YAML-style files, where it is not a property path and, unlike an
+//     identifier, carries a digit (`sk-abc123…`, `Tr0ub4dor&3`). A property
+//     path is a chain of identifiers whose digits only trail (`url44.password`);
+//     dotted tokens with base64url segments (SendGrid `SG.…`, Discord bot
+//     tokens) are not paths.
+//   - placeholders: `"<client-secret>"`, `"${API_KEY}"`, `"{{token}}"`,
+//     `xxxx`/`****` masks, and "example"/"placeholder"/"your-" values.
+//   - minified string seams: `"…password: "),m=n.limit…"` reads the code
+//     between two literals as a quoted value; a quoted value with code
+//     punctuation `(){};,` is that seam, not a password.
+// Spacing around the separator stays on one line so `token =\n  this.x`
+// cannot reach the next statement. Every sub-pattern is bounded or anchored
+// on disjoint character classes so a long run stays linear.
+const SECRET_KEY_ASSIGNMENT = String.raw`(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)[ \t]*[:=][ \t]*)`;
+const WORD_SEGMENT = String.raw`(?:[A-Za-z]{1,16}|[A-Za-z]{1,3}[0-9]{1,4}|\$?[0-9]{1,2})`;
+// Segments are separated by `.` and cannot contain one, so the chain scans
+// linearly; every dotted part must be an identifier, not just a prefix of them.
+const IDENTIFIER_SEGMENT = String.raw`[A-Za-z_$][A-Za-z_$]*[0-9]*`;
+const PROPERTY_PATH = String.raw`(?:${IDENTIFIER_SEGMENT}\.)+${IDENTIFIER_SEGMENT}(?![\w$.-])`;
+// Quoted names may use `:` (`urn:…:token-type`); the unquoted variant leaves it
+// out, as its value cannot contain one. Keeping `:` out also keeps the scan
+// linear: a run of `token:token:…` would otherwise rescan to the end from
+// every key.
+const wordShapedValue = (separators: string) =>
+  String.raw`[${separators}@]*${WORD_SEGMENT}(?:[${separators}]+${WORD_SEGMENT})*[${separators}]*`;
+const QUOTED_WORD_SHAPED_VALUE = wordShapedValue("-_.:/");
+const UNQUOTED_WORD_SHAPED_VALUE = wordShapedValue("-_./");
+const PLACEHOLDER_VALUE_HINT = String.raw`x{4}|\*{3}|<|>|example|placeholder|changeme|redacted|your[-_]`;
+const UNQUOTED_SECRET_CHAR = String.raw`[^'"\s,;:(){}[\]=]`;
+const GENERIC_SECRET_FINDING_PATTERN = new RegExp(
+  SECRET_KEY_ASSIGNMENT +
+    "(?:" +
+    // Quoted literal.
+    String.raw`(['"])(?![{%[]|\$\{)(?!${QUOTED_WORD_SHAPED_VALUE}\2)(?![^'"\s]*?(?:${PLACEHOLDER_VALUE_HINT}))[^'"\s(){};,\x60]{12,}\2` +
+    "|" +
+    // Unquoted `.env`/YAML value running to whitespace or end of text.
+    String.raw`(?![$<%]|${PROPERTY_PATH})(?!${UNQUOTED_WORD_SHAPED_VALUE}={0,2}(?:\s|$))(?!${UNQUOTED_SECRET_CHAR}*?(?:${PLACEHOLDER_VALUE_HINT}))(?=${UNQUOTED_SECRET_CHAR}*?[0-9])${UNQUOTED_SECRET_CHAR}{12,}={0,2}(?=$|\s)` +
+    ")",
+  "gi",
+);
 
 // .npmrc auth (`//registry/:_authToken=…`, legacy `_auth=`/`_password=`).
 // Redaction masks any literal value; `${NPM_TOKEN}` is a reference. A finding
@@ -497,28 +676,67 @@ const NPM_AUTH_FINDING_PATTERN =
 // the generic pattern's whitespace terminator cannot end. A connection-string
 // key earlier on the same line is required, segments are bounded so a long run
 // of keys stays linear, and a template placeholder (`${pwd}`, `<password>`) or a
-// property read (`host=e.host;password=e.password`) is not a value.
-const CONNECTION_STRING_PASSWORD_PATTERN =
-  /(\b(?:Server|Data Source|Host|Uid|User ID|Initial Catalog|Database)[ \t]*=[^;"'\n]{0,256};(?:[^;"'\n]{0,256};){0,8}?[ \t]*(?:Password|Pwd)[ \t]*=[ \t]*)(?![$<{%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])[^;"'\s]{6,}/gi;
+// property read (`host=e.host;password=e.password`) is not a value. The
+// finding side also skips the structural placeholders (`Password=myPassword;`,
+// `password=randompassword;` in a CLI's sample connection strings).
+const CONNECTION_STRING_PASSWORD_PREFIX = String.raw`(\b(?:Server|Data Source|Host|Uid|User ID|Initial Catalog|Database)[ \t]*=[^;"'\n]{0,256};(?:[^;"'\n]{0,256};){0,8}?[ \t]*(?:Password|Pwd)[ \t]*=[ \t]*)(?![$<{%]|[A-Za-z_$][\w$]*\.[A-Za-z_$])`;
+const CONNECTION_STRING_PASSWORD_PATTERN = new RegExp(
+  String.raw`${CONNECTION_STRING_PASSWORD_PREFIX}[^;"'\s]{6,}`,
+  "gi",
+);
+const CONNECTION_STRING_PASSWORD_FINDING_PATTERN = new RegExp(
+  String.raw`${CONNECTION_STRING_PASSWORD_PREFIX}(?!(?:${STRUCTURAL_PLACEHOLDER_SEGMENT})(?:[;"'\s]|$))[^;"'\s]{6,}`,
+  "gi",
+);
+
+// Self-identifying token shapes that still occur by chance inside long base64
+// runs (a 20-char `AKIA…` window in an inlined WASM module): the finding side
+// requires the token to stand alone rather than sit inside a longer base64 run.
+// The letter of a `\n`/`\t` escape is not part of a run (`"…\nAKIA…"`), and a
+// trailing `/` is the SigV4 credential scope (`X-Amz-Credential=AKIA…/2024…`).
+const AWS_ACCESS_KEY_PATTERN = /AKIA[0-9A-Z]{16}/g;
+const AWS_SESSION_KEY_PATTERN = /ASIA[0-9A-Z]{16}/g;
+const AWS_ACCESS_KEY_FINDING_PATTERN = /(?<!(?<!\\)[A-Za-z0-9+/])AKIA[0-9A-Z]{16}(?![A-Za-z0-9+])/g;
+const AWS_SESSION_KEY_FINDING_PATTERN =
+  /(?<!(?<!\\)[A-Za-z0-9+/])ASIA[0-9A-Z]{16}(?![A-Za-z0-9+])/g;
+
+// Slack webhook paths are `T<team>/B<bot>/<secret>`; docs and bundled samples
+// use `xxx/xxx/xxx` or short made-up segments.
+const SLACK_WEBHOOK_PATTERN = /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g;
+const SLACK_WEBHOOK_FINDING_PATTERN =
+  /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{6,}\/B[A-Z0-9]{6,}\/(?![xX]{8})[A-Za-z0-9]{16,}/g;
+
+// A PEM/PGP private key body is base64 in 64-char lines. Documentation and
+// armor code carry the header with a placeholder or code instead
+// (`-----BEGIN PRIVATE KEY-----\nXXXX\n…`, `<KEY>`, `…'\n'); result.push(`),
+// so the finding side needs a 40-char base64 run within the first 400
+// characters after the header (room for `Proc-Type`/`Version:` headers). The
+// window is bounded and stops at the next `-----`, keeping the scan linear.
+const PRIVATE_KEY_LABEL = "(?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?";
+const PRIVATE_KEY_PATTERN = new RegExp(
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  "g",
+);
+const PRIVATE_KEY_FINDING_PATTERN = new RegExp(
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----(?:[^-]|-(?!----)){0,400}?[A-Za-z0-9+/]{40}[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  "g",
+);
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
   [/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
   [/github_pat_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]"],
-  [/AKIA[0-9A-Z]{16}/g, "[REDACTED_AWS_ACCESS_KEY]"],
-  [/ASIA[0-9A-Z]{16}/g, "[REDACTED_AWS_SESSION_KEY]"],
+  [AWS_ACCESS_KEY_PATTERN, "[REDACTED_AWS_ACCESS_KEY]"],
+  [AWS_SESSION_KEY_PATTERN, "[REDACTED_AWS_SESSION_KEY]"],
   [/AIza[0-9A-Za-z\-_]{35}/g, "[REDACTED_GOOGLE_API_KEY]"],
   [/ya29\.[0-9A-Za-z\-_]{20,}/g, "[REDACTED_GOOGLE_OAUTH_TOKEN]"],
   [/sk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/rk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/xox[abprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED_SLACK_TOKEN]"],
-  [/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, "[REDACTED_SLACK_WEBHOOK]"],
+  [SLACK_WEBHOOK_PATTERN, "[REDACTED_SLACK_WEBHOOK]"],
   [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]"],
   [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
-  [
-    /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
-    "[REDACTED_PRIVATE_KEY]",
-  ],
+  [PRIVATE_KEY_PATTERN, "[REDACTED_PRIVATE_KEY]"],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
   [NPM_AUTH_REDACTION_PATTERN, "$1[REDACTED_NPM_AUTH]"],
   [CONNECTION_STRING_PASSWORD_PATTERN, "$1[REDACTED_SECRET]"],
@@ -529,6 +747,11 @@ const FINDING_PATTERN_FOR_REDACTION = new Map<RegExp, RegExp>([
   [URL_CREDENTIALS_REDACTION_PATTERN, URL_CREDENTIALS_FINDING_PATTERN],
   [GENERIC_SECRET_REDACTION_PATTERN, GENERIC_SECRET_FINDING_PATTERN],
   [NPM_AUTH_REDACTION_PATTERN, NPM_AUTH_FINDING_PATTERN],
+  [CONNECTION_STRING_PASSWORD_PATTERN, CONNECTION_STRING_PASSWORD_FINDING_PATTERN],
+  [AWS_ACCESS_KEY_PATTERN, AWS_ACCESS_KEY_FINDING_PATTERN],
+  [AWS_SESSION_KEY_PATTERN, AWS_SESSION_KEY_FINDING_PATTERN],
+  [SLACK_WEBHOOK_PATTERN, SLACK_WEBHOOK_FINDING_PATTERN],
+  [PRIVATE_KEY_PATTERN, PRIVATE_KEY_FINDING_PATTERN],
 ]);
 
 // Detection-side view of SECRET_PATTERNS: identical except where a finding needs
@@ -543,7 +766,7 @@ export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.
 const KEY_VALUE_FINDING_PATTERNS = new Set([
   GENERIC_SECRET_FINDING_PATTERN,
   NPM_AUTH_FINDING_PATTERN,
-  CONNECTION_STRING_PASSWORD_PATTERN,
+  CONNECTION_STRING_PASSWORD_FINDING_PATTERN,
 ]);
 export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =
   FINDING_SECRET_PATTERNS.filter(([pattern]) => !KEY_VALUE_FINDING_PATTERNS.has(pattern));

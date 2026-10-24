@@ -14,37 +14,38 @@ import {
 import type { AppDb } from "../../db/client";
 import { getNpmConnection } from "../../db/npm-connections";
 import { recordScanEvent } from "../../db/events";
+import { postReleaseLink } from "../../db/publication-alerts";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
   SCAN_DECISION_FILTERS,
   type ScanDecisionFilter,
-  type ScanSource,
-  createScanJob,
   deleteFailedScan,
   findMemberScanOrganization,
   getScan,
   getScanFile,
   getScanStatus,
   listScans,
+  readScanRiskBreakdown,
+  scanPublicDisclosureAllowed,
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
-import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../lib/ecosystems/npm/connection";
 import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
 } from "../../lib/ecosystems/npm/staged-publishes";
-import { getPublicationMonitor, getPublishedAdapter, getStagedAdapter } from "../../lib/ecosystems";
-import { publishedPairStageId } from "../../lib/ecosystems/published-pair";
-import { PublicDiffError } from "../../lib/public-diff/error";
-import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
-import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
+import { getPublicationMonitor, getStagedAdapter } from "../../lib/ecosystems";
+import { parseScanInput } from "../../lib/scan/input";
 import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list-cursor";
-import { recordProductEvent } from "../../lib/analytics";
-import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
+import {
+  createPreparedScan,
+  enqueuePreparedScan,
+  preparePublishedScan,
+  type PreparedScan,
+} from "../../lib/scan/start";
 import type { Bindings, ScanInput, Variables } from "../../types";
 import { PackageClaimConflictError } from "../../db/package-claims";
 import { readNpmPackageClaimAvailability } from "../../db/scan-jobs";
@@ -77,19 +78,11 @@ scanLifecycleRoutes.post("/", async (c) => {
   if ("error" in prepared) return prepared.error;
 
   const scanId = crypto.randomUUID();
-  const detail = await createScanJob(db, {
-    id: scanId,
-    stageId: prepared.input.stageId,
+  const detail = await createPreparedScan(db, {
+    scanId,
     organizationId,
     ownerUserId: session.userId,
-    source: prepared.source,
-    packageName: prepared.packageName,
-    stagedVersion: prepared.version,
-    stagedCreatedAt: prepared.stagedCreatedAt,
-    stagedDeclaredSha1: prepared.stagedDeclaredSha1,
-    registryUrl: prepared.registryUrl,
-    stageAccessStatus: prepared.stageAccessStatus,
-    baselineVersion: prepared.baselineVersion,
+    prepared,
   }).catch((err: unknown) => {
     if (err instanceof PackageClaimConflictError) return err;
     throw err;
@@ -115,63 +108,17 @@ scanLifecycleRoutes.post("/", async (c) => {
       releases: [prepared.staged],
     });
   }
-  const message: ScanQueueMessage = {
-    ...prepared.input,
+  await enqueuePreparedScan(c, db, {
     scanId,
     organizationId,
     actorUserId: session.userId,
-    source: prepared.source,
-  };
-
-  // Counted at creation, not completion, so the queued → completed drop-off
-  // is visible: a scan that never reaches a terminal state emits neither
-  // `scan.completed` nor `scan.failed` and would otherwise vanish.
-  recordProductEvent(c.env, {
-    name: "scan.queued",
-    organizationId,
-    ecosystem: prepared.ecosystem,
-    source: message.source ?? "manual",
+    prepared,
   });
-
-  if (c.env.SCAN_QUEUE) {
-    await c.env.SCAN_QUEUE.send(message);
-  } else {
-    c.executionCtx.waitUntil(
-      executeScanJob(c.env, workerExecutionContext(c.executionCtx), message, db, {
-        finalAttempt: true,
-      }),
-    );
-  }
 
   return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
 });
 
 type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
-
-interface PreparedScan {
-  input: ScanInput;
-  source: ScanSource;
-  ecosystem: string;
-  packageName: string | null;
-  version: string | null;
-  /**
-   * Registry-reported stage creation time. Only a staged npm scan has one; a
-   * published-pair review was never staged.
-   */
-  stagedCreatedAt: string | null;
-  /** The registry's SHA-1 from the same stage record; only a staged npm scan has one. */
-  stagedDeclaredSha1: string | null;
-  /**
-   * Only a staged npm scan captures one. A published-pair review must leave it
-   * null: `createScanJob` uses it to claim the registry coordinates a staged
-   * release owns, and a review of an already-public version has no claim on them.
-   */
-  registryUrl: string | null;
-  stageAccessStatus?: number | null;
-  /** The registry-confirmed baseline of a published pair. */
-  baselineVersion?: string | null;
-  staged?: NonNullable<Awaited<ReturnType<typeof fetchStagedPublishDetails>>>;
-}
 
 async function prepareStagedScan(
   c: ScanRouteContext,
@@ -258,53 +205,6 @@ async function prepareStagedScan(
   };
 }
 
-/**
- * Resolve a published `package@version` against its public registry before any
- * scan row exists, so an unpublished version is a request error rather than a
- * scan that fails minutes later, and the queued message names an exact pair.
- *
- * No npm credential is read, decrypted, or attached here: acquisition reuses
- * the same public brokers the anonymous `/diff` surface uses.
- */
-async function preparePublishedScan(
-  c: ScanRouteContext,
-  request: PublishedScanRequest,
-): Promise<PreparedScan | { error: Response }> {
-  const adapter = getPublishedAdapter(request.ecosystem);
-  if (!adapter) return { error: c.json({ error: "unsupported ecosystem" }, 400) };
-
-  let resolved: Awaited<ReturnType<typeof adapter.resolvePair>>;
-  try {
-    resolved = await adapter.resolvePair(c.env, workerExecutionContext(c.executionCtx), request);
-  } catch (err) {
-    emitOperationalEvent("warn", "scan.published_pair.resolve_failed", {
-      ecosystem: request.ecosystem,
-      error: describeOperationalError(err),
-    });
-    // The public-diff loaders already classify their own failures (unknown
-    // package, oversized archive, registry unreachable) with a public-safe
-    // message and status; anything else is ours and stays opaque.
-    if (err instanceof PublicDiffError) {
-      return { error: c.json({ error: err.message }, err.status) };
-    }
-    return { error: c.json({ error: "could not reach the registry for that package" }, 502) };
-  }
-  if (!resolved.ok) return { error: c.json({ error: resolved.error }, resolved.status) };
-
-  const pair = resolved.pair;
-  return {
-    input: { stageId: publishedPairStageId(pair), published: pair },
-    source: "published",
-    ecosystem: pair.ecosystem,
-    packageName: pair.packageName,
-    version: pair.version,
-    stagedCreatedAt: null,
-    stagedDeclaredSha1: null,
-    registryUrl: null,
-    baselineVersion: pair.baselineVersion,
-  };
-}
-
 const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
 
 scanLifecycleRoutes.get("/", async (c) => {
@@ -371,12 +271,16 @@ scanLifecycleRoutes.get("/:id", async (c) => {
   if (!scan) return c.json({ error: "not found" }, 404);
   return c.json({
     ...scan,
+    postRelease: await postReleaseLink(db, organizationId, scan.scan.id, scan.scan.source),
     scan: {
       ...scan.scan,
       publicShareUrl: scan.scan.publicShareToken
         ? `${canonicalOrigin(c)}/reports/${scan.scan.publicShareToken}`
         : null,
       publicShareIncludesFiles: scan.scan.publicShareIncludesFiles,
+      publicShareAwaitingPublication: scan.scan.publicShareToken
+        ? !(await scanPublicDisclosureAllowed(db, { scanId: scan.scan.id, organizationId }))
+        : false,
     },
   });
 });
@@ -384,9 +288,17 @@ scanLifecycleRoutes.get("/:id", async (c) => {
 scanLifecycleRoutes.get("/:id/status", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
-  if (!scan) return c.json({ error: "not found" }, 404);
-  return c.json({ scan });
+  const status = await getScanStatus(db, c.req.param("id"), organizationId);
+  if (!status) return c.json({ error: "not found" }, 404);
+  const { baselineComparisonSkipped, ...scan } = status;
+  // The release/context split, so a poller can gate on release risk as the
+  // workflow gate does. With no baseline compared there is no release delta,
+  // and the gate asks for manual review; null sends a poller to overall risk.
+  const riskSummary =
+    scan.status === "complete" && !baselineComparisonSkipped
+      ? readScanRiskBreakdown(scan.riskSummaryJson)
+      : null;
+  return c.json({ scan, riskSummary });
 });
 
 // The one scan read that does not resolve the active organization: a link
