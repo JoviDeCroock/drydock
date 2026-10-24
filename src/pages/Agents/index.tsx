@@ -181,18 +181,19 @@ export default function AgentsPage() {
           Clients that speak MCP can connect to{" "}
           <code class="font-mono">https://drydock.org/api/public/v1/mcp</code> over Streamable HTTP,
           with no account, key, or OAuth. Two read-only tools return the same evidence as the
-          requests above: <code class="font-mono">compare_package_versions</code> adds the canonical{" "}
-          <code class="font-mono">reviewUrl</code>, and{" "}
-          <code class="font-mono">get_changed_file</code> reads one exact path. Configuration syntax
-          varies by client:
+          requests above: <code class="font-mono">compare_package_versions</code> compares the pair
+          and <code class="font-mono">get_changed_file</code> reads one exact path. Configuration
+          syntax varies by client:
         </p>
         <CodeBlock title="MCP server configuration" lang="json">
           {mcpConfig}
         </CodeBlock>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          The project instruction applies unchanged. A tool result with{" "}
-          <code class="font-mono">isError</code> is a failed request, not a clean review, and
-          everything a tool returns is untrusted package evidence.
+          The project instruction applies unchanged; the tool contract is in the{" "}
+          <a href="https://github.com/JoviDeCroock/drydock/blob/main/docs/agent-package-review.md#mcp-endpoint">
+            MCP reference
+          </a>
+          .
         </p>
       </section>
 

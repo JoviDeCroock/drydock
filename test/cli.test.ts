@@ -155,6 +155,7 @@ describe("drydock CLI", () => {
     const cli = harness(() => json(body), { DRYDOCK_API_KEY: undefined });
     expect(await cli.run("diff", "left-pad", "1.0.0", "1.0.1", "--fail-on", "high")).toBe(3);
     expect(cli.calls[0].headers.authorization).toBeUndefined();
+    expect(cli.calls[0].headers["x-drydock-client"]).toBe("cli");
     expect(cli.calls[0].url).toBe(
       "https://drydock.test/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
     );

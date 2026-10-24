@@ -17,7 +17,4 @@
 - [Security model](https://drydock.org/security): Isolation, credential boundaries, and evidence limitations.
 - [Open source](https://drydock.org/open-source): Apache-2.0 source and self-hosting references.
 
-The agent quickstart and MCP endpoint use the existing public package-diff API.
-They need no account or API key and send no registry credentials. Use it for public packages
-only when the project permits contacting an external service. Authenticated
-organization APIs and unlisted report links have separate access boundaries.
+The agent quickstart and MCP endpoint need no account or API key; evidence rules and access boundaries are in the [agent package review reference](https://github.com/JoviDeCroock/drydock/blob/main/docs/agent-package-review.md).
