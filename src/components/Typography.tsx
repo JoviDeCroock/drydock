@@ -116,14 +116,20 @@ export function LoadingLine({
   children,
   size = "full",
   class: className,
+  live = true,
 }: {
   children: ComponentChildren;
   size?: "inline" | "full";
   class?: string;
+  /** False inside a live region that outlives the loading state, so it is not announced twice. */
+  live?: boolean;
 }) {
   const sizeClass = size === "inline" ? "text-[12px] font-mono" : "text-[14px]";
   return (
-    <p class={cn("text-ink-muted m-0 leading-[1.55]", sizeClass, className)} aria-live="polite">
+    <p
+      class={cn("text-ink-muted m-0 leading-[1.55]", sizeClass, className)}
+      aria-live={live ? "polite" : undefined}
+    >
       {children}
       <span class="ml-0.5 motion-safe:animate-pulse">…</span>
     </p>
