@@ -213,7 +213,8 @@ describe("pip invocations during prepare", () => {
     expect(harness.PYPI_INDEX).toBe("https://pypi.org/simple/");
     expect(options).not.toContain("--no-binary");
     expect(options).not.toContain("--extra-index-url");
-    // Caller arguments come after every option, so none can override one.
+    // pip would still read a later `-…` argument as an option; what keeps one
+    // out is isSafeRequirement (tested below), not this ordering.
     expect(argv.slice(options.length)).toEqual(args);
   });
 

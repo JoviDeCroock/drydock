@@ -1410,6 +1410,45 @@ describe("PyPI gate detonation", () => {
     expect(result.artifacts).toEqual([{ path: WHEEL_PATH, sha256: wheelSha, role: "wheel" }]);
   });
 
+  test("skips a wheel over the sandbox limit, and refuses an oversize sdist with the wrong digest", async () => {
+    const oversize = new Uint8Array(16 * 1024 * 1024 + 1).fill(0x61);
+    const bigWheel = buildZip([{ path: "demo_package/blob.bin", body: oversize }]);
+    const tooLarge = await seedGateForTest({
+      installationExternalId: "9309",
+      repositoryId: 73009,
+      runId: 30309,
+    });
+    const tooLargeScan = await seedPyPiGateScan(tooLarge, [
+      { path: WHEEL_PATH, kind: "wheel", sha256: await sha256Hex(bigWheel) },
+    ]);
+    await stubReleaseBundle(30309, [{ path: WHEEL_PATH, bytes: bigWheel }]);
+    const sandbox = fakePyPiSandbox();
+    const skipped = await runQueued(tooLarge, tooLargeScan, sandbox);
+    expect(sandbox.received).toHaveLength(0);
+    expect(skipped?.status).toBe("skipped");
+    expect(skipped?.errorCode).toBe("artifact_too_large");
+
+    // Too big to run, but still checked: a swapped sdist means the bundle is
+    // not the one reviewed, so the wheel does not run either.
+    const mismatch = await seedGateForTest({
+      installationExternalId: "9310",
+      repositoryId: 73010,
+      runId: 30310,
+    });
+    const mismatchScan = await seedPyPiGateScan(mismatch, [
+      { path: WHEEL_PATH, kind: "wheel", sha256: await sha256Hex(WHEEL_BYTES) },
+      { path: SDIST_PATH, kind: "sdist", sha256: "b".repeat(64) },
+    ]);
+    await stubReleaseBundle(30310, [
+      { path: WHEEL_PATH, bytes: WHEEL_BYTES },
+      { path: SDIST_PATH, bytes: oversize },
+    ]);
+    const refused = await runQueued(mismatch, mismatchScan, sandbox);
+    expect(sandbox.received).toHaveLength(0);
+    expect(refused?.status).toBe("failed");
+    expect(refused?.errorCode).toBe("artifact_digest_mismatch");
+  });
+
   test("refuses to run when the refetched wheel is not the one the review read", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9302",
