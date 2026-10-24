@@ -72,12 +72,15 @@ Loads of queued, running, or failed reviews have no report and are not views.
 Public share links, `/diff`, the report export, and the status poll are other
 surfaces and record nothing. Four columns on `scans` (migration `0040_futuristic_zombie`):
 
-- `report_first_viewed_at` / `report_last_viewed_at` — first and latest load.
+- `report_first_viewed_at` / `report_last_viewed_at` — first and latest
+  counted load.
 - `report_view_count` — loads, including reloads and the load that follows a
-  change on the page. Written as 0 when the scan is created. Rows that existed
-  before view tracking have null, so their earlier loads, which went
-  unrecorded, are never read as "not opened"; for them `report_first_viewed_at`
-  is the earliest recorded load, and the release timeline says so.
+  change on the page, at most one per 60 seconds: a load within 60 seconds of
+  `report_last_viewed_at` writes nothing (the condition is in the UPDATE, so it
+  costs no extra read). The first load is never throttled. Written as 0 when
+  the scan is created. Rows that existed before view tracking have null, so
+  their earlier loads, which went unrecorded, are never read as "not opened";
+  for them `report_first_viewed_at` is only the earliest recorded load.
 - `report_first_view_surface` — `web`, or `notification` when the first load
   was a landing from an email or Slack link (those links carry
   `?via=notification`; the page drops it from its address and passes it on
