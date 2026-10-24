@@ -225,6 +225,7 @@ describe("anonymous public MCP tools", () => {
     const text = first.content.find((item) => item.type === "text")!.text;
     expect(text.length).toBeLessThan(16 * 1024);
     expect(text).toContain("15 more findings in structuredContent");
+    expect(text).toContain("changed files 1–100 of 1000:");
     expect(text).toContain(
       `975 more changed files (75 in structuredContent); call compare_package_versions with changedFilesOffset=${CHANGED_FILES_PAGE_SIZE} for the next page. Inspect any path with get_changed_file.`,
     );
@@ -240,11 +241,31 @@ describe("anonymous public MCP tools", () => {
       moreChangedFiles: 0,
       nextChangedFilesOffset: null,
     });
+    const lastText = last.content.find((item) => item.type === "text")!.text;
+    expect(lastText).toContain("changed files 951–1000 of 1000:");
+    expect(lastText).toContain("25 more changed files (25 in structuredContent). Inspect any path");
+    expect(lastText).not.toContain("for the next page");
     expect(
       new URL(invoke.mock.calls[1][0], "https://internal.example").searchParams.has(
         "changedFilesOffset",
       ),
     ).toBe(false);
+
+    const past = await request<CallToolResult>("tools/call", {
+      name: "compare_package_versions",
+      arguments: { ...pairArgs, changedFilesOffset: 5000 },
+    });
+    expect(past.isError).not.toBe(true);
+    expect(past.structuredContent).toMatchObject({
+      changedFileCount: 1000,
+      changedFilesOffset: 5000,
+      changedFiles: [],
+      moreChangedFiles: 0,
+      nextChangedFilesOffset: null,
+    });
+    expect(past.content.find((item) => item.type === "text")!.text).toContain(
+      "changedFilesOffset=5000 is past the last changed file (1000); start again at 0.",
+    );
   });
 
   test("preserves file contents, omission flags, and additional evidence fields", async () => {
