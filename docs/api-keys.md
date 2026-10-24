@@ -10,7 +10,7 @@ A key is the one authenticated exception to "every non-auth `/api/*` endpoint re
 curl -H "Authorization: Bearer $DRYDOCK_API_KEY" https://drydock.org/api/v1/scans?filter=all
 ```
 
-`GET /api/v1/api-keys/current` returns the key's own name, prefix, expiry, and organization, so a script can check a key before relying on it.
+`GET /api/v1/api-keys/current` returns the key's own name, prefix, expiry, and organization, so a script can check a key before relying on it. The [`drydock` CLI](../cli/README.md) is built on the routes below.
 
 A key belongs to exactly one organization. It ignores the dashboard's active-organization selector; a request whose `x-organization-id` (or report-export `?organizationId=`) names a different organization is refused (`403 api_key_organization_mismatch` or `404`), never answered from the key's own organization.
 
@@ -18,18 +18,18 @@ A key belongs to exactly one organization. It ignores the dashboard's active-org
 
 Only these routes, all reads a plain member can already make (`API_KEY_ROUTES` in `server/lib/auth/api-keys.ts`):
 
-| Route                                                   | Returns                                       |
-| ------------------------------------------------------- | --------------------------------------------- |
-| `GET /api/v1/api-keys/current`                          | the calling key and its organization          |
-| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface         |
-| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`) |
-| `GET /api/v1/scans/overview`                            | dashboard counts                              |
-| `GET /api/v1/scans/:id`                                 | one review                                    |
-| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status, for polling      |
-| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                   |
-| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                           |
-| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`) |
-| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to         |
+| Route                                                   | Returns                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `GET /api/v1/api-keys/current`                          | the calling key and its organization                    |
+| `GET /api/v1/openapi.json`                              | the OpenAPI document for this surface                   |
+| `GET /api/v1/scans`                                     | the review list (`filter`, `cursor`, `limit`)           |
+| `GET /api/v1/scans/overview`                            | dashboard counts                                        |
+| `GET /api/v1/scans/:id`                                 | one review                                              |
+| `GET /api/v1/scans/:id/status`                          | a review's lifecycle status and risk split, for polling |
+| `GET /api/v1/scans/:id/report.json`                     | the canonical report export                             |
+| `GET /api/v1/scans/:id/release-receipt.json`            | the Release Receipt                                     |
+| `GET /api/v1/packages/:name/releases`                   | one package's reviews (`ecosystem`, `cursor`)           |
+| `GET /api/v1/github-app/workflow-gates/by-scan/:scanId` | the workflow gate a review belongs to                   |
 
 Every other `/api/*` route answers a key with `403 { code: "api_key_endpoint_not_allowed" }`, including every write: a key cannot record a scan or gate decision, start a review, share a report, manage members or credentials, or read the audit log. Release decisions stay with signed-in maintainers, behind the organization's two-factor policy.
 

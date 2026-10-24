@@ -853,6 +853,61 @@ export default function DocsPage() {
             </LinkButton>
           </section>
 
+          <section id="automation" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Automate reads</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                Read reviews from scripts and CI. Decide them in Drydock.
+              </h2>
+              <Prose>
+                An organization API key reads the same reviews, report exports, and release receipts
+                the dashboard shows. It is read-only by construction: it cannot approve a gate,
+                record a decision, start a review, or change settings.
+              </Prose>
+            </div>
+
+            <Subsection id="api-keys" title="API keys">
+              <Prose>
+                Owners and admins create keys in Organization settings → Integrations → API keys.
+                The key is shown once; Drydock keeps only its hash. Every key expires after 30, 90,
+                or 365 days, and a key stops working when the member who created it leaves the
+                organization.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`curl -H "Authorization: Bearer $DRYDOCK_API_KEY" \\
+  "https://drydock.org/api/v1/scans?filter=all"`}
+              </CodeBlock>
+              <Prose>
+                The endpoints a key reaches are described in the repository&apos;s{" "}
+                <InlineCode>docs/openapi.json</InlineCode>, also served at{" "}
+                <InlineCode>/api/v1/openapi.json</InlineCode>.
+              </Prose>
+            </Subsection>
+
+            <Subsection id="cli" title="The drydock CLI">
+              <Prose>
+                The CLI wraps those endpoints with readable output, exit codes for CI, and a receipt
+                check against the digest Drydock sends. It is not published to npm yet: run it with
+                Node from a checkout of the Drydock repository. It reads the key from{" "}
+                <InlineCode>DRYDOCK_API_KEY</InlineCode> only, so the key stays out of shell
+                history.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs whoami
+node cli/bin/drydock.mjs scans list --filter undecided
+node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
+node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
+node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+              </CodeBlock>
+              <Prose>
+                Package names and finding text come from the packages under review, so the CLI
+                strips terminal control characters from what it prints and escapes them in JSON
+                output. <InlineCode>--output</InlineCode> keeps a receipt&apos;s exact bytes for
+                digest checks.
+              </Prose>
+            </Subsection>
+          </section>
+
           <section class="border-t border-border pt-10">
             <Card
               padding="roomy"
