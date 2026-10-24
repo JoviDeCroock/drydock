@@ -2,6 +2,7 @@ import type { PackageJsonDiff } from "../../server/types";
 import { dependencyDiffHref, type DependencyDiffRow } from "../lib/package-diff-path";
 import { Badge, statusTone } from "./Badge";
 import { EmptyLine } from "./Typography";
+import { DependencyIntel } from "../features/review/DependencyIntel";
 
 // Structured manifest diff (scripts / dependencies / bin), shared by the scan
 // detail report and the public package-diff page. `linkDependencyDiffs` adds a
@@ -41,6 +42,7 @@ export function PackageJsonDiffView({
             title="dependencies"
             noun="dependency"
             rows={diff.dependencies}
+            showIntel
             linkFor={linkDependencyDiffs ? dependencyDiffHref : undefined}
           />
           {/* Only surfaced when present: most releases change no bin, and a new
@@ -86,12 +88,14 @@ function ChangeList({
   noun,
   rows,
   linkFor,
+  showIntel = false,
 }: {
   title: string;
   // Singular attributive form for the empty line: "No dependency changes."
   noun: string;
   rows: DependencyDiffRow[];
   linkFor?: (row: DependencyDiffRow) => string | null;
+  showIntel?: boolean;
 }) {
   return (
     <div class="border border-border rounded-lg overflow-hidden">
@@ -126,6 +130,7 @@ function ChangeList({
                   ) : null}
                 </div>
                 <ChangeValue status={row.status} previous={row.previous} staged={row.staged} />
+                {showIntel && row.intel ? <DependencyIntel verdict={row.intel} /> : null}
               </div>
             );
           })}

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import incidentBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1.json" with { type: "json" };
 import historicalBenchmarkReport from "../../public/benchmarks/shai-hulud-nx/v1-rules-1.47.0.json" with { type: "json" };
 import { expect, test, type Page, type Route } from "@playwright/test";
+import type { PackageJsonDiff } from "../../server/types";
 
 test("benchmark report downloads bypass client routing and retain the measured evidence", async ({
   page,
@@ -98,6 +99,137 @@ test("homepage copy and metadata stay consistent across hydration and client nav
   expect(documentRequests).toHaveLength(1);
   expect(errors).toEqual([]);
 });
+
+test("dependency Intel shows advisory matches and incomplete coverage", async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("requestfailed", (request) =>
+    errors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
+  );
+  await installWorkflowGateMocks(page, false, undefined, {}, true);
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const manifest = page.locator("#manifest-changes");
+  await expect(manifest.getByText("Known malware", { exact: true })).toBeVisible();
+  await expect(manifest.getByText("No known malware match", { exact: true })).toBeVisible();
+  await expect(manifest.getByText("Intel unavailable", { exact: true })).toBeVisible();
+  await expect(manifest.getByText("Spec not checked", { exact: true })).toBeVisible();
+  await expect(manifest.getByText(/installed version is unknown/)).toBeVisible();
+  await expect(manifest.getByText(/This is not a safety verdict/)).toBeVisible();
+  await expect(manifest.getByText("advisory", { exact: true })).toHaveCount(4);
+  await expect(manifest.getByRole("link", { name: "Aikido Intel" }).first()).toHaveAttribute(
+    "href",
+    "https://intel.aikido.dev/malware?ecosystem=npm",
+  );
+  await expect(manifest.locator("time").first()).toHaveAttribute("datetime", now);
+  await expect(manifest.locator("time").first()).toContainText("2026");
+  await manifest.screenshot({ path: testInfo.outputPath("dependency-intel.png") });
+  await expect(page.locator("body")).toHaveJSProperty(
+    "scrollWidth",
+    await page.locator("body").evaluate((element) => element.clientWidth),
+  );
+  expect(errors).toEqual([]);
+
+  await page.route("**/api/public/v1/package-diff**", async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/versions")) {
+      await fulfillJson(route, {
+        ecosystem: "npm",
+        packageName: "intel-demo",
+        displayName: null,
+        versions: [
+          { version: "1.1.0", distTags: [] },
+          { version: "1.2.0", distTags: [] },
+        ],
+        suggested: { from: "1.1.0", to: "1.2.0" },
+      });
+      return;
+    }
+    await fulfillJson(route, {
+      ecosystem: "npm",
+      packageName: "intel-demo",
+      fromVersion: "1.1.0",
+      toVersion: "1.2.0",
+      fromPackageJson: null,
+      toPackageJson: null,
+      diff: [],
+      packageJsonDiff: intelManifestDiff(),
+      findings: [],
+      risk: riskSummary(),
+      textSamplesOmitted: false,
+      notices: [],
+      provenance: [],
+      attestation: null,
+      displayName: null,
+      cachedAt: now,
+    });
+  });
+  await page.goto("/diff/intel-demo/1.1.0/1.2.0");
+  await expect(page.getByText("Known malware", { exact: true })).toBeVisible();
+  await expect(page.getByText("Intel unavailable", { exact: true })).toBeVisible();
+  await expect(page.locator("time").first()).toContainText("2026");
+  await page.screenshot({
+    path: testInfo.outputPath("public-dependency-intel.png"),
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
+});
+
+function intelManifestDiff(): PackageJsonDiff {
+  return {
+    name: "@drydock/gate-demo",
+    hasPreviousManifest: true,
+    previousVersion: "1.1.0",
+    stagedVersion: "1.2.0",
+    entrypointsChanged: false,
+    scripts: [],
+    bin: [],
+    dependencies: [
+      {
+        key: "listed-dependency",
+        status: "added",
+        staged: "^1.0.0",
+        intel: {
+          provider: "aikido",
+          status: "known_malware",
+          packageName: "listed-dependency",
+          checkedAt: now,
+          matchKind: "range",
+          matchedVersions: ["1.0.1"],
+          matchedVersionCount: 1,
+        },
+      },
+      {
+        key: "unlisted-dependency",
+        status: "modified",
+        previous: "1.0.0",
+        staged: "1.0.1",
+        intel: {
+          provider: "aikido",
+          status: "no_known_malware",
+          packageName: "unlisted-dependency",
+          checkedAt: now,
+          matchKind: "exact",
+        },
+      },
+      {
+        key: "lookup-failed",
+        status: "added",
+        staged: "1.0.0",
+        intel: { provider: "aikido", status: "unavailable", packageName: "lookup-failed" },
+      },
+      {
+        key: "from-git",
+        status: "added",
+        staged: "github:example/dependency",
+        intel: { provider: "aikido", status: "not_checked", packageName: "from-git" },
+      },
+    ],
+  };
+}
 
 test("renders and decides a workflow-gate review", async ({ page }) => {
   await installWorkflowGateMocks(page);
@@ -670,6 +802,7 @@ async function installWorkflowGateMocks(
   },
   // Answer the recorded baseline's first `times` compare requests with this error.
   baseline: { failure?: { status: number; error: string; times?: number } } = {},
+  dependencyIntel = false,
 ) {
   let packageDecision: "publish" | "no_publish" | null = null;
   let gateStatus: "pending" | "rejected" = "pending";
@@ -721,9 +854,18 @@ async function installWorkflowGateMocks(
     }
 
     if (path === `/api/v1/scans/${scanId}`) {
+      const detail = reviewNotes ? reviewNotesDetail(packageDecision) : scanDetail(packageDecision);
       await fulfillJson(
         route,
-        reviewNotes ? reviewNotesDetail(packageDecision) : scanDetail(packageDecision),
+        dependencyIntel
+          ? {
+              ...detail,
+              scan: {
+                ...detail.scan,
+                summaryJson: { ...detail.scan.summaryJson, packageJsonDiff: intelManifestDiff() },
+              },
+            }
+          : detail,
       );
       return;
     }

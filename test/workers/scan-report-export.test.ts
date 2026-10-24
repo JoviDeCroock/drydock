@@ -27,7 +27,20 @@ function seedExportScan(owner: ScanOwner, ai: unknown = null) {
         previousVersion: "1.0.0",
         stagedVersion: "1.1.0",
         scripts: [{ key: "postinstall", status: "added", staged: "node install.js" }],
-        dependencies: [],
+        dependencies: [
+          {
+            key: "listed-dependency",
+            status: "added",
+            staged: "1.0.0",
+            intel: {
+              provider: "aikido",
+              status: "known_malware",
+              packageName: "listed-dependency",
+              checkedAt: "2026-01-01T00:00:00.000Z",
+              matchedVersions: ["1.0.0"],
+            },
+          },
+        ],
         entrypointsChanged: false,
       },
       diff: [{ path: "package.json", status: "modified" }],
@@ -108,6 +121,17 @@ describe("scan report JSON export", () => {
     expect(body.package.name).toBe("@org/pkg");
     expect(body.package.stagedVersion).toBe("1.1.0");
     expect(body.packageJsonDiff).toBeTruthy();
+    expect(body.packageJsonDiff).toMatchObject({
+      dependencies: [
+        {
+          intel: {
+            provider: "aikido",
+            status: "known_malware",
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      ],
+    });
     expect(body.artifactIntegrity).toEqual({
       algorithm: "sha1",
       status: "unverified",

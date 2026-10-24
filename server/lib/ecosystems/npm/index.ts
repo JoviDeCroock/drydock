@@ -7,11 +7,13 @@ import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
 import { lookupStagedReleaseFate } from "./release-outcome";
 import { isTerminalNpmVersionStatus } from "./version-status";
+import { enrichNpmDependencyIntel } from "./dependency-intel";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   id: "npm",
+  enrichDependencyIntel: enrichNpmDependencyIntel,
   // Detection scans every file of an npm package with the JavaScript set, so
   // diff annotation must re-match findings with it too. Left undefined,
   // annotation falls back to Python patterns for a `.py` file (a node-gyp
