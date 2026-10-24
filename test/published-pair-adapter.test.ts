@@ -56,4 +56,54 @@ describe("published-pair adapter", () => {
     expect(sources.buildFindings).toHaveBeenCalledOnce();
     expect((broker as unknown as { sources: unknown }).sources).toBeNull();
   });
+
+  test("persists the reviewed tarball's digests and the registry it read them from", async () => {
+    const sources: PublicDiffAcquiredSources = {
+      from: { files: [], packageJson: null },
+      to: { files: [], packageJson: null },
+      toDigests: { sha1: "A".repeat(40), sha256: "not a digest" },
+      buildFindings: vi.fn(() => []),
+    };
+    const acquire = vi.fn(async () => sources);
+    const publicDiff = {
+      ecosystem: "npm",
+      registryUrl: "https://registry.npmjs.org",
+      rulesVersionSegment: "test",
+      payloadVersion: "test",
+      isValidPackageName: () => true,
+      normalizePackageName: (name: string) => name,
+      isValidVersion: () => true,
+      cacheTag: () => "test",
+      // The local harness's loopback registry, as npm returns it only under
+      // the explicit local-development override.
+      publishedRegistryUrl: () => "http://127.0.0.1:5481",
+      listVersions: vi.fn(),
+      acquire,
+    } satisfies PublicDiffAdapter;
+    const adapter = publishedPairAdapter(publicDiff);
+    const context = { env: {} } as AdapterContext;
+    const pair: PublishedPairRef = {
+      ecosystem: "npm",
+      packageName: "pkg",
+      version: "2.0.0",
+      baselineVersion: "1.0.0",
+    };
+    const broker = adapter.createBroker(context, { organizationId: "org" });
+    const staged = await adapter.acquireStaged(context, pair, broker);
+
+    expect(acquire).toHaveBeenCalledWith(
+      context.env,
+      undefined,
+      expect.objectContaining({
+        registryUrl: "http://127.0.0.1:5481",
+        allowInsecureLocalhost: true,
+      }),
+    );
+    expect(adapter.summarizeDetails(staged.details)).toMatchObject({
+      mode: "published_pair",
+      registryUrl: "http://127.0.0.1:5481",
+      // Lowercased, and a malformed digest is dropped rather than persisted.
+      artifactDigest: { sha1: "a".repeat(40), sha256: null },
+    });
+  });
 });

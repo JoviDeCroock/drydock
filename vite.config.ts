@@ -3,6 +3,7 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import preact from "@preact/preset-vite";
 import tailwindcss from "@tailwindcss/vite";
 import { ADDITIONAL_PRERENDER_ROUTES } from "./src/lib/prerender-routes.ts";
+import { diffLinkWorkflowRef } from "./scripts/lib/workflow-ref.mjs";
 
 declare const process: {
   env: {
@@ -22,6 +23,9 @@ export default defineConfig(({ mode }) => {
   const persistStatePath = process.env.CLOUDFLARE_VITE_PERSIST_STATE_PATH;
 
   return {
+    define: {
+      __DIFF_LINK_WORKFLOW_REF__: JSON.stringify(diffLinkWorkflowRef()),
+    },
     server: {
       port: devPort,
       strictPort: true,

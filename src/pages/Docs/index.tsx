@@ -28,6 +28,7 @@ import {
 } from "./primitives";
 import { scrollToDocsHash } from "./hash-navigation";
 import { TOC_IDS } from "./toc";
+import { DEPENDENCY_PR_WORKFLOW, REUSABLE_WORKFLOW } from "./dependency-pr-workflow";
 
 // The rail track and the article track. Shared by the hero and the body so
 // every heading on the page starts on the same column.
@@ -336,7 +337,9 @@ export default function DocsPage() {
               </div>
               <Callout label="Quick decision">
                 Use npm staging for npm's private candidate store. For PyPI, the VS Code
-                Marketplace, or other CI-first releases, use a GitHub workflow gate.
+                Marketplace, or other CI-first releases, use a GitHub workflow gate. For npm the two
+                compose: run <InlineCode>npm stage publish</InlineCode> inside the gated job and the
+                gate reviews the tarball before npm holds it.
               </Callout>
             </Subsection>
           </section>
@@ -470,6 +473,48 @@ export default function DocsPage() {
                 approval and can publish interactively outside this staged path.
               </Callout>
             </Subsection>
+
+            <Subsection id="gated-staging" title="Gate the staging job">
+              <Prose>
+                npm has no hook for a third party to block a stage: approving and rejecting both
+                need an OTP, and there is no stage webhook. Drydock does not need one. Run{" "}
+                <InlineCode>npm stage publish</InlineCode> inside a gated GitHub Environment and the
+                workflow gate reviews the tarball before npm ever receives it. The gate is the
+                enforced checkpoint, held by GitHub; the stage is npm holding exactly the reviewed
+                bytes; the 2FA approval on npm stays with you.
+              </Prose>
+              <Steps
+                items={[
+                  <>
+                    Pin the stage-only trusted publisher to the gate environment. npm then refuses
+                    the OIDC exchange for any job outside it, and GitHub keeps the job inside it
+                    from starting until you approve the gate in Drydock.
+                  </>,
+                  <>
+                    Pack once, record <InlineCode>SHA256SUMS</InlineCode>, upload, and run{" "}
+                    <InlineCode>npm stage publish</InlineCode> on the verified download in the
+                    protected job. Start from the gated staging workflow below.
+                  </>,
+                  <>
+                    Approve on npm with 2FA as before. The staged review now carries a Gate
+                    continuity section: <InlineCode>matched</InlineCode> means npm holds the tarball
+                    the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> means
+                    the gate saw these bytes and did not approve them, and{" "}
+                    <InlineCode>ungated</InlineCode> means a release target you still have
+                    configured has gated this package and this version never went through it —
+                    reject either on npm. <InlineCode>unverified</InlineCode> and{" "}
+                    <InlineCode>unknown</InlineCode> bind nothing; the section says why.
+                  </>,
+                ]}
+              />
+              <CodeBlock name="stage-only publisher pinned to the gate" lang="bash">
+                {`npm trust github <package> \\
+  --repo <owner>/<repo> \\
+  --file publish.yml \\
+  --environment production \\
+  --allow-stage-publish`}
+              </CodeBlock>
+            </Subsection>
           </section>
 
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
@@ -482,8 +527,9 @@ export default function DocsPage() {
               </h2>
               <Prose>
                 CI uploads built files and reaches a protected publish job. GitHub asks Drydock for
-                a decision before that configured job continues. The enforcement boundary is the
-                configured protected job. Other publication paths remain outside the gate.
+                a decision before that configured job continues. GitHub enforces the hold, for that
+                job only: repository admins can remove the protection rule or bypass it, and other
+                publication paths remain outside the gate.
               </Prose>
             </div>
 
@@ -618,6 +664,45 @@ export default function DocsPage() {
             npm publish "$tgz" --access public --provenance
           done`}
               </WorkflowExample>
+              <WorkflowExample title="npm gated staging">
+                {`jobs:
+  pack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm pack --pack-destination dist
+      - run: cd dist && sha256sum *.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist/
+
+  stage:
+    needs: pack
+    runs-on: ubuntu-latest
+    environment: production # Drydock is this environment's protection rule
+    permissions:
+      id-token: write # stage-only trusted publisher pinned to this environment
+      contents: read
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.15.0 # npm stage needs >= 11.15.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: npm stage publish dist/*.tgz`}
+              </WorkflowExample>
               <WorkflowExample title="VS Code extension">
                 {`jobs:
   package:
@@ -666,9 +751,10 @@ export default function DocsPage() {
                     gate when evidence is unsafe, unexpected, or incomplete.
                   </>,
                   <>
-                    After every package is approved, Drydock releases the GitHub job, which verifies{" "}
-                    <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded files. Any
-                    rejection keeps the configured protected publish job blocked.
+                    After every package is approved, Drydock tells GitHub to let the job continue.
+                    The job then verifies <InlineCode>SHA256SUMS</InlineCode> and publishes the
+                    downloaded files. On any rejection, GitHub keeps the configured protected
+                    publish job blocked.
                   </>,
                 ]}
               />
@@ -689,7 +775,8 @@ export default function DocsPage() {
               <Prose>
                 A Renovate or Dependabot PR names the versions you are upgrading between. For npm
                 and PyPI updates with two published versions, these integrations add a link to their
-                package diff. Reviewers can open it without a Drydock account.
+                package diff, and the PR comment adds what Drydock found in it. Reviewers can open
+                the diff without a Drydock account.
               </Prose>
             </div>
 
@@ -714,132 +801,44 @@ export default function DocsPage() {
               </Prose>
             </Subsection>
 
-            <Subsection id="dependabot-diff-links" title="Dependabot">
+            <Subsection id="dependabot-diff-links" title="Pull request comment">
               <Prose>
-                Dependabot cannot template PR bodies, so a small workflow comments the links
-                instead. It reads the bumps from the PR metadata and never checks out or executes
-                the updated code. Grouped update PRs get one link per dependency in a single
-                comment, rewritten in place each time Dependabot revises the group.
+                One workflow comments the diff on Dependabot and Renovate PRs. Each npm or PyPI bump
+                gets a link to its diff and Drydock's headline for it: release risk, files added,
+                removed, and changed, new install scripts, dependencies, and native binaries, and
+                the top release findings with their rule ids. The comment is rewritten in place each
+                time the PR is updated. The workflow never checks out or executes the updated code.
               </Prose>
-              <WorkflowExample title="Dependabot diff comment">
-                {`name: drydock-diff-link
-
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-# Dependabot-triggered runs honor this permissions key; the read-only default
-# token does not apply when permissions are set explicitly.
-permissions:
-  pull-requests: write
-
-# Dependabot rewrites a grouped PR in place as the group's contents change, so
-# the comment is rebuilt on every push. Serialize per PR so two pushes cannot
-# race the read-then-write below into two comments.
-concurrency:
-  group: drydock-diff-link-\${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  diff-link:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      # Fails the job unless the PR's first commit is an authentic, signed
-      # Dependabot commit, which is what makes it safe for the next step to
-      # parse that commit message. Also derives the ecosystem from the branch.
-      - id: meta
-        uses: dependabot/fetch-metadata@v3
-
-      - env:
-          GH_TOKEN: \${{ github.token }}
-          REPO: \${{ github.repository }}
-          PR: \${{ github.event.pull_request.number }}
-          ECOSYSTEM: \${{ steps.meta.outputs.package-ecosystem }}
-          NAMES: \${{ steps.meta.outputs.dependency-names }}
-          FROM: \${{ steps.meta.outputs.previous-version }}
-          TO: \${{ steps.meta.outputs.new-version }}
-        run: |
-          set -euo pipefail
-
-          case "$ECOSYSTEM" in
-            npm_and_yarn) prefix="" ;;
-            pip) prefix="pypi/" ;;
-            *) echo "No /diff pages for $ECOSYSTEM."; exit 0 ;;
-          esac
-
-          api="repos/$REPO"
-
-          # A single-dependency PR carries its one pair in the action's outputs.
-          # A grouped PR carries one \`Updates ...\` line per dependency in the
-          # commit message, and is the only kind that does. Those lines are read
-          # directly rather than through the action, which collapses a group to
-          # one pair and fills the new version from the commit's
-          # \`dependency-version\` metadata -- a value that can lag the version the
-          # PR actually merges once Dependabot revises the group.
-          case "$NAMES" in
-            *,*)
-              msg=$(gh api "$api/pulls/$PR/commits" --jq '.[0].commit.message')
-              pairs=$(printf '%s\\n' "$msg" | sed -n \\
-                's/^Updates \`\\([^\`]*\\)\` from \\([^ ]*\\) to \\([^ ]*\\)$/\\1 \\2 \\3/p')
-              ;;
-            *)
-              pairs="$NAMES $FROM $TO"
-              ;;
-          esac
-
-          # Anything that is not two distinct published versions of one package
-          # gets no link: no link beats a confidently wrong one.
-          links=""
-          count=0
-          while read -r name from to; do
-            [ -n "$name" ] && [ -n "$from" ] && [ -n "$to" ] || continue
-            [ "$from" != "$to" ] || continue
-            url="https://drydock.org/diff/$prefix$name/$from/$to"
-            links="$links- [$name $from → $to]($url)
-          "
-            count=$((count + 1))
-          done < <(printf '%s\\n' "$pairs")
-
-          if [ "$count" -eq 0 ]; then
-            echo "No linkable version pair in this PR."
-            exit 0
-          fi
-
-          lead="Read the diff this PR merges:"
-          if [ "$count" -gt 1 ]; then
-            lead="Read the diff of each update in this group:"
-          fi
-
-          MARKER="<!-- drydock:diff-link -->"
-          body="$MARKER
-          $lead
-
-          $links"
-
-          # Upsert, so a revised group updates its comment instead of
-          # stacking a second one underneath the now-stale first.
-          comments="$api/issues/$PR/comments"
-          existing=$(MARKER="$MARKER" gh api "$comments" --paginate \\
-            --jq '[.[] | select(.body | contains(env.MARKER))][0].id // empty')
-          # --paginate applies the filter per page and concatenates, so keep
-          # the first line only. Trimmed in bash rather than through \`head\`,
-          # which under \`pipefail\` can fail the job on EPIPE.
-          existing=\${existing%%$'\\n'*}
-          if [ -n "$existing" ]; then
-            method=PATCH
-            target="$api/issues/comments/$existing"
-          else
-            method=POST
-            target="$comments"
-          fi
-          gh api -X "$method" "$target" -f body="$body" --silent`}
-              </WorkflowExample>
+              <Prose>
+                For Dependabot, it reads the bumps from the signed Dependabot commit. For Renovate,
+                it compares the lockfiles the PR changes (<InlineCode>package-lock.json</InlineCode>
+                , <InlineCode>pnpm-lock.yaml</InlineCode>, <InlineCode>yarn.lock</InlineCode>,{" "}
+                <InlineCode>uv.lock</InlineCode>, and <InlineCode>requirements*.txt</InlineCode>{" "}
+                pins). It ignores the PR text, which can include upstream release notes. Renovate
+                PRs that change no supported lockfile get no comment, but the preset column above
+                still links them.
+              </Prose>
+              <CodeBlock name=".github/workflows/drydock-diff-link.yml" lang="yaml">
+                {DEPENDENCY_PR_WORKFLOW}
+              </CodeBlock>
+              <Prose>
+                The job calls the reusable workflow at <InlineCode>{REUSABLE_WORKFLOW}</InlineCode>,
+                pinned to the commit that last changed it, so nothing changes in your repository
+                until you change the hash. To pick up later fixes, copy the hash from this page
+                again.
+              </Prose>
             </Subsection>
 
-            <Callout label="Public diff links">
-              Both integrations add markdown links to public-registry diffs. Reviewers contact
-              Drydock when they open a link; rendering the PR does not send a request to Drydock.
+            <Callout label="What reaches Drydock">
+              The Renovate column is a plain link: rendering the PR sends nothing to Drydock. The
+              workflow sends each bumped package's name and version pair to the public diff API when
+              the PR opens or changes, at most 10 per run. npm packages that your committed{" "}
+              <InlineCode>.npmrc</InlineCode> or <InlineCode>.yarnrc.yml</InlineCode> sends to
+              another registry are left out, as are Renovate's pins from requirements files with
+              their own index. Dependabot's pip and uv bumps are sent as they are. Pass{" "}
+              <InlineCode>summaries: false</InlineCode> to post links only. If the API is slow, rate
+              limited, or down, the comment keeps the link and says the summary is unavailable. The
+              job does not fail.
             </Callout>
           </section>
 

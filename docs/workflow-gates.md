@@ -1,6 +1,6 @@
 # Workflow Gate — enforced
 
-Workflow Gate is Drydock's **enforced** mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses the configured protected publish job while Drydock reviews the bytes. Drydock can approve or reject that job; it does not claim authority over publication paths outside the configured workflow.
+Workflow Gate is Drydock's **enforced** mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses the configured protected publish job while Drydock reviews the bytes. GitHub enforces the hold: Drydock's approve or reject answer tells GitHub whether that job continues. The hold covers only jobs that target the configured Environment, and only while the repository keeps the rule; a repository admin can remove it, and GitHub lets administrators bypass it unless "Allow administrators to bypass configured protection rules" is unchecked on the Environment (it is on by default). Drydock does not claim authority over publication paths outside the configured workflow.
 
 Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
@@ -81,7 +81,7 @@ The PyPI adapter (`server/lib/ecosystems/pypi/`):
 
 ## npm workflow-gate notes
 
-Use npm workflow gates when CI publishes from built artifacts instead of `npm stage publish`, or when the release must be paused by GitHub rather than npm registry staging.
+Use npm workflow gates when CI publishes from built artifacts, when the release must be paused by GitHub rather than npm registry staging, or in front of `npm stage publish` so the gate reviews the tarball before npm holds it (gated staging, below).
 
 The candidate is the uploaded npm pack artifact. Drydock detects npm candidates from `package.json` in the archive, normalizes package identity, and compares against the currently published baseline using the same npm adapter projection used by registry-staged scans.
 
@@ -113,9 +113,13 @@ jobs:
       - run: npm publish *.tgz
 ```
 
-Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary. The `SHA256SUMS` record/check pair makes that enforceable in CI: the digests match the ones Drydock recomputes and shows in the report Provenance section, and the publish job fails closed on any drift. Drydock ignores `SHA256SUMS` in the bundle (it is not a `.tgz`).
+Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary. The `SHA256SUMS` record/check pair makes that checkable in CI: the digests match the ones Drydock recomputes and shows in the report Provenance section, and the publish job fails closed on any drift. The check runs in the repository's own job, so it holds only while the workflow keeps it. Drydock ignores `SHA256SUMS` in the bundle (it is not a `.tgz`).
 
 To narrow npm's automated publish path to this gated workflow — trusted publishing pinned to the gate environment, tokens disallowed — see [`npm-trusted-publishing.md`](./npm-trusted-publishing.md). npm still permits interactive publication by an account holder using password, 2FA, and an OTP.
+
+### Gated staging
+
+The protected job can run `npm stage publish *.tgz` instead of `npm publish *.tgz`, with the trusted publisher granting stage-only permission pinned to the gate environment. The gate, held by GitHub, is then the enforced review and npm holds exactly the reviewed bytes until a maintainer approves with 2FA. Drydock still discovers and scans the resulting stage; because the staged parse computes the tarball's SHA-256 alongside npm's SHA-1, the staged review is bound back to this gate review as **gate continuity** (`matched` / `gate-not-approved` / `digest-mismatch` / `unverified` / `ungated` / `unknown`), persisted as `summary.gateContinuity` by `server/lib/scan/gate-continuity.ts` (record shape and evaluation in `gate-continuity-record.ts`, which the UI imports) and read through `loadGateReviewHistory` (organization-scoped `workflow_gate` scans of the package named by npm's stage record, restricted to the staged adapter's ecosystem by the gate scan's provenance, or by the stage id's ecosystem segment for a scan that never completed, so a PyPI gate of the same name is never npm evidence). `ungated` requires a release target that can still gate the package — present (or any live target for the same repository), npm or auto-detect, on an active installation — so deleting the target or uninstalling the app retires it. The full recipe and the meaning of each status live in [`npm-staged-publishing.md`](./npm-staged-publishing.md#gated-staging-compose-both).
 
 See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
 workflow shape, including build-time `SHA256SUMS` generation and publish-time

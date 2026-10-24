@@ -202,6 +202,9 @@ function recordPublicDiffView(
     packageName: payload.packageName,
     cache: cacheHit === null ? "unknown" : cacheHit ? "hit" : "miss",
     risk: payload.risk?.artifactRisk ?? "unknown",
+    // The dependency-PR workflow fetches once per PR push, not per reader, so
+    // its requests are kept apart from people opening the diff.
+    client: c.req.header("x-drydock-client") === "dependency-pr" ? "dependency-pr" : "other",
     durationMs: Math.max(0, Date.now() - startedAtMs),
   });
 }

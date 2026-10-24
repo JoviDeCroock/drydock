@@ -43,7 +43,18 @@ verifier that sorts by code point will disagree. Implement the JCS rule (JS
 ## Evidence semantics
 
 `content.release` records scan id, stage id, package coordinates, source, mode,
-risk, and a structured decision with decision time and the authenticated Drydock reviewer id when one exists. It also states the narrow control classification: a workflow-gate receipt is `workflow_enforced` for the configured publish workflow, while a staged-publish receipt is `advisory` registry-stage observation. Neither classification claims universal registry enforcement. `mode` is `workflow_gate` only for gate scans; manual and auto-discovered registry stages are `staged_publish`.
+risk, and a structured decision with decision time and the authenticated Drydock reviewer id when one exists. `mode` is `workflow_gate` only for gate scans; manual and auto-discovered registry stages are `staged_publish`.
+
+`content.release.control` states who enforces the release decision, and how far:
+
+| Mode             | `classification`    | `scope`                       | `enforcedBy`                        | `enforcementScope`           |
+| ---------------- | ------------------- | ----------------------------- | ----------------------------------- | ---------------------------- |
+| `workflow_gate`  | `workflow_enforced` | `configured_publish_workflow` | `github_deployment_protection_rule` | `configured_environment_job` |
+| `staged_publish` | `advisory`          | `registry_stage_observation`  | `null`                              | `null`                       |
+
+Read `workflow_enforced` as **enforced by GitHub for the configured publish job**. Drydock holds nothing itself. GitHub's deployment-protection rule on the configured Environment keeps the jobs that target that Environment waiting until Drydock answers, and fails them on a rejection. That enforcement belongs to GitHub and to the repository's settings. A repository admin can remove the rule, and administrators can bypass it unless the Environment's "Allow administrators to bypass configured protection rules" option (on by default) is unchecked. The `sha256sum --check` that ties the published bytes to the reviewed digests runs in a job the repository controls. Other publication paths, such as a token or an interactive npm publish, are outside the gate. `advisory` means no party enforces the Drydock decision: the maintainer approves the stage independently, in npm (or atpm). Neither classification claims registry-wide enforcement.
+
+`classification` and `scope` keep their original v1 values. `enforcedBy` and `enforcementScope` were added within v1 without a schema bump, as `evidence.gateContinuity` was. A verifier re-serializes `content` to check `address`, so it accepts the added fields. Because receipts are generated from current state, a receipt downloaded again for an older scan includes them and has a different `address`. A receipt archived earlier still verifies against its own content.
 
 `content.evidence` separates independent claims:
 
@@ -63,6 +74,21 @@ risk, and a structured decision with decision time and the authenticated Drydock
   `not_applicable`. Callback outcome is `unknown` in v1:
   callback success/failure is not durably persisted, and a stored gate decision
   is not proof GitHub received it.
+- `gateContinuity` binds a staged-publish receipt to the organization's npm
+  workflow-gate review of the same bytes: `complete` when the stage is
+  `matched` (the staged SHA-256, confirmed against npm's stage record, equals
+  an approved gate review's provenance digest; the validated record names that
+  gate scan, gate identity, and decision), `conflicting` on `digest-mismatch`
+  or `gate-not-approved`, `partial` when the stage is `ungated` or
+  `unverified` (with or without a review to name), `unknown` when the check
+  could not run for an organization with a live npm-capable release target
+  (gate history unreadable, or npm's stage record unavailable), and
+  `not_applicable` for gate receipts and for packages the organization does not
+  gate. It carries the gate's evidence second-hand; the receipt's control
+  classification stays `advisory`. The full record, gate identity included,
+  appears only in this receipt and on the authenticated scan page:
+  `report.json` — which a public share token also serves — carries the status,
+  reason, and both digests.
 - `registryOutcome` records the registry status and observation time only when a
   status was observed. It remains `unknown` for workflow gates, unsupported
   registries, failed lookups, and legacy scans.

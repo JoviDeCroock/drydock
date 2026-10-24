@@ -182,7 +182,10 @@ Publication monitoring sends `publication_discrepancy` notifications for newly o
 releases with no approval in the alerting organization, releases published despite a
 rejection there, or bytes that differ from its approval; the copy names that
 organization and never implies nobody else reviewed the release. When the organization
-has an undecided review of the published bytes, it asks for that decision first. It
+has an undecided review of the published bytes, it asks for that decision first, and
+one the AI reviewer flagged is titled as such; an undecided review that graded the
+release low risk sends nothing (see
+[`publication-monitor.md`](./publication-monitor.md#undecided-reviews-are-tiered-by-risk)). It
 also sends `publication_coverage_gap` notices, once per gap, when a release (or every
 release of a package) could not be verified for more than an hour; they say Drydock
 could not verify it and are never worded as a discrepancy.

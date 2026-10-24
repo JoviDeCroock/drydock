@@ -74,6 +74,30 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: summarizePackageVersion,
   },
+  "publication.review_started": {
+    category: "security",
+    label: "Post-release review started for a publication alert",
+    severity: "info",
+    summarize: summarizePackageVersion,
+  },
+  "publication.review_resolved": {
+    category: "security",
+    label: "Publication alert decided after release",
+    severity: "notice",
+    summarize: (m) => {
+      const release = summarizePackageVersion(m);
+      const outcome =
+        m.resolution === "approved_after_release"
+          ? // Only an approval of the published bytes settles the alert.
+            m.reviewedBytes === "match"
+            ? "approved after release"
+            : "approved after release, alert left open"
+          : m.resolution === "declined_after_release"
+            ? "declined after release"
+            : null;
+      return release && outcome ? `${release} · ${outcome}` : (release ?? outcome);
+    },
+  },
   "publication_watch.started": {
     category: "security",
     label: "Package publication watch enrolled",

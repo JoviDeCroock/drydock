@@ -223,24 +223,44 @@ function minifyLines(code) {
   return code.replace(/(^|[\s;{}])\/\/[^\n]*/gm, "$1").replace(/\n/g, " ");
 }
 
+// The renamed shapes model a bundler chunk that changed content hash: the
+// carrier shipped last release under a hashed sibling name, so the payload's
+// file is added and pairs with it by content (renamed-files.ts). The carrier
+// is padded with a module body so a payload stays a minority of the chunk, as
+// it would be in a real bundle; otherwise the file would not pair and the
+// shape would only re-measure the added-file path.
+const RENAMED_CHUNK_BODY = Array.from(
+  { length: 120 },
+  (_, index) => `function formatRow${index}(row) { return [row.name, row.size].join(' | '); }`,
+).join("\n");
+const RELEASE_INJECTION_MODES = ["lines", "minified", "renamed", "renamed-minified"];
+
+function hashedSibling(path) {
+  return path.replace(RELEASE_INJECTION_CODE_FILE, (extension) => `-C3pLm8Zd${extension}`);
+}
+
 function injectIntoCarrier(fx, mode) {
-  const carrier =
-    mode === "minified" ? minifyLines(RELEASE_INJECTION_CARRIER) : RELEASE_INJECTION_CARRIER;
+  const renamed = mode.startsWith("renamed");
+  const minified = mode.endsWith("minified");
+  const body = renamed
+    ? `${RELEASE_INJECTION_CARRIER}\n${RENAMED_CHUNK_BODY}`
+    : RELEASE_INJECTION_CARRIER;
+  const carrier = minified ? minifyLines(body) : body;
   const injected = new Set();
   const stagedFiles = (fx.stagedFiles ?? []).map((file) => {
     if (!RELEASE_INJECTION_CODE_FILE.test(file.path) || typeof file.textSample !== "string") {
       return file;
     }
     injected.add(file.path);
-    const payload = mode === "minified" ? minifyLines(file.textSample) : file.textSample;
-    const textSample = mode === "minified" ? `${carrier} ${payload}\n` : `${carrier}\n${payload}`;
+    const payload = minified ? minifyLines(file.textSample) : file.textSample;
+    const textSample = minified ? `${carrier} ${payload}\n` : `${carrier}\n${payload}`;
     return { ...file, textSample, sha256: `${file.sha256}-injected` };
   });
   if (!injected.size) return null;
   const previousFiles = [
     ...(fx.previousFiles ?? []).filter((file) => !injected.has(file.path)),
     ...[...injected].map((path) => ({
-      path,
+      path: renamed ? hashedSibling(path) : path,
       size: carrier.length,
       sha256: `carrier-${path}`,
       flags: [],
@@ -260,8 +280,8 @@ function releaseRiskOf(fx) {
 
 function releaseInjectionEval(records) {
   const result = {};
-  for (const mode of ["lines", "minified"]) {
-    const bucket = { samples: 0, caught: 0, misses: [] };
+  for (const mode of RELEASE_INJECTION_MODES) {
+    const bucket = { samples: 0, caught: 0, paired: 0, misses: [] };
     for (const record of records) {
       if (record.ecosystem !== "npm" || record.verdict !== "malicious") continue;
       const injected = injectIntoCarrier(record.fx, mode);
@@ -272,6 +292,15 @@ function releaseInjectionEval(records) {
       if (!original.codePayload) continue;
       if (riskRank(original.releaseRisk) < riskRank(record.expectMinRisk)) continue;
       bucket.samples += 1;
+      // Counts samples whose payload file was actually attributed against a
+      // predecessor, so a renamed shape cannot pass by never pairing.
+      if (
+        createPackageDiff(injected.previousFiles, injected.stagedFiles).some(
+          (entry) => entry.renamedFrom,
+        )
+      ) {
+        bucket.paired += 1;
+      }
       const risk = releaseRiskOf(injected).releaseRisk;
       if (riskRank(risk) >= riskRank(record.expectMinRisk)) bucket.caught += 1;
       else
@@ -542,11 +571,13 @@ function renderMarkdown(result) {
   lines.push("");
   lines.push("## Release injection (gated — payload spliced into an existing module)");
   lines.push("");
-  lines.push("| shape | samples | release risk still at bar | misses |");
-  lines.push("| --- | --- | --- | --- |");
+  lines.push("| shape | samples | paired as rename | release risk still at bar | misses |");
+  lines.push("| --- | --- | --- | --- | --- |");
   for (const [shape, stats] of Object.entries(result.releaseInjection)) {
     const misses = stats.misses.map((miss) => `\`${miss.id}\` (${miss.releaseRisk})`).join(", ");
-    lines.push(`| ${shape} | ${stats.samples} | ${pct(stats.recall)} | ${misses || "none"} |`);
+    lines.push(
+      `| ${shape} | ${stats.samples} | ${stats.paired} | ${pct(stats.recall)} | ${misses || "none"} |`,
+    );
   }
   lines.push("");
   return lines.join("\n");
