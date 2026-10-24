@@ -103,10 +103,10 @@ export const ApiKeyIdentity = z
 export const StartScanRequest = z
   .union([
     z
-      .object({ stageId: z.string().describe("npm stage id from `npm stage publish`") })
+      .looseObject({ stageId: z.string().describe("npm stage id from `npm stage publish`") })
       .describe("Review a staged npm publish; needs the organization's npm token"),
     z
-      .object({
+      .looseObject({
         ecosystem: z.enum(["npm", "pypi", "vscode", "atpm"]),
         packageName: z.string(),
         version: z.string(),
@@ -117,7 +117,7 @@ export const StartScanRequest = z
       })
       .describe("Review an already-published release"),
   ])
-  .meta({ id: "StartScanRequest" });
+  .register(openApiSchemas, { id: "StartScanRequest" });
 
 export const StartedScan = z
   .looseObject({
@@ -130,8 +130,11 @@ export const StartedScan = z
       status: scanStatus,
     }),
     queued: z.boolean(),
+    existing: z
+      .boolean()
+      .describe("True when the stage already had a review and this request started nothing"),
   })
-  .meta({ id: "StartedScan" });
+  .register(openApiSchemas, { id: "StartedScan" });
 
 export const StagedPublishDiscovery = z
   .looseObject({
@@ -147,7 +150,7 @@ export const StagedPublishDiscovery = z
       }),
     ),
   })
-  .meta({ id: "StagedPublishDiscovery" });
+  .register(openApiSchemas, { id: "StagedPublishDiscovery" });
 
 export const ScanList = z
   .looseObject({

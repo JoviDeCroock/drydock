@@ -7,9 +7,11 @@ export {
   deletePendingScanJob,
   discardGateScans,
   discardScanAttempt,
+  findLiveStageReviewId,
   listExistingScanStageIds,
   markScanFailed,
   recordScanBaseline,
+  StageReviewExistsError,
 } from "./scan-jobs";
 export {
   SCAN_DECISION_FILTERS,

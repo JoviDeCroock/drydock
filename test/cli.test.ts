@@ -402,6 +402,12 @@ describe("drydock CLI", () => {
     const staged = harness(() => json({ scan: { id: "scan_11" } }, { status: 202 }));
     expect(await staged.run("scans", "start", "--stage", "stage-abc")).toBe(0);
     expect(JSON.parse(staged.calls[0].body ?? "")).toEqual({ stageId: "stage-abc" });
+
+    const rerun = harness(() =>
+      json({ scan: { id: "scan_11", status: "complete" }, existing: true }, { status: 200 }),
+    );
+    expect(await rerun.run("scans", "start", "--stage", "stage-abc")).toBe(0);
+    expect(rerun.stdout).toContain("already reviewing scan_11");
   });
 
   test("a read-only key is told it needs scan access, without echoing the key", async () => {

@@ -224,7 +224,7 @@
       "post": {
         "operationId": "startScan",
         "summary": "Start a review",
-        "description": "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. Starting a review never records a release decision.",
+        "description": "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. A stage the organization already has a review of (one that has not failed) is answered 200 with that review and `existing: true`, so a retried request starts nothing. Starting a review never records a release decision.",
         "tags": [
           "Reviews"
         ],
@@ -240,6 +240,16 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "The stage already has a review in this organization; nothing was started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedScan"
+                }
+              }
+            }
+          },
           "202": {
             "description": "Accepted",
             "content": {
@@ -1336,6 +1346,186 @@
         ],
         "additionalProperties": {}
       },
+      "StartScanRequest": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "stageId": {
+                "type": "string",
+                "description": "npm stage id from `npm stage publish`"
+              }
+            },
+            "required": [
+              "stageId"
+            ],
+            "additionalProperties": {},
+            "description": "Review a staged npm publish; needs the organization's npm token"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ecosystem": {
+                "type": "string",
+                "enum": [
+                  "npm",
+                  "pypi",
+                  "vscode",
+                  "atpm"
+                ]
+              },
+              "packageName": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "baselineVersion": {
+                "description": "Version to diff against; defaults to the previous release",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ecosystem",
+              "packageName",
+              "version"
+            ],
+            "additionalProperties": {},
+            "description": "Review an already-published release"
+          }
+        ]
+      },
+      "StartedScan": {
+        "type": "object",
+        "properties": {
+          "scan": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stageId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto_discovery",
+                  "workflow_gate",
+                  "published"
+                ]
+              },
+              "packageName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stagedVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "complete",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "stageId",
+              "source",
+              "packageName",
+              "stagedVersion",
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "existing": {
+            "type": "boolean",
+            "description": "True when the stage already had a review and this request started nothing"
+          }
+        },
+        "required": [
+          "scan",
+          "queued",
+          "existing"
+        ],
+        "additionalProperties": {}
+      },
+      "StagedPublishDiscovery": {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Staged publishes the npm token can see"
+          },
+          "created": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Reviews started by this call"
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Stages already reviewed, or not admissible"
+          },
+          "scans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "stageId": {
+                  "type": "string"
+                },
+                "packageName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "stageId",
+                "packageName",
+                "version"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "found",
+          "created",
+          "skipped",
+          "scans"
+        ],
+        "additionalProperties": {}
+      },
       "ScanList": {
         "type": "object",
         "properties": {
@@ -1538,197 +1728,6 @@
           "nextCursor",
           "filter",
           "limit"
-        ],
-        "additionalProperties": {}
-      },
-      "StartedScan": {
-        "type": "object",
-        "properties": {
-          "scan": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "stageId": {
-                "type": "string"
-              },
-              "source": {
-                "type": "string",
-                "enum": [
-                  "manual",
-                  "auto_discovery",
-                  "workflow_gate",
-                  "published"
-                ]
-              },
-              "packageName": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "stagedVersion": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "pending",
-                  "running",
-                  "complete",
-                  "failed"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "stageId",
-              "source",
-              "packageName",
-              "stagedVersion",
-              "status"
-            ],
-            "additionalProperties": {}
-          },
-          "queued": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "scan",
-          "queued"
-        ],
-        "additionalProperties": {}
-      },
-      "StartScanRequest": {
-        "anyOf": [
-          {
-            "type": "object",
-            "properties": {
-              "stageId": {
-                "type": "string",
-                "description": "npm stage id from `npm stage publish`"
-              }
-            },
-            "required": [
-              "stageId"
-            ],
-            "additionalProperties": false,
-            "description": "Review a staged npm publish; needs the organization's npm token"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "ecosystem": {
-                "type": "string",
-                "enum": [
-                  "npm",
-                  "pypi",
-                  "vscode",
-                  "atpm"
-                ]
-              },
-              "packageName": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "baselineVersion": {
-                "description": "Version to diff against; defaults to the previous release",
-                "type": "string"
-              }
-            },
-            "required": [
-              "ecosystem",
-              "packageName",
-              "version"
-            ],
-            "additionalProperties": false,
-            "description": "Review an already-published release"
-          }
-        ]
-      },
-      "StagedPublishDiscovery": {
-        "type": "object",
-        "properties": {
-          "found": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991,
-            "description": "Staged publishes the npm token can see"
-          },
-          "created": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991,
-            "description": "Reviews started by this call"
-          },
-          "skipped": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991,
-            "description": "Stages already reviewed, or not admissible"
-          },
-          "scans": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "stageId": {
-                  "type": "string"
-                },
-                "packageName": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "version": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "stageId",
-                "packageName",
-                "version"
-              ],
-              "additionalProperties": {}
-            }
-          }
-        },
-        "required": [
-          "found",
-          "created",
-          "skipped",
-          "scans"
         ],
         "additionalProperties": {}
       },

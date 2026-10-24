@@ -51,6 +51,8 @@ interface OperationSpec {
   requestBody?: ZodSchema;
   /** Starts work and answers 202; reachable only by a key with `scan` access. */
   startsWork?: boolean;
+  /** A `startsWork` route that answers 200 with work already under way, described here. */
+  existingWork?: string;
   response: ZodSchema;
   /** Media type of the success response, when it is not plain JSON. */
   download?: boolean;
@@ -144,10 +146,11 @@ export const OPENAPI_OPERATIONS: readonly OperationSpec[] = [
     operationId: "startScan",
     summary: "Start a review",
     description:
-      "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. Starting a review never records a release decision.",
+      "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. A stage the organization already has a review of (one that has not failed) is answered 200 with that review and `existing: true`, so a retried request starts nothing. Starting a review never records a release decision.",
     tag: "Reviews",
     requestBody: StartScanRequest,
     startsWork: true,
+    existingWork: "The stage already has a review in this organization; nothing was started",
     response: StartedScan,
     errors: [400, 401, 403, 404, 409, 413, 422, 429, 502, 503],
   },
@@ -323,6 +326,14 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         description: operation.download ? "Download" : operation.startsWork ? "Accepted" : "OK",
         content: { "application/json": { schema: componentRef(operation.response) } },
       },
+      ...(operation.existingWork
+        ? {
+            "200": {
+              description: operation.existingWork,
+              content: { "application/json": { schema: componentRef(operation.response) } },
+            },
+          }
+        : {}),
     };
     // Every key request is charged to a per-IP and a per-key budget before its
     // route runs, so each key operation can answer 429.
