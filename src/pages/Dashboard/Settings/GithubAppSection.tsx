@@ -53,8 +53,9 @@ export function GithubAppSection({
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <Muted class="text-[13px] m-0 max-w-[600px]">
             <span class="font-medium text-ink">Workflow Gate — enforced.</span> Install the Drydock
-            GitHub App to approve or reject the publish job protected by your configured GitHub
-            environment. Your workflow keeps its publishing credentials and publishes the package.
+            GitHub App so your configured GitHub environment holds the publish job until you approve
+            or reject it here. Your workflow keeps its publishing credentials and publishes the
+            package.
           </Muted>
           <Button
             variant={installations.length ? "secondary" : "primary"}

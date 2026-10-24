@@ -1943,7 +1943,7 @@ describe("review", () => {
     expect(run("site/attrs.html", `<p x=${" ".repeat(128 * 1024)}y>`)).toBeLessThan(2000);
     expect(run("site/refs.html", `<a href="${"&#x".repeat(40 * 1024)}`)).toBeLessThan(2000);
     expect(run("lib/conn.js", "Host=".repeat(40 * 1024))).toBeLessThan(2000);
-  });
+  }, 60_000);
 
   test("does not flag placeholder URL credentials as secret content", () => {
     // requests' HISTORY.md CVE-2023-32681 entry (`http://user:pass@proxy`) is

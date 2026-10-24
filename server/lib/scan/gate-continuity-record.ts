@@ -3,8 +3,9 @@
  * workflow-gate review of the same bytes.
  *
  * A stage-only trusted publisher lets CI put a candidate into npm's staging
- * area but never publish it; a workflow gate lets Drydock hold the job that
- * stages until the bytes are reviewed. Composed, the gate is the enforced
+ * area but never publish it; a workflow gate keeps the job that stages from
+ * running until the bytes are reviewed (GitHub's required check enforces the
+ * wait; Drydock supplies the verdict). Composed, the gate is the enforced
  * checkpoint and the stage is npm holding exactly the reviewed artifact. npm
  * exposes no hook for a third party to block a stage, so the stage itself is
  * the receipt: this record says whether the tarball npm holds is the tarball

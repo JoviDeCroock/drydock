@@ -1,0 +1,20 @@
+name: drydock-diff-link
+
+# Comments Drydock's diff summary on Dependabot and Renovate PRs.
+# pull_request_target runs this file and the workflow it calls as they
+# are on the base branch, so a dependency PR cannot change what runs
+# with write access. Nothing from the PR is checked out or executed.
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diff-link:
+    uses: ./.github/workflows/drydock-diff-link.yml
+    # Posts links only and sends nothing to Drydock:
+    # with:
+    #   summaries: false
