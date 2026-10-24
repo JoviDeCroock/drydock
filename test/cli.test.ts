@@ -162,6 +162,196 @@ describe("drydock CLI", () => {
     expect(cli.stdout).toContain("release risk high");
   });
 
+  test("public diff preserves review evidence and prints the server review link", async () => {
+    const body = {
+      ecosystem: "npm",
+      packageName: "@canonical/name",
+      fromVersion: "1.0.0+old",
+      toVersion: "2.0.0+new",
+      diff: [
+        { path: "index.js", status: "modified", flags: ["truncated"] },
+        { path: "new.js", status: "added", flags: [] },
+        { path: "old.js", status: "removed", flags: [] },
+        { path: "same.bin", status: "unchanged", flags: ["binary"] },
+      ],
+      packageJsonDiff: { scripts: [{ key: "install", status: "added", staged: "node new.js" }] },
+      findings: [
+        {
+          severity: "high",
+          ruleId: "new-rule",
+          file: "new.js",
+          line: 2,
+          reason: "new behavior",
+          releaseDelta: true,
+          diffStatus: "added",
+        },
+        {
+          severity: "medium",
+          ruleId: "old-rule",
+          file: "index.js",
+          reason: "old behavior",
+          releaseDelta: false,
+          diffStatus: "modified",
+        },
+        {
+          severity: "high",
+          ruleId: "expanded-rule",
+          file: "index.js",
+          reason: "expanded behavior",
+          releaseDelta: true,
+          releaseDeltaKind: "expanded",
+          diffStatus: "modified",
+        },
+        {
+          severity: "low",
+          file: "unknown.js",
+          reason: "unknown origin",
+          releaseDelta: false,
+          diffStatus: "unknown",
+        },
+        {
+          severity: "high",
+          ruleId: "release-rule",
+          file: "unchanged.py",
+          reason: "release-scoped evidence",
+          releaseDelta: true,
+          diffStatus: "unchanged",
+        },
+      ],
+      risk: { artifactRisk: "high", releaseRisk: "medium" },
+      notices: ["Baseline coverage is limited"],
+      textSamplesOmitted: true,
+      reviewUrl: "https://drydock.test/diff/@canonical/name/1.0.0%2Bold/2.0.0%2Bnew",
+    };
+    const cli = harness(() => json(body));
+    expect(await cli.run("diff", "@input/name", "1", "2")).toBe(0);
+    expect(cli.calls[0].headers.authorization).toBeUndefined();
+    expect(cli.stdout).toContain("3 changed files · release risk medium · artifact risk high");
+    for (const text of [
+      "index.js",
+      "new.js",
+      "old.js",
+      "modified",
+      "added",
+      "removed",
+      "Baseline coverage is limited",
+      "text samples omitted",
+      "new in release",
+      "existing context",
+      "expanded in release",
+      "unattributed context",
+      "Manifest changes:",
+      '"install"',
+    ]) {
+      expect(cli.stdout).toContain(text);
+    }
+    const fileRow = (path: string) =>
+      cli.stdout.split("\n").find((line) => line.split(/\s+/).includes(path));
+    expect(fileRow("index.js")).toMatch(/modified\s+index\.js\s+truncated/);
+    expect(fileRow("new.js")).toMatch(/added\s+new\.js\s+-$/);
+    expect(cli.stdout).not.toContain("same.bin");
+    expect(cli.stdout).not.toContain("flags:");
+    expect(cli.stdout).toContain(`review: ${body.reviewUrl}`);
+    const releaseFinding = cli.stdout.split("\n").find((line) => line.includes("release-rule"));
+    expect(releaseFinding).toContain("release finding");
+    expect(releaseFinding).not.toContain("new in release");
+    const raw = harness(() => json(body));
+    expect(await raw.run("diff", "@input/name", "1", "2", "--json")).toBe(0);
+    expect(JSON.parse(raw.stdout)).toEqual(body);
+  });
+
+  test("public diff omits the review link when the server returns no web URL", async () => {
+    for (const reviewUrl of [undefined, "javascript:alert(1)", 42]) {
+      const cli = harness(() =>
+        json({ ecosystem: "npm", packageName: "x", fromVersion: "1", toVersion: "2", reviewUrl }),
+      );
+      expect(await cli.run("diff", "x", "1", "2")).toBe(0);
+      expect(cli.stdout).not.toContain("review:");
+    }
+  });
+
+  test("file is anonymous, encodes the exact path, and preserves raw sample evidence", async () => {
+    const body = {
+      path: "lib/a #?.js",
+      before: null,
+      after: {
+        path: "lib/a #?.js",
+        size: 35,
+        sha256: "abc",
+        flags: ["truncated"],
+        textSample: "line one\n\u001b[2Jline two‮\n",
+      },
+      textSamplesOmitted: true,
+    };
+    const cli = harness(() => json(body));
+    expect(
+      await cli.run("file", "@scope/name", "1+old", "2", body.path, "--ecosystem", "npm"),
+    ).toBe(0);
+    const url = new URL(cli.calls[0].url);
+    expect(url.pathname).toBe("/api/public/v1/package-diff/file");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      package: "@scope/name",
+      from: "1+old",
+      to: "2",
+      path: body.path,
+      ecosystem: "npm",
+    });
+    expect(cli.calls[0].headers.authorization).toBeUndefined();
+    expect(cli.stdout).toContain("before:\n  absent");
+    expect(cli.stdout).toContain("flags: truncated");
+    expect(cli.stdout).toContain("text samples omitted");
+    expect(cli.stdout).toContain("  | line one\n  |  [2Jline two");
+    expect(cli.stdout).not.toMatch(TERMINAL_CONTROL);
+    const raw = harness(() => json(body), { DRYDOCK_API_KEY: undefined });
+    expect(await raw.run("file", "@scope/name", "1+old", "2", body.path, "--json")).toBe(0);
+    expect(JSON.parse(raw.stdout)).toEqual(body);
+  });
+
+  test("file exposes binary, skipped, truncated and absent evidence without inventing text", async () => {
+    for (const flags of [
+      ["binary"],
+      ["text-sample-skipped", "content-skipped"],
+      ["baseline-truncated", "truncated"],
+    ]) {
+      const cli = harness(() =>
+        json({
+          path: "file.bin",
+          before: { size: 42, sha256: "abc", flags },
+          after: null,
+          textSamplesOmitted: false,
+        }),
+      );
+      expect(await cli.run("file", "pkg", "1", "2", "file.bin")).toBe(0);
+      expect(cli.stdout).toContain(`flags: ${flags.join(", ")}`);
+      expect(cli.stdout).toContain("text sample unavailable");
+      expect(cli.stdout).toContain("after:\n  absent");
+    }
+  });
+
+  test("file rejects incomplete arguments and unsupported ecosystems before requesting evidence", async () => {
+    const cli = harness(() => json({}));
+    expect(await cli.run("file", "pkg", "1", "2")).toBe(2);
+    expect(await cli.run("file", "pkg", "1", "2", "index.js", "--ecosystem", "vscode")).toBe(2);
+    expect(cli.calls).toEqual([]);
+  });
+
+  test("public pair and file failures remain failed reviews with rate-limit context", async () => {
+    for (const command of [
+      ["diff", "pkg", "1", "2"],
+      ["file", "pkg", "1", "2", "index.js"],
+    ]) {
+      const limited = harness(() =>
+        json({ error: "try later" }, { status: 429, headers: { "retry-after": "30" } }),
+      );
+      expect(await limited.run(...command)).toBe(1);
+      expect(limited.stderr).toContain("retry after 30s");
+      expect(limited.stdout).toBe("");
+      const missing = harness(() => json({ error: "file or release not found" }, { status: 404 }));
+      expect(await missing.run(...command)).toBe(1);
+      expect(missing.stdout).toBe("");
+    }
+  });
+
   test("strips terminal control and bidi characters from package-controlled text", async () => {
     const hostile = "\u001b]0;owned\u0007\u001b[2Jsafe‮reversed\u00ad\u{e0041}\nnext";
     const cli = harness(() =>

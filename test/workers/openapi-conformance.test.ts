@@ -166,6 +166,7 @@ describe("OpenAPI response schemas match the Worker", () => {
       listPackageReleases: "/api/v1/packages/@acme/documented/releases",
       getWorkflowGateByScan: `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
       getPublicPackageDiff: `/api/public/v1/package-diff?package=${publicPackage}&from=1.0.0&to=1.0.1`,
+      getPublicPackageFile: `/api/public/v1/package-diff/file?package=${publicPackage}&from=1.0.0&to=1.0.1&path=index.js`,
     };
     // Listing versions reaches the live registry; its schema is deliberately
     // loose and is the one operation this suite does not exercise.
