@@ -2644,6 +2644,9 @@ describe("review", () => {
       expect(finding.reason).toContain("Zip extractors disagree");
       expect(finding.reason).not.toMatch(/node-tar|npm install|tarfile/);
     }
+    // A VSIX is not installed by pip, so only the PyPI wording names it.
+    expect(tarSuspiciousEntryFindings(entries, { dialect: "pypi" })[0].reason).toContain("pip");
+    expect(tarSuspiciousEntryFindings(entries)[0].reason).not.toContain("pip");
   });
 
   test("escalates retention-tier findings when hash-only content changed", () => {

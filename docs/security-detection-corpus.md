@@ -837,10 +837,12 @@ startup hook. Like the tar reader, both zip readers now record a high `parser-di
 
 `1.55.0` makes the zip readers collapse pure `.` path segments the way the tar reader does, so
 `./evil.pth` is read as `evil.pth`: its content is inspected and reaches `pypi.pth-execution`
-rather than an uninspected disclosure. `..` segments, drive letters, backslashes and NUL stay
-unrepresentable. Those zip disclosures now carry `archive: "zip"`, and the finding's reason
-describes how pip and zip extractors resolve the name instead of node-tar and `npm install`. Rule
-ID and severity are unchanged.
+rather than an uninspected disclosure. A leading `.` before a `*.dist-info` or `*.data` directory
+stays unrepresentable, because pip finds those by the name as written: collapsing
+`./x.dist-info/METADATA` would merge a decoy onto the metadata pip reads. `..` segments, drive
+letters, backslashes and NUL stay unrepresentable too. Zip disclosures now carry `archive: "zip"`.
+Their reason describes pip for wheels and zip extractors in general for VSIX, instead of node-tar
+and `npm install`. Rule ID and severity are unchanged.
 
 ### Fixture format
 

@@ -53,7 +53,7 @@
           "kind": "parser-differential",
           "archive": "zip",
           "path": "demo_package/../usercustomize.py",
-          "detail": "entry path is not representable as a safe relative path (`..` segment, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here"
+          "detail": "entry path is not representable as a safe relative path (`..` segment, `./` before a `.dist-info`/`.data` directory, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here"
         }
       ]
     }

@@ -61,6 +61,15 @@ describe("normalizeZipPath", () => {
     expect(normalizeZipPath("./.pth")).toBe(".pth");
     expect(normalizeZipPath("pkg/.../x.py")).toBe("pkg/.../x.py");
   });
+
+  test("keeps rejecting a leading `.` before the directories pip reads by raw name", () => {
+    expect(normalizeZipPath("./demo-1.0.dist-info/METADATA")).toBeNull();
+    expect(normalizeZipPath(".//demo-1.0.dist-info/entry_points.txt")).toBeNull();
+    expect(normalizeZipPath("/./demo-1.0.data/purelib/hook.pth")).toBeNull();
+    // An inner `.` leaves pip's first-segment classification unchanged.
+    expect(normalizeZipPath("demo-1.0.dist-info/./METADATA")).toBe("demo-1.0.dist-info/METADATA");
+    expect(normalizeZipPath("./pkg/demo-1.0.dist-info/x")).toBe("pkg/demo-1.0.dist-info/x");
+  });
 });
 
 describe("readZipArchive", () => {
@@ -127,6 +136,40 @@ describe("readZipArchive", () => {
     ]);
     expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
       ["duplicate", "hook.pth"],
+    ]);
+  });
+
+  test("discloses a `./` alias of dist-info metadata instead of merging it", async () => {
+    const zip = buildZip([
+      {
+        path: "demo-1.0.dist-info/entry_points.txt",
+        body: "[console_scripts]\ndemo = demo:main\n",
+      },
+      { path: "./demo-1.0.dist-info/entry_points.txt", body: "[console_scripts]\n" },
+    ]);
+    const streamed = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20);
+    const buffered = await readZipArchiveBuffered(zip, 100, 1 << 20);
+
+    for (const parsed of [streamed, buffered]) {
+      expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+        ["demo-1.0.dist-info/entry_points.txt", "[console_scripts]\ndemo = demo:main\n"],
+      ]);
+      expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
+        ["parser-differential", "./demo-1.0.dist-info/entry_points.txt"],
+      ]);
+    }
+  });
+
+  test("the buffered (VSIX) reader keeps both copies of a `./` alias for the adapter's duplicate check", async () => {
+    const zip = buildZip([
+      { path: "extension/extension.js", body: "exports.a = 1;\n" },
+      { path: "./extension/extension.js", body: "exports.a = 2;\n" },
+    ]);
+    const parsed = await readZipArchiveBuffered(zip, 100, 1 << 20);
+
+    expect(parsed.files.map((file) => file.path)).toEqual([
+      "extension/extension.js",
+      "extension/extension.js",
     ]);
   });
 });

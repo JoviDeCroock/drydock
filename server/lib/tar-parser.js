@@ -195,7 +195,7 @@ export function unrepresentableZipEntry(rawPath) {
     detail:
       rawPath.length > 512
         ? "entry path exceeds the 512-character limit this reader records; the entry was not inspected"
-        : "entry path is not representable as a safe relative path (`..` segment, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here",
+        : "entry path is not representable as a safe relative path (`..` segment, `./` before a `.dist-info`/`.data` directory, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here",
   };
 }
 
@@ -210,6 +210,11 @@ export function normalizeZipPath(rawPath) {
   // as the tar reader drops them; rejecting them left that file unread.
   const parts = path.split("/").filter((part) => part && part !== ".");
   if (!parts.length || parts.some((part) => part === "..")) return null;
+  // Except where pip reads the raw first segment: it finds `*.dist-info` and
+  // routes `*.data` schemes by the name as written, so `./x.dist-info/METADATA`
+  // is not the metadata pip reads and `./x.data/purelib/y` installs under
+  // `x.data/`. Collapsing those would merge a decoy onto the real path.
+  if (path.split("/")[0] === "." && /\.(?:dist-info|data)$/i.test(parts[0])) return null;
   path = parts.join("/");
   // Collapsing can expose a drive letter the early check missed (`./C:x`).
   if (/^[A-Za-z]:/.test(path)) return null;
