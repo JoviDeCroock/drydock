@@ -140,9 +140,8 @@ export default function AgentsPage() {
           Leave a link the reviewer can inspect.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          Use the returned canonical package name and exact versions. Encode each path segment
-          separately, preserving the slash between an npm scope and name. These links open the same
-          example pairs without an account:
+          Link the diff response's <code>reviewUrl</code> as returned rather than building it. These
+          links open the same example pairs without an account:
         </p>
         <ul class="m-0 pl-5 text-[14px] leading-[1.65] max-w-[680px]">
           <li>

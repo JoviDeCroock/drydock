@@ -3067,6 +3067,11 @@
           "cachedAt": {
             "type": "string",
             "description": "ISO 8601 timestamp"
+          },
+          "reviewUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Canonical human review page for this release pair"
           }
         },
         "required": [
@@ -3079,7 +3084,8 @@
           "risk",
           "textSamplesOmitted",
           "notices",
-          "cachedAt"
+          "cachedAt",
+          "reviewUrl"
         ],
         "additionalProperties": {}
       },

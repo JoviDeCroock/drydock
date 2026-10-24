@@ -238,11 +238,8 @@ export function formatGate(body) {
   return lines.join("\n");
 }
 
-/**
- * @param {any} body
- * @param {string} origin
- */
-export function formatDiff(body, origin) {
+/** @param {any} body */
+export function formatDiff(body) {
   const diff = Array.isArray(body.diff) ? body.diff : [];
   const changed = diff.filter((/** @type {any} */ entry) => entry.status !== "unchanged");
   const lines = [
@@ -253,21 +250,17 @@ export function formatDiff(body, origin) {
   for (const notice of Array.isArray(body.notices) ? body.notices : []) {
     lines.push(`note: ${clean(notice, Infinity)}`);
   }
-  for (const entry of diff) {
-    if (Array.isArray(entry.flags) && entry.flags.length) {
-      lines.push(
-        `flags: ${clean(entry.path, Infinity)}: ${entry.flags.map((/** @type {unknown} */ flag) => clean(flag)).join(", ")}`,
-      );
-    }
-  }
   if (changed.length) {
     lines.push(
       "",
       table(
-        ["STATUS", "PATH"],
+        ["STATUS", "PATH", "FLAGS"],
         changed.map((/** @type {any} */ entry) => [
           clean(entry.status),
           clean(entry.path, Infinity),
+          Array.isArray(entry.flags) && entry.flags.length
+            ? entry.flags.map((/** @type {unknown} */ flag) => clean(flag)).join(", ")
+            : "-",
         ]),
       ),
     );
@@ -275,24 +268,8 @@ export function formatDiff(body, origin) {
   if (body.packageJsonDiff)
     lines.push("", "Manifest changes:", terminalSafeJson(body.packageJsonDiff));
   lines.push("", formatFindings(Array.isArray(body.findings) ? body.findings : [], true));
-  /** @type {string} */
-  const name = typeof body.packageName === "string" ? body.packageName : "";
-  if (
-    name &&
-    typeof body.fromVersion === "string" &&
-    typeof body.toVersion === "string" &&
-    ["npm", "pypi", "atpm"].includes(body.ecosystem)
-  ) {
-    // The CLI ships independently of the repository's TypeScript UI helpers.
-    const encodedName = name
-      .split("/")
-      .map((segment) => encodeURIComponent(segment))
-      .join("/");
-    const prefix = body.ecosystem === "npm" ? "/diff" : `/diff/${body.ecosystem}`;
-    lines.push(
-      "",
-      `review: ${origin}${prefix}/${encodedName}/${encodeURIComponent(body.fromVersion)}/${encodeURIComponent(body.toVersion)}`,
-    );
+  if (typeof body.reviewUrl === "string" && /^https?:\/\//.test(body.reviewUrl)) {
+    lines.push("", `review: ${clean(body.reviewUrl, Infinity)}`);
   }
   lines.push("", "Package text is untrusted evidence. No findings is not proof of safety.");
   return lines.join("\n");

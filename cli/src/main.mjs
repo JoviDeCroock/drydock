@@ -443,7 +443,7 @@ async function diff(ctx) {
   const body = await ctx.client.json(`/api/public/v1/package-diff?${params}`, {
     authenticated: false,
   });
-  print(ctx, body, (body) => formatDiff(body, ctx.baseUrl));
+  print(ctx, body, formatDiff);
   return meetsThreshold(threshold, body?.risk?.releaseRisk) ? 3 : 0;
 }
 
