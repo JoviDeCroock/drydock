@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AppDb } from "../../server/db/client";
 import { scans } from "../../server/db/schema";
+import { REPORT_VIEW_THROTTLE_MS } from "../../server/db/scan-views";
 import { recordReportView } from "../../server/lib/scan/report-view";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
@@ -47,6 +48,11 @@ async function viewColumns(db: AppDb, scanId: string) {
   return row;
 }
 
+async function scanRow(db: AppDb, scanId: string) {
+  const [row] = await db.select().from(scans).where(eq(scans.id, scanId));
+  return row;
+}
+
 /** A completed staged review counted since creation, as `createScanJob` writes it. */
 function seedTrackedScan(owner: SeededUser, jobColumns: Partial<typeof scans.$inferInsert> = {}) {
   return seedCompletedScan(owner, {
@@ -80,17 +86,20 @@ describe("report view tracking", () => {
     // A view is not a change to the review.
     expect(afterFirst.updatedAt).toEqual(before.updatedAt);
 
+    // A reload inside the throttle window is the same view and writes nothing.
     const second = await getDetail(owner, `/api/v1/scans/${scanId}?via=notification`);
     expect(second.status).toBe(200);
-    const afterSecond = await viewColumns(owner.db, scanId);
-    expect(afterSecond).toMatchObject({
+    expect(await viewColumns(owner.db, scanId)).toEqual(afterFirst);
+
+    // A load after the window counts, and leaves the first view and its surface alone.
+    const later = new Date(afterFirst.lastViewedAt!.getTime() + REPORT_VIEW_THROTTLE_MS + 1);
+    await recordReportView(env, owner.db, await scanRow(owner.db, scanId), "notification", later);
+    expect(await viewColumns(owner.db, scanId)).toMatchObject({
       viewCount: 2,
       surface: "web",
       firstViewedAt: afterFirst.firstViewedAt,
+      lastViewedAt: later,
     });
-    expect(afterSecond.lastViewedAt!.getTime()).toBeGreaterThanOrEqual(
-      afterFirst.lastViewedAt!.getTime(),
-    );
 
     const events = viewEvents(written);
     expect(events).toHaveLength(1);
@@ -195,6 +204,22 @@ describe("report view tracking", () => {
       reportOpenedBeforePublication: "opened",
       reportViewCount: 2,
     });
+  });
+
+  test("the throttle never swallows the first view", async () => {
+    const written = withAnalytics();
+    const owner = await seedUser();
+    const now = new Date();
+    // A last view inside the window but no first view: the first view still lands.
+    const scanId = await seedTrackedScan(owner, { reportLastViewedAt: now });
+
+    await recordReportView(env, owner.db, await scanRow(owner.db, scanId), "web", now);
+    expect(await viewColumns(owner.db, scanId)).toMatchObject({
+      viewCount: 1,
+      firstViewedAt: now,
+      surface: "web",
+    });
+    expect(viewEvents(written)).toHaveLength(1);
   });
 
   test("a failed view write never fails the read path's bookkeeping", async () => {

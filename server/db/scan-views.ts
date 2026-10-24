@@ -6,7 +6,7 @@
  * are counted per scan, with no user, IP, or user agent, because the product
  * question is whether anyone in the organization looked before publication.
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import type { ReportViewSurface } from "./enums";
 import { scans } from "./schema";
@@ -16,6 +16,13 @@ import { scans } from "./schema";
  * publication instant is not ordered against it.
  */
 export const REPORT_VIEW_CLOCK_SKEW_MS = 10_000;
+
+/**
+ * Every completed-scan read records a view, and the page reloads the detail on
+ * each change, so loads closer together than this are one view. Throttled in
+ * the UPDATE's WHERE so a skipped write costs no extra read.
+ */
+export const REPORT_VIEW_THROTTLE_MS = 60_000;
 
 export type ReportOpenedBeforePublication = "opened" | "not_opened" | "unknown";
 
@@ -86,10 +93,13 @@ export function reportOpenedBeforePublication(
 
 /**
  * Count one report load. Only completed scans have a report, so loads of a
- * queued, running, or failed review are not views. `firstView` is true for
- * exactly one load of a scan counted since creation: the count only ever goes
- * from 0 to 1 once, and a null count (a scan older than view tracking) stays
- * null, so it never reports a first view it cannot vouch for.
+ * queued, running, or failed review are not views. A load within
+ * `REPORT_VIEW_THROTTLE_MS` of the last recorded one is not counted, but the
+ * first view is never throttled: an unset `report_first_viewed_at` always
+ * writes. `firstView` is true for exactly one load of a scan counted since
+ * creation: the count only ever goes from 0 to 1 once, and a null count (a
+ * scan older than view tracking) stays null, so it never reports a first view
+ * it cannot vouch for.
  */
 export async function recordScanReportView(
   db: AppDb,
@@ -109,6 +119,11 @@ export async function recordScanReportView(
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
+        or(
+          isNull(scans.reportFirstViewedAt),
+          isNull(scans.reportLastViewedAt),
+          lt(scans.reportLastViewedAt, new Date(at - REPORT_VIEW_THROTTLE_MS)),
+        ),
       ),
     )
     .returning({ viewCount: scans.reportViewCount });
