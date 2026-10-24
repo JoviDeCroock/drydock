@@ -64,4 +64,19 @@ describe("ApiKeysModel", () => {
     expect(model.revokingKeyId.value).toBeNull();
     expect(model.keys.value.map((key) => key.id)).toEqual(["two"]);
   });
+
+  test("a reload drops the revoking mark of a request it superseded", async () => {
+    stubFetchRoutes({
+      "/api/v1/api-keys/one": () => new Promise<Response>(() => {}),
+      "/api/v1/api-keys": () =>
+        jsonResponse({ keys: [apiKey("one", DAY_MS)], limit: 10, expiryDays: [30, 90, 365] }),
+    });
+
+    const model = new ApiKeysModel();
+    await model.load(true);
+    void model.revoke("one");
+    await model.load(true);
+    expect(model.revokingKeyId.value).toBeNull();
+    expect(model.busy.value).toBe(false);
+  });
 });
