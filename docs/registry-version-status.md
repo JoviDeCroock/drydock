@@ -260,7 +260,8 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Eight columns on `scans` (migration `0027`), plus one from `0030`:
+Eight columns on `scans` (migration `0027`), plus one from `0030` and one from
+`0040_futuristic_zombie`:
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.
