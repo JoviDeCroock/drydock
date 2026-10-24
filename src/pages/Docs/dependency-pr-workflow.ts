@@ -1,19 +1,15 @@
-import repositoryWorkflow from "../../../.github/workflows/drydock-diff-link.yml?raw";
+import repositoryCaller from "../../../.github/workflows/dependency-pr-diff.yml?raw";
 
-// The documented snippet is the workflow this repository runs on its own
+export const REUSABLE_WORKFLOW = "JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml";
+
+// The documented snippet is the caller this repository runs on its own
 // dependency PRs, so the published copy cannot drift from the exercised one.
-// Two differences are intended: the header comment that addresses this
-// repository is dropped, and actions pinned to a commit (the ci.yml
-// convention) float on their major tag for adopters.
+// The only difference is the reference: adopters reach the reusable workflow
+// in this repository instead of a local path.
 export function publishedDependencyPrWorkflow(source: string): string {
-  const [nameLine, blank, ...rest] = source.split("\n");
-  let start = 0;
-  while (rest[start]?.startsWith("#")) start += 1;
-  if (rest[start] === "") start += 1;
-  return [nameLine, blank, ...rest.slice(start)]
-    .join("\n")
-    .replace(/^(\s*(?:- )?uses: [^@\s]+)@[0-9a-f]{40} # (v\d+)\S*$/gm, "$1@$2")
-    .trimEnd();
+  const local = /^(\s*uses: )\.\/\.github\/workflows\/drydock-diff-link\.yml$/m;
+  if (!local.test(source)) throw new Error("dependency PR caller lost its local uses: line");
+  return source.replace(local, `$1${REUSABLE_WORKFLOW}@main`).trimEnd();
 }
 
-export const DEPENDENCY_PR_WORKFLOW = publishedDependencyPrWorkflow(repositoryWorkflow);
+export const DEPENDENCY_PR_WORKFLOW = publishedDependencyPrWorkflow(repositoryCaller);

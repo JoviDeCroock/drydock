@@ -65,13 +65,18 @@ Shape notes, so edits keep the links correct:
 ## PR comment workflow (Dependabot and Renovate)
 
 Dependabot has no PR-body templating, and a Renovate PR body is rendered by
-Renovate without any chance to fetch. The documented path for both is one small
-workflow, `.github/workflows/drydock-diff-link.yml`: `dependabot/fetch-metadata`
-for Dependabot PRs, then one `actions/github-script` step that derives the
-version pairs, fetches each pair's summary from the public diff API, and upserts
-one comment. It is copy-paste YAML on the Docs page with no Drydock-owned action.
-The trigger is `pull_request_target`, so GitHub runs this workflow file and the
-action commits it pins as they are on the base branch. Under `pull_request`, the
+Renovate without any chance to fetch. The documented path for both is the
+reusable workflow `.github/workflows/drydock-diff-link.yml`:
+`dependabot/fetch-metadata` for Dependabot PRs, then one `actions/github-script`
+step that derives the version pairs, fetches each pair's summary from the public
+diff API, and upserts one comment. Adopters paste a ~20-line caller from the Docs
+page that references it at `JoviDeCroock/drydock/...@main`; there is still no
+Drydock-owned action. Floating on `main` means adopters run our latest workflow
+with `pull-requests: write` in their repository, so the Docs page tells them how
+to pin a commit SHA or vendor the file instead. The caller's trigger is
+`pull_request_target`; a called workflow runs under its caller's event, so
+GitHub runs the caller, this workflow, and the action commits it pins as they
+are on the base branch. Under `pull_request`, the
 file came from the PR's merge ref. Dependabot and Renovate both bump GitHub
 Actions, so a PR that bumped `fetch-metadata` or `github-script` would have run
 the bumped, unreviewed action with write access. `pull_request_target` is also
@@ -81,7 +86,8 @@ with the base repository's token. This workflow never checks out or executes PR
 code. It reads PR lockfiles as data through the API, so granting
 `pull-requests: write` to the run is safe. `contents: read` is the only other
 scope, for those lockfile and registry-config reads. Dependabot-triggered runs
-honor the workflow-level `permissions` key (GitHub changelog 2022-02-10). The
+honor the workflow-level `permissions` key (GitHub changelog 2022-02-10), and a
+called workflow can only narrow what its caller grants. The
 cost is that a change to the workflow itself takes effect only after it merges,
 so a PR editing the file is not exercised against itself.
 
@@ -196,22 +202,22 @@ below GitHub's 65,536 limit.
 A pair whose summary cannot be fetched keeps today's link, followed by "summary
 unavailable" and the reason: an HTTP status, `rate limited`, `timed out`,
 `request failed`, or `unreadable response`. The job never fails on a Drydock
-API problem. Setting `DRYDOCK_SUMMARIES: "false"` turns the fetch off and posts
-links only.
+API problem. Calling the workflow `with: summaries: false` turns the fetch off
+and posts links only.
 
 ### Keeping the snippet and the repository copy in step
 
-The logic stays inline in the workflow rather than moving under `scripts/`: the
-published artifact is copy-paste YAML for repositories that cannot reference
-anything in this one, so a shared script would be reachable only by us and would
-end the dogfooding below.
+The logic stays inline in the reusable workflow rather than moving under
+`scripts/`: a called workflow runs in the caller's repository, so a script here
+would not be on disk, and a vendored copy of the file must keep working alone.
 
-This repository runs the workflow against its own Dependabot PRs in
-`.github/workflows/drydock-diff-link.yml`, pinned to action commits per the
-`.github/workflows/ci.yml` convention. The Docs page doesn't keep a second copy:
-`src/pages/Docs/dependency-pr-workflow.ts` imports that file and drops its
-repository-only header comment and moves pinned actions to their major tags.
-That is the only intended difference. `test/dependency-pr-diff-workflow.test.ts`
+This repository dogfoods the published path. `.github/workflows/dependency-pr-diff.yml`
+is the caller, and it calls `.github/workflows/drydock-diff-link.yml` locally, whose
+actions are pinned to commits per the `.github/workflows/ci.yml` convention. The
+Docs page doesn't keep a second copy: `src/pages/Docs/dependency-pr-workflow.ts`
+imports the caller and swaps the local path for
+`JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@main`. That is the
+only intended difference. `test/dependency-pr-diff-workflow.test.ts`
 checks the transformation, then runs the inline script under a stubbed
 `github`/`fetch` against grouped and single Dependabot PRs, each supported
 lockfile, hostile API responses, API failures, and the caps.
@@ -268,8 +274,8 @@ Those checks see only committed config. Registries set through environment
 variables, CI-only config, user-level `.npmrc`, `pip.conf`, or a Dependabot
 `registries:` block are invisible to the workflow. Dependabot's pip and uv bumps
 in particular are sent as they are. Drydock answers 404 for a name it can't find. If a
-repository's private package names are themselves confidential, set
-`DRYDOCK_SUMMARIES: "false"`.
+repository's private package names are themselves confidential, call the
+workflow `with: summaries: false`.
 
 The workflow sends `x-drydock-client: dependency-pr`, which `public_diff.viewed`
 records in its `client` dimension (`docs/product-analytics.md`), so CI fetches

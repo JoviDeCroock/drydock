@@ -28,7 +28,7 @@ import {
 } from "./primitives";
 import { scrollToDocsHash } from "./hash-navigation";
 import { TOC_IDS } from "./toc";
-import { DEPENDENCY_PR_WORKFLOW } from "./dependency-pr-workflow";
+import { DEPENDENCY_PR_WORKFLOW, REUSABLE_WORKFLOW } from "./dependency-pr-workflow";
 
 // The rail track and the article track. Shared by the hero and the body so
 // every heading on the page starts on the same column.
@@ -816,9 +816,15 @@ export default function DocsPage() {
                 PRs that change no supported lockfile get no comment, but the preset column above
                 still links them.
               </Prose>
-              <WorkflowExample title="Dependency PR diff comment">
+              <CodeBlock name=".github/workflows/drydock-diff-link.yml" lang="yaml">
                 {DEPENDENCY_PR_WORKFLOW}
-              </WorkflowExample>
+              </CodeBlock>
+              <Prose>
+                The job calls the reusable workflow at <InlineCode>{REUSABLE_WORKFLOW}</InlineCode>{" "}
+                on <InlineCode>main</InlineCode>, so it picks up fixes without a PR. To review each
+                change before it runs with write access, replace <InlineCode>main</InlineCode> with
+                a commit SHA, or copy that file into your repository.
+              </Prose>
             </Subsection>
 
             <Callout label="What reaches Drydock">
@@ -827,10 +833,10 @@ export default function DocsPage() {
               the PR opens or changes, at most 10 per run. npm packages that your committed{" "}
               <InlineCode>.npmrc</InlineCode> or <InlineCode>.yarnrc.yml</InlineCode> sends to
               another registry are left out, as are Renovate's pins from requirements files with
-              their own index. Dependabot's pip and uv bumps are sent as they are. Set{" "}
-              <InlineCode>DRYDOCK_SUMMARIES</InlineCode> to <InlineCode>"false"</InlineCode> to post
-              links only. If the API is slow, rate limited, or down, the comment keeps the link and
-              says the summary is unavailable. The job does not fail.
+              their own index. Dependabot's pip and uv bumps are sent as they are. Pass{" "}
+              <InlineCode>summaries: false</InlineCode> to post links only. If the API is slow, rate
+              limited, or down, the comment keeps the link and says the summary is unavailable. The
+              job does not fail.
             </Callout>
           </section>
 

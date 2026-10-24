@@ -1,23 +1,28 @@
-name: drydock-diff-link
+name: drydock-diff-link (reusable)
 
-# The dependency-PR integration documented on the Docs page ("Diffs in
-# dependency PRs") and in docs/dependency-pr-diff-links.md, running against this
-# repo's own update PRs. The Docs page renders this file as its copy-paste
-# snippet, minus this comment and with actions on their major tags. Never checks
-# out or executes the updated code.
+# The reusable workflow behind the Docs page's "Diffs in dependency PRs" snippet
+# and docs/dependency-pr-diff-links.md. Adopters call it from a short
+# pull_request_target workflow; .github/workflows/dependency-pr-diff.yml is that
+# caller for this repository and the source of the published snippet. Never
+# checks out or executes the updated code.
 
-# pull_request_target runs this file, and the action commits it pins, as they
-# are on the base branch. Dependabot and Renovate both bump actions, so under
+# A called workflow runs under its caller's event, so the caller's
+# pull_request_target is what fixes this file and the action commits it pins to
+# the base branch: Dependabot and Renovate both bump actions, and under
 # pull_request a bump of the actions below would run the bumped code with write
 # access before anyone reviewed it. Nothing from the PR head is checked out or
 # executed here; its lockfiles are only read as data through the API.
 on:
-  pull_request_target:
-    types: [opened, synchronize]
+  workflow_call:
+    inputs:
+      summaries:
+        description: Fetch each bump's summary from Drydock. false posts links only.
+        type: boolean
+        default: true
 
-# Dependabot-triggered runs honor this permissions key; the read-only default
-# token does not apply when permissions are set explicitly. contents: read lets
-# the run read lockfiles and registry config through the API.
+# A called workflow can only narrow the caller's grant, so the caller must give
+# at least these. contents: read lets the run read lockfiles and registry config
+# through the API.
 permissions:
   contents: read
   pull-requests: write
@@ -47,7 +52,7 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           # "false" posts links only and sends nothing to Drydock.
-          DRYDOCK_SUMMARIES: "true"
+          DRYDOCK_SUMMARIES: ${{ inputs.summaries }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
           NAMES: ${{ steps.meta.outputs.dependency-names }}
           FROM: ${{ steps.meta.outputs.previous-version }}

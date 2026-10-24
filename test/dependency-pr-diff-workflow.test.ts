@@ -9,6 +9,10 @@ const REPO_WORKFLOW = readFileSync(
   new URL("../.github/workflows/drydock-diff-link.yml", import.meta.url),
   "utf8",
 );
+const REPO_CALLER = readFileSync(
+  new URL("../.github/workflows/dependency-pr-diff.yml", import.meta.url),
+  "utf8",
+);
 const MARKER = "<!-- drydock:diff-link -->";
 
 function inlineScript(workflow: string): string {
@@ -198,21 +202,19 @@ function proseOutsideCode(markdown: string): string {
 }
 
 describe("published workflow snippet", () => {
-  test("is the repository workflow minus its header, with actions on major tags", () => {
-    expect(DEPENDENCY_PR_WORKFLOW).toBe(publishedDependencyPrWorkflow(REPO_WORKFLOW));
-    expect(
-      DEPENDENCY_PR_WORKFLOW.startsWith(
-        "name: drydock-diff-link\n\n# pull_request_target runs this file",
+  test("is the repository caller pointed at the reusable workflow on main", () => {
+    expect(DEPENDENCY_PR_WORKFLOW).toBe(publishedDependencyPrWorkflow(REPO_CALLER));
+    expect(DEPENDENCY_PR_WORKFLOW).toBe(
+      REPO_CALLER.trimEnd().replace(
+        "uses: ./.github/workflows/drydock-diff-link.yml",
+        "uses: JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml@main",
       ),
-    ).toBe(true);
+    );
     expect(DEPENDENCY_PR_WORKFLOW).not.toMatch(/this\s+repo/i);
-    expect(DEPENDENCY_PR_WORKFLOW).not.toMatch(/[0-9a-f]{40}/);
-    expect(DEPENDENCY_PR_WORKFLOW).toContain("uses: dependabot/fetch-metadata@v3\n");
-    expect(DEPENDENCY_PR_WORKFLOW).toContain("uses: actions/github-script@v9\n");
-    expect(inlineScript(DEPENDENCY_PR_WORKFLOW).trimEnd()).toBe(SCRIPT.trimEnd());
+    expect(() => publishedDependencyPrWorkflow("jobs: {}\n")).toThrow();
   });
 
-  test("pins every action in the repository copy", () => {
+  test("pins every action in the reusable workflow", () => {
     const uses = [...REPO_WORKFLOW.matchAll(/uses: (\S+)/g)].map((m) => m[1]);
     expect(uses).toHaveLength(2);
     for (const ref of uses) expect(ref).toMatch(/@[0-9a-f]{40}$/);
@@ -221,21 +223,31 @@ describe("published workflow snippet", () => {
   test("authenticates the Dependabot commit before anything reads it", () => {
     const steps = REPO_WORKFLOW.slice(REPO_WORKFLOW.indexOf("steps:"));
     expect(steps.indexOf("dependabot/fetch-metadata")).toBeLessThan(steps.indexOf("github-script"));
-    // Base-branch workflow and pins: a PR bumping the actions cannot change
-    // what runs with write access. Nothing from the head is checked out.
-    expect(REPO_WORKFLOW).toMatch(
+    // Base-branch caller, and through it the base-branch reusable workflow and
+    // pins: a PR bumping the actions cannot change what runs with write
+    // access. Nothing from the head is checked out.
+    expect(REPO_CALLER).toMatch(
       /^on:\n {2}pull_request_target:\n {4}types: \[opened, synchronize\]\n/m,
     );
-    expect(REPO_WORKFLOW).not.toMatch(/actions\/checkout|^\s*pull_request:|\bref:/m);
-    expect(REPO_WORKFLOW).toMatch(
-      /^permissions:\n {2}contents: read\n {2}pull-requests: write\n\n/m,
-    );
+    expect(REPO_WORKFLOW).toMatch(/^on:\n {2}workflow_call:\n/m);
+    for (const workflow of [REPO_CALLER, REPO_WORKFLOW]) {
+      expect(workflow).not.toMatch(/actions\/checkout|^\s*pull_request:|\bref:/m);
+      expect(workflow).toMatch(/^permissions:\n {2}contents: read\n {2}pull-requests: write\n\n/m);
+    }
     // No expression is interpolated into the script body.
     expect(SCRIPT).not.toContain("${{");
   });
 
-  test("holds the published snippet to the repository print width", () => {
-    const long = DEPENDENCY_PR_WORKFLOW.split("\n").filter((line) => line.length > 100);
+  test("turns summaries off only when the caller passes false", () => {
+    expect(REPO_WORKFLOW).toContain("DRYDOCK_SUMMARIES: ${{ inputs.summaries }}\n");
+    expect(SCRIPT).toContain('process.env.DRYDOCK_SUMMARIES !== "false"');
+  });
+
+  test("holds the published snippet to the docs snippet width", () => {
+    // The reusable workflow's path is fixed at 76 characters with its indent.
+    const long = DEPENDENCY_PR_WORKFLOW.split("\n").filter(
+      (line) => line.length > 71 && !line.trimStart().startsWith("uses: "),
+    );
     expect(long).toEqual([]);
   });
 });
