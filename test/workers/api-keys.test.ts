@@ -759,6 +759,44 @@ describe("API keys with scan access", () => {
     expect(results.flatMap((result) => result.queue)).toHaveLength(1);
   });
 
+  test("a start whose queue send fails leaves no review behind, so a retry starts one", async () => {
+    const owner = await signedUpAccount();
+    await connectNpm(owner);
+    const key = await createKey(owner, owner.organizationId, { name: "ci", access: "scan" });
+    stubStagedRegistry("stage-queue-down-000001", "@acme/queue-down", "1.0.0");
+
+    const ctx = createExecutionContext();
+    const failing = await worker.fetch(
+      new Request("http://example.com/api/v1/scans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${key.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ stageId: "stage-queue-down-000001" }),
+      }),
+      {
+        ...env,
+        SCAN_QUEUE: {
+          send: async () => {
+            throw new Error("queue unavailable");
+          },
+        },
+      },
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(failing.status).toBe(500);
+    const rows = await createDb(env.DB)
+      .select({ id: schema.scans.id })
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, "stage-queue-down-000001"));
+    expect(rows).toEqual([]);
+
+    const retry = await postWithoutOrigin("/api/v1/scans", key.token, {
+      stageId: "stage-queue-down-000001",
+    });
+    expect(retry.status).toBe(202);
+    expect(retry.queue).toHaveLength(1);
+  });
+
   test("a stage whose review failed can be started again", async () => {
     const owner = await signedUpAccount();
     await connectNpm(owner);

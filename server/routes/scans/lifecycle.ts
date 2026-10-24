@@ -21,6 +21,7 @@ import {
   SCAN_DECISION_FILTERS,
   type ScanDecisionFilter,
   deleteFailedScan,
+  deletePendingScanJob,
   findLiveStageReviewId,
   findMemberScanOrganization,
   getScan,
@@ -125,19 +126,26 @@ scanLifecycleRoutes.post("/", async (c) => {
     return c.json({ error }, 409);
   }
   if (!detail) return c.json({ error: "failed to create scan" }, 500);
-  if (prepared.staged) {
-    await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
+  try {
+    if (prepared.staged) {
+      await getPublicationMonitor("npm")?.registerStagedReleases(db, c.env, {
+        organizationId,
+        registryUrl: prepared.registryUrl!,
+        releases: [prepared.staged],
+      });
+    }
+    await enqueuePreparedScan(c, db, {
+      scanId,
       organizationId,
-      registryUrl: prepared.registryUrl!,
-      releases: [prepared.staged],
+      actorUserId,
+      prepared,
     });
+  } catch (err) {
+    // A pending row nothing will run would answer every retry of this stage as
+    // an existing review (see the check above), so the start is undone.
+    await deletePendingScanJob(db, scanId, organizationId);
+    throw err;
   }
-  await enqueuePreparedScan(c, db, {
-    scanId,
-    organizationId,
-    actorUserId,
-    prepared,
-  });
 
   const apiKey = c.get("apiKey");
   if (apiKey) {
