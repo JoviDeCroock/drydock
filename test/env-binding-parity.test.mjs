@@ -32,6 +32,11 @@ const UNREAD_VARS = new Set([
   "PNPM_VERSION",
 ]);
 
+// Production bindings the self-host template ships commented out, because
+// enabling them is an operator decision: the detonation sandbox executes
+// package code. Each must stay optional in `env.d.ts`.
+const SELF_HOST_OPT_IN = new Set(["DETONATION_QUEUE", "DETONATION_SANDBOX"]);
+
 function read(file) {
   return readFileSync(`${repoRoot}/${file}`, "utf8");
 }
@@ -162,7 +167,14 @@ describe("Cloudflare binding parity", () => {
     expect(
       sorted(selfHost),
       `${SELF_HOST} must offer operators every binding ${PRODUCTION} uses, with placeholder ids.`,
-    ).toEqual(sorted(production));
+    ).toEqual(sorted(production).filter((name) => !SELF_HOST_OPT_IN.has(name)));
+  });
+
+  test("opt-in self-host bindings are optional production bindings", () => {
+    for (const name of SELF_HOST_OPT_IN) {
+      expect(production.has(name), `${name} is not a ${PRODUCTION} binding`).toBe(true);
+      expect(env.optional.has(name), `${name} must be optional in ${ENV_TYPES}`).toBe(true);
+    }
   });
 
   test("every required env member is a production binding, var, or known secret", () => {

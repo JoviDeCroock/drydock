@@ -1,0 +1,2762 @@
+{
+  "version": 1,
+  "coverage": {
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": false
+  },
+  "steps": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 2373
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:postinstall",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 113
+    },
+    {
+      "step": "require",
+      "target": "drydock-detonation-flooder:require",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 105
+    },
+    {
+      "step": "import",
+      "target": "drydock-detonation-flooder:import",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 108
+    }
+  ],
+  "events": [
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/node",
+      "argv": ["node", "flood.js"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-0"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-1"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-2"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-3"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-4"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-5"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-6"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-7"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-8"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-9"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-10"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-11"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-12"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-13"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-14"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-15"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-16"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-17"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-18"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-19"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-20"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-21"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-22"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-23"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-24"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-25"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-26"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-27"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-28"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-29"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-30"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-31"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-32"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-33"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-34"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-35"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-36"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-37"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-38"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-39"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-40"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-41"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-42"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-43"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-44"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-45"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-46"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-47"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-48"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-49"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-50"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-51"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-52"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-53"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-54"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-55"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-56"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-57"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-58"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-59"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-60"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-61"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-62"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-63"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-64"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-65"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-66"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-67"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-68"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-69"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-70"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-71"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-72"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-73"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-74"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-75"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-76"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-77"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-78"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-79"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-80"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-81"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-82"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-83"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-84"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-85"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-86"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-87"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-88"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-89"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-90"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-91"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-92"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-93"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-94"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-95"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-96"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-97"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-98"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-99"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-100"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-101"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-102"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-103"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-104"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-105"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-106"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-107"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-108"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-109"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-110"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-111"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-112"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-113"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-114"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-115"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-116"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-117"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-118"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-119"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-120"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-121"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-122"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-123"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-124"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-125"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-126"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-127"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-128"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-129"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-130"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-131"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-132"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-133"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-134"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-135"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-136"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-137"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-138"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-139"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-140"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-141"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-142"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-143"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-144"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-145"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-146"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-147"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-148"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-149"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-150"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-151"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-152"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-153"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-154"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-155"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-156"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-157"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-158"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-159"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-160"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-161"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-162"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-163"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-164"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-165"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-166"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-167"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-168"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-169"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-170"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-171"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-172"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-173"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-174"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-175"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-176"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-177"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-178"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-179"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-180"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-181"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-182"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-183"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-184"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-185"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-186"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-187"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-188"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-189"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-190"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-191"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-192"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-193"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-194"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-195"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-196"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-197"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-198"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-199"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-200"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-201"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-202"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-203"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-204"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-205"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-206"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-207"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-208"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-209"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-210"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-211"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-212"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-213"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-214"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-215"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-216"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-217"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-218"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-219"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-220"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-221"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-222"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-223"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-224"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-225"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-226"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-227"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-228"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-229"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-230"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-231"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-232"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-233"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-234"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-235"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-236"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-237"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-238"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-239"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-240"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-241"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-242"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-243"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-244"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-245"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-246"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-247"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-248"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-249"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-250"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-251"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-252"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-253"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-254"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-255"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-256"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-257"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-258"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-259"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-260"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-261"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-262"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-263"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-264"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-265"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-266"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-267"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-268"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-269"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-270"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-271"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-272"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-273"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-274"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-275"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-276"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-277"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-278"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-279"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-280"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-281"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-282"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-283"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-284"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-285"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-286"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-287"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-288"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-289"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-290"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-291"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-292"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-293"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-294"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-295"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-296"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 50,
+      "via": "syscall",
+      "kind": "file",
+      "op": "create",
+      "path": "/tmp/drydock-flood-297"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 57,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/bin/cat",
+      "argv": ["cat", ".npmrc"]
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:preinstall",
+      "pid": 57,
+      "via": "syscall",
+      "kind": "file",
+      "op": "read",
+      "path": "/home/pkg/.npmrc"
+    },
+    {
+      "step": "lifecycle",
+      "target": "drydock-detonation-flooder@1.0.0:postinstall",
+      "pid": 66,
+      "via": "syscall",
+      "kind": "exec",
+      "path": "/usr/local/bin/node",
+      "argv": ["node", "-e", "console.log('ok')"]
+    }
+  ],
+  "truncated": true
+}

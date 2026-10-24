@@ -28,6 +28,7 @@ import { sandboxErrorDetail } from "../sandbox";
 import { parseJsonObject } from "./json";
 import type { ScanInput } from "../../types";
 import { recordProductEvent } from "../analytics";
+import { maybeRequestDetonationAfterScan } from "../detonation/job";
 
 export interface ScanQueueMessage extends ScanInput {
   scanId: string;
@@ -100,6 +101,15 @@ export async function executeScanJob(
       releaseRisk: result.riskSummary.releaseRisk,
       artifactRisk: result.risk,
     });
+    if (!message.published && message.source !== "workflow_gate") {
+      executionCtx.waitUntil(
+        maybeRequestDetonationAfterScan(env, executionCtx, db, {
+          scanId: message.scanId,
+          organizationId: message.organizationId,
+          actorUserId: message.actorUserId,
+        }),
+      );
+    }
     if (message.source !== "workflow_gate") {
       executionCtx.waitUntil(
         notifyScanCompletion({

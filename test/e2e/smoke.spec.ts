@@ -144,6 +144,31 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("blocked").first()).toBeVisible();
 });
 
+test("a clean detonation of a browser build says the sandbox did not cover it", async ({
+  page,
+}) => {
+  await installWorkflowGateMocks(page, true);
+  const clean = detonationResponse();
+  const result = clean.detonation.result;
+  clean.detonation.result = {
+    ...result,
+    signals: [],
+    egress: [],
+    coverage: { ...result.coverage, browserTargeted: true },
+  };
+  // Registered after the shared mocks, so it answers first.
+  await page.route(`**/api/v1/scans/${scanId}/detonation`, (route) =>
+    route.fulfill({ json: clean }),
+  );
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const notes = page
+    .getByRole("heading", { name: "Review notes", exact: true })
+    .locator("xpath=ancestor::details[1]");
+  await expect(
+    notes.getByText(/ships a browser build, which never runs in the sandbox/),
+  ).toBeVisible();
+});
+
 test("review notes group evidence and keep AI advice subordinate to findings", async ({
   page,
 }, testInfo) => {
@@ -174,6 +199,12 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   ).toHaveAttribute("href", "https://github.com/drydock/example");
   await expect(notes.getByText("manifest-repository", { exact: true })).toHaveCount(0);
   await expect(notes.getByRole("heading", { name: "Release changes", exact: true })).toBeVisible();
+  await expect(notes.getByRole("heading", { name: /^Detonation/ })).toBeVisible();
+  await expect(notes.getByText("1 suspicious behavior observed", { exact: true })).toBeVisible();
+  await expect(notes.getByText("seen at the network boundary · during lifecycle")).toBeVisible();
+  await expect(notes.getByText(/without calling its exports/)).toBeVisible();
+  // The clean-run caveat is for runs without signals only.
+  await expect(notes.getByText(/ships a browser build/)).toHaveCount(0);
   await notes.screenshot({ path: testInfo.outputPath("review-notes.png") });
   await notes.locator("summary").filter({ hasText: "Remote shell" }).click();
   const locations = notes.getByRole("button", { name: /^site\/dist\/changelog.*:42$/ });
@@ -655,6 +686,64 @@ function publicReportExport() {
   };
 }
 
+function detonationResponse() {
+  return {
+    eligible: true,
+    detonation: {
+      status: "complete",
+      stale: false,
+      errorCode: null,
+      artifactSha256: "a".repeat(64),
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      result: {
+        status: "complete",
+        signals: [
+          {
+            id: "dynamic.canary-exfiltration",
+            severity: "critical",
+            title: "Planted npm token sent to an outside host",
+            evidence: ["POST collect.example.test/upload", "canary npm-token"],
+            source: "egress",
+            step: "lifecycle",
+          },
+        ],
+        coverage: {
+          syscallTracing: true,
+          runtimeHooks: true,
+          dependencyInstall: "complete",
+          stepsSkipped: 0,
+          exercise: "load",
+          browserTargeted: true,
+        },
+        steps: [
+          {
+            step: "lifecycle",
+            target: "@drydock/gate-demo@1.2.0:postinstall",
+            exitCode: 0,
+            timedOut: false,
+            durationMs: 812,
+          },
+        ],
+        egress: [
+          {
+            phase: "detonate",
+            method: "POST",
+            host: "collect.example.test",
+            path: "/upload",
+            bodyBytes: 96,
+            canaryHits: ["npm-token"],
+            action: "sinkholed",
+          },
+        ],
+        truncated: false,
+        errorCode: null,
+      },
+    },
+  };
+}
+
 async function installWorkflowGateMocks(
   page: Page,
   reviewNotes = false,
@@ -793,6 +882,16 @@ async function installWorkflowGateMocks(
         packageJson: null,
         findingAnnotations: [],
       });
+      return;
+    }
+
+    // Outside the beta the endpoint answers `eligible: false`; review-notes
+    // scenarios answer as a beta organization with a finished run.
+    if (path === `/api/v1/scans/${scanId}/detonation`) {
+      await fulfillJson(
+        route,
+        reviewNotes ? detonationResponse() : { eligible: false, detonation: null },
+      );
       return;
     }
 

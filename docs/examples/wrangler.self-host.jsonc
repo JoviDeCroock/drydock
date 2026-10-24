@@ -168,6 +168,26 @@
 			"bucket_name": "staged-publish-review-artifacts"
 		}
 	],
+	// Opt-in, beta: the detonation sandbox runs staged packages' install
+	// scripts in a Cloudflare Container (Workers Paid, Docker in the build).
+	// Off by default so a self-host never executes package code. To opt in,
+	// uncomment this block and the producer and consumer entries marked
+	// "Detonation opt-in" under `queues`, create that queue and its DLQ, and
+	// enable the `detonation-sandbox` flag.
+	// See docs/detonation-sandbox.md.
+	// "containers": [
+	// 	{
+	// 		"class_name": "DetonationSandbox",
+	// 		"image": "./containers/detonation/Dockerfile",
+	// 		"instance_type": "standard-1",
+	// 		"max_instances": 5
+	// 	}
+	// ],
+	// "durable_objects": {
+	// 	"bindings": [{ "name": "DETONATION_SANDBOX", "class_name": "DetonationSandbox" }]
+	// },
+	// "migrations": [{ "tag": "v1-detonation-sandbox", "new_sqlite_classes": ["DetonationSandbox"] }],
+	// "dev": { "enable_containers": false },
 	// Optional: asynchronous scan execution and retries. Without this block,
 	// requests enqueue work with the Worker's waitUntil fallback.
 	"queues": {
@@ -175,7 +195,9 @@
 			{
 				"binding": "SCAN_QUEUE",
 				"queue": "staged-publish-review-scans"
-			}
+			},
+			// Detonation opt-in (see above):
+			// { "binding": "DETONATION_QUEUE", "queue": "staged-publish-review-detonations" }
 		],
 		"consumers": [
 			{
@@ -185,7 +207,17 @@
 				"max_concurrency": 10,
 				"max_retries": 3,
 				"dead_letter_queue": "staged-publish-review-scans-dlq"
-			}
+			},
+			// Detonation opt-in: its own queue so a run (up to ~8 minutes) never
+			// holds a scan or gate consumer; concurrency matches max_instances.
+			// {
+			// 	"queue": "staged-publish-review-detonations",
+			// 	"max_batch_size": 1,
+			// 	"max_batch_timeout": 5,
+			// 	"max_concurrency": 5,
+			// 	"max_retries": 3,
+			// 	"dead_letter_queue": "staged-publish-review-detonations-dlq"
+			// }
 		]
 	},
 	// Optional: outbound email notifications. Remove when email is not configured.

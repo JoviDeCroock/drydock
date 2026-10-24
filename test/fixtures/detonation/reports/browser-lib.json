@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "coverage": {
+    "syscallTracing": true,
+    "runtimeHooks": true,
+    "dependencyInstall": "complete",
+    "stepsSkipped": 0,
+    "exercise": "load",
+    "browserTargeted": true
+  },
+  "steps": [
+    {
+      "step": "require",
+      "target": "drydock-fixture-browser-lib:require",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 199
+    },
+    {
+      "step": "import",
+      "target": "drydock-fixture-browser-lib:import",
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 397
+    }
+  ],
+  "events": [],
+  "truncated": false
+}

@@ -177,7 +177,8 @@ Both review pages lead with the diff:
   the button that changes it), then the version picker directly above the
   workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
   verdict reads that way, release memory, release changes, the advisory AI
-  assessment, source binding), then the risk index and the manifest sections.
+  assessment, source binding, and for organizations in the beta the advisory
+  detonation sandbox), then the risk index and the manifest sections.
   The risk index here holds only the signals the diff cannot pin to a changed
   line (`unpinnedFindings` in `src/features/review/risk-index.ts`) and is
   hidden when there are none: a pinned finding is already stated inline and in
@@ -225,6 +226,16 @@ stays inert under **Read full AI assessment**, labeled advisory and potentially
 quoting package text. Release memory stays beside the verdict evidence (the severity bar renders only for two or more findings). Declared
 source binding shows one unverified repository link; only an exact duplicate
 manifest declaration is omitted, preserving additional or conflicting evidence.
+The detonation section (`ScanDetail/DetonationSection.tsx`) renders nothing
+outside the beta (its endpoint answers `eligible: false`). It states once that
+it is advisory and that exports are not called. A red Badge marks only canary
+exfiltration and registry publish attempts; other signals show their severity as
+mono text, since a telemetry ping is a `high` egress signal. A canary hit does
+not auto-expand the collapsed Review notes card: the result is advisory. Run/Run
+again sits beside the state line, which is a polite live region; the egress and
+step log fold under **Sandbox log**. A coverage line appears only for gaps, and
+a clean run carries one caveat line: the browser build never ran (for a
+browser-targeted manifest), or limited coverage.
 
 ## Dashboard overview strip
 

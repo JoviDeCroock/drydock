@@ -8,7 +8,14 @@ import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { ScanPreconditionError } from "../../scan/errors";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
-import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
+import { fetchStagedArchive } from "./staged-archive";
+import type {
+  AdapterBroker,
+  AdapterContext,
+  AdapterConnectionRef,
+  StagedArchiveRequest,
+  StagedArchiveResult,
+} from "../package-adapter";
 
 // SHA-1 binds the review to npm's own stage record (`shasum`); SHA-256 is the
 // digest a workflow gate recomputes for the same `.tgz`, so a stage can be
@@ -20,6 +27,8 @@ export interface NpmBroker extends AdapterBroker {
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
   downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
+  /** Raw staged bytes for the detonation sandbox, pinned to the reviewed SHA-256. */
+  fetchStagedArchive(request: StagedArchiveRequest): Promise<StagedArchiveResult>;
 }
 
 export interface NpmBrokerDownloadOptions {
@@ -97,6 +106,10 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
         maxTextSampleChars: opts.maxTextSampleChars,
       }),
     );
+  }
+
+  async fetchStagedArchive(request: StagedArchiveRequest): Promise<StagedArchiveResult> {
+    return fetchStagedArchive(this.ctx, await this.resolveCredentials(), request);
   }
 
   private async resolveCredentials(): Promise<ResolvedCredentials> {
@@ -198,6 +211,10 @@ class LocalNpmBroker implements NpmBroker {
       maxFiles: opts.maxFiles,
       maxTextSampleChars: opts.maxTextSampleChars,
     });
+  }
+
+  async fetchStagedArchive(request: StagedArchiveRequest): Promise<StagedArchiveResult> {
+    return fetchStagedArchive(this.ctx.executionCtx, await this.resolve(), request);
   }
 
   private async resolve(): Promise<ResolvedCredentials> {

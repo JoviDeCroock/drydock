@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { OrganizationRole } from "../lib/auth/roles";
+import type { DetonationStatus } from "../lib/detonation/types";
 import type {
   GithubAppInstallationStatus,
   InvitationStatus,
@@ -910,5 +911,38 @@ export const publicationAlerts = sqliteTable(
     index("publication_alerts_package_badge").on(table.packageName, table.resolutionBadge),
     index("publication_alerts_review_requested_by").on(table.reviewRequestedBy),
     index("publication_alerts_resolved_by").on(table.resolvedBy),
+  ],
+);
+
+/**
+ * Latest detonation-sandbox run per scan (beta, advisory). Kept apart from
+ * `scans.summary_json` because the report digest is fixed when the scan
+ * completes, and because nothing here may reach risk, findings, or a gate.
+ * `run_id` fences a rerun against a slower earlier run finishing late.
+ */
+export const scanDetonations = sqliteTable(
+  "scan_detonations",
+  {
+    scanId: text("scan_id")
+      .primaryKey()
+      .references(() => scans.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    status: text("status").$type<DetonationStatus>().notNull(),
+    requestedByUserId: text("requested_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    artifactSha256: text("artifact_sha256"),
+    resultJson: text("result_json", { mode: "json" }),
+    errorCode: text("error_code"),
+    requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("scan_detonations_org_idx").on(table.organizationId),
+    index("scan_detonations_requested_by").on(table.requestedByUserId),
   ],
 );

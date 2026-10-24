@@ -7,14 +7,15 @@ ready just because TypeScript compiles.
 
 ## Required test layer by change type
 
-| Change type                                                                                  | Required coverage                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/`                                                                                                                                                  |
-| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch      | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes                                                                                         |
-| Sandbox, tar/zip parsing, archive limits, credential egress                                  | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved |
-| Deterministic findings, risk, redaction, package diff behavior                               | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk                                                       |
-| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts`                                                                             |
-| UI-only changes                                                                              | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes                                                                  |
+| Change type                                                                                  | Required coverage                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/`                                                                                                                                                                                                                 |
+| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch      | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes                                                                                                                                                        |
+| Sandbox, tar/zip parsing, archive limits, credential egress                                  | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved                                                                |
+| Detonation sandbox: container harness, egress policy, canaries, classifier, job              | `test/detonation-egress.test.ts`, `test/detonation-classify.test.ts`, `test/detonation-trace-parse.test.ts`, `test/workers/detonation.test.ts`, and a `scripts/detonation-local.mjs` run against `test/fixtures/detonation/` when the harness changes |
+| Deterministic findings, risk, redaction, package diff behavior                               | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk                                                                                                                      |
+| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts`                                                                                                                                            |
+| UI-only changes                                                                              | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes                                                                                                                                 |
 
 When a change spans layers, test the lowest deterministic unit and the highest
 user- or operator-visible contract. For example, a new scan route should usually
@@ -32,7 +33,10 @@ for the lifecycle behavior behind it.
 - `NpmStageGateway` is the only credentialed sandbox egress path and only forwards
   auth to allowlisted registry endpoints.
 - Package code is never executed, imported, installed, built, rendered as active
-  content, or allowed to define instructions for reviewers.
+  content, or allowed to define instructions for reviewers, except inside the
+  beta detonation container, which receives no credentials and reaches the
+  network only through the recorded HTTP(S) egress boundary and Cloudflare DNS
+  (`docs/detonation-sandbox.md`).
 - Archive parsing fails closed on traversal, symlinks/hardlinks, malformed
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI

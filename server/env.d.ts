@@ -28,6 +28,15 @@ declare global {
       // server/lib/analytics.ts.
       PRODUCT_ANALYTICS?: AnalyticsEngineDataset;
       SCAN_QUEUE?: Queue<import("./lib/scan/job").QueueMessage>;
+      // Optional: without it a detonation runs in the request's waitUntil
+      // (local development only; a long run can be cut off there).
+      DETONATION_QUEUE?: Queue<import("./lib/detonation/job").DetonationQueueMessage>;
+      // Beta detonation sandbox (Cloudflare Container behind a Durable
+      // Object). Optional: without it the `detonation-sandbox` flag is moot
+      // and no package code is ever executed. See docs/detonation-sandbox.md.
+      DETONATION_SANDBOX?: DurableObjectNamespace<
+        import("./lib/detonation/sandbox-do").DetonationSandbox
+      >;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in
