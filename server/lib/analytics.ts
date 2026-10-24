@@ -158,6 +158,19 @@ export type AnalyticsEvent =
       packageCount: number;
     }
   | {
+      name: "dependency_review.completed";
+      organizationId: string;
+      conclusion: string;
+      bumpCount: number;
+      heldCount: number;
+      durationMs: number;
+    }
+  | {
+      name: "dependency_review.approved";
+      organizationId: string;
+      approvedCount: number;
+    }
+  | {
       /**
        * One badge *serve*, never an impression. A README badge is fetched by
        * shields.io and, on GitHub, by Camo before it — and this Worker caches
@@ -223,6 +236,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "workflow_gate.opened",
   "workflow_gate.reviewed",
   "workflow_gate.decided",
+  "dependency_review.completed",
+  "dependency_review.approved",
 ] as const;
 
 type AssertExtends<A extends B, B> = A;
@@ -375,6 +390,15 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [event.surface, event.decision],
         [0, event.packageCount],
       );
+    case "dependency_review.completed":
+      return base(
+        event.organizationId,
+        "",
+        [event.conclusion],
+        [event.durationMs, event.bumpCount, event.heldCount],
+      );
+    case "dependency_review.approved":
+      return base(event.organizationId, "", [], [0, event.approvedCount]);
     case "badge.served":
       return base(
         "",

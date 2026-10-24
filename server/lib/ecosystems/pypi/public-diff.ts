@@ -73,7 +73,9 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // every sample, and mark the records that lost one. Entries written by v5
   // carry no sample at all for a pair this large, so they must not be served
   // once the prioritized retention ships.
-  payloadVersion: "v6",
+  // v7: a notice names the target version's wheels the diff did not read, so
+  // a clean result is never mistaken for coverage of every platform wheel.
+  payloadVersion: "v7",
 
   isValidPackageName: isValidPyPiProjectName,
   // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
@@ -524,7 +526,15 @@ async function acquirePublicPyPiDiff(
   const downloads = await downloadPublicPyPiArtifacts(env, ctx, selection);
   const resolved = resolvePublicPyPiDownloads(downloads.from, downloads.to);
   const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
-  const notices = [...selection.notices, ...resolved.notices];
+  const notices = [
+    ...selection.notices,
+    ...resolved.notices,
+    ...unreadPublicPyPiWheelNotice(
+      metadata,
+      input.toVersion,
+      selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
+    ),
+  ];
 
   return {
     ...buildPublicPyPiDiffSources({
@@ -540,6 +550,23 @@ async function acquirePublicPyPiDiff(
     }),
     ...(notices.length ? { notices } : {}),
   };
+}
+
+// One wheel per version is read. The others for the target version may hold
+// different bytes (platform builds), so they are named rather than implied.
+export function unreadPublicPyPiWheelNotice(
+  metadata: PyPiProjectMetadata,
+  toVersion: string,
+  selectedTo: PyPiRemoteArtifact[],
+): string[] {
+  const read = new Set(selectedTo.map((artifact) => artifact.filename));
+  const unread = usablePublicArtifacts(metadata, toVersion).filter(
+    (artifact) => artifact.kind === "wheel" && !read.has(artifact.filename),
+  ).length;
+  if (unread === 0) return [];
+  return [
+    `${unread} other ${unread === 1 ? "wheel" : "wheels"} of ${toVersion} ${unread === 1 ? "was" : "were"} not inspected; this diff reads one wheel per version.`,
+  ];
 }
 
 // Pure resolution of per-artifact download outcomes into a servable pair,

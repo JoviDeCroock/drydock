@@ -44,6 +44,8 @@ export interface PaginateOptions {
    * as incomplete, because the pages behind the rejected link were never read.
    */
   followNext?(next: string): boolean;
+  /** `manual` turns a redirect into a 3xx page for `readPage` to refuse. */
+  redirect?: RequestRedirect;
 }
 
 /**
@@ -64,7 +66,10 @@ export async function paginate(
   for (let page = 0; page < options.maxPages && url; page += 1) {
     if (seen.has(url)) return { complete: false };
     seen.add(url);
-    const response = await reliableFetch(url, { headers: options.headers });
+    const response = await reliableFetch(url, {
+      headers: options.headers,
+      ...(options.redirect ? { redirect: options.redirect } : {}),
+    });
     await readPage(response);
     const next = nextLink(response.headers.get("link"));
     // A vetoed link is a chain we refused to walk, not the end of one. Reporting

@@ -104,6 +104,12 @@ severity, so color there read as an alarm on routine actions.
 non-leakage, org scoping, cursor pagination, and the member-403 / admin-200 role
 gate.
 
+Dependency review adds `dependency_review.approved` (release decision, notice;
+the repository, PR, and the GitHub login that approved, which is not a Drydock
+member) and `dependency_review.settings_updated` (security, notice; the member
+who changed the policy or turned the check on or off). See
+[`dependency-review.md`](./dependency-review.md).
+
 Publication monitoring adds `publication.discrepancy` (security severity) and
 `publication.acknowledged` (notice severity). Both carry package/version identity;
 acknowledgment records the member who acknowledged it and does not change approval

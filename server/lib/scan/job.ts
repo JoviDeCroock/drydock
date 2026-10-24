@@ -48,10 +48,43 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+/**
+ * A dependency-update PR review, or a click on its check's Approve button.
+ * The approver identity is GitHub's `sender` from a signature-verified
+ * webhook; the job still checks their repository permission before it counts.
+ */
+export interface DependencyReviewQueueMessage {
+  kind: "dependency_review";
+  organizationId: string;
+  reviewId?: string;
+  // Re-run a completed review: the check's Re-run button, or a skip raced it.
+  rerun?: boolean;
+  approver?: { login: string; githubId: number; checkRunId?: number };
+  // Post a passing `skipped` check on a PR no dependency bot opened.
+  skip?: {
+    installationRowId: string;
+    repositoryId: number;
+    repositoryFullName: string;
+    headSha: string;
+    fromFork?: boolean;
+    authorLogin?: string;
+    senderLogin?: string;
+  };
+}
+
+export type QueueMessage =
+  | ScanQueueMessage
+  | WorkflowGateQueueMessage
+  | DependencyReviewQueueMessage;
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";
+}
+
+export function isDependencyReviewMessage(
+  message: QueueMessage,
+): message is DependencyReviewQueueMessage {
+  return "kind" in message && message.kind === "dependency_review";
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
