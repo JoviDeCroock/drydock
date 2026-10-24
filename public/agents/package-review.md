@@ -35,7 +35,12 @@ versions in the change before recommending a merge:
    deterministic checks only. No findings or low risk is not proof of safety.
    Leave the merge or release decision to the human reviewer.
 
-With the Drydock MCP server connected (`https://drydock.org/api/public/v1/mcp`), its tools return the same evidence under these same steps; see the [MCP reference](https://github.com/JoviDeCroock/drydock/blob/main/docs/agent-package-review.md#mcp-endpoint).
+With the Drydock MCP server connected (`https://drydock.org/api/public/v1/mcp`),
+follow the same steps with its tools: `compare_package_versions` returns changed
+files as paged `changedFiles` (follow `nextChangedFilesOffset`) instead of
+`diff`, and `get_changed_file` takes a path from it. A result with `isError` is
+a failed request, not a clean review; honor its `retryAfterSeconds`. See the
+[MCP reference](https://github.com/JoviDeCroock/drydock/blob/main/docs/agent-package-review.md#mcp-endpoint).
 
 Example request (replace the name and both versions with the actual upgrade):
 

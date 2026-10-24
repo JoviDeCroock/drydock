@@ -105,9 +105,12 @@ arbitrary fetch targets. On npm, explicit versions can also be supported
 ## MCP request and evidence boundaries
 
 `server/routes/public-mcp.ts` mounts before session/API-key authentication.
-It dispatches in process to `publicDiffRoutes` with only the caller's IP for
-rate-limit accounting. It forwards no cookies or Authorization headers and
-never makes an HTTP request back to the Worker.
+It dispatches in process to `publicDiffRoutes` with a fresh request on the
+canonical app origin (so `reviewUrl` matches the site) that carries only the
+caller's IP, for rate-limit accounting, and a constant `x-drydock-client: mcp`
+analytics tag. It forwards no cookies, Authorization, or Origin headers and
+never makes an HTTP request back to the Worker. Each compare page is a full
+pair request, so paging a large release spends the 10/minute pair budget.
 
 The endpoint is disabled with a custom `NPM_REGISTRY`, accepts no browser
 Origin except the canonical app origin, limits protocol requests to 120/minute

@@ -203,10 +203,12 @@ dependency-PR comment workflow fetching a pair from CI, once per PR push
 (`docs/dependency-pr-diff-links.md`). `cli` is the Drydock CLI's `diff`
 command and `mcp` is a `compare_package_versions` call on the hosted MCP
 endpoint, one row per tool call (each changed-file page is a call).
-Everything else is `other`, the browser `/diff` page. Filter `blob8 = 'other'`
-for people reading diffs (rows from before the `cli`/`mcp` values existed
-counted those calls as `other`), and `blob8 IN ('cli', 'mcp')` for agent and
-script use. They are tagged rather than dropped because agent adoption is a
+Everything else is `other`: mostly the browser `/diff` page, plus any API
+caller that does not send the header. Filter `blob8 NOT IN ('dependency-pr',
+'cli', 'mcp')` for people reading diffs, which keeps `other` and the older rows
+with an empty `blob8` (rows from before the `cli`/`mcp` values existed counted
+those calls as `other`), and `blob8 IN ('cli', 'mcp')` for agent and script
+use. They are tagged rather than dropped because agent adoption is a
 signal worth measuring, and a separate value keeps it out of the page-view
 number. The value comes from the caller's `x-drydock-client` header (the MCP
 route sets it on its in-process dispatch), so it separates traffic shapes and

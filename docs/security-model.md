@@ -192,9 +192,10 @@ One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonym
 
 The `/api/public/v1/mcp` endpoint is a second deliberate anonymous surface,
 limited to tools over that same public package-diff router. It accepts no
-organization selectors, credentials, or arbitrary fetch targets and forwards
-only the caller's IP into an in-process route dispatch. Cookies and
-Authorization headers never reach public analysis. It inherits the custom
+organization selectors, credentials, or arbitrary fetch targets. Its
+in-process route dispatch is a fresh request on the canonical app origin that
+carries only the caller's IP and a constant `x-drydock-client: mcp` analytics
+tag. Cookies, Authorization, and Origin headers never reach public analysis. It inherits the custom
 registry 404, allowed public artifact hosts, no package execution, no AI review,
 cache, archive caps, and shared analysis budgets above. MCP additionally limits
 all protocol requests to 120/minute per IP, caps request bodies at 16 KiB, and

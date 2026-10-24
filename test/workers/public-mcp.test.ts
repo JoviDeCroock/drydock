@@ -267,6 +267,20 @@ describe("anonymous hosted public MCP", () => {
     expect(pair.body.result.structuredContent.notices).toEqual(payload.notices);
   });
 
+  test("reviewUrl uses the canonical origin, not the request host", async () => {
+    const bindings = { ...requestEnv(), BETTER_AUTH_URL: "https://drydock.example/app" };
+    const payload = await seedPair(bindings);
+    const pair = await rpc(
+      "tools/call",
+      { name: "compare_package_versions", arguments: pairArgs(payload) },
+      bindings,
+    );
+    expect(pair.body.result.isError).not.toBe(true);
+    expect(pair.body.result.structuredContent.reviewUrl).toBe(
+      `https://drydock.example/diff/${payload.packageName}/1.0.0/2.0.0`,
+    );
+  });
+
   test("strict tool arguments and unknown tools cannot dispatch package requests", async () => {
     const dispatch = vi.spyOn(publicDiffRoutes, "fetch");
     for (const params of [

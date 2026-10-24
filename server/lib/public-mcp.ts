@@ -31,7 +31,7 @@ const pairFields = {
     .min(1)
     .max(2048)
     .describe(
-      "Exact published baseline version, e.g. 18.2.0. Ranges, tags, and lockfile specs are rejected.",
+      "Exact published baseline version, e.g. 18.2.0, or for npm a pkg.pr.new preview URL. Ranges, tags, and lockfile specs are rejected.",
     ),
   to: z
     .string()
@@ -137,6 +137,16 @@ function pairSummary(
     out.push(`${findings.length - TEXT_FINDINGS_LIMIT} more findings in structuredContent`);
   }
   const shown = result.changedFiles.slice(0, TEXT_FILES_LIMIT);
+  const offset = result.changedFilesOffset;
+  if (result.changedFiles.length) {
+    out.push(
+      `changed files ${offset + 1}–${offset + result.changedFiles.length} of ${result.changedFileCount}:`,
+    );
+  } else if (offset > 0 && offset >= result.changedFileCount) {
+    out.push(
+      `changedFilesOffset=${offset} is past the last changed file (${result.changedFileCount}); start again at 0.`,
+    );
+  }
   for (const entry of shown) out.push(`changed: ${line(entry.status)} ${line(entry.path, 500)}`);
   const unlisted = result.changedFileCount - result.changedFilesOffset - shown.length;
   if (unlisted > 0) {
