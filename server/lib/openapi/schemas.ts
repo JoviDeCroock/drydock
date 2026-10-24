@@ -138,7 +138,9 @@ export const ScanStatus = z
     scan: z.looseObject(scanIdentity),
     riskSummary: riskSummary
       .nullable()
-      .describe("Null until the review completes, and for reviews without a breakdown"),
+      .describe(
+        "Null until the review completes, and when no release delta was graded (no baseline compared, or a review recorded before the split); fall back to `scan.risk` then",
+      ),
   })
   .register(openApiSchemas, { id: "ScanStatus" });
 

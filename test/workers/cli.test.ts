@@ -113,6 +113,34 @@ describe("drydock CLI against the Worker", () => {
     expect(await cli(token).run("scans", "wait", releaseScanId, "--fail-on", "high")).toBe(3);
     expect(await cli(token).run("scans", "wait", releaseScanId, "--fail-on", "critical")).toBe(0);
 
+    // No baseline compared means no release delta was graded; the workflow
+    // gate asks for manual review, and the CLI gates on the overall risk.
+    const ungradedScanId = await seedCompletedScan(
+      { userId, organizationId },
+      {
+        packageJson: { name: "@acme/cli-e2e-ungraded", version: "3.0.0" },
+        risk: "high",
+        summary: {
+          diff: [{ path: "package.json", status: "modified" }],
+          baseline: { comparisonSkipped: "baseline-too-large" },
+        },
+        findings: [
+          {
+            severity: "high",
+            file: "install.js",
+            evidence: "child_process.exec(cmd)",
+            reason: "process execution in an install script",
+            line: 4,
+          },
+        ],
+      },
+    );
+    const ungraded = cli(token);
+    expect(await ungraded.run("scans", "wait", ungradedScanId, "--fail-on", "high", "--json")).toBe(
+      3,
+    );
+    expect(JSON.parse(ungraded.out.join(""))).toMatchObject({ riskSummary: null });
+
     const report = cli(token);
     expect(await report.run("report", scanId, "--output", "report.json")).toBe(0);
     const direct = await callWorker("GET", `/api/v1/scans/${scanId}/report.json`, { jar });

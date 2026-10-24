@@ -1810,7 +1810,7 @@
                 "type": "null"
               }
             ],
-            "description": "Null until the review completes, and for reviews without a breakdown"
+            "description": "Null until the review completes, and when no release delta was graded (no baseline compared, or a review recorded before the split); fall back to `scan.risk` then"
           }
         },
         "required": [
