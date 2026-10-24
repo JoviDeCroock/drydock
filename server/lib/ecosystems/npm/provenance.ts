@@ -7,11 +7,19 @@ import {
   attestedField,
   attestedNumericId,
   attestedRepositoryFromUrl,
+  evaluateProvenanceContinuity,
+  PROVENANCE_NOT_EVALUATED,
   PROVENANCE_UNKNOWN,
+  provenanceLineage,
   sameAttestedPublisher,
   type AttestedPublisher,
+  type ProvenanceContinuityOutcome,
+  type ProvenanceLineage,
+  type ProvenanceStatus,
+  type ProvenanceVersionScheme,
   type RegistryProvenance,
 } from "../../provenance-continuity";
+import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
 import type { RegistryMetadata } from "./registry";
 
 /**
@@ -45,6 +53,76 @@ const NPM_GHA_V02_BUILD_TYPE_PREFIX = "https://github.com/npm/cli/gha/";
 const NPM_GITLAB_V02_BUILD_TYPE_PREFIX = "https://github.com/npm/cli/gitlab/";
 
 /**
+ * Provenance continuity for a published npm pair. The baseline and history
+ * come from `provenanceLineage` over the packument, whose per-version
+ * provenance marker makes the history free; identity is read for the two
+ * compared releases only. `readProvenance` is a seam for offline replays.
+ */
+export async function npmProvenanceContinuity(args: {
+  metadata: RegistryMetadata;
+  packageName: string;
+  fromVersion: string;
+  toVersion: string;
+  registryUrl: string;
+  readProvenance?: (version: string) => Promise<RegistryProvenance>;
+}): Promise<ProvenanceContinuityOutcome> {
+  // A custom registry's attestation record carries no npm-validated meaning.
+  if (!isNpmPublicRegistry(args.registryUrl)) return PROVENANCE_NOT_EVALUATED;
+  const { metadata } = args;
+  const lineage = npmProvenanceLineage(metadata, args.fromVersion, args.toVersion);
+  if (!lineage) return PROVENANCE_NOT_EVALUATED;
+  const read =
+    args.readProvenance ??
+    ((version: string) =>
+      readNpmRegistryProvenance(metadata, args.packageName, version, args.registryUrl));
+  const [baseline, candidate] = await Promise.all([read(lineage.baseline), read(args.toVersion)]);
+  return evaluateProvenanceContinuity({
+    registry: "npm",
+    baseline: { version: lineage.baseline, provenance: baseline },
+    candidate: { version: args.toVersion, provenance: candidate },
+    prior: lineage.prior.map((version) => npmPackumentProvenanceStatus(metadata, version)),
+  });
+}
+
+export function npmProvenanceLineage(
+  metadata: RegistryMetadata,
+  fromVersion: string,
+  toVersion: string,
+): ProvenanceLineage | null {
+  return provenanceLineage(
+    npmVersionScheme(metadata),
+    Object.keys(metadata.versions ?? {}),
+    fromVersion,
+    toVersion,
+  );
+}
+
+function npmVersionScheme(metadata: RegistryMetadata): ProvenanceVersionScheme<ParsedSemver> {
+  return {
+    parse: parseSemver,
+    compare: compareParsedSemver,
+    isPrerelease: (version) => version.prerelease.length > 0,
+    publishedAt: (version) => {
+      const at = metadata.time?.[version];
+      const ms = typeof at === "string" ? Date.parse(at) : Number.NaN;
+      return Number.isFinite(ms) ? ms : null;
+    },
+  };
+}
+
+export function npmPackumentProvenanceStatus(
+  metadata: RegistryMetadata,
+  version: string,
+): ProvenanceStatus {
+  const hasProvenance = metadata.versions?.[version]?.hasProvenance;
+  return hasProvenance === true ? "present" : hasProvenance === false ? "absent" : "unknown";
+}
+
+function isNpmPublicRegistry(registryUrl: string): boolean {
+  return registryUrl.replace(/\/+$/, "") === NPM_PUBLIC_REGISTRY_ORIGIN;
+}
+
+/**
  * Read provenance for one side of a published pair. Only the public npm
  * registry is consulted: a custom registry's attestation endpoint (if it has
  * one) carries no npm-validated meaning, so it reads as unknown.
@@ -55,7 +133,7 @@ export async function readNpmRegistryProvenance(
   version: string,
   registryUrl: string,
 ): Promise<RegistryProvenance> {
-  if (registryUrl.replace(/\/+$/, "") !== NPM_PUBLIC_REGISTRY_ORIGIN) return PROVENANCE_UNKNOWN;
+  if (!isNpmPublicRegistry(registryUrl)) return PROVENANCE_UNKNOWN;
   const hasProvenance = metadata.versions?.[version]?.hasProvenance;
   if (hasProvenance !== true) {
     return npmRegistryProvenance({ hasProvenance, attestations: null, packageName, version });

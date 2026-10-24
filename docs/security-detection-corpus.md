@@ -882,13 +882,17 @@ Their reason describes pip for wheels and zip extractors in general for VSIX, in
 and `npm install`. Rule ID and severity are unchanged.
 
 `1.56.0` adds registry provenance continuity for published-pair reviews (npm and PyPI `/diff`,
-and authenticated published-pair reviews): `release.provenance-dropped` (medium) when the registry
-lists build provenance for the baseline and affirmatively none for the candidate, and
-`release.provenance-publisher-changed` (medium for a different attested repository or repository
-id, low for a different workflow in the same repository). Unknown provenance never fires. See
-[`provenance-continuity.md`](./provenance-continuity.md). Goldens live in `cases-provenance/`;
-hard negatives (`legit-provenance-*` in `cases-benign/`) pin transfers that keep the repository id,
-the SLSA v0.2→v1 format change, first adoption, unknown candidates, PyPI's HTML 404, and letter case.
+and authenticated published-pair reviews): `release.provenance-dropped` when the registry lists
+build provenance for the baseline and affirmatively none for the candidate (medium after three
+attested releases in a row, low otherwise), and `release.provenance-publisher-changed` (medium for
+a different attested repository or repository id; low for a same-owner repository change when no
+repository id is recorded on both sides, or a different workflow in the same repository). The
+baseline is an earlier release in the candidate's channel that was already published when the
+candidate was. Unknown provenance never fires. See [`provenance-continuity.md`](./provenance-continuity.md).
+Goldens live in `cases-provenance/`; hard negatives (`legit-provenance-*` in `cases-benign/`) pin
+transfers that keep the repository id, the SLSA v0.2→v1 format change, first adoption, unknown
+candidates, PyPI's HTML 404, letter case, a local hotfix after two CI releases, a hand-published
+stable after a CI-attested prerelease, and a same-owner PyPI rename.
 
 ### Fixture format
 
@@ -1002,13 +1006,17 @@ pnpm test -- test/security-corpus-atpm.test.mjs --project node
 rather than package files, so their golden cases under `test/fixtures/security-corpus/cases-provenance/`
 are registry-record projections, evaluated by `test/security-corpus-provenance.test.mjs`.
 `test/helpers/provenance-security-corpus.mjs` feeds them through the production readers
-(`npmRegistryProvenance`, `classifyPyPiProvenanceResponse` + `combinePyPiFileProvenance`) and
+(`npmRegistryProvenance`, `classifyPyPiProvenanceResponse` + `combinePyPiFileProvenance`), the
+production lineage (`npmProvenanceLineage`, `pypiProvenanceLineage`), and
 `provenanceContinuityFindings`. The detection eval routes any fixture with `registryProvenance`
 (including `legit-provenance-*` hard negatives in `cases-benign/`) through the same helper.
 
 Fields: `id`, `title`, `category`, `intent`, `ecosystem` (`npm` or `pypi`), `expectedRisk`,
-`expectedFindings`, and `registryProvenance: { packageName, baseline, candidate }`. An npm side is
-`{ version, packumentProvenance?, statements? | attestations? }`: `packumentProvenance` is the
+`expectedFindings`, and `registryProvenance: { packageName, history?, baseline, candidate }`.
+`history` lists earlier published releases of any channel; the lineage picks the compared baseline
+and the prior releases the drop rule's history reads from them, so a medium drop needs two attested
+releases before the baseline. Any side may carry `publishedAt` (ISO time) to pin publish order. An
+npm side is `{ version, packumentProvenance?, statements? | attestations? }`: `packumentProvenance` is the
 packument's `dist.attestations.provenance` marker (omitted means unknown), `statements` are decoded
 in-toto statements the helper wraps in DSSE envelopes, and `attestations` is a raw attestations
 document for malformed shapes. A PyPI side is `{ version, files: [{ filename, status, body }] }`, one

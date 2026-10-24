@@ -6,6 +6,16 @@
   "ecosystem": "npm",
   "registryProvenance": {
     "packageName": "example-widget",
+    "history": [
+      {
+        "version": "0.9.0",
+        "packumentProvenance": true
+      },
+      {
+        "version": "0.9.1",
+        "packumentProvenance": true
+      }
+    ],
     "baseline": {
       "version": "1.0.0",
       "packumentProvenance": true,
