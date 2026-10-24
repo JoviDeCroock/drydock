@@ -44,6 +44,8 @@ export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
   path: string;
   detail: string;
+  /** Set by the zip readers; absent means the tar reader produced the entry. */
+  archive?: "zip";
 }
 
 export interface ReadTarResult {
@@ -71,6 +73,7 @@ export function normalizeTarPath(
   rootStrip?: TarRootStrip,
 ): string | null;
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
+export function unrepresentableZipEntry(rawPath: string | null | undefined): TarSuspiciousEntry | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;

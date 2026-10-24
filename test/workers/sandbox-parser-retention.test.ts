@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { sandboxSource, SANDBOX_MAX_FILES } from "../../server/lib/sandbox";
-import { buildTar } from "../helpers/archive-fixtures";
+import { buildTar, buildZip } from "../helpers/archive-fixtures";
 
 // Executes the *rendered* sandbox module, the same string the Worker loader is
 // handed in production. The parser functions are unit-tested directly in
@@ -132,5 +132,42 @@ describe("rendered sandbox module: per-file sample retention", () => {
     expect(Object.keys(BASE_ENV).join(",").toLowerCase()).not.toContain("token");
     const parsed = await parseTgz([{ name: "package/package.json", body: MANIFEST }]);
     expect(JSON.stringify(parsed)).not.toContain("npm_");
+  });
+});
+
+describe("rendered sandbox module: zip entry names", () => {
+  // Both zip readers call helpers that exist in the rendered module only if
+  // sandbox.ts lists them, so this exercises the string the loader receives.
+  test.each(["zip", "vsix"])("%s: collapses `./x` and discloses unsafe names", async (format) => {
+    const zip = buildZip([
+      { path: "./evil.pth", body: "import os\n" },
+      { path: "pkg/../usercustomize.py", body: "x = 1\n" },
+      { path: "pkg/ok.py", body: "ok\n" },
+    ]);
+    const res = await loadRenderedSandbox().fetch(
+      new Request("https://sandbox.local/download", {
+        method: "POST",
+        body: zip as unknown as BodyInit,
+        headers: { "content-type": "application/octet-stream", "x-archive-format": format },
+      }),
+      BASE_ENV,
+    );
+
+    expect(res.status).toBe(200);
+    const parsed = (await res.json()) as {
+      files: SandboxFile[];
+      suspiciousEntries?: Array<{ kind: string; path: string; archive?: string }>;
+    };
+    expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+      ["evil.pth", "import os\n"],
+      ["pkg/ok.py", "ok\n"],
+    ]);
+    expect(parsed.suspiciousEntries).toEqual([
+      expect.objectContaining({
+        kind: "parser-differential",
+        archive: "zip",
+        path: "pkg/../usercustomize.py",
+      }),
+    ]);
   });
 });

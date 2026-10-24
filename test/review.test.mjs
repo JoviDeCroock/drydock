@@ -2622,6 +2622,30 @@ describe("review", () => {
     expect(computeRisk(npm)).toBe("high");
   });
 
+  test("explains zip-reader disclosures in zip terms under either dialect", () => {
+    const entries = [
+      {
+        kind: "parser-differential",
+        archive: "zip",
+        path: "pkg/../hook.pth",
+        detail: "entry path is not representable as a safe relative path",
+      },
+    ];
+
+    for (const dialect of ["npm", "pypi"]) {
+      const [finding] = tarSuspiciousEntryFindings(entries, { dialect });
+      expect(finding).toEqual(
+        expect.objectContaining({
+          severity: "high",
+          file: "pkg/../hook.pth",
+          ruleId: "tar.suspicious-entry",
+        }),
+      );
+      expect(finding.reason).toContain("Zip extractors disagree");
+      expect(finding.reason).not.toMatch(/node-tar|npm install|tarfile/);
+    }
+  });
+
   test("escalates retention-tier findings when hash-only content changed", () => {
     const entries = [
       {

@@ -213,6 +213,7 @@ function parseSuspiciousEntries(
       kind: item.kind as TarSuspiciousEntry["kind"],
       path: typeof item.path === "string" ? item.path : "",
       detail: typeof item.detail === "string" ? item.detail : "",
+      ...(item.archive === "zip" ? { archive: "zip" as const } : {}),
     });
   }
   return entries.length ? { suspiciousEntries: entries } : {};
