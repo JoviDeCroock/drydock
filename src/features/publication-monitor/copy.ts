@@ -51,6 +51,17 @@ const unknownReasonLabels: Record<string, string> = {
   artifact_identity_invalid: "npm metadata names no valid tarball",
 };
 
+// Why an undecided review kept a release from reading low risk. Mirrors the
+// alert email and Slack copy in server/lib/notify/publication-alerts.ts.
+const undecidedReviewCauses: Record<string, string> = {
+  reviewed_ungated_without_decision: "found the stage not bound to an approved gate review",
+  reviewed_risk_without_decision: "graded the release above low risk",
+  reviewed_ai_concern_without_decision: "has an AI review asking for a closer look",
+  reviewed_ai_unfinished_without_decision: "has an AI review that did not finish",
+  reviewed_diverged_without_decision: "found findings new since the last approved release",
+  reviewed_ungraded_without_decision: "could not grade the release risk",
+};
+
 // What refines an alert. An undecided review of the published bytes is most
 // often the owner's own release promoted before anyone decided, so it asks for
 // the decision first and never accuses whoever published it.
@@ -64,8 +75,12 @@ const alertReasonLabels: Record<string, string> = {
     "the Drydock review of these exact bytes failed and nothing approved them: investigate if nobody here published it",
   reviewed_without_decision:
     "a Drydock review of these exact bytes is undecided: decide it, or investigate if nobody here published it",
-  reviewed_risk_without_decision:
-    "an undecided Drydock review of these exact bytes did not grade the release low risk: decide it, or investigate if nobody here published it",
+  ...Object.fromEntries(
+    Object.entries(undecidedReviewCauses).map(([reason, cause]) => [
+      reason,
+      `an undecided Drydock review of these exact bytes ${cause}: decide it, or investigate if nobody here published it`,
+    ]),
+  ),
   [AI_FLAGGED_REASON]:
     // The label already says the AI reviewer flagged it.
     "the Drydock review of these exact bytes is undecided: investigate whether someone here published it, then decide it",

@@ -15,6 +15,18 @@ export interface NotifyPublicationDiscrepancyInput {
   reason?: string | null;
 }
 
+// Why an undecided review kept a release from reading low risk, completing
+// "Drydock's undecided review of these exact bytes ...". Mirrored in
+// src/features/publication-monitor/copy.ts.
+const UNDECIDED_REVIEW_CAUSES: Record<string, string> = {
+  reviewed_ungated_without_decision: "found the stage not bound to an approved gate review",
+  reviewed_risk_without_decision: "graded the release above low risk",
+  reviewed_ai_concern_without_decision: "has an AI review asking for a closer look",
+  reviewed_ai_unfinished_without_decision: "has an AI review that did not finish",
+  reviewed_diverged_without_decision: "found findings new since the last approved release",
+  reviewed_ungraded_without_decision: "could not grade the release risk",
+};
+
 // `reviewed_without_decision` says only that the review is undecided: a review
 // that read low but could not vouch for these bytes alone, and every such
 // alert raised before undecided reviews were tiered by risk.
@@ -49,10 +61,10 @@ function describe(
           detail: `No approval in ${organization} predates the publication of this release, and Drydock's AI reviewer flagged risk in these exact bytes. Investigate whether someone here published it, then decide the review.${approveFirst}`,
         };
       }
-      if (reason === "reviewed_risk_without_decision") {
+      if (reason && Object.hasOwn(UNDECIDED_REVIEW_CAUSES, reason)) {
         return {
           title: `Published with no approval in ${organization}`,
-          detail: `No approval in ${organization} predates the publication of this release. Drydock's undecided review of these exact bytes did not grade the release low risk: decide it, or investigate if nobody here published it.${approveFirst}`,
+          detail: `No approval in ${organization} predates the publication of this release. Drydock's undecided review of these exact bytes ${UNDECIDED_REVIEW_CAUSES[reason]}: decide it, or investigate if nobody here published it.${approveFirst}`,
         };
       }
       return {

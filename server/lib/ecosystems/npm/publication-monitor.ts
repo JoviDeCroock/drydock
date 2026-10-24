@@ -242,8 +242,9 @@ function publicationMonitoringEnabled(env: Cloudflare.Env, organizationId: strin
 }
 
 /**
- * The organization `ai-review` killswitch, read as the scan pipeline reads it
- * (off without a FLAGS binding). A failed read errs toward reading the stored
+ * Whether AI review is on for the organization (by default; the `ai-review`
+ * flag is its killswitch), read as the scan pipeline reads it (off without a
+ * FLAGS binding). A failed read errs toward reading the stored
  * AI result, which can only escalate an undecided review's alert.
  */
 async function aiReviewEnabled(env: Cloudflare.Env, organizationId: string): Promise<boolean> {
@@ -633,8 +634,8 @@ async function examineReleases(
     // Bytes matter only against a Drydock record of this release; a release
     // with none is decided without downloading it.
     let artifact = storedArtifact(item.previous);
-    const hasRecords =
-      releaseRecords(watch.packageName, item.version, reviews, registry).length > 0;
+    const records = releaseRecords(watch.packageName, item.version, reviews, registry);
+    const hasRecords = records.length > 0;
     if (artifact === null && item.publishedAt && hasRecords) {
       downloadDeadline ??= Date.now() + DOWNLOAD_BUDGET_MS;
       const remainingMs = Math.min(TARBALL_DEADLINE_MS, downloadDeadline - Date.now());
@@ -693,6 +694,7 @@ async function examineReleases(
       },
       watch.packageName,
       registry,
+      records.map((record) => record.id),
     );
     if (createdAlert && isPublicationAlert(verdict.status)) {
       // One line per new unapproved publish on a watched package, so operators

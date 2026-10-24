@@ -1,6 +1,6 @@
 import { createDb } from "../../server/db/client";
 import { env } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -546,6 +546,54 @@ describe("an undecided completed review of the published bytes", () => {
         (row) => row.version === "1.0.0",
       ),
     ).toMatchObject({
+      status: "published_despite_rejection",
+      reason: "rejected_after_publication",
+    });
+    expect(await alertsOf(db, organizationId)).toEqual(["1.0.0", "2.0.0", "3.0.0"]);
+  });
+
+  test("a decision recorded while the check runs keeps the release from settling quiet", async () => {
+    const seeded = await seed();
+    const { db, organizationId, userId, watch } = seeded;
+    await seedTiers(seeded);
+    const [quietReview] = await db
+      .select({ id: scans.id })
+      .from(scans)
+      .where(and(eq(scans.organizationId, organizationId), eq(scans.stagedVersion, "1.0.0")));
+    // The check reads the killswitch after reading the release's records and
+    // before writing its verdict: the decision lands in exactly that gap.
+    let decided = false;
+    const racingEnv = {
+      ...env,
+      FLAGS: {
+        getBooleanValue: vi.fn(async (flag: string, fallback: boolean) => {
+          if (flag !== "ai-review") return fallback;
+          if (!decided) {
+            decided = true;
+            await recordScanDecision(db, {
+              scanId: quietReview!.id,
+              organizationId,
+              actorUserId: userId,
+              decision: "no_publish",
+            });
+          }
+          return true;
+        }),
+      },
+    } as unknown as Cloudflare.Env;
+    await checkNpmPublicationWatch(db, racingEnv, watch);
+    expect(decided).toBe(true);
+    const release = async () =>
+      (await listPublicationObservations(db, organizationId, watch.id)).find(
+        (row) => row.version === "1.0.0",
+      );
+    expect(await release()).toMatchObject({
+      status: "unknown",
+      reason: "decided_after_observation",
+    });
+    await releaseLease(db, watch.id);
+    await checkNpmPublicationWatch(db, flags(true), watch);
+    expect(await release()).toMatchObject({
       status: "published_despite_rejection",
       reason: "rejected_after_publication",
     });

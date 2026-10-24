@@ -138,6 +138,11 @@ describe("publication monitor copy", () => {
       "review_failed",
       "reviewed_without_decision",
       "reviewed_risk_without_decision",
+      "reviewed_ungated_without_decision",
+      "reviewed_ai_concern_without_decision",
+      "reviewed_ai_unfinished_without_decision",
+      "reviewed_diverged_without_decision",
+      "reviewed_ungraded_without_decision",
     ]) {
       const label = observationReasonLabel({ status: "published_without_approval", reason });
       expect(label).toMatch(/these exact bytes/);

@@ -182,7 +182,7 @@ describe("a record of the same bytes softens nothing without a decision", () => 
   test("a completed undecided review with no readable release risk is published without approval", () => {
     expect(classify([review({ decision: null, decidedAt: null })])).toEqual({
       status: "published_without_approval",
-      reason: "reviewed_risk_without_decision",
+      reason: "reviewed_ungraded_without_decision",
       scanId: "scan1",
     });
   });
@@ -266,7 +266,7 @@ describe("a restaged version", () => {
       classify([approvedA, review({ id: "stage-b", decision: null, decidedAt: null })]),
     ).toEqual({
       status: "published_without_approval",
-      reason: "reviewed_risk_without_decision",
+      reason: "reviewed_ungraded_without_decision",
       scanId: "stage-b",
     });
     expect(classify([approvedA, review({ id: "stage-b" })])).toMatchObject({
@@ -585,10 +585,11 @@ describe("an undecided completed review of the published bytes is tiered by risk
       declaredSha1: sha1,
       ...options,
     });
-  const riskyAlert = {
+  const alertFor = (cause: string) => ({
     status: "published_without_approval",
-    reason: "reviewed_risk_without_decision",
-  };
+    reason: `reviewed_${cause}_without_decision`,
+  });
+  const riskyAlert = alertFor("risk");
 
   test("low release risk with a clean AI review is recorded without an alert", () => {
     // Artifact and context risk (high here) describe the package, not this release.
@@ -602,11 +603,16 @@ describe("an undecided completed review of the published bytes is tiered by risk
     expect(classifyWith([undecided({ aiJson: null })]).status).toBe("undecided_low_risk");
   });
 
-  test.each(["medium", "high", "critical", "unknown"])(
+  test.each([
+    ["medium", "risk"],
+    ["high", "risk"],
+    ["critical", "risk"],
+    ["unknown", "ungraded"],
+  ])(
     "%s release risk alerts even when the AI reviewer saw nothing unusual",
-    (releaseRisk) => {
+    (releaseRisk, cause) => {
       expect(classifyWith([undecided({ riskSummaryJson: risk(releaseRisk) })])).toEqual({
-        ...riskyAlert,
+        ...alertFor(cause),
         scanId: "scan1",
       });
     },
@@ -617,20 +623,28 @@ describe("an undecided completed review of the published bytes is tiered by risk
       ...stagedIntegrity(sha1),
       baseline: { comparisonSkipped: "baseline-too-large" },
     };
-    expect(classifyWith([undecided({ summaryJson: skipped })])).toMatchObject(riskyAlert);
-    expect(classifyWith([undecided({ riskSummaryJson: null })])).toMatchObject(riskyAlert);
+    const ungraded = alertFor("ungraded");
+    expect(classifyWith([undecided({ summaryJson: skipped })])).toMatchObject(ungraded);
+    expect(classifyWith([undecided({ riskSummaryJson: null })])).toMatchObject(ungraded);
+    const aiConcern = alertFor("ai_concern");
     expect(classifyWith([undecided({ aiJson: ai("review_recommended") })])).toMatchObject(
-      riskyAlert,
+      aiConcern,
     );
     expect(
       classifyWith([undecided({ aiJson: ai("nothing_unusual", { requiresManualReview: true }) })]),
+    ).toMatchObject(aiConcern);
+    // Release risk is named ahead of what the AI review asked for.
+    expect(
+      classifyWith([
+        undecided({ riskSummaryJson: risk("medium"), aiJson: ai("review_recommended") }),
+      ]),
     ).toMatchObject(riskyAlert);
     // An attempted AI review that did not finish never reads as clean.
     for (const status of ["unavailable", "invalid"]) {
       expect(
         classifyWith([undecided({ aiJson: ai("not_assessed", { status }) })]),
         status,
-      ).toMatchObject(riskyAlert);
+      ).toMatchObject(alertFor("ai_unfinished"));
     }
   });
 
@@ -695,6 +709,17 @@ describe("an undecided completed review of the published bytes is tiered by risk
     ).toMatchObject({ reason: "ai_flagged_without_decision", scanId: "flagged" });
     expect(
       classifyWith([owner, undecided({ id: "risky", riskSummaryJson: risk("medium") })]),
+    ).toMatchObject({ ...riskyAlert, scanId: "owner" });
+    // The owner's own cause (the record no restage superseded) is the one named.
+    expect(
+      classifyWith([
+        undecided({
+          id: "old",
+          registryStatusSupersededAt: before,
+          summaryJson: { ...stagedIntegrity(sha1), releaseConsistency: { status: "diverged" } },
+        }),
+        undecided({ id: "owner", riskSummaryJson: risk("high") }),
+      ]),
     ).toMatchObject({ ...riskyAlert, scanId: "owner" });
     // A low review that cannot vouch alone alerts without claiming any risk.
     const undecidedAlert = {
@@ -762,9 +787,23 @@ describe("an undecided completed review of the published bytes is tiered by risk
       expect(
         classifyWith([withSummary({ gateContinuity: { status, reason: "x" } })]),
         status,
-      ).toMatchObject(riskyAlert);
+      ).toMatchObject(alertFor("ungated"));
     }
-    expect(classifyWith([withSummary({ gateContinuity: "garbled" })])).toMatchObject(riskyAlert);
+    expect(classifyWith([withSummary({ gateContinuity: "garbled" })])).toMatchObject(
+      alertFor("ungated"),
+    );
+    // An unbound stage is named ahead of its release risk.
+    expect(
+      undecidedReviewTier(
+        {
+          status: "complete",
+          aiJson: null,
+          riskSummaryJson: risk("high"),
+          summaryJson: { gateContinuity: { status: "ungated" } },
+        },
+        { aiReview: true },
+      ),
+    ).toBe("ungated");
     for (const status of ["none", "matched"]) {
       expect(classifyWith([withSummary({ gateContinuity: { status } })]).status, status).toBe(
         "undecided_low_risk",
@@ -772,7 +811,7 @@ describe("an undecided completed review of the published bytes is tiered by risk
     }
     expect(
       classifyWith([withSummary({ releaseConsistency: { status: "diverged" } })]),
-    ).toMatchObject(riskyAlert);
+    ).toMatchObject(alertFor("diverged"));
     expect(classifyWith([withSummary({ releaseConsistency: { status: "match" } })]).status).toBe(
       "undecided_low_risk",
     );
@@ -785,12 +824,12 @@ describe("an undecided completed review of the published bytes is tiered by risk
         { ...scan, aiJson: { status: "mystery", model: null } },
         { aiReview: true },
       ),
-    ).toBe("risky");
+    ).toBe("ai_unfinished");
     expect(
       undecidedReviewTier(
         { ...scan, aiJson: ai("nothing_unusual", { requiresManualReview: undefined }) },
         { aiReview: true },
       ),
-    ).toBe("risky");
+    ).toBe("ai_concern");
   });
 });

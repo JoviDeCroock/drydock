@@ -31,23 +31,50 @@ export function isPublicationAlert(status: string): status is PublicationAlertSt
   );
 }
 
+/**
+ * The status and reason actually written. `undecided_low_risk` settles, and
+ * the check that chose it read its records before this write: a decision
+ * recorded in between finds no quiet row to reopen (see
+ * reopenQuietPublicationObservations), so the write itself refuses to settle
+ * once any of those records is decided and leaves the release `unknown` for
+ * the next check to re-read, exactly as the reopen would have.
+ */
+function observationOutcome(
+  observation: typeof publicationObservations.$inferInsert,
+  recordIds: readonly string[],
+) {
+  if (observation.status !== "undecided_low_risk" || recordIds.length === 0) {
+    return { status: sql`${observation.status}`, reason: sql`${observation.reason ?? null}` };
+  }
+  // One JSON parameter however many records: the guard appears four times in
+  // the statement, and D1 caps bound parameters per statement.
+  const decided = sql`exists(select 1 from scans s where s.organization_id = ${observation.organizationId} and s.decision is not null and s.decided_at is not null and s.id in (select value from json_each(${JSON.stringify(recordIds)})))`;
+  return {
+    status: sql`case when ${decided} then 'unknown' else 'undecided_low_risk' end`,
+    reason: sql`case when ${decided} then 'decided_after_observation' else ${observation.reason ?? null} end`,
+  };
+}
+
 // The ledger survives stopping a watch. A release must not notify again merely
 // because its observation window was removed and later recreated.
+// `recordIds` are the Drydock records of the release the verdict was read from.
 export async function savePublicationObservation(
   db: AppDb,
   observation: typeof publicationObservations.$inferInsert,
   packageName: string,
   registryUrl = "https://registry.npmjs.org",
+  recordIds: readonly string[] = [],
 ) {
   // Ownership may change while registry acquisition is in flight. Guard the
   // observation and alert together, including the conflict-update path.
   const stillAuthorized = sql`not ${publicationWatchBlocked(registryUrl, packageName, observation.organizationId)}`;
+  const outcome = observationOutcome(observation, recordIds);
   const writeObservation = db
     .insert(publicationObservations)
     .select(sql`select ${observation.id}, ${observation.watchId}, ${observation.organizationId},
       ${observation.version}, ${observation.publishedAt?.getTime() ?? null},
       ${observation.firstSeenAt.getTime()}, ${observation.checkedAt.getTime()},
-      ${observation.status}, ${observation.reason ?? null}, ${observation.sha256 ?? null},
+      ${outcome.status}, ${outcome.reason}, ${observation.sha256 ?? null},
       ${observation.sha1 ?? null}, ${observation.scanId ?? null}, ${observation.previousVersion ?? null},
       ${observation.distTags == null ? null : JSON.stringify(observation.distTags)}, ${observation.coverageNotifiedAt?.getTime() ?? null}
       where ${stillAuthorized}`)
@@ -56,8 +83,8 @@ export async function savePublicationObservation(
       set: {
         publishedAt: observation.publishedAt,
         checkedAt: observation.checkedAt,
-        status: observation.status,
-        reason: observation.reason,
+        status: outcome.status,
+        reason: outcome.reason,
         scanId: observation.scanId,
         sha1: observation.sha1,
         sha256: observation.sha256,

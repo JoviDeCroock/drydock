@@ -189,24 +189,36 @@ function unmatchedVerdict(records: readonly ReviewEvidence[], historyLimited: bo
  * What a completed review nobody decided says about the release it reviewed:
  *
  * - `ai_flagged`: the AI reviewer judged it `suspicious` or `blocked`.
- * - `risky`: anything that keeps it from reading low. Release risk (not
- *   artifact or context risk: those describe the package, not this release)
- *   above low or unreadable, no published baseline compared (so release risk
- *   graded nothing), or an AI review that asked for a look
- *   (`review_recommended`, manual review) or was attempted and did not finish.
+ * - a cause that keeps it from reading low, the first that applies:
+ *   - `ungated`: the stage is not bound to an approved gate review of a gated
+ *     package (one that skipped the gate is the account-takeover path).
+ *   - `risk`: release risk (not artifact or context risk: those describe the
+ *     package, not this release) medium or above.
+ *   - `ai_concern`: the AI review asked for a look (`review_recommended`,
+ *     manual review); `ai_unfinished`: it was attempted and did not finish.
+ *   - `diverged`: findings new since the last approved release.
+ *   - `ungraded`: release risk unreadable, or no published baseline compared
+ *     (so release risk graded nothing).
  * - `low_risk`: release risk low and the AI reviewer raised nothing, or no AI
  *   review ran.
  *
  * AI review is advisory and only escalates: a clean AI review never lowers a
  * deterministic grade, since the release risk it is checked against already
  * carries the deterministic score. With the organization's `ai-review`
- * killswitch off (`aiReview: false`) the AI result is not read at all, so
+ * killswitch engaged (`aiReview: false`) the AI result is not read at all, so
  * nothing is `ai_flagged` and the tier rests on the persisted grades alone
  * (which keep any escalation the AI added while the review ran).
  */
-export type UndecidedReviewTier = "low_risk" | "risky" | "ai_flagged";
+type UndecidedReviewCause =
+  | "ungated"
+  | "risk"
+  | "ai_concern"
+  | "ai_unfinished"
+  | "diverged"
+  | "ungraded";
+export type UndecidedReviewTier = "low_risk" | "ai_flagged" | UndecidedReviewCause;
 
-type AiSignal = "none" | "clean" | "concern" | "flagged";
+type AiSignal = "none" | "clean" | "concern" | "unfinished" | "flagged";
 
 function aiSignal(aiJson: unknown): AiSignal {
   if (!isRecord(aiJson)) return "none";
@@ -215,7 +227,7 @@ function aiSignal(aiJson: unknown): AiSignal {
     // The disabled placeholder records no model: no reviewer ran. An attempt
     // that did not finish must not read as clean, as in release scoring.
     return attempted || (aiJson.status !== "unavailable" && aiJson.status !== "invalid")
-      ? "concern"
+      ? "unfinished"
       : "none";
   }
   if (aiJson.releaseAssessment === "suspicious" || aiJson.releaseAssessment === "blocked") {
@@ -226,24 +238,27 @@ function aiSignal(aiJson: unknown): AiSignal {
     : "concern";
 }
 
+const ELEVATED_RISK = new Set(["medium", "high", "critical"]);
+
 export function undecidedReviewTier(
   scan: Pick<ReviewEvidence, "status" | "riskSummaryJson" | "aiJson" | "summaryJson">,
   options: { aiReview: boolean },
 ): UndecidedReviewTier {
   const ai = options.aiReview ? aiSignal(scan.aiJson) : "none";
   if (ai === "flagged") return "ai_flagged";
-  if (scan.status !== "complete" || ai === "concern") return "risky";
-  const releaseRisk = isRecord(scan.riskSummaryJson) ? scan.riskSummaryJson.releaseRisk : null;
-  if (releaseRisk !== "low") return "risky";
+  if (scan.status !== "complete") return "ungraded";
   const summary = isRecord(scan.summaryJson) ? scan.summaryJson : {};
-  if (isRecord(summary.baseline) && summary.baseline.comparisonSkipped != null) return "risky";
-  // The signals batch approval also refuses to read as likely safe: findings
-  // new since the last approved release, and a stage that is not bound to an
-  // approved gate review of a gated package (one that skipped the gate is the
-  // account-takeover path). Neither moves risk, so neither shows in it.
-  if (summarizedStatus(summary.releaseConsistency) === "diverged") return "risky";
+  // Gate continuity and release consistency are signals batch approval also
+  // refuses to read as likely safe. Neither moves risk, so neither shows in it.
   const gate = summarizedStatus(summary.gateContinuity);
-  if (gate !== null && gate !== "none" && gate !== "matched") return "risky";
+  if (gate !== null && gate !== "none" && gate !== "matched") return "ungated";
+  const releaseRisk = isRecord(scan.riskSummaryJson) ? scan.riskSummaryJson.releaseRisk : null;
+  if (typeof releaseRisk === "string" && ELEVATED_RISK.has(releaseRisk)) return "risk";
+  if (ai === "concern") return "ai_concern";
+  if (ai === "unfinished") return "ai_unfinished";
+  if (summarizedStatus(summary.releaseConsistency) === "diverged") return "diverged";
+  if (releaseRisk !== "low") return "ungraded";
+  if (isRecord(summary.baseline) && summary.baseline.comparisonSkipped != null) return "ungraded";
   return "low_risk";
 }
 
@@ -304,9 +319,11 @@ function undecidedVerdict(
     reason,
     scanId: owner.id,
   });
-  if (!tiers.every(({ tier }) => tier === "low_risk")) {
-    return alert("reviewed_risk_without_decision");
-  }
+  // The alert names one cause: the owner's when it has one.
+  const raised =
+    tiers.find(({ scan, tier }) => scan === owner && tier !== "low_risk") ??
+    tiers.find(({ tier }) => tier !== "low_risk");
+  if (raised) return alert(`reviewed_${raised.tier}_without_decision`);
   const vouched =
     allComplete &&
     !unhashed &&
@@ -383,9 +400,10 @@ function matchedVerdict(
  * When the bytes cannot be hashed and every record that carries a digest
  * carries a SHA-1, npm's own `dist.shasum` identifies them one-sidedly: it can
  * raise an alert but never establish an approval. `historyLimited` says the
- * records are only the newest of more than were read. `aiReview` is the
- * organization's `ai-review` killswitch: off (the default), the AI result of
- * an undecided review is not read.
+ * records are only the newest of more than were read. `aiReview` says AI
+ * review is on for the organization: it is by default, and the `ai-review`
+ * flag is its killswitch. When false, or omitted, the AI result of an
+ * undecided review is not read.
  */
 export function classifyPublication(
   name: string,

@@ -842,7 +842,19 @@ describe("notifyPublicationDiscrepancy", () => {
       "published_without_approval",
       "reviewed_risk_without_decision",
       "Published with no approval in Acme Corp",
-      "Drydock's undecided review of these exact bytes did not grade the release low risk: decide it, or investigate if nobody here published it.",
+      "Drydock's undecided review of these exact bytes graded the release above low risk: decide it, or investigate if nobody here published it.",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_ungated_without_decision",
+      "Published with no approval in Acme Corp",
+      "Drydock's undecided review of these exact bytes found the stage not bound to an approved gate review: decide it",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_ai_unfinished_without_decision",
+      "Published with no approval in Acme Corp",
+      "Drydock's undecided review of these exact bytes has an AI review that did not finish: decide it",
     ],
     [
       "published_without_approval",
