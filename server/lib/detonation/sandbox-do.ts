@@ -2,8 +2,12 @@ import { DurableObject } from "cloudflare:workers";
 import { readBoundedText } from "../platform/bounded-body";
 import { generateCanaries, type CanarySet } from "./canaries";
 import { isRegistryWrite, type DetonationEgressProps } from "./egress";
+import { encodePyPiPrepareBundle } from "./pypi";
 import {
   DETONATION_HARNESS_VERSION,
+  DETONATION_PREPARE_TIMEOUT_MS,
+  type DetonationEcosystem,
+  type PyPiDetonationFile,
   type DetonationEgressEvent,
   type DetonationErrorCode,
   type DetonationPhase,
@@ -13,7 +17,6 @@ import {
 const HARNESS_PORT = 8080;
 const HARNESS_ORIGIN = "http://harness.drydock.internal";
 const STARTUP_TIMEOUT_MS = 60_000;
-const PREPARE_TIMEOUT_MS = 150_000;
 const STEP_TIMEOUT_MS = 30_000;
 const DETONATE_TIMEOUT_MS = 180_000;
 /** Slack between the harness's own budget and ours, so its report usually arrives first. */
@@ -105,7 +108,20 @@ export class DetonationSandbox extends DurableObject<Cloudflare.Env> {
     bucket.push(event);
   }
 
+  /** Runs one reviewed npm tarball. */
   async detonate(tarball: ArrayBuffer): Promise<DetonationRunOutput> {
+    return this.run("npm", { path: "/prepare", body: tarball });
+  }
+
+  /** Runs one reviewed PyPI wheel and/or sdist, bound to the scan's digests by the caller. */
+  async detonatePyPi(files: PyPiDetonationFile[]): Promise<DetonationRunOutput> {
+    return this.run("pypi", { path: "/prepare-pypi", body: encodePyPiPrepareBundle(files) });
+  }
+
+  private async run(
+    ecosystem: DetonationEcosystem,
+    prepare: { path: string; body: ArrayBuffer | Uint8Array<ArrayBuffer> },
+  ): Promise<DetonationRunOutput> {
     const container = this.ctx.container;
     const canaries = generateCanaries();
     const output: DetonationRunOutput = {
@@ -131,6 +147,7 @@ export class DetonationSandbox extends DurableObject<Cloudflare.Env> {
       const egressProps: DetonationEgressProps = {
         sandboxId: this.ctx.id.toString(),
         canaries: canaries.values,
+        ecosystem,
       };
       const egress = (this.ctx.exports as unknown as EgressFactory).DetonationEgress({
         props: egressProps,
@@ -148,11 +165,11 @@ export class DetonationSandbox extends DurableObject<Cloudflare.Env> {
       const harness = container.getTcpPort(HARNESS_PORT);
       await waitForHarness(harness);
 
-      const prepared = await harness.fetch(`${HARNESS_ORIGIN}/prepare`, {
+      const prepared = await harness.fetch(`${HARNESS_ORIGIN}${prepare.path}`, {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
-        body: tarball,
-        signal: AbortSignal.timeout(PREPARE_TIMEOUT_MS),
+        body: prepare.body,
+        signal: AbortSignal.timeout(DETONATION_PREPARE_TIMEOUT_MS),
       });
       if (!prepared.ok) throw new DetonationRunError("harness_failed");
       output.prepareJson = await readHarnessText(prepared);

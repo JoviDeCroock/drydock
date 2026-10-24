@@ -93,7 +93,7 @@ describe("detonationView", () => {
     );
     expect(mismatch).toEqual({
       kind: "unfinished",
-      message: "Refused: the staged bytes changed since this review, so they were not run.",
+      message: "Refused: the bytes no longer match what this review read, so they were not run.",
       canRun: false,
     });
     expect(

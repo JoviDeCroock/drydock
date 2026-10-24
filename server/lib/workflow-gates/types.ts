@@ -31,6 +31,14 @@ export interface WorkflowGateAdapter {
   readonly artifactName: string;
 
   readonly shardedArtifactNames?: boolean;
+  /**
+   * The beta detonation sandbox (`server/lib/detonation`) can run this
+   * ecosystem's reviewed gate artifacts, so the gate runner requests an
+   * advisory run once a review is attached. Setting it also needs a run plan
+   * for the ecosystem in `server/lib/detonation/job.ts` (only PyPI has one);
+   * otherwise each run is requested and then skipped.
+   */
+  readonly detonatesReviewedPackages?: boolean;
   readonly packageAdapter: AnyPackageAdapter;
 
   classifyArtifact(path: string): WorkflowArtifactKind | null;

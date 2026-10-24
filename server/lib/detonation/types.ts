@@ -12,14 +12,34 @@
 
 export const DETONATION_HARNESS_VERSION = 1;
 
-/** Which part of the run produced an event. */
-export type DetonationStep = "lifecycle" | "require" | "import" | "bin";
+/**
+ * How long the parent waits for the harness's prepare. The harness keeps its
+ * own prepare inside this with room to answer (`PYPI_PREPARE_BUDGET_MS` in
+ * containers/detonation/pypi.mjs).
+ */
+export const DETONATION_PREPARE_TIMEOUT_MS = 150_000;
+
+/** The ecosystem whose install and entry points a run drives. */
+export type DetonationEcosystem = "npm" | "pypi";
+
+/**
+ * Which part of the run produced an event. npm runs `lifecycle`, `require`,
+ * `import`, and `bin`. PyPI runs `startup` (a bare interpreter start, which is
+ * when `.pth` files and `sitecustomize` execute), `import`, `bin` (a
+ * `console_scripts` entry point with `--help`), and `build` (the sdist's PEP 517
+ * build backend, which is what `pip install` of the sdist executes).
+ */
+export type DetonationStep = "lifecycle" | "require" | "import" | "bin" | "startup" | "build";
 
 export type DetonationPhase = "prepare" | "detonate";
 
 export interface HarnessStepResult {
   step: DetonationStep;
-  /** e.g. `left-pad@1.3.0:postinstall`, `left-pad:require`, `left-pad:bin:lp`. */
+  /**
+   * e.g. `left-pad@1.3.0:postinstall`, `left-pad:require`, `left-pad:bin:lp`;
+   * for PyPI `litellm:startup`, `litellm:import:litellm`, `litellm:bin:litellm`,
+   * `litellm:build`.
+   */
   target: string;
   exitCode: number | null;
   timedOut: boolean;
@@ -52,9 +72,14 @@ export type HarnessEvent = HarnessEventBase &
   );
 
 export interface HarnessCoverage {
+  /** Absent on results stored before PyPI runs existed, which were all npm. */
+  ecosystem?: DetonationEcosystem;
   /** strace attached to every package process; false means runtime hooks only. */
   syscallTracing: boolean;
-  /** The Node preload observer loaded (it runs as the package user, so it is tamperable). */
+  /**
+   * The in-process observer loaded: the Node preload for npm, the audit-hook
+   * `.pth` for PyPI. Both run as the package user, so both are tamperable.
+   */
   runtimeHooks: boolean;
   dependencyInstall: "complete" | "partial" | "failed";
   /**
@@ -99,6 +124,19 @@ export interface HarnessPrepareResponse {
   dependencyInstall: HarnessCoverage["dependencyInstall"];
 }
 
+/**
+ * A reviewed PyPI distribution handed to the harness. POST /prepare-pypi takes
+ * these framed by `encodePyPiPrepareBundle` (`server/lib/detonation/pypi.ts`),
+ * installs the wheel with every dependency restricted to binary wheels, and
+ * unpacks the sdist; no package code runs during that phase either.
+ */
+export interface PyPiDetonationFile {
+  /** Bare distribution filename (`litellm-1.0.0-py3-none-any.whl`), never a path. */
+  name: string;
+  kind: "wheel" | "sdist";
+  bytes: Uint8Array;
+}
+
 /** POST /detonate body: plant canaries, then run package code under observation. */
 export interface HarnessDetonateRequest {
   version: typeof DETONATION_HARNESS_VERSION;
@@ -109,7 +147,13 @@ export interface HarnessDetonateRequest {
   totalTimeoutMs: number;
 }
 
-export type CanaryKind = "npm-token" | "github-token" | "aws-key" | "ssh-key" | "ci-oidc";
+export type CanaryKind =
+  | "npm-token"
+  | "pypi-token"
+  | "github-token"
+  | "aws-key"
+  | "ssh-key"
+  | "ci-oidc";
 
 /** Recorded by `DetonationEgress` for every HTTP(S) request the container makes. */
 export interface DetonationEgressEvent {
@@ -153,10 +197,22 @@ export type DetonationErrorCode =
   | "artifact_unavailable"
   | "artifact_digest_mismatch"
   | "artifact_too_large"
+  /** No reviewed wheel installs on the sandbox's CPython/linux-x86_64, and there is no sdist. */
+  | "platform_unsupported"
   | "container_unavailable"
   | "harness_failed"
   | "harness_report_invalid"
   | "timeout";
+
+/**
+ * One reviewed file a run executed, bound to the digest the scan recorded for
+ * it. A PyPI run can carry a wheel and the release's sdist.
+ */
+export interface DetonationArtifact {
+  path: string;
+  sha256: string;
+  role: "wheel" | "sdist";
+}
 
 /** Persisted summary of a run, as the API returns it. */
 export interface DetonationResult {
@@ -168,4 +224,6 @@ export interface DetonationResult {
   /** Events or egress were truncated by a bound; the record is incomplete. */
   truncated: boolean;
   errorCode: DetonationErrorCode | null;
+  /** PyPI runs only: which reviewed distributions ran, by bundle path and digest. */
+  artifacts?: DetonationArtifact[];
 }

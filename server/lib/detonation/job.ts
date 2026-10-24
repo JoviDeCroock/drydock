@@ -5,6 +5,7 @@ import {
   releaseScanDetonationClaim,
   getDetonationTarget,
   requestScanDetonation,
+  type DetonationTarget,
 } from "../../db/scan-detonations";
 import { getStagedAdapter } from "../ecosystems";
 import { isRecord } from "../platform/guards";
@@ -14,9 +15,23 @@ import {
   emitOperationalEvent,
 } from "../platform/observability";
 import { classifyDetonation } from "./classify";
+import { fetchGateReleaseFiles } from "./gate-artifacts";
+import {
+  distributionFilename,
+  readPyPiProvenance,
+  selectPyPiDetonationArtifacts,
+  type PyPiProvenanceArtifact,
+} from "./pypi";
 import { parseHarnessReport, parsePrepareInstall } from "./report";
+import type { DetonationRunOutput } from "./sandbox-do";
 import type { StagedArchiveResult } from "../ecosystems/package-adapter";
-import type { DetonationErrorCode, DetonationResult } from "./types";
+import type {
+  DetonationArtifact,
+  DetonationErrorCode,
+  DetonationResult,
+  HarnessCoverage,
+  PyPiDetonationFile,
+} from "./types";
 
 const DETONATION_FLAG = "detonation-sandbox";
 
@@ -189,52 +204,34 @@ export async function executeDetonationJob(
 
   try {
     const target = await getDetonationTarget(db, scanId, organizationId);
-    const sha256 = target ? readPinnedSha256(target.summaryJson) : null;
-    const namespace = env.DETONATION_SANDBOX;
-    if (!target || !sha256) {
+    if (!target) {
       await finish(emptyResult("skipped", "artifact_unavailable"), null);
       return "done";
     }
+    const plan = planDetonation(target);
+    if (plan.status === "refused") {
+      await finish(plan.result, plan.sha256);
+      return "done";
+    }
+    const { sha256, ecosystem } = plan;
+    const namespace = env.DETONATION_SANDBOX;
     if (!namespace) {
       await finish(emptyResult("failed", "container_unavailable"), sha256);
       return "done";
     }
 
-    // Staged scans are npm-only today; going through the registry keeps an
-    // ecosystem without `fetchStagedArchive` from ever being detonated.
-    const adapter = getStagedAdapter("npm");
-    const broker = adapter.createBroker(
-      { env, executionCtx, db, session: { userId: "" } },
-      { organizationId, registryUrl: target.registryUrl },
-    );
-    // A missing or changed npm connection surfaces here as a thrown
-    // precondition; either way the reviewed bytes cannot be fetched again.
-    const archive: StagedArchiveResult = adapter.fetchStagedArchive
-      ? await adapter
-          .fetchStagedArchive(broker, {
-            stageId: target.stageId,
-            expectedSha256: sha256,
-            maxBytes: MAX_DETONATION_TARBALL_BYTES,
-          })
-          .catch(() => ({ status: "unavailable" as const }))
-          .finally(() => broker.dispose())
-      : { status: "unavailable" };
-    if (archive.status !== "ok") {
-      const code: DetonationErrorCode =
-        archive.status === "too_large"
-          ? "artifact_too_large"
-          : archive.status === "digest_mismatch"
-            ? "artifact_digest_mismatch"
-            : "artifact_unavailable";
-      await finish(
-        emptyResult(archive.status === "too_large" ? "skipped" : "failed", code),
-        sha256,
-      );
+    const acquired =
+      plan.kind === "pypi_gate"
+        ? await acquirePyPiGateFiles(env, db, plan)
+        : await acquireNpmStageTarball(env, executionCtx, db, plan);
+    if (acquired.status === "refused") {
+      await finish(acquired.result, sha256);
       return "done";
     }
+    const { artifacts } = acquired;
 
     const sandbox = namespace.get(namespace.idFromName(`${scanId}:${runId}`));
-    const output = await sandbox.detonate(archive.bytes);
+    const output = await acquired.invoke(sandbox);
     if (
       output.errorCode === "container_unavailable" &&
       output.egress.length === 0 &&
@@ -248,6 +245,23 @@ export async function executeDetonationJob(
       output.errorCode ?? (report ? null : "harness_report_invalid");
     const installState =
       report?.coverage.dependencyInstall ?? parsePrepareInstall(parseJsonText(output.prepareJson));
+    const coverage: HarnessCoverage | null =
+      report?.coverage ??
+      (installState
+        ? {
+            syscallTracing: false,
+            runtimeHooks: false,
+            dependencyInstall: installState,
+            stepsSkipped: 0,
+            exercise: "load" as const,
+            browserTargeted: false,
+          }
+        : null);
+    // The parent chose what ran; the harness's own claim about it is not used.
+    if (coverage) {
+      delete coverage.ecosystem;
+      if (ecosystem === "pypi") coverage.ecosystem = "pypi";
+    }
 
     await finish(
       {
@@ -255,22 +269,12 @@ export async function executeDetonationJob(
         // when the harness failed to report.
         status: errorCode ? "failed" : "complete",
         signals: classifyDetonation(report, output.egress, output.canaryValues),
-        coverage:
-          report?.coverage ??
-          (installState
-            ? {
-                syscallTracing: false,
-                runtimeHooks: false,
-                dependencyInstall: installState,
-                stepsSkipped: 0,
-                exercise: "load" as const,
-                browserTargeted: false,
-              }
-            : null),
+        coverage,
         steps: report?.steps ?? [],
         egress: output.egress,
         truncated: (report?.truncated ?? false) || output.egressTruncated,
         errorCode,
+        ...(artifacts ? { artifacts } : {}),
       },
       sha256,
     );
@@ -285,4 +289,162 @@ export async function executeDetonationJob(
     await finish(emptyResult("failed", "container_unavailable"), null).catch(() => undefined);
     return "done";
   }
+}
+
+type SandboxStub = ReturnType<NonNullable<Cloudflare.Env["DETONATION_SANDBOX"]>["get"]>;
+
+type RunPlan =
+  | { status: "refused"; result: DetonationResult; sha256: string | null }
+  | {
+      status: "planned";
+      kind: "npm_stage";
+      ecosystem: "npm";
+      sha256: string;
+      target: Extract<DetonationTarget, { kind: "npm_stage" }>;
+    }
+  | {
+      status: "planned";
+      kind: "pypi_gate";
+      ecosystem: "pypi";
+      /** The wheel's digest when one runs, else the sdist's; persisted on the row. */
+      sha256: string;
+      target: Extract<DetonationTarget, { kind: "pypi_gate" }>;
+      files: PyPiProvenanceArtifact[];
+    };
+
+type Acquired =
+  | { status: "refused"; result: DetonationResult }
+  | {
+      status: "ready";
+      artifacts: DetonationArtifact[] | null;
+      invoke: (sandbox: SandboxStub) => Promise<DetonationRunOutput>;
+    };
+
+/** Which reviewed bytes a run would execute, decided from the scan's own record. */
+function planDetonation(target: DetonationTarget): RunPlan {
+  if (target.kind === "npm_stage") {
+    const sha256 = readPinnedSha256(target.summaryJson);
+    return sha256
+      ? { status: "planned", kind: "npm_stage", ecosystem: "npm", sha256, target }
+      : { status: "refused", result: emptyResult("skipped", "artifact_unavailable"), sha256: null };
+  }
+  const provenance = readPyPiProvenance(target.summaryJson);
+  if (!provenance) {
+    return {
+      status: "refused",
+      result: emptyResult("skipped", "artifact_unavailable"),
+      sha256: null,
+    };
+  }
+  const { wheel, sdist } = selectPyPiDetonationArtifacts(provenance);
+  const primary = wheel ?? sdist;
+  if (!primary) {
+    return {
+      status: "refused",
+      result: emptyResult("skipped", "platform_unsupported"),
+      sha256: null,
+    };
+  }
+  return {
+    status: "planned",
+    kind: "pypi_gate",
+    ecosystem: "pypi",
+    sha256: primary.sha256,
+    target,
+    files: [wheel, sdist].filter((file): file is PyPiProvenanceArtifact => file !== null),
+  };
+}
+
+function refusedFor(status: "too_large" | "digest_mismatch" | "unavailable"): Acquired {
+  const code: DetonationErrorCode =
+    status === "too_large"
+      ? "artifact_too_large"
+      : status === "digest_mismatch"
+        ? "artifact_digest_mismatch"
+        : "artifact_unavailable";
+  return {
+    status: "refused",
+    result: emptyResult(status === "too_large" ? "skipped" : "failed", code),
+  };
+}
+
+async function acquireNpmStageTarball(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  plan: Extract<RunPlan, { kind: "npm_stage" }>,
+): Promise<Acquired> {
+  const { target, sha256 } = plan;
+  // Going through the registry keeps an ecosystem without
+  // `fetchStagedArchive` from ever being detonated from a stage.
+  const adapter = getStagedAdapter("npm");
+  const broker = adapter.createBroker(
+    { env, executionCtx, db, session: { userId: "" } },
+    { organizationId: target.organizationId, registryUrl: target.registryUrl },
+  );
+  // A missing or changed npm connection surfaces here as a thrown
+  // precondition; either way the reviewed bytes cannot be fetched again.
+  const archive: StagedArchiveResult = adapter.fetchStagedArchive
+    ? await adapter
+        .fetchStagedArchive(broker, {
+          stageId: target.stageId,
+          expectedSha256: sha256,
+          maxBytes: MAX_DETONATION_TARBALL_BYTES,
+        })
+        .catch(() => ({ status: "unavailable" as const }))
+        .finally(() => broker.dispose())
+    : { status: "unavailable" };
+  if (archive.status !== "ok") return refusedFor(archive.status);
+  return {
+    status: "ready",
+    artifacts: null,
+    invoke: (sandbox) => sandbox.detonate(archive.bytes),
+  };
+}
+
+/**
+ * The gate's GitHub artifact is downloaded again in this Worker and every
+ * selected distribution must hash to the digest the review recorded. The
+ * container receives bytes only, never the installation token.
+ */
+async function acquirePyPiGateFiles(
+  env: Cloudflare.Env,
+  db: AppDb,
+  plan: Extract<RunPlan, { kind: "pypi_gate" }>,
+): Promise<Acquired> {
+  const { target, files } = plan;
+  const fetched = await fetchGateReleaseFiles(env, db, {
+    organizationId: target.organizationId,
+    gateId: target.gateId,
+    wanted: new Map(files.map((file) => [file.path, file.sha256])),
+    // A file over the run's cap could never be selected below, so it is not
+    // held; an oversize sdist must not cost the wheel its run.
+    maxFileBytes: MAX_DETONATION_TARBALL_BYTES,
+  }).catch(() => ({ status: "unavailable" as const }));
+  if (fetched.status !== "ok") return refusedFor(fetched.status);
+
+  // The wheel (or, without one, the sdist) is what the run is for; the sdist
+  // build is dropped first when both do not fit.
+  const selected: PyPiProvenanceArtifact[] = [];
+  let total = 0;
+  for (const file of files) {
+    const bytes = fetched.oversized.has(file.path) ? undefined : fetched.files.get(file.path);
+    const size = bytes?.byteLength ?? Number.POSITIVE_INFINITY;
+    if (total + size > MAX_DETONATION_TARBALL_BYTES) {
+      if (selected.length === 0) return refusedFor("too_large");
+      continue;
+    }
+    total += size;
+    selected.push(file);
+  }
+  const payload: PyPiDetonationFile[] = selected.map((file) => ({
+    name: distributionFilename(file.path),
+    kind: file.kind,
+    bytes: fetched.files.get(file.path) as Uint8Array,
+  }));
+  return {
+    status: "ready",
+    artifacts: selected.map((file) => ({ path: file.path, sha256: file.sha256, role: file.kind })),
+    invoke: (sandbox) => sandbox.detonatePyPi(payload),
+  };
 }

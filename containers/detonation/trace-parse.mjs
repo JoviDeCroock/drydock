@@ -433,6 +433,11 @@ export function isNoiseEvent(event) {
       "/sys",
       "/dev",
       "/work/app/node_modules",
+      // A PyPI run's interpreter environment, build requirements, and the
+      // unpacked sdist: every start reads the first, every build the others.
+      "/work/venv",
+      "/work/build-env",
+      "/work/sdist",
       "/opt/drydock",
       "/home/pkg/.node_modules",
       "/home/pkg/.node_libraries",

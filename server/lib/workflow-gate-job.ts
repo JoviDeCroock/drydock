@@ -24,6 +24,8 @@ import {
   emitOperationalEvent,
 } from "./platform/observability";
 import { recordProductEvent } from "./analytics";
+import { maybeRequestDetonationAfterScan } from "./detonation/job";
+import { getEcosystem } from "./ecosystems";
 import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
 import {
   type PreparedGatePackage,
@@ -327,6 +329,20 @@ export async function executeWorkflowGateJob(
     return;
   }
 
+  // Beta detonation of reviewed packages whose ecosystem supports it. It only
+  // enqueues on its own queue after the review is ready, so it never holds the
+  // gate, and its result is advisory: a maintainer may decide before it finishes.
+  for (const pkg of reviewed) {
+    if (!getEcosystem(pkg.ecosystem)?.gate?.detonatesReviewedPackages) continue;
+    executionCtx.waitUntil(
+      maybeRequestDetonationAfterScan(env, executionCtx, db, {
+        scanId: pkg.scanId,
+        organizationId,
+        actorUserId: ownerUserId,
+      }),
+    );
+  }
+
   // Detect whether the review outran GitHub's deployment-protection callback
   // window. GitHub never tells us when it auto-rejects, so a `missed` gate is
   // most likely already lost — we tell the maintainer it timed out instead of
@@ -425,6 +441,7 @@ export async function executeWorkflowGateJob(
 
 interface ReviewedPackage {
   scanId: string;
+  ecosystem: string;
   packageName: string | null;
   version: string | null;
   releaseRisk: RiskLevel;
@@ -499,6 +516,7 @@ async function reviewGatePackages(
       );
       return {
         scanId,
+        ecosystem: candidate.ecosystem,
         packageName: result.package.name,
         version: result.package.stagedVersion,
         releaseRisk: result.riskSummary.releaseRisk,
