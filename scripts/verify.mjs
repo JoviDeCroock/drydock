@@ -5,7 +5,7 @@
 // output for each check is buffered and printed grouped, never interleaved.
 //
 // `--quick` (pnpm run verify:quick) is the iteration loop: it scopes lint and
-// format check to changed files, keeps the full typecheck (tsc cannot be
+// format check to changed files, keeps the full typecheck (the checker cannot be
 // usefully scoped), keeps knip (whole-graph, ~10s, and an unused export is
 // created by *removing* the last import, so a changed-file scope would miss the
 // file that actually broke), and runs only Vitest tests affected by the change set
@@ -15,7 +15,7 @@
 //
 // `--file <path...>` (pnpm run verify:file <path...>) is the inner loop after
 // editing one or two files: lint and format check on exactly those files, the
-// full typecheck (1–2s with the native compiler, so scoping buys nothing), and
+// full typecheck (about 1s with tsrs, so scoping buys nothing), and
 // `vitest related` for both projects, which runs only the test files that import
 // the given paths (a test file relates to itself). Knip is skipped: an unused
 // export is a whole-graph question that `--quick` and the full gate answer.

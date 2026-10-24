@@ -55,6 +55,8 @@ const scenarios = readScenarioDefinitions();
  * rather than remade.
  */
 let reviewedScanId: string | null = null;
+/** The link the smoke test minted before npm published that review's version. */
+let pendingShareToken = "";
 
 test.describe.configure({ mode: "serial" });
 
@@ -177,6 +179,36 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await commandDialog.getByRole("button", { name: "Done" }).click();
     await expect(commandDialog).toBeHidden();
 
+    // Approved, not yet published: a link can be minted now (for the release
+    // notes), but it must answer exactly like an unknown token until npm
+    // publishes. Nothing has asked npm about this version yet; the fixture
+    // reports `published` from the first lookup, which Check npm below runs.
+    await page.getByRole("button", { name: "Share", exact: true }).click();
+    const shareDialog = page.getByRole("dialog").filter({ hasText: "Share report" });
+    await shareDialog.getByRole("button", { name: "Create public link" }).click();
+    await expect(
+      shareDialog.getByText(/go live once this release is published/),
+      "the dialog says the link is waiting, not broken",
+    ).toBeVisible({ timeout: 30_000 });
+    const shareUrl = await shareDialog.getByRole("textbox").first().inputValue();
+    pendingShareToken = shareUrl.split("/reports/")[1] ?? "";
+    expect(pendingShareToken, "share token minted").not.toHaveLength(0);
+    await page.keyboard.press("Escape");
+    await expect(shareDialog).toBeHidden();
+    const outsider = await browser.newContext({ baseURL });
+    try {
+      for (const suffix of ["", "/file?path=binding.gyp", "/attestation"]) {
+        const pending = await outsider.request.get(`/public/reports/${pendingShareToken}${suffix}`);
+        const unknown = await outsider.request.get(`/public/reports/${"z".repeat(43)}${suffix}`);
+        expect(pending.status(), `unpublished ${suffix || "report"}`).toBe(404);
+        expect(await pending.text(), `unpublished ${suffix || "report"}`).toBe(
+          await unknown.text(),
+        );
+      }
+    } finally {
+      await outsider.close();
+    }
+
     // Now exercise Check npm as the live entry point. The button kicks off
     // discovery and we wait only for the "Found N staged releases on npm" message —
     // the resulting background scans are exercised by the scenarios below.
@@ -219,6 +251,25 @@ test("a shared review is readable as an anonymous public report", async ({ brows
   let token = "";
   try {
     await page.goto("/dashboard");
+    // The smoke test's Check npm asked npm about this version; the link goes
+    // live once that lookup lands `published`, with no further action.
+    await expect
+      .poll(
+        () =>
+          evaluateOnStablePage(
+            page,
+            async (id) => {
+              const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}`);
+              const body = (await response.json().catch(() => null)) as {
+                scan?: { publicShareAwaitingPublication?: boolean };
+              } | null;
+              return body?.scan?.publicShareAwaitingPublication ?? null;
+            },
+            String(reviewedScanId),
+          ),
+        { timeout: 60_000, message: "npm's published status reached the review" },
+      )
+      .toBe(false);
     const shared = await evaluateOnStablePage(
       page,
       async (id) => {
@@ -228,7 +279,7 @@ test("a shared review is readable as an anonymous public report", async ({ brows
           body: "{}",
         });
         const body = (await response.json().catch(() => null)) as {
-          share?: { token?: string; includesFiles?: boolean };
+          share?: { token?: string; includesFiles?: boolean; awaitingPublication?: boolean };
         } | null;
         return { status: response.status, body };
       },
@@ -236,8 +287,11 @@ test("a shared review is readable as an anonymous public report", async ({ brows
     );
     expect(shared.status, "share link created").toBe(200);
     token = String(shared.body?.share?.token ?? "");
-    expect(token, "share token minted").not.toHaveLength(0);
+    expect(token, "the link minted before publication is the one that goes live").toBe(
+      pendingShareToken,
+    );
     expect(shared.body?.share?.includesFiles, "a new share discloses file samples").toBe(true);
+    expect(shared.body?.share?.awaitingPublication).toBe(false);
   } finally {
     await context.close();
   }

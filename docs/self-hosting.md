@@ -65,9 +65,11 @@ pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
 
 The beta detonation sandbox (`containers`, `durable_objects`, `migrations`,
-and the `DETONATION_QUEUE` producer and consumer) is optional and needs
-Workers Paid. Docker builds its image at deploy time. Either create its queues
-or remove all of those blocks, so Drydock never executes package code:
+and the `DETONATION_QUEUE` producer and consumer) is opt-in and needs Workers
+Paid. The template ships those blocks commented out, so Drydock never executes
+package code. To opt in, uncomment them (Docker builds the image at deploy
+time), create its queues, and enable the `detonation-sandbox` flag for the
+organizations that should use it:
 
 ```sh
 pnpm exec wrangler queues create staged-publish-review-detonations

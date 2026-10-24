@@ -16,6 +16,8 @@
  * caller may place credentials, sessions, headers, or operator secrets in it.
  */
 
+import { AI_GATEWAY_ID, AI_GATEWAY_POLICY_HEADERS } from "./gateway";
+
 export const CLEF_MODEL = "@cf/cloudflare/clef";
 // The request body names the variant again; Clef rejects a body without it.
 const CLEF_VARIANT = "clef";
@@ -100,10 +102,10 @@ export async function askClef(
       CLEF_MODEL,
       { model: CLEF_VARIANT, state, questions },
       {
-        gateway: { id: "drydock-gateway" },
+        gateway: { id: AI_GATEWAY_ID },
         extraHeaders: {
           "cf-aig-metadata": JSON.stringify(options.gatewayMetadata ?? {}),
-          "cf-aig-max-attempts": "1",
+          ...AI_GATEWAY_POLICY_HEADERS,
         },
       },
     );

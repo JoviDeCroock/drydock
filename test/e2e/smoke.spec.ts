@@ -164,7 +164,6 @@ test("a clean detonation of a browser build says the sandbox did not cover it", 
   const notes = page
     .getByRole("heading", { name: "Review notes", exact: true })
     .locator("xpath=ancestor::details[1]");
-  await expect(notes.getByText(/loaded only, no exports called/)).toBeVisible();
   await expect(
     notes.getByText(/ships a browser build, which never runs in the sandbox/),
   ).toBeVisible();
@@ -203,7 +202,7 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   await expect(notes.getByRole("heading", { name: /^Detonation/ })).toBeVisible();
   await expect(notes.getByText("1 suspicious behavior observed", { exact: true })).toBeVisible();
   await expect(notes.getByText("seen at the network boundary · during lifecycle")).toBeVisible();
-  await expect(notes.getByText(/loaded only, no exports called/)).toBeVisible();
+  await expect(notes.getByText(/without calling its exports/)).toBeVisible();
   // The clean-run caveat is for runs without signals only.
   await expect(notes.getByText(/ships a browser build/)).toHaveCount(0);
   await notes.screenshot({ path: testInfo.outputPath("review-notes.png") });

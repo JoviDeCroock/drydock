@@ -10,6 +10,7 @@ import {
   cleanRunCaveat,
   coverageParts,
   detonationView,
+  signalNeedsBadge,
 } from "../src/pages/Dashboard/ScanDetail/detonation-view";
 import { jsonResponse, stubFetchRoutes } from "./helpers/fetch-stub";
 
@@ -129,6 +130,14 @@ describe("detonationView", () => {
   });
 });
 
+test("only canary exfiltration and registry writes get a Badge, whatever the severity", () => {
+  expect(signalNeedsBadge("dynamic.canary-exfiltration")).toBe(true);
+  expect(signalNeedsBadge("dynamic.registry-publish-attempt")).toBe(true);
+  // A telemetry ping that sends data is a high network-egress signal.
+  expect(signalNeedsBadge("dynamic.network-egress")).toBe(false);
+  expect(signalNeedsBadge("dynamic.credential-file-read")).toBe(false);
+});
+
 describe("coverage", () => {
   const full = {
     syscallTracing: true,
@@ -140,21 +149,18 @@ describe("coverage", () => {
   } as const;
   const LIMITED = "Limited coverage makes a clean run weaker evidence.";
 
-  test("names syscall tracing, install completeness, and how far the code ran", () => {
-    expect(coverageParts(full, false)).toEqual([
-      "syscall tracing on",
-      "dependency install complete",
-      "loaded only, no exports called",
-    ]);
+  test("names only the ways a run fell short of full coverage", () => {
+    expect(coverageParts(full, false)).toEqual([]);
     expect(cleanRunCaveat(full, false)).toBeNull();
 
     const hooksOnly = { ...full, syscallTracing: false, dependencyInstall: "partial" } as const;
     expect(coverageParts(hooksOnly, true)).toEqual([
       "syscall tracing off",
       "dependency install partial",
-      "loaded only, no exports called",
       "record truncated",
     ]);
+    expect(coverageParts({ ...full, runtimeHooks: false }, false)).toEqual(["runtime hooks off"]);
+    expect(coverageParts(null, false)).toEqual(["coverage not reported"]);
     expect(cleanRunCaveat(hooksOnly, false)).toBe(LIMITED);
     expect(cleanRunCaveat(null, false)).toBe(LIMITED);
 
@@ -244,5 +250,25 @@ describe("ScanDetonationModel", () => {
       "POST",
       "GET",
     ]);
+  });
+
+  test("a new request clears the previous request's error", async () => {
+    let status = 429;
+    stubFetchRoutes({
+      "/detonation": (_url, init) =>
+        init?.method === "POST"
+          ? jsonResponse(status === 200 ? { ok: true } : { error: "nope" }, status)
+          : jsonResponse(response(run())),
+    });
+    model = new ScanDetonationModel("scan-1");
+    await vi.advanceTimersByTimeAsync(0);
+    await model.requestRun();
+    expect(model.requestError.value).not.toBeNull();
+
+    status = 200;
+    const pending = model.requestRun();
+    expect(model.requestError.value).toBeNull();
+    await pending;
+    expect(model.requestError.value).toBeNull();
   });
 });

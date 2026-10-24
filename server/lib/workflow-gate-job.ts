@@ -551,7 +551,7 @@ async function rejectGateForArtifactError(
   error: WorkflowArtifactError,
 ): Promise<void> {
   const comment =
-    "Drydock blocked this release: the published artifacts could not be verified against the reviewed manifest.";
+    "Drydock rejected this deployment: the published artifacts could not be verified against the reviewed manifest.";
   const decided = await markGateDecided(db, {
     gateId: gate.id,
     decision: "rejected",
@@ -602,7 +602,6 @@ export function buildHumanDecisionComment(
   decision: "approved" | "rejected",
   reportUrl: string | null,
 ): string {
-  const verb = decision === "approved" ? "approved" : "blocked";
-  const head = `A Drydock maintainer ${verb} this release.`;
+  const head = `A Drydock maintainer ${decision} this deployment.`;
   return reportUrl ? `${head} Review: ${reportUrl}` : head;
 }

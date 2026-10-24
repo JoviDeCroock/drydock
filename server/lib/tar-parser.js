@@ -180,6 +180,22 @@ export function normalizeTarPath(rawPath, rootStrip = "package-prefix") {
   return path;
 }
 
+// A file entry whose name normalizeZipPath rejects used to vanish, deleting
+// the only evidence it exists. pip resolves `./x` and `a/../x` to a file inside
+// site-packages, and Windows extractors split on backslashes, so the entry is
+// disclosed (mirroring the tar reader) with its content left uninspected.
+function unrepresentableZipEntry(rawPath) {
+  if (!rawPath || rawPath.endsWith("/")) return null;
+  return {
+    kind: "parser-differential",
+    path: clipTextSample(rawPath, 256) || "<unnamed>",
+    detail:
+      rawPath.length > 512
+        ? "entry path exceeds the 512-character limit this reader records; the entry was not inspected"
+        : "entry path is not representable as a safe relative path (`.`/`..` segment, drive letter, backslash, or NUL); installers that normalize paths may still extract it, so its content was not inspected here",
+  };
+}
+
 export function normalizeZipPath(rawPath) {
   const nul = String.fromCharCode(0);
   if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
@@ -1546,7 +1562,11 @@ export async function readZipArchiveBuffered(
     const path = normalizeZipPath(rawPath);
     offset = fileNameEnd + extraLength + commentLength;
 
-    if (!path) continue;
+    if (!path) {
+      const unrepresentable = unrepresentableZipEntry(rawPath);
+      if (unrepresentable) suspicious.push(unrepresentable);
+      continue;
+    }
     if (uncompressedSize > maxArchiveBytes || expandedBytes + uncompressedSize > maxArchiveBytes) {
       throw tarError("archive expands beyond safety limit");
     }
@@ -1834,8 +1854,9 @@ export async function readZipStream(
 
         const path = normalizeZipPath(rawPath);
         if (!path) {
-          // Directory markers and unsafe paths are dropped like the buffered
-          // parser dropped them, but their bytes still have to leave the stream.
+          const unrepresentable = unrepresentableZipEntry(rawPath);
+          if (unrepresentable) addSuspicious(unrepresentable);
+          // Their bytes still have to leave the stream.
           if (!(await cursor.discard(compressedSize))) throw tarError("truncated zip entry");
           continue;
         }

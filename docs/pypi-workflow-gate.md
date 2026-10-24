@@ -148,8 +148,9 @@ redaction with every other adapter. The PyPI-specific pieces:
 ## Workflow shape
 
 The publish job must verify the downloaded bytes before upload — this is what
-makes "the reviewed bytes are the published bytes" enforceable in CI rather than
-assumed.
+makes "the reviewed bytes are the published bytes" checkable in CI rather than
+assumed. The check runs in the repository's own job, so it holds only while the
+workflow keeps it.
 
 ```yaml
 jobs:

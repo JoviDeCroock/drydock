@@ -18,6 +18,7 @@ import {
   MAX_REPORT_BYTES,
   MAX_REPORT_EVENTS,
 } from "./event-budget.mjs";
+import { plantCanaryFiles } from "./canary-files.mjs";
 import { isBrowserTargeted } from "./manifest.mjs";
 import {
   BUILD_ENV,
@@ -709,7 +710,7 @@ function readTarballPackageName() {
       maxBuffer: MAX_MANIFEST_BYTES,
       killSignal: "SIGKILL",
     });
-  let manifest = read(["-xzOf", TARBALL, "package/package.json"]);
+  let manifest = read(["-xzOf", TARBALL, "--", "package/package.json"]);
   if (manifest.status !== 0) {
     // npm accepts any single top-level directory, not only `package/`.
     const listing = read(["-tzf", TARBALL]);
@@ -718,7 +719,8 @@ function readTarballPackageName() {
       .split("\n")
       .find((line) => /^[^/]+\/package\.json$/.test(line));
     if (!entry) return null;
-    manifest = read(["-xzOf", TARBALL, entry]);
+    // The member name is tarball-derived and may start with `-`.
+    manifest = read(["-xzOf", TARBALL, "--", entry]);
   }
   if (manifest.status !== 0 || !manifest.stdout) return null;
   try {
@@ -763,59 +765,6 @@ function parseDetonateRequest(body) {
   return { version: VERSION, canaryEnv, canaryFiles, stepTimeoutMs, totalTimeoutMs };
 }
 
-/**
- * Root writes the canaries into a home the package user owns, so nothing on
- * the way may be a link the package left there: a symlinked `~/.npmrc` would
- * otherwise have root create and chown a file of the package's choosing.
- * Every component below the home is replaced if it is not a real directory,
- * and the file is created with O_EXCL | O_NOFOLLOW. Package processes are
- * already killed when this runs, so nothing races the checks.
- *
- * @param {DetonateRequest["canaryFiles"]} files
- */
-function plantCanaries(files) {
-  for (const file of files) {
-    const relative = path.relative(PKG_HOME, file.path);
-    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-      throw new Error("canary path outside the package home");
-    }
-    let dir = PKG_HOME;
-    for (const part of path
-      .dirname(relative)
-      .split(path.sep)
-      .filter((p) => p && p !== ".")) {
-      dir = path.join(dir, part);
-      const stat = lstatOrNull(dir);
-      if (stat?.isDirectory()) continue;
-      if (stat) fs.rmSync(dir, { recursive: true, force: true });
-      fs.mkdirSync(dir, { mode: 0o700 });
-      fs.chownSync(dir, PKG_UID, PKG_GID);
-    }
-    if (lstatOrNull(file.path)) fs.rmSync(file.path, { recursive: true, force: true });
-    const fd = fs.openSync(
-      file.path,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      file.mode,
-    );
-    try {
-      fs.writeSync(fd, file.content);
-      fs.fchownSync(fd, PKG_UID, PKG_GID);
-      fs.fchmodSync(fd, file.mode);
-    } finally {
-      fs.closeSync(fd);
-    }
-  }
-}
-
-/** @param {string} target */
-function lstatOrNull(target) {
-  try {
-    return fs.lstatSync(target);
-  } catch {
-    return null;
-  }
-}
-
 /** @param {DetonateRequest} request @returns {Promise<HarnessReport>} */
 async function detonate(request) {
   const deadline = Date.now() + request.totalTimeoutMs;
@@ -831,7 +780,7 @@ async function detonate(request) {
     ? pypi.installed || pypi.build !== null
     : state.installName !== null && state.dependencyInstall !== "failed";
   if (runnable) {
-    plantCanaries(request.canaryFiles);
+    plantCanaryFiles(request.canaryFiles, { home: PKG_HOME, uid: PKG_UID, gid: PKG_GID });
     fs.mkdirSync(HOOK_LOG_DIR, { recursive: true, mode: 0o755 });
     fs.chmodSync(HOOK_LOG_DIR, 0o755);
 

@@ -718,6 +718,107 @@ describe("PyPI artifact summaries and review", () => {
     expect(review.ruleFindings).toEqual([]);
   });
 
+  const D = "demo_package-1.2.0.data";
+  test.each([
+    ["purelib .pth", `${D}/purelib/hook.pth`, "pypi.pth-execution"],
+    [
+      "posix data-scheme site-packages .pth",
+      `${D}/data/lib/python3.12/site-packages/hook.pth`,
+      "pypi.pth-execution",
+    ],
+    [
+      "Debian dist-packages .pth",
+      `${D}/data/lib/python3/dist-packages/hook.pth`,
+      "pypi.pth-execution",
+    ],
+    [
+      "PyPy site-packages .pth",
+      `${D}/data/lib/pypy3.10/site-packages/hook.pth`,
+      "pypi.pth-execution",
+    ],
+    ["Windows prefix-root .pth", `${D}/data/hook.pth`, "pypi.pth-execution"],
+    ["Windows user-site .pth", `${D}/data/Python312/site-packages/hook.pth`, "pypi.pth-execution"],
+    ["sitecustomize package", "sitecustomize/__init__.py", "pypi.startup-hook"],
+    ["extension-module package init", "sitecustomize/__init__.abi3.so", "pypi.startup-hook"],
+    ["Windows .pyw source", "sitecustomize.pyw", "pypi.startup-hook"],
+    ["Windows prefix-root sitecustomize", `${D}/data/sitecustomize.py`, "pypi.startup-hook"],
+    [
+      "stdlib directory sitecustomize",
+      `${D}/data/lib/python3.12/sitecustomize.py`,
+      "pypi.startup-hook",
+    ],
+    [
+      "lib-dynload extension",
+      `${D}/data/lib/python3.12/lib-dynload/usercustomize.cpython-312-x86_64-linux-gnu.so`,
+      "pypi.startup-hook",
+    ],
+    ["Windows Lib sitecustomize", `${D}/data/Lib/sitecustomize.py`, "pypi.startup-hook"],
+    ["Windows DLLs extension", `${D}/data/DLLs/sitecustomize.pyd`, "pypi.startup-hook"],
+    ["POSIX stdlib archive", `${D}/data/lib/python312.zip`, "pypi.startup-hook"],
+    ["Windows stdlib archive", `${D}/data/python312.zip`, "pypi.startup-hook"],
+    ["stdlib-dir .pth (not a site dir)", `${D}/data/lib/python3.12/lib-dynload/hook.pth`, null],
+    ["nested stdlib package sitecustomize", `${D}/data/lib/python3.12/json/sitecustomize.py`, null],
+    ["data share sitecustomize", `${D}/data/share/demo/sitecustomize.py`, null],
+    ["scripts sitecustomize", `${D}/scripts/sitecustomize.py`, null],
+    ["site-packages stdlib-named archive", "python312.zip", null],
+    ["package-internal sitecustomize", "demo_package/sitecustomize.py", null],
+  ])("resolves the import path like an installer: %s", (_label, path, ruleId) => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            ...wheelArtifactFiles("1.2.0"),
+            file(path, path.endsWith(".pth") ? "import demo_package\n" : "VALUE = 1\n"),
+          ],
+        },
+      ],
+    });
+    const hooks = review.ruleFindings
+      .filter(
+        (finding) =>
+          finding.ruleId === "pypi.pth-execution" || finding.ruleId === "pypi.startup-hook",
+      )
+      .map((finding) => [finding.ruleId, finding.file]);
+
+    expect(hooks).toEqual(
+      ruleId ? [[ruleId, `dist/demo_package-1.2.0-py3-none-any.whl/${path}`]] : [],
+    );
+  });
+
+  test("reads .pth import lines on every line boundary site.py splits on", () => {
+    const manifest = parsePyPiReleaseManifest({
+      schema: "drydock.release-artifacts.v1",
+      ecosystem: "pypi",
+      package: "demo-package",
+      version: "1.2.0",
+      artifacts: [{ path: "dist/demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) }],
+    });
+    const review = createPyPiReleaseCandidateReview({
+      manifest,
+      artifacts: [
+        {
+          path: "dist/demo_package-1.2.0-py3-none-any.whl",
+          files: [
+            ...wheelArtifactFiles("1.2.0"),
+            file("hook.pth", "# looks like a comment\rimport demo_package\n"),
+          ],
+        },
+      ],
+    });
+    const pth = review.ruleFindings.find((finding) => finding.ruleId === "pypi.pth-execution");
+
+    expect(pth).toMatchObject({ severity: "high", line: 1 });
+  });
+
   test("detects secret-looking content before redacting PyPI evidence", () => {
     const manifest = parsePyPiReleaseManifest({
       schema: "drydock.release-artifacts.v1",
