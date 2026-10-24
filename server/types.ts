@@ -1,4 +1,5 @@
 import type { Auth, AuthSession } from "./lib/auth";
+import type { ApiKeyPrincipal } from "./lib/auth/api-keys";
 import type { AppDb } from "./db/client";
 import type { BaselineInfo } from "./lib/ecosystems/package-adapter";
 import type { PublishedPairRef } from "./lib/ecosystems/published-pair";
@@ -24,7 +25,13 @@ export type Bindings = Cloudflare.Env;
 
 export type Variables = {
   auth: Auth;
+  /**
+   * Unset on an API-key request: only the routes in `API_KEY_ROUTES` run for
+   * one, and they resolve the organization through `requireActiveOrganization`.
+   */
   authSession: AuthSession;
+  /** Set only when the request authenticated with an organization API key. */
+  apiKey?: ApiKeyPrincipal;
   /** One Drizzle handle per request, attached by `server/middleware/db.ts`. */
   db: AppDb;
 };

@@ -281,6 +281,13 @@
       "when": 1792050737726,
       "tag": "0039_illegal_falcon",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792826741384,
+      "tag": "0040_fat_gunslinger",
+      "breakpoints": true
     }
   ]
 }

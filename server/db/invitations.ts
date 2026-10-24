@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { normalizeRole, type OrganizationRole } from "../lib/auth/roles";
 import type { InvitationStatus } from "./enums";
+import { deleteApiKeysCreatedByStatement } from "./api-keys";
 import type { AppDb } from "./client";
 import { organizationInvitations, organizationMembers, organizations, user } from "./schema";
 
@@ -109,21 +110,28 @@ export async function addOrganizationMember(
     });
 }
 
+/**
+ * Removes a membership and, in the same batch, the API keys that member
+ * created: a key lives no longer than its creator's membership.
+ */
 export async function removeOrganizationMember(
   db: AppDb,
   organizationId: string,
   userId: string,
 ): Promise<boolean> {
-  const result = await db
-    .delete(organizationMembers)
-    .where(
-      and(
-        eq(organizationMembers.organizationId, organizationId),
-        eq(organizationMembers.userId, userId),
-      ),
-    )
-    .returning({ id: organizationMembers.id });
-  return result.length > 0;
+  const [removed] = await db.batch([
+    db
+      .delete(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.userId, userId),
+        ),
+      )
+      .returning({ id: organizationMembers.id }),
+    deleteApiKeysCreatedByStatement(db, organizationId, userId),
+  ]);
+  return removed.length > 0;
 }
 
 export interface InvitationRecord {

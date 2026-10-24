@@ -4,6 +4,7 @@ import { useLocation } from "preact-iso";
 import { buildQueryUrl, useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { ApiKeysModel } from "../../../models/api-keys";
 import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
@@ -30,6 +31,7 @@ import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
+import { ApiKeysSection } from "./ApiKeysSection";
 import { AuditLogSection } from "./AuditLogSection";
 import { SettingsNav } from "./SettingsNav";
 import {
@@ -50,6 +52,7 @@ export default function SettingsPage() {
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
+  const apiKeys = useModel(ApiKeysModel);
   const activeTab = useSignal<SettingsTab>("general");
 
   useQuerySignal(activeTab, {
@@ -80,6 +83,7 @@ export default function SettingsPage() {
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
+        apiKeys.load(canManageIntegrations(organizations)),
       ]);
     },
   });
@@ -92,6 +96,7 @@ export default function SettingsPage() {
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
+    loaders.push(apiKeys.load(canManageIntegrations(organizations)));
     await Promise.all(loaders);
   };
 
@@ -205,6 +210,9 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
                 </div>
+                {canManageIntegrations(organizations) ? (
+                  <ApiKeysSection apiKeys={apiKeys} defaultOpen />
+                ) : null}
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? (

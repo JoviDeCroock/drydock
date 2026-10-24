@@ -47,6 +47,8 @@ Implementation requirements:
 - record add/validate/use/rotate/remove audit events;
 - redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 
+Organization API keys are the other stored credential, in the opposite direction: Drydock issues them rather than holding a third party's. Only their SHA-256 is stored, the secret is shown once, every key expires, and a key is deleted with its creator's membership. See [`api-keys.md`](./api-keys.md).
+
 Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
 
 ## Artifact handling and retention
@@ -182,7 +184,7 @@ For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `i
 
 ## Authorization posture
 
-Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
+Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. The one authenticated alternative is an organization API key, which reaches only the read-only routes in `API_KEY_ROUTES`, reads as a plain member of exactly one organization, and is never combined with a cookie session; see [`api-keys.md`](./api-keys.md). Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
 
 One read resolves ownership by membership instead of the active organization: `GET /api/v1/scans/:id/organization` answers which of the caller's own organizations holds a scan, so a review link without `?org=` (the workflow gate's GitHub comment has no room for one) opens in the right organization. It is a single join of the scan to the caller's membership rows, read from D1 on every request, and it answers a scan in an organization the caller is not a member of with the same 404 and body as a scan id that does not exist, so it confirms nothing about other organizations' scans; a member learns only what opening the scan under each of their own organizations would already tell them. Scan ids are random UUIDs. A gate comment can publish one in a public repository's Actions log, and that id still opens nothing for a non-member.
 
@@ -244,7 +246,7 @@ A cached session can outlive its user by up to the cache lifetime, so `ensurePer
 
 The binding's `{limit, period}` pair is static per binding and `period` may only be 10 or 60 seconds. `wrangler.jsonc` therefore declares one `ratelimits` binding per per-minute limit the app enforces (`NATIVE_TIERS` in the module), and:
 
-- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks) are enforced entirely by the binding.
+- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks, organization API-key requests per IP and per key) are enforced entirely by the binding.
 - **Longer budgets** — the 15-minute and hourly limits on human-initiated actions such as sign-in, sign-up, password reset, organization creation, invitations, and connecting npm or Slack — cannot be expressed by the binding, so they keep the D1 `rate_limits` counter. Each one first passes a native per-minute burst guard whose limit is at or above the long-window limit, which can only reject traffic the long window would reject anyway while capping how many D1 writes one key can force per minute per colo.
 
 Semantic differences from the previous D1-only scheme, accepted deliberately:
