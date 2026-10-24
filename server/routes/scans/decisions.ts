@@ -119,7 +119,17 @@ async function requireKeyCreatorStepUp(
     );
   }
   const step = await matchUserTotpStep(c.get("auth"), db, apiKey.userId, code);
-  if (step === null) {
+  if (step === "unavailable") {
+    return c.json(
+      {
+        error:
+          "Drydock cannot check authenticator codes for the account that created this key right now (two-factor is locked after failed sign-in codes, or not confirmed); try again later",
+        code: "two_factor_unavailable",
+      },
+      401,
+    );
+  }
+  if (step === "mismatch") {
     const failures = await recordApiKeyTotpFailure(db, apiKey.id);
     if (failures !== null && failures >= API_KEY_TOTP_FAILURE_LIMIT) {
       const removed = await deleteOrganizationApiKey(db, organizationId, apiKey.id);

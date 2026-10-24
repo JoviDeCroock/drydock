@@ -783,18 +783,20 @@ export async function verifyTotpStepUp(
  * endpoint uses (6 digits, 30-second period, one period either side; the
  * plugin's defaults, which `twoFactor()` above keeps). An enrollment that was
  * never confirmed, or one Better Auth has locked after failed sign-in codes,
- * matches nothing.
+ * cannot be checked.
  *
  * Returns the matched time step, so the caller can refuse a code it has
- * already accepted, or null. Callers rate-limit attempts, as for the session.
+ * already accepted; "mismatch" for a wrong code; "unavailable" when no code
+ * could have matched, which the caller must not count as a guess. Callers
+ * rate-limit attempts, as for the session.
  */
 export async function matchUserTotpStep(
   auth: Auth,
   db: AppDb,
   userId: string,
   code: string,
-): Promise<number | null> {
-  if (!/^\d{6}$/.test(code)) return null;
+): Promise<number | "mismatch" | "unavailable"> {
+  if (!/^\d{6}$/.test(code)) return "mismatch";
   const [row] = await db
     .select({
       secret: schema.twoFactor.secret,
@@ -806,22 +808,22 @@ export async function matchUserTotpStep(
     .innerJoin(schema.user, eq(schema.user.id, schema.twoFactor.userId))
     .where(eq(schema.twoFactor.userId, userId))
     .limit(1);
-  if (!row?.enabled || row.verified === false) return null;
-  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return null;
+  if (!row?.enabled || row.verified === false) return "unavailable";
+  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return "unavailable";
   try {
     const context = await auth.$context;
     const secret = await symmetricDecrypt({ key: context.secretConfig, data: row.secret });
     const otp = createOTP(secret, { digits: TOTP_DIGITS, period: TOTP_PERIOD_SECONDS });
     const current = Math.floor(Date.now() / (TOTP_PERIOD_SECONDS * 1000));
     const given = new TextEncoder().encode(code);
-    let matched: number | null = null;
+    let matched: number | "mismatch" = "mismatch";
     // Every window is computed and compared, so timing says nothing about which matched.
     for (const step of [current - 1, current, current + 1]) {
       if (timingSafeEqual(given, new TextEncoder().encode(await otp.hotp(step)))) matched = step;
     }
     return matched;
   } catch {
-    return null;
+    return "unavailable";
   }
 }
 

@@ -73,7 +73,7 @@ export async function approve(ctx, startWaiting) {
   const id = String(found.id);
 
   if (found.status !== "complete") {
-    if (flagOtp) {
+    if (flagOtp && found.status !== "failed") {
       throw new CliError(
         `review ${clean(id)} is still running, and the --otp code would expire before it finishes. Run "drydock scans wait ${clean(id)}", then approve again with a current code`,
       );

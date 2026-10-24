@@ -673,7 +673,7 @@ describe("resolveNpmCommand", () => {
       platform: "win32",
       cwd: "C:\\repo",
       execPath: "C:\\node\\node.exe",
-      path: ";.;C:\\repo;bin;C:\\Program Files\\nodejs",
+      path: ";.;C:\\repo;bin;C:\\repo\\node_modules\\.bin;C:\\Program Files\\nodejs",
       isFile: files([
         "C:\\repo\\npm.cmd",
         "C:\\repo\\node_modules\\npm\\bin\\npm-cli.js",
@@ -693,8 +693,8 @@ describe("resolveNpmCommand", () => {
       platform: "darwin",
       cwd: "/work/repo",
       execPath: "/usr/local/bin/node",
-      path: ":.:/work/repo:node_modules/.bin:/usr/local/bin",
-      isFile: files(["/work/repo/npm", "/usr/local/bin/npm"]),
+      path: ":.:/work/repo:node_modules/.bin:/work/repo/node_modules/.bin:/usr/local/bin",
+      isFile: files(["/work/repo/npm", "/work/repo/node_modules/.bin/npm", "/usr/local/bin/npm"]),
     };
     expect(resolveNpmCommand(posix)).toEqual({
       command: "/usr/local/bin/npm",

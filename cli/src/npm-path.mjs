@@ -7,7 +7,10 @@ import { posix, win32 } from "node:path";
  * needs to start the `npm.cmd` shim, resolves a bare `npm` against the working
  * directory before PATH, and on any platform an empty or relative PATH entry
  * means the working directory; either way an `npm` planted in a checked-out
- * repository would run with the user's terminal and npm credentials. On Windows
+ * repository would run with the user's terminal and npm credentials. For the
+ * same reason a `node_modules` bin directory, which `npm run`, `npx`, and
+ * direnv put on PATH as an absolute path, is skipped: any dependency can ship
+ * an `npm` or `node` bin there. On Windows
  * the shim is skipped entirely: npm's own `npm-cli.js` beside it is run with
  * node, which is what the shim does. npm then runs with the same PATH minus
  * those entries, because the POSIX `npm` starts `node` through `env`, which
@@ -25,6 +28,7 @@ export function resolveNpmCommand({ platform, path, cwd, execPath, isFile }) {
     const dir = entry.trim().replace(/^"(.*)"$/, "$1");
     // An empty or relative entry means the current directory (or one under it).
     if (!dir || !isAbsolute(dir) || sameDir(resolve(dir), here, windows)) continue;
+    if (dir.split(/[\\/]/).some((segment) => segment.toLowerCase() === "node_modules")) continue;
     dirs.push(dir);
   }
   const safePath = dirs.join(delimiter);
