@@ -15,7 +15,14 @@ const TOKEN_RE = /^ddk_[A-Za-z0-9_-]{43}$/;
 const DISPLAY_PREFIX_LENGTH = API_KEY_TOKEN_PREFIX.length + 8;
 
 export const API_KEY_NAME_MAX_LENGTH = 64;
-export const MAX_API_KEYS_PER_ORGANIZATION = 10;
+/** Per member, so one member's keys never crowd out another's. */
+export const MAX_API_KEYS_PER_MEMBER = 10;
+/**
+ * Wrong authenticator codes in a row on a key's decisions before the key is
+ * revoked. The 15-minute step-up budget alone would let a stolen key keep
+ * guessing for its whole life; this bounds the guesses any one key gets.
+ */
+export const API_KEY_TOTP_FAILURE_LIMIT = 5;
 export const API_KEY_EXPIRY_DAYS = [30, 90, 365] as const;
 export type ApiKeyExpiryDays = (typeof API_KEY_EXPIRY_DAYS)[number];
 

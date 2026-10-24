@@ -7,7 +7,14 @@ import {
   EMAIL_VERIFICATION_REQUIRED_CODE,
   requireVerifiedEmail,
 } from "../../lib/auth/email-verification";
-import { emailVerificationAvailable, userHasTwoFactor, verifyUserTotp } from "../../lib/auth";
+import { emailVerificationAvailable, matchUserTotpStep, userHasTwoFactor } from "../../lib/auth";
+import { API_KEY_TOTP_FAILURE_LIMIT, type ApiKeyPrincipal } from "../../lib/auth/api-keys";
+import {
+  acceptApiKeyTotpStep,
+  deleteOrganizationApiKey,
+  recordApiKeyTotpFailure,
+} from "../../db/api-keys";
+import { recordScanEvent } from "../../db/events";
 import { guardRateLimit } from "../../lib/rate-limit";
 import {
   API_KEY_DECIDABLE_SCAN_SOURCES,
@@ -71,18 +78,21 @@ const KEY_DECIDABLE_SOURCES = new Set<string>(API_KEY_DECIDABLE_SCAN_SOURCES);
  * secret that can sit in a shell environment where a later `npm install`'s
  * lifecycle script can read it. With an npm token beside it, a worm could
  * record "publish" on its own stage and become the approved baseline. So every
- * key decision needs a fresh TOTP code from the key's creator, checked as the
- * gate decision's step-up is, and a creator who has turned two-factor off can
- * no longer decide with any key. The code is read from the body only; it is
+ * key decision needs a TOTP code from the key's creator, checked as the gate
+ * decision's step-up is; a creator who has turned two-factor off can no longer
+ * decide with any key. A code is accepted once, and a key that sends
+ * `API_KEY_TOTP_FAILURE_LIMIT` wrong codes in a row is revoked, so a stolen key
+ * cannot guess for its whole life. The code is read from the body only; it is
  * never logged or stored.
  */
 async function requireKeyCreatorStepUp(
   c: DecisionContext,
   db: AppDb,
-  creatorUserId: string,
+  organizationId: string,
+  apiKey: ApiKeyPrincipal,
   totpCode: unknown,
 ): Promise<Response | null> {
-  if (!(await userHasTwoFactor(db, creatorUserId))) {
+  if (!(await userHasTwoFactor(db, apiKey.userId))) {
     return c.json(
       {
         error:
@@ -94,7 +104,7 @@ async function requireKeyCreatorStepUp(
   }
   const limited = await guardRateLimit(
     c,
-    { key: `api-key-decision-2fa:${creatorUserId}`, limit: 10, windowMs: 15 * 60 * 1000 },
+    { key: `api-key-decision-2fa:${apiKey.userId}`, limit: 10, windowMs: 15 * 60 * 1000 },
     "too many two-factor attempts",
   );
   if (limited) return limited;
@@ -108,8 +118,45 @@ async function requireKeyCreatorStepUp(
       401,
     );
   }
-  if (!(await verifyUserTotp(c.get("auth"), db, creatorUserId, code))) {
-    return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+  const step = await matchUserTotpStep(c.get("auth"), db, apiKey.userId, code);
+  if (step === null) {
+    const failures = await recordApiKeyTotpFailure(db, apiKey.id);
+    if (failures !== null && failures >= API_KEY_TOTP_FAILURE_LIMIT) {
+      const removed = await deleteOrganizationApiKey(db, organizationId, apiKey.id);
+      // Concurrent wrong codes can all reach the limit; only the request that
+      // deleted the key records it.
+      if (removed) {
+        await recordScanEvent(db, {
+          organizationId,
+          actorUserId: apiKey.userId,
+          type: "organization.api_key_revoked_wrong_codes",
+          metadata: { name: removed.name, prefix: removed.prefix, failedCodes: failures },
+        });
+      }
+      return c.json(
+        {
+          error: `${API_KEY_TOTP_FAILURE_LIMIT} wrong authenticator codes in a row, so Drydock revoked this API key. Create a new one in Organization settings.`,
+          code: "api_key_revoked",
+        },
+        401,
+      );
+    }
+    return c.json(
+      {
+        error: `invalid two-factor code; after ${API_KEY_TOTP_FAILURE_LIMIT} wrong codes in a row the key is revoked`,
+        code: "two_factor_invalid",
+      },
+      401,
+    );
+  }
+  if (!(await acceptApiKeyTotpStep(db, apiKey.id, apiKey.userId, step))) {
+    return c.json(
+      {
+        error: "that code was already used; wait for the next one",
+        code: "two_factor_invalid",
+      },
+      401,
+    );
   }
   return null;
 }
@@ -150,7 +197,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
         403,
       );
     }
-    const refused = await requireKeyCreatorStepUp(c, db, apiKey.userId, body.totpCode);
+    const refused = await requireKeyCreatorStepUp(c, db, organizationId, apiKey, body.totpCode);
     if (refused) return refused;
   }
 

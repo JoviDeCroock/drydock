@@ -449,7 +449,7 @@
       "post": {
         "operationId": "recordStagedDecision",
         "summary": "Record a decision on a staged publish",
-        "description": "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review. Every decision needs `totpCode`, a current code from the authenticator of the member who created the key: missing is `401 two_factor_required`, wrong is `401 two_factor_invalid`, and a creator without two-factor authentication is `403 two_factor_enrollment_required`. Attempts are limited to 10 per 15 minutes per creator.",
+        "description": "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review. Every decision needs `totpCode`, a current code from the authenticator of the member who created the key: missing is `401 two_factor_required`, wrong is `401 two_factor_invalid`, and a creator without two-factor authentication is `403 two_factor_enrollment_required`. A code is accepted once (a reused one is `401 two_factor_invalid`), five wrong codes in a row revoke the key (`401 api_key_revoked`), and attempts are limited to 10 per 15 minutes per creator.",
         "tags": [
           "Reviews"
         ],
@@ -1526,7 +1526,7 @@
           },
           "totpCode": {
             "type": "string",
-            "description": "Current 6-digit code from the key creator's authenticator app; never stored"
+            "description": "Current 6-digit code from the key creator's authenticator app, accepted once; never stored"
           }
         },
         "required": [

@@ -357,6 +357,12 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: summarizeApiKey,
   },
+  "organization.api_key_revoked_wrong_codes": {
+    category: "security",
+    label: "API key revoked after wrong authenticator codes",
+    severity: "security",
+    summarize: summarizeApiKey,
+  },
   "organization.api_key_review_started": {
     category: "integration",
     label: "Review started with an API key",

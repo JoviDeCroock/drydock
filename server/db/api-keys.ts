@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import type { ApiKeyAccess } from "./enums";
 import { recordScanEvent } from "./events";
@@ -74,9 +74,10 @@ export async function listOrganizationApiKeys(
 }
 
 /** Unexpired keys only: an expired key stays listed until revoked but holds no slot. */
-export async function countActiveOrganizationApiKeys(
+export async function countActiveMemberApiKeys(
   db: AppDb,
   organizationId: string,
+  createdByUserId: string,
   now: Date,
 ): Promise<number> {
   const [row] = await db
@@ -85,10 +86,47 @@ export async function countActiveOrganizationApiKeys(
     .where(
       and(
         eq(organizationApiKeys.organizationId, organizationId),
+        eq(organizationApiKeys.createdByUserId, createdByUserId),
         gt(organizationApiKeys.expiresAt, now),
       ),
     );
   return row?.value ?? 0;
+}
+
+/**
+ * Accepts the TOTP time step of a key decision's step-up and clears the key's
+ * failure count. A step is accepted once per creator: it is refused when any of
+ * their keys has accepted it or a later one, so a code read from a process
+ * listing cannot be replayed. One statement, so two requests carrying the same
+ * code cannot both pass.
+ */
+export async function acceptApiKeyTotpStep(
+  db: AppDb,
+  keyId: string,
+  creatorUserId: string,
+  step: number,
+): Promise<boolean> {
+  const rows = await db
+    .update(organizationApiKeys)
+    .set({ lastTotpStep: step, failedTotpAttempts: 0 })
+    .where(
+      and(
+        eq(organizationApiKeys.id, keyId),
+        sql`not exists (select 1 from organization_api_keys as used where used.created_by_user_id = ${creatorUserId} and used.last_totp_step >= ${step})`,
+      ),
+    )
+    .returning({ id: organizationApiKeys.id });
+  return rows.length > 0;
+}
+
+/** Counts a wrong step-up code against the key; the new count, or null once the key is gone. */
+export async function recordApiKeyTotpFailure(db: AppDb, keyId: string): Promise<number | null> {
+  const [row] = await db
+    .update(organizationApiKeys)
+    .set({ failedTotpAttempts: sql`${organizationApiKeys.failedTotpAttempts} + 1` })
+    .where(eq(organizationApiKeys.id, keyId))
+    .returning({ failed: organizationApiKeys.failedTotpAttempts });
+  return row?.failed ?? null;
 }
 
 export async function insertOrganizationApiKey(

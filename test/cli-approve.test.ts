@@ -209,6 +209,38 @@ describe("drydock approve", () => {
     expect(piped.decisionCalls()[0].body).toEqual({ decision: "publish", totpCode: OTP });
     expect(piped.prompts.some((question) => question.includes("authenticator"))).toBe(false);
     expect(piped.npmRuns.flat().join(" ")).not.toContain(OTP);
+
+    const unfinished = harness(
+      { list: [{ ...listed[0], status: "running" }] },
+      { stdinIsTerminal: false, answers: ["p", ""] },
+    );
+    expect(await unfinished.run("approve", STAGE, "--otp", OTP)).toBe(1);
+    expect(unfinished.stderr).toContain(`Run "drydock scans wait ${SCAN_ID}"`);
+    expect(unfinished.decisionCalls()).toEqual([]);
+  });
+
+  test("a key revoked for wrong codes ends the run without asking again", async () => {
+    const cli = harness(
+      {
+        list: listed,
+        decision: () =>
+          json(
+            {
+              error:
+                "5 wrong authenticator codes in a row, so Drydock revoked this API key. Create a new one in Organization settings.",
+              code: "api_key_revoked",
+            },
+            401,
+          ),
+      },
+      { answers: ["p", "", "111111", OTP] },
+    );
+    expect(await cli.run("approve", STAGE)).toBe(1);
+    expect(cli.decisionCalls()).toHaveLength(1);
+    expect(cli.stderr).toContain(
+      "Create a new one in Organization settings. Drydock recorded nothing and npm was not run.",
+    );
+    expect(cli.npmRuns).toEqual([]);
   });
 
   test("asks again for a code Drydock rejects on a terminal, and never with --otp", async () => {
@@ -636,7 +668,7 @@ describe("drydock approve", () => {
 describe("resolveNpmCommand", () => {
   const files = (paths: string[]) => (path: string) => paths.includes(path);
 
-  test("never resolves npm from the current directory or a relative PATH entry", () => {
+  test("never resolves npm, or hands npm a PATH, with the current directory or a relative entry", () => {
     const windows = {
       platform: "win32",
       cwd: "C:\\repo",
@@ -653,6 +685,7 @@ describe("resolveNpmCommand", () => {
     expect(resolveNpmCommand(windows)).toEqual({
       command: "C:\\Program Files\\nodejs\\node.exe",
       args: ["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js"],
+      path: "C:\\Program Files\\nodejs",
     });
     expect(resolveNpmCommand({ ...windows, path: "c:\\REPO" })).toBeNull();
 
@@ -663,7 +696,11 @@ describe("resolveNpmCommand", () => {
       path: ":.:/work/repo:node_modules/.bin:/usr/local/bin",
       isFile: files(["/work/repo/npm", "/usr/local/bin/npm"]),
     };
-    expect(resolveNpmCommand(posix)).toEqual({ command: "/usr/local/bin/npm", args: [] });
+    expect(resolveNpmCommand(posix)).toEqual({
+      command: "/usr/local/bin/npm",
+      args: [],
+      path: "/usr/local/bin",
+    });
     expect(resolveNpmCommand({ ...posix, path: "" })).toBeNull();
   });
 });

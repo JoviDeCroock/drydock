@@ -127,7 +127,9 @@ export const StagedDecisionRequest = z
     reason: z.string().max(500).optional().describe("Shown with the decision in Drydock"),
     totpCode: z
       .string()
-      .describe("Current 6-digit code from the key creator's authenticator app; never stored"),
+      .describe(
+        "Current 6-digit code from the key creator's authenticator app, accepted once; never stored",
+      ),
   })
   .register(openApiSchemas, { id: "StagedDecisionRequest" });
 

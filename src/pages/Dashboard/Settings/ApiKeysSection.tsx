@@ -167,8 +167,8 @@ export function ApiKeysSection({
         ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
-            This organization holds the maximum of {apiKeys.limit.value} unexpired keys. Revoke one
-            to create another.
+            You hold the maximum of {apiKeys.limit.value} unexpired keys. Revoke one to create
+            another.
           </Muted>
         ) : null}
 

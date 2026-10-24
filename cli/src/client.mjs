@@ -194,8 +194,9 @@ function errorMessage(status, text, headers) {
   const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
   const code = typeof body.code === "string" ? ` (${body.code})` : "";
   // The decision route's two-factor step-up answers 401 like the session one;
-  // the key itself was accepted.
+  // the key itself was accepted. A key revoked by that step-up says so itself.
   if (typeof body.code === "string" && body.code.startsWith("two_factor_")) return detail;
+  if (body.code === "api_key_revoked") return detail;
   if (status === 401) return `the API key was rejected: ${detail}${code}`;
   if (body.code === "api_key_access_insufficient" && body.requiredAccess === "decide_staged") {
     return "this API key cannot record decisions; drydock approve needs a key with decide_staged access (Organization settings → Integrations → API keys)";

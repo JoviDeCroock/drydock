@@ -73,6 +73,11 @@ export async function approve(ctx, startWaiting) {
   const id = String(found.id);
 
   if (found.status !== "complete") {
+    if (flagOtp) {
+      throw new CliError(
+        `review ${clean(id)} is still running, and the --otp code would expire before it finishes. Run "drydock scans wait ${clean(id)}", then approve again with a current code`,
+      );
+    }
     const started = io.now();
     const final = await waitForReview(ctx, id, startWaiting(), (scan) => {
       const seconds = Math.round((io.now() - started) / 1000);
@@ -190,16 +195,17 @@ async function recordDecision(ctx, { id, decision, reason, link, flagOtp, prompt
     } catch (err) {
       if (!(err instanceof CliError)) throw err;
       if (err.code === "two_factor_invalid" && !flagOtp && attempt < OTP_ATTEMPTS) {
-        ctx.io.stderr("Drydock did not accept that code. Try the current one.\n");
+        ctx.io.stderr(`Drydock did not accept that code: ${clean(err.message)}.\n`);
         continue;
       }
       // Only a refusal proves nothing was written; a 5xx or a lost response
       // may follow a committed decision.
       const refused = typeof err.status === "number" && err.status >= 400 && err.status < 500;
+      const message = err.message.replace(/\.$/, "");
       throw new CliError(
         refused
-          ? `${err.message}. ${nothing}`
-          : `${err.message}. Drydock may have recorded the decision; check ${link}. npm was not run.`,
+          ? `${message}. ${nothing}`
+          : `${message}. Drydock may have recorded the decision; check ${link}. npm was not run.`,
         err.exitCode,
       );
     }
