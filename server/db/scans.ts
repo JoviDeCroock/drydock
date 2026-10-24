@@ -71,6 +71,7 @@ export {
   readPublicShare,
   resolvePublicShareToken,
   revokePublicShare,
+  scanPublicDisclosureAllowed,
   setThreatFeedListing,
   type SharedScanRow,
   threatFeedNextCursor,

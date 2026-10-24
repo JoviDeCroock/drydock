@@ -5,12 +5,7 @@ import { Badge } from "../../components/Badge";
 import { EmptyLine, LoadingLine } from "../../components/Typography";
 import { packageReleasesPath } from "../../lib/package-releases-path";
 import { PublicationAlertLogModel } from "../../models/publication-alert-log";
-import {
-  alertLogMetaLine,
-  observationStatusLabels,
-  resolutionLabels,
-  resolutionTone,
-} from "./copy";
+import { alertLogMetaLine, observationLabel, resolutionLabels, resolutionTone } from "./copy";
 
 /**
  * Every release of a watched package that npm published without this
@@ -53,7 +48,7 @@ export function UnapprovedPublishLog({ refreshKey }: { refreshKey: ReadonlySigna
             >
               {entry.packageName}@{entry.version}
             </a>
-            <Badge tone="critical">{observationStatusLabels[entry.status]}</Badge>
+            <Badge tone="critical">{observationLabel(entry)}</Badge>
             {entry.resolution ? (
               <Badge tone={resolutionTone(entry)}>{resolutionLabels[entry.resolution]}</Badge>
             ) : null}

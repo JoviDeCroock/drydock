@@ -1,3 +1,4 @@
+import { pairRenamedFiles } from "./renamed-files";
 import type { DiffStatus, FileRecord } from "./types";
 
 /**
@@ -28,6 +29,13 @@ export interface DiffEntry {
   previousSha256?: string;
   stagedSha256?: string;
   flags: string[];
+  /**
+   * On an `added` entry, the removed file it was renamed from, paired by
+   * content (renamed-files.ts). Release attribution and the rules' severity
+   * tiers diff it against that predecessor as a modified file; the entry stays
+   * `added` because that is what happened to the path.
+   */
+  renamedFrom?: string;
 }
 
 export function createPackageDiff(
@@ -37,18 +45,22 @@ export function createPackageDiff(
   const previous = new Map(previousFiles.map((file) => [file.path, file]));
   const staged = new Map(stagedFiles.map((file) => [file.path, file]));
   const paths = [...new Set([...previous.keys(), ...staged.keys()])].sort();
+  const predecessors = pairRenamedFiles(previousFiles, stagedFiles);
 
   return paths.map((path) => {
     const before = previous.get(path);
     const after = staged.get(path);
-    if (!before && after)
+    if (!before && after) {
+      const renamedFrom = predecessors.get(path);
       return {
         path,
         status: "added",
         stagedSize: after.size,
         stagedSha256: after.sha256,
         flags: diffFlags(after.flags),
+        ...(renamedFrom ? { renamedFrom } : {}),
       };
+    }
     if (before && !after)
       return {
         path,

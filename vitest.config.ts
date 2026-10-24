@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { diffLinkWorkflowRef } from "./scripts/lib/workflow-ref.mjs";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -16,6 +17,9 @@ export default defineConfig(async () => {
     test: {
       projects: [
         {
+          define: {
+            __DIFF_LINK_WORKFLOW_REF__: JSON.stringify(diffLinkWorkflowRef()),
+          },
           test: {
             name: "node",
             include: ["test/**/*.test.{ts,mjs}"],

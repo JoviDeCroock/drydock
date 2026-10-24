@@ -29,6 +29,7 @@ export function buildNpmFindings(args: {
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {
       fileDiff: args.fileDiff,
+      stagedFiles: args.staged.files,
     }),
   ];
 }

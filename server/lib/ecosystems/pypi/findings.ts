@@ -133,15 +133,18 @@ export function pyPiReleaseFindings(
   for (const artifact of artifacts) {
     for (const file of artifact.files) {
       const filePath = namespacedPath(artifact.path, file.path);
-      if (/\.pth$/i.test(file.path) && isPythonInstallRootFile(artifact, file.path)) {
+      const installed = pythonImportPathLocation(artifact, file.path);
+      if (installed?.kind === "site" && /^[^/]+\.pth$/i.test(installed.path)) {
         const hasImportLine = Boolean(
-          file.textSample?.split(/\r?\n/).some((line) => /^\s*import\s+/.test(line)),
+          file.textSample?.split(PYTHON_LINE_BOUNDARY_RE).some((line) => PTH_IMPORT_RE.test(line)),
         );
         findings.push(
           tag("pthExecution", {
             severity: hasImportLine ? "high" : "medium",
             file: filePath,
-            line: hasImportLine ? firstMatchingLine(file.textSample, [/^\s*import\s+/]) : undefined,
+            line: hasImportLine
+              ? firstMatchingLine(file.textSample, [PTH_IMPORT_LINE_RE])
+              : undefined,
             evidence: hasImportLine
               ? ".pth file contains an import line"
               : ".pth file included in wheel",
@@ -150,17 +153,28 @@ export function pyPiReleaseFindings(
           }),
         );
       }
-      if (
-        /(^|\/)(sitecustomize|usercustomize)\.py$/i.test(file.path) &&
-        isPythonInstallRootFile(artifact, file.path)
-      ) {
+      const startupModule =
+        installed && installed.kind !== "stdlib-archive"
+          ? STARTUP_HOOK_MODULE_RE.exec(installed.path)?.[1]
+          : undefined;
+      if (startupModule) {
         findings.push(
           tag("startupHook", {
             severity: "high",
             file: filePath,
-            evidence: `${file.path.split("/").at(-1)} runs automatically on interpreter startup`,
+            evidence: `${startupModule.toLowerCase()} module runs automatically on interpreter startup`,
             reason:
-              "sitecustomize.py and usercustomize.py execute on every Python startup once installed, a common persistence hook",
+              "Python imports sitecustomize and usercustomize from the import path on every startup once installed, a common persistence hook",
+          }),
+        );
+      } else if (installed?.kind === "stdlib-archive") {
+        findings.push(
+          tag("startupHook", {
+            severity: "high",
+            file: filePath,
+            evidence: `${installed.path.split("/").at(-1)} sits ahead of the standard library on the import path`,
+            reason:
+              "Python searches its pythonXY.zip archive before the standard library directory, so a wheel that installs one can replace any stdlib module imported at startup",
           }),
         );
       }
@@ -281,11 +295,64 @@ function undeclaredWheelFiles(artifact: PyPiPreparedArtifact, recordPath: string
   return artifact.files.filter((file) => !declared.has(file.path));
 }
 
-function isPythonInstallRootFile(artifact: PyPiPreparedArtifact, filePath: string): boolean {
+// `site` imports these by module name, so any importable form counts: source
+// (`.pyw` on Windows), sourceless bytecode, a native extension, or a package
+// whose `__init__` is any of those.
+const STARTUP_HOOK_MODULE_RE =
+  /^(sitecustomize|usercustomize)(?:\/__init__)?(?:\.pyw?|\.pyc|(?:\.[^/]*)?\.(?:so|pyd))$/i;
+
+// `site` reads `.pth` files with str.splitlines(), which breaks on more than \n.
+// eslint-disable-next-line no-control-regex -- these are Python's line boundaries
+const PYTHON_LINE_BOUNDARY_RE = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+const PTH_IMPORT_RE = /^\s*import\s/;
+// Same test against the \n-split display lines, for the finding's line number.
+// eslint-disable-next-line no-control-regex -- same boundaries as above
+const PTH_IMPORT_LINE_RE = /(?:^|[\r\v\f\x1c-\x1e\x85\u2028\u2029])\s*import\s/;
+
+// The `.data/data/` scheme installs relative to the environment prefix
+// (LiteLLM 1.107.0 used `.data/` to plant its hooks). Under it, these
+// directories are on the import path; `site` additionally processes `.pth`
+// files in the site directories. Covers posix_prefix/venv (`lib|lib64/
+// pythonX.Y`, PyPy's `pypyX.Y`, Debian `dist-packages`), posix_user and the
+// macOS framework user layout, nt/nt venv (`Lib`, `DLLs`, and the prefix
+// itself, which Windows treats as a site directory), and nt_user `PythonXY`.
+const PREFIX_SITE_DIR_RE =
+  /^(?:(?:lib|lib64)\/(?:python|pypy)[^/]*\/(?:site|dist)-packages\/|Lib\/site-packages\/|Python[^/]*\/site-packages\/|(?=[^/]+$))/i;
+const PREFIX_IMPORT_DIR_RE =
+  /^(?:(?:lib|lib64)\/(?:python|pypy)[^/]*\/(?:lib-dynload\/)?|Lib\/|DLLs\/)/i;
+// The interpreter searches `pythonXY.zip` (prefix root on Windows, `lib/` on
+// POSIX) before the stdlib directory, and none ships by default.
+const PREFIX_STDLIB_ARCHIVE_RE = /^(?:lib\/)?python\d+\.zip$/i;
+
+interface ImportPathLocation {
+  /** Path relative to the import-path directory the file installs into. */
+  path: string;
+  /** `site` processes `.pth` files only in site directories. */
+  kind: "site" | "import" | "stdlib-archive";
+}
+
+/** Where a wheel file lands relative to Python's import path, or null if it installs off the import path. */
+function pythonImportPathLocation(
+  artifact: PyPiPreparedArtifact,
+  filePath: string,
+): ImportPathLocation | null {
+  if (artifact.kind !== "wheel") return null;
   const normalized = filePath.replace(/^\/+/, "");
-  if (artifact.kind !== "wheel") return false;
-  if (!normalized.includes("/")) return true;
-  return /^[^/]+\.data\/(?:purelib|platlib)\/[^/]+$/i.test(normalized);
+  const scheme = /^[^/]+\.data\/([^/]+)\/(.*)$/i.exec(normalized);
+  if (!scheme) {
+    // A `.data` entry with no scheme directory installs nowhere.
+    return /^[^/]+\.data\//i.test(normalized) ? null : { path: normalized, kind: "site" };
+  }
+  const [, schemeName = "", rest = ""] = scheme;
+  if (/^(?:purelib|platlib)$/i.test(schemeName)) return { path: rest, kind: "site" };
+  // headers and scripts never reach the import path.
+  if (schemeName.toLowerCase() !== "data") return null;
+  if (PREFIX_STDLIB_ARCHIVE_RE.test(rest)) return { path: rest, kind: "stdlib-archive" };
+  const site = PREFIX_SITE_DIR_RE.exec(rest)?.[0];
+  if (site !== undefined) return { path: rest.slice(site.length), kind: "site" };
+  const importDir = PREFIX_IMPORT_DIR_RE.exec(rest)?.[0];
+  if (importDir !== undefined) return { path: rest.slice(importDir.length), kind: "import" };
+  return null;
 }
 
 function tag(

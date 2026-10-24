@@ -14,8 +14,24 @@ export const observationStatusLabels: Record<PublicationObservation["status"], s
   published_without_approval: "Published with no approval in this organization",
   published_despite_rejection: "Published despite a rejection in this organization",
   artifact_mismatch: "Published bytes differ from what this organization reviewed",
+  undecided_low_risk: "Reviewed, no decision in this organization",
   unknown: "Evidence unknown",
 };
+
+const AI_FLAGGED_REASON = "ai_flagged_without_decision";
+
+/**
+ * The label of an observation or alert. A release the AI reviewer flagged is
+ * named as such: it is the most pressing kind of unapproved publish.
+ */
+export function observationLabel(
+  observation: Pick<PublicationObservation, "status" | "reason">,
+): string {
+  return observation.status === "published_without_approval" &&
+    observation.reason === AI_FLAGGED_REASON
+    ? "Published with no approval, flagged by the AI reviewer"
+    : observationStatusLabels[observation.status];
+}
 
 // Why a release is `unknown`: the monitor records one specific reason. A
 // decision recorded only after publication is the organization's own act, so
@@ -24,6 +40,7 @@ const unknownReasonLabels: Record<string, string> = {
   publication_time_unavailable: "npm reports no publication time",
   review_pending: "a Drydock review of this version is still running",
   review_failed: "the Drydock review of this version failed",
+  decided_after_observation: "a review of it was decided since; the next check re-reads it",
   reviewed_without_decision: "reviewed these bytes, no decision recorded before publication",
   decision_history_unavailable: "decided only after publication",
   review_digest_unavailable: "npm's record matches, but the review could not confirm these bytes",
@@ -34,9 +51,23 @@ const unknownReasonLabels: Record<string, string> = {
   artifact_identity_invalid: "npm metadata names no valid tarball",
 };
 
+// Why an undecided review kept a release from reading low risk. Mirrors the
+// alert email and Slack copy in server/lib/notify/publication-alerts.ts.
+const undecidedReviewCauses: Record<string, string> = {
+  reviewed_ungated_without_decision: "found the stage not bound to an approved gate review",
+  reviewed_risk_without_decision: "graded the release above low risk",
+  reviewed_ai_concern_without_decision: "has an AI review asking for a closer look",
+  reviewed_ai_unfinished_without_decision: "has an AI review that did not finish",
+  reviewed_diverged_without_decision: "found findings new since the last approved release",
+  reviewed_ungraded_without_decision: "could not grade the release risk",
+};
+
 // What refines an alert. An undecided review of the published bytes is most
 // often the owner's own release promoted before anyone decided, so it asks for
 // the decision first and never accuses whoever published it.
+// `reviewed_without_decision` claims nothing about risk: it is a low-risk
+// review that could not vouch for the bytes alone, or an alert raised before
+// undecided reviews were tiered by risk.
 const alertReasonLabels: Record<string, string> = {
   review_pending:
     "a Drydock review of these exact bytes is still undecided: decide it, or investigate if nobody here published it",
@@ -44,6 +75,15 @@ const alertReasonLabels: Record<string, string> = {
     "the Drydock review of these exact bytes failed and nothing approved them: investigate if nobody here published it",
   reviewed_without_decision:
     "a Drydock review of these exact bytes is undecided: decide it, or investigate if nobody here published it",
+  ...Object.fromEntries(
+    Object.entries(undecidedReviewCauses).map(([reason, cause]) => [
+      reason,
+      `an undecided Drydock review of these exact bytes ${cause}: decide it, or investigate if nobody here published it`,
+    ]),
+  ),
+  [AI_FLAGGED_REASON]:
+    // The label already says the AI reviewer flagged it.
+    "the Drydock review of these exact bytes is undecided: investigate whether someone here published it, then decide it",
   rejected_after_publication: "these exact bytes were rejected after they were published",
   review_history_limit: "matches none of the latest 100 Drydock records of this version",
 };
@@ -58,13 +98,16 @@ export function observationReasonLabel(
   observation: Pick<PublicationObservation, "status" | "reason">,
 ): string | null {
   if (observation.status === "unknown") return unknownReasonLabel(observation.reason);
+  if (observation.status === "undecided_low_risk") {
+    return "its review graded these exact bytes low release risk, so no alert was raised";
+  }
   if (observation.status === "approved_match" || !observation.reason) return null;
   return alertReasonLabels[observation.reason] ?? null;
 }
 
 export function observationTone(status: PublicationObservation["status"]) {
   if (status === "approved_match") return "ok";
-  if (status === "unknown") return "neutral";
+  if (status === "unknown" || status === "undecided_low_risk") return "neutral";
   return "critical";
 }
 

@@ -77,6 +77,27 @@ describe("readZipArchive", () => {
     const files = await parse(zip);
     expect(files.map((file) => file.path)).toEqual(["demo/good.py"]);
   });
+
+  test("discloses unrepresentable file entries in both readers but not directory markers", async () => {
+    const zip = buildZip([
+      { path: "./evil.pth", body: "import os\n" },
+      { path: "pkg/../usercustomize.py", body: "x = 1\n" },
+      { path: "pkg\\hook.pth", body: "import os\n" },
+      { path: "../", body: "" },
+      { path: "demo/good.py", body: "ok\n" },
+    ]);
+    const streamed = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20);
+    const buffered = await readZipArchiveBuffered(zip, 100, 1 << 20);
+
+    for (const parsed of [streamed, buffered]) {
+      expect(parsed.files.map((file) => file.path)).toEqual(["demo/good.py"]);
+      expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
+        ["parser-differential", "./evil.pth"],
+        ["parser-differential", "pkg/../usercustomize.py"],
+        ["parser-differential", "pkg\\hook.pth"],
+      ]);
+    }
+  });
 });
 
 describe("readZipStream", () => {

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "deploy": "pnpm run build && wrangler deploy --config dist/staged_publish_review/wrangler.json",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "typecheck": "tsrs --noEmit && tsrs -p test/tsconfig.json --noEmit",
     "knip": "knip --config tooling/knip.jsonc",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
@@ -30,6 +30,7 @@
     "benchmark:incidents": "UPDATE_INCIDENT_BENCHMARK=1 vitest run --project node test/eval/incident-benchmark.test.ts && oxfmt public/benchmarks/shai-hulud-nx/v1.json src/features/public-content/incident-benchmark-v1.json",
     "eval:ai": "vitest run --project node test/eval/ai-review-eval.test.mjs",
     "eval:ai:live": "AI_REVIEW_LIVE_EVAL=1 vitest run --project node test/eval/ai-review-live.test.mjs",
+    "eval:npm-sweep": "NPM_FP_SWEEP=1 vitest run --project node test/eval/npm-fp-sweep.test.mjs",
     "eval:clef:live": "CLEF_LIVE_EVAL=1 vitest run --project node test/eval/clef-live.test.mjs",
     "fuzz": "FUZZ_RUNS=20000 vitest run --project node --testTimeout=600000 test/archive-parser.fuzz.test.mjs",
     "e2e:fixtures": "node test/e2e/build-fixtures.mjs",
@@ -56,7 +57,7 @@
     "better-auth": "^1.7.7",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.7",
+    "hono": "^4.13.13",
     "hoofd": "^1.7.3",
     "multiformats": "14.0.5",
     "preact": "^11.0.0",
@@ -64,7 +65,7 @@
     "qrcode": "^1.5.4",
     "shiki": "^4.4.3",
     "workers-ai-provider": "^4.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.61.0",
@@ -83,9 +84,10 @@
     "oxfmt": "^0.63.0",
     "oxlint": "^1.83.0",
     "tailwindcss": "^4.3.3",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^7.0.2",
-    "vite": "^8.2.1",
-    "vitest": "^4.1.11",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.12",
     "wrangler": "4.142.0"
   },
   "engines": {

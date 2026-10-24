@@ -1,0 +1,62 @@
+{
+  "id": "nested-padding-folded-eval",
+  "title": "Short nested-bracket padding ahead of an assembled eval",
+  "category": "obfuscation-assembly",
+  "intent": "A 150-deep array literal costs the lexer nothing once bracket lookups are O(1). Before that it exhausted a linear work budget in a 336-byte file, the constant folder gave up, and `globalThis['ev'+'al']` stayed unassembled, so dynamic evaluation went unreported. Folding must never give up on a small file. Safe: the payload only decodes a variable.",
+  "previousPackageJson": {
+    "name": "nested-padding-folded-eval",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "nested-padding-folded-eval",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 55,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"nested-padding-folded-eval\",\"version\":\"1.0.0\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 20,
+      "sha256": "before",
+      "flags": [],
+      "textSample": "module.exports = 1;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 55,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"nested-padding-folded-eval\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 336,
+      "sha256": "after",
+      "flags": [],
+      "textSample": "x=[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]];\nglobalThis['ev'+'al'](atob(p));\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedReleaseRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ],
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "index.js"
+    }
+  ]
+}

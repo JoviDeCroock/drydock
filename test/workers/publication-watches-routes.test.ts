@@ -433,6 +433,8 @@ describe("one package's monitoring for the package page", () => {
       {
         version: "1.0.0",
         status: "published_without_approval",
+        // Its observation went with the stopped window.
+        reason: null,
         createdAt: expect.any(String),
         acknowledgedAt: null,
         reviewScanId: null,
@@ -454,7 +456,8 @@ describe("one package's monitoring for the package page", () => {
         publishedAt: now,
         firstSeenAt: now,
         checkedAt: now,
-        status: "artifact_mismatch",
+        status: "published_without_approval",
+        reason: "ai_flagged_without_decision",
       },
       second.packageName,
     );
@@ -462,8 +465,12 @@ describe("one package's monitoring for the package page", () => {
     expect(alerts).toHaveLength(2);
     expect(alerts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ version: "2.0.0", inCurrentWatch: true }),
-        expect.objectContaining({ version: "1.0.0", inCurrentWatch: false }),
+        expect.objectContaining({
+          version: "2.0.0",
+          inCurrentWatch: true,
+          reason: "ai_flagged_without_decision",
+        }),
+        expect.objectContaining({ version: "1.0.0", inCurrentWatch: false, reason: null }),
       ]),
     );
   });
@@ -816,7 +823,8 @@ describe("the organization's log of unapproved publishes", () => {
     organizationId: string,
     watch: { id: string; packageName: string },
     version: string,
-    status: "published_without_approval" | "artifact_mismatch" | "unknown",
+    status: "published_without_approval" | "artifact_mismatch" | "undecided_low_risk" | "unknown",
+    reason: string | null = null,
   ) {
     const now = new Date();
     await savePublicationObservation(
@@ -830,6 +838,7 @@ describe("the organization's log of unapproved publishes", () => {
         firstSeenAt: now,
         checkedAt: now,
         status,
+        reason,
       },
       watch.packageName,
     );
@@ -842,9 +851,17 @@ describe("the organization's log of unapproved publishes", () => {
     const kept = await createPublicationWatch(db, owner.organizationId, "log-kept");
     const stopped = await createPublicationWatch(db, owner.organizationId, "log-stopped");
     await alertOn(owner.organizationId, stopped, "1.0.0", "artifact_mismatch");
-    await alertOn(owner.organizationId, kept, "2.0.0", "published_without_approval");
-    // Unknown evidence is not an unapproved publish.
+    await alertOn(
+      owner.organizationId,
+      kept,
+      "2.0.0",
+      "published_without_approval",
+      "ai_flagged_without_decision",
+    );
+    // Unknown evidence is not an unapproved publish, nor is an undecided
+    // review that graded the release low risk.
     await alertOn(owner.organizationId, kept, "2.0.1", "unknown");
+    await alertOn(owner.organizationId, kept, "2.0.2", "undecided_low_risk");
     await deletePublicationWatch(db, owner.organizationId, stopped.id);
     const foreign = await createPublicationWatch(db, outsider.organizationId, "log-kept");
     await alertOn(outsider.organizationId, foreign, "9.9.9", "published_without_approval");
@@ -861,6 +878,7 @@ describe("the organization's log of unapproved publishes", () => {
           packageName: "log-kept",
           version: "2.0.0",
           status: "published_without_approval",
+          reason: "ai_flagged_without_decision",
           createdAt: expect.any(String),
           acknowledgedAt: null,
           reviewScanId: null,
@@ -870,7 +888,12 @@ describe("the organization's log of unapproved publishes", () => {
           reviewedBytes: null,
           watched: true,
         },
-        expect.objectContaining({ packageName: "log-stopped", version: "1.0.0", watched: false }),
+        expect.objectContaining({
+          packageName: "log-stopped",
+          version: "1.0.0",
+          watched: false,
+          reason: null,
+        }),
       ]),
     );
     // Selecting another organization falls back to the caller's own ledger.

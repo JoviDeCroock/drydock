@@ -1,0 +1,85 @@
+{
+  "id": "renamed-chunk-capability-context",
+  "title": "Bundler renames a CLI chunk under a new content hash (release context)",
+  "category": "release-attribution",
+  "intent": "A bundled CLI ships the same chunk under a new content hash, so dist/chunks/run-De07GUeT.js is removed and dist/chunks/run-CGfpMDSb.js is added with one new formatting helper. The chunk already spawned git, fetched the npm registry and read NO_COLOR. Content pairing diffs the added chunk against its predecessor, so none of those capabilities lands on the release delta and nothing is graded at added-file severity. Inert: no install hook, no secret, registry host only.",
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "dist/chunks/run-CGfpMDSb.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "dist/chunks/run-CGfpMDSb.js"
+    }
+  ],
+  "expectedReleaseRisk": "low",
+  "expectedReleaseFindings": [],
+  "previousPackageJson": {
+    "name": "@example/bundled-cli",
+    "version": "3.4.0",
+    "type": "module",
+    "bin": {
+      "bundled-cli": "dist/cli.js"
+    },
+    "files": ["dist"]
+  },
+  "stagedPackageJson": {
+    "name": "@example/bundled-cli",
+    "version": "3.4.1",
+    "type": "module",
+    "bin": {
+      "bundled-cli": "dist/cli.js"
+    },
+    "files": ["dist"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 157,
+      "sha256": "f611bc7b31186b93",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/bundled-cli\",\n  \"version\": \"3.4.0\",\n  \"type\": \"module\",\n  \"bin\": {\n    \"bundled-cli\": \"dist/cli.js\"\n  },\n  \"files\": [\n    \"dist\"\n  ]\n}\n"
+    },
+    {
+      "path": "dist/cli.js",
+      "size": 96,
+      "sha256": "de15d54b445cc390",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nimport { run } from './chunks/run-De07GUeT.js';\nrun(process.argv.slice(2));\n"
+    },
+    {
+      "path": "dist/chunks/run-De07GUeT.js",
+      "size": 5398,
+      "sha256": "2e66880be81d19be",
+      "flags": [],
+      "textSample": "import { execFileSync } from 'node:child_process';\nconst colorEnabled = !process.env.NO_COLOR;\nexport function gitHead(cwd) { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim(); }\nexport async function latestVersion(name) { const res = await fetch(`https://registry.npmjs.org/${name}/latest`); return (await res.json()).version; }\nexport function paint(text) { return colorEnabled ? `\\u001b[1m${text}\\u001b[22m` : text; }\nexport function formatColumn0(rows) { return rows.map((row) => String(row[0] ?? '')).join('\\t'); }\nexport function formatColumn1(rows) { return rows.map((row) => String(row[1] ?? '')).join('\\t'); }\nexport function formatColumn2(rows) { return rows.map((row) => String(row[2] ?? '')).join('\\t'); }\nexport function formatColumn3(rows) { return rows.map((row) => String(row[3] ?? '')).join('\\t'); }\nexport function formatColumn4(rows) { return rows.map((row) => String(row[4] ?? '')).join('\\t'); }\nexport function formatColumn5(rows) { return rows.map((row) => String(row[5] ?? '')).join('\\t'); }\nexport function formatColumn6(rows) { return rows.map((row) => String(row[6] ?? '')).join('\\t'); }\nexport function formatColumn7(rows) { return rows.map((row) => String(row[7] ?? '')).join('\\t'); }\nexport function formatColumn8(rows) { return rows.map((row) => String(row[8] ?? '')).join('\\t'); }\nexport function formatColumn9(rows) { return rows.map((row) => String(row[9] ?? '')).join('\\t'); }\nexport function formatColumn10(rows) { return rows.map((row) => String(row[10] ?? '')).join('\\t'); }\nexport function formatColumn11(rows) { return rows.map((row) => String(row[11] ?? '')).join('\\t'); }\nexport function formatColumn12(rows) { return rows.map((row) => String(row[12] ?? '')).join('\\t'); }\nexport function formatColumn13(rows) { return rows.map((row) => String(row[13] ?? '')).join('\\t'); }\nexport function formatColumn14(rows) { return rows.map((row) => String(row[14] ?? '')).join('\\t'); }\nexport function formatColumn15(rows) { return rows.map((row) => String(row[15] ?? '')).join('\\t'); }\nexport function formatColumn16(rows) { return rows.map((row) => String(row[16] ?? '')).join('\\t'); }\nexport function formatColumn17(rows) { return rows.map((row) => String(row[17] ?? '')).join('\\t'); }\nexport function formatColumn18(rows) { return rows.map((row) => String(row[18] ?? '')).join('\\t'); }\nexport function formatColumn19(rows) { return rows.map((row) => String(row[19] ?? '')).join('\\t'); }\nexport function formatColumn20(rows) { return rows.map((row) => String(row[20] ?? '')).join('\\t'); }\nexport function formatColumn21(rows) { return rows.map((row) => String(row[21] ?? '')).join('\\t'); }\nexport function formatColumn22(rows) { return rows.map((row) => String(row[22] ?? '')).join('\\t'); }\nexport function formatColumn23(rows) { return rows.map((row) => String(row[23] ?? '')).join('\\t'); }\nexport function formatColumn24(rows) { return rows.map((row) => String(row[24] ?? '')).join('\\t'); }\nexport function formatColumn25(rows) { return rows.map((row) => String(row[25] ?? '')).join('\\t'); }\nexport function formatColumn26(rows) { return rows.map((row) => String(row[26] ?? '')).join('\\t'); }\nexport function formatColumn27(rows) { return rows.map((row) => String(row[27] ?? '')).join('\\t'); }\nexport function formatColumn28(rows) { return rows.map((row) => String(row[28] ?? '')).join('\\t'); }\nexport function formatColumn29(rows) { return rows.map((row) => String(row[29] ?? '')).join('\\t'); }\nexport function formatColumn30(rows) { return rows.map((row) => String(row[30] ?? '')).join('\\t'); }\nexport function formatColumn31(rows) { return rows.map((row) => String(row[31] ?? '')).join('\\t'); }\nexport function formatColumn32(rows) { return rows.map((row) => String(row[32] ?? '')).join('\\t'); }\nexport function formatColumn33(rows) { return rows.map((row) => String(row[33] ?? '')).join('\\t'); }\nexport function formatColumn34(rows) { return rows.map((row) => String(row[34] ?? '')).join('\\t'); }\nexport function formatColumn35(rows) { return rows.map((row) => String(row[35] ?? '')).join('\\t'); }\nexport function formatColumn36(rows) { return rows.map((row) => String(row[36] ?? '')).join('\\t'); }\nexport function formatColumn37(rows) { return rows.map((row) => String(row[37] ?? '')).join('\\t'); }\nexport function formatColumn38(rows) { return rows.map((row) => String(row[38] ?? '')).join('\\t'); }\nexport function formatColumn39(rows) { return rows.map((row) => String(row[39] ?? '')).join('\\t'); }\nexport function formatColumn40(rows) { return rows.map((row) => String(row[40] ?? '')).join('\\t'); }\nexport function formatColumn41(rows) { return rows.map((row) => String(row[41] ?? '')).join('\\t'); }\nexport function formatColumn42(rows) { return rows.map((row) => String(row[42] ?? '')).join('\\t'); }\nexport function formatColumn43(rows) { return rows.map((row) => String(row[43] ?? '')).join('\\t'); }\nexport function formatColumn44(rows) { return rows.map((row) => String(row[44] ?? '')).join('\\t'); }\nexport function formatColumn45(rows) { return rows.map((row) => String(row[45] ?? '')).join('\\t'); }\nexport function formatColumn46(rows) { return rows.map((row) => String(row[46] ?? '')).join('\\t'); }\nexport function formatColumn47(rows) { return rows.map((row) => String(row[47] ?? '')).join('\\t'); }\n\nexport const VERSION = '3.4.0';\nexport function run(argv) { console.log(paint(`bundled-cli ${VERSION}`), argv.length); }\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 157,
+      "sha256": "3ea40af4fe17d586",
+      "flags": [],
+      "textSample": "{\n  \"name\": \"@example/bundled-cli\",\n  \"version\": \"3.4.1\",\n  \"type\": \"module\",\n  \"bin\": {\n    \"bundled-cli\": \"dist/cli.js\"\n  },\n  \"files\": [\n    \"dist\"\n  ]\n}\n"
+    },
+    {
+      "path": "dist/cli.js",
+      "size": 96,
+      "sha256": "f2dac626edf9f258",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nimport { run } from './chunks/run-CGfpMDSb.js';\nrun(process.argv.slice(2));\n"
+    },
+    {
+      "path": "dist/chunks/run-CGfpMDSb.js",
+      "size": 5497,
+      "sha256": "e6790c1a54d2fe8a",
+      "flags": [],
+      "textSample": "import { execFileSync } from 'node:child_process';\nconst colorEnabled = !process.env.NO_COLOR;\nexport function gitHead(cwd) { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim(); }\nexport async function latestVersion(name) { const res = await fetch(`https://registry.npmjs.org/${name}/latest`); return (await res.json()).version; }\nexport function paint(text) { return colorEnabled ? `\\u001b[1m${text}\\u001b[22m` : text; }\nexport function formatColumn0(rows) { return rows.map((row) => String(row[0] ?? '')).join('\\t'); }\nexport function formatColumn1(rows) { return rows.map((row) => String(row[1] ?? '')).join('\\t'); }\nexport function formatColumn2(rows) { return rows.map((row) => String(row[2] ?? '')).join('\\t'); }\nexport function formatColumn3(rows) { return rows.map((row) => String(row[3] ?? '')).join('\\t'); }\nexport function formatColumn4(rows) { return rows.map((row) => String(row[4] ?? '')).join('\\t'); }\nexport function formatColumn5(rows) { return rows.map((row) => String(row[5] ?? '')).join('\\t'); }\nexport function formatColumn6(rows) { return rows.map((row) => String(row[6] ?? '')).join('\\t'); }\nexport function formatColumn7(rows) { return rows.map((row) => String(row[7] ?? '')).join('\\t'); }\nexport function formatColumn8(rows) { return rows.map((row) => String(row[8] ?? '')).join('\\t'); }\nexport function formatColumn9(rows) { return rows.map((row) => String(row[9] ?? '')).join('\\t'); }\nexport function formatColumn10(rows) { return rows.map((row) => String(row[10] ?? '')).join('\\t'); }\nexport function formatColumn11(rows) { return rows.map((row) => String(row[11] ?? '')).join('\\t'); }\nexport function formatColumn12(rows) { return rows.map((row) => String(row[12] ?? '')).join('\\t'); }\nexport function formatColumn13(rows) { return rows.map((row) => String(row[13] ?? '')).join('\\t'); }\nexport function formatColumn14(rows) { return rows.map((row) => String(row[14] ?? '')).join('\\t'); }\nexport function formatColumn15(rows) { return rows.map((row) => String(row[15] ?? '')).join('\\t'); }\nexport function formatColumn16(rows) { return rows.map((row) => String(row[16] ?? '')).join('\\t'); }\nexport function formatColumn17(rows) { return rows.map((row) => String(row[17] ?? '')).join('\\t'); }\nexport function formatColumn18(rows) { return rows.map((row) => String(row[18] ?? '')).join('\\t'); }\nexport function formatColumn19(rows) { return rows.map((row) => String(row[19] ?? '')).join('\\t'); }\nexport function formatColumn20(rows) { return rows.map((row) => String(row[20] ?? '')).join('\\t'); }\nexport function formatColumn21(rows) { return rows.map((row) => String(row[21] ?? '')).join('\\t'); }\nexport function formatColumn22(rows) { return rows.map((row) => String(row[22] ?? '')).join('\\t'); }\nexport function formatColumn23(rows) { return rows.map((row) => String(row[23] ?? '')).join('\\t'); }\nexport function formatColumn24(rows) { return rows.map((row) => String(row[24] ?? '')).join('\\t'); }\nexport function formatColumn25(rows) { return rows.map((row) => String(row[25] ?? '')).join('\\t'); }\nexport function formatColumn26(rows) { return rows.map((row) => String(row[26] ?? '')).join('\\t'); }\nexport function formatColumn27(rows) { return rows.map((row) => String(row[27] ?? '')).join('\\t'); }\nexport function formatColumn28(rows) { return rows.map((row) => String(row[28] ?? '')).join('\\t'); }\nexport function formatColumn29(rows) { return rows.map((row) => String(row[29] ?? '')).join('\\t'); }\nexport function formatColumn30(rows) { return rows.map((row) => String(row[30] ?? '')).join('\\t'); }\nexport function formatColumn31(rows) { return rows.map((row) => String(row[31] ?? '')).join('\\t'); }\nexport function formatColumn32(rows) { return rows.map((row) => String(row[32] ?? '')).join('\\t'); }\nexport function formatColumn33(rows) { return rows.map((row) => String(row[33] ?? '')).join('\\t'); }\nexport function formatColumn34(rows) { return rows.map((row) => String(row[34] ?? '')).join('\\t'); }\nexport function formatColumn35(rows) { return rows.map((row) => String(row[35] ?? '')).join('\\t'); }\nexport function formatColumn36(rows) { return rows.map((row) => String(row[36] ?? '')).join('\\t'); }\nexport function formatColumn37(rows) { return rows.map((row) => String(row[37] ?? '')).join('\\t'); }\nexport function formatColumn38(rows) { return rows.map((row) => String(row[38] ?? '')).join('\\t'); }\nexport function formatColumn39(rows) { return rows.map((row) => String(row[39] ?? '')).join('\\t'); }\nexport function formatColumn40(rows) { return rows.map((row) => String(row[40] ?? '')).join('\\t'); }\nexport function formatColumn41(rows) { return rows.map((row) => String(row[41] ?? '')).join('\\t'); }\nexport function formatColumn42(rows) { return rows.map((row) => String(row[42] ?? '')).join('\\t'); }\nexport function formatColumn43(rows) { return rows.map((row) => String(row[43] ?? '')).join('\\t'); }\nexport function formatColumn44(rows) { return rows.map((row) => String(row[44] ?? '')).join('\\t'); }\nexport function formatColumn45(rows) { return rows.map((row) => String(row[45] ?? '')).join('\\t'); }\nexport function formatColumn46(rows) { return rows.map((row) => String(row[46] ?? '')).join('\\t'); }\nexport function formatColumn47(rows) { return rows.map((row) => String(row[47] ?? '')).join('\\t'); }\nexport function formatDuration(ms) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`; }\nexport const VERSION = '3.4.1';\nexport function run(argv) { console.log(paint(`bundled-cli ${VERSION}`), argv.length); }\n"
+    }
+  ]
+}

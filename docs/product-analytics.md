@@ -70,7 +70,7 @@ scan, after the response through `waitUntil`, so the write can neither slow nor
 fail the read (`server/lib/scan/report-view.ts`, `server/db/scan-views.ts`).
 Loads of queued, running, or failed reviews have no report and are not views.
 Public share links, `/diff`, the report export, and the status poll are other
-surfaces and record nothing. Four columns on `scans` (migration `0040`):
+surfaces and record nothing. Four columns on `scans` (migration `0040_futuristic_zombie`):
 
 - `report_first_viewed_at` / `report_last_viewed_at` — first and latest load.
 - `report_view_count` — loads, including reloads and the load that follows a
@@ -282,6 +282,14 @@ whether a Drydock decision was already recorded (`decided` / `undecided`);
 load came before publication is usually not known yet when it happens, so the
 event does not claim it; read that from the ops snapshot.
 
+**`blob8` on `public_diff.viewed` is the client.** `dependency-pr` is the
+dependency-PR comment workflow fetching a pair from CI, once per PR push
+(`docs/dependency-pr-diff-links.md`). Everything else is `other`. Filter
+`blob8 != 'dependency-pr'` for people reading diffs. The value comes from the
+caller's `x-drydock-client` header, so it separates traffic shapes and proves
+nothing. Rows written before the dimension existed have no `blob8`, and the
+workflow did not fetch summaries then.
+
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at
 medium and `displayedAiResult` refuses to render it as "low risk / nothing
@@ -354,7 +362,9 @@ agent attempt can report zero steps when the provider supplies no usage, so use
 AI Gateway request metrics as the exact RPM source and Analytics Engine as the
 privacy-preserving routing/fallback source. Keep Gateway metadata logging and
 the per-request one-attempt override enabled, but keep payload collection off so
-private package evidence is never retained in request or response logs.
+private package evidence is never retained in request or response logs. Every
+request enforces that itself with `cf-aig-collect-log-payload: false`, so a
+dashboard setting cannot turn payload logging back on.
 
 ## Optional binding
 
@@ -365,6 +375,7 @@ emits one. Local dev, the test suite, and self-hosted deployments that omit the
 block in `docs/examples/wrangler.self-host.jsonc` behave exactly as they did before.
 
 `publication.discrepancy` counts first-created publication alerts. Its positional
-payload is organization, ecosystem, discrepancy status, and zero duration; it contains
+payload is organization, ecosystem, discrepancy status, the observation's reason code
+(empty when none, e.g. `ai_flagged_without_decision`), and zero duration; it contains
 no package name, tarball content, or credentials. Rechecks and acknowledgments do not
 increment it.

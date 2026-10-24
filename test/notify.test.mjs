@@ -839,6 +839,30 @@ describe("notifyPublicationDiscrepancy", () => {
       "undecided review of these exact bytes",
     ],
     [
+      "published_without_approval",
+      "reviewed_risk_without_decision",
+      "Published with no approval in Acme Corp",
+      "Drydock's undecided review of these exact bytes graded the release above low risk: decide it, or investigate if nobody here published it.",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_ungated_without_decision",
+      "Published with no approval in Acme Corp",
+      "Drydock's undecided review of these exact bytes found the stage not bound to an approved gate review: decide it",
+    ],
+    [
+      "published_without_approval",
+      "reviewed_ai_unfinished_without_decision",
+      "Published with no approval in Acme Corp",
+      "Drydock's undecided review of these exact bytes has an AI review that did not finish: decide it",
+    ],
+    [
+      "published_without_approval",
+      "ai_flagged_without_decision",
+      "AI reviewer flagged a release published with no approval in Acme Corp",
+      "Drydock's AI reviewer flagged risk in these exact bytes. Investigate whether someone here published it, then decide the review.",
+    ],
+    [
       "published_despite_rejection",
       "rejected_after_publication",
       "Rejected in Acme Corp after it was published",
@@ -860,6 +884,22 @@ describe("notifyPublicationDiscrepancy", () => {
       input.db,
       expect.objectContaining({ metadata: expect.objectContaining({ status, reason }) }),
     );
+  });
+
+  test("titles an AI-flagged release as such on Slack too", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+    await notifyPublicationDiscrepancy({
+      ...input,
+      status: "published_without_approval",
+      reason: "ai_flagged_without_decision",
+    });
+    const [payload] = slackMock.renderSlackMessage.mock.calls.at(-1);
+    expect(payload).toMatchObject({
+      title: "AI reviewer flagged a release published with no approval in Acme Corp",
+      statusLine: expect.stringContaining(
+        "Drydock's AI reviewer flagged risk in these exact bytes.",
+      ),
+    });
   });
 
   test("advises approving before npm only for a review that could still be decided", async () => {
