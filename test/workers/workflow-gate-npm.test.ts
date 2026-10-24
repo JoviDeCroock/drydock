@@ -76,6 +76,15 @@ describe("workflow-gate registry with npm registered", () => {
     expect(supportedWorkflowGateEcosystems()).toEqual(expect.arrayContaining(["pypi", "npm"]));
   });
 
+  test("only PyPI gate reviews request a detonation run", () => {
+    // The sandbox runs npm from a stage, not from a gate artifact.
+    expect(
+      supportedWorkflowGateEcosystems().filter(
+        (id) => getWorkflowGateAdapter(id).detonatesReviewedPackages,
+      ),
+    ).toEqual(["pypi"]);
+  });
+
   test("tags an ambiguous .tgz with the archive sentinel, a .whl with pypi", () => {
     expect(classifyBundleArtifact("dist/pkg-1.0.0.tgz")).toEqual({
       ecosystem: AMBIGUOUS_ARCHIVE_ECOSYSTEM,

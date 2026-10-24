@@ -8,6 +8,7 @@ import {
   wheelScore,
   type PyPiProvenanceArtifact,
 } from "../server/lib/detonation/pypi";
+import { DETONATION_PREPARE_TIMEOUT_MS } from "../server/lib/detonation/types";
 
 const harness = await import("../containers/detonation/pypi.mjs");
 
@@ -192,6 +193,67 @@ describe("dependencies of the reviewed wheel", () => {
       requirements: ["requests (>=2.0)", 'tomli ; python_version < "3.11"'],
       dropped: 3,
     });
+  });
+});
+
+describe("pip invocations during prepare", () => {
+  const optionsOf = (argv: string[]) => argv.slice(0, argv.indexOf("--target") + 2);
+
+  test.each([
+    ["the reviewed wheel", harness.reviewedWheelPipArgs("/work/dist/demo-1.0-py3-none-any.whl")],
+    ["its dependencies", ["requests (>=2.0)", 'tomli ; python_version < "3.11"']],
+    ["the sdist build environment", ["setuptools>=40.8.0", "wheel"]],
+    ["an empty requirement list", []],
+  ])("%s: isolated interpreter, wheels only, public index", (_name, args) => {
+    const argv = harness.pipInstallArgv("/work/venv/lib/python3.11/site-packages", args);
+    expect(argv.slice(0, 5)).toEqual([harness.INSTALLER_PYTHON, "-I", "-m", "pip", "install"]);
+    const options = optionsOf(argv);
+    expect(options[options.indexOf("--only-binary") + 1]).toBe(":all:");
+    expect(options[options.indexOf("--index-url") + 1]).toBe(harness.PYPI_INDEX);
+    expect(harness.PYPI_INDEX).toBe("https://pypi.org/simple/");
+    expect(options).not.toContain("--no-binary");
+    expect(options).not.toContain("--extra-index-url");
+    // Caller arguments come after every option, so none can override one.
+    expect(argv.slice(options.length)).toEqual(args);
+  });
+
+  test("the reviewed wheel is installed without resolving its dependencies", () => {
+    expect(harness.reviewedWheelPipArgs("/work/dist/demo-1.0-py3-none-any.whl")).toEqual([
+      "--no-deps",
+      "/work/dist/demo-1.0-py3-none-any.whl",
+    ]);
+  });
+
+  test("every requirement handed to pip starts like a name, never an option", () => {
+    const { requirements } = harness.requiresDist(
+      ["Requires-Dist: --no-binary=:all:", "Requires-Dist: -e .", "Requires-Dist: ok"].join("\n"),
+    );
+    expect(requirements).toEqual(["ok"]);
+    const { requires } = harness.narrowBuildSystem({
+      requires: ["--only-binary=:none:", "setuptools"],
+      backend: "setuptools.build_meta",
+    });
+    expect(requires).toEqual(["setuptools"]);
+  });
+});
+
+describe("PyPI prepare budget", () => {
+  test("leaves the harness time to answer inside the parent's prepare window", () => {
+    expect(harness.PYPI_PREPARE_BUDGET_MS).toBeLessThanOrEqual(
+      DETONATION_PREPARE_TIMEOUT_MS - 30_000,
+    );
+  });
+
+  test("each step gets the smaller of its cap and what is left, then nothing", () => {
+    let now = 1_000;
+    const budget = harness.createPrepareBudget(100_000, () => now);
+    expect(budget(60_000)).toBe(60_000);
+    now += 60_000;
+    expect(budget(60_000)).toBe(40_000);
+    now += 40_000;
+    expect(budget(10_000)).toBe(0);
+    now += 5_000;
+    expect(budget(10_000)).toBe(0);
   });
 });
 

@@ -25,6 +25,7 @@ import {
 } from "./platform/observability";
 import { recordProductEvent } from "./analytics";
 import { maybeRequestDetonationAfterScan } from "./detonation/job";
+import { getEcosystem } from "./ecosystems";
 import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
 import {
   type PreparedGatePackage,
@@ -328,11 +329,11 @@ export async function executeWorkflowGateJob(
     return;
   }
 
-  // Beta detonation of the reviewed PyPI distributions. It only enqueues on
-  // its own queue after the review is ready, so it never holds the gate, and
-  // its result is advisory: a maintainer may decide before it finishes.
+  // Beta detonation of reviewed packages whose ecosystem supports it. It only
+  // enqueues on its own queue after the review is ready, so it never holds the
+  // gate, and its result is advisory: a maintainer may decide before it finishes.
   for (const pkg of reviewed) {
-    if (pkg.ecosystem !== "pypi") continue;
+    if (!getEcosystem(pkg.ecosystem)?.gate?.detonatesReviewedPackages) continue;
     executionCtx.waitUntil(
       maybeRequestDetonationAfterScan(env, executionCtx, db, {
         scanId: pkg.scanId,

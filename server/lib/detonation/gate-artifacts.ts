@@ -7,16 +7,13 @@ import { getGateForOrganization } from "../github-app/webhook-gates";
 import { selectBundleClassifier } from "../workflow-gates/prepare";
 
 export type GateArtifactFetchResult =
-  | { status: "ok"; files: Map<string, Uint8Array> }
-  | { status: "too_large" | "digest_mismatch" | "unavailable" };
+  /** `oversized` holds the wanted paths over `maxFileBytes`: verified, not kept. */
+  | { status: "ok"; files: Map<string, Uint8Array>; oversized: Set<string> }
+  | { status: "digest_mismatch" | "unavailable" };
 
 /** Stops the bundle walk once every wanted file is in hand. */
 class CollectedEverything extends Error {}
-class FetchRefused extends Error {
-  constructor(readonly status: "too_large" | "digest_mismatch") {
-    super(status);
-  }
-}
+class DigestMismatch extends Error {}
 
 /**
  * Downloads a workflow gate's GitHub Actions artifacts again and returns the
@@ -26,7 +23,9 @@ class FetchRefused extends Error {
  * same `processReleaseBundleForGate` path the review used; only the returned
  * bytes go on to the container. Every file must hash to the digest the scan
  * recorded, or nothing is returned: GitHub artifacts are immutable, so a
- * mismatch means the run would not execute what was reviewed.
+ * mismatch means the run would not execute what was reviewed. A file over
+ * `maxFileBytes` is reported in `oversized` rather than failing the fetch, so
+ * the caller can still run the files that fit.
  *
  * This never writes gate state. The gate may be decided, or still waiting on
  * a maintainer; a detonation must neither hold nor move it.
@@ -38,10 +37,10 @@ export async function fetchGateReleaseFiles(
     organizationId: string;
     gateId: string;
     wanted: ReadonlyMap<string, string>;
-    maxBytes: number;
+    maxFileBytes: number;
   },
 ): Promise<GateArtifactFetchResult> {
-  const { organizationId, gateId, wanted, maxBytes } = input;
+  const { organizationId, gateId, wanted, maxFileBytes } = input;
   if (wanted.size === 0) return { status: "unavailable" };
   let config;
   try {
@@ -75,7 +74,7 @@ export async function fetchGateReleaseFiles(
   if (!releaseTarget) return { status: "unavailable" };
 
   const found = new Map<string, Uint8Array>();
-  let total = 0;
+  const oversized = new Set<string>();
   try {
     const { classify, artifactName, artifactNamePrefix } = selectBundleClassifier(releaseTarget);
     await processReleaseBundleForGate(
@@ -90,17 +89,18 @@ export async function fetchGateReleaseFiles(
       classify,
       async (file) => {
         const expected = wanted.get(file.path);
-        if (expected === undefined || found.has(file.path)) return null;
-        if (file.sha256 !== expected) throw new FetchRefused("digest_mismatch");
-        total += file.bytes.byteLength;
-        if (total > maxBytes) throw new FetchRefused("too_large");
-        found.set(file.path, file.bytes);
-        if (found.size === wanted.size) throw new CollectedEverything();
+        if (expected === undefined || found.has(file.path) || oversized.has(file.path)) {
+          return null;
+        }
+        if (file.sha256 !== expected) throw new DigestMismatch();
+        if (file.bytes.byteLength > maxFileBytes) oversized.add(file.path);
+        else found.set(file.path, file.bytes);
+        if (found.size + oversized.size === wanted.size) throw new CollectedEverything();
         return null;
       },
     );
   } catch (err) {
-    if (err instanceof FetchRefused) return { status: err.status };
+    if (err instanceof DigestMismatch) return { status: "digest_mismatch" };
     if (!(err instanceof CollectedEverything)) {
       // The same path with two different payloads across shards is the one
       // bundle error that says the bytes are not the reviewed ones.
@@ -109,5 +109,7 @@ export async function fetchGateReleaseFiles(
         : { status: "unavailable" };
     }
   }
-  return found.size === wanted.size ? { status: "ok", files: found } : { status: "unavailable" };
+  return found.size + oversized.size === wanted.size
+    ? { status: "ok", files: found, oversized }
+    : { status: "unavailable" };
 }

@@ -1384,6 +1384,32 @@ describe("PyPI gate detonation", () => {
     expect(scan?.scan.risk).toBe("low");
   });
 
+  test("drops an sdist over the sandbox limit and still runs the wheel", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9308",
+      repositoryId: 73008,
+      runId: 30308,
+    });
+    const bigSdist = new Uint8Array(16 * 1024 * 1024 + 1).fill(0x61);
+    const wheelSha = await sha256Hex(WHEEL_BYTES);
+    const scanId = await seedPyPiGateScan(seeded, [
+      { path: WHEEL_PATH, kind: "wheel", sha256: wheelSha },
+      { path: SDIST_PATH, kind: "sdist", sha256: await sha256Hex(bigSdist) },
+    ]);
+    await stubReleaseBundle(30308, [
+      { path: WHEEL_PATH, bytes: WHEEL_BYTES },
+      { path: SDIST_PATH, bytes: bigSdist },
+    ]);
+    const sandbox = fakePyPiSandbox();
+
+    const row = await runQueued(seeded, scanId, sandbox);
+
+    expect(sandbox.received.map((files) => files.map(({ kind }) => kind))).toEqual([["wheel"]]);
+    expect(row?.status).toBe("complete");
+    const result = row?.resultJson as DetonationResult;
+    expect(result.artifacts).toEqual([{ path: WHEEL_PATH, sha256: wheelSha, role: "wheel" }]);
+  });
+
   test("refuses to run when the refetched wheel is not the one the review read", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9302",

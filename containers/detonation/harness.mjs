@@ -24,18 +24,20 @@ import {
   BUILD_ENV,
   BUILD_OUT,
   BUILD_SYSTEM_READER,
+  createPrepareBudget,
   decodePyPiBundle,
   DIST_DIR,
   findDistInfo,
-  INSTALLER_PYTHON,
   narrowBuildSystem,
   OBSERVER_PTH,
   OBSERVER_PTH_NAME,
   parseEntryPoints,
   PIP_CACHE,
+  pipInstallArgv,
   planPyPiSteps,
-  PYPI_INDEX,
+  PYPI_PREPARE_BUDGET_MS,
   requiresDist,
+  reviewedWheelPipArgs,
   RUN_DIR,
   SDIST_DIR,
   SYSTEM_PYTHON,
@@ -134,8 +136,8 @@ const STRACE_ARGS = [
 
 // pip runs from the root-owned installer venv with `--target` into the run's
 // site directory, so the installer's own interpreter never processes a `.pth`
-// the package installed there. Budgets keep the whole PyPI prepare inside the
-// parent's 150 s window.
+// the package installed there. Each cap bounds one step; together they draw on
+// `PYPI_PREPARE_BUDGET_MS`, so their sum may exceed it.
 const VENV_CREATE_TIMEOUT_MS = 10_000;
 const PIP_INSTALL_TIMEOUT_MS = 60_000;
 const PIP_NO_DEPS_TIMEOUT_MS = 15_000;
@@ -378,6 +380,7 @@ function prepare(tarball) {
  * @returns {import("../../server/lib/detonation/types.ts").HarnessPrepareResponse}
  */
 function preparePyPi(files) {
+  const budget = createPrepareBudget(PYPI_PREPARE_BUDGET_MS);
   installCloudflareCa();
   fs.mkdirSync(WORK_DIR, { recursive: true, mode: 0o755 });
   fs.mkdirSync(TRACE_DIR, { recursive: true, mode: 0o700 });
@@ -414,25 +417,21 @@ function preparePyPi(files) {
 
   /** @type {HarnessCoverage["dependencyInstall"]} */
   let dependencyInstall = "failed";
-  const siteDir = createVenv();
+  const siteDir = createVenv(budget);
   if (wheel && identity && siteDir) {
     info.siteDir = siteDir;
     const wheelPath = path.join(DIST_DIR, wheel.name);
     // The wheel goes in alone, then only its index-resolvable dependencies
     // (see `requiresDist`). A dependency with no binary wheel fails that
     // second resolution; the reviewed wheel still runs its own code.
-    runPip(["--no-deps", wheelPath], siteDir, PIP_NO_DEPS_TIMEOUT_MS);
+    runPip(reviewedWheelPipArgs(wheelPath), siteDir, budget(PIP_NO_DEPS_TIMEOUT_MS));
     const distInfo = findDistInfo(safeReaddir(siteDir), identity);
     info.installed = distInfo !== null;
     if (distInfo !== null) {
       const deps = requiresDist(readTextHead(path.join(siteDir, distInfo, "METADATA")));
       const depsInstalled =
         deps.requirements.length === 0 ||
-        runPip(
-          ["--only-binary", ":all:", ...deps.requirements],
-          siteDir,
-          PIP_INSTALL_TIMEOUT_MS,
-        ) === 0;
+        runPip(deps.requirements, siteDir, budget(PIP_INSTALL_TIMEOUT_MS)) === 0;
       dependencyInstall = depsInstalled && deps.dropped === 0 ? "complete" : "partial";
       info.modules = topLevelModules(
         readSmallText(path.join(siteDir, distInfo, "RECORD")),
@@ -445,17 +444,15 @@ function preparePyPi(files) {
   }
 
   if (sdist) {
-    const root = extractSdist(path.join(DIST_DIR, sdist.name));
+    const root = extractSdist(path.join(DIST_DIR, sdist.name), budget(SDIST_EXTRACT_TIMEOUT_MS));
     if (root !== null) {
-      const buildSystem = narrowBuildSystem(readBuildSystem(path.join(root, "pyproject.toml")));
+      const buildSystem = narrowBuildSystem(
+        readBuildSystem(path.join(root, "pyproject.toml"), budget(BUILD_SYSTEM_TIMEOUT_MS)),
+      );
       if (buildSystem.backend) {
         const requirementsReady =
           buildSystem.requires.length === 0 ||
-          runPip(
-            ["--only-binary", ":all:", ...buildSystem.requires],
-            BUILD_ENV,
-            BUILD_ENV_TIMEOUT_MS,
-          ) === 0;
+          runPip(buildSystem.requires, BUILD_ENV, budget(BUILD_ENV_TIMEOUT_MS)) === 0;
         info.build = {
           root,
           backend: buildSystem.backend,
@@ -503,8 +500,14 @@ function sdistDistribution(filename) {
   return dash > 0 ? stem.slice(0, dash) : null;
 }
 
-/** Creates the run's venv and returns its site directory. Nothing is installed in it yet. */
-function createVenv() {
+/**
+ * Creates the run's venv and returns its site directory. Nothing is installed in it yet.
+ *
+ * @param {(capMs: number) => number} budget
+ */
+function createVenv(budget) {
+  const createMs = budget(VENV_CREATE_TIMEOUT_MS);
+  if (createMs <= 0) return null;
   const created = spawnSync(
     DROP_PRIVILEGES[0],
     [...DROP_PRIVILEGES.slice(1), SYSTEM_PYTHON, "-I", "-m", "venv", "--without-pip", VENV_DIR],
@@ -512,11 +515,13 @@ function createVenv() {
       cwd: WORK_DIR,
       env: pythonPrepareEnv(),
       stdio: "ignore",
-      timeout: VENV_CREATE_TIMEOUT_MS,
+      timeout: createMs,
       killSignal: "SIGKILL",
     },
   );
   if (created.status !== 0) return null;
+  const purelibMs = budget(VENV_CREATE_TIMEOUT_MS);
+  if (purelibMs <= 0) return null;
   const purelib = spawnSync(
     DROP_PRIVILEGES[0],
     [
@@ -530,7 +535,7 @@ function createVenv() {
       cwd: WORK_DIR,
       env: pythonPrepareEnv(),
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: VENV_CREATE_TIMEOUT_MS,
+      timeout: purelibMs,
       killSignal: "SIGKILL",
     },
   );
@@ -554,36 +559,19 @@ function pythonPrepareEnv() {
 }
 
 /**
- * pip as the package user from the installer venv, into `target`, resolving
- * only from the public index. Returns the exit status.
+ * pip as the package user from the installer venv, into `target` (argv from
+ * `pipInstallArgv`). Returns the exit status, or null when the prepare budget
+ * is spent: spawnSync reads a 0 timeout as none, so 0 never reaches it.
  *
  * @param {string[]} args
  * @param {string} target
  * @param {number} timeoutMs
  */
 function runPip(args, target, timeoutMs) {
+  if (timeoutMs <= 0) return null;
   const result = spawnSync(
     DROP_PRIVILEGES[0],
-    [
-      ...DROP_PRIVILEGES.slice(1),
-      INSTALLER_PYTHON,
-      "-I",
-      "-m",
-      "pip",
-      "install",
-      "--no-input",
-      "--disable-pip-version-check",
-      "--no-warn-script-location",
-      "--progress-bar",
-      "off",
-      "--cache-dir",
-      PIP_CACHE,
-      "--index-url",
-      PYPI_INDEX,
-      "--target",
-      target,
-      ...args,
-    ],
+    [...DROP_PRIVILEGES.slice(1), ...pipInstallArgv(target, args)],
     {
       cwd: WORK_DIR,
       env: pythonPrepareEnv(),
@@ -601,8 +589,10 @@ function runPip(args, target, timeoutMs) {
  * defers symlinks) and returns its single top-level directory, or null.
  *
  * @param {string} archive
+ * @param {number} timeoutMs
  */
-function extractSdist(archive) {
+function extractSdist(archive, timeoutMs) {
+  if (timeoutMs <= 0) return null;
   const result = spawnSync(
     DROP_PRIVILEGES[0],
     [
@@ -615,7 +605,7 @@ function extractSdist(archive) {
       "--no-same-owner",
       "--no-same-permissions",
     ],
-    { stdio: "ignore", timeout: SDIST_EXTRACT_TIMEOUT_MS, killSignal: "SIGKILL" },
+    { stdio: "ignore", timeout: timeoutMs, killSignal: "SIGKILL" },
   );
   killPackageUser();
   if (result.status !== 0) return null;
@@ -626,11 +616,11 @@ function extractSdist(archive) {
   return roots.length === 1 ? path.join(SDIST_DIR, roots[0]) : null;
 }
 
-/** @param {string} pyproject @returns {unknown} */
-function readBuildSystem(pyproject) {
+/** @param {string} pyproject @param {number} timeoutMs @returns {unknown} */
+function readBuildSystem(pyproject, timeoutMs) {
   const stat = fs.lstatSync(pyproject, { throwIfNoEntry: false });
   if (!stat) return null;
-  if (!stat.isFile()) return {};
+  if (!stat.isFile() || timeoutMs <= 0) return {};
   const result = spawnSync(
     DROP_PRIVILEGES[0],
     [...DROP_PRIVILEGES.slice(1), SYSTEM_PYTHON, "-I", BUILD_SYSTEM_READER, pyproject],
@@ -638,7 +628,7 @@ function readBuildSystem(pyproject) {
       cwd: WORK_DIR,
       env: pythonPrepareEnv(),
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: BUILD_SYSTEM_TIMEOUT_MS,
+      timeout: timeoutMs,
       maxBuffer: MAX_MANIFEST_BYTES,
       killSignal: "SIGKILL",
     },

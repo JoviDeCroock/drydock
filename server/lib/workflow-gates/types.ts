@@ -31,6 +31,12 @@ export interface WorkflowGateAdapter {
   readonly artifactName: string;
 
   readonly shardedArtifactNames?: boolean;
+  /**
+   * The beta detonation sandbox (`server/lib/detonation`) can run this
+   * ecosystem's reviewed gate artifacts, so the gate runner requests an
+   * advisory run once a review is attached.
+   */
+  readonly detonatesReviewedPackages?: boolean;
   readonly packageAdapter: AnyPackageAdapter;
 
   classifyArtifact(path: string): WorkflowArtifactKind | null;

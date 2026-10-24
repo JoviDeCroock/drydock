@@ -12,6 +12,13 @@
 
 export const DETONATION_HARNESS_VERSION = 1;
 
+/**
+ * How long the parent waits for the harness's prepare. The harness keeps its
+ * own prepare inside this with room to answer (`PYPI_PREPARE_BUDGET_MS` in
+ * containers/detonation/pypi.mjs).
+ */
+export const DETONATION_PREPARE_TIMEOUT_MS = 150_000;
+
 /** The ecosystem whose install and entry points a run drives. */
 export type DetonationEcosystem = "npm" | "pypi";
 

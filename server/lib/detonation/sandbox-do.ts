@@ -5,6 +5,7 @@ import { isRegistryWrite, type DetonationEgressProps } from "./egress";
 import { encodePyPiPrepareBundle } from "./pypi";
 import {
   DETONATION_HARNESS_VERSION,
+  DETONATION_PREPARE_TIMEOUT_MS,
   type DetonationEcosystem,
   type PyPiDetonationFile,
   type DetonationEgressEvent,
@@ -16,7 +17,6 @@ import {
 const HARNESS_PORT = 8080;
 const HARNESS_ORIGIN = "http://harness.drydock.internal";
 const STARTUP_TIMEOUT_MS = 60_000;
-const PREPARE_TIMEOUT_MS = 150_000;
 const STEP_TIMEOUT_MS = 30_000;
 const DETONATE_TIMEOUT_MS = 180_000;
 /** Slack between the harness's own budget and ours, so its report usually arrives first. */
@@ -169,7 +169,7 @@ export class DetonationSandbox extends DurableObject<Cloudflare.Env> {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: prepare.body,
-        signal: AbortSignal.timeout(PREPARE_TIMEOUT_MS),
+        signal: AbortSignal.timeout(DETONATION_PREPARE_TIMEOUT_MS),
       });
       if (!prepared.ok) throw new DetonationRunError("harness_failed");
       output.prepareJson = await readHarnessText(prepared);
