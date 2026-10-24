@@ -1,4 +1,5 @@
-import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./review/rules";
+import { DETERMINISTIC_RULES_VERSION } from "./review/rules";
+import { tag } from "./review/rules/helpers";
 import type { Finding } from "./review";
 import { RELEASE_PROCESS_FINDING_FILE } from "./release-fingerprint";
 
@@ -44,6 +45,8 @@ export type RegistryProvenance =
 
 export const PROVENANCE_UNKNOWN: RegistryProvenance = Object.freeze({ status: "unknown" });
 
+export type ProvenanceStatus = RegistryProvenance["status"];
+
 interface ProvenanceSide {
   version: string;
   provenance: RegistryProvenance;
@@ -54,6 +57,17 @@ export interface ProvenanceContinuityArgs {
   registry: string;
   baseline: ProvenanceSide;
   candidate: ProvenanceSide;
+  /**
+   * Provenance of the releases before the baseline in the candidate's channel,
+   * newest first (`provenanceLineage().prior`). A drop is medium only after
+   * `ESTABLISHED_PROVENANCE_RELEASES` attested releases in a row.
+   */
+  prior: ProvenanceStatus[];
+  /**
+   * What an absent candidate was read from. PyPI reads the files the diff
+   * selected, so its absence is about those files, not the whole release.
+   */
+  absenceScope?: "release" | "checked-files";
 }
 
 // Attested strings are publisher-influenced (a workflow path is whatever file
@@ -124,22 +138,132 @@ export function sameAttestedPublisher(a: AttestedPublisher, b: AttestedPublisher
   );
 }
 
+/**
+ * Attested releases in a row, the baseline included, before a drop is medium.
+ * Projects adopting provenance commonly ship one or two attested releases and
+ * then publish from a laptop again while CI settles; three matches
+ * `release.source-drift`'s history bar and is what an established attested
+ * release habit looks like.
+ */
+const ESTABLISHED_PROVENANCE_RELEASES = 3;
+
+/**
+ * The releases a candidate's provenance is judged against: the baseline it is
+ * compared with, and the releases before that baseline, newest first, up to
+ * the history the drop rule reads.
+ */
+export interface ProvenanceLineage {
+  baseline: string;
+  prior: string[];
+}
+
+export interface ProvenanceVersionScheme<P> {
+  parse(version: string): P | null;
+  compare(a: P, b: P): number;
+  isPrerelease(version: P): boolean;
+  /** Publish time in epoch ms, or null when the registry did not say. */
+  publishedAt(version: string): number | null;
+}
+
+/**
+ * Choose the provenance baseline and history for a candidate: earlier releases
+ * in its channel that were already published when it was.
+ *
+ * A stable release is judged against earlier stable releases: comparing it
+ * with its own CI-built prerelease would report a hand-published stable as a
+ * drop. A prerelease may follow a release of either channel. Publish time
+ * matters as much as version order: a maintenance line that adopted provenance
+ * after the next major shipped (4.22.3 published after 5.0.0) is not something
+ * 5.0.0 could have dropped. When the requested baseline fails either test, the
+ * highest qualifying release stands in. Returns null for a pair that is not
+ * forward or has no qualifying baseline.
+ */
+export function provenanceLineage<P>(
+  scheme: ProvenanceVersionScheme<P>,
+  versions: Iterable<string>,
+  baseline: string,
+  candidate: string,
+): ProvenanceLineage | null {
+  const candidateParsed = scheme.parse(candidate);
+  const baselineParsed = scheme.parse(baseline);
+  if (!candidateParsed || !baselineParsed) return null;
+  if (scheme.compare(candidateParsed, baselineParsed) <= 0) return null;
+  const stableOnly = !scheme.isPrerelease(candidateParsed);
+  const candidateTime = scheme.publishedAt(candidate);
+  const qualifies = (version: string, parsed: P) => {
+    if (scheme.compare(parsed, candidateParsed) >= 0) return false;
+    if (stableOnly && scheme.isPrerelease(parsed)) return false;
+    const time = scheme.publishedAt(version);
+    return candidateTime === null || time === null || time < candidateTime;
+  };
+  const channel: Array<{ version: string; parsed: P }> = [];
+  for (const version of new Set(versions)) {
+    const parsed = scheme.parse(version);
+    if (parsed && qualifies(version, parsed)) channel.push({ version, parsed });
+  }
+  channel.sort((a, b) => scheme.compare(b.parsed, a.parsed));
+  const effective = qualifies(baseline, baselineParsed)
+    ? { version: baseline, parsed: baselineParsed }
+    : channel[0];
+  if (!effective) return null;
+  return {
+    baseline: effective.version,
+    prior: channel
+      .filter((entry) => scheme.compare(entry.parsed, effective.parsed) < 0)
+      .slice(0, ESTABLISHED_PROVENANCE_RELEASES - 1)
+      .map((entry) => entry.version),
+  };
+}
+
+export interface ProvenanceContinuityOutcome {
+  findings: Finding[];
+  /**
+   * A read on either side or in the history was undetermined. A cached review
+   * must not let a transient registry failure stand in for the registry's
+   * answer for long.
+   */
+  unsettled: boolean;
+}
+
+export const PROVENANCE_NOT_EVALUATED: ProvenanceContinuityOutcome = Object.freeze({
+  findings: [],
+  unsettled: false,
+});
+
+export function evaluateProvenanceContinuity(
+  args: ProvenanceContinuityArgs,
+): ProvenanceContinuityOutcome {
+  return {
+    findings: provenanceContinuityFindings(args),
+    unsettled:
+      args.baseline.provenance.status === "unknown" ||
+      args.candidate.provenance.status === "unknown" ||
+      args.prior.includes("unknown"),
+  };
+}
+
 export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Finding[] {
   const { baseline, candidate } = args;
   if (baseline.provenance.status !== "present") return [];
 
   if (candidate.provenance.status === "absent") {
     const from = describePublishers(baseline.provenance.publishers);
+    const established = isEstablished(args.prior);
+    const scope =
+      args.absenceScope === "checked-files"
+        ? `for the checked files of ${candidate.version}`
+        : `for ${candidate.version}`;
     return [
-      {
-        severity: "medium",
-        file: RELEASE_PROCESS_FINDING_FILE,
-        evidence: `${args.registry} reports build provenance for ${baseline.version}${from ? ` (${from})` : ""} and none for the checked files of ${candidate.version}`,
-        reason:
-          "the previous release was published from an attested CI build and this one carries no provenance; a release published around CI with a stolen token has exactly this shape, but so does a maintainer publishing from their own machine or moving to CI that does not attest — confirm how this release was published",
-        ruleId: DETERMINISTIC_RULE_IDS.releaseProvenanceDropped,
-        ruleVersion: DETERMINISTIC_RULES_VERSION,
-      },
+      stamp(
+        tag("releaseProvenanceDropped", {
+          severity: established ? "medium" : "low",
+          file: RELEASE_PROCESS_FINDING_FILE,
+          evidence: `${args.registry} reports build provenance for ${baseline.version}${from ? ` (${from})` : ""}${established ? ` and the ${ESTABLISHED_PROVENANCE_RELEASES - 1} releases before it` : ""}, and none ${scope}`,
+          reason: established
+            ? "the previous releases were published from attested CI builds and this one carries no provenance; a release published around CI with a stolen token has exactly this shape, but so does a maintainer publishing from their own machine or moving to CI that does not attest — confirm how this release was published"
+            : `the previous release carried build provenance and this one does not, but provenance was not yet attested for ${ESTABLISHED_PROVENANCE_RELEASES} releases in a row, which is how a project still settling its release pipeline looks; context, not release risk`,
+        }),
+      ),
     ];
   }
 
@@ -151,10 +275,23 @@ export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Fi
 
   const newRepository = after.filter((p) => !before.some((b) => sameRepository(b, p)));
   if (newRepository.length) {
+    const evidence = `${args.registry} provenance for ${baseline.version} names ${describePublishers(before)}; ${candidate.version} names ${describePublishers(newRepository)}${repositoryIdNote(before, newRepository)}`;
+    // Without a stable id on both sides a rename cannot be told from a new
+    // repository by name alone (PyPI records none). The owner is the boundary
+    // an outside attacker cannot create repositories under.
+    if (newRepository.every((p) => before.some((b) => sameOwnerWithoutIds(b, p)))) {
+      return [
+        publisherChanged(
+          "low",
+          `${evidence} (same owner; no repository id recorded to tell a rename from a new repository)`,
+          "this release was built in a differently named repository under the same owner as the previous one; the registry records no stable repository id here, so this is usually a renamed repository or a moved release pipeline within the owner's account",
+        ),
+      ];
+    }
     return [
       publisherChanged(
         "medium",
-        `${args.registry} provenance for ${baseline.version} names ${describePublishers(before)}; ${candidate.version} names ${describePublishers(newRepository)}${repositoryIdNote(before, newRepository)}`,
+        evidence,
         "this release was built in a different source repository than the previous one; an attacker who cannot push to the real repository can still attest a build from one they control, so a repository change between releases is worth confirming with the maintainer before trusting this release",
       ),
     ];
@@ -179,15 +316,32 @@ export function provenanceContinuityFindings(args: ProvenanceContinuityArgs): Fi
   ];
 }
 
+function isEstablished(prior: ProvenanceStatus[]): boolean {
+  const needed = ESTABLISHED_PROVENANCE_RELEASES - 1;
+  return prior.length >= needed && prior.slice(0, needed).every((status) => status === "present");
+}
+
+// These findings are composed outside `deterministicFindings`, so the version
+// stamp it applies is applied here.
+function stamp(finding: Finding): Finding {
+  return { ...finding, ruleVersion: DETERMINISTIC_RULES_VERSION };
+}
+
 function publisherChanged(severity: "medium" | "low", evidence: string, reason: string): Finding {
-  return {
-    severity,
-    file: RELEASE_PROCESS_FINDING_FILE,
-    evidence,
-    reason,
-    ruleId: DETERMINISTIC_RULE_IDS.releaseProvenancePublisherChanged,
-    ruleVersion: DETERMINISTIC_RULES_VERSION,
-  };
+  return stamp(
+    tag("releaseProvenancePublisherChanged", {
+      severity,
+      file: RELEASE_PROCESS_FINDING_FILE,
+      evidence,
+      reason,
+    }),
+  );
+}
+
+function sameOwnerWithoutIds(a: AttestedPublisher, b: AttestedPublisher): boolean {
+  if (!sameText(a.provider, b.provider) || (a.repositoryId && b.repositoryId)) return false;
+  const owner = (p: AttestedPublisher) => p.repository.split("/").slice(0, 2).join("/");
+  return sameText(owner(a), owner(b));
 }
 
 // A stable id on both sides is authoritative: equal ids with different names

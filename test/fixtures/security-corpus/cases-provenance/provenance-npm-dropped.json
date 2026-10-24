@@ -2,10 +2,20 @@
   "id": "provenance-npm-dropped",
   "title": "npm release drops the build provenance its baseline carried",
   "category": "provenance-regression",
-  "intent": "The stolen-token shape: every earlier release came from attested CI, this one was published with no provenance. Pins the medium severity: legitimate local or non-attesting publishes look identical.",
+  "intent": "The stolen-token shape: the baseline and the two releases before it came from attested CI, this one was published with no provenance. Pins the medium severity: a legitimate local or non-attesting publish after an established attested history looks identical.",
   "ecosystem": "npm",
   "registryProvenance": {
     "packageName": "example-widget",
+    "history": [
+      {
+        "version": "0.9.0",
+        "packumentProvenance": true
+      },
+      {
+        "version": "0.9.1",
+        "packumentProvenance": true
+      }
+    ],
     "baseline": {
       "version": "1.0.0",
       "packumentProvenance": true,

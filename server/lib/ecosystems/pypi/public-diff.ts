@@ -41,8 +41,7 @@ import type {
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { DETERMINISTIC_RULES_VERSION, deterministicFindings, type Finding } from "../../review";
 import { downloadInSandbox } from "../../sandbox";
-import { PROVENANCE_UNKNOWN, provenanceContinuityFindings } from "../../provenance-continuity";
-import { readPyPiRegistryProvenance } from "./provenance";
+import { pypiProvenanceContinuity } from "./provenance";
 
 // PyPI side of the anonymous public package diff. Like the npm path it only
 // touches public-registry data: project metadata comes from the canonical
@@ -525,22 +524,16 @@ async function acquirePublicPyPiDiff(
   );
   const projectName =
     typeof metadata.info?.name === "string" ? metadata.info.name : input.packageName;
-  // Continuity reads forward; a reversed or unparseable pair is not evaluated.
-  const fromParsed = parsePyPiVersion(input.fromVersion);
-  const toParsed = parsePyPiVersion(input.toVersion);
-  const forward = !!fromParsed && !!toParsed && compareParsedPyPiVersions(toParsed, fromParsed) > 0;
-  const readProvenance = (version: string, artifacts: PyPiRemoteArtifact[]) =>
-    forward
-      ? readPyPiRegistryProvenance(
-          projectName,
-          version,
-          artifacts.map((artifact) => artifact.filename),
-        )
-      : Promise.resolve(PROVENANCE_UNKNOWN);
-  const [downloads, fromProvenance, toProvenance] = await Promise.all([
+  const [downloads, continuity] = await Promise.all([
     downloadPublicPyPiArtifacts(env, ctx, selection),
-    readProvenance(input.fromVersion, selection.from),
-    readProvenance(input.toVersion, selection.to),
+    pypiProvenanceContinuity({
+      metadata,
+      projectName,
+      fromVersion: input.fromVersion,
+      toVersion: input.toVersion,
+      fromFilenames: selection.from.map((artifact) => artifact.filename),
+      toFilenames: selection.to.map((artifact) => artifact.filename),
+    }),
   ]);
   const resolved = resolvePublicPyPiDownloads(downloads.from, downloads.to);
   const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
@@ -561,13 +554,10 @@ async function acquirePublicPyPiDiff(
     ...sources,
     buildFindings: (fileDiff, manifestDiff) => [
       ...sources.buildFindings(fileDiff, manifestDiff),
-      ...provenanceContinuityFindings({
-        registry: "PyPI",
-        baseline: { version: input.fromVersion, provenance: fromProvenance },
-        candidate: { version: input.toVersion, provenance: toProvenance },
-      }),
+      ...continuity.findings,
     ],
     ...(notices.length ? { notices } : {}),
+    ...(continuity.unsettled ? { unsettledRegistryRead: true } : {}),
   };
 }
 

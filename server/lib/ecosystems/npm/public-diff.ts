@@ -18,11 +18,10 @@ import {
   isPublishedTarballUrlAllowed,
 } from "./published-tarball";
 import { compareSemver, isValidNpmPackageName } from "./registry";
-import { readNpmRegistryProvenance } from "./provenance";
+import { npmProvenanceContinuity } from "./provenance";
 import {
-  PROVENANCE_UNKNOWN,
-  provenanceContinuityFindings,
-  type RegistryProvenance,
+  PROVENANCE_NOT_EVALUATED,
+  type ProvenanceContinuityOutcome,
 } from "../../provenance-continuity";
 
 export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -114,10 +113,8 @@ export const npmPublicDiff: PublicDiffAdapter = {
     let toTarballUrl = toPreview?.url;
     // Provenance continuity compares two published releases; a preview side
     // has no registry record, so the pair is not evaluated.
-    let provenance: Promise<[RegistryProvenance, RegistryProvenance]> = Promise.resolve([
-      PROVENANCE_UNKNOWN,
-      PROVENANCE_UNKNOWN,
-    ]);
+    let provenance: Promise<ProvenanceContinuityOutcome> =
+      Promise.resolve(PROVENANCE_NOT_EVALUATED);
     if (!fromTarballUrl || !toTarballUrl) {
       const metadata = await fetchPublicPackageMetadata(
         env,
@@ -145,28 +142,18 @@ export const npmPublicDiff: PublicDiffAdapter = {
           throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
         }
       }
-      // Continuity reads forward: a reversed pair (an older release picked as
-      // the "to" side) would report the older release as having dropped
-      // provenance its successor added.
-      if (!fromPreview && !toPreview && compareSemver(input.toVersion, input.fromVersion) > 0) {
-        provenance = Promise.all([
-          readNpmRegistryProvenance(
-            metadata,
-            input.packageName,
-            input.fromVersion,
-            input.registryUrl,
-          ),
-          readNpmRegistryProvenance(
-            metadata,
-            input.packageName,
-            input.toVersion,
-            input.registryUrl,
-          ),
-        ]);
+      if (!fromPreview && !toPreview) {
+        provenance = npmProvenanceContinuity({
+          metadata,
+          packageName: input.packageName,
+          fromVersion: input.fromVersion,
+          toVersion: input.toVersion,
+          registryUrl: input.registryUrl,
+        });
       }
     }
 
-    const [[fromProvenance, toProvenance], fromArchive, toArchive] = await Promise.all([
+    const [continuity, fromArchive, toArchive] = await Promise.all([
       provenance,
       fromPreview
         ? downloadPreviewArchive(env, ctx, fromPreview.url)
@@ -201,12 +188,9 @@ export const npmPublicDiff: PublicDiffAdapter = {
           stagedManifestText:
             toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
         }),
-        ...provenanceContinuityFindings({
-          registry: "npm",
-          baseline: { version: input.fromVersion, provenance: fromProvenance },
-          candidate: { version: input.toVersion, provenance: toProvenance },
-        }),
+        ...continuity.findings,
       ],
+      ...(continuity.unsettled ? { unsettledRegistryRead: true } : {}),
     };
   },
 };

@@ -5,12 +5,20 @@ import { emitOperationalEvent } from "../../platform/observability";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {
   attestedField,
+  evaluateProvenanceContinuity,
+  PROVENANCE_NOT_EVALUATED,
   PROVENANCE_UNKNOWN,
+  provenanceLineage,
   sameAttestedPublisher,
   type AttestedPublisher,
+  type ProvenanceContinuityOutcome,
+  type ProvenanceLineage,
+  type ProvenanceVersionScheme,
   type RegistryProvenance,
 } from "../../provenance-continuity";
 import { normalizePyPiProjectName } from "./manifest";
+import type { PyPiProjectMetadata, PyPiReleaseFile } from "./types";
+import { compareParsedPyPiVersions, parsePyPiVersion, type ParsedPyPiVersion } from "./version";
 
 /**
  * PyPI's served provenance (PEP 740) for one release, reduced for
@@ -35,6 +43,111 @@ type FileProvenance =
   | { status: "present"; publishers: AttestedPublisher[] }
   | { status: "absent" }
   | { status: "unknown" };
+
+type ReadReleaseProvenance = (version: string, filenames: string[]) => Promise<RegistryProvenance>;
+
+/**
+ * Provenance continuity for a published PyPI pair. Each compared side is read
+ * from the files the diff selected (or, when `provenanceLineage` substitutes a
+ * baseline, that release's representative file). History costs one integrity
+ * request per prior release, so it is read only when the drop rule needs it.
+ * `readProvenance` is a seam for tests.
+ */
+export async function pypiProvenanceContinuity(args: {
+  metadata: PyPiProjectMetadata;
+  projectName: string;
+  fromVersion: string;
+  toVersion: string;
+  fromFilenames: string[];
+  toFilenames: string[];
+  readProvenance?: ReadReleaseProvenance;
+}): Promise<ProvenanceContinuityOutcome> {
+  const lineage = pypiProvenanceLineage(args.metadata, args.fromVersion, args.toVersion);
+  if (!lineage) return PROVENANCE_NOT_EVALUATED;
+  const read: ReadReleaseProvenance =
+    args.readProvenance ??
+    ((version, filenames) => readPyPiRegistryProvenance(args.projectName, version, filenames));
+  const baselineFiles =
+    lineage.baseline === args.fromVersion
+      ? args.fromFilenames
+      : representativeFilenames(args.metadata, lineage.baseline);
+  const [baseline, candidate] = await Promise.all([
+    read(lineage.baseline, baselineFiles),
+    read(args.toVersion, args.toFilenames),
+  ]);
+  const prior =
+    baseline.status === "present" && candidate.status === "absent"
+      ? await Promise.all(
+          lineage.prior.map(async (version) => {
+            const filenames = representativeFilenames(args.metadata, version);
+            return filenames.length ? (await read(version, filenames)).status : "unknown";
+          }),
+        )
+      : [];
+  return evaluateProvenanceContinuity({
+    registry: "PyPI",
+    baseline: { version: lineage.baseline, provenance: baseline },
+    candidate: { version: args.toVersion, provenance: candidate },
+    prior,
+    absenceScope: "checked-files",
+  });
+}
+
+export function pypiProvenanceLineage(
+  metadata: PyPiProjectMetadata,
+  fromVersion: string,
+  toVersion: string,
+): ProvenanceLineage | null {
+  return provenanceLineage(
+    pypiVersionScheme(metadata),
+    Object.keys(metadata.releases ?? {}).filter(
+      (version) => representativeFilenames(metadata, version).length,
+    ),
+    fromVersion,
+    toVersion,
+  );
+}
+
+function pypiVersionScheme(
+  metadata: PyPiProjectMetadata,
+): ProvenanceVersionScheme<ParsedPyPiVersion> {
+  return {
+    parse: parsePyPiVersion,
+    compare: compareParsedPyPiVersions,
+    isPrerelease: (version) => version.pre !== null || version.dev !== null,
+    // A release's first upload; wheels for new interpreters arrive later.
+    publishedAt: (version) => {
+      let earliest: number | null = null;
+      for (const file of releaseFiles(metadata, version)) {
+        const ms = Date.parse(file.upload_time_iso_8601 ?? "");
+        if (Number.isFinite(ms) && (earliest === null || ms < earliest)) earliest = ms;
+      }
+      return earliest;
+    },
+  };
+}
+
+function releaseFiles(metadata: PyPiProjectMetadata, version: string): PyPiReleaseFile[] {
+  const releases = metadata.releases;
+  const files = releases && Object.hasOwn(releases, version) ? releases[version] : null;
+  return Array.isArray(files) ? files : [];
+}
+
+// One file stands for a release outside the diff: the sdist when there is one,
+// else the first wheel by name. A release whose other files are attested but
+// this one is not reads as absent, which only ever keeps a drop at low.
+function representativeFilenames(metadata: PyPiProjectMetadata, version: string): string[] {
+  const files = releaseFiles(metadata, version).filter(
+    (file) => typeof file.filename === "string" && file.yanked !== true,
+  );
+  const sdist = files.find((file) => file.packagetype === "sdist");
+  const wheel = files
+    .filter((file) => file.packagetype === "bdist_wheel")
+    .map((file) => file.filename as string)
+    .sort()[0];
+  const pick = sdist?.filename ?? wheel;
+  return pick ? [pick] : [];
+}
 
 /**
  * Provenance for a release, from the files this review selected. A release is

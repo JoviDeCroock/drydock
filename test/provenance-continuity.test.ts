@@ -2,20 +2,27 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   npmAttestedPublishers,
+  npmProvenanceContinuity,
   readNpmRegistryProvenance,
 } from "../server/lib/ecosystems/npm/provenance";
 import { projectRegistryMetadata } from "../server/lib/ecosystems/npm/registry";
 import {
   classifyPyPiProvenanceResponse,
   combinePyPiFileProvenance,
+  pypiProvenanceContinuity,
   readPyPiRegistryProvenance,
 } from "../server/lib/ecosystems/pypi/provenance";
 import {
   attestedRepositoryFromUrl,
+  evaluateProvenanceContinuity,
   provenanceContinuityFindings,
+  provenanceLineage,
   type AttestedPublisher,
+  type ProvenanceStatus,
   type RegistryProvenance,
 } from "../server/lib/provenance-continuity";
+import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review/rules";
+import { compareParsedSemver, parseSemver } from "../server/lib/ecosystems/semver";
 import { RELEASE_PROCESS_FINDING_FILE } from "../server/lib/release-fingerprint";
 import { computeScanRiskBreakdown } from "../server/lib/review/risk";
 import type { AiReview } from "../server/lib/ai-review/types";
@@ -62,16 +69,28 @@ const present = (...publishers: AttestedPublisher[]): RegistryProvenance => ({
 const ABSENT: RegistryProvenance = { status: "absent" };
 const UNKNOWN: RegistryProvenance = { status: "unknown" };
 
-function findings(baseline: RegistryProvenance, candidate: RegistryProvenance) {
+// Two attested releases before the baseline: an established attested habit.
+const ESTABLISHED: ProvenanceStatus[] = ["present", "present"];
+
+function findings(
+  baseline: RegistryProvenance,
+  candidate: RegistryProvenance,
+  prior: ProvenanceStatus[] = ESTABLISHED,
+) {
   return provenanceContinuityFindings({
     registry: "npm",
     baseline: { version: "1.0.0", provenance: baseline },
     candidate: { version: "1.0.1", provenance: candidate },
+    prior,
   });
 }
 
-function rules(baseline: RegistryProvenance, candidate: RegistryProvenance) {
-  return findings(baseline, candidate).map((f) => `${f.ruleId}:${f.severity}`);
+function rules(
+  baseline: RegistryProvenance,
+  candidate: RegistryProvenance,
+  prior: ProvenanceStatus[] = ESTABLISHED,
+) {
+  return findings(baseline, candidate, prior).map((f) => `${f.ruleId}:${f.severity}`);
 }
 
 function base64Json(value: unknown): string {
@@ -142,6 +161,276 @@ describe("provenanceContinuityFindings", () => {
   test("identity unreadable on either side compares nothing", () => {
     expect(rules(present(), present(publisher()))).toEqual([]);
     expect(rules(present(publisher()), present())).toEqual([]);
+  });
+
+  test("a drop is medium only after three attested releases in a row", () => {
+    expect(rules(present(publisher()), ABSENT, ["present", "present", "absent"])).toEqual([
+      "release.provenance-dropped:medium",
+    ]);
+    const short: ProvenanceStatus[][] = [
+      [],
+      ["present"],
+      ["present", "absent"],
+      ["unknown", "present"],
+    ];
+    for (const prior of short) {
+      expect(rules(present(publisher()), ABSENT, prior), prior.join(",")).toEqual([
+        "release.provenance-dropped:low",
+      ]);
+    }
+    const annotated = annotateFindingsWithDiffStatus(
+      findings(present(publisher()), ABSENT, ["present"]),
+      [],
+      {},
+    );
+    expect(computeScanRiskBreakdown(annotated, AI_REVIEW_OFF).releaseRisk).toBe("low");
+  });
+
+  test("evidence names the release on npm and the checked files on PyPI", () => {
+    const [npm] = findings(present(publisher()), ABSENT);
+    expect(npm.evidence).toBe(
+      "npm reports build provenance for 1.0.0 (github.com/example-org/widget .github/workflows/release.yml) and the 2 releases before it, and none for 1.0.1",
+    );
+    const [pypi] = provenanceContinuityFindings({
+      registry: "PyPI",
+      baseline: { version: "1.0.0", provenance: present() },
+      candidate: { version: "1.0.1", provenance: ABSENT },
+      prior: [],
+      absenceScope: "checked-files",
+    });
+    expect(pypi.evidence).toBe(
+      "PyPI reports build provenance for 1.0.0, and none for the checked files of 1.0.1",
+    );
+  });
+
+  test("findings are tagged and stamped with the ruleset version", () => {
+    const all = [
+      ...findings(present(publisher()), ABSENT),
+      ...findings(present(publisher()), present(publisher({ workflow: "x.yml" }))),
+    ];
+    expect(all).toHaveLength(2);
+    for (const finding of all) expect(finding.ruleVersion).toBe(DETERMINISTIC_RULES_VERSION);
+  });
+
+  test("without ids on both sides, a same-owner repository change is low", () => {
+    const pypi = (repository: string) =>
+      publisher({ repository, repositoryId: null, workflow: "release.yml" });
+    const original = present(pypi("github.com/example-org/widget"));
+    expect(rules(original, present(pypi("github.com/Example-Org/widget-py")))).toEqual([
+      "release.provenance-publisher-changed:low",
+    ]);
+    expect(rules(original, present(pypi("github.com/examp1e-org/widget")))).toEqual([
+      "release.provenance-publisher-changed:medium",
+    ]);
+    // One new repository under another owner keeps the release medium.
+    expect(
+      rules(
+        original,
+        present(pypi("github.com/example-org/widget-py"), pypi("github.com/other/widget")),
+      ),
+    ).toEqual(["release.provenance-publisher-changed:medium"]);
+    // Ids on both sides are authoritative: a different id is a different repository.
+    const sibling = publisher({ repository: "github.com/example-org/other", repositoryId: "2" });
+    expect(rules(present(publisher()), present(sibling))).toEqual([
+      "release.provenance-publisher-changed:medium",
+    ]);
+  });
+
+  test("an undetermined read on any side or in the history is unsettled", () => {
+    const unsettled = (
+      baseline: RegistryProvenance,
+      candidate: RegistryProvenance,
+      prior: ProvenanceStatus[],
+    ) =>
+      evaluateProvenanceContinuity({
+        registry: "npm",
+        baseline: { version: "1.0.0", provenance: baseline },
+        candidate: { version: "1.0.1", provenance: candidate },
+        prior,
+      }).unsettled;
+    expect(unsettled(present(), ABSENT, ESTABLISHED)).toBe(false);
+    expect(unsettled(ABSENT, ABSENT, [])).toBe(false);
+    expect(unsettled(UNKNOWN, ABSENT, [])).toBe(true);
+    expect(unsettled(present(), UNKNOWN, [])).toBe(true);
+    expect(unsettled(present(), ABSENT, ["present", "unknown"])).toBe(true);
+  });
+});
+
+describe("provenanceLineage", () => {
+  const scheme = (times: Record<string, number> = {}) => ({
+    parse: parseSemver,
+    compare: compareParsedSemver,
+    isPrerelease: (v: NonNullable<ReturnType<typeof parseSemver>>) => v.prerelease.length > 0,
+    publishedAt: (version: string) => times[version] ?? null,
+  });
+  const versions = ["1.0.0", "1.1.0", "1.2.0", "2.0.0-rc.1", "2.0.0-rc.2", "2.0.0", "2.1.0-beta.0"];
+
+  test("a stable release is judged against earlier stable releases", () => {
+    const expected = { baseline: "1.2.0", prior: ["1.1.0", "1.0.0"] };
+    expect(provenanceLineage(scheme(), versions, "2.0.0-rc.2", "2.0.0")).toEqual(expected);
+    expect(provenanceLineage(scheme(), versions, "1.2.0", "2.0.0")).toEqual(expected);
+  });
+
+  test("a prerelease may follow a release of either channel", () => {
+    expect(provenanceLineage(scheme(), versions, "2.0.0-rc.1", "2.0.0-rc.2")).toEqual({
+      baseline: "2.0.0-rc.1",
+      prior: ["1.2.0", "1.1.0"],
+    });
+    expect(provenanceLineage(scheme(), versions, "2.0.0", "2.1.0-beta.0")?.prior).toEqual([
+      "2.0.0-rc.2",
+      "2.0.0-rc.1",
+    ]);
+  });
+
+  test("a release published after the candidate is not its baseline", () => {
+    // 1.2.0 is a maintenance release shipped after 2.0.0.
+    const times = {
+      "1.0.0": 1,
+      "1.1.0": 2,
+      "2.0.0-rc.1": 3,
+      "2.0.0-rc.2": 4,
+      "2.0.0": 5,
+      "1.2.0": 6,
+    };
+    expect(provenanceLineage(scheme(times), versions, "1.2.0", "2.0.0")).toEqual({
+      baseline: "1.1.0",
+      prior: ["1.0.0"],
+    });
+  });
+
+  test("reversed, unparseable, and baseline-less pairs are not evaluated", () => {
+    expect(provenanceLineage(scheme(), versions, "2.0.0", "1.2.0")).toBeNull();
+    expect(provenanceLineage(scheme(), versions, "2.0.0", "2.0.0")).toBeNull();
+    expect(provenanceLineage(scheme(), versions, "latest", "2.0.0")).toBeNull();
+    expect(provenanceLineage(scheme(), ["1.0.0-rc.1", "1.0.0"], "1.0.0-rc.1", "1.0.0")).toBeNull();
+  });
+});
+
+describe("npmProvenanceContinuity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const PUBLIC = "https://registry.npmjs.org";
+  const packument = (entries: Record<string, boolean | undefined>) => ({
+    versions: Object.fromEntries(
+      Object.entries(entries).map(([version, hasProvenance]) => [
+        version,
+        { dist: { tarball: "t" }, ...(hasProvenance === undefined ? {} : { hasProvenance }) },
+      ]),
+    ) as Record<string, { dist: { tarball: string }; hasProvenance?: boolean }>,
+  });
+  const run = (metadata: ReturnType<typeof packument>, fromVersion: string, toVersion: string) =>
+    npmProvenanceContinuity({
+      metadata,
+      packageName: "example-widget",
+      fromVersion,
+      toVersion,
+      registryUrl: PUBLIC,
+      readProvenance: async (version) =>
+        metadata.versions[version]?.hasProvenance ? present(publisher()) : ABSENT,
+    });
+  const severities = async (...args: Parameters<typeof run>) =>
+    (await run(...args)).findings.map((f) => `${f.ruleId}:${f.severity}`);
+
+  test("history comes from the packument's provenance markers", async () => {
+    const ci = { "1.0.0": true, "1.0.1": true, "1.0.2": true };
+    expect(await severities(packument({ ...ci, "1.0.3": false }), "1.0.2", "1.0.3")).toEqual([
+      "release.provenance-dropped:medium",
+    ]);
+    // A local hotfix after only two CI releases is context.
+    const adopting = packument({ "0.9.0": false, "1.0.0": true, "1.0.1": true, "1.0.2": false });
+    expect(await severities(adopting, "1.0.1", "1.0.2")).toEqual([
+      "release.provenance-dropped:low",
+    ]);
+  });
+
+  test("a hand-published stable is not compared with its CI-built prerelease", async () => {
+    const metadata = packument({
+      "1.0.0": false,
+      "1.1.0": false,
+      "2.0.0-rc.1": true,
+      "2.0.0": false,
+    });
+    expect(await run(metadata, "2.0.0-rc.1", "2.0.0")).toEqual({ findings: [], unsettled: false });
+  });
+
+  test("a stale packument is unsettled; a custom registry is not evaluated", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const evaluate = (metadata: ReturnType<typeof packument>, registryUrl: string) =>
+      npmProvenanceContinuity({
+        metadata,
+        packageName: "example-widget",
+        fromVersion: "1.0.0",
+        toVersion: "1.0.1",
+        registryUrl,
+      });
+    expect(await evaluate(packument({ "1.0.0": undefined, "1.0.1": undefined }), PUBLIC)).toEqual({
+      findings: [],
+      unsettled: true,
+    });
+    expect(
+      await evaluate(packument({ "1.0.0": true, "1.0.1": false }), "http://127.0.0.1:4873"),
+    ).toEqual({ findings: [], unsettled: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("pypiProvenanceContinuity", () => {
+  const release = (version: string, uploaded: string) => [
+    {
+      filename: `example_sdk-${version}.tar.gz`,
+      packagetype: "sdist",
+      upload_time_iso_8601: uploaded,
+    },
+  ];
+  const metadata = {
+    info: { name: "example-sdk" },
+    releases: {
+      "1.0.0": release("1.0.0", "2026-01-01T00:00:00Z"),
+      "1.1.0": release("1.1.0", "2026-02-01T00:00:00Z"),
+      "1.2.0": release("1.2.0", "2026-03-01T00:00:00Z"),
+      "2.0.0rc1": release("2.0.0rc1", "2026-04-01T00:00:00Z"),
+      "2.0.0": release("2.0.0", "2026-05-01T00:00:00Z"),
+    },
+  };
+  const evaluate = (fromVersion: string, attested: Set<string>, reads: string[]) =>
+    pypiProvenanceContinuity({
+      metadata,
+      projectName: "example-sdk",
+      fromVersion,
+      toVersion: "2.0.0",
+      fromFilenames: [`example_sdk-${fromVersion}.tar.gz`],
+      toFilenames: ["example_sdk-2.0.0.tar.gz"],
+      readProvenance: async (version, filenames) => {
+        reads.push(`${version}:${filenames.join(",")}`);
+        return attested.has(version) ? present() : ABSENT;
+      },
+    });
+
+  test("reads history only for a drop, one representative file per release", async () => {
+    const reads: string[] = [];
+    const outcome = await evaluate("1.2.0", new Set(["1.0.0", "1.1.0", "1.2.0"]), reads);
+    expect(outcome.findings.map((f) => `${f.ruleId}:${f.severity}`)).toEqual([
+      "release.provenance-dropped:medium",
+    ]);
+    expect(reads.sort()).toEqual([
+      "1.0.0:example_sdk-1.0.0.tar.gz",
+      "1.1.0:example_sdk-1.1.0.tar.gz",
+      "1.2.0:example_sdk-1.2.0.tar.gz",
+      "2.0.0:example_sdk-2.0.0.tar.gz",
+    ]);
+    const quiet: string[] = [];
+    await evaluate("1.2.0", new Set(["1.2.0", "2.0.0"]), quiet);
+    expect(quiet).toHaveLength(2);
+  });
+
+  test("a stable after a CI-built rc is compared with the previous stable", async () => {
+    const reads: string[] = [];
+    const outcome = await evaluate("2.0.0rc1", new Set(["2.0.0rc1"]), reads);
+    expect(outcome).toEqual({ findings: [], unsettled: false });
+    expect(reads.sort()).toEqual([
+      "1.2.0:example_sdk-1.2.0.tar.gz",
+      "2.0.0:example_sdk-2.0.0.tar.gz",
+    ]);
   });
 });
 

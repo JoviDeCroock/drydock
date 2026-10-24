@@ -4,13 +4,14 @@ A valid build attestation says _who built_ a release, not _what is in it_. Chain
 
 Two deterministic rules compare the registry's provenance record for a published baseline with the candidate's. They live in the `release.*` family, so they carry the `<release-process>` file label, land on the release delta, and feed release risk like [`release.source-drift`](./release-fingerprint.md).
 
-| Rule                                   | Severity | Fires when                                                                                                                          |
-| -------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `release.provenance-dropped`           | medium   | the registry lists build provenance for the baseline and affirmatively lists none for the candidate                                 |
-| `release.provenance-publisher-changed` | medium   | both releases are attested and the candidate names a repository the baseline did not (a different repository id when both have one) |
-| `release.provenance-publisher-changed` | low      | same repository, but the candidate was built by a workflow the baseline was not                                                     |
+| Rule                                   | Severity | Fires when                                                                                                                                                     |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release.provenance-dropped`           | medium   | the registry lists build provenance for the baseline and the two releases before it, and affirmatively lists none for the candidate                            |
+| `release.provenance-dropped`           | low      | the same drop, but provenance was not yet attested for three releases in a row                                                                                 |
+| `release.provenance-publisher-changed` | medium   | both releases are attested and the candidate names a repository the baseline did not (a different repository id when both have one)                            |
+| `release.provenance-publisher-changed` | low      | a repository change under the same owner when no repository id is recorded on both sides, or the same repository with a workflow the baseline was not built by |
 
-The pure rule is `server/lib/provenance-continuity.ts`; the registry readers are `server/lib/ecosystems/npm/provenance.ts` and `server/lib/ecosystems/pypi/provenance.ts`. Unit tests: `test/provenance-continuity.test.ts`; golden and eval cases: the registry provenance section of [`security-detection-corpus.md`](./security-detection-corpus.md).
+The pure rule and baseline selection (`provenanceLineage`) are `server/lib/provenance-continuity.ts`; the registry readers are `server/lib/ecosystems/npm/provenance.ts` and `server/lib/ecosystems/pypi/provenance.ts`. Unit tests: `test/provenance-continuity.test.ts`; golden and eval cases: the registry provenance section of [`security-detection-corpus.md`](./security-detection-corpus.md).
 
 ## Surfaces
 
@@ -19,7 +20,9 @@ The readers run inside the ecosystem's `publicDiff.acquire`, so every review of 
 - anonymous `/diff` for npm and PyPI;
 - authenticated published-pair reviews (`server/lib/ecosystems/published-pair.ts`), including the post-release review started from a [publication monitor](./publication-monitor.md) alert.
 
-Continuity reads forward: a pair whose `to` version is not newer than its `from` (by semver on npm, PEP 440 on PyPI; unparseable PyPI versions included) is not evaluated, so picking an older release as the `to` side on `/diff` cannot report it as having dropped its successor's provenance.
+Continuity reads forward: a pair whose `to` version is not newer than its `from` (by semver on npm, PEP 440 on PyPI; unparseable versions included) is not evaluated, so picking an older release as the `to` side on `/diff` cannot report it as having dropped its successor's provenance.
+
+The provenance baseline is chosen within the candidate's channel, separately from the diff baseline. A stable candidate is compared with earlier stable releases only, so a stable published by hand is not compared with its own CI-built prerelease (the `/diff` suggestion and the published-pair default baseline are the semver predecessor, which is often that prerelease). A prerelease candidate may follow a release of either channel. A release published after the candidate is skipped too: a maintenance line that adopted provenance after the next major shipped (4.x.y published after 5.0.0) is not something 5.0.0 dropped. When the requested baseline fails either test, the highest qualifying release stands in and the evidence names it. Publish times come from the packument's `time` (npm) and each release's earliest file upload (PyPI).
 
 Not covered: staged npm reviews and workflow-gate reviews (the candidate is not published, so the registry has no provenance record for it yet), pkg.pr.new preview sides, atpm (its own verified-provenance rules, `atpm.trusted-publishing-lost` among them, see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md)), and VS Code. The publication monitor's own observation does not read provenance; it only hashes bytes.
 
@@ -42,7 +45,7 @@ PyPI's 404 means both "no provenance for this file" and "no such file". Only the
 
 ## Unknown is never a finding
 
-Every read degrades instead of failing the review: the rule fires only when the baseline is affirmatively present and the candidate is affirmatively absent, or when both sides have a readable identity. A custom `NPM_REGISTRY` (including the local fake registry) reads as unknown: another registry's attestation endpoint carries no npm-validated meaning. A failed attestations fetch after the packument listed provenance leaves that side present with unreadable identity, so a drop on the other side still fires but nothing is compared.
+Every read degrades instead of failing the review, and a `/diff` result built on an undetermined read on either side or in the history is cached for 15 minutes instead of the immutable pair's 30 days, so a transient registry failure does not hide a finding for a month: the rule fires only when the baseline is affirmatively present and the candidate is affirmatively absent, or when both sides have a readable identity. A custom `NPM_REGISTRY` (including the local fake registry) reads as unknown: another registry's attestation endpoint carries no npm-validated meaning. A failed attestations fetch after the packument listed provenance leaves that side present with unreadable identity, so a drop on the other side still fires but nothing is compared.
 
 The records are attacker-influenced even when served by the registry (whoever ran the attested build chose the workflow file name), so reads are bounded: fixed origins, no credentials, redirects not followed (`redirect: "manual"`), one attempt with a 5-second timeout (a retry would add latency to every warm-cache diff, and a lost read is only a missed comparison), a 256 KiB body cap through `readBoundedJson`, at most 8 attestations or bundles per document, a 128 KiB cap on a DSSE payload, and each attested string at most 256 characters with no control, zero-width, or bidi formatting characters before it can reach evidence text or a comparison. Failures emit `public_diff.npm_provenance.unavailable` / `public_diff.pypi_provenance.unavailable` with a status code only, never a body.
 
@@ -51,10 +54,12 @@ The records are attacker-influenced even when served by the registry (whoever ra
 Medium, not high, for both repository-level rules, matching `atpm.trusted-publishing-lost`. Known legitimate triggers:
 
 - **Dropped:** a maintainer publishes a hotfix from their machine, CI moves to a provider or setup that does not attest, or a project simply stops attaching attestations. LiteLLM itself attached PEP 740 provenance to 1.83.0–1.83.14 (from `BerriAI/project-releaser`) and none from 1.84.0 onward, so 1.83.14 → 1.84.0 fires on a release that was not, as far as is known, compromised.
-- **Repository changed:** a package moves to a new repository or monorepo. A GitHub rename or organization transfer keeps the repository id, so npm (which attests the id) stays quiet; PyPI's publisher carries no id, so a PyPI rename fires. Comparison is case-insensitive.
+- **Repository changed:** a package moves to a new repository or monorepo. A GitHub rename or organization transfer keeps the repository id, so npm (which attests the id) stays quiet. PyPI's publisher carries no id, so a rename is visible only by name; a change that keeps the owner (the first path segment, which an outside attacker cannot create repositories under) is low, a change of owner stays medium. Comparison is case-insensitive.
 - **Workflow changed:** release workflows are renamed and split routinely, hence low.
 
-The rule only compares adjacent releases. A history requirement like `release.source-drift`'s three consistent prior releases is not applied because the registry, not organization scan history, is the source; adding one would need a per-version provenance walk over the packument (npm) or one integrity request per historical file (PyPI).
+A drop is medium only after three attested releases in a row (the baseline and the two before it in the candidate's channel), matching `release.source-drift`'s three consistent prior releases; a shorter attested history is low. Projects adopting provenance commonly ship one or two attested releases and then publish from a laptop again while their CI settles. On npm the history is free: `projectRegistryMetadata` keeps `hasProvenance` for every version in the packument already in memory. On PyPI it costs one integrity request per prior release (one representative file: the sdist, else the first wheel by name), so it is read only when the baseline is present and the candidate absent.
+
+Replaying the rules over registry metadata for the release pairs of the npm false-positive sweep's package list (318 packages, the 10 most recent stable pairs each, 3,171 pairs) fired a medium drop on 7 pairs (0.2%), down from 15 before the channel, publish-order, and history rules; every removed one was a new major compared with a maintenance release published after it, or a short attested history. The remaining medium drops are releases published without provenance after an established attested history, the shape the rule exists for.
 
 ## What this does not catch
 
