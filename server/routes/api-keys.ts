@@ -7,7 +7,7 @@
 import { type Context, Hono } from "hono";
 import { eq } from "drizzle-orm";
 import {
-  countActiveOrganizationApiKeys,
+  countActiveMemberApiKeys,
   deleteOrganizationApiKey,
   getApiKeyDescription,
   insertOrganizationApiKey,
@@ -22,7 +22,7 @@ import { API_KEY_ACCESS_LEVELS } from "../db/enums";
 import {
   API_KEY_EXPIRY_DAYS,
   API_KEY_NAME_MAX_LENGTH,
-  MAX_API_KEYS_PER_ORGANIZATION,
+  MAX_API_KEYS_PER_MEMBER,
   generateApiKey,
   parseApiKeyAccess,
   parseApiKeyExpiry,
@@ -85,7 +85,9 @@ apiKeyRoutes.get("/", async (c) => {
   return c.json({
     keys: keys.map(publicApiKey),
     manageAll,
-    limit: MAX_API_KEYS_PER_ORGANIZATION,
+    // The cap counts the viewer's own unexpired keys.
+    viewerUserId: c.get("authSession").userId,
+    limit: MAX_API_KEYS_PER_MEMBER,
     expiryDays: API_KEY_EXPIRY_DAYS,
     accessLevels: API_KEY_ACCESS_LEVELS,
   });
@@ -137,11 +139,12 @@ apiKeyRoutes.post("/", async (c) => {
 
   const now = new Date();
   if (
-    (await countActiveOrganizationApiKeys(db, organizationId, now)) >= MAX_API_KEYS_PER_ORGANIZATION
+    (await countActiveMemberApiKeys(db, organizationId, session.userId, now)) >=
+    MAX_API_KEYS_PER_MEMBER
   ) {
     return c.json(
       {
-        error: `an organization can hold at most ${MAX_API_KEYS_PER_ORGANIZATION} unexpired API keys`,
+        error: `you can hold at most ${MAX_API_KEYS_PER_MEMBER} unexpired API keys in an organization`,
       },
       409,
     );

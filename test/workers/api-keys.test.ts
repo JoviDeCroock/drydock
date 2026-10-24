@@ -142,8 +142,14 @@ describe("organization API key management", () => {
     }
   });
 
-  test("caps an organization at ten keys", async () => {
+  test("caps each member at ten keys, without counting anyone else's", async () => {
     const owner = await signedUpAccount();
+    const member = await signedUpAccount();
+    await addOrganizationMember(createDb(env.DB), {
+      organizationId: owner.organizationId,
+      userId: member.userId,
+      role: "member",
+    });
     for (let index = 0; index < 10; index += 1) {
       await createKey(owner, owner.organizationId, { name: `key ${index}` });
     }
@@ -152,6 +158,13 @@ describe("organization API key management", () => {
       body: { name: "one too many" },
     });
     expect(res.res.status).toBe(409);
+
+    await createKey(member, owner.organizationId, { name: "member key" });
+    const listed = await callWorker("GET", "/api/v1/api-keys", {
+      jar: owner.jar,
+      headers: orgHeaders(owner.organizationId),
+    });
+    expect(listed.json).toMatchObject({ viewerUserId: owner.userId, limit: 10 });
   });
 
   test("members create, list, and revoke only their own keys; owners manage every key", async () => {
@@ -857,6 +870,11 @@ describe("API keys with scan access", () => {
       { userId: owner.userId, organizationId: owner.organizationId },
       { stageId: "stage-filter-other-001" },
     );
+    const stranger = await signedUpAccount();
+    await seedCompletedScan(
+      { userId: stranger.userId, organizationId: stranger.organizationId },
+      { stageId: "stage-filter-wanted-01" },
+    );
     const key = await createKey(owner);
     const listed = await callWorker(
       "GET",
@@ -1125,6 +1143,115 @@ describe("API keys with decide_staged access", () => {
     const right = await decide({ totpCode: totpFor(totpURI) });
     expect(right.status, JSON.stringify(right.json)).toBe(200);
     expect((await scanDecision(scanId)).decision).toBe("publish");
+  });
+
+  test("a code is accepted once, across all of the creator's keys", async () => {
+    const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const laptop = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const desktop = await createKey(owner, owner.organizationId, {
+      name: "desktop",
+      access: "decide_staged",
+    });
+    const totpCode = totpFor(totpURI);
+    const first = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, laptop.token, {
+      decision: "publish",
+      totpCode,
+    });
+    expect(first.status, JSON.stringify(first.json)).toBe(200);
+
+    for (const key of [laptop, desktop]) {
+      const replayed = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+        decision: "no_publish",
+        totpCode,
+      });
+      expect(replayed.status).toBe(401);
+      expect(replayed.json).toMatchObject({ code: "two_factor_invalid" });
+      expect(replayed.json?.error).toContain("already used");
+    }
+    expect((await scanDecision(scanId)).decision).toBe("publish");
+  });
+
+  test("wrong codes in a row revoke the key; a right code clears the count", async () => {
+    const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const decide = (totpCode: string) =>
+      postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+        decision: "publish",
+        totpCode,
+      });
+    const failedAttempts = async () => {
+      const [row] = await createDb(env.DB)
+        .select({ failed: schema.organizationApiKeys.failedTotpAttempts })
+        .from(schema.organizationApiKeys)
+        .where(eq(schema.organizationApiKeys.id, key.id));
+      return row?.failed ?? null;
+    };
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      expect((await decide(wrongCode(totpURI))).json).toMatchObject({
+        code: "two_factor_invalid",
+      });
+    }
+    expect(await failedAttempts()).toBe(4);
+    expect((await decide(totpFor(totpURI))).status).toBe(200);
+    expect(await failedAttempts()).toBe(0);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) await decide(wrongCode(totpURI));
+    const revoked = await decide(wrongCode(totpURI));
+    expect(revoked.status).toBe(401);
+    expect(revoked.json).toMatchObject({ code: "api_key_revoked" });
+    expect(await failedAttempts()).toBeNull();
+    const [event] = await auditEvents(
+      owner.organizationId,
+      "organization.api_key_revoked_wrong_codes",
+    );
+    expect(event).toMatchObject({ actorUserId: owner.userId });
+    expect(event.metadataJson).toMatchObject({ name: "laptop", prefix: key.prefix });
+    const after = await callWorker("GET", "/api/v1/scans", withKey(key.token));
+    expect(after.res.status).toBe(401);
+  });
+
+  test("an unconfirmed or locked enrollment verifies no code", async () => {
+    const owner = await signedUpAccount();
+    const totpURI = await enrollTwoFactor(owner);
+    const scanId = await seedCompletedScan({
+      userId: owner.userId,
+      organizationId: owner.organizationId,
+    });
+    const key = await createKey(owner, owner.organizationId, {
+      name: "laptop",
+      access: "decide_staged",
+    });
+    const db = createDb(env.DB);
+    for (const state of [
+      { verified: false, lockedUntil: null },
+      { verified: true, lockedUntil: new Date(Date.now() + 60_000) },
+    ]) {
+      await db.update(schema.twoFactor).set(state).where(eq(schema.twoFactor.userId, owner.userId));
+      const res = await postWithoutOrigin(`/api/v1/scans/${scanId}/decision`, key.token, {
+        decision: "publish",
+        totpCode: totpFor(totpURI),
+      });
+      expect(res.status, JSON.stringify(state)).toBe(401);
+      expect(res.json).toMatchObject({ code: "two_factor_invalid" });
+    }
+    expect((await scanDecision(scanId)).decision).toBeNull();
   });
 
   test("only a member with two-factor creates a decide_staged key, and turning it off stops the key", async () => {

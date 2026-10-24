@@ -83,6 +83,9 @@ function runNpm(args) {
     process.on("SIGINT", ignoreInterrupt);
     const env = { ...process.env };
     delete env.DRYDOCK_API_KEY;
+    // Windows spells it Path; replace whichever spelling is present.
+    for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
+    env[process.platform === "win32" ? "Path" : "PATH"] = npm.path;
     const child = spawn(npm.command, [...npm.args, ...args], { stdio: "inherit", env });
     /** @param {import("../src/approve.mjs").NpmResult} result */
     const done = (result) => {

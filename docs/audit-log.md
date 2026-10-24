@@ -34,7 +34,8 @@ Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
 `organization.*` (including `organization.api_key_created` and
 `organization.api_key_revoked`, shown with the key's name, display prefix, and
-access), and notification-delivery events. Individual API-key reads are not
+access, and `organization.api_key_revoked_wrong_codes` when five wrong
+authenticator codes in a row revoke a `decide_staged` key), and notification-delivery events. Individual API-key reads are not
 recorded, but every review a `scan` key starts is:
 `organization.api_key_review_started` (with the package and version) and
 `organization.api_key_discovery_ran` (with how many reviews it started), both

@@ -22,6 +22,8 @@ interface ListResponse {
   keys: OrganizationApiKey[];
   /** False for a member, who sees only the keys they created. */
   manageAll?: boolean;
+  /** The limit counts this member's own unexpired keys. */
+  viewerUserId?: string;
   limit: number;
   expiryDays: number[];
 }
@@ -52,14 +54,19 @@ export const ApiKeysModel = createModel(() => {
   const revokingKeyId = signal<string | null>(null);
   // Owners and admins see every key; a member only their own.
   const manageAll = signal(true);
+  const viewerUserId = signal<string | null>(null);
   let loadRequestId = 0;
 
   const busy = computed(() => status.value !== "idle");
-  // Matches the server, which counts only unexpired keys against the limit.
+  // Matches the server, which counts only the member's own unexpired keys.
   const atLimit = computed(() => {
     if (limit.value === null) return false;
     const now = Date.now();
-    const active = keys.value.filter((key) => new Date(key.expiresAt).getTime() > now);
+    const viewer = viewerUserId.value;
+    const active = keys.value.filter(
+      (key) =>
+        new Date(key.expiresAt).getTime() > now && (!viewer || key.createdBy.userId === viewer),
+    );
     return active.length >= limit.value;
   });
 
@@ -76,6 +83,7 @@ export const ApiKeysModel = createModel(() => {
     revealed,
     revokingKeyId,
     manageAll,
+    viewerUserId,
     busy,
     atLimit,
 
@@ -92,6 +100,7 @@ export const ApiKeysModel = createModel(() => {
         if (requestId !== loadRequestId) return;
         this.keys.value = data.keys;
         this.manageAll.value = data.manageAll !== false;
+        this.viewerUserId.value = data.viewerUserId ?? null;
         this.limit.value = data.limit;
         if (data.expiryDays.length) this.expiryChoices.value = data.expiryDays;
       } catch (err) {

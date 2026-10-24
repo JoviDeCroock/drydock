@@ -40,6 +40,23 @@ describe("ApiKeysModel", () => {
     expect(model.atLimit.value).toBe(true);
   });
 
+  test("counts only the viewer's own keys against the limit", async () => {
+    const others = { userId: "user-2", email: "admin@example.com", name: null };
+    stubFetchRoutes({
+      "/api/v1/api-keys": () =>
+        jsonResponse({
+          keys: [apiKey("mine", DAY_MS), { ...apiKey("theirs", DAY_MS), createdBy: others }],
+          viewerUserId: "user-1",
+          limit: 2,
+          expiryDays: [30, 90, 365],
+        }),
+    });
+
+    const model = new ApiKeysModel();
+    await model.load();
+    expect(model.atLimit.value).toBe(false);
+  });
+
   test("marks only the key being revoked", async () => {
     let finishDelete!: (response: Response) => void;
     stubFetchRoutes({

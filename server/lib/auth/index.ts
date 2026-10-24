@@ -1,4 +1,4 @@
-import { hexEncode, sha256Hex } from "../platform/crypto-utils";
+import { hexEncode, sha256Hex, timingSafeEqual } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -779,19 +779,22 @@ export async function verifyTotpStepUp(
  * its creator. `verifyTotpStepUp` asks Better Auth's endpoint to check a code
  * for the session's own user, which needs that user's session cookie. This
  * checks the creator's code against the same stored secret, decrypted with
- * Better Auth's own secret configuration, with the same TOTP check that
- * endpoint runs (`createOTP`: 6 digits, 30-second period, one period either
- * side; the plugin's defaults, which `twoFactor()` above keeps). An enrollment
- * that was never confirmed, or one Better Auth has locked after failed sign-in
- * codes, verifies nothing. Callers rate-limit attempts, as for the session.
+ * Better Auth's own secret configuration, with the same TOTP parameters that
+ * endpoint uses (6 digits, 30-second period, one period either side; the
+ * plugin's defaults, which `twoFactor()` above keeps). An enrollment that was
+ * never confirmed, or one Better Auth has locked after failed sign-in codes,
+ * matches nothing.
+ *
+ * Returns the matched time step, so the caller can refuse a code it has
+ * already accepted, or null. Callers rate-limit attempts, as for the session.
  */
-export async function verifyUserTotp(
+export async function matchUserTotpStep(
   auth: Auth,
   db: AppDb,
   userId: string,
   code: string,
-): Promise<boolean> {
-  if (!/^\d{6}$/.test(code)) return false;
+): Promise<number | null> {
+  if (!/^\d{6}$/.test(code)) return null;
   const [row] = await db
     .select({
       secret: schema.twoFactor.secret,
@@ -803,16 +806,27 @@ export async function verifyUserTotp(
     .innerJoin(schema.user, eq(schema.user.id, schema.twoFactor.userId))
     .where(eq(schema.twoFactor.userId, userId))
     .limit(1);
-  if (!row?.enabled || row.verified === false) return false;
-  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return false;
+  if (!row?.enabled || row.verified === false) return null;
+  if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) return null;
   try {
     const context = await auth.$context;
     const secret = await symmetricDecrypt({ key: context.secretConfig, data: row.secret });
-    return await createOTP(secret, { digits: 6, period: 30 }).verify(code);
+    const otp = createOTP(secret, { digits: TOTP_DIGITS, period: TOTP_PERIOD_SECONDS });
+    const current = Math.floor(Date.now() / (TOTP_PERIOD_SECONDS * 1000));
+    const given = new TextEncoder().encode(code);
+    let matched: number | null = null;
+    // Every window is computed and compared, so timing says nothing about which matched.
+    for (const step of [current - 1, current, current + 1]) {
+      if (timingSafeEqual(given, new TextEncoder().encode(await otp.hotp(step)))) matched = step;
+    }
+    return matched;
   } catch {
-    return false;
+    return null;
   }
 }
+
+const TOTP_DIGITS = 6;
+const TOTP_PERIOD_SECONDS = 30;
 
 function normalizeSession(data: unknown): AuthSession | null {
   if (!data || typeof data !== "object") return null;
