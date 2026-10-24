@@ -32,9 +32,9 @@ overrides:
   # resolver on the patched line.
   proxy-addr: ^2.0.8
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
-  # retry, cookie, header, decompression, WebSocket, and TLS handling (7.29.1)
-  # until its dependency floor catches up.
-  undici: ^7.29.1
+  # retry, cookie, header, decompression, WebSocket, and TLS handling (7.29.1),
+  # plus the DoS and SRI fixes (7.30.1), until its dependency floor catches up.
+  undici: ^7.30.1
   # express-rate-limit (via @modelcontextprotocol/sdk) permits ip-address
   # releases whose subnet checks mis-compare addresses and whose IPv6 parse
   # diagnostics grow with input (GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw,
