@@ -63,19 +63,23 @@ describe("OpenAPI document", () => {
     }
   });
 
-  test("response objects stay open to fields outside the contract", () => {
-    const document = buildOpenApiDocument();
-    const schemas = (document.components as { schemas: Record<string, unknown> }).schemas;
-    const responseSchemas = new Set(
-      operations(document).flatMap(({ operation }) =>
-        [...JSON.stringify(operation.responses).matchAll(/"#\/components\/schemas\/(\w+)"/g)].map(
-          (match) => match[1],
-        ),
-      ),
-    );
-    expect(responseSchemas.size).toBeGreaterThan(1);
-    for (const name of responseSchemas) {
-      expect(JSON.stringify(schemas[name]), name).not.toContain('"additionalProperties":false');
+  test("schema objects stay open to fields outside the contract", () => {
+    const schemas = (buildOpenApiDocument().components as { schemas: Record<string, unknown> })
+      .schemas;
+    expect(Object.keys(schemas)).toEqual(expect.arrayContaining(["Finding", "RiskSummary"]));
+    for (const [name, schema] of Object.entries(schemas)) {
+      expect(JSON.stringify(schema), name).not.toContain('"additionalProperties":false');
+    }
+  });
+
+  test("shared shapes are referenced, not inlined per response", () => {
+    const schemas = (buildOpenApiDocument().components as { schemas: Record<string, unknown> })
+      .schemas;
+    for (const name of ["ScanDetail", "ReportExport"]) {
+      const body = JSON.stringify(schemas[name]);
+      expect(body, name).toContain('"$ref":"#/components/schemas/Finding"');
+      expect(body, name).toContain('"$ref":"#/components/schemas/RiskSummary"');
+      expect(body, name).not.toContain("$defs");
     }
   });
 
