@@ -3,7 +3,11 @@ import { guardRateLimit } from "../lib/rate-limit";
 import { getNpmConnection } from "../db/npm-connections";
 import { recordApiKeyAction } from "../db/api-keys";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
-import { requestActorUserId, requireActiveOrganization } from "../lib/auth/active-organization";
+import {
+  requestActorUserId,
+  requestBudgetKey,
+  requireActiveOrganization,
+} from "../lib/auth/active-organization";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "../lib/ecosystems/npm/connection";
 import {
@@ -23,7 +27,11 @@ stagedPublishesRoutes.post("/scan", async (c) => {
 
   const limited = await guardRateLimit(
     c,
-    { key: `staged-publishes:scan:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 },
+    {
+      key: requestBudgetKey(c, `staged-publishes:scan:${organizationId}`),
+      limit: 12,
+      windowMs: 10 * 60 * 1000,
+    },
     "staged publish discovery rate limit exceeded",
   );
   if (limited) return limited;

@@ -130,6 +130,9 @@ export const StartedScan = z
       status: scanStatus,
     }),
     queued: z.boolean(),
+    existing: z
+      .boolean()
+      .describe("True when the stage already had a review and this request started nothing"),
   })
   .register(openApiSchemas, { id: "StartedScan" });
 

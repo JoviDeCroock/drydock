@@ -224,7 +224,7 @@
       "post": {
         "operationId": "startScan",
         "summary": "Start a review",
-        "description": "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. Starting a review never records a release decision.",
+        "description": "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. A stage the organization already has a review of (one that has not failed) is answered 200 with that review and `existing: true`, so a retried request starts nothing. Starting a review never records a release decision.",
         "tags": [
           "Reviews"
         ],
@@ -240,6 +240,16 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "The stage already has a review in this organization; nothing was started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedScan"
+                }
+              }
+            }
+          },
           "202": {
             "description": "Accepted",
             "content": {
@@ -1440,11 +1450,16 @@
           },
           "queued": {
             "type": "boolean"
+          },
+          "existing": {
+            "type": "boolean",
+            "description": "True when the stage already had a review and this request started nothing"
           }
         },
         "required": [
           "scan",
-          "queued"
+          "queued",
+          "existing"
         ],
         "additionalProperties": {}
       },

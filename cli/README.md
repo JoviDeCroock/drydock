@@ -37,6 +37,8 @@ These need a key created with **scan access**; a read-only key gets a clear erro
 
 Each takes `--wait` to poll the started reviews until they finish (`--timeout`, `--interval` as for `scans wait`); `scans start --wait` also takes `--fail-on`. Scoped names keep their leading `@`: `scans start @acme/cli@2.0.0`. `check-npm` refuses `--fail-on` with a usage error, because it is not a gate (below); `check-npm --wait` exits `1` when a review it started failed.
 
+Starting a stage that already has a review (one that has not failed) starts nothing: `scans start --stage` prints `already reviewing <review-id>` and, with `--wait`, waits for that review. A re-run CI job therefore gates on the same review instead of paying for a second one.
+
 `--json` prints the API response instead of a table (with `--wait`, the start response plus a `results` array of final statuses). A flag the command does not take is a usage error.
 
 `--fail-on RISK` (`low`, `medium`, `high`, `critical`) compares the release risk: the findings the release introduces, not ones already in the previous version. That is the risk the workflow gate decides on. A review with no graded release delta (the previous version was not compared, or the review predates the split) is compared on its overall risk, and a risk the CLI does not recognize counts as at the threshold. Every wait retries rate limits (honouring `Retry-After`), server errors, and network errors with backoff until `--timeout`.

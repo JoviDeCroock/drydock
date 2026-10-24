@@ -21,6 +21,7 @@ import {
   SCAN_DECISION_FILTERS,
   type ScanDecisionFilter,
   deleteFailedScan,
+  findLiveStageReviewId,
   findMemberScanOrganization,
   getScan,
   getScanFile,
@@ -28,9 +29,14 @@ import {
   listScans,
   readScanRiskBreakdown,
   scanPublicDisclosureAllowed,
+  StageReviewExistsError,
 } from "../../db/scans";
 import { recordApiKeyAction } from "../../db/api-keys";
-import { requestActorUserId, requireActiveOrganization } from "../../lib/auth/active-organization";
+import {
+  requestActorUserId,
+  requestBudgetKey,
+  requireActiveOrganization,
+} from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
@@ -63,10 +69,20 @@ scanLifecycleRoutes.post("/", async (c) => {
   // A `scan` API key acts as its creator (`requestActorUserId`).
   const actorUserId = requestActorUserId(c);
   const organizationId = await requireActiveOrganization(c, db);
+
+  // A stage this organization already reviews is answered with that review: a
+  // re-run CI job, or one racing the cron or "Check npm", must not pay for a
+  // second review or supersede one a person already decided. `createScanJob`
+  // repeats the check atomically for requests that pass this one together.
+  if (parsed.kind === "staged") {
+    const existingId = await findLiveStageReviewId(db, organizationId, parsed.input.stageId);
+    if (existingId) return existingReview(c, db, organizationId, existingId);
+  }
+
   const limited = await guardRateLimit(
     c,
     {
-      key: `scan:${organizationId}`,
+      key: requestBudgetKey(c, `scan:${organizationId}`),
       limit: ORGANIZATION_SCAN_LIMIT,
       windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     },
@@ -87,9 +103,14 @@ scanLifecycleRoutes.post("/", async (c) => {
     ownerUserId: actorUserId,
     prepared,
   }).catch((err: unknown) => {
-    if (err instanceof PackageClaimConflictError) return err;
+    if (err instanceof PackageClaimConflictError || err instanceof StageReviewExistsError) {
+      return err;
+    }
     throw err;
   });
+  if (detail instanceof StageReviewExistsError) {
+    return existingReview(c, db, organizationId, detail.scanId);
+  }
   if (detail instanceof PackageClaimConflictError) {
     // The caller already proved stage access; only its own history is described.
     const availability = await readNpmPackageClaimAvailability(db, {
@@ -139,10 +160,21 @@ scanLifecycleRoutes.post("/", async (c) => {
     });
   }
 
-  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
+  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE), existing: false }, 202);
 });
 
 type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
+
+async function existingReview(
+  c: ScanRouteContext,
+  db: AppDb,
+  organizationId: string,
+  scanId: string,
+): Promise<Response> {
+  const existing = await getScan(db, scanId, organizationId);
+  if (!existing) return c.json({ error: "failed to create scan" }, 500);
+  return c.json({ scan: existing.scan, queued: false, existing: true }, 200);
+}
 
 async function prepareStagedScan(
   c: ScanRouteContext,
