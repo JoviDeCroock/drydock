@@ -21,6 +21,7 @@ function scan(overrides: Partial<Parameters<typeof buildReleaseTimeline>[0]> = {
     registryVersionStatus: null,
     registryVersionStatusAt: null,
     registryStatusSupersededAt: null,
+    registryPublishedAt: null,
     ...overrides,
   };
 }
@@ -56,6 +57,32 @@ describe("buildReleaseTimeline", () => {
       T0 + minutes(30),
     ]);
     expect(events.find((event) => event.key === "decided")?.detail).toBe("publish · by Jane");
+  });
+
+  test("shows npm's own publication time before the status observation that bounds it", () => {
+    const events = buildReleaseTimeline(
+      scan({
+        completedAt: T0 + minutes(5),
+        registryPublishedAt: T0 + minutes(20),
+        registryVersionStatus: "published",
+        registryVersionStatusAt: T0 + minutes(25),
+      }),
+      {},
+    );
+    expect(events.map((event) => [event.key, event.label, event.detail])).toEqual([
+      ["queued", "Review queued", null],
+      ["completed", "Review completed", null],
+      ["published", "Published on npm", null],
+      ["registry_status", "npm status observed", "published"],
+    ]);
+  });
+
+  test("a superseded review does not show the publication of a stage it did not review", () => {
+    const keys = buildReleaseTimeline(
+      scan({ registryPublishedAt: T0 + minutes(20), registryStatusSupersededAt: T0 + minutes(9) }),
+      {},
+    ).map((event) => event.key);
+    expect(keys).not.toContain("published");
   });
 
   test("omits events without a timestamp instead of inventing one", () => {

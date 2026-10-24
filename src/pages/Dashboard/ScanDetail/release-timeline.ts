@@ -7,6 +7,7 @@ type ReleaseTimelineEventKey =
   | "queued"
   | "started"
   | "completed"
+  | "published"
   | "registry_status"
   | "decided"
   | "superseded";
@@ -32,6 +33,7 @@ type TimelineScan = Pick<
   | "registryVersionStatus"
   | "registryVersionStatusAt"
   | "registryStatusSupersededAt"
+  | "registryPublishedAt"
 >;
 
 function epoch(value: string | number | Date | null | undefined): number | null {
@@ -88,6 +90,12 @@ export function buildReleaseTimeline(
       label: scan.status === "failed" ? "Review failed" : "Review completed",
       detail: null,
       at: epoch(scan.completedAt),
+    },
+    {
+      key: "published",
+      label: "Published on npm",
+      detail: null,
+      at: superseded ? null : epoch(scan.registryPublishedAt),
     },
     {
       key: "registry_status",

@@ -237,9 +237,13 @@ before that column existed fall back to the stage's `createdAt` under
 npm status last observed (`registry_version_status_at`, phrased with the same
 vocabulary as the dashboard badge — "validating", "awaiting approval",
 "published", "blocked", "removed" — from `registryStatusPhrase` in
-`src/features/registry-status.ts`), the Drydock decision, and supersession. A
-null or undocumented status renders no row, and a superseded review shows the
-supersession instead of its stale registry status. Stamps carry the year and
+`src/features/registry-status.ts`), npm's own publication time when the
+publication monitor observed it ("Published on npm", `registry_published_at`),
+the Drydock decision, and supersession. Report views are analytics
+([`product-analytics.md`](./product-analytics.md#report-views)) and are not
+listed. A null or undocumented status renders no row, and a superseded review
+shows the supersession instead of its stale registry status or a publication of
+a stage it did not review. Stamps carry the year and
 seconds, because rows are often seconds apart and a stage can straddle a year.
 `src/pages/Dashboard/ScanDetail/release-timeline.ts` owns the ordering.
 
@@ -256,7 +260,8 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Eight columns on `scans` (migration `0027`), plus one from `0030`:
+Eight columns on `scans` (migration `0027`), plus one from `0030` and one from
+`0040_futuristic_zombie`:
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.
@@ -272,6 +277,13 @@ Eight columns on `scans` (migration `0027`), plus one from `0030`:
 - `registry_publish_reminder_at` — send-once marker for the nudge.
 - `registry_approvable_notified_at` — send-once marker for the approvable-now
   notice (migration `0030`).
+- `registry_published_at` — npm's own publication time for the version (the
+  packument's `time[version]`), stamped on this organization's live staged
+  reviews of it, matched by the immutable registry coordinates and by the
+  stage's SHA-1 against the published bytes, when its
+  [publication monitor](./publication-monitor.md) observes the release
+  (migration `0040_futuristic_zombie`). Null when no watch saw the release; the status columns
+  above then only bound publication from above.
 
 Exported additively as `registryStatus: { status, observedAt } | null` on
 `report.json`. No schema bump: the field is optional and additive, and

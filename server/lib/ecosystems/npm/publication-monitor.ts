@@ -10,6 +10,7 @@ import {
   type PublicationWatch,
 } from "../../../db/publication-watches";
 import { publicationObservations, publicationWatches, scans } from "../../../db/schema";
+import { recordScanRegistryPublishedAt } from "../../../db/scan-views";
 import { recordProductEvent } from "../../analytics";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
@@ -696,6 +697,14 @@ async function examineReleases(
       registry,
       records.map((record) => record.id),
     );
+    // The bytes this check hashed, else npm's own shasum for them.
+    const publishedSha1 = digests?.sha1 ?? entry?.shasum ?? null;
+    if (item.publishedAt && publishedSha1) {
+      await recordPublishedAtOnReviews(db, watch, registry, item.version, {
+        publishedAt: item.publishedAt,
+        sha1: publishedSha1,
+      });
+    }
     if (createdAlert && isPublicationAlert(verdict.status)) {
       // One line per new unapproved publish on a watched package, so operators
       // can follow them in the logs. Name and version are npm's public record.
@@ -723,6 +732,36 @@ async function examineReleases(
     }
   }
   return { lastError, attempted, watchGap: unconsidered ? "invalid_version_metadata" : null };
+}
+
+/**
+ * Give this organization's staged reviews of the published bytes npm's own
+ * publication time, so "was the report opened before publication" has an
+ * exact answer. Ancillary to the check: a failure leaves the reviews on the
+ * version-status bound and never fails the observation.
+ */
+async function recordPublishedAtOnReviews(
+  db: AppDb,
+  watch: PublicationWatch,
+  registry: string,
+  version: string,
+  published: { publishedAt: Date; sha1: string },
+): Promise<void> {
+  try {
+    await recordScanRegistryPublishedAt(db, {
+      organizationId: watch.organizationId,
+      registryUrl: registry,
+      packageName: watch.packageName,
+      version,
+      ...published,
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "npm.publication_monitor.published_at_write_failed", {
+      organizationId: watch.organizationId,
+      watchId: watch.id,
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 /**

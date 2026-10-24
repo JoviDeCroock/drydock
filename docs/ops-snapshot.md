@@ -9,7 +9,22 @@ timestamped JSON report to `~/.drydock-ops/snapshots/`. It never runs in
 
 Queries: scan volume by day (last 14 days), scans by source and by status,
 scans bucketed by finding count and by release risk, workflow-gate decisions by
-outcome, scan events by type (last 14 days), and failed-scan error codes.
+outcome, scan events by type (last 14 days), failed-scan error codes, and
+whether published staged reviews had their report opened before publication.
+
+`published_staged_reviews_opened_before_publication` counts completed,
+non-superseded staged reviews with evidence of publication, grouped by
+`decided` (a Drydock decision was recorded, at any time), `publicationEvidence`
+(`npm_publish_time` from the publication monitor, or `version_status`, which only
+bounds publication from above), `reviewReady` (whether the review had completed
+before publication: `before` or `after` with npm's publication time, otherwise
+`unknown`, since a version status is only read after the review completes), and
+`openedBeforePublication` (`opened` / `not_opened` / `unknown`, the rule in
+[`product-analytics.md`](./product-analytics.md#report-views)). The share is
+`opened / (opened + not_opened)` per `decided` group; report `unknown` beside
+it rather than folding it into either side, and read `reviewReady = after` as a
+report that did not exist yet, not one nobody opened. "Opened" means a member
+loaded the report, not that anyone reviewed the release.
 
 Per-rule finding counts are not available here: findings live only in each
 scan's R2 `report.json`, so D1 can answer how many findings a scan carried but
