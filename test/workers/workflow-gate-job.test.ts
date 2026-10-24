@@ -13,6 +13,7 @@ import {
   markGateDecided,
 } from "../../server/lib/github-app/webhook-gates";
 import {
+  buildHumanDecisionComment,
   classifyGateTimeout,
   executeWorkflowGateJob,
   recommendationForReleaseRisk,
@@ -319,6 +320,19 @@ describe("recommendationForReleaseRisk", () => {
     // not claim the release is clean — nor reject it for shipping its own files.
     expect(recommendationForReleaseRisk("low", true)).toBe("manual_review");
     expect(recommendationForReleaseRisk("critical", true)).toBe("manual_review");
+  });
+});
+
+describe("buildHumanDecisionComment", () => {
+  test("reports the maintainer's decision on the deployment GitHub holds", () => {
+    expect(buildHumanDecisionComment("approved", null)).toBe(
+      "A Drydock maintainer approved this deployment.",
+    );
+    expect(
+      buildHumanDecisionComment("rejected", "https://drydock.example/dashboard/scans/s1"),
+    ).toBe(
+      "A Drydock maintainer rejected this deployment. Review: https://drydock.example/dashboard/scans/s1",
+    );
   });
 });
 

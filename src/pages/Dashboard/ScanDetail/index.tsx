@@ -513,6 +513,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           packageName={sharePackageName}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}
+          rejected={detail.scan.decision === "no_publish"}
           npmPackageClaimOwned={detail.scan.npmPackageClaimOwned}
           npmPackageManagementAllowed={detail.scan.npmPackageManagementAllowed}
           npmBadgeNote={npmBadgeAuthorityNote({

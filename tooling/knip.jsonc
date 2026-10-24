@@ -20,7 +20,10 @@
     "test/fixtures/oxlint-signals/**",
     "test/fixtures/oxlint-boundaries/**",
     "test/fixtures/oxlint-design/**",
-    "test/fixtures/oxlint-shadcn/**"
+    "test/fixtures/oxlint-shadcn/**",
+    // Types the .mjs helper for vite.config.ts; knip resolves the import to the
+    // .mjs and never reaches the declaration beside it.
+    "scripts/lib/workflow-ref.d.mts"
   ],
   "ignoreDependencies": [
     // `cloudflare:workers` / `cloudflare:test` / `cloudflare:email` are Workers

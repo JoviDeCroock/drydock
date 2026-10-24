@@ -227,7 +227,12 @@ describe("canonical release receipt v1", () => {
     expect(receipt.content.release).toMatchObject({
       mode: "staged_publish",
       source: "manual",
-      control: { classification: "advisory", scope: "registry_stage_observation" },
+      control: {
+        classification: "advisory",
+        scope: "registry_stage_observation",
+        enforcedBy: null,
+        enforcementScope: null,
+      },
       decision: {
         outcome: "publish",
         decidedAt: "2026-08-03T00:00:00.000Z",
@@ -397,6 +402,8 @@ describe("canonical release receipt v1", () => {
     expect(receipt.content.release.control).toEqual({
       classification: "workflow_enforced",
       scope: "configured_publish_workflow",
+      enforcedBy: "github_deployment_protection_rule",
+      enforcementScope: "configured_environment_job",
     });
     expect(receipt.content.evidence.reviewedArtifacts).toEqual({
       status: "complete",

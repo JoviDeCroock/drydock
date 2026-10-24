@@ -32,8 +32,7 @@ await connectRegistry(cookie);
 const results = [];
 for (const stageId of stageIds) {
   const result = await runScan(cookie, stageId);
-  result.shareToken =
-    result.status === "complete" ? await sharePublicly(cookie, result.scanId) : null;
+  result.share = result.status === "complete" ? await sharePublicly(cookie, result.scanId) : null;
   results.push(result);
 }
 
@@ -49,8 +48,13 @@ for (const result of results) {
   // The public report is the one review surface with no session at all, so the
   // seed mints its capability too — otherwise verifying it locally means
   // hand-rolling a share request against a token nobody printed.
-  if (result.shareToken) {
-    console.log(`  report:   ${appUrl}/reports/${result.shareToken} (public, no sign-in)`);
+  if (result.share) {
+    console.log(`  report:   ${appUrl}/reports/${result.share.token} (public, no sign-in)`);
+    // A link serves nothing until npm reports the version published, and only
+    // the discovery sweep asks npm; the fixture registry answers `published`.
+    if (result.share.awaitingPublication) {
+      console.log("            404 until npm's status is read: click Check npm on the dashboard");
+    }
   }
 }
 console.log("");
@@ -148,7 +152,7 @@ async function sharePublicly(cookie, scanId) {
     console.error(`seed: share link for ${scanId} failed (${shared.status}): ${shared.text}`);
     return null;
   }
-  return token;
+  return { token, awaitingPublication: shared.body?.share?.awaitingPublication === true };
 }
 
 async function api(cookie, method, pathname, body) {

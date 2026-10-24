@@ -15,7 +15,7 @@ import {
   type PublicationEnrollment,
 } from "../../models/package-publication";
 import {
-  observationStatusLabels,
+  observationLabel,
   isAlertResolved,
   resolutionLabels,
   resolutionTone,
@@ -122,7 +122,7 @@ function EarlierAlerts({ publication }: { publication: PackagePublication }) {
               {alerts.map((alert) => (
                 <li key={alert.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
-                  <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
+                  <Badge tone="critical">{observationLabel(alert)}</Badge>
                   {alert.resolution ? (
                     <Badge tone={resolutionTone(alert)}>{resolutionLabels[alert.resolution]}</Badge>
                   ) : null}

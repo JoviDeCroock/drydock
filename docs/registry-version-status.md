@@ -29,6 +29,12 @@ says the version failed npm's validation, never which check or why.
   `decision` records what it decided; nothing recorded whether that took effect.
   The common failure is mundane — someone approves here, never runs
   `npm stage approve <stage-id>`, and the release silently never ships.
+- **It decides when a staged review may go public.** A share link, a
+  threat-feed listing, and the badge serve a staged review only once npm
+  reports the version `published` (or `deleted` after publishing). Until then
+  the release may be an embargoed security fix. An unresolved lookup keeps them
+  dark, like any other unknown (see
+  [`public-reports.md`](./public-reports.md#share-flow)).
 - **A staged tarball we cannot read is usually not a token problem.** A stage
   approved seconds after discovery queued its scan returns 404 on the tarball,
   which used to surface as "the npm token may have expired, or its scope may not

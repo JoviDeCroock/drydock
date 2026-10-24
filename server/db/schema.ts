@@ -737,6 +737,9 @@ export const publicationObservations = sqliteTable(
         "published_without_approval",
         "published_despite_rejection",
         "artifact_mismatch",
+        // The published bytes match a completed review nobody decided, which
+        // graded the release low risk: recorded, but never an alert.
+        "undecided_low_risk",
         "unknown",
       ],
     }).notNull(),

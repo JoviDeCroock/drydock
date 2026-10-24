@@ -455,7 +455,8 @@ export function listPublicationObservations(db: AppDb, organizationId: string, w
       ),
     )
     .orderBy(
-      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and not ${publicationAlertSettled("publication_alerts")} then 0 else 1 end`,
+      // Open alerts first, a release the AI reviewer flagged ahead of the rest.
+      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null and not ${publicationAlertSettled("publication_alerts")} then (case when ${publicationObservations.reason} = 'ai_flagged_without_decision' then 0 else 1 end) else 2 end`,
       desc(publicationObservations.firstSeenAt),
       desc(publicationObservations.id),
     )
@@ -585,6 +586,37 @@ export async function releaseReleaseCoverageNotice(
         eq(publicationObservations.id, input.observationId),
         eq(publicationObservations.organizationId, input.organizationId),
         eq(publicationObservations.coverageNotifiedAt, claimedAt),
+      ),
+    );
+}
+
+/**
+ * Hand a quiet release back to the monitor once someone decides a review of
+ * its version. `undecided_low_risk` settles like any verdict, so without this
+ * a rejection recorded after publication would never become the alert (and
+ * the post-release decline) it is for. Marked unknown, the next check
+ * re-reads it from its stored digests; observations of any other status are
+ * never touched.
+ */
+export async function reopenQuietPublicationObservations(
+  db: AppDb,
+  organizationId: string,
+  scanIds: readonly string[],
+) {
+  if (!scanIds.length) return;
+  // Qualified by hand: the subquery's tables share column names with the
+  // updated one.
+  await db
+    .update(publicationObservations)
+    .set({ status: "unknown", reason: "decided_after_observation" })
+    .where(
+      and(
+        eq(publicationObservations.organizationId, organizationId),
+        eq(publicationObservations.status, "undecided_low_risk"),
+        sql`exists (select 1 from publication_watches w join scans s on s.organization_id = w.organization_id and s.package_name = w.package_name where w.id = publication_observations.watch_id and w.organization_id = publication_observations.organization_id and s.staged_version = publication_observations.version and s.id in (${sql.join(
+          scanIds.map((id) => sql`${id}`),
+          sql`, `,
+        )}))`,
       ),
     );
 }

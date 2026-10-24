@@ -30,6 +30,7 @@ export type { SharedScanRow };
 import type { AppDb } from "./client";
 import { npmPackageManagementAllowed } from "./package-claims";
 import { recordScanEvent } from "./events";
+import { publicDisclosureAllowedCondition } from "./scan-query";
 import { scans } from "./schema";
 
 // 256 bits of entropy, base64url (43 chars). The token is the whole capability
@@ -430,6 +431,7 @@ export async function listThreatFeedScans(
         isNotNull(scans.publicShareToken),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
         after
           ? or(
               sql`${scans.publicFeedListedAt} < ${after.listedAtMs}`,
@@ -540,6 +542,7 @@ export async function listBadgeCandidateScans(
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
         ecosystemMatches,
         ecosystem === "npm"
           ? and(canonicalNpmBadgeOwner, eq(scans.registryPackageName, packageName))
@@ -741,6 +744,10 @@ export async function findNewerPublishedRelease(
  * re-reads the full detail through `getScan` with the resolved organization so
  * the public path shares the exact read pipeline (R2 artifacts, digest checks)
  * used by authenticated reads.
+ *
+ * A token whose release is not public yet resolves to null, exactly like an
+ * unknown one: the link can be minted before publication, but answering it
+ * differently would tell anyone holding it that the release is pending.
  */
 export async function resolvePublicShareToken(
   db: AppDb,
@@ -755,7 +762,13 @@ export async function resolvePublicShareToken(
       includesFiles: scans.publicShareIncludesFiles,
     })
     .from(scans)
-    .where(and(eq(scans.publicShareToken, token), isNull(scans.registryStatusSupersededAt)))
+    .where(
+      and(
+        eq(scans.publicShareToken, token),
+        isNull(scans.registryStatusSupersededAt),
+        publicDisclosureAllowedCondition(),
+      ),
+    )
     .limit(1);
   if (!row || row.status !== "complete" || !row.organizationId) return null;
   return {
@@ -763,4 +776,27 @@ export async function resolvePublicShareToken(
     organizationId: row.organizationId,
     includesFiles: row.includesFiles,
   };
+}
+
+/**
+ * Whether this scan's release is public yet, so its share link, listing, and
+ * listed badge are live (`publicDisclosureAllowedCondition`). The share dialog
+ * reads it to say the link is waiting rather than broken.
+ */
+export async function scanPublicDisclosureAllowed(
+  db: AppDb,
+  input: { scanId: string; organizationId: string },
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        publicDisclosureAllowedCondition(),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
