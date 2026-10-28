@@ -331,12 +331,17 @@ describe("publisher setup HTTP boundaries", () => {
     const { app, scope } = await fixture();
     mockGithub(42, { missingEnvironment: true });
     const result = await call(app, "POST", "/api/v1/github-app/setup/status", {
-      body: { ...scope, environment: "production", ecosystem: "npm" },
+      body: { ...scope, environment: " Production ", ecosystem: "npm" },
       envOverride: setupEnv(),
     });
     expect(result.status).toBe(200);
     expect(await result.json()).toMatchObject({
-      status: { environmentExists: false, protectionEnabled: false, firstReview: null },
+      status: {
+        environment: "production",
+        environmentExists: false,
+        protectionEnabled: false,
+        firstReview: null,
+      },
     });
   });
   test("status does not turn missing GitHub access into missing protection", async () => {
@@ -412,7 +417,7 @@ describe("publisher setup HTTP boundaries", () => {
     });
     await owner.db
       .update(schema.githubReleaseTargets)
-      .set({ artifactName: "npm-release-candidate" })
+      .set({ artifactName: "npm-release-candidates" })
       .where(eq(schema.githubReleaseTargets.id, gate.releaseTargetId));
     const scope = {
       installationRowId: installation.id,

@@ -298,10 +298,22 @@ export async function createSetupPullRequest(
       409,
     );
   }
-  const branch = `drydock/setup-${(await sha256Hex(canonicalJson(proposal))).slice(0, 20)}`;
+  // The branch derives from what gets written, not from the proposal's expiry
+  // or prose, so re-drafting identical content reuses the same branch.
+  const written = {
+    repositoryId: proposal.repositoryId,
+    workflowPath: proposal.workflowPath,
+    baseSha: proposal.baseSha,
+    originalSha: proposal.originalSha,
+    content: proposal.content,
+  };
+  const branch = `drydock/setup-${(await sha256Hex(canonicalJson(written))).slice(0, 20)}`;
   const owner = client.repository.fullName.split("/")[0];
+  // Only an open PR is recovered. A closed one falls through: the branch check
+  // below reopens its exact one-file branch as a new PR, and a merged one fails
+  // as stale because the default branch moved.
   const pulls = await client.request(
-    `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&base=${encodeURIComponent(proposal.defaultBranch)}&per_page=1`,
+    `/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&base=${encodeURIComponent(proposal.defaultBranch)}&per_page=1`,
   );
   if (!Array.isArray(pulls))
     throw new PublisherSetupError(

@@ -5,7 +5,7 @@ import { isRecord } from "../platform/guards";
 import type { GithubAppConfig, SupportedEcosystem } from "./config";
 import { listReleaseTargetsForOrganization } from "./persistence";
 import { PublisherSetupError, type SetupGithubClient } from "./setup-api";
-import type { PublisherSetupStatus } from "./setup-types";
+import { SETUP_ARTIFACT_NAMES, type PublisherSetupStatus } from "./setup-types";
 
 export async function publisherSetupStatus(
   db: AppDb,
@@ -23,7 +23,7 @@ export async function publisherSetupStatus(
       target.repositoryId === client.repository.id &&
       target.environment === environment &&
       target.ecosystem === ecosystem &&
-      target.artifactName === `${ecosystem}-release-candidate`,
+      target.artifactName === SETUP_ARTIFACT_NAMES[ecosystem],
   );
   const targetMapped = Boolean(selectedTarget);
   const environmentData = await client.request(

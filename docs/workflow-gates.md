@@ -163,6 +163,9 @@ jobs:
     environment: production
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          name: vscode-release-candidate
+          path: dist
       - run: npx @vscode/vsce publish --packagePath dist/*.vsix
 ```
 

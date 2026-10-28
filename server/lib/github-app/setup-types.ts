@@ -1,5 +1,12 @@
 import type { SupportedEcosystem } from "./config";
 
+/** Artifact names the ecosystem workflow-gate guides upload, per release target. */
+export const SETUP_ARTIFACT_NAMES: Record<SupportedEcosystem, string> = {
+  npm: "npm-release-candidates",
+  pypi: "pypi-release-candidate",
+  vscode: "vscode-release-candidate",
+};
+
 interface PublisherSetupScope {
   installationRowId: string;
   repositoryFullName: string;

@@ -16,7 +16,10 @@ import {
   validSetupEnvironment,
 } from "../../lib/github-app/setup-api";
 import { publisherSetupStatus } from "../../lib/github-app/setup-status";
-import { parseRepositoryFullName } from "../../lib/github-app/validation";
+import {
+  normalizeGithubEnvironmentName,
+  parseRepositoryFullName,
+} from "../../lib/github-app/validation";
 import { readJsonObject } from "../../lib/platform/http";
 import { guardRateLimit } from "../../lib/rate-limit";
 import type { Bindings, Variables } from "../../types";
@@ -50,12 +53,26 @@ const scopeSchema = z.object({
 const statusSchema = scopeSchema
   .extend({
     ecosystem: z.enum(["npm", "pypi", "vscode"]),
-    environment: z.string().min(1).max(255).refine(validSetupEnvironment),
+    environment: z
+      .string()
+      .min(1)
+      .max(255)
+      .transform(normalizeGithubEnvironmentName)
+      .refine(validSetupEnvironment),
   })
   .strict();
 
+// Separate budgets so status refreshes cannot exhaust drafting or PR creation.
+// Drafting is the costly bucket: each call sends a workflow to Workers AI.
+const RATE_LIMITS = {
+  read: 60,
+  draft: 20,
+  "pull-request": 20,
+} as const;
+
 async function route(
   c: RouteContext,
+  bucket: keyof typeof RATE_LIMITS,
   operation: (config: GithubAppConfig, organizationId: string) => Promise<Response>,
 ) {
   if (!c.get("authSession")) return c.json({ error: "unauthorized" }, 401);
@@ -64,7 +81,11 @@ async function route(
   const { organizationId } = await requireOrganizationRole(c, c.var.db, roleCanManageIntegrations);
   const limited = await guardRateLimit(
     c,
-    { key: `github-app:setup:${organizationId}`, limit: 20, windowMs: 60 * 60_000 },
+    {
+      key: `github-app:setup:${bucket}:${organizationId}`,
+      limit: RATE_LIMITS[bucket],
+      windowMs: 60 * 60_000,
+    },
     "Publisher setup rate limit exceeded",
   );
   if (limited) return limited;
@@ -93,7 +114,7 @@ async function route(
 }
 
 publisherSetupRoutes.post("/setup/inspect", (c) =>
-  route(c, async (config, organizationId) => {
+  route(c, "read", async (config, organizationId) => {
     const input = scopeSchema.strict().parse(await readJsonObject(c));
     const installation = await ensureInstallationOwnedBy(
       c.var.db,
@@ -110,7 +131,7 @@ publisherSetupRoutes.post("/setup/inspect", (c) =>
 );
 
 publisherSetupRoutes.post("/setup/draft", (c) =>
-  route(c, async (config, organizationId) => {
+  route(c, "draft", async (config, organizationId) => {
     const { setupDraftRequestSchema, generateSetupDraft, setupManualSteps, signSetupProposal } =
       await import("../../lib/github-app/setup-draft");
     const input = setupDraftRequestSchema.parse(await readJsonObject(c));
@@ -178,7 +199,7 @@ publisherSetupRoutes.post("/setup/draft", (c) =>
 );
 
 publisherSetupRoutes.post("/setup/pull-request", (c) =>
-  route(c, async (config, organizationId) => {
+  route(c, "pull-request", async (config, organizationId) => {
     const { setupProposalSchema, verifySetupProposal } =
       await import("../../lib/github-app/setup-draft");
     const input = z
@@ -227,7 +248,7 @@ publisherSetupRoutes.post("/setup/pull-request", (c) =>
 );
 
 publisherSetupRoutes.post("/setup/status", (c) =>
-  route(c, async (config, organizationId) => {
+  route(c, "read", async (config, organizationId) => {
     const input = statusSchema.parse(await readJsonObject(c));
     const installation = await ensureInstallationOwnedBy(
       c.var.db,

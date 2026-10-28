@@ -1,10 +1,11 @@
 import { computed, createModel, effect, signal } from "@preact/signals";
-import type {
-  PublisherSetupDraft,
-  PublisherSetupDraftRequest,
-  PublisherSetupInspection,
-  PublisherSetupPullRequest,
-  PublisherSetupStatus,
+import {
+  SETUP_ARTIFACT_NAMES,
+  type PublisherSetupDraft,
+  type PublisherSetupDraftRequest,
+  type PublisherSetupInspection,
+  type PublisherSetupPullRequest,
+  type PublisherSetupStatus,
 } from "../../server/lib/github-app/setup-types";
 import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
@@ -270,7 +271,7 @@ export const PublisherSetupModel = createModel(() => {
         ...scope(),
         environment: environment.peek().trim(),
         ecosystem: selectedEcosystem,
-        artifactName: `${selectedEcosystem}-release-candidate`,
+        artifactName: SETUP_ARTIFACT_NAMES[selectedEcosystem],
       };
       let mapped = false;
       await run(
