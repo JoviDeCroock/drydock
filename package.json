@@ -65,6 +65,7 @@
     "qrcode": "^1.5.4",
     "shiki": "^4.4.3",
     "workers-ai-provider": "^4.0.0",
+    "yaml": "^2.9.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

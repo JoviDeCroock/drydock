@@ -78,6 +78,9 @@ importers:
       workers-ai-provider:
         specifier: ^4.0.0
         version: 4.0.0(@ai-sdk/provider@4.0.7)(ai@7.0.66(zod@4.6.7))
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7

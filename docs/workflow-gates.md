@@ -4,6 +4,13 @@ Workflow Gate is Drydock's **enforced** mode for releases whose registry cannot 
 
 Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
+Settings → Integrations → GitHub App includes a guided setup flow that inspects an
+existing workflow and proposes changes in a draft pull request. A proposal still
+needs maintainer review, an enabled environment protection rule, and a matching
+release target. The setup checker reports those separately from the first real
+workflow-gate review; creating a PR alone does not establish a working gate. See
+[`publisher-setup.md`](./publisher-setup.md) for the setup and permission contract.
+
 atpm has no gate. Its releases are reviewed through an anonymous link from atpm's own staged dashboard, and approving stays entirely on atpm's side; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
 ## Core contract

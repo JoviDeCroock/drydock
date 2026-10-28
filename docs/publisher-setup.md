@@ -1,0 +1,35 @@
+# Guided publisher setup
+
+Organization owners and admins can open **Settings → Integrations → GitHub App → Prepare a release workflow** to inspect an installed repository, draft changes to an existing release workflow, and explicitly request a draft pull request. The existing first-review panel links to this flow for CI publishers.
+
+## Flow
+
+1. Select an active GitHub App installation and one of its accessible repositories.
+2. Inspect workflows from a pinned commit on the default branch. Only regular UTF-8 `.github/workflows/*.yml` and `*.yaml` files are eligible: at most 12 files, each at most 48 KB. No source, workflow, build, package code, or dependency is executed by Drydock.
+3. Select the release workflow, ecosystem, and GitHub Environment. Ask GLM 5.3 Flash (`@cf/zai-org/glm-5.3-flash`) to draft the selected file. Drafting requires the organization's `ai-review` flag and Workers AI; disabled or unavailable AI leaves the existing manual guides available. Selected workflow text is sent to Workers AI with AI Gateway payload logging disabled.
+4. Review the complete original/proposed diff and confirm it before requesting a draft PR. The proposal is signed for this organization, user, repository, file, revision, content, and expiry. A proposal expires after 20 minutes; changing its fields or switching users/organizations invalidates it.
+5. Configure the Environment and its Drydock custom deployment-protection rule in GitHub, then map the selected ecosystem and `<ecosystem>-release-candidate` artifact to the repository/environment release target. Existing conflicting targets must be removed explicitly before remapping.
+6. Run a real release and refresh setup checks. A workflow gate being requested and a release review completing are separate states. Reviewing an already-published package never completes publisher setup.
+
+## Draft limits and authority
+
+The model proposes a replacement for one existing workflow, preserving its triggers and separating build/package from publishing. Structural validation requires a producer to upload the named artifact before the review environment, a publish job that depends on that producer and uses that environment, and a matching artifact download before an explicit archive publish command. The publish job cannot rebuild, install package dependencies, change its working directory, download from another run, or run additional steps after download. Custom publishing actions and complex shell publishers require manual setup. YAML with duplicate keys, unsupported aliases/tags, or indirect/privileged triggers (`pull_request_target`, `workflow_run`, `workflow_call`) is rejected.
+
+These are bounded structural checks, not a proof of arbitrary workflow semantics or a replacement for maintainer review. Review build commands, conditions, provenance, archive selection, permissions, and every other release path before merging. The generated commit includes `[skip ci]` to reduce automatic CI execution; it does not guarantee that no GitHub automation will run. The PR does not configure an Environment or enable its protection rules. GitHub protects only the configured job, and other workflows, manual publishing, or administrator bypass remain separate paths.
+
+Inspection and drafting require only repository-scoped Contents and Actions read permissions. **Create draft PR** separately requests a repository-scoped installation token with Contents, Pull requests, and Workflows write permissions. The App operator must configure these optional permissions, and the repository owner must approve the installation update; Drydock does not silently expand an installation. If write access is unavailable, copy the reviewed draft and open the PR manually. Deployment-protection operation itself retains its existing permission requirements.
+
+PR creation rechecks the default-branch revision and original blob. A stable branch derived from the proposal makes retries recover an existing PR or a one-file partially completed branch. It refuses to overwrite additional edits on that branch. GitHub mutations are not automatically retried. Tokens remain server-side, credentialed requests stay on `api.github.com`, redirects are refused, and response bodies are bounded. Audit event `github_app_setup.pr_created` records repository/environment/PR number only, with no workflow content or proposal token.
+
+## Setup checks
+
+Checks independently report the selected release target, Environment existence, this exact Drydock App's enabled protection rule, administrator bypass, and an observed workflow-gated review. The target must match installation, repository, environment, selected ecosystem, and the expected artifact name. Historical review lookup is scoped to that target and organization; pending/failed reviews do not count as complete. A GitHub 403 or upstream failure is an error, not evidence that an Environment is missing.
+
+## HTTP contract
+
+All endpoints require an authenticated, verified-email organization owner/admin, an active organization-owned installation, and a setup rate limit of 20 requests/hour/organization. Request bodies are capped at 200 KB.
+
+- `POST /api/v1/github-app/setup/inspect`: installation row id and repository full name → `{ inspection }`, including pinned revision and workflow files.
+- `POST /api/v1/github-app/setup/draft`: inspection scope, selected workflow/revision, environment, and ecosystem → `{ proposal, proposalToken }`.
+- `POST /api/v1/github-app/setup/pull-request`: exact proposal and token → `{ pullRequest }`; creates a draft or recovers the existing PR.
+- `POST /api/v1/github-app/setup/status`: installation row id, repository, environment, and ecosystem → `{ status }`, including independent checks and first observed/completed review details.

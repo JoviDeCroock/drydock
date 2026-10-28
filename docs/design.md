@@ -254,6 +254,12 @@ The public docs are a learning path first and a configuration reference second. 
 - **Copy:** define product terms in plain language on first use. Keep conceptual paragraphs under `680px`; operational steps use numbered lists and one action per step.
 - **Two edges, not five:** the docs body has exactly one structural edge and one text edge. The rail (`200px` + `40px` gap) leaves an `~880px` article column: section-label rules, card grids, document Cards, step lists, requirement rows, callout boxes, and code blocks all span it. Every run of body copy — including copy inside a callout or a step — stops at the `680px` measure. The hero rides the same article track (`lg:col-start-2`), so the `h1` starts on the column every `h2` starts on; only its full-bleed rule spans the shell. A block that is neither a filled container nor running text does not exist here — pick one.
 
+## Publisher workflow setup
+
+The GitHub App integration in Settings includes `Prepare a release workflow` before the manual release-target form. It extends the existing settings card with native installation, repository, workflow and ecosystem selects plus an environment input. Maintainers inspect the existing workflow, explicitly request an AI draft, review the original and proposed YAML in the shared `DiffView`, and confirm review before creating a draft pull request. The full proposal can also be copied when direct GitHub writes are unavailable.
+
+Remaining environment configuration stays visible with the proposal. `Check setup status` separately reports the release-target mapping, GitHub protection configuration, administrator bypass state, and first observed pre-publish review. A completed published-package review does not complete these setup checks. Missing permissions, AI availability, or an unsupported workflow remain actionable errors; creating a PR never renders a protected-release success state. Changing the organization, repository, workflow, environment or ecosystem discards the corresponding stale proposal and its review confirmation.
+
 ## Iconography
 
 The system is typography-first. It communicates through type, severity color, and a small allowed set of Unicode glyphs. **No SVG icons.**
