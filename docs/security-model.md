@@ -82,6 +82,26 @@ The sandbox must remain small and boring. Genuine parser bugs and malformed arch
 
 ## Workflow-gate posture
 
+### Publisher setup proposals
+
+The GitHub publisher setup endpoints require a verified session and permission to
+manage the active organization's integrations. Repository inspection and status
+checks remain scoped to an installation owned by that organization. Workflow text
+is untrusted evidence for drafting; Drydock never executes it. AI drafting uses
+the existing organization killswitch, and workflow payloads must not be retained
+in AI Gateway logs.
+
+The user reviews an expiring proposal bound to its organization, author,
+repository, source commit, file, and exact proposed content before explicitly
+creating a draft pull request. The server checks that source state again before
+writing. The optional write token is repository-scoped and requires already
+granted Contents, Pull requests, and Workflows permissions. Drafting cannot grant
+permissions, enable environment protection, approve a release, or publish a
+package. Setup status reports observed configuration and a real scoped gate
+review; it does not certify arbitrary workflow code or publication paths.
+
+### Release decisions
+
 Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone.
 
 ## AI prompt-injection posture

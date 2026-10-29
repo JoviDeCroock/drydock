@@ -38,6 +38,11 @@ A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view
 reads it as "approved publish in a batch".
 
+Creating a publisher setup draft PR records `github_app_setup.pr_created` with
+the actor, repository, environment, and PR number. Its visible detail contains
+only the repository and PR number. Proposed workflow contents and signed proposal
+tokens are never recorded in the audit event.
+
 ## Visible allowlist
 
 `server/lib/auth/audit-events.ts` is the single source of truth for the audit view. It

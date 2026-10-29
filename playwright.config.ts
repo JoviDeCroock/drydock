@@ -34,17 +34,17 @@ export default defineConfig({
     },
     {
       name: "desktop-smoke",
-      testMatch: "**/smoke.spec.ts",
+      testMatch: ["**/smoke.spec.ts", "**/publisher-setup.spec.ts"],
       use: { ...devices["Desktop Chrome"], colorScheme: "light" },
     },
     {
       name: "mobile-smoke",
-      testMatch: "**/smoke.spec.ts",
+      testMatch: ["**/smoke.spec.ts", "**/publisher-setup.spec.ts"],
       use: { ...devices["Pixel 7"], colorScheme: "light" },
     },
     {
       name: "dark-smoke",
-      testMatch: "**/smoke.spec.ts",
+      testMatch: ["**/smoke.spec.ts", "**/publisher-setup.spec.ts"],
       use: { ...devices["Desktop Chrome"], colorScheme: "dark" },
     },
   ],

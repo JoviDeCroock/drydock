@@ -17,6 +17,7 @@ import {
 } from "../../../components/Card";
 import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
+import { PublisherSetup } from "../../../features/publisher-setup/PublisherSetup";
 
 export function GithubAppSection({
   githubApp,
@@ -24,7 +25,7 @@ export function GithubAppSection({
   defaultOpen = false,
 }: {
   githubApp: ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
-  targets: ReturnType<typeof useModel<typeof ReleaseTargetsModel.prototype>>;
+  targets: InstanceType<typeof ReleaseTargetsModel>;
   defaultOpen?: boolean;
 }) {
   const configured = githubApp.config.value?.configured === true;
@@ -106,6 +107,10 @@ export function GithubAppSection({
           </SettingsCardBody>
         )}
       </div>
+
+      {activeInstallations.length ? (
+        <PublisherSetup installations={activeInstallations} targets={targets} />
+      ) : null}
 
       <div>
         <SettingsCardHeader

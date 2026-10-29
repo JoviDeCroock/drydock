@@ -255,6 +255,21 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: (m) => str(m.accountLogin),
   },
+  "github_app_setup.pr_created": {
+    category: "integration",
+    label: "Publisher setup PR created",
+    severity: "notice",
+    summarize: (m) => {
+      const repository = str(m.repositoryFullName);
+      const number =
+        typeof m.pullRequestNumber === "number" &&
+        Number.isSafeInteger(m.pullRequestNumber) &&
+        m.pullRequestNumber > 0
+          ? m.pullRequestNumber
+          : null;
+      return repository && number ? `${repository} #${number}` : repository;
+    },
+  },
   "github_app_release_target.created": {
     category: "integration",
     label: "Release target added",

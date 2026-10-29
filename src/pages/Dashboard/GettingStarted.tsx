@@ -141,7 +141,7 @@ function CiPublisherTrack() {
         size="sm"
         href="/dashboard/settings?tab=integrations#github-app"
       >
-        Set up a workflow gate
+        Prepare a release workflow
       </LinkButton>
     </div>
   );

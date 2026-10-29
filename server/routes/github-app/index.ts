@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import type { Bindings, Variables } from "../../types";
 import { installationRoutes } from "./installations";
 import { releaseTargetRoutes } from "./release-targets";
+import { publisherSetupRoutes } from "./setup";
 import { workflowGateRoutes } from "./workflow-gates";
 
 export const githubAppRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -17,3 +18,4 @@ export const githubAppRoutes = new Hono<{ Bindings: Bindings; Variables: Variabl
 githubAppRoutes.route("/", installationRoutes);
 githubAppRoutes.route("/", releaseTargetRoutes);
 githubAppRoutes.route("/", workflowGateRoutes);
+githubAppRoutes.route("/", publisherSetupRoutes);
