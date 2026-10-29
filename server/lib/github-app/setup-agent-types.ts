@@ -19,6 +19,8 @@ export interface SetupAgentState {
   missingFiles?: string[];
   inspectedChanges?: Record<string, { digest: string; through: number }>;
   submitted?: { summary: string; digest: string };
+  /** Blocker calls refused for naming no concrete missing fact; repeated refusals end the job. */
+  vagueBlockers?: number;
   candidateDigest?: string;
   assessment?: {
     verdict: "pass" | "changes_requested";

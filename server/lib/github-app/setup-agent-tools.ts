@@ -26,7 +26,7 @@ const MAX_EDITS = 100;
 // The judge pages every changed file through inspect_changes in one-call turns; keep
 // proposals small enough to review fully with turns left for call-path reads.
 export const SETUP_REVIEW_PAGE_CHARS = 12_000;
-export const SETUP_REVIEW_MAX_PAGES = 32;
+export const SETUP_REVIEW_MAX_PAGES = 10;
 const SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const encoder = new TextEncoder();
 const byteLength = (text: string) => encoder.encode(text).length;

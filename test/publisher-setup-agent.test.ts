@@ -92,7 +92,7 @@ describe("publisher setup native agent turns", () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: "user",
-          content: expect.stringContaining('"remainingInputTokens":1050000'),
+          content: expect.stringContaining('"remainingInputTokens":900000'),
         }),
       ]),
     );
@@ -411,6 +411,30 @@ describe("publisher setup native agent turns", () => {
     expect(next.blocked?.reason).toContain("missing");
     expect(next.files[state.request.workflowPath].content).toBe(SETUP_ORIGINAL_WORKFLOW);
   });
+  test("a filler blocker in the handoff turn is refused with guidance instead of ending the job", async () => {
+    const state = start();
+    state.progress.turns = 12;
+    const { env, client, run } = binding([
+      response("report_blocker", { reason: "placeholder" }),
+      response("report_blocker", { reason: "placeholder" }),
+      response("report_blocker", { reason: "placeholder" }),
+    ]);
+    const next = await runSetupAgentTurn(env, state, client);
+    expect(next.blocked).toBeUndefined();
+    expect(next.vagueBlockers).toBe(1);
+    expect(JSON.stringify(next.messages.at(-1))).toContain("blocker_not_specific");
+    const calls = run.mock.calls as unknown as [
+      string,
+      { messages: { role: string; content: string }[] },
+    ][];
+    expect(calls[0][1].messages.at(-1)?.content).toContain("repository reads are closed");
+    const again = await runSetupAgentTurn(env, next, client);
+    expect(again.blocked).toBeUndefined();
+    await expect(runSetupAgentTurn(env, again, client)).rejects.toThrow(
+      /without naming what was missing/,
+    );
+    expect(run).toHaveBeenCalledTimes(3);
+  });
   test("hands bounded investigation to a fresh implementation context without resetting shared budgets", async () => {
     const state = start();
     state.progress.turns = 12;
@@ -421,6 +445,7 @@ describe("publisher setup native agent turns", () => {
       response("finish_investigation", {
         plan: "PRIVATE_ADVISORY_PLAN: move packaging before the literal environment gate.",
         evidencePaths: [state.request.workflowPath],
+        openQuestions: ["Confirm whether pnpm stage publish accepts a tarball path."],
       }),
       response("read_file", { path: state.request.workflowPath }),
     ]);
@@ -437,6 +462,7 @@ describe("publisher setup native agent turns", () => {
     );
     expect(JSON.stringify(current.messages)).not.toContain("PRIVATE_INVESTIGATION_RATIONALE");
     expect(JSON.stringify(current.messages)).toContain("PRIVATE_ADVISORY_PLAN");
+    expect(JSON.stringify(current.messages)).toContain("pnpm stage publish accepts a tarball");
     const calls = harness.run.mock.calls as unknown as [
       string,
       { tools: { function: { name: string } }[] },
@@ -526,8 +552,8 @@ describe("publisher setup native agent turns", () => {
   });
   test("discards a terminal result that arrives after the shared deadline", async () => {
     const state = start();
-    // Drafting's deadline is 14 minutes; the rest of the 20 is reserved for review.
-    state.progress.startedAt = Date.now() - 14 * 60_000 + 1000;
+    // Drafting's deadline is 12 minutes; the rest of the 20 is reserved for review and the PR.
+    state.progress.startedAt = Date.now() - 12 * 60_000 + 1000;
     const { env, client, run } = binding([]);
     const now = vi.spyOn(Date, "now");
     const timeout = vi.spyOn(AbortSignal, "timeout");
