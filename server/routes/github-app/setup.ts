@@ -33,17 +33,20 @@ import {
 } from "./shared";
 
 export const publisherSetupRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-publisherSetupRoutes.use(
-  "/setup/*",
-  bodyLimit({
-    maxSize: 200_000,
-    onError: (c) =>
-      c.json(
-        { error: "The setup request exceeds the 200 KB limit.", code: "setup_request_too_large" },
+publisherSetupRoutes.use("/setup/*", async (c, next) => {
+  const maximum = c.req.path.endsWith("/setup/pull-request") ? 4_194_304 : 200_000;
+  return bodyLimit({
+    maxSize: maximum,
+    onError: (context) =>
+      context.json(
+        {
+          error: "The setup request exceeds its supported size limit.",
+          code: "setup_request_too_large",
+        },
         413,
       ),
-  }),
-);
+  })(c, next);
+});
 
 const scopeSchema = z.object({
   installationRowId: z.string().min(1).max(100),

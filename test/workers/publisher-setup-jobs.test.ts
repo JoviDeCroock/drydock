@@ -18,6 +18,7 @@ import { deleteOrganization } from "../../server/db/organizations";
 import { publisherSetupJobs, organizationMembers, scanEvents } from "../../server/db/schema";
 import type { Bindings } from "../../server/types";
 import type { PublisherSetupDraftJob } from "../../server/lib/github-app/setup-types";
+import { SETUP_DRAFT_MAX_TURNS } from "../../server/lib/github-app/setup-agent";
 import { buildTestApp, call } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 import { configurePublisherSetupWorkflowTest } from "./helpers/publisher-setup-workflow-entry";
@@ -65,9 +66,10 @@ async function fixture(
     staleBeforePr?: boolean;
     uncertainPr?: boolean;
     revokeBeforePr?: boolean;
-    invalidDraft?: boolean;
-    incompleteContext?: boolean;
-    unsupportedScript?: "flags" | "directory" | "missing";
+    blocked?: boolean;
+    noProgress?: boolean;
+    multiFile?: boolean;
+    tamperAfterTree?: boolean;
   } = {},
 ) {
   const owner = await seedUser();
@@ -87,18 +89,20 @@ async function fixture(
   };
   let draftCalls = 0;
   let judgeCalls = 0;
-  let tokenCalls = 0;
+  let writeTokens = 0;
   let pullRequestsCreated = 0;
   let headCalls = 0;
   let prBranch = "";
-  let originalWorkflow = options.incompleteContext
-    ? `${SETUP_ORIGINAL_WORKFLOW}      - uses: changesets/action@v1\n`
-    : SETUP_ORIGINAL_WORKFLOW;
-  if (options.unsupportedScript)
-    originalWorkflow += `      - uses: changesets/action@v1\n        with:\n          publish: node ${options.unsupportedScript === "flags" ? "--enable-source-maps " : ""}.github/scripts/stage-packages.mjs\n${options.unsupportedScript === "directory" ? "      - working-directory: packages/a\n        run: node .github/scripts/stage-packages.mjs\n" : ""}`;
-  const packageContext = options.incompleteContext
-    ? JSON.stringify({ name: "context-only-fixture", workspaces: ["packages/**"] })
-    : PACKAGE_CONTEXT;
+  let branchHead: string | null = null;
+  const gitWrites: string[] = [];
+  const helperPath = ".github/scripts/release-helper.js";
+  const helperContent = "// Private proposed repository source; never executed by Drydock.\n";
+  const proposed = options.multiFile
+    ? SETUP_PROPOSED_WORKFLOW.replace(
+        "      - run: npm pack",
+        `      - run: node ${helperPath}\n      - run: npm pack`,
+      )
+    : SETUP_PROPOSED_WORKFLOW;
   const binding: Partial<Bindings> = {
     PUBLISHER_SETUP_WORKFLOW: undefined,
     GITHUB_APP_ID: "123",
@@ -112,35 +116,106 @@ async function fixture(
     FLAGS: { getBooleanValue: async () => true } as unknown as Flagship,
     AI: {
       run: vi.fn(async (_model: string, input: unknown) => {
-        expect(JSON.stringify(input)).toContain("context-only-fixture");
         const data = input as {
-          response_format?: { json_schema?: { properties?: { verdict?: unknown } } };
+          tools?: { function?: { name?: string } }[];
+          messages?: { role: string; content?: unknown }[];
         };
-        const judging = Boolean(data.response_format?.json_schema?.properties?.verdict);
+        const judging = Boolean(
+          data.tools?.some((entry) => entry.function?.name === "finish_review"),
+        );
         if (judging) judgeCalls++;
         else draftCalls++;
         if (!judging && (options.permanentDraft || (options.transientDraft && draftCalls === 1)))
           throw Object.assign(new Error("PRIVATE_WORKFLOW credential=must-not-enter-history"), {
             code: 3040,
           });
-        const content = judging
-          ? JSON.stringify({
+        if (options.noProgress)
+          return {
+            choices: [
+              {
+                message: { role: "assistant", content: "Still considering the release." },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          };
+        const results = data.messages?.filter((message) => message.role === "tool") ?? [];
+        const turn = results.length + 1;
+        const last = results.at(-1)?.content;
+        const previous =
+          typeof last === "string" ? (JSON.parse(last) as { revision?: string }) : {};
+        let name: string;
+        let args: Record<string, unknown>;
+        if (!judging) {
+          if (options.blocked) {
+            name = "report_blocker";
+            args = { reason: "Inspect the custom release inputs before continuing." };
+          } else if (turn === 1) {
+            name = "list_directory";
+            args = { path: "" };
+          } else if (turn === 2) {
+            name = "read_file";
+            args = { path: "package.json" };
+          } else if (turn === 3) {
+            name = "read_file";
+            args = { path: request.workflowPath };
+          } else if (turn === 4) {
+            name = "stage_file";
+            args = {
+              path: request.workflowPath,
+              expectedRevision: previous.revision,
+              content: proposed,
+            };
+          } else if (options.multiFile && turn === 5) {
+            name = "read_file";
+            args = { path: helperPath };
+          } else if (options.multiFile && turn === 6) {
+            name = "stage_file";
+            args = {
+              path: helperPath,
+              expectedRevision: previous.revision,
+              content: helperContent,
+            };
+          } else {
+            name = "submit_changes";
+            args = { summary: "Prepare the release candidate before protected publishing." };
+          }
+        } else {
+          if (turn === 1) {
+            name = "inspect_changes";
+            args = { path: request.workflowPath, maxChars: 12000 };
+          } else if (options.multiFile && turn === 2) {
+            name = "inspect_changes";
+            args = { path: helperPath, maxChars: 12000 };
+          } else if (turn === (options.multiFile ? 3 : 2)) {
+            name = "read_file";
+            args = { path: "package.json" };
+          } else {
+            name = "finish_review";
+            args = {
               verdict: options.judgeRejects ? "changes_requested" : "pass",
-              summary: options.judgeRejects
-                ? "The release behavior needs another look."
-                : "The reviewed archive is published by the protected job.",
+              summary: "The archive publication path was independently inspected.",
               issues: options.judgeRejects ? ["Review the publication conditions."] : [],
-            })
-          : data.response_format
-            ? JSON.stringify({
-                content: SETUP_PROPOSED_WORKFLOW,
-                summary: "Separate packaging and publication.",
-              })
-            : options.invalidDraft
-              ? "name: invalid"
-              : SETUP_PROPOSED_WORKFLOW;
+            };
+          }
+        }
         return {
-          choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    id: `${judging ? "judge" : "draft"}-${turn}`,
+                    type: "function",
+                    function: { name, arguments: JSON.stringify(args) },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
           usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
         };
       }),
@@ -152,73 +227,111 @@ async function fixture(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
+      if (init?.method && url.pathname.startsWith("/repos/octo/release/"))
+        gitWrites.push(url.pathname.slice("/repos/octo/release".length));
       if (url.pathname.endsWith("/access_tokens")) {
-        tokenCalls++;
         const body = JSON.parse(String(init?.body));
-        expect(body.permissions).toEqual({
-          contents: "write",
-          pull_requests: "write",
-          workflows: "write",
-        });
         expect(body.repositories).toEqual(["release"]);
-        if (options.writePermissionsMissing) return Response.json({}, { status: 403 });
-        if (options.revokeBeforePr && tokenCalls === 2)
-          await owner.db
-            .update(organizationMembers)
-            .set({ role: "member" })
-            .where(eq(organizationMembers.userId, owner.userId));
+        if (body.permissions.contents === "write") {
+          writeTokens++;
+          expect(body.permissions).toEqual({
+            contents: "write",
+            pull_requests: "write",
+            workflows: "write",
+          });
+          if (options.writePermissionsMissing) return Response.json({}, { status: 403 });
+          if (options.revokeBeforePr && writeTokens === 2)
+            await owner.db
+              .update(organizationMembers)
+              .set({ role: "member" })
+              .where(eq(organizationMembers.userId, owner.userId));
+        } else expect(body.permissions).toEqual({ contents: "read" });
         return Response.json({ token: "private-installation-token" });
       }
       if (url.pathname === "/repos/octo/release")
         return Response.json({ id: 42, full_name: "octo/release", default_branch: "main" });
-      if (url.pathname === `/repos/octo/release/git/trees/${SETUP_BASE_SHA}`)
+      if (url.pathname.includes("/git/commits/")) {
+        const revision = url.pathname.split("/").at(-1);
         return Response.json({
-          tree: [
-            { path: "package.json", type: "blob", mode: "100644", sha: SETUP_BLOB_SHA },
-            ...(options.unsupportedScript && options.unsupportedScript !== "missing"
-              ? [{ path: ".github", type: "tree", mode: "040000", sha: "c".repeat(40) }]
-              : []),
-          ],
-          truncated: false,
-        });
-      if (url.pathname === `/repos/octo/release/git/trees/${"c".repeat(40)}`)
-        return Response.json({
-          tree: [{ path: "scripts", type: "tree", mode: "040000", sha: "d".repeat(40) }],
-          truncated: false,
-        });
-      if (url.pathname === `/repos/octo/release/git/trees/${"d".repeat(40)}`)
-        return Response.json({
-          tree: [{ path: "stage-packages.mjs", type: "blob", mode: "100644", sha: SETUP_BLOB_SHA }],
-          truncated: false,
-        });
-      if (url.pathname === "/repos/octo/release/contents/.github/scripts/stage-packages.mjs") {
-        expect(url.searchParams.get("ref")).toBe(SETUP_BASE_SHA);
-        const content = "throw new Error('inert fixture source');";
-        return Response.json({
-          type: "file",
-          path: ".github/scripts/stage-packages.mjs",
-          sha: SETUP_BLOB_SHA,
-          encoding: "base64",
-          size: content.length,
-          content: btoa(content),
+          sha: revision,
+          tree: { sha: revision === "e".repeat(40) ? "f".repeat(40) : SETUP_BASE_SHA },
         });
       }
-      if (url.pathname === "/repos/octo/release/contents/package.json") {
-        expect(url.searchParams.get("ref")).toBe(SETUP_BASE_SHA);
+      if (url.pathname.endsWith("/git/trees") && init?.method === "POST") {
+        if (options.tamperAfterTree) {
+          const [job] = await owner.db
+            .select()
+            .from(publisherSetupJobs)
+            .where(eq(publisherSetupJobs.organizationId, owner.organizationId));
+          if (!job) throw new Error("Missing fixture job");
+          const key = publisherSetupPayloadKey(job, "judge");
+          const assessment = await env.ARTIFACTS.get(key);
+          const body = JSON.parse(await assessment!.text());
+          await env.ARTIFACTS.put(key, JSON.stringify({ ...body, digest: "f".repeat(64) }));
+        }
+        return Response.json({ sha: "f".repeat(40) });
+      }
+      if (url.pathname.endsWith("/git/commits") && init?.method === "POST")
+        return Response.json({ sha: "e".repeat(40) });
+      if (url.pathname.includes("/git/trees/")) {
+        const sha = url.pathname.split("/").at(-1);
+        const tree =
+          sha === SETUP_BASE_SHA || sha === "f".repeat(40)
+            ? [
+                { path: "package.json", type: "blob", mode: "100644", sha: SETUP_BLOB_SHA },
+                {
+                  path: ".github",
+                  type: "tree",
+                  mode: "040000",
+                  sha: sha === SETUP_BASE_SHA ? "c".repeat(40) : "1".repeat(40),
+                },
+              ]
+            : sha === "c".repeat(40) || sha === "1".repeat(40)
+              ? [
+                  {
+                    path: "workflows",
+                    type: "tree",
+                    mode: "040000",
+                    sha: sha === "c".repeat(40) ? "d".repeat(40) : "2".repeat(40),
+                  },
+                  ...(sha === "1".repeat(40)
+                    ? [{ path: "scripts", type: "tree", mode: "040000", sha: "3".repeat(40) }]
+                    : []),
+                ]
+              : sha === "d".repeat(40) || sha === "2".repeat(40)
+                ? [
+                    {
+                      path: "release.yml",
+                      type: "blob",
+                      mode: "100644",
+                      sha: sha === "d".repeat(40) ? SETUP_BLOB_SHA : "4".repeat(40),
+                    },
+                  ]
+                : [
+                    {
+                      path: "release-helper.js",
+                      type: "blob",
+                      mode: "100644",
+                      sha: "5".repeat(40),
+                    },
+                  ];
+        return Response.json({ tree, truncated: false });
+      }
+      if (url.pathname.includes("/git/blobs/"))
         return Response.json({
-          type: "file",
-          path: "package.json",
           sha: SETUP_BLOB_SHA,
           encoding: "base64",
-          size: packageContext.length,
-          content: btoa(packageContext),
+          size: PACKAGE_CONTEXT.length,
+          content: btoa(PACKAGE_CONTEXT),
         });
-      }
       if (url.pathname.includes("/git/ref/heads/")) {
-        if (!url.pathname.endsWith("/main")) return Response.json({}, { status: 404 });
+        if (!url.pathname.endsWith("/main"))
+          return branchHead
+            ? Response.json({ object: { sha: branchHead } })
+            : Response.json({}, { status: 404 });
         headCalls++;
         return Response.json({
-          object: { sha: options.staleBeforePr && headCalls > 1 ? "b".repeat(40) : SETUP_BASE_SHA },
+          object: { sha: options.staleBeforePr && headCalls > 1 ? "9".repeat(40) : SETUP_BASE_SHA },
         });
       }
       if (url.pathname.endsWith("/pulls")) {
@@ -243,18 +356,38 @@ async function fixture(
             : [],
         );
       }
-      if (url.pathname.endsWith("/git/refs")) return Response.json({});
-      if (url.pathname.includes("/contents/.github/workflows/release.yml"))
-        if (init?.method === "PUT") return Response.json({});
-        else
-          return Response.json({
-            type: "file",
-            path: request.workflowPath,
-            sha: SETUP_BLOB_SHA,
-            size: originalWorkflow.length,
-            encoding: "base64",
-            content: btoa(originalWorkflow),
-          });
+      if (
+        url.pathname.endsWith("/git/refs") ||
+        (url.pathname.includes("/git/refs/heads/") && init?.method === "PATCH")
+      ) {
+        branchHead = JSON.parse(String(init?.body)).sha;
+        return Response.json({});
+      }
+      if (url.pathname.includes("/compare/"))
+        return Response.json({
+          files: [
+            { filename: request.workflowPath },
+            ...(options.multiFile ? [{ filename: helperPath }] : []),
+          ],
+        });
+      if (url.pathname.includes("/contents/")) {
+        if (init?.method === "PUT") {
+          branchHead = "e".repeat(40);
+          return Response.json({});
+        }
+        const path = decodeURIComponent(url.pathname.split("/contents/")[1] ?? "");
+        const current = url.searchParams.get("ref") === "e".repeat(40);
+        const content =
+          path === helperPath ? helperContent : current ? proposed : SETUP_ORIGINAL_WORKFLOW;
+        return Response.json({
+          type: "file",
+          path,
+          sha: path === helperPath ? "5".repeat(40) : current ? "4".repeat(40) : SETUP_BLOB_SHA,
+          encoding: "base64",
+          size: content.length,
+          content: btoa(content),
+        });
+      }
       throw new Error("Unexpected transport request");
     }),
   );
@@ -270,6 +403,9 @@ async function fixture(
     testEnv,
     counts: () => ({ draftCalls, judgeCalls }),
     prCount: () => pullRequestsCreated,
+    helperPath,
+    helperContent,
+    gitWrites,
   };
 }
 
@@ -367,43 +503,14 @@ describe("publisher setup durable jobs", () => {
       draftCalls: 0,
       judgeCalls: 0,
     },
-    { options: { staleBeforePr: true }, code: "proposal_stale", draftCalls: 1, judgeCalls: 1 },
+    { options: { staleBeforePr: true }, code: "proposal_stale", draftCalls: 5, judgeCalls: 3 },
     {
       options: { revokeBeforePr: true },
       code: "setup_access_changed",
-      draftCalls: 1,
-      judgeCalls: 1,
+      draftCalls: 5,
+      judgeCalls: 3,
     },
-    {
-      options: { invalidDraft: true },
-      code: "workflow_invalid",
-      draftCalls: 1,
-      judgeCalls: 0,
-    },
-    {
-      options: { incompleteContext: true },
-      code: "setup_context_incomplete",
-      draftCalls: 0,
-      judgeCalls: 0,
-    },
-    {
-      options: { unsupportedScript: "flags" as const },
-      code: "setup_context_incomplete",
-      draftCalls: 0,
-      judgeCalls: 0,
-    },
-    {
-      options: { unsupportedScript: "directory" as const },
-      code: "setup_context_incomplete",
-      draftCalls: 0,
-      judgeCalls: 0,
-    },
-    {
-      options: { unsupportedScript: "missing" as const },
-      code: "setup_context_incomplete",
-      draftCalls: 0,
-      judgeCalls: 0,
-    },
+    { options: { blocked: true }, code: "setup_agent_blocked", draftCalls: 1, judgeCalls: 0 },
   ])("setup failure $code never opens a PR", async ({ options, code, draftCalls, judgeCalls }) => {
     const { owner, request, testEnv, counts, prCount } = await fixture(options);
     const job = await createPublisherSetupJob(
@@ -520,15 +627,157 @@ describe("publisher setup durable jobs", () => {
     expect(finished?.result?.proposalToken).toBeTruthy();
     expect(finished?.result?.originalContent).toBe(SETUP_ORIGINAL_WORKFLOW);
   });
+  test("blocked feedback stays private while D1 keeps only its static failure", async () => {
+    const { owner, request, testEnv, counts, prCount } = await fixture({ blocked: true });
+    const row = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, row.id, async (_name, operation) => operation());
+    const stored = await getPublisherSetupJob(owner.db, row.id);
+    expect(stored?.failureJson?.code).toBe("setup_agent_blocked");
+    expect(JSON.stringify(stored?.failureJson)).not.toContain("Inspect the custom release inputs");
+    const result = await readPublisherSetupDraftJob(
+      testEnv,
+      row.id,
+      owner.organizationId,
+      owner.userId,
+    );
+    expect(result?.feedback).toEqual(["Inspect the custom release inputs before continuing."]);
+    expect(counts()).toEqual({ draftCalls: 1, judgeCalls: 0 });
+    expect(prCount()).toBe(0);
+  });
+  test("an unproductive agent stops at its bounded turn count without opening a PR", async () => {
+    const { owner, request, testEnv, counts, prCount } = await fixture({ noProgress: true });
+    const row = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, row.id, async (_name, operation) => operation());
+    expect((await getPublisherSetupJob(owner.db, row.id))?.failureJson?.code).toBe(
+      "setup_agent_turn_limit",
+    );
+    expect(counts()).toEqual({ draftCalls: SETUP_DRAFT_MAX_TURNS, judgeCalls: 0 });
+    expect(prCount()).toBe(0);
+  });
+  test("the cumulative wall-clock limit survives an absent first-turn checkpoint", async () => {
+    const { owner, request, testEnv, counts } = await fixture();
+    const row = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await owner.db
+      .update(publisherSetupJobs)
+      .set({ createdAt: new Date(Date.now() - 21 * 60_000) })
+      .where(eq(publisherSetupJobs.id, row.id));
+    const checkpoint = vi.fn(async (_name: string, operation: () => Promise<boolean>) =>
+      operation(),
+    );
+    await runPublisherSetupDraftJob(testEnv, row.id, checkpoint);
+    expect((await getPublisherSetupJob(owner.db, row.id))?.failureJson?.code).toBe(
+      "setup_agent_budget_exceeded",
+    );
+    expect(checkpoint).not.toHaveBeenCalled();
+    expect(counts()).toEqual({ draftCalls: 0, judgeCalls: 0 });
+  });
+  test("the first draft turn reports and persists the D1 creation clock after source-read time", async () => {
+    const { owner, request, testEnv } = await fixture({ blocked: true });
+    const row = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await owner.db
+      .update(publisherSetupJobs)
+      .set({ createdAt: new Date(Date.now() - 2 * 60_000) })
+      .where(eq(publisherSetupJobs.id, row.id));
+    const stored = await getPublisherSetupJob(owner.db, row.id);
+    await runPublisherSetupDraftJob(testEnv, row.id, async (_name, operation) => operation());
+    const agent = await env.ARTIFACTS.get(publisherSetupPayloadKey(row, "draft-agent"));
+    const state = JSON.parse(await agent!.text()) as { progress: { startedAt: number } };
+    expect(state.progress.startedAt).toBe(stored!.createdAt.getTime());
+    const calls = vi.mocked(testEnv.AI.run).mock.calls as unknown as [
+      string,
+      { messages: { role: string; content: string }[] },
+    ][];
+    const system =
+      calls[0]?.[1].messages.find((message) => message.role === "system")?.content ?? "";
+    const remaining = Number(/"remainingSeconds":(\d+)/.exec(system)?.[1]);
+    expect(remaining).toBeLessThanOrEqual(18 * 60);
+    expect(remaining).toBeGreaterThan(17 * 60);
+  });
+  test("each Git mutation rechecks the independent assessment digest", async () => {
+    const { owner, request, testEnv, prCount, gitWrites } = await fixture({
+      multiFile: true,
+      tamperAfterTree: true,
+    });
+    const row = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, row.id, async (_name, operation) => operation());
+    expect((await getPublisherSetupJob(owner.db, row.id))?.failureJson?.code).toBe(
+      "setup_judge_mismatch",
+    );
+    expect(gitWrites).toEqual(["/git/trees"]);
+    expect(prCount()).toBe(0);
+  });
   test.each([
-    { judgeRejects: false, transientDraft: false, permanentDraft: false, uncertainPr: false },
-    { judgeRejects: true, transientDraft: false, permanentDraft: false, uncertainPr: false },
-    { judgeRejects: false, transientDraft: true, permanentDraft: false, uncertainPr: false },
-    { judgeRejects: false, transientDraft: false, permanentDraft: true, uncertainPr: false },
-    { judgeRejects: false, transientDraft: false, permanentDraft: false, uncertainPr: true },
+    {
+      judgeRejects: false,
+      transientDraft: false,
+      permanentDraft: false,
+      uncertainPr: false,
+      multiFile: false,
+    },
+    {
+      judgeRejects: true,
+      transientDraft: false,
+      permanentDraft: false,
+      uncertainPr: false,
+      multiFile: false,
+    },
+    {
+      judgeRejects: false,
+      transientDraft: true,
+      permanentDraft: false,
+      uncertainPr: false,
+      multiFile: false,
+    },
+    {
+      judgeRejects: false,
+      transientDraft: false,
+      permanentDraft: true,
+      uncertainPr: false,
+      multiFile: false,
+    },
+    {
+      judgeRejects: false,
+      transientDraft: false,
+      permanentDraft: false,
+      uncertainPr: true,
+      multiFile: false,
+    },
+    {
+      judgeRejects: false,
+      transientDraft: false,
+      permanentDraft: false,
+      uncertainPr: true,
+      multiFile: true,
+    },
   ])("real Workflow checkpoints keep source private for %j", async (options) => {
     const judgeRejects = options.judgeRejects;
-    const { app, owner, request, binding, counts, prCount, testEnv } = await fixture(options);
+    const { app, owner, request, binding, counts, prCount, testEnv, helperPath, helperContent } =
+      await fixture(options);
     const state: { instance?: Awaited<ReturnType<typeof introspectWorkflowInstance>> } = {};
     const realBinding = workflowBinding();
     const create = async (options: { id: string; params: { jobId: string } }) => {
@@ -571,21 +820,45 @@ describe("publisher setup durable jobs", () => {
       }
       expect(finished?.status).toBe(judgeRejects ? "failed" : "ready");
       expect(finished?.judge?.verdict).toBe(judgeRejects ? "changes_requested" : "pass");
-      expect(counts()).toEqual({ draftCalls: options.transientDraft ? 2 : 1, judgeCalls: 1 });
-      for (const name of ["fetch_source", "draft", "validate", "judge"] as const)
-        expect(await state.instance.waitForStepResult({ name })).toEqual({ jobId: job.id });
+      expect(counts()).toEqual({
+        draftCalls: options.multiFile ? 7 : options.transientDraft ? 6 : 5,
+        judgeCalls: options.multiFile ? 4 : 3,
+      });
+      for (const name of ["fetch_source", "draft-01", "validate", "judge-01"] as const)
+        expect(await state.instance.waitForStepResult({ name })).toMatchObject({
+          jobId: job.id,
+          done: name !== "draft-01" && name !== "judge-01",
+        });
       expect(await state.instance.getOutput()).toEqual({ jobId: job.id });
+      const draftState = await env.ARTIFACTS.get(
+        publisherSetupPayloadKey(
+          { id: job.id, organizationId: owner.organizationId },
+          "draft-agent",
+        ),
+      );
+      expect(await draftState?.text()).toContain("context-only-fixture");
+      const judgeState = await env.ARTIFACTS.get(
+        publisherSetupPayloadKey(
+          { id: job.id, organizationId: owner.organizationId },
+          "judge-agent",
+        ),
+      );
+      expect(await judgeState?.text()).toContain("context-only-fixture");
       expect(JSON.stringify(finished)).not.toContain("context-only-fixture");
       const source = await env.ARTIFACTS.get(
         publisherSetupPayloadKey({ id: job.id, organizationId: owner.organizationId }, "source"),
       );
-      expect(await source?.text()).toContain("context-only-fixture");
+      expect(await source?.text()).not.toContain("context-only-fixture");
       if (judgeRejects) {
         expect(finished?.result).toBeNull();
         expect(prCount()).toBe(0);
       } else {
         expect(finished?.result?.originalContent).toBe(SETUP_ORIGINAL_WORKFLOW);
         expect(finished?.result?.proposalToken).toBeTruthy();
+        if (options.multiFile)
+          expect(finished?.result?.proposal.supportingFiles).toEqual([
+            { path: helperPath, content: helperContent, originalSha: null, originalContent: null },
+          ]);
         expect(finished?.result?.pullRequest).toMatchObject({
           number: 81,
           url: "https://github.com/octo/release/pull/81",
@@ -593,6 +866,7 @@ describe("publisher setup durable jobs", () => {
         expect(prCount()).toBe(1);
         expect(await state.instance.waitForStepResult({ name: "create_pr" })).toEqual({
           jobId: job.id,
+          done: true,
         });
         if (options.uncertainPr) {
           const repeat = await createPublisherSetupJob(
@@ -638,15 +912,17 @@ describe("publisher setup durable jobs", () => {
     );
     const outputs: unknown[] = [];
     await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation, retryModel) => {
+      let done: boolean;
       try {
-        await operation();
+        done = await operation();
       } catch (error) {
         if (!retryModel) throw error;
-        await operation();
+        done = await operation();
       }
-      outputs.push({ jobId: job.id });
+      outputs.push({ jobId: job.id, done });
+      return done;
     });
-    expect(counts()).toEqual({ draftCalls: 2, judgeCalls: 1 });
+    expect(counts()).toEqual({ draftCalls: 6, judgeCalls: 3 });
     expect((await getPublisherSetupJob(owner.db, job.id))?.status).toBe("ready");
     expect(JSON.stringify(outputs)).not.toContain("PRIVATE_WORKFLOW");
   });
@@ -713,9 +989,16 @@ describe("publisher setup durable jobs", () => {
       async (_stage, operation) => operation(),
     );
     expect(await getPublisherSetupJob(owner.db, job.id)).toBeNull();
-    for (const payload of ["source", "candidate", "judge", "result"] as const)
+    for (const payload of [
+      "source",
+      "candidate",
+      "judge",
+      "result",
+      "draft-agent",
+      "judge-agent",
+    ] as const)
       expect(await realBucket.get(publisherSetupPayloadKey(job, payload))).toBeNull();
-    expect(counts()).toEqual({ draftCalls: 1, judgeCalls: 0 });
+    expect(counts()).toEqual({ draftCalls: 5, judgeCalls: 0 });
   });
   test("expiry and user cleanup remove private payloads with metadata", async () => {
     const { owner, request, testEnv } = await fixture();

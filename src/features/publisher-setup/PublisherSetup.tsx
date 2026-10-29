@@ -264,6 +264,26 @@ function ProposalDetails({ model }: { model: SetupModel }) {
         <div>
           <CopyButton text={draft.proposal.content} label="Copy proposed workflow" />
         </div>
+        {draft.proposal.supportingFiles?.map((file) => (
+          <section
+            key={file.path}
+            class="flex flex-col gap-3"
+            aria-label={`Proposed file ${file.path}`}
+          >
+            <h4 class="m-0 text-[14px] font-medium">Supporting change</h4>
+            <DiffView
+              path={file.path}
+              status={file.originalSha === null ? "added" : "modified"}
+              before={file.originalContent === null ? null : { textSample: file.originalContent }}
+              after={{ textSample: file.content }}
+              beforeLabel={file.originalSha === null ? "Not in repository" : "Current file"}
+              afterLabel="Proposed file"
+            />
+            <div>
+              <CopyButton text={file.content} label={`Copy ${file.path}`} />
+            </div>
+          </section>
+        ))}
       </div>
     </details>
   );
@@ -307,6 +327,16 @@ function DraftProgress({ model }: { model: SetupModel }) {
           </Button>
         </div>
       </Show>
+      {job?.status === "failed" && job.feedback?.length ? (
+        <section class="flex flex-col gap-2" aria-label="Agent feedback">
+          <h4 class="m-0 text-[14px] font-medium">Agent feedback</h4>
+          <ul class="m-0 pl-5 text-[13px] leading-[1.55]">
+            {job.feedback.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {judge ? (
         <div class="flex flex-col gap-2">
           <h4 class="m-0 text-[14px] font-medium">Second review · advisory</h4>

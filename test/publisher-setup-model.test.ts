@@ -70,6 +70,7 @@ function draftJob(overrides: Partial<PublisherSetupDraftJob> = {}): PublisherSet
       summary: "The change preserves the release artifacts.",
       issues: [],
       model: "test-judge",
+      digest: "d".repeat(64),
     },
     result: { ...draft, originalContent: inspection.workflows[0].content, pullRequest },
     ...overrides,
@@ -267,6 +268,7 @@ describe("publisher setup", () => {
               summary: "The publish step rebuilds the package.",
               issues: ["Publish the reviewed artifact."],
               model: "test-judge",
+              digest: "d".repeat(64),
             },
             result: null,
             failure: {

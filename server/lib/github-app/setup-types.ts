@@ -36,6 +36,12 @@ export interface PublisherSetupProposal extends PublisherSetupDraftRequest {
   summary: string;
   manualSteps: string[];
   expiresAt: number;
+  supportingFiles?: {
+    path: string;
+    content: string;
+    originalSha: string | null;
+    originalContent: string | null;
+  }[];
 }
 
 export interface PublisherSetupDraft {
@@ -72,11 +78,7 @@ export interface PublisherSetupJudgeAssessment {
   summary: string;
   issues: string[];
   model: string;
-}
-
-export interface PublisherSetupContext {
-  files: { path: string; sha: string; content: string }[];
-  warnings: string[];
+  digest: string;
 }
 
 export type PublisherSetupJobStage =
@@ -99,6 +101,7 @@ export interface PublisherSetupDraftJob {
   expiresAt: string;
   failure: { code: string; message: string } | null;
   judge: PublisherSetupJudgeAssessment | null;
+  feedback?: string[];
   result:
     | (PublisherSetupDraft & {
         originalContent: string;

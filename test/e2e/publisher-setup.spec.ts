@@ -12,11 +12,22 @@ import {
 const now = "2026-10-28T10:00:00.000Z";
 const baseSha = "a".repeat(40);
 const workflowPath = ".github/workflows/release.yml";
+const helperPath = ".github/scripts/prepare-release.mjs";
+const helperContent =
+  '// <img src=x onerror="globalThis.publisherHelperExecuted = true">\nexport const candidateDirectory = "release-candidate";\n';
+const releaseScriptPath = "scripts/release.mjs";
+const currentReleaseScript = 'console.log("Publishing from source");\n';
+const proposedReleaseScript = 'console.log("Publishing reviewed candidate");\n';
 const currentWorkflow = SETUP_ORIGINAL_WORKFLOW;
 const proposedWorkflow = SETUP_PROPOSED_WORKFLOW.replace(
   "environment: production",
   "environment: drydock",
-);
+)
+  .replace("      - run: npm pack\n", `      - run: node ${helperPath} prepare\n`)
+  .replace(
+    "      - run: npm publish *.tgz --provenance\n",
+    `      - run: node ${helperPath} publish\n`,
+  );
 
 function proposal(): PublisherSetupDraft {
   return {
@@ -31,6 +42,15 @@ function proposal(): PublisherSetupDraft {
       environment: "drydock",
       ecosystem: "npm",
       content: proposedWorkflow,
+      supportingFiles: [
+        { path: helperPath, content: helperContent, originalSha: null, originalContent: null },
+        {
+          path: releaseScriptPath,
+          content: proposedReleaseScript,
+          originalSha: "c".repeat(40),
+          originalContent: currentReleaseScript,
+        },
+      ],
       summary: "Hold the publishing job behind the drydock environment.",
       manualSteps: [
         "Enable the Drydock deployment protection rule on the drydock environment.",
@@ -77,7 +97,12 @@ function setupStatus(complete: boolean): PublisherSetupStatus {
   };
 }
 
-async function installSetupMocks(page: Page, permissionDenied = false, judgeFails = false) {
+async function installSetupMocks(
+  page: Page,
+  permissionDenied = false,
+  judgeFails = false,
+  agentBlocked = false,
+) {
   const observations = {
     created: 0,
     complete: false,
@@ -110,6 +135,7 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
           summary: "The reviewed artifact is preserved.",
           issues: [],
           model: "test-judge",
+          digest: "d".repeat(64),
         }
       : null,
     result: ready
@@ -240,6 +266,7 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
             summary: "The publish job rebuilds the artifact.",
             issues: ["Publish the exact reviewed tarball."],
             model: "test-judge",
+            digest: "d".repeat(64),
           },
         };
       else if (!observations.holdJob && observations.jobPolls === 2)
@@ -251,6 +278,7 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
             summary: "The reviewed artifact is preserved.",
             issues: [],
             model: "test-judge",
+            digest: "d".repeat(64),
           },
         };
       if (permissionDenied && observations.jobPolls >= 2)
@@ -269,7 +297,20 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
             summary: "The reviewed artifact is preserved.",
             issues: [],
             model: "test-judge",
+            digest: "d".repeat(64),
           },
+        };
+      if (agentBlocked)
+        current = {
+          ...job(),
+          status: "failed",
+          stage: "draft",
+          result: null,
+          judge: null,
+          failure: { code: "setup_agent_blocked", message: "More release evidence is needed." },
+          feedback: [
+            'Missing publishing configuration: <img src=x onerror="globalThis.publisherFeedbackExecuted=true">',
+          ],
         };
       if (current.status === "ready") observations.created = 1;
       json = { job: current };
@@ -334,6 +375,34 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
   ).toHaveAttribute("href", "https://github.com/drydock/example/pull/42");
   expect(observations.created).toBe(1);
   expect(observations.requests).not.toContain("POST /api/v1/github-app/setup/pull-request");
+  await page.getByText("View workflow changes", { exact: true }).click();
+  const helper = page.getByRole("region", { name: `Proposed file ${helperPath}`, exact: true });
+  await expect(helper).toBeVisible();
+  await expect(
+    helper.getByRole("region", {
+      name: `Contents of ${helperPath} (Proposed file)`,
+      exact: true,
+    }),
+  ).toContainText("export const candidateDirectory");
+  await expect(
+    helper.getByRole("button", { name: `Copy ${helperPath}`, exact: true }),
+  ).toBeVisible();
+  const releaseScript = page.getByRole("region", {
+    name: `Diff of ${releaseScriptPath}`,
+    exact: true,
+  });
+  await expect(releaseScript).toContainText('console.log("Publishing from source")');
+  await expect(releaseScript).toContainText('console.log("Publishing reviewed candidate")');
+  await expect(
+    page.getByRole("button", { name: `Copy ${releaseScriptPath}`, exact: true }),
+  ).toBeVisible();
+  await expect(helper.locator("img")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => Reflect.get(globalThis, "publisherHelperExecuted")),
+  ).toBeUndefined();
+  await expect(
+    page.getByRole("region", { name: `Diff of ${workflowPath}`, exact: true }),
+  ).toContainText(`node ${helperPath} prepare`);
   await page.getByRole("button", { name: "Check setup status", exact: true }).click();
   await expect(
     page.getByText(
@@ -410,6 +479,23 @@ test("a negative second review surfaces actionable issues without a PR action", 
     path: testInfo.outputPath("publisher-draft-judge-failure.png"),
     fullPage: true,
   });
+  expect(observations.created).toBe(0);
+});
+
+test("a blocked preparation displays escaped feedback without opening a PR", async ({ page }) => {
+  const observations = await installSetupMocks(page, false, false, true);
+  await beginPreparation(page);
+  await expect(page.getByRole("heading", { name: "Agent feedback", exact: true })).toBeVisible();
+  await expect(page.getByText(/Missing publishing configuration:/)).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Agent feedback", exact: true }).locator("img"),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() => Reflect.get(globalThis, "publisherFeedbackExecuted")),
+  ).toBeUndefined();
+  await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
+    0,
+  );
   expect(observations.created).toBe(0);
 });
 
@@ -534,6 +620,7 @@ test("switching organizations preserves a resumed draft while the new installati
                 summary: "The reviewed artifact is preserved.",
                 issues: [],
                 model: "test-judge",
+                digest: "d".repeat(64),
               }
             : null,
           result: complete

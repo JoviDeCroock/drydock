@@ -12,7 +12,7 @@ export class PublisherSetupWorkflow extends WorkflowEntrypoint<Cloudflare.Env, {
         this.env,
         event.payload.jobId,
         async (stage, operation, retrySafeOperation) => {
-          await step.do(
+          const result = await step.do(
             stage,
             {
               retries: {
@@ -23,15 +23,17 @@ export class PublisherSetupWorkflow extends WorkflowEntrypoint<Cloudflare.Env, {
               timeout: "4 minutes",
             },
             async () => {
+              let done: boolean;
               try {
-                await operation();
+                done = await operation();
               } catch (error) {
                 if (error instanceof PublisherSetupRetryError) throw new Error(error.failureCode);
                 throw new NonRetryableError("setup_workflow_failed");
               }
-              return { jobId: event.payload.jobId };
+              return { jobId: event.payload.jobId, done };
             },
           );
+          return result.done;
         },
       );
       return { jobId: event.payload.jobId };

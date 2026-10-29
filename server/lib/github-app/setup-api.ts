@@ -6,6 +6,7 @@ import { readBoundedJson } from "../platform/bounded-body";
 import { base64Encode, sha256Hex } from "../platform/crypto-utils";
 import { canonicalJson } from "../platform/canonical-json";
 import { isRecord } from "../platform/guards";
+import { isSafeManifestPath } from "../platform/path-safety";
 import { reliableFetch } from "../platform/reliable-fetch";
 import type {
   PublisherSetupInspection,
@@ -33,6 +34,15 @@ export function validSetupWorkflowPath(value: string): boolean {
   return value.length <= 180 && WORKFLOW_PATH.test(value);
 }
 
+export function validSetupFilePath(value: string): boolean {
+  return (
+    isSafeManifestPath(value) &&
+    value.split("/").length <= 16 &&
+    !value.split("/").some((segment) => segment.toLowerCase() === ".git") &&
+    ![...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  );
+}
+
 export function validSetupEnvironment(value: string): boolean {
   return (
     value.length > 0 &&
@@ -51,6 +61,7 @@ export async function createSetupClient(
   installationId: string,
   fullName: string,
   write = false,
+  repositoryEvidenceOnly = false,
 ) {
   const parsed = parseRepositoryFullName(fullName);
   if (!parsed)
@@ -59,7 +70,9 @@ export async function createSetupClient(
   const jwt = await generateGithubAppJwt(config);
   const permissions = write
     ? { contents: "write", pull_requests: "write", workflows: "write" }
-    : { contents: "read", actions: "read" };
+    : repositoryEvidenceOnly
+      ? { contents: "read" }
+      : { contents: "read", actions: "read" };
   const tokenResponse = await reliableFetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
     {
@@ -284,11 +297,313 @@ export async function inspectPublisherSetup(
   };
 }
 
+function setupGithubSha(value: unknown): string {
+  if (typeof value !== "string" || !validSetupSha(value))
+    throw new PublisherSetupError(
+      "github_unavailable",
+      "GitHub did not confirm a valid setup revision.",
+      502,
+    );
+  return value;
+}
+
+async function setupCommitTree(client: SetupGithubClient, revision: string): Promise<string> {
+  const commit = await client.request(`/git/commits/${revision}`);
+  if (!isRecord(commit) || commit.sha !== revision || !isRecord(commit.tree))
+    throw new PublisherSetupError(
+      "github_unavailable",
+      "GitHub did not confirm the pinned source tree.",
+      502,
+    );
+  return setupGithubSha(commit.tree.sha);
+}
+
+async function readRegularSetupFile(client: SetupGithubClient, path: string, revision: string) {
+  if (!validSetupFilePath(path) || !validSetupSha(revision))
+    throw new PublisherSetupError(
+      "proposal_invalid",
+      "The setup file or revision is not supported.",
+      409,
+    );
+  let treeSha = await setupCommitTree(client, revision);
+  const segments = path.split("/");
+  let blobSha = "";
+  let mode = "";
+  for (let index = 0; index < segments.length; index++) {
+    const listing = await client.request(`/git/trees/${treeSha}`);
+    if (
+      !isRecord(listing) ||
+      !Array.isArray(listing.tree) ||
+      listing.truncated !== false ||
+      listing.tree.length > 1000
+    )
+      throw new PublisherSetupError(
+        "github_unavailable",
+        "GitHub could not inspect a bounded setup tree.",
+        502,
+      );
+    const entry = listing.tree.find((value) => isRecord(value) && value.path === segments[index]);
+    if (!isRecord(entry)) return null;
+    const directory = index < segments.length - 1;
+    if (
+      (directory && (entry.type !== "tree" || entry.mode !== "040000")) ||
+      (!directory &&
+        (entry.type !== "blob" || (entry.mode !== "100644" && entry.mode !== "100755")))
+    )
+      throw new PublisherSetupError(
+        "proposal_file_conflict",
+        "A setup path is a symlink or another unsupported entry. Configure this workflow manually.",
+        409,
+      );
+    treeSha = setupGithubSha(entry.sha);
+    if (!directory) {
+      blobSha = treeSha;
+      mode = entry.mode as string;
+    }
+  }
+  const data = await client.request(
+    `/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${revision}`,
+  );
+  const maximum = 65_536;
+  if (
+    !isRecord(data) ||
+    data.type !== "file" ||
+    data.path !== path ||
+    data.sha !== blobSha ||
+    data.encoding !== "base64" ||
+    typeof data.content !== "string" ||
+    data.content.length > maximum * 1.5 ||
+    typeof data.size !== "number" ||
+    !Number.isSafeInteger(data.size) ||
+    data.size < 0 ||
+    data.size > maximum ||
+    "target" in data ||
+    "submodule_git_url" in data
+  )
+    throw new PublisherSetupError(
+      "proposal_file_conflict",
+      "The pinned setup file is not a supported regular UTF-8 file.",
+      409,
+    );
+  try {
+    const bytes = Uint8Array.from(atob(data.content.replace(/\s/g, "")), (character) =>
+      character.charCodeAt(0),
+    );
+    if (bytes.length !== data.size || bytes.length > maximum) throw new Error("size");
+    return {
+      path,
+      sha: blobSha,
+      mode,
+      content: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    };
+  } catch {
+    throw new PublisherSetupError(
+      "proposal_file_conflict",
+      "The pinned setup file is not supported UTF-8 text.",
+      409,
+    );
+  }
+}
+
+async function prepareSetupProposalBranch(
+  client: SetupGithubClient,
+  proposal: PublisherSetupProposal,
+  branch: string,
+  beforeWrite: (() => Promise<void>) | undefined,
+  existingPullRequest: boolean,
+): Promise<void> {
+  const original = await readRegularSetupFile(client, proposal.workflowPath, proposal.baseSha);
+  if (!original || original.sha !== proposal.originalSha)
+    throw new PublisherSetupError(
+      "proposal_stale",
+      "The pinned workflow source changed. Inspect the repository and start a fresh setup.",
+      409,
+    );
+  const files = [
+    {
+      path: proposal.workflowPath,
+      content: proposal.content,
+      mode: original.mode,
+      changed: original.content !== proposal.content,
+    },
+  ];
+  for (const file of proposal.supportingFiles ?? []) {
+    const before = await readRegularSetupFile(client, file.path, proposal.baseSha);
+    if (
+      (before?.sha ?? null) !== file.originalSha ||
+      (before?.content ?? null) !== file.originalContent
+    )
+      throw new PublisherSetupError(
+        "proposal_stale",
+        "A pinned supporting file changed. Inspect the repository and start a fresh setup.",
+        409,
+      );
+    files.push({
+      path: file.path,
+      content: file.content,
+      mode: before?.mode ?? "100644",
+      changed: before?.content !== file.content,
+    });
+  }
+  const changedFiles = files.filter((file) => file.changed);
+  const changedPaths = new Set(changedFiles.map((file) => file.path));
+  if (!changedPaths.size)
+    throw new PublisherSetupError(
+      "proposal_no_changes",
+      "The proposal does not change any repository files.",
+      409,
+    );
+  const ref = await client.request(`/git/ref/heads/${encodeURIComponent(branch)}`, {}, true);
+  const head =
+    ref === null
+      ? null
+      : isRecord(ref) && isRecord(ref.object)
+        ? setupGithubSha(ref.object.sha)
+        : setupGithubSha(null);
+  if (head && head !== proposal.baseSha) {
+    const comparison = await client.request(`/compare/${proposal.baseSha}...${head}`);
+    let contentsMatch = true;
+    for (const file of files) {
+      try {
+        const current = await readRegularSetupFile(client, file.path, head);
+        if (current?.content !== file.content || current.mode !== file.mode) contentsMatch = false;
+      } catch (error) {
+        if (!(error instanceof PublisherSetupError) || error.code !== "proposal_file_conflict")
+          throw error;
+        contentsMatch = false;
+      }
+    }
+    if (
+      !isRecord(comparison) ||
+      !Array.isArray(comparison.files) ||
+      comparison.files.length !== changedPaths.size ||
+      comparison.files.some(
+        (file) =>
+          !isRecord(file) ||
+          typeof file.filename !== "string" ||
+          !changedPaths.has(file.filename) ||
+          "previous_filename" in file,
+      ) ||
+      new Set(comparison.files.map((file) => (isRecord(file) ? file.filename : null))).size !==
+        changedPaths.size ||
+      !contentsMatch
+    )
+      throw new PublisherSetupError(
+        "proposal_branch_changed",
+        "The setup branch contains other edits. Review it on GitHub instead of overwriting it.",
+        409,
+      );
+    return;
+  }
+  if (existingPullRequest)
+    throw new PublisherSetupError(
+      "proposal_branch_changed",
+      "The setup pull request no longer contains its proposed files. Review it on GitHub.",
+      409,
+    );
+  if ((await setupDefaultHead(client)) !== proposal.baseSha)
+    throw new PublisherSetupError(
+      "proposal_stale",
+      "The default branch changed. Inspect the repository and start a fresh setup.",
+      409,
+    );
+  const baseTree = await setupCommitTree(client, proposal.baseSha);
+  await beforeWrite?.();
+  const tree = await client.request("/git/trees", {
+    method: "POST",
+    body: JSON.stringify({
+      base_tree: baseTree,
+      tree: changedFiles.map((file) => ({
+        path: file.path,
+        mode: file.mode,
+        type: "blob",
+        content: file.content,
+      })),
+    }),
+  });
+  const newTree = setupGithubSha(isRecord(tree) ? tree.sha : null);
+  await beforeWrite?.();
+  const commit = await client.request("/git/commits", {
+    method: "POST",
+    body: JSON.stringify({
+      message: "Configure Drydock release review [skip ci]",
+      tree: newTree,
+      parents: [proposal.baseSha],
+    }),
+  });
+  const newCommit = setupGithubSha(isRecord(commit) ? commit.sha : null);
+  await beforeWrite?.();
+  if (head === null)
+    await client.request("/git/refs", {
+      method: "POST",
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: newCommit }),
+    });
+  else
+    await client.request(`/git/refs/heads/${encodeURIComponent(branch)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sha: newCommit, force: false }),
+    });
+}
+
 export async function createSetupPullRequest(
   client: SetupGithubClient,
   proposal: PublisherSetupProposal,
   beforeWrite?: () => Promise<void>,
 ): Promise<PublisherSetupPullRequest & { created: boolean }> {
+  const supportingFiles = proposal.supportingFiles ?? [];
+  if (
+    !Array.isArray(supportingFiles) ||
+    supportingFiles.some(
+      (file) =>
+        !isRecord(file) ||
+        typeof file.path !== "string" ||
+        typeof file.content !== "string" ||
+        (file.originalSha !== null && typeof file.originalSha !== "string") ||
+        (file.originalContent !== null && typeof file.originalContent !== "string"),
+    )
+  )
+    throw new PublisherSetupError(
+      "proposal_invalid",
+      "The proposed repository edits are invalid.",
+      409,
+    );
+  const paths = [proposal.workflowPath, ...supportingFiles.map((file) => file.path)];
+  if (
+    !validSetupWorkflowPath(proposal.workflowPath) ||
+    !validSetupSha(proposal.baseSha) ||
+    !validSetupSha(proposal.originalSha) ||
+    supportingFiles.length > 12 ||
+    new Set(paths).size !== paths.length ||
+    paths.some(
+      (path) =>
+        !validSetupFilePath(path) ||
+        paths.some((other) => other !== path && other.startsWith(`${path}/`)),
+    ) ||
+    supportingFiles.some(
+      (file) =>
+        typeof file.content !== "string" ||
+        file.content.includes("\0") ||
+        new TextEncoder().encode(file.content).byteLength > 65_536 ||
+        (file.originalSha === null
+          ? file.originalContent !== null
+          : !validSetupSha(file.originalSha) ||
+            typeof file.originalContent !== "string" ||
+            new TextEncoder().encode(file.originalContent).byteLength > 65_536) ||
+        file.content === file.originalContent,
+    ) ||
+    new TextEncoder().encode(proposal.content).byteLength +
+      supportingFiles.reduce(
+        (bytes, file) => bytes + new TextEncoder().encode(file.content).byteLength,
+        0,
+      ) >
+      262_144 ||
+    new TextEncoder().encode(proposal.content).byteLength > 65_536
+  )
+    throw new PublisherSetupError(
+      "proposal_invalid",
+      "The proposed repository edits exceed supported path, identity, file, or byte limits.",
+      409,
+    );
   if (
     client.repository.id !== proposal.repositoryId ||
     client.repository.defaultBranch !== proposal.defaultBranch
@@ -307,6 +622,13 @@ export async function createSetupPullRequest(
     baseSha: proposal.baseSha,
     originalSha: proposal.originalSha,
     content: proposal.content,
+    ...(supportingFiles.length
+      ? {
+          supportingFiles: [...supportingFiles].sort((a, b) =>
+            a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+          ),
+        }
+      : {}),
   };
   const branch = `drydock/setup-${(await sha256Hex(canonicalJson(written))).slice(0, 20)}`;
   const owner = client.repository.fullName.split("/")[0];
@@ -335,68 +657,63 @@ export async function createSetupPullRequest(
       isRecord(pr.base.repo) &&
       pr.base.repo.id === proposal.repositoryId,
   );
-  if (isRecord(existing) && typeof existing.number === "number")
+  if (isRecord(existing) && typeof existing.number === "number" && !supportingFiles.length) {
+    await prepareSetupProposalBranch(client, proposal, branch, beforeWrite, true);
     return { ...setupPullRequestResult(client, existing.number, branch), created: false };
-  if ((await setupDefaultHead(client)) !== proposal.baseSha)
-    throw new PublisherSetupError(
-      "proposal_stale",
-      "The default branch changed. Inspect the repository and create a fresh draft before opening the PR.",
-      409,
-    );
-  const original = await readSetupWorkflow(client, proposal.workflowPath, proposal.baseSha);
-  if (original.sha !== proposal.originalSha)
-    throw new PublisherSetupError(
-      "proposal_stale",
-      "The workflow changed. Create a fresh draft.",
-      409,
-    );
-  const ref = await client.request(`/git/ref/heads/${encodeURIComponent(branch)}`, {}, true);
-  if (ref === null) {
-    await beforeWrite?.();
-    await client.request("/git/refs", {
-      method: "POST",
-      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: proposal.baseSha }),
-    });
-  } else if (!isRecord(ref) || !isRecord(ref.object) || typeof ref.object.sha !== "string") {
-    throw new PublisherSetupError(
-      "github_unavailable",
-      "GitHub could not confirm the setup branch revision.",
-      502,
-    );
   }
-  const branchHead =
-    ref === null ? proposal.baseSha : String((ref as { object: { sha: string } }).object.sha);
-  if (branchHead === proposal.baseSha) {
-    await beforeWrite?.();
-    await client.request(`/contents/${proposal.workflowPath}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        message: "Configure Drydock release review [skip ci]",
-        branch,
-        sha: proposal.originalSha,
-        content: base64Encode(new TextEncoder().encode(proposal.content)),
-      }),
-    });
+  if (supportingFiles.length) {
+    await prepareSetupProposalBranch(client, proposal, branch, beforeWrite, Boolean(existing));
+    if (isRecord(existing) && typeof existing.number === "number")
+      return { ...setupPullRequestResult(client, existing.number, branch), created: false };
   } else {
-    // After an uncertain write, resume only the exact one-file proposal. Never
-    // overwrite a collaborator's edits on the proposal's stable branch.
-    const comparison = await client.request(
-      `/compare/${proposal.baseSha}...${encodeURIComponent(branch)}`,
-    );
-    const current = await readSetupWorkflow(client, proposal.workflowPath, branchHead);
-    if (
-      !isRecord(comparison) ||
-      !Array.isArray(comparison.files) ||
-      comparison.files.length !== 1 ||
-      !isRecord(comparison.files[0]) ||
-      comparison.files[0].filename !== proposal.workflowPath ||
-      current.content !== proposal.content
-    ) {
+    if ((await setupDefaultHead(client)) !== proposal.baseSha)
       throw new PublisherSetupError(
-        "proposal_branch_changed",
-        "The setup branch contains other edits. Review it on GitHub instead of overwriting it.",
+        "proposal_stale",
+        "The default branch changed. Inspect the repository and create a fresh draft before opening the PR.",
         409,
       );
+    const original = await readSetupWorkflow(client, proposal.workflowPath, proposal.baseSha);
+    if (original.sha !== proposal.originalSha)
+      throw new PublisherSetupError(
+        "proposal_stale",
+        "The workflow changed. Create a fresh draft.",
+        409,
+      );
+    if (original.content === proposal.content)
+      throw new PublisherSetupError(
+        "proposal_no_changes",
+        "The proposal does not change any repository files.",
+        409,
+      );
+    const ref = await client.request(`/git/ref/heads/${encodeURIComponent(branch)}`, {}, true);
+    if (ref === null) {
+      await beforeWrite?.();
+      await client.request("/git/refs", {
+        method: "POST",
+        body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: proposal.baseSha }),
+      });
+    } else if (!isRecord(ref) || !isRecord(ref.object) || typeof ref.object.sha !== "string") {
+      throw new PublisherSetupError(
+        "github_unavailable",
+        "GitHub could not confirm the setup branch revision.",
+        502,
+      );
+    }
+    const branchHead =
+      ref === null ? proposal.baseSha : String((ref as { object: { sha: string } }).object.sha);
+    if (branchHead === proposal.baseSha) {
+      await beforeWrite?.();
+      await client.request(`/contents/${proposal.workflowPath}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          message: "Configure Drydock release review [skip ci]",
+          branch,
+          sha: proposal.originalSha,
+          content: base64Encode(new TextEncoder().encode(proposal.content)),
+        }),
+      });
+    } else {
+      await prepareSetupProposalBranch(client, proposal, branch, beforeWrite, false);
     }
   }
   await beforeWrite?.();

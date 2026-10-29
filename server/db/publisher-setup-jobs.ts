@@ -10,7 +10,14 @@ import type {
 
 export type PublisherSetupJobRow = typeof publisherSetupJobs.$inferSelect;
 const JOB_TTL_MS = 24 * 60 * 60_000;
-const PAYLOAD_NAMES = ["source", "candidate", "judge", "result"] as const;
+const PAYLOAD_NAMES = [
+  "source",
+  "candidate",
+  "judge",
+  "result",
+  "draft-agent",
+  "judge-agent",
+] as const;
 export type PublisherSetupPayloadName = (typeof PAYLOAD_NAMES)[number];
 
 export function publisherSetupPayloadKey(

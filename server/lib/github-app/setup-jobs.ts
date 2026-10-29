@@ -24,14 +24,19 @@ import {
   setupDefaultHead,
 } from "./setup-api";
 import { readGithubAppConfig } from "./config";
-import { readSetupContext } from "./setup-context";
 import { describeSetupDraftFailure, setupDraftFailureResponse } from "./setup-draft-errors";
+import { AI_MODEL } from "../ai-review";
+import {
+  SETUP_DRAFT_MAX_TURNS,
+  SETUP_JUDGE_MAX_TURNS,
+  type DurableSetupAgentState,
+} from "./setup-agent";
+import { validateSetupAgentChanges } from "./setup-agent-validation";
 import type {
   PublisherSetupDraftJob,
   PublisherSetupDraftRequest,
   PublisherSetupJudgeAssessment,
   PublisherSetupJobStage,
-  PublisherSetupContext,
 } from "./setup-types";
 
 interface SetupSource {
@@ -40,18 +45,19 @@ interface SetupSource {
   defaultBranch: string;
   originalSha: string;
   content: string;
-  context: PublisherSetupContext;
 }
 interface SetupCandidate {
   content: string;
   summary: string;
+  supportingFiles: NonNullable<PublisherSetupDraftJob["result"]>["proposal"]["supportingFiles"];
+  digest: string;
 }
 type StepName = Exclude<PublisherSetupJobStage, "queued" | "ready">;
 export type PublisherSetupStepRunner = (
-  stage: StepName,
-  operation: () => Promise<void>,
+  checkpoint: StepName | `draft-${string}` | `judge-${string}`,
+  operation: () => Promise<boolean>,
   retrySafeOperation: boolean,
-) => Promise<void>;
+) => Promise<boolean>;
 
 export class PublisherSetupRetryError extends Error {
   constructor(public failureCode: string) {
@@ -75,17 +81,17 @@ function publicJob(row: PublisherSetupJobRow): PublisherSetupDraftJob {
   };
 }
 
+function payloadByteLimit(name: PublisherSetupPayloadName): number {
+  return name === "source" ? 400_000 : name === "judge" ? 220_000 : 4_194_304;
+}
+
 async function readPayload<T>(
   env: Cloudflare.Env,
   job: PublisherSetupJobRow,
   name: PublisherSetupPayloadName,
 ): Promise<T | null> {
   const object = await env.ARTIFACTS.get(publisherSetupPayloadKey(job, name));
-  if (
-    !object ||
-    object.size > (name === "source" ? 900_000 : name === "result" ? 400_000 : 220_000)
-  )
-    return null;
+  if (!object || object.size > payloadByteLimit(name)) return null;
   try {
     return JSON.parse(await object.text()) as T;
   } catch {
@@ -126,6 +132,15 @@ async function activeJob(env: Cloudflare.Env, id: string): Promise<PublisherSetu
   const db = createDb(env.DB);
   const job = await getPublisherSetupJob(db, id);
   if (!job || job.status === "failed" || job.status === "ready") return null;
+  if (Date.now() - job.createdAt.getTime() > 20 * 60_000) {
+    await failJob(
+      env,
+      job,
+      "setup_agent_budget_exceeded",
+      "The setup agent reached its twenty-minute limit. Start a fresh setup or configure this release manually.",
+    );
+    return null;
+  }
   if (job.requestJson.createPullRequest !== true) {
     await failJob(
       env,
@@ -194,10 +209,7 @@ async function writePayload(
 ): Promise<boolean> {
   if (!(await activeJob(env, job.id))) return false;
   const encoded = JSON.stringify(value);
-  if (
-    new TextEncoder().encode(encoded).byteLength >
-    (name === "source" ? 900_000 : name === "result" ? 400_000 : 220_000)
-  )
+  if (new TextEncoder().encode(encoded).byteLength > payloadByteLimit(name))
     throw new PublisherSetupError(
       "setup_result_too_large",
       "The private workflow draft exceeds its storage limit. Use a smaller workflow.",
@@ -281,6 +293,12 @@ export async function readPublisherSetupDraftJob(
     }
   }
   const result = publicJob(row);
+  if (row.status === "failed" && row.failureJson?.code === "setup_agent_blocked") {
+    const draft = await readPayload<DurableSetupAgentState>(env, row, "draft-agent");
+    const judge = await readPayload<DurableSetupAgentState>(env, row, "judge-agent");
+    const reason = judge?.blocked?.reason ?? draft?.blocked?.reason;
+    if (reason) result.feedback = [reason];
+  }
   if (row.status === "ready" || row.status === "failed")
     result.judge = await readPayload<PublisherSetupJudgeAssessment>(env, row, "judge");
   if (row.status === "ready") {
@@ -301,9 +319,9 @@ export async function readPublisherSetupDraftJob(
   return result;
 }
 
-async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promise<void> {
+async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promise<boolean> {
   const job = await activeJob(env, id);
-  if (!job) return;
+  if (!job) return true;
   if (
     !(await updatePublisherSetupJob(createDb(env.DB), id, {
       status: "running",
@@ -311,7 +329,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       failureJson: null,
     }))
   )
-    return;
+    return true;
   if (stage === "fetch_source") {
     const installation = await installationForJob(env, job);
     const client = await createSetupClient(
@@ -331,25 +349,14 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       job.requestJson.workflowPath,
       job.requestJson.baseSha,
     );
-    const context = await readSetupContext(client, workflow.content, job.requestJson.baseSha);
-    if (
-      context.warnings.length &&
-      /changesets\/action@|\bchangesets?\s+(?:publish|version)\b/.test(workflow.content)
-    )
-      throw new PublisherSetupError(
-        "setup_context_incomplete",
-        "Changesets setup needs complete repository release evidence. Supporting files exceeded a limit or could not be inspected; configure this workflow manually.",
-        409,
-      );
     await writePayload(env, job, "source", {
       repositoryId: client.repository.id,
       repositoryFullName: client.repository.fullName,
       defaultBranch: client.repository.defaultBranch,
       originalSha: workflow.sha,
       content: workflow.content,
-      context,
     } satisfies SetupSource);
-    return;
+    return true;
   }
   const source = await readPayload<SetupSource>(env, job, "source");
   if (!source)
@@ -358,68 +365,117 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       "The private workflow source is unavailable. Start a fresh draft.",
       409,
     );
-  if (stage === "draft") {
-    const { generateSetupCandidate } = await import("./setup-draft");
-    const candidate = await generateSetupCandidate(
-      env,
-      job.requestJson,
-      source.content,
-      undefined,
-      source.context,
-    );
-    await writePayload(env, job, "candidate", candidate);
-    return;
-  }
-  const candidate = await readPayload<SetupCandidate>(env, job, "candidate");
-  if (!candidate)
-    throw new PublisherSetupError(
-      "setup_result_unavailable",
-      "The private workflow draft is unavailable. Start a fresh draft.",
-      409,
-    );
-  const { validateSetupDraft } = await import("./setup-draft");
-  if (stage === "validate") {
-    validateSetupDraft(source.content, candidate.content, job.requestJson, source.context);
-    return;
-  }
-  if (stage === "judge") {
-    const { judgeSetupDraft } = await import("./setup-judge");
-    const judge = await judgeSetupDraft(
-      env,
-      job.requestJson,
-      source.content,
-      candidate,
-      undefined,
-      source.context,
-    );
-    if (!(await writePayload(env, job, "judge", judge))) return;
-    if (judge.verdict !== "pass")
+  const { createSetupAgentState, runSetupAgentTurn, extractSetupAgentCandidate } =
+    await import("./setup-agent");
+  if (stage === "draft" || stage === "judge") {
+    const slot = stage === "draft" ? "draft-agent" : "judge-agent";
+    let state = await readPayload<DurableSetupAgentState>(env, job, slot);
+    if (!state) {
+      const draftState =
+        stage === "judge"
+          ? await readPayload<DurableSetupAgentState>(env, job, "draft-agent")
+          : undefined;
+      if (stage === "judge" && !draftState?.submitted)
+        throw new PublisherSetupError(
+          "setup_result_unavailable",
+          "The submitted proposal is unavailable. Start a fresh setup.",
+          409,
+        );
+      state = await createSetupAgentState(
+        job.requestJson,
+        { path: job.requestJson.workflowPath, sha: source.originalSha, content: source.content },
+        stage,
+        draftState ?? undefined,
+      );
+    }
+    if (stage === "draft")
+      state.progress.startedAt = Math.min(state.progress.startedAt, job.createdAt.getTime());
+    if (!state.blocked && !(stage === "draft" ? state.submitted : state.assessment)) {
+      const installation = await installationForJob(env, job);
+      const client = await createSetupClient(
+        readGithubAppConfig(env),
+        installation.installationId,
+        job.requestJson.repositoryFullName,
+        false,
+        true,
+      );
+      if (!(await activeJob(env, id))) return true;
+      state = await runSetupAgentTurn(env, state, client);
+      if (!(await writePayload(env, job, slot, state))) return true;
+    }
+    if (state.blocked) {
       await failJob(
         env,
         job,
-        "setup_judge_changes_requested",
-        "The independent workflow review requested changes. Read the assessment and start a fresh draft.",
+        "setup_agent_blocked",
+        "The setup agent needs more repository information or a manual decision. Read its feedback before starting a fresh setup.",
       );
-    return;
+      return true;
+    }
+    if (stage === "draft" && state.submitted) {
+      const candidate = await extractSetupAgentCandidate(state);
+      await writePayload(env, job, "candidate", candidate);
+      return true;
+    }
+    if (stage === "judge" && state.assessment) {
+      const candidate = await readPayload<SetupCandidate>(env, job, "candidate");
+      if (!candidate || state.assessment.digest !== candidate.digest)
+        throw new PublisherSetupError(
+          "setup_judge_mismatch",
+          "The review does not match the submitted files. Start a fresh setup.",
+          409,
+        );
+      const assessment: PublisherSetupJudgeAssessment = { ...state.assessment, model: AI_MODEL };
+      if (!(await writePayload(env, job, "judge", assessment))) return true;
+      if (assessment.verdict !== "pass")
+        await failJob(
+          env,
+          job,
+          "setup_judge_changes_requested",
+          "The independent review requested changes. Read the assessment and start a fresh setup.",
+        );
+      return true;
+    }
+    return false;
   }
+  const draftState = await readPayload<DurableSetupAgentState>(env, job, "draft-agent");
+  if (!draftState?.submitted)
+    throw new PublisherSetupError(
+      "setup_result_unavailable",
+      "The submitted proposal is unavailable. Start a fresh setup.",
+      409,
+    );
+  const candidate = await extractSetupAgentCandidate(draftState);
+  if (!(await validateSetupAgentChanges(draftState)).valid)
+    throw new PublisherSetupError(
+      "draft_invalid",
+      "The proposed files did not pass the static release checks. Start a fresh setup or configure this release manually.",
+      409,
+    );
+  if (stage === "validate") return true;
   const judge = await readPayload<PublisherSetupJudgeAssessment>(env, job, "judge");
-  if (!judge || judge.verdict !== "pass")
+  if (
+    !judge ||
+    judge.verdict !== "pass" ||
+    judge.digest !== candidate.digest ||
+    draftState.submitted.digest !== candidate.digest
+  )
     throw new PublisherSetupError(
       "setup_judge_changes_requested",
       "The workflow draft has not passed independent review.",
       409,
     );
-  validateSetupDraft(source.content, candidate.content, job.requestJson, source.context);
-  if (!(await activeJob(env, id))) return;
+  if (!(await activeJob(env, id))) return true;
   const { signSetupProposal, setupManualSteps } = await import("./setup-draft");
   const { createPullRequest: _authorization, ...request } = job.requestJson;
+  const { digest: _reviewedDigest, ...proposalCandidate } = candidate;
   const proposal = {
     ...request,
     repositoryFullName: source.repositoryFullName,
     repositoryId: source.repositoryId,
     defaultBranch: source.defaultBranch,
     originalSha: source.originalSha,
-    ...candidate,
+    ...proposalCandidate,
     manualSteps: setupManualSteps(job.requestJson),
     expiresAt: Date.now() + 20 * 60_000,
   };
@@ -436,7 +492,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     job.requestJson.repositoryFullName,
     true,
   );
-  if (!(await activeJob(env, id))) return;
+  if (!(await activeJob(env, id))) return true;
   const { created: _created, ...pullRequest } = await createSetupPullRequest(
     client,
     proposal,
@@ -446,6 +502,27 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
           "setup_access_changed",
           "Publisher setup stopped because account, organization, or installation access changed.",
           403,
+        );
+      const currentState = await readPayload<DurableSetupAgentState>(env, job, "draft-agent");
+      const assessment = await readPayload<PublisherSetupJudgeAssessment>(env, job, "judge");
+      if (
+        !currentState?.submitted ||
+        !assessment ||
+        assessment.verdict !== "pass" ||
+        assessment.digest !== currentState.submitted.digest ||
+        !(await validateSetupAgentChanges(currentState)).valid
+      )
+        throw new PublisherSetupError(
+          "setup_judge_mismatch",
+          "The review no longer matches the submitted files. Start a fresh setup.",
+          409,
+        );
+      const current = await extractSetupAgentCandidate(currentState);
+      if (current.digest !== candidate.digest || current.digest !== assessment.digest)
+        throw new PublisherSetupError(
+          "setup_judge_mismatch",
+          "The review no longer matches the submitted files. Start a fresh setup.",
+          409,
         );
     },
   );
@@ -476,6 +553,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       }))
     )
       await deletePublisherSetupJobPayloads(env.ARTIFACTS, job);
+  return true;
 }
 
 export async function runPublisherSetupDraftJob(
@@ -484,69 +562,92 @@ export async function runPublisherSetupDraftJob(
   runStep: PublisherSetupStepRunner,
 ): Promise<void> {
   for (const stage of ["fetch_source", "draft", "validate", "judge", "create_pr"] as const) {
-    if (!(await activeJob(env, jobId))) return;
-    try {
-      await runStep(
-        stage,
-        async () => {
-          const started = Date.now();
-          try {
-            await runStage(env, jobId, stage);
-          } catch (error) {
-            const job = await getPublisherSetupJob(createDb(env.DB), jobId);
-            if (!job) return;
-            if (
-              stage === "create_pr" &&
-              (!(error instanceof PublisherSetupError) || error.code === "github_unavailable")
-            ) {
+    const turns =
+      stage === "draft" ? SETUP_DRAFT_MAX_TURNS : stage === "judge" ? SETUP_JUDGE_MAX_TURNS : 1;
+    for (let turn = 1; turn <= turns; turn++) {
+      if (!(await activeJob(env, jobId))) return;
+      const checkpoint =
+        stage === "draft" || stage === "judge"
+          ? (`${stage}-${String(turn).padStart(2, "0")}` as const)
+          : stage;
+      let done: boolean;
+      try {
+        done = await runStep(
+          checkpoint,
+          async () => {
+            const started = Date.now();
+            try {
+              return await runStage(env, jobId, stage);
+            } catch (error) {
+              const job = await getPublisherSetupJob(createDb(env.DB), jobId);
+              if (!job) return true;
+              if (
+                stage === "create_pr" &&
+                (!(error instanceof PublisherSetupError) || error.code === "github_unavailable")
+              ) {
+                await updatePublisherSetupJob(createDb(env.DB), jobId, {
+                  failureJson: {
+                    code: "setup_pull_request_unavailable",
+                    message:
+                      "GitHub did not confirm the setup pull request. Start a fresh setup to recover its existing branch or PR.",
+                  },
+                });
+                emitOperationalEvent("warn", "github_app.setup_pr.failed", {
+                  reason: "github_unavailable",
+                });
+                throw new PublisherSetupRetryError("setup_pull_request_unavailable");
+              }
+              if (error instanceof PublisherSetupError) {
+                await failJob(env, job, error.code, error.message);
+                return true;
+              }
+              const failure = describeSetupDraftFailure(error);
+              const response = setupDraftFailureResponse(failure.category);
+              emitOperationalEvent("warn", "github_app.setup_draft.failed", {
+                model: AI_MODEL,
+                durationMs: durationMsSince(started),
+                stage,
+                ...failure,
+              });
+              const retryable =
+                (stage === "draft" || stage === "judge") &&
+                ["rate_limited", "capacity", "provider_unavailable", "timeout"].includes(
+                  failure.category,
+                );
               await updatePublisherSetupJob(createDb(env.DB), jobId, {
-                failureJson: {
-                  code: "setup_pull_request_unavailable",
-                  message:
-                    "GitHub did not confirm the setup pull request. Start a fresh setup to recover its existing branch or PR.",
-                },
+                failureJson: { code: response.code, message: response.error },
+                ...(retryable ? {} : { status: "failed" }),
               });
-              emitOperationalEvent("warn", "github_app.setup_pr.failed", {
-                reason: "github_unavailable",
-              });
-              throw new PublisherSetupRetryError("setup_pull_request_unavailable");
+              if (retryable) throw new PublisherSetupRetryError(response.code);
+              return true;
             }
-            if (error instanceof PublisherSetupError) {
-              await failJob(env, job, error.code, error.message);
-              return;
-            }
-            const failure = describeSetupDraftFailure(error);
-            const response = setupDraftFailureResponse(failure.category);
-            emitOperationalEvent("warn", "github_app.setup_draft.failed", {
-              model: "@cf/zai-org/glm-5.3-flash",
-              durationMs: durationMsSince(started),
-              stage,
-              ...failure,
-            });
-            const retryable =
-              (stage === "draft" || stage === "judge") &&
-              ["rate_limited", "capacity", "provider_unavailable", "timeout"].includes(
-                failure.category,
-              );
-            await updatePublisherSetupJob(createDb(env.DB), jobId, {
-              failureJson: { code: response.code, message: response.error },
-              ...(retryable ? {} : { status: "failed" }),
-            });
-            if (retryable) throw new PublisherSetupRetryError(response.code);
-          }
-        },
-        stage === "draft" || stage === "judge" || stage === "create_pr",
-      );
-    } catch {
-      const job = await getPublisherSetupJob(createDb(env.DB), jobId);
-      if (job)
-        await failJob(
-          env,
-          job,
-          job.failureJson?.code ?? "setup_workflow_failed",
-          job.failureJson?.message ?? "The workflow draft could not complete. Start a fresh draft.",
+          },
+          stage === "draft" || stage === "judge" || stage === "create_pr",
         );
-      return;
+      } catch {
+        const job = await getPublisherSetupJob(createDb(env.DB), jobId);
+        if (job)
+          await failJob(
+            env,
+            job,
+            job.failureJson?.code ?? "setup_workflow_failed",
+            job.failureJson?.message ??
+              "The workflow draft could not complete. Start a fresh setup.",
+          );
+        return;
+      }
+      if (done) break;
+      if (turn === turns) {
+        const job = await getPublisherSetupJob(createDb(env.DB), jobId);
+        if (job)
+          await failJob(
+            env,
+            job,
+            "setup_agent_turn_limit",
+            "The setup agent reached its turn limit before completing. Start a fresh setup or configure this release manually.",
+          );
+        return;
+      }
     }
   }
 }
