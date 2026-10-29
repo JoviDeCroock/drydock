@@ -62,7 +62,7 @@ export function PublisherSetup({
             <Select
               id="publisherSetupInstallation"
               value={model.installationRowId}
-              disabled={model.busy}
+              disabled={model.inputsLocked}
               onChange={(value) => void model.selectInstallation(value)}
             >
               <option value="">Choose an installation…</option>
@@ -111,7 +111,8 @@ export function PublisherSetup({
 
 function RepositoryField({ model }: { model: SetupModel }) {
   const disabled = useComputed(
-    () => model.busy.value || model.loadingRepositories.value || !model.installationRowId.value,
+    () =>
+      model.inputsLocked.value || model.loadingRepositories.value || !model.installationRowId.value,
   );
   return (
     <Field label="Repository" for="publisherSetupRepository">
@@ -162,7 +163,7 @@ function DraftFields({ model }: { model: SetupModel }) {
         <Select
           id="publisherSetupWorkflow"
           value={model.workflowPath}
-          disabled={model.busy}
+          disabled={model.inputsLocked}
           onChange={model.selectWorkflow}
         >
           <option value="">Choose a workflow…</option>
@@ -178,7 +179,7 @@ function DraftFields({ model }: { model: SetupModel }) {
           <Select
             id="publisherSetupEcosystem"
             value={model.ecosystem}
-            disabled={model.busy}
+            disabled={model.inputsLocked}
             onChange={(value) => {
               if (value === "npm" || value === "pypi" || value === "vscode")
                 model.setEcosystem(value);
@@ -194,7 +195,7 @@ function DraftFields({ model }: { model: SetupModel }) {
             id="publisherSetupEnvironment"
             mono
             value={model.environment}
-            disabled={model.busy}
+            disabled={model.inputsLocked}
             maxLength={255}
             onInput={(event) => model.setEnvironment(event.currentTarget.value)}
           />
@@ -339,7 +340,7 @@ function DraftProgress({ model }: { model: SetupModel }) {
       ) : null}
       {judge ? (
         <div class="flex flex-col gap-2">
-          <h4 class="m-0 text-[14px] font-medium">Second review · advisory</h4>
+          <h4 class="m-0 text-[14px] font-medium">Independent review</h4>
           <Muted class="m-0 text-[13px] max-w-[680px]">{judge.summary}</Muted>
           <ul class="m-0 pl-5 text-[13px] leading-[1.55]">
             {judge.issues.map((issue) => (
@@ -355,8 +356,8 @@ function DraftProgress({ model }: { model: SetupModel }) {
       ) : null}
       <Show when={model.draftPending}>
         <div>
-          <Button variant="ghost" onClick={model.hideJob}>
-            Hide this job
+          <Button variant="ghost" disabled={model.busy} onClick={() => void model.cancelJob()}>
+            {model.operation.value === "cancelling" ? "Cancelling…" : "Cancel preparation"}
           </Button>
         </div>
       </Show>

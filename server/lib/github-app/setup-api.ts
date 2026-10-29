@@ -56,6 +56,35 @@ export function validSetupSha(value: string): boolean {
   return SHA.test(value);
 }
 
+const WRITE_PERMISSIONS_REQUIRED =
+  "Creating a workflow PR requires this installation to grant Contents, Pull requests, and Workflows write permissions. Ask the GitHub App operator to enable these optional permissions, approve the installation update, then retry PR preparation.";
+
+/** Fails fast on missing write grants without minting a write token before PR creation needs one. */
+export async function requireSetupWritePermissions(
+  config: GithubAppConfig,
+  installationId: string,
+): Promise<void> {
+  const response = await reliableFetch(
+    `https://api.github.com/app/installations/${encodeURIComponent(installationId)}`,
+    { redirect: "manual", headers: githubHeaders(await generateGithubAppJwt(config)) },
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new PublisherSetupError(
+      "github_unavailable",
+      "GitHub did not return this installation's permissions.",
+      502,
+    );
+  }
+  const body = await readBoundedJson(response, {
+    maxBytes: 40_000,
+    deadlineMs: Date.now() + 15_000,
+  });
+  const permissions = isRecord(body) && isRecord(body.permissions) ? body.permissions : {};
+  if (!["contents", "pull_requests", "workflows"].every((name) => permissions[name] === "write"))
+    throw new PublisherSetupError("setup_permissions_required", WRITE_PERMISSIONS_REQUIRED, 403);
+}
+
 export async function createSetupClient(
   config: GithubAppConfig,
   installationId: string,
@@ -87,7 +116,7 @@ export async function createSetupClient(
     throw new PublisherSetupError(
       "setup_permissions_required",
       write
-        ? "Creating a workflow PR requires this installation to grant Contents, Pull requests, and Workflows write permissions. Ask the GitHub App operator to enable these optional permissions, approve the installation update, then retry PR preparation."
+        ? WRITE_PERMISSIONS_REQUIRED
         : "Reading the release workflow requires Contents and Actions read permissions for this repository.",
       403,
     );
@@ -533,16 +562,26 @@ async function prepareSetupProposalBranch(
   });
   const newCommit = setupGithubSha(isRecord(commit) ? commit.sha : null);
   await beforeWrite?.();
+  // Branch creation fires `create` workflows from the new ref's head, and [skip ci] does
+  // not suppress that event; create at the reviewed base so only a skipped push carries
+  // the drafted files.
   if (head === null)
     await client.request("/git/refs", {
       method: "POST",
-      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: newCommit }),
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: proposal.baseSha }),
     });
-  else
-    await client.request(`/git/refs/heads/${encodeURIComponent(branch)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ sha: newCommit, force: false }),
-    });
+  await beforeWrite?.();
+  await client.request(`/git/refs/heads/${encodeURIComponent(branch)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: newCommit, force: false }),
+  });
+}
+
+/** Agent text can carry repository-steered mentions or closing keywords; a fence keeps them inert. */
+function inertMarkdown(text: string) {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}text\n${text}\n${fence}`;
 }
 
 export async function createSetupPullRequest(
@@ -724,7 +763,7 @@ export async function createSetupPullRequest(
       head: branch,
       base: proposal.defaultBranch,
       draft: true,
-      body: `Adds a proposed release workflow for Drydock review. Review every workflow change before merging.\n\n${proposal.summary}\n\nSetup still required:\n${proposal.manualSteps.map((step) => `- ${step}`).join("\n")}\n\nThis PR does not configure GitHub Environment protection rules or prove that a release is protected. Verify a real gated release in Drydock after setup.`,
+      body: `Adds a proposed release workflow for Drydock review. Review every workflow change before merging.\n\n${inertMarkdown(proposal.summary)}\n\nSetup still required:\n${proposal.manualSteps.map((step) => `- ${step}`).join("\n")}\n\nThis PR does not configure GitHub Environment protection rules or prove that a release is protected. Verify a real gated release in Drydock after setup.`,
     }),
   });
   if (

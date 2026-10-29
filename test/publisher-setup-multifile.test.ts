@@ -205,7 +205,7 @@ function fixture(
 }
 
 describe("publisher setup atomic supporting file PRs", () => {
-  test("publishes workflow and proposed script in one commit before creating the branch or draft PR", async () => {
+  test("creates the branch at the reviewed base, then moves it to the one proposal commit", async () => {
     const { client, proposal, state } = fixture();
     const hook = vi.fn(async () => {});
     const result = await createSetupPullRequest(client, proposal, hook);
@@ -214,6 +214,7 @@ describe("publisher setup atomic supporting file PRs", () => {
       "/git/trees",
       "/git/commits",
       "/git/refs",
+      expect.stringMatching(/^\/git\/refs\/heads\//),
       "/pulls",
     ]);
     expect(state.writes[0]?.body).toEqual({
@@ -224,9 +225,11 @@ describe("publisher setup atomic supporting file PRs", () => {
       ],
     });
     expect(state.writes[1]?.body).toMatchObject({ tree: NEW_TREE, parents: [SETUP_BASE_SHA] });
-    expect(state.writes[2]?.body.sha).toBe(NEW_COMMIT);
-    expect(state.writes[3]?.body.draft).toBe(true);
-    expect(hook).toHaveBeenCalledTimes(4);
+    expect(state.writes[2]?.body.sha).toBe(SETUP_BASE_SHA);
+    expect(state.writes[3]?.body).toEqual({ sha: NEW_COMMIT, force: false });
+    expect(state.writes[4]?.body.draft).toBe(true);
+    expect(state.writes[4]?.body.body).toContain("```text\n");
+    expect(hook).toHaveBeenCalledTimes(5);
   });
   test("edits an existing file only after its exact pinned before-content and blob identity match", async () => {
     const { client, proposal, state } = fixture({ helper: "identical" });

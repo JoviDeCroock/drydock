@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { recordScanEvent } from "../../db/events";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { requireOrganizationRole } from "../../lib/auth/active-organization";
@@ -8,12 +7,12 @@ import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { type GithubAppConfig, readGithubAppConfig } from "../../lib/github-app/config";
 import {
   createSetupClient,
-  createSetupPullRequest,
   inspectPublisherSetup,
   PublisherSetupError,
   validSetupEnvironment,
 } from "../../lib/github-app/setup-api";
 import {
+  cancelPublisherSetupDraftJob,
   enqueuePublisherSetupDraft,
   readPublisherSetupDraftJob,
 } from "../../lib/github-app/setup-jobs";
@@ -33,10 +32,10 @@ import {
 } from "./shared";
 
 export const publisherSetupRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-publisherSetupRoutes.use("/setup/*", async (c, next) => {
-  const maximum = c.req.path.endsWith("/setup/pull-request") ? 4_194_304 : 200_000;
-  return bodyLimit({
-    maxSize: maximum,
+publisherSetupRoutes.use(
+  "/setup/*",
+  bodyLimit({
+    maxSize: 200_000,
     onError: (context) =>
       context.json(
         {
@@ -45,8 +44,8 @@ publisherSetupRoutes.use("/setup/*", async (c, next) => {
         },
         413,
       ),
-  })(c, next);
-});
+  }),
+);
 
 const scopeSchema = z.object({
   installationRowId: z.string().min(1).max(100),
@@ -67,12 +66,11 @@ const statusSchema = scopeSchema
   })
   .strict();
 
-// Separate budgets so status refreshes cannot exhaust drafting or PR creation.
-// Drafting is the costly bucket: each call sends a workflow to Workers AI.
+// Separate budgets so status refreshes cannot exhaust drafting.
+// Drafting is the costly bucket: each job runs repository agents on Workers AI.
 const RATE_LIMITS = {
   read: 60,
   draft: 20,
-  "pull-request": 20,
   poll: 120,
 } as const;
 
@@ -109,8 +107,7 @@ async function route(
     if (error instanceof z.ZodError)
       return c.json(
         {
-          error:
-            "Check the selected repository, workflow, environment, and proposal, then try again.",
+          error: "Check the selected repository, workflow, and environment, then try again.",
           code: "invalid_input",
         },
         400,
@@ -184,52 +181,18 @@ publisherSetupRoutes.get("/setup/draft-jobs/:id", (c) =>
   }),
 );
 
-publisherSetupRoutes.post("/setup/pull-request", (c) =>
-  route(c, "pull-request", async (config, organizationId) => {
-    const { setupProposalSchema, verifySetupProposal } =
-      await import("../../lib/github-app/setup-draft");
-    const input = z
-      .object({ proposal: setupProposalSchema, proposalToken: z.string().max(100) })
-      .strict()
-      .parse(await readJsonObject(c));
-    if (
-      !(await verifySetupProposal(
-        config.stateSecret,
-        input.proposal,
-        input.proposalToken,
-        organizationId,
-        c.get("authSession").userId,
-      ))
-    )
-      throw new PublisherSetupError(
-        "proposal_invalid",
-        "This proposal is expired or no longer valid. Inspect the repository and create a fresh draft.",
-        409,
-      );
-    const installation = await ensureInstallationOwnedBy(
-      c.var.db,
+publisherSetupRoutes.post("/setup/draft-jobs/:id/cancel", (c) =>
+  route(c, "poll", async (_config, organizationId) => {
+    const job = await cancelPublisherSetupDraftJob(
+      c.env,
+      c.req.param("id"),
       organizationId,
-      input.proposal.installationRowId,
+      c.get("authSession").userId,
     );
-    const client = await createSetupClient(
-      config,
-      installation.installationId,
-      input.proposal.repositoryFullName,
-      true,
-    );
-    const { created, ...pullRequest } = await createSetupPullRequest(client, input.proposal);
-    await recordScanEvent(c.var.db, {
-      idempotencyKey: `publisher-setup:${organizationId}:${input.proposal.repositoryId}:${pullRequest.number}`,
-      organizationId,
-      actorUserId: c.get("authSession").userId,
-      type: "github_app_setup.pr_created",
-      metadata: {
-        repositoryFullName: input.proposal.repositoryFullName,
-        environment: input.proposal.environment,
-        pullRequestNumber: pullRequest.number,
-      },
-    });
-    return c.json({ pullRequest }, created ? 201 : 200);
+    if (!job)
+      return c.json({ error: "Draft job not found or expired.", code: "setup_job_not_found" }, 404);
+    c.header("Cache-Control", "no-store");
+    return c.json({ job });
   }),
 );
 

@@ -58,7 +58,6 @@ function proposal(): PublisherSetupDraft {
       ],
       expiresAt: Date.now() + 900_000,
     },
-    proposalToken: "local-signed-proposal-fixture",
   };
 }
 

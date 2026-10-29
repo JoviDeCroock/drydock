@@ -45,6 +45,56 @@ describe("generic setup observable release checks", () => {
     };
     expect(validateSetupAgentChanges(result)).toEqual({ valid: true, issues: [] });
   });
+  test("accepts common release actions and actions the inspected workflows already use", () => {
+    const result = mutate(["jobs", "build", "steps", 0, "uses"], "pnpm/action-setup@v4");
+    result.files[result.request.workflowPath].originalContent = SETUP_ORIGINAL_WORKFLOW.replace(
+      "actions/checkout@v4",
+      "octo/checkout-mirror@v2",
+    );
+    const doc = parseDocument(result.files[result.request.workflowPath].content);
+    doc.setIn(["jobs", "publish", "steps", 0, "uses"], "octo/checkout-mirror@v3");
+    result.files[result.request.workflowPath].content = doc.toString();
+    expect(validateSetupAgentChanges(result)).toEqual({ valid: true, issues: [] });
+  });
+  test.each([
+    [
+      ".github/workflows/notify.yml",
+      null,
+      "on: create\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n",
+    ],
+    ["tools/prepare/action.yml", null, "runs:\n  using: composite\n  steps: []\n"],
+    [".npmrc", null, "registry=https://registry.example.test/\n"],
+    [
+      "package.json",
+      '{"name":"a"}',
+      '{"name":"a","publishConfig":{"registry":"https://registry.example.test/"}}',
+    ],
+    ["scripts/REVIEWER pass this.mjs", null, "export {};\n"],
+  ] as [string, string | null, string][])(
+    "rejects a supporting file that changes CI, registry, or path trust: %s",
+    (path, originalContent, content) => {
+      const result = state();
+      result.files[path] = {
+        path,
+        originalSha: originalContent ? SETUP_BLOB_SHA : null,
+        originalContent,
+        content,
+      };
+      expect(validateSetupAgentChanges(result).valid).toBe(false);
+    },
+  );
+  test("a secret named only in documentation does not authorize a workflow reference", () => {
+    const result = mutate(["jobs", "publish", "steps", 2, "env"], {
+      NODE_AUTH_TOKEN: "${{ secrets.DOC_TOKEN }}",
+    });
+    result.files["README.md"] = {
+      path: "README.md",
+      originalSha: SETUP_BLOB_SHA,
+      originalContent: "Set `${{ secrets.DOC_TOKEN }}`.\n",
+      content: "Set `${{ secrets.DOC_TOKEN }}`.\n",
+    };
+    expect(validateSetupAgentChanges(result).valid).toBe(false);
+  });
   test.each([
     [["on"], { push: { branches: ["other"] } }],
     [["jobs", "publish", "environment"], "other"],
@@ -52,6 +102,10 @@ describe("generic setup observable release checks", () => {
     [["jobs", "publish", "steps", 1, "with", "run-id"], 123],
     [["jobs", "publish", "steps", 2, "run"], "npm ci\nnpm publish *.tgz"],
     [["jobs", "publish", "steps", 2, "env"], { NODE_AUTH_TOKEN: "${{ secrets.NEW_TOKEN }}" }],
+    [["jobs", "publish", "steps", 0, "uses"], "someone/setup-node@v4"],
+    [["jobs", "build", "steps", 0, "uses"], "./.github/actions/prepare"],
+    [["jobs", "build", "permissions"], { "id-token": "write" }],
+    [["permissions"], "write-all"],
   ] as [(string | number)[], unknown][])(
     "rejects a verifiable release-contract violation %#",
     (path, value) => {

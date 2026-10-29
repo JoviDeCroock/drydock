@@ -32,7 +32,6 @@ const draft: PublisherSetupDraft = {
     manualSteps: ["Configure the environment."],
     expiresAt: 100,
   },
-  proposalToken: "signed-proposal",
 };
 
 function draftRequest(): PublisherSetupDraftRequest {
@@ -319,12 +318,28 @@ describe("publisher setup", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  test("selection changes and disposal stop background polling", async () => {
+  test("a pending job locks its inputs until cancel stops it; disposal stops polling", async () => {
     vi.useFakeTimers();
     let polls = 0;
+    let cancels = 0;
     stubFetchRoutes({
       "/repositories": repositories,
       "/setup/inspect": () => jsonResponse({ inspection }),
+      "/cancel": () => {
+        cancels += 1;
+        return jsonResponse({
+          job: draftJob({
+            status: "failed",
+            stage: "draft",
+            judge: null,
+            result: null,
+            failure: {
+              code: "setup_cancelled",
+              message: "Pull request preparation was cancelled.",
+            },
+          }),
+        });
+      },
       "/setup/draft-jobs/": () => {
         polls += 1;
         return jsonResponse({
@@ -341,17 +356,29 @@ describe("publisher setup", () => {
     await inspect(model);
     await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
+    expect(model.inputsLocked.value).toBe(true);
+    const repository = model.repositoryFullName.value;
     model.setEnvironment("publish");
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(polls).toBe(1);
-    expect(model.draftJob.value).toBeNull();
+    model.selectRepository("drydock/other");
+    expect(model.environment.value).toBe("drydock");
+    expect(model.repositoryFullName.value).toBe(repository);
 
+    await model.cancelJob();
+    expect(cancels).toBe(1);
+    expect(model.draftJob.value).toBeNull();
+    expect(model.inputsLocked.value).toBe(false);
+    const pollsAtCancel = polls;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(polls).toBe(pollsAtCancel);
+
+    model.setEnvironment("publish");
+    expect(model.environment.value).toBe("publish");
     model.setEnvironment("drydock");
     await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
     model[Symbol.dispose]();
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(polls).toBe(2);
+    expect(polls).toBe(pollsAtCancel + 1);
     expect(vi.getTimerCount()).toBe(0);
   });
 

@@ -46,7 +46,6 @@ export interface PublisherSetupProposal extends PublisherSetupDraftRequest {
 
 export interface PublisherSetupDraft {
   proposal: PublisherSetupProposal;
-  proposalToken: string;
 }
 
 export interface PublisherSetupPullRequest {
