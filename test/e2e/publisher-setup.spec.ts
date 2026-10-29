@@ -107,7 +107,9 @@ async function installSetupMocks(
     complete: false,
     jobPolls: 0,
     holdJob: false,
+    cancelled: 0,
     requests: [] as string[],
+    inspected: [] as string[],
   };
   const signedDraft = proposal();
   const requestScope = {
@@ -217,14 +219,15 @@ async function installSetupMocks(
     else if (path === "/api/v1/organizations/invitations") json = { invitations: [] };
     else if (path === "/api/v1/audit-events") json = { events: [], nextCursor: null };
     else if (path === "/api/v1/github-app/setup/inspect") {
-      expect(request.postDataJSON()).toEqual({
-        installationRowId: "installation-setup",
-        repositoryFullName: "drydock/example",
-      });
+      // Choosing a repository inspects it, so either fixture repository may arrive.
+      const body = request.postDataJSON();
+      expect(body.installationRowId).toBe("installation-setup");
+      expect(["drydock/example", "drydock/other"]).toContain(body.repositoryFullName);
+      observations.inspected.push(body.repositoryFullName);
       json = {
         inspection: {
           installationRowId: "installation-setup",
-          repositoryFullName: "drydock/example",
+          repositoryFullName: body.repositoryFullName,
           repositoryId: 101,
           defaultBranch: "main",
           baseSha,
@@ -247,6 +250,18 @@ async function installSetupMocks(
         json: { job: { ...job(), status: "queued", stage: "queued" } },
       });
       return;
+    } else if (path === "/api/v1/github-app/setup/draft-jobs/job-setup/cancel") {
+      observations.cancelled += 1;
+      json = {
+        job: {
+          ...job(),
+          status: "failed",
+          stage: "draft",
+          result: null,
+          judge: null,
+          failure: { code: "setup_cancelled", message: "Pull request preparation was cancelled." },
+        },
+      };
     } else if (path === "/api/v1/github-app/setup/draft-jobs/job-setup") {
       observations.jobPolls += 1;
       let current = job(!observations.holdJob && observations.jobPolls > 2);
@@ -258,7 +273,7 @@ async function installSetupMocks(
           result: null,
           failure: {
             code: "judge_changes_requested",
-            message: "The second review requested changes. Prepare another attempt.",
+            message: "The independent review requested changes. Prepare another attempt.",
           },
           judge: {
             verdict: "changes_requested",
@@ -337,7 +352,6 @@ async function beginPreparation(page: Page) {
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await expect(page.getByRole("heading", { name: "Prepare a release workflow" })).toBeVisible();
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
-  await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
   await expect(page.getByLabel("Publishing workflow", { exact: true })).toHaveValue(workflowPath);
   await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
 }
@@ -345,7 +359,7 @@ async function beginPreparation(page: Page) {
 async function draftSetup(page: Page, progressPath?: string) {
   await beginPreparation(page);
   await expect(
-    page.getByText("Running a second review of the change…", { exact: true }),
+    page.getByText("Running an independent review of the change…", { exact: true }),
   ).toBeVisible();
   if (progressPath) await page.screenshot({ path: progressPath, fullPage: true });
   await expect(
@@ -356,9 +370,10 @@ async function draftSetup(page: Page, progressPath?: string) {
     page.getByRole("heading", { name: "Independent review", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("No changes requested by the second reviewer; your review is still required.", {
-      exact: true,
-    }),
+    page.getByText(
+      "No changes requested by the independent reviewer; your review is still required.",
+      { exact: true },
+    ),
   ).toBeVisible();
 }
 
@@ -381,7 +396,7 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
   ).toHaveAttribute("href", "https://github.com/drydock/example/pull/42");
   expect(observations.created).toBe(1);
   expect(observations.requests).not.toContain("POST /api/v1/github-app/setup/pull-request");
-  await page.getByText("View workflow changes", { exact: true }).click();
+  await page.locator("summary", { hasText: "View workflow changes" }).click();
   const helper = page.getByRole("region", { name: `Proposed file ${helperPath}`, exact: true });
   await expect(helper).toBeVisible();
   await expect(
@@ -442,6 +457,8 @@ test("changing repository hides the previous job link from the new selection", a
   await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
     0,
   );
+  await expect(page.getByText("1 workflow on main · aaaaaaa")).toBeVisible();
+  expect(observations.inspected).toEqual(["drydock/example", "drydock/other"]);
   expect(observations.created).toBe(1);
 });
 
@@ -461,13 +478,12 @@ test("missing GitHub write permission reports the automatic job failure and reco
   expect(observations.created).toBe(0);
 });
 
-test("a negative second review surfaces actionable issues without a PR action", async ({
+test("a negative independent review surfaces actionable issues without a PR action", async ({
   page,
 }, testInfo) => {
   const observations = await installSetupMocks(page, false, true);
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
-  await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
   await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
   await expect(
     page.getByText("The publish job rebuilds the artifact.", { exact: true }),
@@ -512,10 +528,9 @@ test("a pending background draft resumes after refresh without persisting workfl
   observations.holdJob = true;
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
-  await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
   await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
   await expect(
-    page.getByText("Running a second review of the change…", { exact: true }),
+    page.getByText("Running an independent review of the change…", { exact: true }),
   ).toBeVisible();
   const stored = await page.evaluate(() =>
     sessionStorage.getItem("drydock:publisher-draft:org-setup"),
@@ -529,6 +544,34 @@ test("a pending background draft resumes after refresh without persisting workfl
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toBeVisible();
   expect(observations.created).toBe(1);
+});
+
+test("a pending preparation locks the release choice until it is cancelled", async ({ page }) => {
+  const observations = await installSetupMocks(page);
+  observations.holdJob = true;
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  await page.locator("#publisherSetupRepository").selectOption("drydock/example");
+  await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
+  await expect(
+    page.getByText("Running an independent review of the change…", { exact: true }),
+  ).toBeVisible();
+  for (const id of [
+    "#publisherSetupRepository",
+    "#publisherSetupEnvironment",
+    "#publisherSetupWorkflow",
+  ])
+    await expect(page.locator(id)).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel preparation", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Cancel preparation" })).toHaveCount(0);
+  await expect(page.locator("#publisherSetupRepository")).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Prepare draft pull request", exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("drydock:publisher-draft:org-setup")),
+  ).toBeNull();
+  expect(observations.cancelled).toBe(1);
+  expect(observations.created).toBe(0);
 });
 
 test("switching organizations preserves a resumed draft while the new installation list is delayed", async ({
@@ -647,7 +690,9 @@ test("switching organizations preserves a resumed draft while the new installati
   });
 
   await page.goto("/dashboard/settings?tab=integrations#github-app");
-  await expect(page.getByLabel("Installation", { exact: true })).toHaveValue("installation-setup");
+  // One installation per organization, so the installation select stays hidden;
+  // an enabled repository select means it was chosen and its repositories loaded.
+  await expect(page.locator("#publisherSetupRepository")).toBeEnabled();
   await page.evaluate((request) => {
     sessionStorage.setItem(
       "drydock:publisher-draft:org-b",
@@ -661,7 +706,7 @@ test("switching organizations preserves a resumed draft while the new installati
   );
   await expect.poll(() => polls).toBeGreaterThan(0);
   await expect(
-    page.getByText("Running a second review of the change…", { exact: true }),
+    page.getByText("Running an independent review of the change…", { exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(() => sessionStorage.getItem("drydock:publisher-draft:org-b")),
@@ -670,7 +715,6 @@ test("switching organizations preserves a resumed draft while the new installati
 
   complete = true;
   finishInstallations!();
-  await expect(page.getByLabel("Installation", { exact: true })).toHaveValue("installation-b");
   await expect(page.getByLabel("Repository", { exact: true }).first()).toHaveValue(
     "team-b/package",
   );

@@ -13,7 +13,13 @@ import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import type { InstallationRepository } from "./release-targets";
 import { normalizeGithubEnvironmentName } from "../../server/lib/github-app/validation";
 
-type SetupOperation = "idle" | "inspecting" | "drafting" | "cancelling" | "checking" | "mapping";
+export type SetupOperation =
+  | "idle"
+  | "inspecting"
+  | "drafting"
+  | "cancelling"
+  | "checking"
+  | "mapping";
 
 interface SavedDraftJob {
   id: string;
@@ -90,6 +96,8 @@ export const PublisherSetupModel = createModel(() => {
   const ecosystem = signal<PublisherSetupDraftRequest["ecosystem"]>("npm");
   const operation = signal<SetupOperation>("idle");
   const error = signal<string | null>(null);
+  // The operation that produced `error`, so the UI can show it beside that step.
+  const failedOperation = signal<SetupOperation | null>(null);
   const inspection = signal<PublisherSetupInspection | null>(null);
   const draft = signal<PublisherSetupDraft | null>(null);
   const draftJob = signal<PublisherSetupDraftJob | null>(null);
@@ -168,6 +176,14 @@ export const PublisherSetupModel = createModel(() => {
     pullRequest.value = null;
     setupStatus.value = null;
     error.value = null;
+    failedOperation.value = null;
+  }
+
+  // Draft-job failures arrive from polling, outside `run`, so they name their
+  // operation here for the step-scoped error display.
+  function failDraft(message: string) {
+    error.value = message;
+    failedOperation.value = "drafting";
   }
 
   function clearRepository(forgetJob = true) {
@@ -220,13 +236,17 @@ export const PublisherSetupModel = createModel(() => {
     operationController = controller;
     operation.value = name;
     error.value = null;
+    failedOperation.value = null;
     const current = () =>
       requestGeneration === generation && activeOrganizationId.peek() === organizationId;
     try {
       const value = await request(controller.signal);
       if (current()) apply(value);
     } catch (err) {
-      if (current() && !controller.signal.aborted) error.value = errorMessage(err);
+      if (current() && !controller.signal.aborted) {
+        error.value = errorMessage(err);
+        failedOperation.value = name;
+      }
     } finally {
       if (current()) {
         operation.value = "idle";
@@ -292,8 +312,9 @@ export const PublisherSetupModel = createModel(() => {
         (job.result && !sameDraftRequest(job.result.proposal, expected.request))
       ) {
         invalidateProposal();
-        error.value =
-          "The draft status did not match the selected workflow. Inspect the repository and draft again.";
+        failDraft(
+          "The draft status did not match the selected workflow. Inspect the repository and draft again.",
+        );
         return;
       }
       draftJob.value = job;
@@ -302,8 +323,7 @@ export const PublisherSetupModel = createModel(() => {
       if (job.status === "ready") {
         saveJob(null);
         if (job.judge?.verdict !== "pass" || !job.result?.pullRequest) {
-          error.value =
-            "The draft pull request did not complete its checks. Prepare another attempt.";
+          failDraft("The draft pull request did not complete its checks. Prepare another attempt.");
           return;
         }
         draft.value = { proposal: job.result.proposal };
@@ -313,8 +333,9 @@ export const PublisherSetupModel = createModel(() => {
       }
       if (job.status === "failed") {
         saveJob(null);
-        error.value =
-          job.failure?.message ?? "The workflow draft could not complete. Try drafting again.";
+        failDraft(
+          job.failure?.message ?? "The workflow draft could not complete. Try drafting again.",
+        );
         return;
       }
       if (pollAttempts >= DRAFT_POLL_MAX_ATTEMPTS) {
@@ -330,7 +351,7 @@ export const PublisherSetupModel = createModel(() => {
       if (!current()) return;
       if (err instanceof ApiError && [403, 404, 410].includes(err.status)) {
         invalidateProposal();
-        error.value = "This draft is no longer available. Inspect the repository and draft again.";
+        failDraft("This draft is no longer available. Inspect the repository and draft again.");
         return;
       }
       pollFailures += 1;
@@ -358,6 +379,7 @@ export const PublisherSetupModel = createModel(() => {
     ecosystem,
     operation,
     error,
+    failedOperation,
     inspection,
     draft,
     draftJob,
@@ -444,8 +466,9 @@ export const PublisherSetupModel = createModel(() => {
             !sameDraftRequest(response.job.request, payload) ||
             response.job.request.createPullRequest !== true
           ) {
-            error.value =
-              "The draft request did not match the selected workflow. Inspect the repository and draft again.";
+            failDraft(
+              "The draft request did not match the selected workflow. Inspect the repository and draft again.",
+            );
             return;
           }
           draftJob.value = response.job;

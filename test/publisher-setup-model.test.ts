@@ -618,7 +618,12 @@ describe("publisher setup", () => {
     expect(model.inspection.value).toEqual(inspection);
     expect(model.draft.value).toBeNull();
     expect(model.error.value).toContain("AI drafting is disabled");
+    expect(model.failedOperation.value).toBe("drafting");
     expect(model.canDraft.value).toBe(true);
+
+    model.setEnvironment("release");
+    expect(model.error.value).toBeNull();
+    expect(model.failedOperation.value).toBeNull();
   });
 
   test("maps only the selected ecosystem and candidate artifact without credentials", async () => {

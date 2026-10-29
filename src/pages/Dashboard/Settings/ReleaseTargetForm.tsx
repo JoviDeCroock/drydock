@@ -47,8 +47,10 @@ export function ReleaseTargetForm({
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
 
+      {/* Secondary: the guided setup above owns this card's primary action, and
+          this manual form is the path for workflows that need no change. */}
       <div class="flex items-center gap-3">
-        <Button type="submit" disabled={submitting || !formValid}>
+        <Button type="submit" variant="secondary" disabled={submitting || !formValid}>
           {submitting ? "Mapping…" : "Map release target"}
         </Button>
       </div>
