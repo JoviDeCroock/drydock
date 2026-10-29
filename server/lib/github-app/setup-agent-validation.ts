@@ -1,6 +1,10 @@
 import { parseDocument } from "yaml";
 import { isRecord } from "../platform/guards";
-import { setupAgentProposalBytes } from "./setup-agent-tools";
+import {
+  SETUP_REVIEW_MAX_PAGES,
+  SETUP_REVIEW_PAGE_CHARS,
+  setupAgentProposalBytes,
+} from "./setup-agent-tools";
 import { canonicalJson } from "../platform/canonical-json";
 import { SETUP_ARTIFACT_NAMES } from "./setup-types";
 import type { SetupAgentState, SetupAgentValidation } from "./setup-agent-types";
@@ -125,7 +129,28 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
     setupAgentProposalBytes(state, changed) > 262_144
   )
     issues.push("The proposed file set exceeds the change budget.");
+  const reviewPages = changed.reduce(
+    (sum, file) =>
+      sum +
+      Math.max(
+        1,
+        Math.ceil(
+          Math.max(file.originalContent?.length ?? 0, file.content.length) /
+            SETUP_REVIEW_PAGE_CHARS,
+        ),
+      ),
+    0,
+  );
+  if (reviewPages > SETUP_REVIEW_MAX_PAGES)
+    issues.push(
+      `The proposal needs ${reviewPages} review pages; keep changed files within ${SETUP_REVIEW_MAX_PAGES} so independent review can read every change.`,
+    );
+  const folded = new Map<string, number>();
+  for (const path of Object.keys(state.files))
+    folded.set(path.toLowerCase(), (folded.get(path.toLowerCase()) ?? 0) + 1);
   for (const file of changed) {
+    if ((folded.get(file.path.toLowerCase()) ?? 0) > 1)
+      issues.push(`${file.path}: another path differs only by letter case.`);
     if (!/^[A-Za-z0-9._@+/-]+$/.test(file.path))
       issues.push(`${file.path}: changed paths use only letters, digits, and . _ @ + / -.`);
     if (

@@ -108,6 +108,31 @@ export async function updatePublisherSetupJob(
   return updated.length > 0;
 }
 
+/** Cancels only before PR creation starts, so a cancelled job can never open a PR. */
+export async function cancelPublisherSetupJob(db: AppDb, id: string): Promise<boolean> {
+  const updated = await db
+    .update(publisherSetupJobs)
+    .set({
+      status: "failed",
+      failureJson: {
+        code: "setup_cancelled",
+        message: "Pull request preparation was cancelled.",
+      },
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(publisherSetupJobs.id, id),
+        gt(publisherSetupJobs.expiresAt, new Date()),
+        ne(publisherSetupJobs.status, "failed"),
+        ne(publisherSetupJobs.status, "ready"),
+        ne(publisherSetupJobs.stage, "create_pr"),
+      ),
+    )
+    .returning({ id: publisherSetupJobs.id });
+  return updated.length > 0;
+}
+
 export async function deletePublisherSetupJobPayloads(
   bucket: R2Bucket,
   job: Pick<PublisherSetupJobRow, "id" | "organizationId">,

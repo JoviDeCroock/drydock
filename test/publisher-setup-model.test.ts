@@ -382,6 +382,31 @@ describe("publisher setup", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  test("a cancel refused after PR creation started keeps following the job", async () => {
+    vi.useFakeTimers();
+    const opening = draftJob({ status: "running", stage: "create_pr", judge: null, result: null });
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/cancel": () => jsonResponse({ job: opening }),
+      "/setup/draft-jobs/": () => jsonResponse({ job: opening }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.preparePullRequest();
+    await vi.advanceTimersByTimeAsync(0);
+    await model.cancelJob();
+    expect(model.draftJobId.value).toBe("job-1");
+    expect(model.draftJob.value?.stage).toBe("create_pr");
+    expect(model.inputsLocked.value).toBe(true);
+    model[Symbol.dispose]();
+  });
+
   test("a draft-status response cannot land after switching organizations", async () => {
     vi.useFakeTimers();
     setActiveOrganizationId("org-a");

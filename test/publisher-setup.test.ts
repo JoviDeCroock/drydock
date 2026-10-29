@@ -4,6 +4,7 @@ import {
   createSetupClient,
   createSetupPullRequest,
   inspectPublisherSetup,
+  setupTreeHasCaseTwin,
   type SetupGithubClient,
 } from "../server/lib/github-app/setup-api";
 import type { GithubAppConfig } from "../server/lib/github-app/config";
@@ -184,6 +185,12 @@ describe("publisher setup proposal", () => {
 });
 
 describe("publisher setup GitHub boundary", () => {
+  test("detects case-only twins without matching the exact entry", () => {
+    const tree = [{ path: "scripts" }, { path: "README.md" }];
+    expect(setupTreeHasCaseTwin(tree, "Scripts")).toBe(true);
+    expect(setupTreeHasCaseTwin(tree, "scripts")).toBe(false);
+    expect(setupTreeHasCaseTwin(tree, "docs")).toBe(false);
+  });
   test.each(["branch", "file", "pr"] as const)(
     "recovers an uncertain %s write without repeating completed mutations",
     async (failAfter) => {

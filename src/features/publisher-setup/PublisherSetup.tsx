@@ -494,7 +494,7 @@ function DraftProgress({ model }: { model: SetupModel }) {
           </Muted>
         </div>
       ) : null}
-      <Show when={model.draftPending}>
+      <Show when={() => model.draftPending.value && model.draftJob.value?.stage !== "create_pr"}>
         <div>
           <Button
             variant="ghost"

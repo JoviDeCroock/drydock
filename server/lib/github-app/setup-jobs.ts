@@ -3,6 +3,7 @@ import { createDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { organizationMembers, user } from "../../db/schema";
 import {
+  cancelPublisherSetupJob,
   createPublisherSetupJob,
   deletePublisherSetupJobPayloads,
   getPublisherSetupJob,
@@ -321,7 +322,10 @@ export async function readPublisherSetupDraftJob(
   return result;
 }
 
-/** Stops a creator's pending job; checks before each GitHub write make the stop binding. */
+/**
+ * Stops a creator's pending job; checks before each GitHub write make the stop binding.
+ * Once PR creation has started the job is left to finish, and its current status is returned.
+ */
 export async function cancelPublisherSetupDraftJob(
   env: Cloudflare.Env,
   id: string,
@@ -331,13 +335,7 @@ export async function cancelPublisherSetupDraftJob(
   const db = createDb(env.DB);
   const row = await getOwnedPublisherSetupJob(db, id, organizationId, userId);
   if (!row) return null;
-  if (
-    (row.status === "queued" || row.status === "running") &&
-    (await updatePublisherSetupJob(db, id, {
-      status: "failed",
-      failureJson: { code: "setup_cancelled", message: "Pull request preparation was cancelled." },
-    }))
-  ) {
+  if (await cancelPublisherSetupJob(db, id)) {
     await deletePublisherSetupJobPayloads(env.ARTIFACTS, row);
     try {
       await (await env.PUBLISHER_SETUP_WORKFLOW?.get(id))?.terminate();

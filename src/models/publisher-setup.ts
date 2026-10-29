@@ -502,8 +502,9 @@ export const PublisherSetupModel = createModel(() => {
             throw err;
           }),
         (response) => {
-          // The job can finish before the cancel lands; show its pull request instead.
-          if (response?.job.status === "ready") {
+          // A job that already started opening its PR cannot be cancelled; follow it to the end.
+          if (response && response.job.status !== "failed") {
+            draftJob.value = response.job;
             pollAttempts = 0;
             void pollJob(job, generation);
           } else invalidateProposal();

@@ -6,6 +6,7 @@ import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import {
   createPublisherSetupJob,
   getPublisherSetupJob,
+  updatePublisherSetupJob,
   publisherSetupPayloadKey,
   prunePublisherSetupJobs,
   deletePublisherSetupJobsForUser,
@@ -629,6 +630,26 @@ describe("publisher setup durable jobs", () => {
     expect(counts()).toEqual({ draftCalls: 0, judgeCalls: 0 });
     expect(prCount()).toBe(0);
   });
+  test("once pull request creation starts, cancel leaves the job running", async () => {
+    const { owner, request, app, binding } = await fixture();
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await updatePublisherSetupJob(owner.db, job.id, { status: "running", stage: "create_pr" });
+    const response = await call(
+      app,
+      "POST",
+      `/api/v1/github-app/setup/draft-jobs/${job.id}/cancel`,
+      { envOverride: binding },
+    );
+    expect(await response.json()).toMatchObject({
+      job: { status: "running", stage: "create_pr" },
+    });
+    expect((await getPublisherSetupJob(owner.db, job.id))?.status).toBe("running");
+  });
   test("cancelling a finished job keeps its pull request result", async () => {
     const { owner, request, app, binding, testEnv } = await fixture();
     const job = await createPublisherSetupJob(
@@ -822,8 +843,9 @@ describe("publisher setup durable jobs", () => {
     const guidance = calls[0]?.[1].messages.at(-1);
     expect(guidance?.role).toBe("user");
     const remaining = Number(/"remainingSeconds":(\d+)/.exec(guidance?.content ?? "")?.[1]);
-    expect(remaining).toBeLessThanOrEqual(18 * 60);
-    expect(remaining).toBeGreaterThan(17 * 60);
+    // Drafting gets 14 of the 20 minutes; two have already passed.
+    expect(remaining).toBeLessThanOrEqual(12 * 60);
+    expect(remaining).toBeGreaterThan(11 * 60);
   });
   test("each Git mutation rechecks the independent assessment digest", async () => {
     const { owner, request, testEnv, prCount, gitWrites } = await fixture({

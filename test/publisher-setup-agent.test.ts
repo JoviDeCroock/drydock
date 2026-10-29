@@ -92,7 +92,7 @@ describe("publisher setup native agent turns", () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: "user",
-          content: expect.stringContaining('"remainingInputTokens":1500000'),
+          content: expect.stringContaining('"remainingInputTokens":1050000'),
         }),
       ]),
     );
@@ -354,6 +354,31 @@ describe("publisher setup native agent turns", () => {
     await expect(runSetupAgentTurn(env, state, client)).rejects.toThrow(/work budget/);
     expect(run).not.toHaveBeenCalled();
   });
+  test("drafting leaves a reserved share of time and output for independent review", async () => {
+    const early = start();
+    const { env, client, run } = binding([]);
+    early.progress.startedAt = Date.now() - 15 * 60_000;
+    await expect(runSetupAgentTurn(env, early, client)).rejects.toThrow(/work budget/);
+    early.progress.startedAt = Date.now();
+    early.progress.outputTokens = 60_000;
+    await expect(runSetupAgentTurn(env, early, client)).rejects.toThrow(/work budget/);
+    expect(run).not.toHaveBeenCalled();
+
+    const { state, harness } = await draft();
+    const judge = createSetupAgentState(
+      state.request,
+      { path: state.request.workflowPath, sha: SETUP_BLOB_SHA, content: SETUP_ORIGINAL_WORKFLOW },
+      "judge",
+      state,
+    );
+    judge.progress.startedAt = Date.now() - 15 * 60_000;
+    judge.progress.outputTokens = 60_000;
+    harness.run.mockImplementationOnce(async () =>
+      response("inspect_changes", { path: state.request.workflowPath }),
+    );
+    const reviewed = await runSetupAgentTurn(harness.env, judge, harness.client);
+    expect(reviewed.progress.turns).toBe(1);
+  });
   test("refuses a submitted workspace whose files no longer match its digest", async () => {
     const { state } = await draft();
     state.files[state.request.workflowPath].content += "\n# changed";
@@ -501,12 +526,13 @@ describe("publisher setup native agent turns", () => {
   });
   test("discards a terminal result that arrives after the shared deadline", async () => {
     const state = start();
-    state.progress.startedAt = Date.now() - 20 * 60_000 + 1000;
+    // Drafting's deadline is 14 minutes; the rest of the 20 is reserved for review.
+    state.progress.startedAt = Date.now() - 14 * 60_000 + 1000;
     const { env, client, run } = binding([]);
     const now = vi.spyOn(Date, "now");
     const timeout = vi.spyOn(AbortSignal, "timeout");
     run.mockImplementationOnce(async () => {
-      now.mockReturnValue(state.progress.startedAt + 21 * 60_000);
+      now.mockReturnValue(state.progress.startedAt + 15 * 60_000);
       return response("report_blocker", { reason: "Late terminal result." });
     });
     try {

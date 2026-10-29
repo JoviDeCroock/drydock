@@ -204,6 +204,18 @@ describe("private publisher setup agent tools", () => {
     ]);
   });
 
+  test("refuses paths that differ only by letter case from a repository entry", async () => {
+    const f = fixture({ "scripts/release.mjs": "export {};\n" });
+    expect(await call(f.tools, "read_file", { path: "Scripts/release.mjs" })).toMatchObject({
+      ok: false,
+      error: "case_conflict",
+    });
+    expect(await call(f.tools, "read_file", { path: "scripts/Release.mjs" })).toMatchObject({
+      ok: false,
+      error: "case_conflict",
+    });
+    expect(f.state.missingFiles ?? []).toEqual([]);
+  });
   test("requires a unique exact edit and a fresh read after each edit", async () => {
     const f = fixture({ "text.txt": "same same" });
     const read = await call(f.tools, "read_file", { path: "text.txt" });

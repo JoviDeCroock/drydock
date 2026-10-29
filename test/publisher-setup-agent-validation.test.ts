@@ -83,6 +83,32 @@ describe("generic setup observable release checks", () => {
       expect(validateSetupAgentChanges(result).valid).toBe(false);
     },
   );
+  test("rejects case-only path twins and proposals too large to review in full", () => {
+    const twin = state();
+    twin.files["scripts/Release.mjs"] = {
+      path: "scripts/Release.mjs",
+      originalSha: null,
+      originalContent: null,
+      content: "export {};\n",
+    };
+    twin.files["scripts/release.mjs"] = {
+      path: "scripts/release.mjs",
+      originalSha: SETUP_BLOB_SHA,
+      originalContent: "export {};\n",
+      content: "export {};\n",
+    };
+    expect(validateSetupAgentChanges(twin).issues.join("\n")).toContain("letter case");
+    const large = state();
+    // Replacing large files is cheap in proposed bytes but the judge reads both sides.
+    for (let index = 0; index < 8; index++)
+      large.files[`scripts/part-${index}.mjs`] = {
+        path: `scripts/part-${index}.mjs`,
+        originalSha: SETUP_BLOB_SHA,
+        originalContent: `// ${"x".repeat(60_000)}\n`,
+        content: "export {};\n",
+      };
+    expect(validateSetupAgentChanges(large).issues.join("\n")).toContain("review pages");
+  });
   test("a secret named only in documentation does not authorize a workflow reference", () => {
     const result = mutate(["jobs", "publish", "steps", 2, "env"], {
       NODE_AUTH_TOKEN: "${{ secrets.DOC_TOKEN }}",

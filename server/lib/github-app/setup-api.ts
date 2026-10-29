@@ -85,6 +85,21 @@ export async function requireSetupWritePermissions(
     throw new PublisherSetupError("setup_permissions_required", WRITE_PERMISSIONS_REQUIRED, 403);
 }
 
+/** Shared by agent tools and PR creation so any directory the agent can read can also be committed. */
+export const SETUP_TREE_MAX_ENTRIES = 2000;
+
+/** Case-only twins collide on case-insensitive checkouts and could hide a reviewed change. */
+export function setupTreeHasCaseTwin(tree: unknown[], name: string): boolean {
+  const folded = name.toLowerCase();
+  return tree.some(
+    (value) =>
+      isRecord(value) &&
+      typeof value.path === "string" &&
+      value.path !== name &&
+      value.path.toLowerCase() === folded,
+  );
+}
+
 export async function createSetupClient(
   config: GithubAppConfig,
   installationId: string,
@@ -364,7 +379,7 @@ async function readRegularSetupFile(client: SetupGithubClient, path: string, rev
       !isRecord(listing) ||
       !Array.isArray(listing.tree) ||
       listing.truncated !== false ||
-      listing.tree.length > 1000
+      listing.tree.length > SETUP_TREE_MAX_ENTRIES
     )
       throw new PublisherSetupError(
         "github_unavailable",
@@ -372,6 +387,12 @@ async function readRegularSetupFile(client: SetupGithubClient, path: string, rev
         502,
       );
     const entry = listing.tree.find((value) => isRecord(value) && value.path === segments[index]);
+    if (setupTreeHasCaseTwin(listing.tree, segments[index]))
+      throw new PublisherSetupError(
+        "proposal_file_conflict",
+        "A setup path differs only by letter case from another repository entry. Configure this workflow manually.",
+        409,
+      );
     if (!isRecord(entry)) return null;
     const directory = index < segments.length - 1;
     if (
