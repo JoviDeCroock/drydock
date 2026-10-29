@@ -86,6 +86,7 @@ describe("publisher setup native agent turns", () => {
     ][];
     expect(calls[0][0]).toBe(AI_MODEL);
     expect(calls[0][1]).toMatchObject({ tool_choice: "auto", parallel_tool_calls: false });
+    expect(calls[0][1]).toHaveProperty("chat_template_kwargs.clear_thinking", false);
     expect(calls[0][1]).not.toHaveProperty("response_format");
     expect(calls[0][1].messages).toEqual(
       expect.arrayContaining([
@@ -115,6 +116,37 @@ describe("publisher setup native agent turns", () => {
     expect(candidate.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(candidate.supportingFiles).toEqual([]);
     expect(state.progress.turns).toBe(3);
+  });
+  test("replays exact native model context in GLM's field while retaining tool identities and visible content", async () => {
+    const state = start();
+    const first = response("read_file", { path: state.request.workflowPath });
+    const sentinel = "INERT_NATIVE_CONTEXT\n  exact whitespace\n";
+    const harness = binding([
+      {
+        ...first,
+        choices: [
+          {
+            ...first.choices[0],
+            message: { ...first.choices[0].message, reasoning_content: sentinel },
+          },
+        ],
+      },
+      response("workspace_status", {}),
+    ]);
+    const next = await runSetupAgentTurn(harness.env, state, harness.client);
+    await runSetupAgentTurn(harness.env, next, harness.client);
+    const calls = harness.run.mock.calls as unknown as [
+      string,
+      { messages: Record<string, unknown>[] },
+    ][];
+    const assistant = calls[1][1].messages.find((message) => message.role === "assistant")!;
+    const result = calls[1][1].messages.find((message) => message.role === "tool")!;
+    expect(assistant).toMatchObject({ content: "", reasoning_content: sentinel });
+    expect(assistant).not.toHaveProperty("reasoning");
+    expect(assistant.content).not.toContain(sentinel);
+    expect(assistant.tool_calls).toMatchObject([{ id: result.tool_call_id }]);
+    expect(result).toMatchObject({ name: "read_file", role: "tool" });
+    expect(next.messages.filter((message) => message.role === "assistant")).toHaveLength(1);
   });
   test("the independent judge must inspect the frozen diff before its native verdict is accepted", async () => {
     const { state, harness } = await draft();

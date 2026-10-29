@@ -16,7 +16,7 @@ Neither agent has a shell, dependency-install/build capability, repository impor
 
 ## Durable execution and budgets
 
-Preparation returns `202` with a job ID; the browser polls its creator-owned status and resumes pending work after refresh. Cloudflare Workflows checkpoints pinned source reads, individual drafting/reviewing turns, validation and PR creation. A turn loads private state, runs the model and tools against a local copy, and saves the complete transcript/workspace atomically before the checkpoint. Failed calls cannot persist half a turn. Workflow parameters/results contain only opaque job IDs and completion metadata, never source or conversations.
+Preparation returns `202` with a job ID; the browser polls its creator-owned status and resumes pending work after refresh. Cloudflare Workflows checkpoints pinned source reads, individual drafting/reviewing turns, validation and PR creation. A turn loads private state, runs the model and tools against a local copy, and saves the complete transcript/workspace atomically before the checkpoint. Failed calls cannot persist half a turn. Native model context is replayed unchanged in GLM's expected field across tool turns and remains private; it is never mixed into visible assistant text. Workflow parameters/results contain only opaque job IDs and completion metadata, never source or conversations.
 
 Source, proposed files, transcripts, tool results, feedback and verdicts remain in organization-scoped private R2. D1 stores request/authorization metadata, safe status/failure codes and one-day expiry. Gateway payload logging is disabled. Account/organization deletion and the scheduled retention sweep remove private job data. A late write cannot revive a revoked, expired or deleted job.
 

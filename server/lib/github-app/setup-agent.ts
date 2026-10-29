@@ -133,16 +133,30 @@ function withinBudget(state: DurableSetupAgentState) {
 function setupAgentModel(env: Cloudflare.Env) {
   const isolated = traceIsolatedAiBinding(env.AI);
   const binding = {
-    run: (model: string, input: unknown, options?: Parameters<typeof isolated.run>[2]) =>
-      isolated.run(
-        model,
-        isRecord(input) ? { ...input, parallel_tool_calls: false } : input,
-        options,
-      ),
+    run: (model: string, input: unknown, options?: Parameters<typeof isolated.run>[2]) => {
+      if (!isRecord(input)) return isolated.run(model, input, options);
+      // Provider v4 emits `reasoning`; GLM's template reads `reasoning_content`.
+      // Preserve the exact bytes/order without mixing private context into visible text.
+      const messages = Array.isArray(input.messages)
+        ? input.messages.map((message: unknown) => {
+            if (
+              !isRecord(message) ||
+              message.role !== "assistant" ||
+              typeof message.reasoning !== "string" ||
+              message.reasoning_content !== undefined
+            )
+              return message;
+            const { reasoning, ...rest } = message;
+            return { ...rest, reasoning_content: reasoning };
+          })
+        : input.messages;
+      return isolated.run(model, { ...input, messages, parallel_tool_calls: false }, options);
+    },
   } as Cloudflare.Env["AI"];
   return createWorkersAI({ binding, gateway: { id: AI_GATEWAY_ID } })(AI_MODEL, {
     extraHeaders: { ...AI_GATEWAY_POLICY_HEADERS, "cf-aig-skip-cache": "true" },
     reasoning_effort: "high",
+    chat_template_kwargs: { clear_thinking: false },
   });
 }
 
