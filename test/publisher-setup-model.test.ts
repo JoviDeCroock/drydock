@@ -127,6 +127,37 @@ async function inspect(model: InstanceType<typeof PublisherSetupModel>) {
   await model.inspect();
 }
 
+function stubSessionStorage(initial: Record<string, unknown> = {}) {
+  const values = new Map<string, string>(
+    Object.entries(initial).map(([key, value]) => [key, JSON.stringify(value)]),
+  );
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  });
+  return values;
+}
+
+function runningJobRoutes(onPoll: (id: string) => void = () => {}) {
+  return {
+    "/repositories": repositories,
+    "/setup/inspect": () => jsonResponse({ inspection }),
+    "/setup/draft-jobs/": (url: string) => {
+      const id = decodeURIComponent(url.split("/").pop()!);
+      onPoll(id);
+      return jsonResponse({
+        job: draftJob({ id, status: "running", stage: "judge", judge: null, result: null }),
+      });
+    },
+    "/setup/draft": () =>
+      jsonResponse(
+        { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+        202,
+      ),
+  };
+}
+
 afterEach(() => {
   for (const model of models.splice(0)) model[Symbol.dispose]();
   setActiveOrganizationId(null);
@@ -735,5 +766,187 @@ describe("publisher setup", () => {
       },
     ]);
     expect(model.setupStatus.value?.firstReview).toBeNull();
+  });
+
+  test("keeps polling a healthy job through the server's twenty-minute wall", async () => {
+    vi.useFakeTimers();
+    stubFetchRoutes(runningJobRoutes());
+    const model = createModel();
+    await inspect(model);
+    await model.preparePullRequest();
+
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(model.pollingPaused.value).toBe(false);
+    expect(model.pollingError.value).toBeNull();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(model.pollingPaused.value).toBe(true);
+    expect(model.pollingError.value).toContain("still running");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a job restored on organization switch gets a fresh poll window", async () => {
+    vi.useFakeTimers();
+    setActiveOrganizationId("org-a");
+    stubSessionStorage({
+      "drydock:publisher-draft:org-b": { id: "job-b", request: draftRequest() },
+    });
+    const polls: string[] = [];
+    stubFetchRoutes(runningJobRoutes((id) => polls.push(id)));
+    const model = createModel();
+    await inspect(model);
+    await model.preparePullRequest();
+    await vi.advanceTimersByTimeAsync(23 * 60_000);
+    expect(model.pollingPaused.value).toBe(true);
+
+    setActiveOrganizationId("org-b");
+    await vi.advanceTimersByTimeAsync(3 * 3_000);
+
+    expect(model.draftJobId.value).toBe("job-b");
+    expect(polls.filter((id) => id === "job-b")).toHaveLength(4);
+    expect(model.pollingPaused.value).toBe(false);
+    expect(model.pollingError.value).toBeNull();
+  });
+
+  test("a restored job that is no longer available reports it as a drafting failure", async () => {
+    vi.useFakeTimers();
+    setActiveOrganizationId("org-a");
+    const values = stubSessionStorage({
+      "drydock:publisher-draft:org-a": { id: "job-gone", request: draftRequest() },
+    });
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/draft-jobs/": () => jsonResponse({ error: "Not found." }, 404),
+    });
+    const model = createModel();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(model.draftJobId.value).toBeNull();
+    expect(model.inspection.value).toBeNull();
+    expect(model.repositoryFullName.value).toBe("example/package");
+    expect(model.failedOperation.value).toBe("drafting");
+    expect(model.error.value).toContain("no longer available");
+    expect(values.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a cancel that loses to an independent-review failure keeps that feedback", async () => {
+    vi.useFakeTimers();
+    const values = stubSessionStorage();
+    setActiveOrganizationId("org-a");
+    const judge = {
+      verdict: "changes_requested" as const,
+      summary: "The publish step rebuilds the package.",
+      issues: ["Publish the reviewed artifact."],
+      model: "test-judge",
+      digest: "d".repeat(64),
+    };
+    let polls = 0;
+    stubFetchRoutes({
+      "/cancel": () =>
+        jsonResponse({
+          job: draftJob({
+            status: "failed",
+            stage: "judge",
+            judge,
+            result: null,
+            feedback: ["The release job needs the reviewed tarball."],
+            failure: {
+              code: "judge_changes_requested",
+              message: "The second review requested changes. Draft again.",
+            },
+          }),
+        }),
+      ...runningJobRoutes(() => {
+        polls += 1;
+      }),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.preparePullRequest();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await model.cancelJob();
+
+    expect(model.draftJobId.value).toBe("job-1");
+    expect(model.draftJob.value?.judge).toEqual(judge);
+    expect(model.draftJob.value?.feedback).toEqual(["The release job needs the reviewed tarball."]);
+    expect(model.error.value).toContain("second review requested changes");
+    expect(model.failedOperation.value).toBe("drafting");
+    expect(model.draftPending.value).toBe(false);
+    expect(model.canDraft.value).toBe(true);
+    expect(values.size).toBe(0);
+    const pollsAtCancel = polls;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(polls).toBe(pollsAtCancel);
+  });
+
+  test("a job queued before an organization switch is kept for its organization", async () => {
+    vi.useFakeTimers();
+    setActiveOrganizationId("org-a");
+    const values = stubSessionStorage();
+    let finishDraft!: (response: Response) => void;
+    const polls: string[] = [];
+    stubFetchRoutes({
+      ...runningJobRoutes((id) => polls.push(id)),
+      "/setup/draft": () =>
+        new Promise<Response>((resolve) => {
+          finishDraft = resolve;
+        }),
+    });
+    const model = createModel();
+    await inspect(model);
+    const pending = model.preparePullRequest();
+    setActiveOrganizationId("org-b");
+    finishDraft(
+      jsonResponse(
+        { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+        202,
+      ),
+    );
+    await pending;
+
+    expect(model.draftJobId.value).toBeNull();
+    expect(polls).toEqual([]);
+    expect(JSON.parse(values.get("drydock:publisher-draft:org-a")!)).toEqual({
+      id: "job-1",
+      request: draftRequest(),
+    });
+    expect(values.has("drydock:publisher-draft:org-b")).toBe(false);
+
+    setActiveOrganizationId("org-a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(model.draftJobId.value).toBe("job-1");
+    expect(model.repositoryFullName.value).toBe("example/package");
+    expect(model.draftPending.value).toBe(true);
+    expect(polls).toEqual(["job-1"]);
+  });
+
+  test("inspecting leaves ecosystem and environment editable without aborting it", async () => {
+    let finishInspection!: (response: Response) => void;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () =>
+        new Promise<Response>((resolve) => {
+          finishInspection = resolve;
+        }),
+    });
+    const model = createModel();
+    await model.selectInstallation("installation-1");
+    model.selectRepository("example/package");
+    const pending = model.inspect();
+    expect(model.operation.value).toBe("inspecting");
+    expect(model.inputsLocked.value).toBe(false);
+
+    model.setEnvironment("publish");
+    model.setEcosystem("pypi");
+    finishInspection(jsonResponse({ inspection }));
+    await pending;
+
+    expect(model.inspection.value).toEqual(inspection);
+    expect(model.environment.value).toBe("publish");
+    expect(model.ecosystem.value).toBe("pypi");
+    expect(model.canDraft.value).toBe(true);
   });
 });

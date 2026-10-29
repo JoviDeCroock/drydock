@@ -4,7 +4,9 @@ import { recordScanEvent } from "../../db/events";
 import { organizationMembers, user } from "../../db/schema";
 import {
   cancelPublisherSetupJob,
+  countActivePublisherSetupJobs,
   createPublisherSetupJob,
+  deletePublisherSetupJob,
   deletePublisherSetupJobPayloads,
   getPublisherSetupJob,
   getOwnedPublisherSetupJob,
@@ -41,6 +43,10 @@ import type {
   PublisherSetupJudgeAssessment,
   PublisherSetupJobStage,
 } from "./setup-types";
+
+const SETUP_JOB_WALL_MS = 20 * 60_000;
+// Each job may spend up to 1.5M input tokens; the hourly rate limit alone allows 20 at once.
+const MAX_ACTIVE_JOBS_PER_ORGANIZATION = 2;
 
 interface SetupSource {
   repositoryId: number;
@@ -131,11 +137,23 @@ async function installationForJob(env: Cloudflare.Env, job: PublisherSetupJobRow
   return installation;
 }
 
-async function activeJob(env: Cloudflare.Env, id: string): Promise<PublisherSetupJobRow | null> {
+/**
+ * Returns the job while it may continue, failing it when its time, authorization or access
+ * has lapsed. Once PR creation starts, a branch or PR may already exist (also from an
+ * earlier attempt), so the time wall no longer applies (the step has its own deadline) and
+ * the killswitch only gates the first write (`beforePrWrite`); failing later would report a
+ * real PR as failed and invite a duplicate. Revoked access still stops every write.
+ */
+async function activeJob(
+  env: Cloudflare.Env,
+  id: string,
+  beforePrWrite = false,
+): Promise<PublisherSetupJobRow | null> {
   const db = createDb(env.DB);
   const job = await getPublisherSetupJob(db, id);
   if (!job || job.status === "failed" || job.status === "ready") return null;
-  if (Date.now() - job.createdAt.getTime() > 20 * 60_000) {
+  const creatingPr = job.stage === "create_pr";
+  if (!creatingPr && Date.now() - job.createdAt.getTime() > SETUP_JOB_WALL_MS) {
     await failJob(
       env,
       job,
@@ -186,6 +204,7 @@ async function activeJob(env: Cloudflare.Env, id: string): Promise<PublisherSetu
     await deletePublisherSetupJobPayloads(env.ARTIFACTS, job);
     return null;
   }
+  if (creatingPr && !beforePrWrite) return job;
   const enabled = env.FLAGS
     ? await env.FLAGS.getBooleanValue("ai-review", true, {
         targetingKey: job.organizationId,
@@ -243,6 +262,22 @@ export async function enqueuePublisherSetupDraft(
     );
   const db = createDb(env.DB);
   const job = await createPublisherSetupJob(db, organizationId, userId, request);
+  // Counting after the insert fails closed when requests race: both may be refused, never both admitted.
+  // Jobs older than the wall plus the PR step's retries are dead or finishing, so they never lock an organization out.
+  if (
+    (await countActivePublisherSetupJobs(
+      db,
+      organizationId,
+      new Date(Date.now() - SETUP_JOB_WALL_MS - 10 * 60_000),
+    )) > MAX_ACTIVE_JOBS_PER_ORGANIZATION
+  ) {
+    await deletePublisherSetupJob(db, job.id);
+    throw new PublisherSetupError(
+      "setup_jobs_busy",
+      "Two workflow drafts are already being prepared for this organization. Wait for one to finish or cancel it, then retry.",
+      409,
+    );
+  }
   try {
     await env.PUBLISHER_SETUP_WORKFLOW.create({ id: job.id, params: { jobId: job.id } });
   } catch {
@@ -349,6 +384,8 @@ export async function cancelPublisherSetupDraftJob(
 async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promise<boolean> {
   const job = await activeJob(env, id);
   if (!job) return true;
+  // A retried PR attempt may follow branch or PR writes from the attempt before it.
+  let prWritesMayExist = job.stage === "create_pr";
   if (
     !(await updatePublisherSetupJob(createDb(env.DB), id, {
       status: "running",
@@ -496,8 +533,8 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       "The workflow draft has not passed independent review.",
       409,
     );
-  if (!(await activeJob(env, id))) return true;
-  const { setupManualSteps } = await import("./setup-draft");
+  if (!(await activeJob(env, id, !prWritesMayExist))) return true;
+  const { markdownCodeSpan, setupManualSteps } = await import("./setup-draft");
   const { createPullRequest: _authorization, ...request } = job.requestJson;
   const { digest: _reviewedDigest, ...proposalCandidate } = candidate;
   const proposal = {
@@ -517,40 +554,47 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     job.requestJson.repositoryFullName,
     true,
   );
-  if (!(await activeJob(env, id))) return true;
-  const { created: _created, ...pullRequest } = await createSetupPullRequest(
-    client,
-    proposal,
-    async () => {
-      if (!(await activeJob(env, id)))
-        throw new PublisherSetupError(
-          "setup_access_changed",
-          "Publisher setup stopped because account, organization, or installation access changed.",
-          403,
-        );
-      const currentState = await readPayload<DurableSetupAgentState>(env, job, "draft-agent");
-      const assessment = await readPayload<PublisherSetupJudgeAssessment>(env, job, "judge");
-      if (
-        !currentState?.submitted ||
-        !assessment ||
-        assessment.verdict !== "pass" ||
-        assessment.digest !== currentState.submitted.digest ||
-        !(await validateSetupAgentChanges(currentState)).valid
-      )
-        throw new PublisherSetupError(
-          "setup_judge_mismatch",
-          "The review no longer matches the submitted files. Start a fresh setup.",
-          409,
-        );
-      const current = await extractSetupAgentCandidate(currentState);
-      if (current.digest !== candidate.digest || current.digest !== assessment.digest)
-        throw new PublisherSetupError(
-          "setup_judge_mismatch",
-          "The review no longer matches the submitted files. Start a fresh setup.",
-          409,
-        );
-    },
-  );
+  let created: Awaited<ReturnType<typeof createSetupPullRequest>>;
+  try {
+    if (!(await activeJob(env, id, !prWritesMayExist))) return true;
+    created = await createSetupPullRequest(
+      client,
+      { ...proposal, manualSteps: setupManualSteps(job.requestJson, markdownCodeSpan) },
+      async () => {
+        if (!(await activeJob(env, id, !prWritesMayExist)))
+          throw new PublisherSetupError(
+            "setup_access_changed",
+            "Publisher setup stopped because account, organization, or installation access changed.",
+            403,
+          );
+        prWritesMayExist = true;
+        const currentState = await readPayload<DurableSetupAgentState>(env, job, "draft-agent");
+        const assessment = await readPayload<PublisherSetupJudgeAssessment>(env, job, "judge");
+        if (
+          !currentState?.submitted ||
+          !assessment ||
+          assessment.verdict !== "pass" ||
+          assessment.digest !== currentState.submitted.digest ||
+          !(await validateSetupAgentChanges(currentState)).valid
+        )
+          throw new PublisherSetupError(
+            "setup_judge_mismatch",
+            "The review no longer matches the submitted files. Start a fresh setup.",
+            409,
+          );
+        const current = await extractSetupAgentCandidate(currentState);
+        if (current.digest !== candidate.digest || current.digest !== assessment.digest)
+          throw new PublisherSetupError(
+            "setup_judge_mismatch",
+            "The review no longer matches the submitted files. Start a fresh setup.",
+            409,
+          );
+      },
+    );
+  } finally {
+    await client.revokeToken();
+  }
+  const { created: _created, ...pullRequest } = created;
   await recordScanEvent(createDb(env.DB), {
     idempotencyKey: `publisher-setup:${job.organizationId}:${source.repositoryId}:${pullRequest.number}`,
     organizationId: job.organizationId,

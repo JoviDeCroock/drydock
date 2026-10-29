@@ -54,11 +54,15 @@ export function PublisherSetup({
   // Drafting is optional (a workflow may already use the environment), so the
   // verify step opens as soon as a repository is chosen; it only takes the
   // primary action once the workflow step is finished or skipped past.
-  // A draft job restored after a reload has no inspection, but its progress and
-  // result still belong to this step.
+  // A draft job restored after a reload has no inspection, but its progress,
+  // result, and failure (including a job that is no longer available) still
+  // belong to this step.
   const workflowState = useComputed<StepState>(() => {
     if (model.pullRequest.value) return "done";
-    const started = model.inspection.value || model.draftJobId.value || model.draft.value;
+    const failed =
+      Boolean(model.error.value) &&
+      (model.failedOperation.value === "drafting" || model.failedOperation.value === "cancelling");
+    const started = model.inspection.value || model.draftJobId.value || model.draft.value || failed;
     return started ? "active" : "upcoming";
   });
   const verifyState = useComputed<StepState>(() => {
@@ -67,11 +71,13 @@ export function PublisherSetup({
     if (status && status.checks.every((check) => check.status === "passed")) return "done";
     return repository ? "active" : "upcoming";
   });
+  // Exactly one primary action: `Prepare draft pull request` renders only for
+  // an inspection with workflows, so verification leads whenever it is absent
+  // (including a restored job, which has no inspection) or a PR exists.
   const verifyLeads = useComputed(() => {
     const inspection = model.inspection.value;
     const draftable = Boolean(inspection && inspection.workflows.length > 0);
-    const drafting = Boolean(model.draftJobId.value || model.draft.value);
-    return Boolean(model.pullRequest.value) || !(draftable || drafting);
+    return Boolean(model.pullRequest.value) || !draftable;
   });
 
   return (
@@ -309,14 +315,10 @@ function RepositoryField({
   model: SetupModel;
   onSelect: (value: string) => void;
 }) {
-  // Inspecting stays switchable: choosing another repository aborts it, and
-  // disabling the focused select would drop keyboard focus mid-choice.
+  // Choosing another repository while inspecting aborts that inspection.
   const disabled = useComputed(
     () =>
-      (model.busy.value && model.operation.value !== "inspecting") ||
-      model.draftPending.value ||
-      model.loadingRepositories.value ||
-      !model.installationRowId.value,
+      model.inputsLocked.value || model.loadingRepositories.value || !model.installationRowId.value,
   );
   return (
     <Field label="Repository" for="publisherSetupRepository">
@@ -374,19 +376,25 @@ function DraftRequest({
   inspection: NonNullable<SetupModel["inspection"]["value"]>;
 }) {
   const disabled = useComputed(() => !model.canDraft.value);
-  return (
-    <div class="flex flex-col gap-4">
-      <Show when={() => inspection.workflows.length === 0}>
+  const warnings = inspection.warnings.map((warning) => (
+    <Alert key={warning} tone="warn">
+      {warning}
+    </Alert>
+  ));
+  // With nothing to draft, the step offers no action of its own; verification leads.
+  if (inspection.workflows.length === 0)
+    return (
+      <div class="flex flex-col gap-4">
         <Alert tone="warn">
           No supported workflow files were found; add a publishing workflow before preparing a
           change.
         </Alert>
-      </Show>
-      {inspection.warnings.map((warning) => (
-        <Alert key={warning} tone="warn">
-          {warning}
-        </Alert>
-      ))}
+        {warnings}
+      </div>
+    );
+  return (
+    <div class="flex flex-col gap-4">
+      {warnings}
       <Field label="Publishing workflow" for="publisherSetupWorkflow">
         <Select
           id="publisherSetupWorkflow"

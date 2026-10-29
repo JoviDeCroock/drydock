@@ -73,6 +73,9 @@ async function fixture(
     multiFile?: boolean;
     tamperAfterTree?: boolean;
     investigationHandoff?: boolean;
+    killBeforePr?: boolean;
+    expireAndKillAfterFirstWrite?: boolean;
+    revokeAfterFirstWrite?: boolean;
   } = {},
 ) {
   const owner = await seedUser();
@@ -96,6 +99,9 @@ async function fixture(
   let pullRequestsCreated = 0;
   let headCalls = 0;
   let prBranch = "";
+  let prBody = "";
+  let revokedTokens = 0;
+  let aiReviewEnabled = true;
   let branchHead: string | null = null;
   const gitWrites: string[] = [];
   const helperPath = ".github/scripts/release-helper.js";
@@ -116,7 +122,7 @@ async function fixture(
     GITHUB_APP_PRIVATE_KEY: privateKey,
     GITHUB_APP_STATE_SECRET: "publisher-workflow-state-secret-with-32-chars",
     BETTER_AUTH_SECRET: "publisher-workflow-state-secret-with-32-chars",
-    FLAGS: { getBooleanValue: async () => true } as unknown as Flagship,
+    FLAGS: { getBooleanValue: async () => aiReviewEnabled } as unknown as Flagship,
     AI: {
       run: vi.fn(async (_model: string, input: unknown) => {
         const data = input as {
@@ -259,8 +265,28 @@ async function fixture(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      if (init?.method && url.pathname.startsWith("/repos/octo/release/"))
+      if (init?.method && url.pathname.startsWith("/repos/octo/release/")) {
         gitWrites.push(url.pathname.slice("/repos/octo/release".length));
+        if (options.expireAndKillAfterFirstWrite && gitWrites.length === 1) {
+          aiReviewEnabled = false;
+          await owner.db
+            .update(publisherSetupJobs)
+            .set({ createdAt: new Date(Date.now() - 25 * 60_000) })
+            .where(eq(publisherSetupJobs.organizationId, owner.organizationId));
+        }
+        if (options.revokeAfterFirstWrite && gitWrites.length === 1)
+          await owner.db
+            .update(organizationMembers)
+            .set({ role: "member" })
+            .where(eq(organizationMembers.userId, owner.userId));
+      }
+      if (url.pathname === "/installation/token" && init?.method === "DELETE") {
+        expect(new Headers(init.headers).get("authorization")).toBe(
+          "Bearer private-installation-token",
+        );
+        revokedTokens++;
+        return new Response(null, { status: 204 });
+      }
       if (/^\/app\/installations\/[^/]+$/.test(url.pathname))
         return Response.json({
           permissions: {
@@ -279,6 +305,7 @@ async function fixture(
             pull_requests: "write",
             workflows: "write",
           });
+          if (options.killBeforePr) aiReviewEnabled = false;
           if (options.revokeBeforePr && writeTokens === 1)
             await owner.db
               .update(organizationMembers)
@@ -379,6 +406,7 @@ async function fixture(
           const body = JSON.parse(String(init.body));
           expect(body.draft).toBe(true);
           prBranch = body.head;
+          prBody = body.body;
           if (options.uncertainPr && pullRequestsCreated === 1)
             return Response.json({}, { status: 502 });
           return Response.json({ number: 81 });
@@ -443,6 +471,8 @@ async function fixture(
     counts: () => ({ draftCalls, judgeCalls }),
     prCount: () => pullRequestsCreated,
     writeTokenCount: () => writeTokens,
+    revokedTokenCount: () => revokedTokens,
+    pullRequestBody: () => prBody,
     helperPath,
     helperContent,
     gitWrites,
@@ -551,8 +581,18 @@ describe("publisher setup durable jobs", () => {
       judgeCalls: 3,
     },
     { options: { blocked: true }, code: "setup_agent_blocked", draftCalls: 1, judgeCalls: 0 },
+    { options: { killBeforePr: true }, code: "setup_ai_unavailable", draftCalls: 5, judgeCalls: 3 },
   ])("setup failure $code never opens a PR", async ({ options, code, draftCalls, judgeCalls }) => {
-    const { owner, request, testEnv, counts, prCount } = await fixture(options);
+    const {
+      owner,
+      request,
+      testEnv,
+      counts,
+      prCount,
+      gitWrites,
+      writeTokenCount,
+      revokedTokenCount,
+    } = await fixture(options);
     const job = await createPublisherSetupJob(
       owner.db,
       owner.organizationId,
@@ -563,6 +603,8 @@ describe("publisher setup durable jobs", () => {
     expect((await getPublisherSetupJob(owner.db, job.id))?.failureJson?.code).toBe(code);
     expect(counts()).toEqual({ draftCalls, judgeCalls });
     expect(prCount()).toBe(0);
+    expect(gitWrites).toEqual([]);
+    expect(revokedTokenCount()).toBe(writeTokenCount());
     expect(
       await owner.db
         .select()
@@ -575,8 +617,16 @@ describe("publisher setup durable jobs", () => {
         ),
     ).toHaveLength(0);
   });
-  test("only pull request creation mints a write token", async () => {
-    const { owner, request, testEnv, prCount, writeTokenCount } = await fixture();
+  test("only pull request creation mints a write token, revoked once the PR exists", async () => {
+    const {
+      owner,
+      request,
+      testEnv,
+      prCount,
+      writeTokenCount,
+      revokedTokenCount,
+      pullRequestBody,
+    } = await fixture();
     const job = await createPublisherSetupJob(
       owner.db,
       owner.organizationId,
@@ -587,6 +637,88 @@ describe("publisher setup durable jobs", () => {
     expect((await getPublisherSetupJob(owner.db, job.id))?.status).toBe("ready");
     expect(prCount()).toBe(1);
     expect(writeTokenCount()).toBe(1);
+    expect(revokedTokenCount()).toBe(1);
+    expect(pullRequestBody()).toContain(`Create the \`${request.environment}\` GitHub Environment`);
+  });
+  test("once PR writes start, the time wall and killswitch cannot fail the job or its result", async () => {
+    const { owner, request, testEnv, prCount, gitWrites, revokedTokenCount } = await fixture({
+      expireAndKillAfterFirstWrite: true,
+    });
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation) => operation());
+    expect(gitWrites.length).toBeGreaterThan(1);
+    expect(prCount()).toBe(1);
+    expect(revokedTokenCount()).toBe(1);
+    const finished = await readPublisherSetupDraftJob(
+      testEnv,
+      job.id,
+      owner.organizationId,
+      owner.userId,
+    );
+    expect(finished).toMatchObject({ status: "ready", failure: null });
+    expect(finished?.result?.pullRequest.number).toBe(81);
+  });
+  test("access revoked after the first PR write stops the remaining writes", async () => {
+    const { owner, request, testEnv, prCount, gitWrites, revokedTokenCount } = await fixture({
+      revokeAfterFirstWrite: true,
+    });
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation) => operation());
+    expect(gitWrites).toHaveLength(1);
+    expect(prCount()).toBe(0);
+    expect(revokedTokenCount()).toBe(1);
+    expect((await getPublisherSetupJob(owner.db, job.id))?.failureJson?.code).toBe(
+      "setup_access_changed",
+    );
+  });
+  test("an organization can have at most two drafts in progress", async () => {
+    const { owner, app, request, binding } = await fixture();
+    const create = vi.fn(async (_options: unknown) => ({}));
+    const envOverride = {
+      ...binding,
+      PUBLISHER_SETUP_WORKFLOW: { create } as unknown as Bindings["PUBLISHER_SETUP_WORKFLOW"],
+    };
+    const draft = () =>
+      call(app, "POST", "/api/v1/github-app/setup/draft", { body: request, envOverride });
+    const stale = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await owner.db
+      .update(publisherSetupJobs)
+      .set({ status: "running", createdAt: new Date(Date.now() - 60 * 60_000) })
+      .where(eq(publisherSetupJobs.id, stale.id));
+    const first = await draft();
+    expect(first.status).toBe(202);
+    expect((await draft()).status).toBe(202);
+    const refused = await draft();
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: "setup_jobs_busy" });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(
+      await owner.db
+        .select()
+        .from(publisherSetupJobs)
+        .where(eq(publisherSetupJobs.organizationId, owner.organizationId)),
+    ).toHaveLength(3);
+    const { job } = (await first.json()) as { job: PublisherSetupDraftJob };
+    await updatePublisherSetupJob(owner.db, job.id, {
+      status: "failed",
+      failureJson: { code: "setup_cancelled", message: "Cancelled." },
+    });
+    expect((await draft()).status).toBe(202);
   });
   test("cancel is creator scoped and stops a pending job before model work or GitHub writes", async () => {
     const { owner, request, app, binding, testEnv, counts, prCount } = await fixture();
@@ -843,9 +975,9 @@ describe("publisher setup durable jobs", () => {
     const guidance = calls[0]?.[1].messages.at(-1);
     expect(guidance?.role).toBe("user");
     const remaining = Number(/"remainingSeconds":(\d+)/.exec(guidance?.content ?? "")?.[1]);
-    // Drafting gets 14 of the 20 minutes; two have already passed.
-    expect(remaining).toBeLessThanOrEqual(12 * 60);
-    expect(remaining).toBeGreaterThan(11 * 60);
+    // Drafting gets 12 of the 20 minutes (judge and PR creation are reserved); two have passed.
+    expect(remaining).toBeLessThanOrEqual(10 * 60);
+    expect(remaining).toBeGreaterThan(9 * 60);
   });
   test("each Git mutation rechecks the independent assessment digest", async () => {
     const { owner, request, testEnv, prCount, gitWrites } = await fixture({

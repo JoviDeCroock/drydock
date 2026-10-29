@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { setupDraftRequestSchema } from "../server/lib/github-app/setup-draft";
+import {
+  markdownCodeSpan,
+  setupDraftRequestSchema,
+  setupManualSteps,
+} from "../server/lib/github-app/setup-draft";
 import {
   createSetupClient,
   createSetupPullRequest,
@@ -35,6 +39,7 @@ function client(request: SetupGithubClient["request"]): SetupGithubClient {
     repository: { id: 42, fullName: "octo/release", defaultBranch: "main" },
     path: "/repos/octo/release",
     request,
+    revokeToken: async () => {},
   };
 }
 
@@ -182,6 +187,25 @@ describe("publisher setup proposal", () => {
         .environment,
     ).toBe("production");
   });
+  test("pull request steps quote the admin-supplied environment as an inert code span", () => {
+    const environment = "@octo [x](https://e.test) closes #1 `tick` ``run`` now";
+    const quoted = markdownCodeSpan(environment);
+    expect(quoted).toBe(`\`\`\`${environment}\`\`\``);
+    expect(markdownCodeSpan("`edge`")).toBe("`` `edge` ``");
+    const markdown = setupManualSteps({ ...SETUP_DRAFT_REQUEST, environment }, markdownCodeSpan);
+    expect(markdown[1]).toContain(`Create the ${quoted} GitHub Environment`);
+    expect(markdown[2]).toContain(`/ ${quoted} as a Drydock release target`);
+    expect(markdown.join("\n").replaceAll(quoted, "")).not.toContain("@octo");
+    expect(setupManualSteps({ ...SETUP_DRAFT_REQUEST, environment })[1]).toContain(
+      `Create the ${environment} GitHub`,
+    );
+  });
+  test("asks for CI only after the maintainer reviews every file", () => {
+    const step = setupManualSteps(SETUP_DRAFT_REQUEST).find((value) => value.includes("[skip ci]"));
+    expect(step).toMatch(
+      /Only after reviewing every file in this pull request, push a commit or re-run checks/,
+    );
+  });
 });
 
 describe("publisher setup GitHub boundary", () => {
@@ -256,6 +280,40 @@ describe("publisher setup GitHub boundary", () => {
           request.redirect === "manual" && new URL(request.url).hostname === "api.github.com",
       ),
     ).toBe(true);
+  });
+  test("retries a transient installation-token failure and revokes the token on request", async () => {
+    const calls: Request[] = [];
+    let mints = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        calls.push(request);
+        if (request.url.includes("access_tokens"))
+          return ++mints === 1
+            ? new Response("upstream", { status: 502 })
+            : Response.json({ token: "installation-token" });
+        if (request.url.endsWith("/installation/token")) throw new Error("network down");
+        return Response.json({ id: 42, full_name: "octo/release", default_branch: "main" });
+      }),
+    );
+    const setup = await createSetupClient(config, "100", "octo/release", true);
+    expect(mints).toBe(2);
+    await expect(setup.revokeToken()).resolves.toBeUndefined();
+    const revoke = calls.at(-1)!;
+    expect(revoke.method).toBe("DELETE");
+    expect(revoke.url).toBe("https://api.github.com/installation/token");
+    expect(revoke.redirect).toBe("manual");
+    expect(revoke.headers.get("authorization")).toBe("Bearer installation-token");
+  });
+  test("reports a persistent token-service outage as GitHub unavailable, not missing permissions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("upstream", { status: 503 })),
+    );
+    await expect(createSetupClient(config, "100", "octo/release", true)).rejects.toMatchObject({
+      code: "github_unavailable",
+    });
   });
   test("rejects renamed or foreign repository identity", async () => {
     vi.stubGlobal(

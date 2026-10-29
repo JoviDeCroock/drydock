@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, lte, ne } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, lte, ne } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { publisherSetupJobs } from "./schema";
 import { organizationArtifactPrefix } from "../lib/scan/artifacts/keys";
@@ -49,6 +49,31 @@ export async function createPublisherSetupJob(
   };
   await db.insert(publisherSetupJobs).values(row);
   return row;
+}
+
+/** Counts queued or running jobs created after `createdAfter`; terminal and expired jobs are excluded. */
+export async function countActivePublisherSetupJobs(
+  db: AppDb,
+  organizationId: string,
+  createdAfter: Date,
+): Promise<number> {
+  const [row] = await db
+    .select({ value: count() })
+    .from(publisherSetupJobs)
+    .where(
+      and(
+        eq(publisherSetupJobs.organizationId, organizationId),
+        inArray(publisherSetupJobs.status, ["queued", "running"]),
+        gt(publisherSetupJobs.createdAt, createdAfter),
+        gt(publisherSetupJobs.expiresAt, new Date()),
+      ),
+    );
+  return row?.value ?? 0;
+}
+
+/** Removes a job that was never dispatched, so it has no private payloads. */
+export async function deletePublisherSetupJob(db: AppDb, id: string): Promise<void> {
+  await db.delete(publisherSetupJobs).where(eq(publisherSetupJobs.id, id));
 }
 
 export async function getPublisherSetupJob(

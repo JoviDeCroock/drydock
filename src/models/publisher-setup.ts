@@ -26,8 +26,15 @@ interface SavedDraftJob {
   request: PublisherSetupDraftRequest;
 }
 
+// The server fails a setup job at its twenty-minute wall (setup-jobs.ts), so
+// automatic polling outlasts that wall and pauses only for a job the server has
+// stopped reporting on.
+const DRAFT_JOB_MAX_DURATION_MS = 20 * 60_000;
+const DRAFT_POLL_MARGIN_MS = 2 * 60_000;
 const DRAFT_POLL_INTERVAL_MS = 3_000;
-const DRAFT_POLL_MAX_ATTEMPTS = 300;
+const DRAFT_POLL_MAX_ATTEMPTS = Math.ceil(
+  (DRAFT_JOB_MAX_DURATION_MS + DRAFT_POLL_MARGIN_MS) / DRAFT_POLL_INTERVAL_MS,
+);
 
 function savedJobKey(organizationId: string) {
   return `drydock:publisher-draft:${organizationId}`;
@@ -42,6 +49,20 @@ function sameDraftRequest(left: PublisherSetupDraftRequest, right: PublisherSetu
     left.environment === right.environment &&
     left.ecosystem === right.ecosystem
   );
+}
+
+function writeSavedJob(
+  organizationId: string | null,
+  value: SavedDraftJob | null,
+  { keepExisting = false } = {},
+) {
+  if (!organizationId || typeof sessionStorage === "undefined") return;
+  try {
+    const key = savedJobKey(organizationId);
+    if (!value) sessionStorage.removeItem(key);
+    else if (!keepExisting || sessionStorage.getItem(key) === null)
+      sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {}
 }
 
 function readSavedJob(organizationId: string | null): SavedDraftJob | null {
@@ -115,7 +136,11 @@ export const PublisherSetupModel = createModel(() => {
   const pullRequest = signal<PublisherSetupPullRequest | null>(null);
   const setupStatus = signal<PublisherSetupStatus | null>(null);
   const busy = computed(() => operation.value !== "idle");
-  const inputsLocked = computed(() => busy.value || draftPending.value);
+  // Inspecting stays editable: it reads only the repository, and disabling the
+  // focused control while it runs would drop keyboard focus to the page.
+  const inputsLocked = computed(
+    () => (busy.value && operation.value !== "inspecting") || draftPending.value,
+  );
   const canInspect = computed(
     () =>
       Boolean(installationRowId.value && repositoryFullName.value) &&
@@ -145,11 +170,7 @@ export const PublisherSetupModel = createModel(() => {
   let currentJob: SavedDraftJob | null = null;
 
   function saveJob(value: SavedDraftJob | null) {
-    if (!selectedOrganizationId || typeof sessionStorage === "undefined") return;
-    try {
-      if (value) sessionStorage.setItem(savedJobKey(selectedOrganizationId), JSON.stringify(value));
-      else sessionStorage.removeItem(savedJobKey(selectedOrganizationId));
-    } catch {}
+    writeSavedJob(selectedOrganizationId, value);
   }
 
   function stopPolling() {
@@ -212,6 +233,8 @@ export const PublisherSetupModel = createModel(() => {
       currentJob = saved;
       draftJobId.value = saved.id;
       pollingPaused.value = true;
+      pollAttempts = 0;
+      pollFailures = 0;
       void loadRepositories(saved.request.installationRowId);
       void pollJob(saved, generation);
     }
@@ -414,14 +437,16 @@ export const PublisherSetupModel = createModel(() => {
       invalidateProposal();
       workflowPath.value = value;
     },
+    // An inspection reads neither field and already cleared any proposal, so
+    // editing them while it runs must not abort it.
     setEnvironment(value: string) {
       if (draftPending.peek()) return;
-      invalidateProposal();
+      if (operation.peek() !== "inspecting") invalidateProposal();
       environment.value = value;
     },
     setEcosystem(value: PublisherSetupDraftRequest["ecosystem"]) {
       if (draftPending.peek()) return;
-      invalidateProposal();
+      if (operation.peek() !== "inspecting") invalidateProposal();
       ecosystem.value = value;
     },
 
@@ -455,12 +480,28 @@ export const PublisherSetupModel = createModel(() => {
         createPullRequest: true,
       };
       invalidateProposal();
+      const organizationId = selectedOrganizationId;
       await run(
         "drafting",
-        (signal) =>
-          apiJson<{ job: PublisherSetupDraftJob }>("/api/v1/github-app/setup/draft", payload, {
-            signal,
-          }),
+        // Not aborted on organization switch or unmount: the server may already
+        // have queued the job, which opens a PR unless someone can see and cancel
+        // it, so its id is kept for the organization it was created in.
+        async () => {
+          const response = await apiJson<{ job: PublisherSetupDraftJob }>(
+            "/api/v1/github-app/setup/draft",
+            payload,
+          );
+          if (
+            sameDraftRequest(response.job.request, payload) &&
+            response.job.request.createPullRequest === true
+          )
+            writeSavedJob(
+              organizationId,
+              { id: response.job.id, request: payload },
+              { keepExisting: true },
+            );
+          return response;
+        },
         (response) => {
           if (
             !sameDraftRequest(response.job.request, payload) ||
@@ -502,11 +543,26 @@ export const PublisherSetupModel = createModel(() => {
             throw err;
           }),
         (response) => {
+          const returned = response?.job;
           // A job that already started opening its PR cannot be cancelled; follow it to the end.
-          if (response && response.job.status !== "failed") {
-            draftJob.value = response.job;
+          if (returned && returned.status !== "failed") {
+            draftJob.value = returned;
             pollAttempts = 0;
             void pollJob(job, generation);
+          } else if (
+            returned &&
+            returned.failure?.code !== "setup_cancelled" &&
+            returned.id === job.id &&
+            sameDraftRequest(returned.request, job.request)
+          ) {
+            // The job failed on its own before the cancel landed; keep its review feedback.
+            stopPolling();
+            saveJob(null);
+            draftJob.value = returned;
+            failDraft(
+              returned.failure?.message ??
+                "The workflow draft could not complete. Try drafting again.",
+            );
           } else invalidateProposal();
         },
       );

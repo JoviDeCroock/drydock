@@ -117,6 +117,8 @@ export async function createSetupClient(
     : repositoryEvidenceOnly
       ? { contents: "read" }
       : { contents: "read", actions: "read" };
+  // Minting has no repository side effect, so transient failures retry like reads; each
+  // agent turn mints a token and a single GitHub blip would otherwise end the job.
   const tokenResponse = await reliableFetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
     {
@@ -124,10 +126,17 @@ export async function createSetupClient(
       redirect: "manual",
       headers: githubHeaders(jwt, { "Content-Type": "application/json" }),
       body: JSON.stringify({ repositories: [parsed.name], permissions }),
+      retryMethods: ["POST"],
     },
   );
   if (!tokenResponse.ok) {
     await tokenResponse.body?.cancel();
+    if (tokenResponse.status === 429 || tokenResponse.status >= 500)
+      throw new PublisherSetupError(
+        "github_unavailable",
+        "GitHub did not return an installation token.",
+        502,
+      );
     throw new PublisherSetupError(
       "setup_permissions_required",
       write
@@ -187,6 +196,20 @@ export async function createSetupClient(
   return {
     repository,
     path,
+    /** Best-effort early expiry of this installation token; it otherwise lives for an hour. */
+    async revokeToken(): Promise<void> {
+      try {
+        const response = await reliableFetch("https://api.github.com/installation/token", {
+          method: "DELETE",
+          redirect: "manual",
+          headers: githubHeaders(token),
+          attempts: 1,
+        });
+        await response.body?.cancel();
+      } catch {
+        /* The token still expires on GitHub's schedule. */
+      }
+    },
     async request(suffix: string, init: RequestInit = {}, allowMissing = false): Promise<unknown> {
       const response = await reliableFetch(`https://api.github.com${path}${suffix}`, {
         ...init,

@@ -723,3 +723,116 @@ test("switching organizations preserves a resumed draft while the new installati
     page.getByRole("link", { name: "Review pull request #84 on GitHub" }),
   ).toHaveAttribute("href", "https://github.com/team-b/package/pull/84");
 });
+
+function primaryActions(page: Page) {
+  return page
+    .locator("ol")
+    .filter({ has: page.getByRole("heading", { name: /^Choose the release/ }) })
+    .locator("button.bg-accent, a.bg-accent");
+}
+
+async function restoreSavedJob(page: Page, id: string) {
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  await expect(page.locator("#publisherSetupRepository")).toBeEnabled();
+  await page.evaluate(
+    ({ id, workflowPath, baseSha }) => {
+      sessionStorage.setItem(
+        "drydock:publisher-draft:org-setup",
+        JSON.stringify({
+          id,
+          request: {
+            installationRowId: "installation-setup",
+            repositoryFullName: "drydock/example",
+            baseSha,
+            workflowPath,
+            environment: "drydock",
+            ecosystem: "npm",
+            createPullRequest: true,
+          },
+        }),
+      );
+    },
+    { id, workflowPath, baseSha },
+  );
+  await page.reload();
+}
+
+test("a restored draft that is no longer available explains it in the workflow step", async ({
+  page,
+}) => {
+  await installSetupMocks(page);
+  await restoreSavedJob(page, "job-gone");
+  await expect(
+    page.getByText("This draft is no longer available. Inspect the repository and draft again.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(primaryActions(page)).toHaveCount(1);
+  await expect(primaryActions(page)).toHaveText("Check setup status");
+});
+
+test("a restored failed job keeps its review and leads with verification", async ({ page }) => {
+  await installSetupMocks(page, false, true);
+  await restoreSavedJob(page, "job-setup");
+  await expect(
+    page.getByText("Publish the exact reviewed tarball.", { exact: true }),
+  ).toBeVisible();
+  await expect(primaryActions(page)).toHaveCount(1);
+  await expect(primaryActions(page)).toHaveText("Check setup status");
+});
+
+test("a repository without workflows offers only verification as the primary action", async ({
+  page,
+}) => {
+  await installSetupMocks(page);
+  await page.route("**/api/v1/github-app/setup/inspect", async (route) => {
+    await route.fulfill({
+      json: {
+        inspection: {
+          installationRowId: "installation-setup",
+          repositoryFullName: "drydock/example",
+          repositoryId: 101,
+          defaultBranch: "main",
+          baseSha,
+          workflows: [],
+          warnings: [],
+        },
+      },
+    });
+  });
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  await page.locator("#publisherSetupRepository").selectOption("drydock/example");
+  await expect(page.getByText(/No supported workflow files were found/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Prepare draft pull request", exact: true }),
+  ).toHaveCount(0);
+  await expect(primaryActions(page)).toHaveCount(1);
+  await expect(primaryActions(page)).toHaveText("Check setup status");
+});
+
+test("release fields stay editable and focused while a repository is inspected", async ({
+  page,
+}) => {
+  await installSetupMocks(page);
+  let finishInspection: (() => void) | undefined;
+  await page.route("**/api/v1/github-app/setup/inspect", async (route) => {
+    await new Promise<void>((resolve) => {
+      finishInspection = resolve;
+    });
+    await route.fallback();
+  });
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  await page.locator("#publisherSetupRepository").selectOption("drydock/example");
+  await expect(page.getByText("Reading workflows from the default branch")).toBeVisible();
+  await expect(page.locator("#publisherSetupEcosystem")).toBeEnabled();
+  const environment = page.locator("#publisherSetupEnvironment");
+  await expect(environment).toBeEnabled();
+  await environment.focus();
+  await environment.fill("release");
+  await expect(environment).toBeFocused();
+  await expect.poll(() => Boolean(finishInspection)).toBe(true);
+  finishInspection!();
+  await expect(page.getByLabel("Publishing workflow", { exact: true })).toHaveValue(workflowPath);
+  await expect(environment).toHaveValue("release");
+  await expect(environment).toBeFocused();
+});
