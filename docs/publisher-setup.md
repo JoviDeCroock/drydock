@@ -24,6 +24,14 @@ Limits include 64 drafting turns, 48 judge turns, 180 seconds per model call, 20
 
 Each model turn is a durable step with a four-minute deadline and at most one transient retry. Calls are clipped to the remaining time/output allowance; completed usage and elapsed time are checked before accepting a terminal result. The shared clock starts at job creation, including source inspection. Invalid arguments or static failures return tool feedback for correction. The agent can explicitly report a blocker. Negative judgments and unfinished work open no PR. The browser stops automatic polling after prolonged failures and offers a resume action; hiding a job or changing selection does not revoke an already authorized server job.
 
+## Prefix caching
+
+System instructions, tool definitions and existing conversation messages remain byte-stable within each agent phase. Current budgets and progress guidance are appended at the end of the conversation and checkpointed with its native results; the next request extends that prefix. Source investigation, handoff, implementation and independent review are intentional cold boundaries with separate stable affinity keys.
+
+The native Workers AI `x-session-affinity` header is derived from an opaque job scope, agent role and model, and is stable across retries and state reconstruction. It contains no repository, organization or user labels. No additional KV or binding is needed. Gateway full-response caching remains disabled with `cf-aig-skip-cache: true`; that is separate from Workers AI prefix caching. Payload logging remains disabled.
+
+Private state and operational events record numeric cached-input usage when the provider reports it. Missing cache usage stays unknown; all input still counts against the shared work budget. Affinity improves cache-hit likelihood but does not guarantee retention or a hit. See [Workers AI prompt caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/).
+
 ## Draft PR creation
 
 Successful preparation rechecks the submitted digest, static validation, matching independent assessment, creator membership/verified-email policy, organization installation, AI killswitch, expiry and pinned source. These checks run immediately before GitHub mutations too. The persisted `createPullRequest: true` marker is required; old requests/jobs without it cannot begin writing.

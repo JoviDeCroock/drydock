@@ -15,6 +15,7 @@ import {
 import { emailVerificationAvailable } from "../auth";
 import { roleCanManageIntegrations } from "../auth/roles";
 import { durationMsSince, emitOperationalEvent } from "../platform/observability";
+import { sha256Hex } from "../platform/crypto-utils";
 import { listInstallationsForOrganization } from "./persistence";
 import {
   createSetupClient,
@@ -400,6 +401,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
         true,
       );
       if (!(await activeJob(env, id))) return true;
+      state.cacheSessionId = await sha256Hex(`publisher-setup:${job.id}`);
       state = await runSetupAgentTurn(env, state, client);
       if (!(await writePayload(env, job, slot, state))) return true;
     }

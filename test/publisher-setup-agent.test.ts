@@ -91,7 +91,7 @@ describe("publisher setup native agent turns", () => {
     expect(calls[0][1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          role: "system",
+          role: "user",
           content: expect.stringContaining('"remainingInputTokens":1500000'),
         }),
       ]),
@@ -116,6 +116,105 @@ describe("publisher setup native agent turns", () => {
     expect(candidate.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(candidate.supportingFiles).toEqual([]);
     expect(state.progress.turns).toBe(3);
+  });
+  test("checkpointed turns extend an identical native prompt prefix and keep affinity isolated", async () => {
+    const state = start();
+    const harness = binding([
+      response("read_file", { path: state.request.workflowPath }),
+      response("workspace_status", {}),
+      response("workspace_status", {}),
+      response("workspace_status", {}),
+    ]);
+    let current = await runSetupAgentTurn(harness.env, state, harness.client);
+    current = JSON.parse(JSON.stringify(current));
+    await runSetupAgentTurn(harness.env, current, harness.client);
+    await runSetupAgentTurn(harness.env, start(), harness.client);
+    const calls = harness.run.mock.calls as unknown as [
+      string,
+      { messages: { role: string; content: string }[]; tools: unknown[] },
+      { extraHeaders: Record<string, string> },
+    ][];
+    expect(calls[1][1].messages.slice(0, calls[0][1].messages.length)).toEqual(
+      calls[0][1].messages,
+    );
+    expect(calls[1][1].tools).toEqual(calls[0][1].tools);
+    expect(calls[0][1].messages[0].content).not.toContain("remainingSeconds");
+    expect(calls[1][1].messages.at(-1)?.content).toContain("Current server work budget");
+    const key = calls[0][2].extraHeaders["x-session-affinity"];
+    expect(key).toMatch(/^[a-f0-9]{64}$/);
+    expect(calls[1][2].extraHeaders["x-session-affinity"]).toBe(key);
+    expect(calls[2][2].extraHeaders["x-session-affinity"]).not.toBe(key);
+    expect(calls[0][2].extraHeaders).toMatchObject({
+      "cf-aig-skip-cache": "true",
+      "cf-aig-collect-log-payload": "false",
+    });
+    const judgeCandidate = await draft();
+    const judge = createSetupAgentState(
+      judgeCandidate.state.request,
+      { path: state.request.workflowPath, sha: SETUP_BLOB_SHA, content: SETUP_ORIGINAL_WORKFLOW },
+      "judge",
+      judgeCandidate.state,
+    );
+    const judgeHarness = binding([
+      response("inspect_changes", { path: state.request.workflowPath }),
+    ]);
+    await runSetupAgentTurn(judgeHarness.env, judge, judgeHarness.client);
+    const judgeCalls = judgeHarness.run.mock.calls as unknown as [
+      string,
+      unknown,
+      { extraHeaders: Record<string, string> },
+    ][];
+    const draftCalls = judgeCandidate.harness.run.mock.calls as unknown as [
+      string,
+      unknown,
+      { extraHeaders: Record<string, string> },
+    ][];
+    expect(judgeCalls[0][2].extraHeaders["x-session-affinity"]).not.toBe(
+      draftCalls[0][2].extraHeaders["x-session-affinity"],
+    );
+  });
+  test("counts cached input separately without discounting work budgets or inventing unavailable metrics", async () => {
+    const first = response("workspace_status", {});
+    const harness = binding([
+      {
+        ...first,
+        usage: {
+          prompt_tokens: 2000,
+          completion_tokens: 100,
+          prompt_tokens_details: { cached_tokens: 0 },
+        },
+      },
+      {
+        ...first,
+        usage: {
+          prompt_tokens: 2500,
+          completion_tokens: 100,
+          prompt_tokens_details: { cached_tokens: 1536 },
+        },
+      },
+      response("workspace_status", {}),
+    ]);
+    const logging = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const firstState = await runSetupAgentTurn(harness.env, start(), harness.client);
+      expect(firstState.progress.inputTokens).toBe(2000);
+      expect(firstState.cacheUsage).toEqual({ input: 2000, cachedInput: 0, measuredCalls: 1 });
+      const next = await runSetupAgentTurn(harness.env, firstState, harness.client);
+      expect(next.progress.inputTokens).toBe(4500);
+      expect(next.cacheUsage).toEqual({ input: 4500, cachedInput: 1536, measuredCalls: 2 });
+      const unknown = await runSetupAgentTurn(harness.env, next, harness.client);
+      expect(unknown.progress.inputTokens).toBe(4600);
+      expect(unknown.cacheUsage).toEqual(next.cacheUsage);
+      expect(logging).toHaveBeenCalledTimes(2);
+      expect(logging).toHaveBeenCalledWith(
+        "github_app.setup_agent.cache",
+        expect.objectContaining({
+          usage: { input: 2500, cachedInput: 1536 },
+        }),
+      );
+    } finally {
+      logging.mockRestore();
+    }
   });
   test("replays exact native model context in GLM's field while retaining tool identities and visible content", async () => {
     const state = start();

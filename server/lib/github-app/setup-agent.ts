@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AI_MODEL, traceIsolatedAiBinding } from "../ai-review";
 import { AI_GATEWAY_ID, AI_GATEWAY_POLICY_HEADERS } from "../ai-review/gateway";
 import { isRecord } from "../platform/guards";
+import { sha256Hex } from "../platform/crypto-utils";
 import { durationMsSince, emitOperationalEvent } from "../platform/observability";
 import { PublisherSetupError, type SetupGithubClient } from "./setup-api";
 import { SETUP_ARTIFACT_NAMES, type PublisherSetupDraftRequest } from "./setup-types";
@@ -27,6 +28,8 @@ export interface DurableSetupAgentState extends SetupAgentState {
   progress: { turns: number; startedAt: number; inputTokens: number; outputTokens: number };
   blocked?: { reason: string };
   handoff?: SetupAgentHandoff;
+  cacheSessionId?: string;
+  cacheUsage?: { input: number; cachedInput: number; measuredCalls: number };
 }
 
 export const SETUP_DRAFT_MAX_TURNS = 64;
@@ -119,6 +122,8 @@ export function createSetupAgentState(
       },
     ],
     phase,
+    cacheSessionId: candidate?.cacheSessionId ?? crypto.randomUUID(),
+    ...(candidate?.cacheUsage ? { cacheUsage: structuredClone(candidate.cacheUsage) } : {}),
     progress: {
       turns: 0,
       startedAt: candidate?.progress.startedAt ?? Date.now(),
@@ -147,7 +152,7 @@ function withinBudget(state: DurableSetupAgentState) {
     throw budgetExceeded();
 }
 
-function setupAgentModel(env: Cloudflare.Env) {
+async function setupAgentModel(env: Cloudflare.Env, cacheSessionId: string, agent: string) {
   const isolated = traceIsolatedAiBinding(env.AI);
   const binding = {
     run: (model: string, input: unknown, options?: Parameters<typeof isolated.run>[2]) => {
@@ -172,6 +177,7 @@ function setupAgentModel(env: Cloudflare.Env) {
   } as Cloudflare.Env["AI"];
   return createWorkersAI({ binding, gateway: { id: AI_GATEWAY_ID } })(AI_MODEL, {
     extraHeaders: { ...AI_GATEWAY_POLICY_HEADERS, "cf-aig-skip-cache": "true" },
+    sessionAffinity: await sha256Hex(`publisher-setup:${cacheSessionId}:${agent}:${AI_MODEL}`),
     reasoning_effort: "high",
     chat_template_kwargs: { clear_thinking: false },
   });
@@ -189,10 +195,19 @@ export async function runSetupAgentTurn(
   withinBudget(previous);
   // Failed calls discard this local copy, including any tools that already ran.
   const state = structuredClone(previous);
-  const model = modelOverride ?? setupAgentModel(env);
+  state.cacheSessionId ??= crypto.randomUUID();
   const changedFiles = setupAgentChangedFiles(state);
   const finishingInvestigation =
     state.phase === "draft" && state.progress.turns >= 12 && !changedFiles.length && !state.handoff;
+  const agent =
+    state.phase === "judge"
+      ? "judge"
+      : finishingInvestigation
+        ? "handoff"
+        : state.handoff
+          ? "implementation"
+          : "investigation";
+  const model = modelOverride ?? (await setupAgentModel(env, state.cacheSessionId, agent));
   const handoffResult: { plan: SetupInvestigationPlan | null } = { plan: null };
   const tools = {
     ...(finishingInvestigation
@@ -231,23 +246,32 @@ export async function runSetupAgentTurn(
     !changedFiles.length
       ? `You have used ${state.progress.turns} drafting turns and cached ${Object.keys(state.files).length} source files with no proposed changes. This workspace is private and reversible. Begin the smallest concrete edit using the release evidence already established. Further discovery should resolve a specific missing fact required by that edit, rather than broaden the repository survey. You can inspect more source and repair the patch after staging it. Preserve unchanged opaque build/test commands without investigating their implementations. If essential evidence is unavailable, report_blocker with the concrete missing fact. Do not invent behavior or force an unsafe change.`
       : "";
-  const system = `${finishingInvestigation ? FINISH_INVESTIGATION : state.phase === "draft" ? `${DRAFT}\n${state.handoff ? IMPLEMENT : ""}` : JUDGE}
-${progressReminder}
-Server work budget (authoritative, shared token/time allowance across drafting and review): ${JSON.stringify(
-    {
-      phase: state.phase,
-      changedFiles: changedFiles.length,
-      remainingTurns:
-        (state.phase === "draft" ? SETUP_DRAFT_MAX_TURNS : SETUP_JUDGE_MAX_TURNS) -
-        state.progress.turns,
-      remainingInputTokens: MAX_INPUT_TOKENS - state.progress.inputTokens,
-      remainingOutputTokens: MAX_OUTPUT_TOKENS - state.progress.outputTokens,
-      remainingSeconds: Math.max(
-        0,
-        Math.floor((MAX_DURATION_MS - (Date.now() - state.progress.startedAt)) / 1000),
-      ),
-    },
-  )}`;
+  const system = finishingInvestigation
+    ? FINISH_INVESTIGATION
+    : state.phase === "draft"
+      ? `${DRAFT}\n${state.handoff ? IMPLEMENT : ""}`
+      : JUDGE;
+  // Append server guidance after the stable history so the next turn extends
+  // this exact prefix, including this turn's guidance and native tool results.
+  state.messages.push({
+    role: "user",
+    content: `${progressReminder}
+Current server work budget (supersedes earlier budget messages; shared across drafting and review): ${JSON.stringify(
+      {
+        phase: state.phase,
+        changedFiles: changedFiles.length,
+        remainingTurns:
+          (state.phase === "draft" ? SETUP_DRAFT_MAX_TURNS : SETUP_JUDGE_MAX_TURNS) -
+          state.progress.turns,
+        remainingInputTokens: MAX_INPUT_TOKENS - state.progress.inputTokens,
+        remainingOutputTokens: MAX_OUTPUT_TOKENS - state.progress.outputTokens,
+        remainingSeconds: Math.max(
+          0,
+          Math.floor((MAX_DURATION_MS - (Date.now() - state.progress.startedAt)) / 1000),
+        ),
+      },
+    )}`,
+  });
   const estimatedInputTokens = Math.ceil(
     (system.length + JSON.stringify(state.messages).length) / 4,
   );
@@ -291,6 +315,28 @@ Server work budget (authoritative, shared token/time allowance across drafting a
     Date.now() - state.progress.startedAt > MAX_DURATION_MS
   )
     throw budgetExceeded();
+  const cachedInput = result.usage.inputTokenDetails.cacheReadTokens;
+  const measuredInput = result.usage.inputTokens;
+  if (
+    typeof cachedInput === "number" &&
+    Number.isFinite(cachedInput) &&
+    cachedInput >= 0 &&
+    typeof measuredInput === "number" &&
+    Number.isFinite(measuredInput) &&
+    measuredInput >= cachedInput
+  ) {
+    const usage = state.cacheUsage ?? { input: 0, cachedInput: 0, measuredCalls: 0 };
+    state.cacheUsage = {
+      input: usage.input + measuredInput,
+      cachedInput: usage.cachedInput + cachedInput,
+      measuredCalls: usage.measuredCalls + 1,
+    };
+    emitOperationalEvent("info", "github_app.setup_agent.cache", {
+      model: AI_MODEL,
+      agent,
+      usage: { input: measuredInput, cachedInput },
+    });
+  }
   if (!result.toolCalls.length && !state.blocked && !state.submitted && !state.assessment)
     state.messages.push({
       role: "user",

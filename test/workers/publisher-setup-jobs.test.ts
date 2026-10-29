@@ -19,6 +19,7 @@ import { publisherSetupJobs, organizationMembers, scanEvents } from "../../serve
 import type { Bindings } from "../../server/types";
 import type { PublisherSetupDraftJob } from "../../server/lib/github-app/setup-types";
 import { SETUP_DRAFT_MAX_TURNS } from "../../server/lib/github-app/setup-agent";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
 import { buildTestApp, call } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 import { configurePublisherSetupWorkflowTest } from "./helpers/publisher-setup-workflow-entry";
@@ -737,9 +738,9 @@ describe("publisher setup durable jobs", () => {
       string,
       { messages: { role: string; content: string }[] },
     ][];
-    const system =
-      calls[0]?.[1].messages.find((message) => message.role === "system")?.content ?? "";
-    const remaining = Number(/"remainingSeconds":(\d+)/.exec(system)?.[1]);
+    const guidance = calls[0]?.[1].messages.at(-1);
+    expect(guidance?.role).toBe("user");
+    const remaining = Number(/"remainingSeconds":(\d+)/.exec(guidance?.content ?? "")?.[1]);
     expect(remaining).toBeLessThanOrEqual(18 * 60);
     expect(remaining).toBeGreaterThan(17 * 60);
   });
@@ -854,8 +855,34 @@ describe("publisher setup durable jobs", () => {
         draftCalls: options.multiFile ? 7 : options.transientDraft ? 6 : 5,
         judgeCalls: options.multiFile ? 4 : 3,
       });
+      const calls = vi.mocked(testEnv.AI.run).mock.calls as unknown as [
+        string,
+        { tools: { function: { name: string } }[] },
+        { extraHeaders: Record<string, string> },
+      ][];
+      const draftHeaders = calls
+        .filter(([, input]) => !input.tools.some((tool) => tool.function.name === "finish_review"))
+        .map(([, , options]) => options.extraHeaders["x-session-affinity"]);
+      const judgeHeaders = calls
+        .filter(([, input]) => input.tools.some((tool) => tool.function.name === "finish_review"))
+        .map(([, , options]) => options.extraHeaders["x-session-affinity"]);
+      expect(new Set(draftHeaders).size).toBe(1);
+      expect(new Set(judgeHeaders).size).toBe(1);
+      expect(draftHeaders[0]).toMatch(/^[a-f0-9]{64}$/);
+      expect(judgeHeaders[0]).toMatch(/^[a-f0-9]{64}$/);
+      expect(draftHeaders[0]).not.toBe(judgeHeaders[0]);
+      for (const [, , options] of calls) {
+        expect(options.extraHeaders).toMatchObject({
+          "cf-aig-skip-cache": "true",
+          "cf-aig-collect-log-payload": "false",
+          "cf-aig-max-attempts": "1",
+        });
+        expect(JSON.stringify(options.extraHeaders)).not.toContain(job.id);
+        expect(JSON.stringify(options.extraHeaders)).not.toContain(request.repositoryFullName);
+        expect(JSON.stringify(options.extraHeaders)).not.toContain(owner.userId);
+      }
       for (const name of ["fetch_source", "draft-01", "validate", "judge-01"] as const)
-        expect(await state.instance.waitForStepResult({ name })).toMatchObject({
+        expect(await state.instance.waitForStepResult({ name })).toEqual({
           jobId: job.id,
           done: name !== "draft-01" && name !== "judge-01",
         });
@@ -866,15 +893,30 @@ describe("publisher setup durable jobs", () => {
           "draft-agent",
         ),
       );
-      expect(await draftState?.text()).toContain("context-only-fixture");
+      const draftAgent = JSON.parse((await draftState?.text()) ?? "null") as {
+        cacheSessionId: string;
+        progress: { startedAt: number; inputTokens: number; turns: number };
+      };
+      expect(JSON.stringify(draftAgent)).toContain("context-only-fixture");
       const judgeState = await env.ARTIFACTS.get(
         publisherSetupPayloadKey(
           { id: job.id, organizationId: owner.organizationId },
           "judge-agent",
         ),
       );
-      expect(await judgeState?.text()).toContain("context-only-fixture");
+      const judgeAgent = JSON.parse((await judgeState?.text()) ?? "null") as typeof draftAgent;
+      const cacheScope = await sha256Hex(`publisher-setup:${job.id}`);
+      expect(draftAgent.cacheSessionId).toBe(cacheScope);
+      expect(judgeAgent.cacheSessionId).toBe(cacheScope);
+      expect(judgeAgent.progress.startedAt).toBe(draftAgent.progress.startedAt);
+      expect(draftAgent.progress.inputTokens).toBe(draftAgent.progress.turns * 10);
+      expect(judgeAgent.progress.inputTokens).toBe(
+        draftAgent.progress.inputTokens + judgeAgent.progress.turns * 10,
+      );
+      expect(JSON.stringify(judgeAgent)).toContain("context-only-fixture");
       expect(JSON.stringify(finished)).not.toContain("context-only-fixture");
+      expect(JSON.stringify(finished)).not.toContain(cacheScope);
+      expect(JSON.stringify(finished)).not.toContain("cacheSessionId");
       const source = await env.ARTIFACTS.get(
         publisherSetupPayloadKey({ id: job.id, organizationId: owner.organizationId }, "source"),
       );
@@ -899,6 +941,7 @@ describe("publisher setup durable jobs", () => {
           done: true,
         });
         if (options.uncertainPr) {
+          const previousCallCount = calls.length;
           const repeat = await createPublisherSetupJob(
             owner.db,
             owner.organizationId,
@@ -910,6 +953,18 @@ describe("publisher setup durable jobs", () => {
           );
           expect((await getPublisherSetupJob(owner.db, repeat.id))?.status).toBe("ready");
           expect(prCount()).toBe(1);
+          const repeatedCalls = calls.slice(previousCallCount);
+          expect(repeatedCalls).toHaveLength(options.multiFile ? 11 : 8);
+          for (const [, , options] of repeatedCalls)
+            expect([draftHeaders[0], judgeHeaders[0]]).not.toContain(
+              options.extraHeaders["x-session-affinity"],
+            );
+          const repeatAgent = await env.ARTIFACTS.get(
+            publisherSetupPayloadKey(repeat, "draft-agent"),
+          );
+          expect(JSON.parse(await repeatAgent!.text()).cacheSessionId).toBe(
+            await sha256Hex(`publisher-setup:${repeat.id}`),
+          );
         }
         const audit = await owner.db
           .select()
