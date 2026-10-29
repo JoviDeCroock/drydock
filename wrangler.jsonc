@@ -2,6 +2,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "staged-publish-review",
 	"main": "./server/index.ts",
+	"workflows": [{ "binding": "PUBLISHER_SETUP_WORKFLOW", "name": "publisher-setup", "class_name": "PublisherSetupWorkflow" }],
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
 		"nodejs_compat",

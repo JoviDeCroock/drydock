@@ -100,6 +100,10 @@ permissions, enable environment protection, approve a release, or publish a
 package. Setup status reports observed configuration and a real scoped gate
 review; it does not certify arbitrary workflow code or publication paths.
 
+### Durable publisher setup jobs
+
+Publisher workflow generation is dispatched to Cloudflare Workflows using only an opaque job id. Its five stages fetch pinned source, draft, validate, independently judge, and sign a ready proposal. Private source, candidate text, judge evidence, and signed output remain in organization-scoped private R2; D1 keeps metadata/status and one-day expiry. Checkpoint and run outputs carry only the job id. Creator-owned, organization-admin polling returns the private result. Every model attempt and result write rechecks current account/membership, installation, expiry, and the AI killswitch. Deterministic validation and an independent passing assessment are required before the v2 signature is issued; legacy unjudged signatures fail verification. Background jobs never create PRs or configure protection. Account/organization deletion and scheduled expiry remove job payloads and metadata, with post-write checks preventing deleted jobs from leaving late R2 objects.
+
 ### Release decisions
 
 Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone.

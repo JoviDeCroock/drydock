@@ -176,6 +176,23 @@ describe("Cloudflare binding parity", () => {
     ).toEqual([]);
   });
 
+  test("publisher setup Workflow bindings name the exported production entrypoint", () => {
+    for (const file of [PRODUCTION, SELF_HOST, TEST_CONFIG]) {
+      const config = parseJsonc(read(file));
+      expect(config.workflows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            binding: "PUBLISHER_SETUP_WORKFLOW",
+            class_name: "PublisherSetupWorkflow",
+          }),
+        ]),
+      );
+    }
+    expect(read("server/index.ts")).toContain(
+      'export { PublisherSetupWorkflow } from "./workflows/publisher-setup"',
+    );
+    expect(read("server/workflows/publisher-setup.ts")).toContain("extends WorkflowEntrypoint");
+  });
   test("parses comments and trailing commas outside strings", () => {
     const parsed = parseJsonc(
       '{\n  // leading\n  "a": "http://x/y", /* block */\n  "b": ["c", "d",],\n  "e": "//not a comment",\n}',
@@ -190,6 +207,13 @@ describe("Cloudflare binding parity", () => {
       ratelimits: [{ name: "RATE_LIMIT_10_PER_MINUTE", namespace_id: "1" }],
       send_email: [{ name: "SEND_EMAIL" }],
       durable_objects: { bindings: [{ name: "GATE_ROOM", class_name: "GateRoom" }] },
+      workflows: [
+        {
+          binding: "PUBLISHER_SETUP_WORKFLOW",
+          name: "publisher-setup",
+          class_name: "PublisherSetupWorkflow",
+        },
+      ],
       queues: {
         producers: [{ binding: "SCAN_QUEUE", queue: "scans" }],
         consumers: [{ queue: "scans" }],
@@ -200,6 +224,7 @@ describe("Cloudflare binding parity", () => {
       "DB",
       "GATE_ROOM",
       "NPM_REGISTRY",
+      "PUBLISHER_SETUP_WORKFLOW",
       "RATE_LIMIT_10_PER_MINUTE",
       "SCAN_QUEUE",
       "SEND_EMAIL",

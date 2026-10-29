@@ -912,3 +912,41 @@ export const publicationAlerts = sqliteTable(
     index("publication_alerts_resolved_by").on(table.resolvedBy),
   ],
 );
+
+// Workflow history carries only this job id. Private source, candidates, and
+// judge evidence live under its organization-scoped R2 prefix until expiry.
+export const publisherSetupJobs = sqliteTable(
+  "publisher_setup_jobs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Kept until the account-deletion hook removes the payload and row, rather
+    // than cascading metadata first and orphaning the private R2 objects.
+    createdByUserId: text("created_by_user_id").notNull(),
+    installationRowId: text("installation_row_id").notNull(),
+    requestJson: text("request_json", { mode: "json" })
+      .$type<import("../lib/github-app/setup-types").PublisherSetupDraftRequest>()
+      .notNull(),
+    status: text("status")
+      .$type<import("../lib/github-app/setup-types").PublisherSetupJobStatus>()
+      .notNull()
+      .default("queued"),
+    stage: text("stage")
+      .$type<import("../lib/github-app/setup-types").PublisherSetupJobStage>()
+      .notNull()
+      .default("queued"),
+    failureJson: text("failure_json", { mode: "json" }).$type<{ code: string; message: string }>(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    ownerIdx: index("publisher_setup_jobs_owner_idx").on(
+      table.organizationId,
+      table.createdByUserId,
+    ),
+    expiryIdx: index("publisher_setup_jobs_expiry_idx").on(table.expiresAt),
+  }),
+);

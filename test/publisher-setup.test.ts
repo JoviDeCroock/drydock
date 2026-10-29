@@ -343,16 +343,13 @@ describe("publisher setup proposal", () => {
       ),
     ).toBe(false);
   });
-  test("validates a structured model output before returning the draft", async () => {
+  test("validates a model workflow before returning the draft", async () => {
     const model = new MockLanguageModelV3({
       doGenerate: async () => ({
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              content: SETUP_PROPOSED_WORKFLOW,
-              summary: "Separate packaging and publication.",
-            }),
+            text: SETUP_PROPOSED_WORKFLOW,
           },
         ],
         finishReason: { unified: "stop", raw: "stop" },
@@ -369,7 +366,7 @@ describe("publisher setup proposal", () => {
       SETUP_ORIGINAL_WORKFLOW,
       model,
     );
-    expect(draft.content).toBe(SETUP_PROPOSED_WORKFLOW);
+    expect(draft.content).toBe(SETUP_PROPOSED_WORKFLOW.trim());
   });
 });
 

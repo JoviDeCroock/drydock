@@ -143,6 +143,13 @@ async function writeWranglerConfig() {
       run_worker_first: workerFirstRoutes(),
     },
     worker_loaders: [{ binding: "LOADER" }],
+    workflows: [
+      {
+        binding: "PUBLISHER_SETUP_WORKFLOW",
+        name: "publisher-setup-e2e",
+        class_name: "PublisherSetupWorkflow",
+      },
+    ],
     d1_databases: [
       {
         binding: "DB",

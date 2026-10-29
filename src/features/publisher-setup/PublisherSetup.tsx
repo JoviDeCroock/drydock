@@ -1,5 +1,6 @@
 import { useComputed, useModel, useSignalEffect } from "@preact/signals";
 import { Show, useLiveSignal } from "@preact/signals/utils";
+import type { PublisherSetupJobStage } from "../../../server/lib/github-app/setup-types";
 import { activeOrganizationId } from "../../models/active-organization";
 import type { PublicGithubAppInstallation } from "../../models/github-app";
 import { PublisherSetupModel } from "../../models/publisher-setup";
@@ -38,8 +39,12 @@ export function PublisherSetup({
   useSignalEffect(() => {
     const available = availableInstallations.value;
     const selected = model.installationRowId.value;
+    // An organization switch can restore a pending job before its installations
+    // replace the previous organization's list; that empty projection is not
+    // authority to discard the restored job.
+    if (available.length === 0) return;
     if (!available.some((installation) => installation.id === selected)) {
-      const next = available[0]?.id ?? "";
+      const next = available[0].id;
       if (next !== selected) void model.selectInstallation(next);
     }
   });
@@ -87,6 +92,9 @@ export function PublisherSetup({
           <DraftFields model={model} />
         </Show>
         <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+        <Show when={model.draftJobId}>
+          <DraftProgress model={model} />
+        </Show>
         <Show when={model.draft}>
           <ProposalReview model={model} />
         </Show>
@@ -217,7 +225,7 @@ function ProposalReview({ model }: { model: SetupModel }) {
       <DiffView
         path={draft.proposal.workflowPath}
         status="modified"
-        before={{ textSample: original?.content ?? "" }}
+        before={{ textSample: model.originalContent.value ?? original?.content ?? "" }}
         after={{ textSample: draft.proposal.content }}
         beforeLabel="Current workflow"
         afterLabel="Proposed workflow"
@@ -265,6 +273,70 @@ function ProposalReview({ model }: { model: SetupModel }) {
           The pull request is a draft; review and merge it in GitHub, then finish the environment
           configuration below.
         </Alert>
+      </Show>
+    </div>
+  );
+}
+
+const DRAFT_STAGE_LABELS: Record<PublisherSetupJobStage, string> = {
+  queued: "Waiting for the draft to start…",
+  fetch_source: "Reading the pinned workflow…",
+  draft: "Drafting the workflow change…",
+  validate: "Checking the proposed workflow structure…",
+  judge: "Running a second review of the change…",
+  ready: "Draft ready for your review.",
+};
+
+function DraftProgress({ model }: { model: SetupModel }) {
+  const job = model.draftJob.value;
+  const judge = job?.judge;
+  const progress = useComputed(() => {
+    const current = model.draftJob.value;
+    if (!current) return "Restoring draft status…";
+    if (current.status === "failed") return "Draft needs another attempt.";
+    return DRAFT_STAGE_LABELS[current.stage];
+  });
+  return (
+    <div class="flex flex-col gap-3">
+      <div aria-live="polite">
+        <Muted class="m-0 font-mono text-[12px]">{progress}</Muted>
+      </div>
+      <Show when={model.draftPending}>
+        <Muted class="m-0 text-[13px] max-w-[680px]">
+          The draft runs in the background. You can change your selection or return to this page
+          while it completes.
+        </Muted>
+      </Show>
+      <Show when={model.pollingError}>{(message) => <Alert tone="warn">{message}</Alert>}</Show>
+      <Show when={model.pollingPaused}>
+        <div>
+          <Button variant="secondary" onClick={model.resumeDraftStatus}>
+            Resume draft status
+          </Button>
+        </div>
+      </Show>
+      {judge ? (
+        <div class="flex flex-col gap-2">
+          <h4 class="m-0 text-[14px] font-medium">Second review · advisory</h4>
+          <Muted class="m-0 text-[13px] max-w-[680px]">{judge.summary}</Muted>
+          <ul class="m-0 pl-5 text-[13px] leading-[1.55]">
+            {judge.issues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+          <Muted class="m-0 text-[12px]">
+            {judge.verdict === "pass"
+              ? "No changes requested by the second reviewer; your review is still required."
+              : "Changes requested; this attempt cannot create a pull request."}
+          </Muted>
+        </div>
+      ) : null}
+      <Show when={model.draftPending}>
+        <div>
+          <Button variant="ghost" onClick={model.discardDraft}>
+            Discard this draft
+          </Button>
+        </div>
       </Show>
     </div>
   );

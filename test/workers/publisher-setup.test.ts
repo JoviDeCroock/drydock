@@ -34,7 +34,10 @@ beforeAll(async () => {
     .match(/.{1,64}/g)
     ?.join("\n")}\n-----END PRIVATE KEY-----`;
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 const STATE_SECRET = "publisher-setup-state-secret-at-least-32-characters";
 function setupEnv(overrides: Partial<Bindings> = {}): Partial<Bindings> {
   return {

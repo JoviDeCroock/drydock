@@ -11,10 +11,12 @@ import {
   createSetupPullRequest,
   inspectPublisherSetup,
   PublisherSetupError,
-  readSetupWorkflow,
-  setupDefaultHead,
   validSetupEnvironment,
 } from "../../lib/github-app/setup-api";
+import {
+  enqueuePublisherSetupDraft,
+  readPublisherSetupDraftJob,
+} from "../../lib/github-app/setup-jobs";
 import { publisherSetupStatus } from "../../lib/github-app/setup-status";
 import {
   normalizeGithubEnvironmentName,
@@ -68,6 +70,7 @@ const RATE_LIMITS = {
   read: 60,
   draft: 20,
   "pull-request": 20,
+  poll: 120,
 } as const;
 
 async function route(
@@ -82,9 +85,9 @@ async function route(
   const limited = await guardRateLimit(
     c,
     {
-      key: `github-app:setup:${bucket}:${organizationId}`,
+      key: `github-app:setup:${bucket}:${organizationId}${bucket === "poll" ? `:${c.get("authSession").userId}` : ""}`,
       limit: RATE_LIMITS[bucket],
-      windowMs: 60 * 60_000,
+      windowMs: bucket === "poll" ? 60_000 : 60 * 60_000,
     },
     "Publisher setup rate limit exceeded",
   );
@@ -131,15 +134,10 @@ publisherSetupRoutes.post("/setup/inspect", (c) =>
 );
 
 publisherSetupRoutes.post("/setup/draft", (c) =>
-  route(c, "draft", async (config, organizationId) => {
-    const { setupDraftRequestSchema, generateSetupDraft, setupManualSteps, signSetupProposal } =
-      await import("../../lib/github-app/setup-draft");
+  route(c, "draft", async (_config, organizationId) => {
+    const { setupDraftRequestSchema } = await import("../../lib/github-app/setup-draft");
     const input = setupDraftRequestSchema.parse(await readJsonObject(c));
-    const installation = await ensureInstallationOwnedBy(
-      c.var.db,
-      organizationId,
-      input.installationRowId,
-    );
+    await ensureInstallationOwnedBy(c.var.db, organizationId, input.installationRowId);
     const aiEnabled = c.env.FLAGS
       ? await c.env.FLAGS.getBooleanValue("ai-review", true, {
           targetingKey: organizationId,
@@ -155,46 +153,29 @@ publisherSetupRoutes.post("/setup/draft", (c) =>
         },
         503,
       );
-    const client = await createSetupClient(
-      config,
-      installation.installationId,
-      input.repositoryFullName,
+    const job = await enqueuePublisherSetupDraft(
+      c.env,
+      organizationId,
+      c.get("authSession").userId,
+      input,
     );
-    if ((await setupDefaultHead(client)) !== input.baseSha)
-      throw new PublisherSetupError(
-        "proposal_stale",
-        "The default branch changed. Inspect the repository again before drafting.",
-        409,
-      );
-    const original = await readSetupWorkflow(client, input.workflowPath, input.baseSha);
-    let generated: Awaited<ReturnType<typeof generateSetupDraft>>;
-    try {
-      generated = await generateSetupDraft(c.env, input, original.content);
-    } catch (error) {
-      if (error instanceof PublisherSetupError) throw error;
-      throw new PublisherSetupError(
-        "setup_ai_unavailable",
-        "The workflow draft could not be completed. Retry or use the release workflow guide; your repository has not been changed.",
-        503,
-      );
-    }
-    const proposal = {
-      ...input,
-      repositoryFullName: client.repository.fullName,
-      repositoryId: client.repository.id,
-      defaultBranch: client.repository.defaultBranch,
-      originalSha: original.sha,
-      ...generated,
-      manualSteps: setupManualSteps(input),
-      expiresAt: Date.now() + 20 * 60_000,
-    };
-    const proposalToken = await signSetupProposal(
-      config.stateSecret,
-      proposal,
+    c.header("Cache-Control", "no-store");
+    return c.json({ job }, 202);
+  }),
+);
+
+publisherSetupRoutes.get("/setup/draft-jobs/:id", (c) =>
+  route(c, "poll", async (_config, organizationId) => {
+    const job = await readPublisherSetupDraftJob(
+      c.env,
+      c.req.param("id"),
       organizationId,
       c.get("authSession").userId,
     );
-    return c.json({ proposal, proposalToken });
+    if (!job)
+      return c.json({ error: "Draft job not found or expired.", code: "setup_job_not_found" }, 404);
+    c.header("Cache-Control", "no-store");
+    return c.json({ job });
   }),
 );
 

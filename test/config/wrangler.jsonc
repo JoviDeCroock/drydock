@@ -1,6 +1,8 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "staged-publish-review-test",
+  "main": "../workers/helpers/publisher-setup-workflow-entry.ts",
+  "workflows": [{ "binding": "PUBLISHER_SETUP_WORKFLOW", "name": "publisher-setup-test", "class_name": "PublisherSetupWorkflow" }],
   "compatibility_date": "2026-05-20",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {

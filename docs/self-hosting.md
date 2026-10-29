@@ -284,3 +284,7 @@ See [`artifact-storage.md`](artifact-storage.md) for object layout and rollback.
   and scan-workflow changes.
 - Review [`security-model.md`](security-model.md) before changing trust
   boundaries.
+
+### Durable publisher setup
+
+Guided workflow drafting requires the `PUBLISHER_SETUP_WORKFLOW` binding configured in the self-host template, with class `PublisherSetupWorkflow` exported from the same Worker. Deploy the Workflow with the Worker and apply D1 migrations before enabling the UI. It uses the existing private `ARTIFACTS` bucket, Workers AI, and the `ai-review` Flagship setting. Without the Workflow binding, drafting returns `503`; manual setup guides and existing release gates continue to work. Source and model evidence stay in private R2 rather than Workflow step history. Expired job payloads are pruned by the existing scheduled handler; retain the cron trigger. See [guided publisher setup](./publisher-setup.md).

@@ -3,6 +3,8 @@ import { PublisherSetupModel } from "../src/models/publisher-setup";
 import { setActiveOrganizationId } from "../src/models/active-organization";
 import type {
   PublisherSetupDraft,
+  PublisherSetupDraftJob,
+  PublisherSetupDraftRequest,
   PublisherSetupInspection,
 } from "../server/lib/github-app/setup-types";
 import { jsonResponse, stubFetchRoutes } from "./helpers/fetch-stub";
@@ -33,6 +35,64 @@ const draft: PublisherSetupDraft = {
   proposalToken: "signed-proposal",
 };
 
+function draftRequest(): PublisherSetupDraftRequest {
+  const { installationRowId, repositoryFullName, workflowPath, baseSha, environment, ecosystem } =
+    draft.proposal;
+  return { installationRowId, repositoryFullName, workflowPath, baseSha, environment, ecosystem };
+}
+
+function draftJob(overrides: Partial<PublisherSetupDraftJob> = {}): PublisherSetupDraftJob {
+  return {
+    id: "job-1",
+    status: "ready",
+    stage: "ready",
+    request: draftRequest(),
+    createdAt: "2026-10-29T10:00:00Z",
+    updatedAt: "2026-10-29T10:00:00Z",
+    expiresAt: "2026-10-29T11:00:00Z",
+    failure: null,
+    judge: {
+      verdict: "pass",
+      summary: "The change preserves the release artifacts.",
+      issues: [],
+      model: "test-judge",
+    },
+    result: { ...draft, originalContent: inspection.workflows[0].content },
+    ...overrides,
+  };
+}
+
+function completedDraftRoutes() {
+  let request = draftRequest();
+  return {
+    "/setup/draft-jobs/": () =>
+      jsonResponse({
+        job: draftJob({
+          request,
+          result: {
+            ...draft,
+            proposal: { ...draft.proposal, ...request },
+            originalContent: inspection.workflows[0].content,
+          },
+        }),
+      }),
+    "/setup/draft": (_url: string, init?: RequestInit) => {
+      request = JSON.parse(String(init?.body)) as PublisherSetupDraftRequest;
+      return jsonResponse(
+        {
+          job: draftJob({ request, status: "queued", stage: "queued", judge: null, result: null }),
+        },
+        202,
+      );
+    },
+  };
+}
+
+async function draftWorkflow(model: InstanceType<typeof PublisherSetupModel>) {
+  await model.draftWorkflow();
+  await vi.waitFor(() => expect(model.draft.value).not.toBeNull());
+}
+
 const models: InstanceType<typeof PublisherSetupModel>[] = [];
 function createModel() {
   const model = new PublisherSetupModel();
@@ -56,15 +116,322 @@ afterEach(() => {
   for (const model of models.splice(0)) model[Symbol.dispose]();
   setActiveOrganizationId(null);
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("publisher setup", () => {
+  test("normalizes a mixed-case environment before queueing and accepting its job", async () => {
+    const bodies: unknown[] = [];
+    const completed = completedDraftRoutes();
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": completed["/setup/draft-jobs/"],
+      "/setup/draft": (url, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return completed["/setup/draft"](url, init);
+      },
+    });
+    const model = createModel();
+    await inspect(model);
+    model.setEnvironment("  ProDucTion  ");
+
+    await draftWorkflow(model);
+
+    expect(bodies).toEqual([{ ...draftRequest(), environment: "production" }]);
+    expect(model.draft.value?.proposal.environment).toBe("production");
+    expect(model.error.value).toBeNull();
+  });
+  test("polls background stages until a separately judged proposal is ready", async () => {
+    vi.useFakeTimers();
+    const stages = ["draft", "validate", "judge", "ready"] as const;
+    let polls = 0;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () => {
+        const stage = stages[polls++];
+        return jsonResponse({
+          job: draftJob(
+            stage === "ready"
+              ? {}
+              : {
+                  status: "running",
+                  stage,
+                  judge: null,
+                  result: null,
+                },
+          ),
+        });
+      },
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(model.draftJob.value?.stage).toBe("draft");
+    expect(model.operation.value).toBe("idle");
+    expect(model.canDraft.value).toBe(false);
+    expect(model.draft.value).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(model.draftJob.value?.stage).toBe("validate");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(model.draftJob.value?.stage).toBe("judge");
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(model.draft.value).toEqual(draft);
+    expect(model.originalContent.value).toBe(inspection.workflows[0].content);
+    expect(model.draftPending.value).toBe(false);
+    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a negative judge cannot expose a proposal or enable PR creation", async () => {
+    vi.useFakeTimers();
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () =>
+        jsonResponse({
+          job: draftJob({
+            status: "failed",
+            stage: "judge",
+            judge: {
+              verdict: "changes_requested",
+              summary: "The publish step rebuilds the package.",
+              issues: ["Publish the reviewed artifact."],
+              model: "test-judge",
+            },
+            result: null,
+            failure: {
+              code: "judge_changes_requested",
+              message: "The second review requested changes. Draft again.",
+            },
+          }),
+        }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+    model.setReviewed(true);
+
+    expect(model.draft.value).toBeNull();
+    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(model.error.value).toContain("second review requested changes");
+    expect(model.draftJob.value?.judge?.issues).toEqual(["Publish the reviewed artifact."]);
+    expect(model.canDraft.value).toBe(true);
+  });
+
+  test("rejects a status or proposal from another workflow scope", async () => {
+    vi.useFakeTimers();
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () =>
+        jsonResponse({ job: draftJob({ request: { ...draftRequest(), environment: "foreign" } }) }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(model.draft.value).toBeNull();
+    expect(model.draftJob.value).toBeNull();
+    expect(model.error.value).toContain("did not match the selected workflow");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("selection changes and disposal stop background polling", async () => {
+    vi.useFakeTimers();
+    let polls = 0;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () => {
+        polls += 1;
+        return jsonResponse({
+          job: draftJob({ status: "running", stage: "draft", judge: null, result: null }),
+        });
+      },
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+    model.setEnvironment("publish");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(polls).toBe(1);
+    expect(model.draftJob.value).toBeNull();
+
+    model.setEnvironment("drydock");
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+    model[Symbol.dispose]();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(polls).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a draft-status response cannot land after switching organizations", async () => {
+    vi.useFakeTimers();
+    setActiveOrganizationId("org-a");
+    let finishPoll!: (response: Response) => void;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () =>
+        new Promise<Response>((resolve) => {
+          finishPoll = resolve;
+        }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    setActiveOrganizationId("org-b");
+    finishPoll(jsonResponse({ job: draftJob() }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(model.draft.value).toBeNull();
+    expect(model.draftJob.value).toBeNull();
+    expect(model.repositoryFullName.value).toBe("");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a new failed submission cannot leave the previous job pending", async () => {
+    let rejectSubmission = false;
+    const completed = completedDraftRoutes();
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": completed["/setup/draft-jobs/"],
+      "/setup/draft": (url, init) =>
+        rejectSubmission
+          ? jsonResponse({ error: "AI drafting is temporarily unavailable." }, 503)
+          : completed["/setup/draft"](url, init),
+    });
+    const model = createModel();
+    await inspect(model);
+    await draftWorkflow(model);
+    rejectSubmission = true;
+
+    await model.draftWorkflow();
+
+    expect(model.draftJobId.value).toBeNull();
+    expect(model.draftPending.value).toBe(false);
+    expect(model.canDraft.value).toBe(true);
+    expect(model.error.value).toContain("temporarily unavailable");
+  });
+
+  test("restores a pending job after reload using only its id and scoped request", async () => {
+    vi.useFakeTimers();
+    setActiveOrganizationId("org-a");
+    const values = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    let complete = false;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () =>
+        jsonResponse({
+          job: complete
+            ? draftJob()
+            : draftJob({ status: "running", stage: "judge", judge: null, result: null }),
+        }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(0);
+    const saved = values.get("drydock:publisher-draft:org-a")!;
+    expect(JSON.parse(saved)).toEqual({ id: "job-1", request: draftRequest() });
+    expect(saved).not.toContain("signed-proposal");
+    expect(saved).not.toContain("name: Release");
+    model[Symbol.dispose]();
+    complete = true;
+
+    const resumed = createModel();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resumed.repositoryFullName.value).toBe("example/package");
+    expect(resumed.draft.value).toEqual(draft);
+    expect(resumed.originalContent.value).toBe(inspection.workflows[0].content);
+    expect(resumed.reviewed.value).toBe(false);
+    expect(values.size).toBe(0);
+  });
+
+  test("pauses repeated status failures and supports an explicit retry", async () => {
+    vi.useFakeTimers();
+    let available = false;
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () =>
+        available
+          ? jsonResponse({ job: draftJob() })
+          : jsonResponse({ error: "Temporarily unavailable." }, 503),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+    await model.draftWorkflow();
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(model.pollingPaused.value).toBe(true);
+    expect(model.pollingError.value).toContain("Resume status checks");
+    expect(vi.getTimerCount()).toBe(0);
+
+    available = true;
+    model.resumeDraftStatus();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(model.draft.value).toEqual(draft);
+    expect(model.pollingError.value).toBeNull();
+  });
+
   test("creates only the exact reviewed signed proposal after explicit review", async () => {
     const bodies: unknown[] = [];
     stubFetchRoutes({
       "/repositories": repositories,
       "/setup/inspect": () => jsonResponse({ inspection }),
-      "/setup/draft": () => jsonResponse(draft),
+      ...completedDraftRoutes(),
       "/setup/pull-request": (_url, init) => {
         bodies.push(JSON.parse(String(init?.body)));
         return jsonResponse({
@@ -78,7 +445,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await draftWorkflow(model);
     await model.createPullRequest();
     expect(bodies).toEqual([]);
 
@@ -104,7 +471,7 @@ describe("publisher setup", () => {
     await inspect(model);
     const pending = model.draftWorkflow();
     model.selectRepository("example/other");
-    finishDraft(jsonResponse(draft));
+    finishDraft(jsonResponse({ job: draftJob() }, 202));
     await pending;
 
     expect(model.draft.value).toBeNull();
@@ -143,16 +510,16 @@ describe("publisher setup", () => {
     stubFetchRoutes({
       "/repositories": repositories,
       "/setup/inspect": () => jsonResponse({ inspection }),
-      "/setup/draft": () => jsonResponse(draft),
+      ...completedDraftRoutes(),
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await draftWorkflow(model);
     model.setReviewed(true);
     model.setEnvironment("publish");
     expect(model.draft.value).toBeNull();
     expect(model.reviewed.value).toBe(false);
-    await model.draftWorkflow();
+    await draftWorkflow(model);
     model.setEcosystem("pypi");
     expect(model.draft.value).toBeNull();
     expect(model.canCreatePullRequest.value).toBe(false);

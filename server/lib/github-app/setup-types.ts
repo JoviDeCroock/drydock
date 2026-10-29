@@ -65,3 +65,32 @@ export interface PublisherSetupStatus {
   } | null;
   checks: { label: string; status: "passed" | "pending" | "unknown"; detail: string }[];
 }
+
+export interface PublisherSetupJudgeAssessment {
+  verdict: "pass" | "changes_requested";
+  summary: string;
+  issues: string[];
+  model: string;
+}
+
+export type PublisherSetupJobStage =
+  | "queued"
+  | "fetch_source"
+  | "draft"
+  | "validate"
+  | "judge"
+  | "ready";
+export type PublisherSetupJobStatus = "queued" | "running" | "ready" | "failed";
+
+export interface PublisherSetupDraftJob {
+  id: string;
+  status: PublisherSetupJobStatus;
+  stage: PublisherSetupJobStage;
+  request: PublisherSetupDraftRequest;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  failure: { code: string; message: string } | null;
+  judge: PublisherSetupJudgeAssessment | null;
+  result: (PublisherSetupDraft & { originalContent: string }) | null;
+}
