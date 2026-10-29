@@ -136,7 +136,9 @@ publisherSetupRoutes.post("/setup/inspect", (c) =>
 publisherSetupRoutes.post("/setup/draft", (c) =>
   route(c, "draft", async (_config, organizationId) => {
     const { setupDraftRequestSchema } = await import("../../lib/github-app/setup-draft");
-    const input = setupDraftRequestSchema.parse(await readJsonObject(c));
+    const input = setupDraftRequestSchema
+      .extend({ createPullRequest: z.literal(true) })
+      .parse(await readJsonObject(c));
     await ensureInstallationOwnedBy(c.var.db, organizationId, input.installationRowId);
     const aiEnabled = c.env.FLAGS
       ? await c.env.FLAGS.getBooleanValue("ai-review", true, {
@@ -213,17 +215,17 @@ publisherSetupRoutes.post("/setup/pull-request", (c) =>
       true,
     );
     const { created, ...pullRequest } = await createSetupPullRequest(client, input.proposal);
-    if (created)
-      await recordScanEvent(c.var.db, {
-        organizationId,
-        actorUserId: c.get("authSession").userId,
-        type: "github_app_setup.pr_created",
-        metadata: {
-          repositoryFullName: input.proposal.repositoryFullName,
-          environment: input.proposal.environment,
-          pullRequestNumber: pullRequest.number,
-        },
-      });
+    await recordScanEvent(c.var.db, {
+      idempotencyKey: `publisher-setup:${organizationId}:${input.proposal.repositoryId}:${pullRequest.number}`,
+      organizationId,
+      actorUserId: c.get("authSession").userId,
+      type: "github_app_setup.pr_created",
+      metadata: {
+        repositoryFullName: input.proposal.repositoryFullName,
+        environment: input.proposal.environment,
+        pullRequestNumber: pullRequest.number,
+      },
+    });
     return c.json({ pullRequest }, created ? 201 : 200);
   }),
 );

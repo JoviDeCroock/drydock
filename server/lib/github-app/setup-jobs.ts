@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { createDb } from "../../db/client";
+import { recordScanEvent } from "../../db/events";
 import { organizationMembers, user } from "../../db/schema";
 import {
   createPublisherSetupJob,
@@ -17,17 +18,20 @@ import { durationMsSince, emitOperationalEvent } from "../platform/observability
 import { listInstallationsForOrganization } from "./persistence";
 import {
   createSetupClient,
+  createSetupPullRequest,
   PublisherSetupError,
   readSetupWorkflow,
   setupDefaultHead,
 } from "./setup-api";
 import { readGithubAppConfig } from "./config";
+import { readSetupContext } from "./setup-context";
 import { describeSetupDraftFailure, setupDraftFailureResponse } from "./setup-draft-errors";
 import type {
   PublisherSetupDraftJob,
   PublisherSetupDraftRequest,
   PublisherSetupJudgeAssessment,
   PublisherSetupJobStage,
+  PublisherSetupContext,
 } from "./setup-types";
 
 interface SetupSource {
@@ -36,16 +40,17 @@ interface SetupSource {
   defaultBranch: string;
   originalSha: string;
   content: string;
+  context: PublisherSetupContext;
 }
 interface SetupCandidate {
   content: string;
   summary: string;
 }
-type StepName = Exclude<PublisherSetupJobStage, "queued">;
+type StepName = Exclude<PublisherSetupJobStage, "queued" | "ready">;
 export type PublisherSetupStepRunner = (
   stage: StepName,
   operation: () => Promise<void>,
-  retryModel: boolean,
+  retrySafeOperation: boolean,
 ) => Promise<void>;
 
 export class PublisherSetupRetryError extends Error {
@@ -76,7 +81,11 @@ async function readPayload<T>(
   name: PublisherSetupPayloadName,
 ): Promise<T | null> {
   const object = await env.ARTIFACTS.get(publisherSetupPayloadKey(job, name));
-  if (!object || object.size > (name === "result" ? 400_000 : 220_000)) return null;
+  if (
+    !object ||
+    object.size > (name === "source" ? 900_000 : name === "result" ? 400_000 : 220_000)
+  )
+    return null;
   try {
     return JSON.parse(await object.text()) as T;
   } catch {
@@ -117,6 +126,15 @@ async function activeJob(env: Cloudflare.Env, id: string): Promise<PublisherSetu
   const db = createDb(env.DB);
   const job = await getPublisherSetupJob(db, id);
   if (!job || job.status === "failed" || job.status === "ready") return null;
+  if (job.requestJson.createPullRequest !== true) {
+    await failJob(
+      env,
+      job,
+      "setup_authorization_required",
+      "Start a fresh setup to authorize creation of the draft pull request.",
+    );
+    return null;
+  }
   const [member] = await db
     .select({ role: organizationMembers.role, emailVerified: user.emailVerified })
     .from(organizationMembers)
@@ -176,7 +194,10 @@ async function writePayload(
 ): Promise<boolean> {
   if (!(await activeJob(env, job.id))) return false;
   const encoded = JSON.stringify(value);
-  if (new TextEncoder().encode(encoded).byteLength > (name === "result" ? 400_000 : 220_000))
+  if (
+    new TextEncoder().encode(encoded).byteLength >
+    (name === "source" ? 900_000 : name === "result" ? 400_000 : 220_000)
+  )
     throw new PublisherSetupError(
       "setup_result_too_large",
       "The private workflow draft exceeds its storage limit. Use a smaller workflow.",
@@ -268,7 +289,7 @@ export async function readPublisherSetupDraftJob(
       row,
       "result",
     );
-    if (!result.result || !result.judge || result.judge.verdict !== "pass") {
+    if (!result.result?.pullRequest || !result.judge || result.judge.verdict !== "pass") {
       result.status = "failed";
       result.result = null;
       result.failure = {
@@ -297,6 +318,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       readGithubAppConfig(env),
       installation.installationId,
       job.requestJson.repositoryFullName,
+      true,
     );
     if ((await setupDefaultHead(client)) !== job.requestJson.baseSha)
       throw new PublisherSetupError(
@@ -309,12 +331,23 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       job.requestJson.workflowPath,
       job.requestJson.baseSha,
     );
+    const context = await readSetupContext(client, workflow.content, job.requestJson.baseSha);
+    if (
+      context.warnings.length &&
+      /changesets\/action@|\bchangesets?\s+(?:publish|version)\b/.test(workflow.content)
+    )
+      throw new PublisherSetupError(
+        "setup_context_incomplete",
+        "Changesets setup needs complete repository release evidence. Supporting files exceeded a limit or could not be inspected; configure this workflow manually.",
+        409,
+      );
     await writePayload(env, job, "source", {
       repositoryId: client.repository.id,
       repositoryFullName: client.repository.fullName,
       defaultBranch: client.repository.defaultBranch,
       originalSha: workflow.sha,
       content: workflow.content,
+      context,
     } satisfies SetupSource);
     return;
   }
@@ -327,7 +360,13 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     );
   if (stage === "draft") {
     const { generateSetupCandidate } = await import("./setup-draft");
-    const candidate = await generateSetupCandidate(env, job.requestJson, source.content);
+    const candidate = await generateSetupCandidate(
+      env,
+      job.requestJson,
+      source.content,
+      undefined,
+      source.context,
+    );
     await writePayload(env, job, "candidate", candidate);
     return;
   }
@@ -340,12 +379,19 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     );
   const { validateSetupDraft } = await import("./setup-draft");
   if (stage === "validate") {
-    validateSetupDraft(source.content, candidate.content, job.requestJson);
+    validateSetupDraft(source.content, candidate.content, job.requestJson, source.context);
     return;
   }
   if (stage === "judge") {
     const { judgeSetupDraft } = await import("./setup-judge");
-    const judge = await judgeSetupDraft(env, job.requestJson, source.content, candidate);
+    const judge = await judgeSetupDraft(
+      env,
+      job.requestJson,
+      source.content,
+      candidate,
+      undefined,
+      source.context,
+    );
     if (!(await writePayload(env, job, "judge", judge))) return;
     if (judge.verdict !== "pass")
       await failJob(
@@ -363,11 +409,12 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       "The workflow draft has not passed independent review.",
       409,
     );
-  validateSetupDraft(source.content, candidate.content, job.requestJson);
+  validateSetupDraft(source.content, candidate.content, job.requestJson, source.context);
   if (!(await activeJob(env, id))) return;
   const { signSetupProposal, setupManualSteps } = await import("./setup-draft");
+  const { createPullRequest: _authorization, ...request } = job.requestJson;
   const proposal = {
-    ...job.requestJson,
+    ...request,
     repositoryFullName: source.repositoryFullName,
     repositoryId: source.repositoryId,
     defaultBranch: source.defaultBranch,
@@ -382,11 +429,43 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     job.organizationId,
     job.createdByUserId,
   );
+  const installation = await installationForJob(env, job);
+  const client = await createSetupClient(
+    readGithubAppConfig(env),
+    installation.installationId,
+    job.requestJson.repositoryFullName,
+    true,
+  );
+  if (!(await activeJob(env, id))) return;
+  const { created: _created, ...pullRequest } = await createSetupPullRequest(
+    client,
+    proposal,
+    async () => {
+      if (!(await activeJob(env, id)))
+        throw new PublisherSetupError(
+          "setup_access_changed",
+          "Publisher setup stopped because account, organization, or installation access changed.",
+          403,
+        );
+    },
+  );
+  await recordScanEvent(createDb(env.DB), {
+    idempotencyKey: `publisher-setup:${job.organizationId}:${source.repositoryId}:${pullRequest.number}`,
+    organizationId: job.organizationId,
+    actorUserId: job.createdByUserId,
+    type: "github_app_setup.pr_created",
+    metadata: {
+      repositoryFullName: source.repositoryFullName,
+      environment: request.environment,
+      pullRequestNumber: pullRequest.number,
+    },
+  });
   if (
     await writePayload(env, job, "result", {
       proposal,
       proposalToken,
       originalContent: source.content,
+      pullRequest,
     })
   )
     if (
@@ -404,7 +483,7 @@ export async function runPublisherSetupDraftJob(
   jobId: string,
   runStep: PublisherSetupStepRunner,
 ): Promise<void> {
-  for (const stage of ["fetch_source", "draft", "validate", "judge", "ready"] as const) {
+  for (const stage of ["fetch_source", "draft", "validate", "judge", "create_pr"] as const) {
     if (!(await activeJob(env, jobId))) return;
     try {
       await runStep(
@@ -416,6 +495,22 @@ export async function runPublisherSetupDraftJob(
           } catch (error) {
             const job = await getPublisherSetupJob(createDb(env.DB), jobId);
             if (!job) return;
+            if (
+              stage === "create_pr" &&
+              (!(error instanceof PublisherSetupError) || error.code === "github_unavailable")
+            ) {
+              await updatePublisherSetupJob(createDb(env.DB), jobId, {
+                failureJson: {
+                  code: "setup_pull_request_unavailable",
+                  message:
+                    "GitHub did not confirm the setup pull request. Start a fresh setup to recover its existing branch or PR.",
+                },
+              });
+              emitOperationalEvent("warn", "github_app.setup_pr.failed", {
+                reason: "github_unavailable",
+              });
+              throw new PublisherSetupRetryError("setup_pull_request_unavailable");
+            }
             if (error instanceof PublisherSetupError) {
               await failJob(env, job, error.code, error.message);
               return;
@@ -440,7 +535,7 @@ export async function runPublisherSetupDraftJob(
             if (retryable) throw new PublisherSetupRetryError(response.code);
           }
         },
-        stage === "draft" || stage === "judge",
+        stage === "draft" || stage === "judge" || stage === "create_pr",
       );
     } catch {
       const job = await getPublisherSetupJob(createDb(env.DB), jobId);

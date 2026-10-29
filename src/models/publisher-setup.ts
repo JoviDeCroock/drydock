@@ -13,7 +13,7 @@ import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import type { InstallationRepository } from "./release-targets";
 import { normalizeGithubEnvironmentName } from "../../server/lib/github-app/validation";
 
-type SetupOperation = "idle" | "inspecting" | "drafting" | "creating-pr" | "checking" | "mapping";
+type SetupOperation = "idle" | "inspecting" | "drafting" | "checking" | "mapping";
 
 interface SavedDraftJob {
   id: string;
@@ -57,7 +57,11 @@ function readSavedJob(organizationId: string | null): SavedDraftJob | null {
       ].every((field) => typeof field === "string" && field.length > 0 && field.length <= 500)
     )
       return null;
-    if (!["npm", "pypi", "vscode"].includes(request.ecosystem)) return null;
+    if (
+      !["npm", "pypi", "vscode"].includes(request.ecosystem) ||
+      request.createPullRequest !== true
+    )
+      return null;
     return {
       id: value.id,
       request: {
@@ -67,6 +71,7 @@ function readSavedJob(organizationId: string | null): SavedDraftJob | null {
         workflowPath: request.workflowPath,
         environment: request.environment,
         ecosystem: request.ecosystem,
+        createPullRequest: true,
       },
     };
   } catch {
@@ -99,7 +104,6 @@ export const PublisherSetupModel = createModel(() => {
         draftJob.value.status === "queued" ||
         draftJob.value.status === "running"),
   );
-  const reviewed = signal(false);
   const pullRequest = signal<PublisherSetupPullRequest | null>(null);
   const setupStatus = signal<PublisherSetupStatus | null>(null);
   const busy = computed(() => operation.value !== "idle");
@@ -111,9 +115,6 @@ export const PublisherSetupModel = createModel(() => {
       Boolean(inspection.value && workflowPath.value && environment.value.trim()) &&
       !busy.value &&
       !draftPending.value,
-  );
-  const canCreatePullRequest = computed(
-    () => Boolean(draft.value && reviewed.value && !pullRequest.value) && !busy.value,
   );
   const canCheck = computed(
     () =>
@@ -160,7 +161,6 @@ export const PublisherSetupModel = createModel(() => {
     operationController = null;
     operation.value = "idle";
     draft.value = null;
-    reviewed.value = false;
     pullRequest.value = null;
     setupStatus.value = null;
     error.value = null;
@@ -284,6 +284,7 @@ export const PublisherSetupModel = createModel(() => {
       if (
         job.id !== expected.id ||
         !sameDraftRequest(job.request, expected.request) ||
+        job.request.createPullRequest !== true ||
         (job.result && !sameDraftRequest(job.result.proposal, expected.request))
       ) {
         invalidateProposal();
@@ -296,13 +297,14 @@ export const PublisherSetupModel = createModel(() => {
       pollFailures = 0;
       if (job.status === "ready") {
         saveJob(null);
-        if (job.judge?.verdict !== "pass" || !job.result) {
+        if (job.judge?.verdict !== "pass" || !job.result?.pullRequest) {
           error.value =
-            "This draft did not pass the second review. Draft a new change before opening a pull request.";
+            "The draft pull request did not complete its checks. Prepare another attempt.";
           return;
         }
         draft.value = { proposal: job.result.proposal, proposalToken: job.result.proposalToken };
         originalContent.value = job.result.originalContent;
+        pullRequest.value = job.result.pullRequest;
         return;
       }
       if (job.status === "failed") {
@@ -360,13 +362,11 @@ export const PublisherSetupModel = createModel(() => {
     draftPending,
     pollingPaused,
     pollingError,
-    reviewed,
     pullRequest,
     setupStatus,
     busy,
     canInspect,
     canDraft,
-    canCreatePullRequest,
     canCheck,
 
     async selectInstallation(value: string) {
@@ -391,9 +391,6 @@ export const PublisherSetupModel = createModel(() => {
       invalidateProposal();
       ecosystem.value = value;
     },
-    setReviewed(value: boolean) {
-      reviewed.value = value;
-    },
 
     async inspect() {
       if (!canInspect.peek()) return;
@@ -414,7 +411,7 @@ export const PublisherSetupModel = createModel(() => {
         },
       );
     },
-    async draftWorkflow() {
+    async preparePullRequest() {
       if (!canDraft.peek()) return;
       const payload: PublisherSetupDraftRequest = {
         ...scope(),
@@ -422,6 +419,7 @@ export const PublisherSetupModel = createModel(() => {
         workflowPath: workflowPath.peek(),
         environment: normalizeGithubEnvironmentName(environment.peek()),
         ecosystem: ecosystem.peek(),
+        createPullRequest: true,
       };
       invalidateProposal();
       await run(
@@ -431,7 +429,10 @@ export const PublisherSetupModel = createModel(() => {
             signal,
           }),
         (response) => {
-          if (!sameDraftRequest(response.job.request, payload)) {
+          if (
+            !sameDraftRequest(response.job.request, payload) ||
+            response.job.request.createPullRequest !== true
+          ) {
             error.value =
               "The draft request did not match the selected workflow. Inspect the repository and draft again.";
             return;
@@ -452,24 +453,8 @@ export const PublisherSetupModel = createModel(() => {
       pollFailures = 0;
       void pollJob(currentJob, generation);
     },
-    discardDraft() {
+    hideJob() {
       invalidateProposal();
-    },
-    async createPullRequest() {
-      if (!canCreatePullRequest.peek()) return;
-      const payload = draft.peek()!;
-      await run(
-        "creating-pr",
-        (signal) =>
-          apiJson<{ pullRequest: PublisherSetupPullRequest }>(
-            "/api/v1/github-app/setup/pull-request",
-            payload,
-            { signal },
-          ),
-        (response) => {
-          pullRequest.value = response.pullRequest;
-        },
-      );
     },
     async checkStatus() {
       if (!canCheck.peek()) return;

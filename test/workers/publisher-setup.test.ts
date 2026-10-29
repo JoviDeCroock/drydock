@@ -250,7 +250,7 @@ describe("publisher setup HTTP boundaries", () => {
     const { app, scope } = await fixture();
     const calls = mockGithub();
     const result = await call(app, "POST", "/api/v1/github-app/setup/draft", {
-      body: { ...SETUP_DRAFT_REQUEST, ...scope },
+      body: { ...SETUP_DRAFT_REQUEST, ...scope, createPullRequest: true },
       envOverride: setupEnv({
         FLAGS: { getBooleanValue: async () => false } as unknown as Flagship,
       }),

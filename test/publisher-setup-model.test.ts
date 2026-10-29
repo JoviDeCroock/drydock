@@ -38,8 +38,22 @@ const draft: PublisherSetupDraft = {
 function draftRequest(): PublisherSetupDraftRequest {
   const { installationRowId, repositoryFullName, workflowPath, baseSha, environment, ecosystem } =
     draft.proposal;
-  return { installationRowId, repositoryFullName, workflowPath, baseSha, environment, ecosystem };
+  return {
+    installationRowId,
+    repositoryFullName,
+    workflowPath,
+    baseSha,
+    environment,
+    ecosystem,
+    createPullRequest: true,
+  };
 }
+
+const pullRequest = {
+  number: 8,
+  url: "https://github.com/example/package/pull/8",
+  branch: "drydock/setup",
+};
 
 function draftJob(overrides: Partial<PublisherSetupDraftJob> = {}): PublisherSetupDraftJob {
   return {
@@ -57,7 +71,7 @@ function draftJob(overrides: Partial<PublisherSetupDraftJob> = {}): PublisherSet
       issues: [],
       model: "test-judge",
     },
-    result: { ...draft, originalContent: inspection.workflows[0].content },
+    result: { ...draft, originalContent: inspection.workflows[0].content, pullRequest },
     ...overrides,
   };
 }
@@ -73,6 +87,7 @@ function completedDraftRoutes() {
             ...draft,
             proposal: { ...draft.proposal, ...request },
             originalContent: inspection.workflows[0].content,
+            pullRequest,
           },
         }),
       }),
@@ -89,7 +104,7 @@ function completedDraftRoutes() {
 }
 
 async function draftWorkflow(model: InstanceType<typeof PublisherSetupModel>) {
-  await model.draftWorkflow();
+  await model.preparePullRequest();
   await vi.waitFor(() => expect(model.draft.value).not.toBeNull());
 }
 
@@ -120,6 +135,48 @@ afterEach(() => {
 });
 
 describe("publisher setup", () => {
+  test("does not resume legacy metadata without explicit automatic PR authorization", () => {
+    setActiveOrganizationId("org-a");
+    const legacyRequest = { ...draftRequest(), createPullRequest: undefined };
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => JSON.stringify({ id: "legacy-job", request: legacyRequest }),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const model = createModel();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(model.draftJobId.value).toBeNull();
+    expect(model.pullRequest.value).toBeNull();
+  });
+
+  test("a ready response without an opened PR cannot expose a completed result", async () => {
+    vi.useFakeTimers();
+    const incomplete = { ...draft, originalContent: inspection.workflows[0].content };
+    stubFetchRoutes({
+      "/repositories": repositories,
+      "/setup/inspect": () => jsonResponse({ inspection }),
+      "/setup/draft-jobs/": () => jsonResponse({ job: { ...draftJob(), result: incomplete } }),
+      "/setup/draft": () =>
+        jsonResponse(
+          { job: draftJob({ status: "queued", stage: "queued", judge: null, result: null }) },
+          202,
+        ),
+    });
+    const model = createModel();
+    await inspect(model);
+
+    await model.preparePullRequest();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(model.draft.value).toBeNull();
+    expect(model.pullRequest.value).toBeNull();
+    expect(model.error.value).toContain("did not complete its checks");
+  });
+
   test("normalizes a mixed-case environment before queueing and accepting its job", async () => {
     const bodies: unknown[] = [];
     const completed = completedDraftRoutes();
@@ -144,7 +201,7 @@ describe("publisher setup", () => {
   });
   test("polls background stages until a separately judged proposal is ready", async () => {
     vi.useFakeTimers();
-    const stages = ["draft", "validate", "judge", "ready"] as const;
+    const stages = ["draft", "validate", "judge", "create_pr", "ready"] as const;
     let polls = 0;
     stubFetchRoutes({
       "/repositories": repositories,
@@ -172,7 +229,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
     expect(model.draftJob.value?.stage).toBe("draft");
     expect(model.operation.value).toBe("idle");
@@ -184,11 +241,14 @@ describe("publisher setup", () => {
     await vi.advanceTimersByTimeAsync(3_000);
     expect(model.draftJob.value?.stage).toBe("judge");
     await vi.advanceTimersByTimeAsync(3_000);
+    expect(model.draftJob.value?.stage).toBe("create_pr");
+    expect(model.pullRequest.value).toBeNull();
+    await vi.advanceTimersByTimeAsync(3_000);
 
     expect(model.draft.value).toEqual(draft);
     expect(model.originalContent.value).toBe(inspection.workflows[0].content);
     expect(model.draftPending.value).toBe(false);
-    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(model.pullRequest.value).toEqual(pullRequest);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -223,12 +283,11 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
-    model.setReviewed(true);
 
     expect(model.draft.value).toBeNull();
-    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(model.pullRequest.value).toBeNull();
     expect(model.error.value).toContain("second review requested changes");
     expect(model.draftJob.value?.judge?.issues).toEqual(["Publish the reviewed artifact."]);
     expect(model.canDraft.value).toBe(true);
@@ -249,7 +308,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(model.draft.value).toBeNull();
@@ -278,7 +337,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
     model.setEnvironment("publish");
     await vi.advanceTimersByTimeAsync(30_000);
@@ -286,7 +345,7 @@ describe("publisher setup", () => {
     expect(model.draftJob.value).toBeNull();
 
     model.setEnvironment("drydock");
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
     model[Symbol.dispose]();
     await vi.advanceTimersByTimeAsync(30_000);
@@ -313,7 +372,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     setActiveOrganizationId("org-b");
     finishPoll(jsonResponse({ job: draftJob() }));
     await vi.advanceTimersByTimeAsync(0);
@@ -341,7 +400,7 @@ describe("publisher setup", () => {
     await draftWorkflow(model);
     rejectSubmission = true;
 
-    await model.draftWorkflow();
+    await model.preparePullRequest();
 
     expect(model.draftJobId.value).toBeNull();
     expect(model.draftPending.value).toBe(false);
@@ -376,7 +435,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(0);
     const saved = values.get("drydock:publisher-draft:org-a")!;
     expect(JSON.parse(saved)).toEqual({ id: "job-1", request: draftRequest() });
@@ -391,7 +450,7 @@ describe("publisher setup", () => {
     expect(resumed.repositoryFullName.value).toBe("example/package");
     expect(resumed.draft.value).toEqual(draft);
     expect(resumed.originalContent.value).toBe(inspection.workflows[0].content);
-    expect(resumed.reviewed.value).toBe(false);
+    expect(resumed.pullRequest.value).toEqual(pullRequest);
     expect(values.size).toBe(0);
   });
 
@@ -413,7 +472,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
     await vi.advanceTimersByTimeAsync(6_000);
     expect(model.pollingPaused.value).toBe(true);
     expect(model.pollingError.value).toContain("Resume status checks");
@@ -426,38 +485,30 @@ describe("publisher setup", () => {
     expect(model.pollingError.value).toBeNull();
   });
 
-  test("creates only the exact reviewed signed proposal after explicit review", async () => {
-    const bodies: unknown[] = [];
-    stubFetchRoutes({
+  test("authorizes automatic PR preparation explicitly and receives its link without another request", async () => {
+    const completed = completedDraftRoutes();
+    const submitted: unknown[] = [];
+    const routes = stubFetchRoutes({
       "/repositories": repositories,
       "/setup/inspect": () => jsonResponse({ inspection }),
-      ...completedDraftRoutes(),
-      "/setup/pull-request": (_url, init) => {
-        bodies.push(JSON.parse(String(init?.body)));
-        return jsonResponse({
-          pullRequest: {
-            number: 8,
-            url: "https://github.com/example/package/pull/8",
-            branch: "drydock/setup",
-          },
-        });
+      "/setup/draft-jobs/": completed["/setup/draft-jobs/"],
+      "/setup/draft": (url, init) => {
+        submitted.push(JSON.parse(String(init?.body)));
+        return completed["/setup/draft"](url, init);
       },
     });
     const model = createModel();
     await inspect(model);
     await draftWorkflow(model);
-    await model.createPullRequest();
-    expect(bodies).toEqual([]);
 
-    model.setReviewed(true);
-    await model.createPullRequest();
-
-    expect(bodies).toEqual([draft]);
-    expect(model.pullRequest.value?.number).toBe(8);
-    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(submitted).toEqual([draftRequest()]);
+    expect(model.pullRequest.value).toEqual(pullRequest);
+    expect(routes.mock.calls.some(([url]) => String(url).includes("/setup/pull-request"))).toBe(
+      false,
+    );
   });
 
-  test("changing the repository discards a pending draft and its review authorization", async () => {
+  test("changing the repository hides a pending job and prevents stale PR links", async () => {
     let finishDraft!: (response: Response) => void;
     stubFetchRoutes({
       "/repositories": repositories,
@@ -469,14 +520,14 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    const pending = model.draftWorkflow();
+    const pending = model.preparePullRequest();
     model.selectRepository("example/other");
     finishDraft(jsonResponse({ job: draftJob() }, 202));
     await pending;
 
     expect(model.draft.value).toBeNull();
     expect(model.inspection.value).toBeNull();
-    expect(model.reviewed.value).toBe(false);
+    expect(model.pullRequest.value).toBeNull();
     expect(model.operation.value).toBe("idle");
     expect(model.repositoryFullName.value).toBe("example/other");
   });
@@ -506,7 +557,7 @@ describe("publisher setup", () => {
     expect(model.error.value).toBeNull();
   });
 
-  test("changing environment or ecosystem requires a new signed proposal and review", async () => {
+  test("changing environment or ecosystem requires a new preparation job", async () => {
     stubFetchRoutes({
       "/repositories": repositories,
       "/setup/inspect": () => jsonResponse({ inspection }),
@@ -515,14 +566,13 @@ describe("publisher setup", () => {
     const model = createModel();
     await inspect(model);
     await draftWorkflow(model);
-    model.setReviewed(true);
     model.setEnvironment("publish");
     expect(model.draft.value).toBeNull();
-    expect(model.reviewed.value).toBe(false);
+    expect(model.pullRequest.value).toBeNull();
     await draftWorkflow(model);
     model.setEcosystem("pypi");
     expect(model.draft.value).toBeNull();
-    expect(model.canCreatePullRequest.value).toBe(false);
+    expect(model.pullRequest.value).toBeNull();
   });
 
   test("AI failure preserves inspection and permits retry without a PR", async () => {
@@ -534,7 +584,7 @@ describe("publisher setup", () => {
     });
     const model = createModel();
     await inspect(model);
-    await model.draftWorkflow();
+    await model.preparePullRequest();
 
     expect(model.inspection.value).toEqual(inspection);
     expect(model.draft.value).toBeNull();

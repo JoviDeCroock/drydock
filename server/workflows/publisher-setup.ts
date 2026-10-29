@@ -11,11 +11,15 @@ export class PublisherSetupWorkflow extends WorkflowEntrypoint<Cloudflare.Env, {
       await runPublisherSetupDraftJob(
         this.env,
         event.payload.jobId,
-        async (stage, operation, retryModel) => {
+        async (stage, operation, retrySafeOperation) => {
           await step.do(
             stage,
             {
-              retries: { limit: retryModel ? 1 : 0, delay: "5 seconds", backoff: "constant" },
+              retries: {
+                limit: retrySafeOperation ? 1 : 0,
+                delay: "5 seconds",
+                backoff: "constant",
+              },
               timeout: "4 minutes",
             },
             async () => {

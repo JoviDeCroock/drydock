@@ -93,6 +93,7 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
     workflowPath,
     environment: "drydock",
     ecosystem: "npm" as const,
+    createPullRequest: true as const,
   };
   const job = (ready = false): PublisherSetupDraftJob => ({
     id: "job-setup",
@@ -111,7 +112,17 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
           model: "test-judge",
         }
       : null,
-    result: ready ? { ...signedDraft, originalContent: currentWorkflow } : null,
+    result: ready
+      ? {
+          ...signedDraft,
+          originalContent: currentWorkflow,
+          pullRequest: {
+            number: 42,
+            url: "https://github.com/drydock/example/pull/42",
+            branch: "drydock/setup-fixture",
+          },
+        }
+      : null,
   });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -204,6 +215,7 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
         workflowPath,
         environment: "drydock",
         ecosystem: "npm",
+        createPullRequest: true,
       });
       await route.fulfill({
         status: 202,
@@ -212,47 +224,55 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
       return;
     } else if (path === "/api/v1/github-app/setup/draft-jobs/job-setup") {
       observations.jobPolls += 1;
-      json = {
-        job: judgeFails
-          ? {
-              ...job(),
-              status: "failed",
-              stage: "judge",
-              result: null,
-              failure: {
-                code: "judge_changes_requested",
-                message: "The second review requested changes. Draft again.",
-              },
-              judge: {
-                verdict: "changes_requested",
-                summary: "The publish job rebuilds the artifact.",
-                issues: ["Publish the exact reviewed tarball."],
-                model: "test-judge",
-              },
-            }
-          : job(!observations.holdJob && observations.jobPolls > 1),
-      };
-    } else if (path === "/api/v1/github-app/setup/pull-request") {
-      expect(request.postDataJSON()).toEqual(signedDraft);
-      observations.created += 1;
-      if (permissionDenied) {
-        await route.fulfill({
-          status: 403,
-          json: {
-            error:
-              "Creating a workflow PR requires Contents, Pull requests, and Workflows write permissions. You can still copy the draft manually.",
-            code: "setup_permissions_required",
+      let current = job(!observations.holdJob && observations.jobPolls > 2);
+      if (judgeFails)
+        current = {
+          ...job(),
+          status: "failed",
+          stage: "judge",
+          result: null,
+          failure: {
+            code: "judge_changes_requested",
+            message: "The second review requested changes. Prepare another attempt.",
           },
-        });
-        return;
-      }
-      json = {
-        pullRequest: {
-          number: 42,
-          url: "https://github.com/drydock/example/pull/42",
-          branch: "drydock/setup-fixture",
-        },
-      };
+          judge: {
+            verdict: "changes_requested",
+            summary: "The publish job rebuilds the artifact.",
+            issues: ["Publish the exact reviewed tarball."],
+            model: "test-judge",
+          },
+        };
+      else if (!observations.holdJob && observations.jobPolls === 2)
+        current = {
+          ...job(),
+          stage: "create_pr",
+          judge: {
+            verdict: "pass",
+            summary: "The reviewed artifact is preserved.",
+            issues: [],
+            model: "test-judge",
+          },
+        };
+      if (permissionDenied && observations.jobPolls >= 2)
+        current = {
+          ...job(),
+          status: "failed",
+          stage: "create_pr",
+          result: null,
+          failure: {
+            code: "setup_permissions_required",
+            message:
+              "Opening a draft PR requires Contents, Pull requests, and Workflows write permissions. Update the GitHub App permissions and prepare another attempt.",
+          },
+          judge: {
+            verdict: "pass",
+            summary: "The reviewed artifact is preserved.",
+            issues: [],
+            model: "test-judge",
+          },
+        };
+      if (current.status === "ready") observations.created = 1;
+      json = { job: current };
     } else if (path === "/api/v1/github-app/setup/status") {
       expect(request.postDataJSON()).toEqual({
         installationRowId: "installation-setup",
@@ -273,22 +293,29 @@ async function installSetupMocks(page: Page, permissionDenied = false, judgeFail
   return observations;
 }
 
-async function draftSetup(page: Page, progressPath?: string) {
+async function beginPreparation(page: Page) {
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await expect(page.getByRole("heading", { name: "Prepare a release workflow" })).toBeVisible();
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
   await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
   await expect(page.getByLabel("Publishing workflow", { exact: true })).toHaveValue(workflowPath);
-  await page.getByRole("button", { name: "Draft workflow change", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
+}
+
+async function draftSetup(page: Page, progressPath?: string) {
+  await beginPreparation(page);
   await expect(
     page.getByText("Running a second review of the change…", { exact: true }),
   ).toBeVisible();
   if (progressPath) await page.screenshot({ path: progressPath, fullPage: true });
-  await expect(page.getByRole("heading", { name: "Review the proposed change" })).toBeVisible();
+  await expect(
+    page.getByText("Opening the draft pull request in GitHub…", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Second review · advisory" })).toBeVisible();
 }
 
-test("publisher setup requires review before creating a draft PR and observes the first real gate", async ({
+test("publisher setup automatically prepares a draft PR after its checks and observes the first real gate", async ({
   page,
 }, testInfo) => {
   const errors: string[] = [];
@@ -298,20 +325,15 @@ test("publisher setup requires review before creating a draft PR and observes th
   });
   const observations = await installSetupMocks(page);
   await draftSetup(page, testInfo.outputPath("publisher-draft-progress.png"));
-  const create = page.getByRole("button", { name: "Create draft pull request", exact: true });
-  await expect(create).toBeDisabled();
-  expect(observations.created).toBe(0);
-  await page
-    .getByRole("checkbox", {
-      name: "I reviewed the workflow changes and the remaining configuration steps.",
-    })
-    .check();
-  await create.click();
-  await expect(page.getByRole("link", { name: "Open pull request #42" })).toHaveAttribute(
-    "href",
-    "https://github.com/drydock/example/pull/42",
-  );
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Create draft pull request", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Review pull request #42 on GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/drydock/example/pull/42");
   expect(observations.created).toBe(1);
+  expect(observations.requests).not.toContain("POST /api/v1/github-app/setup/pull-request");
   await page.getByRole("button", { name: "Check setup status", exact: true }).click();
   await expect(
     page.getByText(
@@ -337,39 +359,31 @@ test("publisher setup requires review before creating a draft PR and observes th
   expect(errors).toEqual([]);
 });
 
-test("changing repository invalidates a reviewed proposal before another PR can be created", async ({
-  page,
-}) => {
+test("changing repository hides the previous job link from the new selection", async ({ page }) => {
   const observations = await installSetupMocks(page);
   await draftSetup(page);
-  await page
-    .getByRole("checkbox", {
-      name: "I reviewed the workflow changes and the remaining configuration steps.",
-    })
-    .check();
   await page.locator("#publisherSetupRepository").selectOption("drydock/other");
-  await expect(page.getByRole("heading", { name: "Review the proposed change" })).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Create draft pull request", exact: true }),
-  ).toHaveCount(0);
-  expect(observations.created).toBe(0);
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
+    0,
+  );
+  expect(observations.created).toBe(1);
 });
 
-test("missing GitHub write permission preserves the reviewed proposal and explains recovery", async ({
+test("missing GitHub write permission reports the automatic job failure and recovery", async ({
   page,
 }) => {
   const observations = await installSetupMocks(page, true);
-  await draftSetup(page);
-  await page
-    .getByRole("checkbox", {
-      name: "I reviewed the workflow changes and the remaining configuration steps.",
-    })
-    .check();
-  await page.getByRole("button", { name: "Create draft pull request", exact: true }).click();
-  await expect(page.getByText(/Creating a workflow PR requires Contents/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Review the proposed change" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open pull request #42" })).toHaveCount(0);
-  expect(observations.created).toBe(1);
+  await beginPreparation(page);
+  await expect(page.getByText(/Opening a draft PR requires Contents/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Prepare draft pull request", exact: true }),
+  ).toBeEnabled();
+  expect(observations.created).toBe(0);
 });
 
 test("a negative second review surfaces actionable issues without a PR action", async ({
@@ -379,7 +393,7 @@ test("a negative second review surfaces actionable issues without a PR action", 
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
   await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
-  await page.getByRole("button", { name: "Draft workflow change", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
   await expect(
     page.getByText("The publish job rebuilds the artifact.", { exact: true }),
   ).toBeVisible();
@@ -390,7 +404,7 @@ test("a negative second review surfaces actionable issues without a PR action", 
     page.getByRole("button", { name: "Create draft pull request", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Draft workflow change", exact: true }),
+    page.getByRole("button", { name: "Prepare draft pull request", exact: true }),
   ).toBeEnabled();
   await page.screenshot({
     path: testInfo.outputPath("publisher-draft-judge-failure.png"),
@@ -407,7 +421,7 @@ test("a pending background draft resumes after refresh without persisting workfl
   await page.goto("/dashboard/settings?tab=integrations#github-app");
   await page.locator("#publisherSetupRepository").selectOption("drydock/example");
   await page.getByRole("button", { name: "Inspect workflow", exact: true }).click();
-  await page.getByRole("button", { name: "Draft workflow change", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare draft pull request", exact: true }).click();
   await expect(
     page.getByText("Running a second review of the change…", { exact: true }),
   ).toBeVisible();
@@ -419,13 +433,10 @@ test("a pending background draft resumes after refresh without persisting workfl
   expect(stored).not.toContain("jobs:");
   observations.holdJob = false;
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Review the proposed change" })).toBeVisible();
-  await expect(
-    page.getByRole("checkbox", {
-      name: "I reviewed the workflow changes and the remaining configuration steps.",
-    }),
-  ).not.toBeChecked();
-  expect(observations.created).toBe(0);
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toBeVisible();
+  expect(observations.created).toBe(1);
 });
 
 test("switching organizations preserves a resumed draft while the new installation list is delayed", async ({
@@ -439,6 +450,7 @@ test("switching organizations preserves a resumed draft while the new installati
     workflowPath,
     environment: "production",
     ecosystem: "npm" as const,
+    createPullRequest: true as const,
   };
   let finishInstallations: (() => void) | undefined;
   let complete = false;
@@ -529,6 +541,11 @@ test("switching organizations preserves a resumed draft while the new installati
                 ...ready,
                 proposal: { ...ready.proposal, ...requestScope, repositoryId: 202 },
                 originalContent: currentWorkflow,
+                pullRequest: {
+                  number: 84,
+                  url: "https://github.com/team-b/package/pull/84",
+                  branch: "drydock/setup-b",
+                },
               }
             : null,
         },
@@ -564,8 +581,8 @@ test("switching organizations preserves a resumed draft while the new installati
   await expect(page.getByLabel("Repository", { exact: true }).first()).toHaveValue(
     "team-b/package",
   );
-  await expect(page.getByRole("heading", { name: "Review the proposed change" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Create draft pull request", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("link", { name: "Review pull request #84 on GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/team-b/package/pull/84");
 });

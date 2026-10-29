@@ -51,6 +51,59 @@ function client(request: SetupGithubClient["request"]): SetupGithubClient {
   };
 }
 
+function uncertainSetupClient(failAfter: "branch" | "file" | "pr" | null = null) {
+  const proposal = setupProposal();
+  const state = { branch: "", head: SETUP_BASE_SHA, opened: false, extraEdits: false };
+  const writes: string[] = [];
+  let failed = false;
+  const request = vi.fn(async (suffix: string, init?: RequestInit) => {
+    if (suffix.startsWith("/pulls?"))
+      return state.opened
+        ? [
+            {
+              number: 12,
+              head: { ref: state.branch, repo: { id: 42 } },
+              base: { ref: "main", repo: { id: 42 } },
+            },
+          ]
+        : [];
+    if (suffix === "/git/ref/heads/main") return { object: { sha: SETUP_BASE_SHA } };
+    if (suffix.startsWith("/git/ref/heads/"))
+      return state.branch ? { object: { sha: state.head } } : null;
+    if (suffix.startsWith("/compare/"))
+      return {
+        files: [
+          { filename: proposal.workflowPath },
+          ...(state.extraEdits ? [{ filename: "other.yml" }] : []),
+        ],
+      };
+    if (suffix.includes("?ref=")) {
+      const original = suffix.endsWith(`?ref=${SETUP_BASE_SHA}`);
+      const content = original ? SETUP_ORIGINAL_WORKFLOW : proposal.content;
+      return {
+        type: "file",
+        path: proposal.workflowPath,
+        sha: SETUP_BLOB_SHA,
+        size: content.length,
+        content: btoa(content),
+        encoding: "base64",
+      };
+    }
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    writes.push(suffix);
+    const mutation = suffix === "/git/refs" ? "branch" : suffix === "/pulls" ? "pr" : "file";
+    if (mutation === "branch") state.branch = String(body.ref).slice("refs/heads/".length);
+    if (mutation === "file") state.head = "c".repeat(40);
+    if (mutation === "pr") state.opened = true;
+    if (mutation === failAfter && !failed) {
+      failed = true;
+      throw new Error("The write completed but its response was lost.");
+    }
+    return mutation === "pr" ? { number: 12 } : {};
+  });
+  return { client: client(request), proposal, state, writes };
+}
+
 describe("publisher setup proposal", () => {
   test("accepts build-once artifact review and publishing from downloaded bytes", () => {
     expect(() =>
@@ -121,7 +174,7 @@ describe("publisher setup proposal", () => {
     ["npm guide", SETUP_ORIGINAL_WORKFLOW, SETUP_NPM_GUIDE_WORKFLOW, SETUP_DRAFT_REQUEST],
     [
       "npm gated staging guide",
-      SETUP_ORIGINAL_WORKFLOW,
+      SETUP_ORIGINAL_WORKFLOW.replace("npm publish", "npm stage publish"),
       SETUP_NPM_STAGING_GUIDE_WORKFLOW,
       SETUP_DRAFT_REQUEST,
     ],
@@ -278,6 +331,22 @@ describe("publisher setup proposal", () => {
       /publish the downloaded archives/,
     );
   });
+  test("preserves staging versus direct publishing for native npm commands", () => {
+    expect(() =>
+      validateSetupDraft(
+        SETUP_ORIGINAL_WORKFLOW.replace("npm publish", "npm stage publish"),
+        SETUP_PROPOSED_WORKFLOW,
+        SETUP_DRAFT_REQUEST,
+      ),
+    ).toThrow(/changed staged publishing/);
+    expect(() =>
+      validateSetupDraft(
+        SETUP_ORIGINAL_WORKFLOW,
+        SETUP_PROPOSED_WORKFLOW.replace("npm publish", "npm stage publish"),
+        SETUP_DRAFT_REQUEST,
+      ),
+    ).toThrow(/changed staged publishing/);
+  });
   test("requires manual setup for privileged and indirectly triggered workflows", () => {
     expect(() =>
       validateSetupDraft(
@@ -371,6 +440,48 @@ describe("publisher setup proposal", () => {
 });
 
 describe("publisher setup GitHub boundary", () => {
+  test.each(["branch", "file", "pr"] as const)(
+    "recovers an uncertain %s write without repeating completed mutations",
+    async (failAfter) => {
+      const transport = uncertainSetupClient(failAfter);
+      await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow(
+        /response was lost/,
+      );
+      const result = await createSetupPullRequest(transport.client, transport.proposal);
+      expect(result.number).toBe(12);
+      expect(result.created).toBe(failAfter !== "pr");
+      expect(transport.writes).toEqual([
+        "/git/refs",
+        `/contents/${transport.proposal.workflowPath}`,
+        "/pulls",
+      ]);
+    },
+  );
+  test("refuses to resume a partially written branch containing other edits", async () => {
+    const transport = uncertainSetupClient("file");
+    await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow();
+    transport.state.extraEdits = true;
+    await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow(
+      /other edits/,
+    );
+    expect(transport.writes).toEqual(["/git/refs", `/contents/${transport.proposal.workflowPath}`]);
+  });
+  test.each([1, 2, 3])(
+    "authority revoked before mutation %i prevents it and later mutations",
+    async (denyAt) => {
+      const transport = uncertainSetupClient();
+      let attempts = 0;
+      const beforeWrite = vi.fn(async () => {
+        if (++attempts === denyAt) throw new Error("Setup authority revoked.");
+      });
+      await expect(
+        createSetupPullRequest(transport.client, transport.proposal, beforeWrite),
+      ).rejects.toThrow(/authority revoked/);
+      expect(beforeWrite).toHaveBeenCalledTimes(denyAt);
+      expect(transport.writes).toHaveLength(denyAt - 1);
+      expect(transport.state.opened).toBe(false);
+    },
+  );
   test("requests a single repository and read permissions without following redirects", async () => {
     const calls: Request[] = [];
     vi.stubGlobal(

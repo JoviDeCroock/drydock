@@ -54,7 +54,7 @@ export function PublisherSetup({
       <SettingsCardHeader title="Prepare a release workflow" />
       <SettingsCardBody inset="belowHeader">
         <Muted class="m-0 text-[13px] max-w-[680px]">
-          Inspect your publishing workflow, review a proposed change, and open a draft pull request.
+          Inspect your publishing workflow, then prepare a draft pull request for review in GitHub.
           GitHub environment configuration stays under your control.
         </Muted>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -95,8 +95,11 @@ export function PublisherSetup({
         <Show when={model.draftJobId}>
           <DraftProgress model={model} />
         </Show>
+        <Show when={model.pullRequest}>
+          <PreparedPullRequest model={model} />
+        </Show>
         <Show when={model.draft}>
-          <ProposalReview model={model} />
+          <ProposalDetails model={model} />
         </Show>
         <Show when={() => Boolean(model.repositoryFullName.value)}>
           <SetupChecks model={model} targets={targets} />
@@ -198,13 +201,17 @@ function DraftFields({ model }: { model: SetupModel }) {
         </Field>
       </div>
       <Muted class="m-0 text-[13px] max-w-[680px]">
-        Drafting sends this workflow to the configured AI model. Review the full change before
-        merging; a generated workflow does not establish that your release is protected.
+        Preparing sends the workflow and supporting release files to the configured AI model,
+        validates the change, and runs a second review. If those checks pass, Drydock automatically
+        opens a draft pull request. Review the changes in GitHub before merging.
       </Muted>
       <div>
-        <Button disabled={disabled} onClick={() => void model.draftWorkflow()}>
-          <Show when={() => model.operation.value === "drafting"} fallback="Draft workflow change">
-            Drafting workflow…
+        <Button disabled={disabled} onClick={() => void model.preparePullRequest()}>
+          <Show
+            when={() => model.operation.value === "drafting"}
+            fallback="Prepare draft pull request"
+          >
+            Starting preparation…
           </Show>
         </Button>
       </div>
@@ -212,69 +219,53 @@ function DraftFields({ model }: { model: SetupModel }) {
   );
 }
 
-function ProposalReview({ model }: { model: SetupModel }) {
+function PreparedPullRequest({ model }: { model: SetupModel }) {
+  const pullRequest = model.pullRequest.value!;
+  const proposal = model.draft.value?.proposal;
+  return (
+    <div class="flex flex-col gap-4">
+      <h4 class="m-0 text-[16px] font-medium">Draft pull request ready</h4>
+      <Muted class="m-0 text-[13px] max-w-[680px]">
+        Review the generated workflow in GitHub, then merge it and complete the environment setup.
+        The pull request stays a draft until you mark it ready for review.
+      </Muted>
+      <div>
+        <LinkButton href={pullRequest.url} target="_blank" rel="noopener noreferrer">
+          Review pull request #{pullRequest.number} on GitHub
+        </LinkButton>
+      </div>
+      <ol class="m-0 pl-5 flex flex-col gap-2 text-[13px] leading-[1.55]">
+        {proposal?.manualSteps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ProposalDetails({ model }: { model: SetupModel }) {
   const draft = model.draft.value!;
   const original = model.inspection.value?.workflows.find(
     (workflow) => workflow.path === draft.proposal.workflowPath,
   );
-  const disabled = useComputed(() => !model.canCreatePullRequest.value);
   return (
-    <div class="flex flex-col gap-4">
-      <h4 class="m-0 text-[16px] font-medium">Review the proposed change</h4>
-      <Muted class="m-0 text-[13px] max-w-[680px]">{draft.proposal.summary}</Muted>
-      <DiffView
-        path={draft.proposal.workflowPath}
-        status="modified"
-        before={{ textSample: model.originalContent.value ?? original?.content ?? "" }}
-        after={{ textSample: draft.proposal.content }}
-        beforeLabel="Current workflow"
-        afterLabel="Proposed workflow"
-      />
-      <ol class="m-0 pl-5 flex flex-col gap-2 text-[13px] leading-[1.55]">
-        {draft.proposal.manualSteps.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
-      <label class="flex items-start gap-2 text-[13px] leading-[1.55]">
-        <input
-          type="checkbox"
-          checked={model.reviewed}
-          disabled={model.busy}
-          onChange={(event) => model.setReviewed(event.currentTarget.checked)}
-          class="mt-0.5 accent-accent"
+    <details class="flex flex-col gap-4">
+      <summary class="cursor-pointer text-[13px] font-medium">View workflow changes</summary>
+      <div class="flex flex-col gap-4 mt-4">
+        <Muted class="m-0 text-[13px] max-w-[680px]">{draft.proposal.summary}</Muted>
+        <DiffView
+          path={draft.proposal.workflowPath}
+          status="modified"
+          before={{ textSample: model.originalContent.value ?? original?.content ?? "" }}
+          after={{ textSample: draft.proposal.content }}
+          beforeLabel="Current workflow"
+          afterLabel="Proposed workflow"
         />
-        <span>I reviewed the workflow changes and the remaining configuration steps.</span>
-      </label>
-      <div class="flex flex-wrap items-center gap-3">
-        <CopyButton text={draft.proposal.content} label="Copy proposed workflow" />
-        <Button disabled={disabled} onClick={() => void model.createPullRequest()}>
-          <Show
-            when={() => model.operation.value === "creating-pr"}
-            fallback="Create draft pull request"
-          >
-            Creating pull request…
-          </Show>
-        </Button>
-        <Show when={model.pullRequest}>
-          {(pullRequest) => (
-            <LinkButton
-              href={pullRequest.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="secondary"
-            >
-              Open pull request #{pullRequest.number}
-            </LinkButton>
-          )}
-        </Show>
+        <div>
+          <CopyButton text={draft.proposal.content} label="Copy proposed workflow" />
+        </div>
       </div>
-      <Show when={model.pullRequest}>
-        <Alert tone="info">
-          The pull request is a draft; review and merge it in GitHub, then finish the environment
-          configuration below.
-        </Alert>
-      </Show>
-    </div>
+    </details>
   );
 }
 
@@ -284,7 +275,8 @@ const DRAFT_STAGE_LABELS: Record<PublisherSetupJobStage, string> = {
   draft: "Drafting the workflow change…",
   validate: "Checking the proposed workflow structure…",
   judge: "Running a second review of the change…",
-  ready: "Draft ready for your review.",
+  create_pr: "Opening the draft pull request in GitHub…",
+  ready: "Draft pull request ready for review in GitHub.",
 };
 
 function DraftProgress({ model }: { model: SetupModel }) {
@@ -293,7 +285,7 @@ function DraftProgress({ model }: { model: SetupModel }) {
   const progress = useComputed(() => {
     const current = model.draftJob.value;
     if (!current) return "Restoring draft status…";
-    if (current.status === "failed") return "Draft needs another attempt.";
+    if (current.status === "failed") return "Draft pull request preparation did not complete.";
     return DRAFT_STAGE_LABELS[current.stage];
   });
   return (
@@ -303,8 +295,8 @@ function DraftProgress({ model }: { model: SetupModel }) {
       </div>
       <Show when={model.draftPending}>
         <Muted class="m-0 text-[13px] max-w-[680px]">
-          The draft runs in the background. You can change your selection or return to this page
-          while it completes.
+          Preparation continues if you leave this page or change your selection. A draft pull
+          request opens automatically when the checks pass.
         </Muted>
       </Show>
       <Show when={model.pollingError}>{(message) => <Alert tone="warn">{message}</Alert>}</Show>
@@ -333,8 +325,8 @@ function DraftProgress({ model }: { model: SetupModel }) {
       ) : null}
       <Show when={model.draftPending}>
         <div>
-          <Button variant="ghost" onClick={model.discardDraft}>
-            Discard this draft
+          <Button variant="ghost" onClick={model.hideJob}>
+            Hide this job
           </Button>
         </div>
       </Show>

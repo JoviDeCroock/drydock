@@ -91,18 +91,20 @@ is untrusted evidence for drafting; Drydock never executes it. AI drafting uses
 the existing organization killswitch, and workflow payloads must not be retained
 in AI Gateway logs.
 
-The user reviews an expiring proposal bound to its organization, author,
-repository, source commit, file, and exact proposed content before explicitly
-creating a draft pull request. The server checks that source state again before
-writing. The optional write token is repository-scoped and requires already
-granted Contents, Pull requests, and Workflows permissions. Drafting cannot grant
+The user explicitly authorizes preparation of a draft pull request before the
+background job starts. The persisted request must include `createPullRequest: true`;
+older clients and queued jobs without that authorization cannot write to GitHub.
+After validation and independent review, the job opens or recovers a draft PR for
+maintainer review in GitHub. It rechecks the pinned source and current authority
+before each mutation. The write token is repository-scoped and requires already
+granted Contents, Pull requests, and Workflows permissions. Preparation cannot grant
 permissions, enable environment protection, approve a release, or publish a
 package. Setup status reports observed configuration and a real scoped gate
 review; it does not certify arbitrary workflow code or publication paths.
 
 ### Durable publisher setup jobs
 
-Publisher workflow generation is dispatched to Cloudflare Workflows using only an opaque job id. Its five stages fetch pinned source, draft, validate, independently judge, and sign a ready proposal. Private source, candidate text, judge evidence, and signed output remain in organization-scoped private R2; D1 keeps metadata/status and one-day expiry. Checkpoint and run outputs carry only the job id. Creator-owned, organization-admin polling returns the private result. Every model attempt and result write rechecks current account/membership, installation, expiry, and the AI killswitch. Deterministic validation and an independent passing assessment are required before the v2 signature is issued; legacy unjudged signatures fail verification. Background jobs never create PRs or configure protection. Account/organization deletion and scheduled expiry remove job payloads and metadata, with post-write checks preventing deleted jobs from leaving late R2 objects.
+Publisher workflow generation is dispatched to Cloudflare Workflows using only an opaque job id. Its five stages fetch pinned source, draft, validate, independently judge, and create the draft PR. Pinned supporting manifests and literal release scripts are evidence only and never run in Drydock. For supported Changesets flows, reserved scalar tokens expand to exact server-owned prepare/publish programs; altered post-gate scripts fail validation. CI preparation builds/packages before review, and the publisher verifies the source commit and complete manifest/tarball hashes with scripts disabled. Private source, candidate text, judge evidence, and signed output remain in organization-scoped private R2; D1 keeps metadata/status and one-day expiry. Checkpoint and run outputs carry only the job id. Creator-owned, organization-admin polling returns the private result. Every model attempt and result write rechecks current account/membership, installation, expiry, and the AI killswitch. Deterministic validation and an independent passing assessment are required before the v2 signature is issued; legacy unjudged signatures fail verification. Uncertain GitHub outcomes get one bounded recovery attempt using the same branch and exact content; completed mutations are not blindly repeated. New and recovered PRs use one stable audit identity. Only an explicitly authorized job with passing checks creates a draft PR; jobs never merge it or configure protection. Account/organization deletion and scheduled expiry remove job payloads and metadata, with post-write checks preventing deleted jobs from leaving late R2 objects.
 
 ### Release decisions
 

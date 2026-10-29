@@ -244,10 +244,12 @@ publish the reviewed artifact bundle after approval. See
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
 
 The optional [publisher setup assistant](publisher-setup.md) can inspect an
-installed repository and draft a workflow change with Workers AI. Draft creation
-uses the organization's existing `ai-review` flag and GLM-5.3-flash. Opening a
-draft PR additionally requires the installation to grant Contents, Pull requests,
-and Workflows write permissions; the assistant does not expand installed grants.
+installed repository and prepare a draft PR with Workers AI. The explicit start
+action authorizes drafting, validation, independent review, and automatic PR
+creation. Preparation uses the organization's existing `ai-review` flag and
+GLM-5.3-flash, and preflights the installation's Contents, Pull requests, and
+Workflows write permissions before calling the model. The assistant does not
+expand installed grants.
 Operators can keep a read-only installation for inspection and manual setup.
 Enable the environment's Drydock deployment-protection rule and map its release
 target before testing a release; the assistant's status check reports the

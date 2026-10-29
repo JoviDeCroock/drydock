@@ -74,7 +74,7 @@ export async function createSetupClient(
     throw new PublisherSetupError(
       "setup_permissions_required",
       write
-        ? "Creating a workflow PR requires this installation to grant Contents, Pull requests, and Workflows write permissions. Ask the GitHub App operator to enable these optional permissions, then approve the installation update. You can still copy the draft manually."
+        ? "Creating a workflow PR requires this installation to grant Contents, Pull requests, and Workflows write permissions. Ask the GitHub App operator to enable these optional permissions, approve the installation update, then retry PR preparation."
         : "Reading the release workflow requires Contents and Actions read permissions for this repository.",
       403,
     );
@@ -287,6 +287,7 @@ export async function inspectPublisherSetup(
 export async function createSetupPullRequest(
   client: SetupGithubClient,
   proposal: PublisherSetupProposal,
+  beforeWrite?: () => Promise<void>,
 ): Promise<PublisherSetupPullRequest & { created: boolean }> {
   if (
     client.repository.id !== proposal.repositoryId ||
@@ -351,6 +352,7 @@ export async function createSetupPullRequest(
     );
   const ref = await client.request(`/git/ref/heads/${encodeURIComponent(branch)}`, {}, true);
   if (ref === null) {
+    await beforeWrite?.();
     await client.request("/git/refs", {
       method: "POST",
       body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: proposal.baseSha }),
@@ -365,6 +367,7 @@ export async function createSetupPullRequest(
   const branchHead =
     ref === null ? proposal.baseSha : String((ref as { object: { sha: string } }).object.sha);
   if (branchHead === proposal.baseSha) {
+    await beforeWrite?.();
     await client.request(`/contents/${proposal.workflowPath}`, {
       method: "PUT",
       body: JSON.stringify({
@@ -396,6 +399,7 @@ export async function createSetupPullRequest(
       );
     }
   }
+  await beforeWrite?.();
   const result = await client.request("/pulls", {
     method: "POST",
     body: JSON.stringify({

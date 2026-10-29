@@ -25,6 +25,7 @@ export interface PublisherSetupDraftRequest extends PublisherSetupScope {
   baseSha: string;
   environment: string;
   ecosystem: SupportedEcosystem;
+  createPullRequest?: true;
 }
 
 export interface PublisherSetupProposal extends PublisherSetupDraftRequest {
@@ -73,12 +74,18 @@ export interface PublisherSetupJudgeAssessment {
   model: string;
 }
 
+export interface PublisherSetupContext {
+  files: { path: string; sha: string; content: string }[];
+  warnings: string[];
+}
+
 export type PublisherSetupJobStage =
   | "queued"
   | "fetch_source"
   | "draft"
   | "validate"
   | "judge"
+  | "create_pr"
   | "ready";
 export type PublisherSetupJobStatus = "queued" | "running" | "ready" | "failed";
 
@@ -92,5 +99,10 @@ export interface PublisherSetupDraftJob {
   expiresAt: string;
   failure: { code: string; message: string } | null;
   judge: PublisherSetupJudgeAssessment | null;
-  result: (PublisherSetupDraft & { originalContent: string }) | null;
+  result:
+    | (PublisherSetupDraft & {
+        originalContent: string;
+        pullRequest: PublisherSetupPullRequest;
+      })
+    | null;
 }
