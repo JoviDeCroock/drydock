@@ -352,7 +352,14 @@ async function draftSetup(page: Page, progressPath?: string) {
     page.getByText("Opening the draft pull request in GitHub…", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Second review · advisory" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Independent review", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No changes requested by the second reviewer; your review is still required.", {
+      exact: true,
+    }),
+  ).toBeVisible();
 }
 
 test("publisher setup automatically prepares a draft PR after its checks and observes the first real gate", async ({
