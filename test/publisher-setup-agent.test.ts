@@ -220,6 +220,26 @@ describe("publisher setup native agent turns", () => {
     await expect(runSetupAgentTurn(env, state, client)).rejects.toThrow(/work budget/);
     expect(run).not.toHaveBeenCalled();
   });
+  test("a prolonged read-only draft gets a progress reminder without forcing an edit", async () => {
+    const state = start();
+    state.progress.turns = 12;
+    const { env, client, run } = binding([
+      response("report_blocker", {
+        reason: "The referenced reusable release workflow is missing.",
+      }),
+    ]);
+    const next = await runSetupAgentTurn(env, state, client);
+    const calls = run.mock.calls as unknown as [
+      string,
+      { tool_choice: string; messages: { role: string; content: string }[] },
+    ][];
+    expect(calls[0][1].tool_choice).toBe("auto");
+    expect(calls[0][1].messages.find((message) => message.role === "system")?.content).toContain(
+      "12 drafting turns and cached 1 source files with no proposed changes",
+    );
+    expect(next.blocked?.reason).toContain("missing");
+    expect(next.files[state.request.workflowPath].content).toBe(SETUP_ORIGINAL_WORKFLOW);
+  });
   test("clips output allowance and discards a final pass whose reported usage exceeds shared caps", async () => {
     const { state, harness } = await draft();
     let judge = createSetupAgentState(

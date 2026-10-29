@@ -173,10 +173,17 @@ export async function runSetupAgentTurn(
       },
     }),
   };
+  const changedFiles = setupAgentChangedFiles(state);
+  const progressReminder =
+    state.phase === "draft" && state.progress.turns >= 12 && !changedFiles.length
+      ? `You have used ${state.progress.turns} drafting turns and cached ${Object.keys(state.files).length} source files with no proposed changes. This workspace is private and reversible. Begin the smallest concrete edit using the release evidence already established. Further discovery should resolve a specific missing fact required by that edit, rather than broaden the repository survey. You can inspect more source and repair the patch after staging it. Preserve unchanged opaque build/test commands without investigating their implementations. If essential evidence is unavailable, report_blocker with the concrete missing fact. Do not invent behavior or force an unsafe change.`
+      : "";
   const system = `${state.phase === "draft" ? DRAFT : JUDGE}
+${progressReminder}
 Server work budget (authoritative, shared token/time allowance across drafting and review): ${JSON.stringify(
     {
       phase: state.phase,
+      changedFiles: changedFiles.length,
       remainingTurns:
         (state.phase === "draft" ? SETUP_DRAFT_MAX_TURNS : SETUP_JUDGE_MAX_TURNS) -
         state.progress.turns,
