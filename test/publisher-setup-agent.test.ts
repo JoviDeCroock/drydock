@@ -195,9 +195,24 @@ describe("publisher setup native agent turns", () => {
         "length",
       ),
     );
-    await expect(runSetupAgentTurn(harness.env, state, harness.client)).rejects.toThrow(
-      /incomplete tool turn/,
-    );
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(runSetupAgentTurn(harness.env, state, harness.client)).rejects.toThrow(
+        /incomplete tool turn/,
+      );
+      expect(warning).toHaveBeenCalledWith(
+        "github_app.setup_agent.incomplete",
+        expect.objectContaining({
+          phase: "draft",
+          finishReason: "length",
+          usage: { input: 100, output: 100 },
+        }),
+      );
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(SETUP_PROPOSED_WORKFLOW);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(SETUP_ORIGINAL_WORKFLOW);
+    } finally {
+      warning.mockRestore();
+    }
     expect(state.files[state.request.workflowPath].content).toBe(SETUP_ORIGINAL_WORKFLOW);
     expect(state.progress.turns).toBe(1);
   });
@@ -252,7 +267,7 @@ describe("publisher setup native agent turns", () => {
     await expect(runSetupAgentTurn(env, state, client)).rejects.toThrow(/work budget/);
     expect(run).not.toHaveBeenCalled();
   });
-  test("a prolonged read-only draft gets a progress reminder without forcing an edit", async () => {
+  test("a prolonged read-only draft can report a blocker during handoff without forcing an edit", async () => {
     const state = start();
     state.progress.turns = 12;
     const { env, client, run } = binding([
@@ -267,10 +282,96 @@ describe("publisher setup native agent turns", () => {
     ][];
     expect(calls[0][1].tool_choice).toBe("auto");
     expect(calls[0][1].messages.find((message) => message.role === "system")?.content).toContain(
-      "12 drafting turns and cached 1 source files with no proposed changes",
+      "The bounded initial investigation has ended",
     );
     expect(next.blocked?.reason).toContain("missing");
     expect(next.files[state.request.workflowPath].content).toBe(SETUP_ORIGINAL_WORKFLOW);
+  });
+  test("hands bounded investigation to a fresh implementation context without resetting shared budgets", async () => {
+    const state = start();
+    state.progress.turns = 12;
+    state.progress.inputTokens = 500;
+    state.budgets.bytes = 123;
+    state.messages.push({ role: "assistant", content: "PRIVATE_INVESTIGATION_RATIONALE" });
+    const harness = binding([
+      response("finish_investigation", {
+        plan: "PRIVATE_ADVISORY_PLAN: move packaging before the literal environment gate.",
+        evidencePaths: [state.request.workflowPath],
+      }),
+      response("read_file", { path: state.request.workflowPath }),
+    ]);
+    let current = await runSetupAgentTurn(harness.env, state, harness.client);
+    expect(current.progress).toMatchObject({
+      turns: 13,
+      inputTokens: 600,
+      startedAt: state.progress.startedAt,
+    });
+    expect(current.budgets).toEqual(state.budgets);
+    expect(current.readRevisions).toEqual({});
+    expect(JSON.stringify(current.handoff?.conversation)).toContain(
+      "PRIVATE_INVESTIGATION_RATIONALE",
+    );
+    expect(JSON.stringify(current.messages)).not.toContain("PRIVATE_INVESTIGATION_RATIONALE");
+    expect(JSON.stringify(current.messages)).toContain("PRIVATE_ADVISORY_PLAN");
+    const calls = harness.run.mock.calls as unknown as [
+      string,
+      { tools: { function: { name: string } }[] },
+    ][];
+    expect(calls[0][1].tools.map((entry) => entry.function.name).sort()).toEqual([
+      "finish_investigation",
+      "report_blocker",
+    ]);
+    current = await runSetupAgentTurn(harness.env, current, harness.client);
+    expect(calls[1][1].tools.map((entry) => entry.function.name)).toContain("edit_file");
+    expect(calls[1][1].tools.map((entry) => entry.function.name)).not.toContain(
+      "finish_investigation",
+    );
+    harness.run.mockImplementationOnce(async () =>
+      response("edit_file", {
+        path: state.request.workflowPath,
+        expectedRevision: current.readRevisions![state.request.workflowPath],
+        find: SETUP_ORIGINAL_WORKFLOW,
+        replace: SETUP_PROPOSED_WORKFLOW,
+      }),
+    );
+    current = await runSetupAgentTurn(harness.env, current, harness.client);
+    harness.run.mockImplementationOnce(async () =>
+      response("submit_changes", { summary: "Package before gate and publish reviewed bytes." }),
+    );
+    current = await runSetupAgentTurn(harness.env, current, harness.client);
+    expect((await extractSetupAgentCandidate(current)).content).toBe(SETUP_PROPOSED_WORKFLOW);
+    const judge = createSetupAgentState(
+      state.request,
+      { path: state.request.workflowPath, sha: SETUP_BLOB_SHA, content: SETUP_ORIGINAL_WORKFLOW },
+      "judge",
+      current,
+    );
+    expect(judge.handoff).toBeUndefined();
+    expect(JSON.stringify(judge.messages)).not.toContain("PRIVATE_ADVISORY_PLAN");
+    expect(JSON.stringify(judge.messages)).not.toContain("PRIVATE_INVESTIGATION_RATIONALE");
+  });
+  test("an incomplete investigation handoff cannot change active context or files", async () => {
+    const state = start();
+    state.progress.turns = 12;
+    const harness = binding([
+      response(
+        "finish_investigation",
+        { plan: "Move packaging before gate.", evidencePaths: [state.request.workflowPath] },
+        "length",
+      ),
+    ]);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(runSetupAgentTurn(harness.env, state, harness.client)).rejects.toThrow(
+        /incomplete tool turn/,
+      );
+      expect(state.handoff).toBeUndefined();
+      expect(state.messages).toHaveLength(1);
+      expect(state.progress.turns).toBe(12);
+      expect(state.files[state.request.workflowPath].content).toBe(SETUP_ORIGINAL_WORKFLOW);
+    } finally {
+      warning.mockRestore();
+    }
   });
   test("clips output allowance and discards a final pass whose reported usage exceeds shared caps", async () => {
     const { state, harness } = await draft();

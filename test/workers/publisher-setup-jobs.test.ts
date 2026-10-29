@@ -70,6 +70,7 @@ async function fixture(
     noProgress?: boolean;
     multiFile?: boolean;
     tamperAfterTree?: boolean;
+    investigationHandoff?: boolean;
   } = {},
 ) {
   const owner = await seedUser();
@@ -123,6 +124,16 @@ async function fixture(
         const judging = Boolean(
           data.tools?.some((entry) => entry.function?.name === "finish_review"),
         );
+        const finishingInvestigation = Boolean(
+          data.tools?.some((entry) => entry.function?.name === "finish_investigation"),
+        );
+        if (options.investigationHandoff && judging)
+          for (const marker of [
+            "INERT_INVESTIGATOR_HISTORY",
+            "INERT_INVESTIGATOR_CONTEXT",
+            "INERT_ADVISORY_PLAN",
+          ])
+            expect(JSON.stringify(data.messages)).not.toContain(marker);
         if (judging) judgeCalls++;
         else draftCalls++;
         if (!judging && (options.permanentDraft || (options.transientDraft && draftCalls === 1)))
@@ -147,7 +158,20 @@ async function fixture(
         let name: string;
         let args: Record<string, unknown>;
         if (!judging) {
-          if (options.blocked) {
+          if (finishingInvestigation) {
+            expect(data.tools?.map((entry) => entry.function?.name).sort()).toEqual([
+              "finish_investigation",
+              "report_blocker",
+            ]);
+            name = "finish_investigation";
+            args = {
+              plan: "INERT_ADVISORY_PLAN: preserve the observed build and split archive preparation from publication.",
+              evidencePaths: [request.workflowPath],
+            };
+          } else if (options.investigationHandoff && draftCalls <= 12) {
+            name = "read_file";
+            args = { path: request.workflowPath };
+          } else if (options.blocked) {
             name = "report_blocker";
             args = { reason: "Inspect the custom release inputs before continuing." };
           } else if (turn === 1) {
@@ -204,7 +228,13 @@ async function fixture(
             {
               message: {
                 role: "assistant",
-                content: null,
+                content:
+                  options.investigationHandoff && !judging && draftCalls <= 12
+                    ? "INERT_INVESTIGATOR_HISTORY"
+                    : null,
+                ...(options.investigationHandoff && !judging && draftCalls <= 12
+                  ? { reasoning_content: "INERT_INVESTIGATOR_CONTEXT" }
+                  : {}),
                 tool_calls: [
                   {
                     id: `${judging ? "judge" : "draft"}-${turn}`,
@@ -898,6 +928,115 @@ describe("publisher setup durable jobs", () => {
         });
         expect(JSON.stringify(audit)).not.toContain(SETUP_PROPOSED_WORKFLOW);
       }
+    } finally {
+      await state.instance?.dispose();
+    }
+  });
+  test("real Workflow hands bounded investigation to fresh implementation context and an independent judge", async () => {
+    const { app, owner, request, binding, counts, prCount } = await fixture({
+      investigationHandoff: true,
+    });
+    const realBinding = workflowBinding();
+    const state: { instance?: Awaited<ReturnType<typeof introspectWorkflowInstance>> } = {};
+    try {
+      const queued = await call(app, "POST", "/api/v1/github-app/setup/draft", {
+        body: request,
+        envOverride: {
+          ...binding,
+          PUBLISHER_SETUP_WORKFLOW: {
+            create: async (options: { id: string; params: { jobId: string } }) => {
+              state.instance = await introspectWorkflowInstance(realBinding, options.id);
+              await state.instance.modify(async (modify) => {
+                await modify.disableRetryDelays();
+              });
+              return realBinding.create(options);
+            },
+          } as unknown as Bindings["PUBLISHER_SETUP_WORKFLOW"],
+        },
+      });
+      expect(queued.status).toBe(202);
+      const { job } = (await queued.json()) as { job: PublisherSetupDraftJob };
+      if (!state.instance) throw new Error("Workflow was not started");
+      await state.instance.waitForStatus("complete");
+      const finished = await readPublisherSetupDraftJob(
+        { ...env, ...binding } as Bindings,
+        job.id,
+        owner.organizationId,
+        owner.userId,
+      );
+      expect(finished?.status).toBe("ready");
+      expect(finished?.result?.pullRequest.number).toBe(81);
+      expect(counts()).toEqual({ draftCalls: 18, judgeCalls: 3 });
+      expect(prCount()).toBe(1);
+      const row = await getPublisherSetupJob(owner.db, job.id);
+      const draftObject = await env.ARTIFACTS.get(
+        publisherSetupPayloadKey(
+          { id: job.id, organizationId: owner.organizationId },
+          "draft-agent",
+        ),
+      );
+      const draft = JSON.parse(await draftObject!.text()) as {
+        messages: unknown[];
+        handoff: { plan: { plan: string }; conversation: { role: string }[] };
+        progress: { turns: number; inputTokens: number; outputTokens: number; startedAt: number };
+      };
+      expect(draft.handoff.plan.plan).toContain("INERT_ADVISORY_PLAN");
+      expect(JSON.stringify(draft.handoff.conversation)).toContain("INERT_INVESTIGATOR_HISTORY");
+      expect(JSON.stringify(draft.handoff.conversation)).toContain("INERT_INVESTIGATOR_CONTEXT");
+      expect(draft.handoff.conversation.filter((message) => message.role === "tool")).toHaveLength(
+        13,
+      );
+      expect(draft.progress).toEqual({
+        turns: 18,
+        inputTokens: 180,
+        outputTokens: 180,
+        startedAt: row!.createdAt.getTime(),
+      });
+      for (const marker of ["INERT_INVESTIGATOR_HISTORY", "INERT_INVESTIGATOR_CONTEXT"])
+        expect(JSON.stringify(draft.messages)).not.toContain(marker);
+      expect(JSON.stringify(draft.messages)).toContain("INERT_ADVISORY_PLAN");
+      const judgeObject = await env.ARTIFACTS.get(
+        publisherSetupPayloadKey(
+          { id: job.id, organizationId: owner.organizationId },
+          "judge-agent",
+        ),
+      );
+      const judge = JSON.parse(await judgeObject!.text()) as {
+        messages: unknown[];
+        progress: { turns: number; inputTokens: number; outputTokens: number; startedAt: number };
+        handoff?: unknown;
+      };
+      expect(judge).not.toHaveProperty("handoff");
+      expect(judge.progress).toEqual({
+        turns: 3,
+        inputTokens: 210,
+        outputTokens: 210,
+        startedAt: row!.createdAt.getTime(),
+      });
+      for (const marker of [
+        "INERT_INVESTIGATOR_HISTORY",
+        "INERT_INVESTIGATOR_CONTEXT",
+        "INERT_ADVISORY_PLAN",
+      ])
+        expect(JSON.stringify(judge.messages)).not.toContain(marker);
+      for (let turn = 1; turn <= 18; turn++)
+        expect(
+          await state.instance.waitForStepResult({
+            name: `draft-${String(turn).padStart(2, "0")}`,
+          }),
+        ).toEqual({ jobId: job.id, done: turn === 18 });
+      for (let turn = 1; turn <= 3; turn++)
+        expect(
+          await state.instance.waitForStepResult({
+            name: `judge-${String(turn).padStart(2, "0")}`,
+          }),
+        ).toEqual({ jobId: job.id, done: turn === 3 });
+      for (const name of ["fetch_source", "validate", "create_pr"])
+        expect(await state.instance.waitForStepResult({ name })).toEqual({
+          jobId: job.id,
+          done: true,
+        });
+      expect(await state.instance.getOutput()).toEqual({ jobId: job.id });
     } finally {
       await state.instance?.dispose();
     }
