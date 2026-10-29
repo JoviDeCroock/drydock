@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import {
-  setupDraftRequestSchema,
-  signSetupProposal,
-  verifySetupProposal,
-} from "../server/lib/github-app/setup-draft";
+import { setupDraftRequestSchema } from "../server/lib/github-app/setup-draft";
 import {
   createSetupClient,
   createSetupPullRequest,
@@ -184,31 +180,6 @@ describe("publisher setup proposal", () => {
       setupDraftRequestSchema.parse({ ...SETUP_DRAFT_REQUEST, environment: " Production " })
         .environment,
     ).toBe("production");
-  });
-  test("binds proposals to purpose, content, organization, user, and expiry", async () => {
-    const proposal = setupProposal();
-    const token = await signSetupProposal("secret", proposal, "org-a", "user-a");
-    expect(await verifySetupProposal("secret", proposal, token, "org-a", "user-a")).toBe(true);
-    expect(await verifySetupProposal("secret", proposal, token, "org-b", "user-a")).toBe(false);
-    expect(await verifySetupProposal("secret", proposal, token, "org-a", "user-b")).toBe(false);
-    expect(
-      await verifySetupProposal(
-        "secret",
-        { ...proposal, content: "changed" },
-        token,
-        "org-a",
-        "user-a",
-      ),
-    ).toBe(false);
-    expect(
-      await verifySetupProposal(
-        "secret",
-        { ...proposal, expiresAt: Date.now() - 1 },
-        token,
-        "org-a",
-        "user-a",
-      ),
-    ).toBe(false);
   });
 });
 

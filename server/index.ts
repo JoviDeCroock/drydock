@@ -177,7 +177,7 @@ app.get("/api", (c) =>
       githubApp:
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       publisherSetup:
-        "POST /api/v1/github-app/setup/inspect; POST /api/v1/github-app/setup/draft; GET /api/v1/github-app/setup/draft-jobs/:id; POST /api/v1/github-app/setup/pull-request; POST /api/v1/github-app/setup/status (organization-admin workflow proposals and observed setup progress)",
+        "POST /api/v1/github-app/setup/inspect; POST /api/v1/github-app/setup/draft; GET /api/v1/github-app/setup/draft-jobs/:id; POST /api/v1/github-app/setup/draft-jobs/:id/cancel; POST /api/v1/github-app/setup/status (organization-admin workflow proposals and observed setup progress)",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi|atpm]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public release data only; on npm, from/to also accept pkg.pr.new preview URLs)",

@@ -260,6 +260,14 @@ async function fixture(
       const url = new URL(String(input));
       if (init?.method && url.pathname.startsWith("/repos/octo/release/"))
         gitWrites.push(url.pathname.slice("/repos/octo/release".length));
+      if (/^\/app\/installations\/[^/]+$/.test(url.pathname))
+        return Response.json({
+          permissions: {
+            contents: "write",
+            pull_requests: "write",
+            workflows: options.writePermissionsMissing ? "read" : "write",
+          },
+        });
       if (url.pathname.endsWith("/access_tokens")) {
         const body = JSON.parse(String(init?.body));
         expect(body.repositories).toEqual(["release"]);
@@ -270,8 +278,7 @@ async function fixture(
             pull_requests: "write",
             workflows: "write",
           });
-          if (options.writePermissionsMissing) return Response.json({}, { status: 403 });
-          if (options.revokeBeforePr && writeTokens === 2)
+          if (options.revokeBeforePr && writeTokens === 1)
             await owner.db
               .update(organizationMembers)
               .set({ role: "member" })
@@ -434,6 +441,7 @@ async function fixture(
     testEnv,
     counts: () => ({ draftCalls, judgeCalls }),
     prCount: () => pullRequestsCreated,
+    writeTokenCount: () => writeTokens,
     helperPath,
     helperContent,
     gitWrites,
@@ -566,6 +574,80 @@ describe("publisher setup durable jobs", () => {
         ),
     ).toHaveLength(0);
   });
+  test("only pull request creation mints a write token", async () => {
+    const { owner, request, testEnv, prCount, writeTokenCount } = await fixture();
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation) => operation());
+    expect((await getPublisherSetupJob(owner.db, job.id))?.status).toBe("ready");
+    expect(prCount()).toBe(1);
+    expect(writeTokenCount()).toBe(1);
+  });
+  test("cancel is creator scoped and stops a pending job before model work or GitHub writes", async () => {
+    const { owner, request, app, binding, testEnv, counts, prCount } = await fixture();
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await env.ARTIFACTS.put(publisherSetupPayloadKey(job, "source"), SETUP_ORIGINAL_WORKFLOW);
+    const other = await seedUser();
+    await owner.db.insert(organizationMembers).values({
+      id: crypto.randomUUID(),
+      organizationId: owner.organizationId,
+      userId: other.userId,
+      role: "admin",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const otherApp = buildTestApp((app) => app.route("/api/v1/github-app", githubAppRoutes), {
+      userId: other.userId,
+      emailVerified: true,
+    });
+    const path = `/api/v1/github-app/setup/draft-jobs/${job.id}/cancel`;
+    expect(
+      (
+        await call(otherApp, "POST", path, {
+          activeOrganizationId: owner.organizationId,
+          envOverride: binding,
+        })
+      ).status,
+    ).toBe(404);
+    expect((await getPublisherSetupJob(owner.db, job.id))?.status).toBe("queued");
+    const cancelled = await call(app, "POST", path, { envOverride: binding });
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toMatchObject({
+      job: { status: "failed", failure: { code: "setup_cancelled" }, result: null },
+    });
+    expect(await env.ARTIFACTS.get(publisherSetupPayloadKey(job, "source"))).toBeNull();
+    await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation) => operation());
+    expect(counts()).toEqual({ draftCalls: 0, judgeCalls: 0 });
+    expect(prCount()).toBe(0);
+  });
+  test("cancelling a finished job keeps its pull request result", async () => {
+    const { owner, request, app, binding, testEnv } = await fixture();
+    const job = await createPublisherSetupJob(
+      owner.db,
+      owner.organizationId,
+      owner.userId,
+      request,
+    );
+    await runPublisherSetupDraftJob(testEnv, job.id, async (_stage, operation) => operation());
+    const response = await call(
+      app,
+      "POST",
+      `/api/v1/github-app/setup/draft-jobs/${job.id}/cancel`,
+      { envOverride: binding },
+    );
+    expect(await response.json()).toMatchObject({
+      job: { status: "ready", result: { pullRequest: { number: expect.any(Number) } } },
+    });
+  });
   test.each(["errored", "terminated", "complete"])(
     "polling reconciles a terminal %s runtime without exposing its private error",
     async (status) => {
@@ -655,7 +737,6 @@ describe("publisher setup durable jobs", () => {
       owner.userId,
     );
     expect(finished?.status).toBe("ready");
-    expect(finished?.result?.proposalToken).toBeTruthy();
     expect(finished?.result?.originalContent).toBe(SETUP_ORIGINAL_WORKFLOW);
   });
   test("blocked feedback stays private while D1 keeps only its static failure", async () => {
@@ -926,7 +1007,6 @@ describe("publisher setup durable jobs", () => {
         expect(prCount()).toBe(0);
       } else {
         expect(finished?.result?.originalContent).toBe(SETUP_ORIGINAL_WORKFLOW);
-        expect(finished?.result?.proposalToken).toBeTruthy();
         if (options.multiFile)
           expect(finished?.result?.proposal.supportingFiles).toEqual([
             { path: helperPath, content: helperContent, originalSha: null, originalContent: null },

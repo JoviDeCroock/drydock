@@ -19,6 +19,7 @@ import { sha256Hex } from "../platform/crypto-utils";
 import { listInstallationsForOrganization } from "./persistence";
 import {
   createSetupClient,
+  requireSetupWritePermissions,
   createSetupPullRequest,
   PublisherSetupError,
   readSetupWorkflow,
@@ -320,6 +321,33 @@ export async function readPublisherSetupDraftJob(
   return result;
 }
 
+/** Stops a creator's pending job; checks before each GitHub write make the stop binding. */
+export async function cancelPublisherSetupDraftJob(
+  env: Cloudflare.Env,
+  id: string,
+  organizationId: string,
+  userId: string,
+): Promise<PublisherSetupDraftJob | null> {
+  const db = createDb(env.DB);
+  const row = await getOwnedPublisherSetupJob(db, id, organizationId, userId);
+  if (!row) return null;
+  if (
+    (row.status === "queued" || row.status === "running") &&
+    (await updatePublisherSetupJob(db, id, {
+      status: "failed",
+      failureJson: { code: "setup_cancelled", message: "Pull request preparation was cancelled." },
+    }))
+  ) {
+    await deletePublisherSetupJobPayloads(env.ARTIFACTS, row);
+    try {
+      await (await env.PUBLISHER_SETUP_WORKFLOW?.get(id))?.terminate();
+    } catch {
+      /* The failed status already stops every later stage; termination only saves model work. */
+    }
+  }
+  return readPublisherSetupDraftJob(env, id, organizationId, userId);
+}
+
 async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promise<boolean> {
   const job = await activeJob(env, id);
   if (!job) return true;
@@ -333,10 +361,13 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     return true;
   if (stage === "fetch_source") {
     const installation = await installationForJob(env, job);
+    const config = readGithubAppConfig(env);
+    await requireSetupWritePermissions(config, installation.installationId);
     const client = await createSetupClient(
-      readGithubAppConfig(env),
+      config,
       installation.installationId,
       job.requestJson.repositoryFullName,
+      false,
       true,
     );
     if ((await setupDefaultHead(client)) !== job.requestJson.baseSha)
@@ -468,7 +499,7 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
       409,
     );
   if (!(await activeJob(env, id))) return true;
-  const { signSetupProposal, setupManualSteps } = await import("./setup-draft");
+  const { setupManualSteps } = await import("./setup-draft");
   const { createPullRequest: _authorization, ...request } = job.requestJson;
   const { digest: _reviewedDigest, ...proposalCandidate } = candidate;
   const proposal = {
@@ -481,12 +512,6 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
     manualSteps: setupManualSteps(job.requestJson),
     expiresAt: Date.now() + 20 * 60_000,
   };
-  const proposalToken = await signSetupProposal(
-    readGithubAppConfig(env).stateSecret,
-    proposal,
-    job.organizationId,
-    job.createdByUserId,
-  );
   const installation = await installationForJob(env, job);
   const client = await createSetupClient(
     readGithubAppConfig(env),
@@ -542,7 +567,6 @@ async function runStage(env: Cloudflare.Env, id: string, stage: StepName): Promi
   if (
     await writePayload(env, job, "result", {
       proposal,
-      proposalToken,
       originalContent: source.content,
       pullRequest,
     })
@@ -591,7 +615,7 @@ export async function runPublisherSetupDraftJob(
                   failureJson: {
                     code: "setup_pull_request_unavailable",
                     message:
-                      "GitHub did not confirm the setup pull request. Start a fresh setup to recover its existing branch or PR.",
+                      "GitHub did not confirm the setup pull request. Check the repository's pull requests and setup branches before starting a fresh setup.",
                   },
                 });
                 emitOperationalEvent("warn", "github_app.setup_pr.failed", {

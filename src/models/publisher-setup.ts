@@ -13,7 +13,7 @@ import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import type { InstallationRepository } from "./release-targets";
 import { normalizeGithubEnvironmentName } from "../../server/lib/github-app/validation";
 
-type SetupOperation = "idle" | "inspecting" | "drafting" | "checking" | "mapping";
+type SetupOperation = "idle" | "inspecting" | "drafting" | "cancelling" | "checking" | "mapping";
 
 interface SavedDraftJob {
   id: string;
@@ -107,8 +107,12 @@ export const PublisherSetupModel = createModel(() => {
   const pullRequest = signal<PublisherSetupPullRequest | null>(null);
   const setupStatus = signal<PublisherSetupStatus | null>(null);
   const busy = computed(() => operation.value !== "idle");
+  const inputsLocked = computed(() => busy.value || draftPending.value);
   const canInspect = computed(
-    () => Boolean(installationRowId.value && repositoryFullName.value) && !busy.value,
+    () =>
+      Boolean(installationRowId.value && repositoryFullName.value) &&
+      !busy.value &&
+      !draftPending.value,
   );
   const canDraft = computed(
     () =>
@@ -302,7 +306,7 @@ export const PublisherSetupModel = createModel(() => {
             "The draft pull request did not complete its checks. Prepare another attempt.";
           return;
         }
-        draft.value = { proposal: job.result.proposal, proposalToken: job.result.proposalToken };
+        draft.value = { proposal: job.result.proposal };
         originalContent.value = job.result.originalContent;
         pullRequest.value = job.result.pullRequest;
         return;
@@ -365,29 +369,36 @@ export const PublisherSetupModel = createModel(() => {
     pullRequest,
     setupStatus,
     busy,
+    inputsLocked,
     canInspect,
     canDraft,
     canCheck,
 
+    // A pending job keeps running server-side, so its inputs stay fixed until it is cancelled.
     async selectInstallation(value: string) {
+      if (draftPending.peek()) return;
       clearRepository();
       installationRowId.value = value;
       await loadRepositories(value);
     },
 
     selectRepository(value: string) {
+      if (draftPending.peek()) return;
       clearRepository();
       repositoryFullName.value = value;
     },
     selectWorkflow(value: string) {
+      if (draftPending.peek()) return;
       invalidateProposal();
       workflowPath.value = value;
     },
     setEnvironment(value: string) {
+      if (draftPending.peek()) return;
       invalidateProposal();
       environment.value = value;
     },
     setEcosystem(value: PublisherSetupDraftRequest["ecosystem"]) {
+      if (draftPending.peek()) return;
       invalidateProposal();
       ecosystem.value = value;
     },
@@ -453,8 +464,28 @@ export const PublisherSetupModel = createModel(() => {
       pollFailures = 0;
       void pollJob(currentJob, generation);
     },
-    hideJob() {
-      invalidateProposal();
+    async cancelJob() {
+      const job = currentJob;
+      if (!job) return;
+      await run(
+        "cancelling",
+        (signal) =>
+          apiJson<{ job: PublisherSetupDraftJob }>(
+            `/api/v1/github-app/setup/draft-jobs/${encodeURIComponent(job.id)}/cancel`,
+            {},
+            { signal },
+          ).catch((err: unknown) => {
+            if (err instanceof ApiError && err.status === 404) return null;
+            throw err;
+          }),
+        (response) => {
+          // The job can finish before the cancel lands; show its pull request instead.
+          if (response?.job.status === "ready") {
+            pollAttempts = 0;
+            void pollJob(job, generation);
+          } else invalidateProposal();
+        },
+      );
     },
     async checkStatus() {
       if (!canCheck.peek()) return;
