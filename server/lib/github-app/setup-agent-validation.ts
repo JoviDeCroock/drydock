@@ -11,7 +11,8 @@ import type { SetupAgentState, SetupAgentValidation } from "./setup-agent-types"
 
 // A standalone `publish` token catches wrappers and flag orders (`pnpm -r publish`,
 // `npm --provenance publish`, `changeset publish`) without matching names like publish-x.mjs.
-const publisherCommand = /(?<![\w./-])publish(?![\w./-])|\btwine\s+upload\b/;
+const publisherCommand =
+  /(?<![\w./-])publish(?![\w./-])|\btwine\s+upload\b|\bsemantic-release\b|\brelease-it\b|\bnx\s+release\b/;
 
 function workflow(content: string): Record<string, unknown> {
   const document = parseDocument(content, { strict: true, uniqueKeys: true });
@@ -134,131 +135,161 @@ function grantsIdToken(permissions: unknown) {
   return scopes.has("*") || scopes.has("id-token");
 }
 
-// Supporting files stay where other CI, hooks, editors, and package managers do not pick
-// them up: scripts and data under .github/ outside workflows and actions. Other files can
-// run before review (CI that ignores [skip ci], review-triggered workflows) or redirect
-// publishing (manifests, registry configuration, .gitattributes, CODEOWNERS).
+// Supporting files are new scripts and data under .github/ outside workflows and actions:
+// nothing else in the repository can already reference them, so CI that ignores [skip ci],
+// review-triggered workflows, hooks, and package managers cannot run or reinterpret them
+// before review. Existing files, manifests, and repository configuration stay unchanged.
 const SUPPORTING_FILE =
   /^\.github\/(?!workflows\/|actions\/)(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:mjs|cjs|js|sh|py|json)$/;
+// These events run the PR's merge ref, so a drafted workflow on them would run before review.
+const REVIEW_EVENTS = ["pull_request_review", "pull_request_review_comment"];
 
-// The protected job holds the OIDC grant, so it only runs setup, the single candidate
-// download, and publishers; caches, scripts actions, and local or container code are out.
-const PROTECTED_ACTIONS = new Set([
-  "actions/checkout",
-  "actions/setup-node",
-  "actions/setup-python",
-  "actions/download-artifact",
-  ...KNOWN_ACTIONS,
-]);
-const PROTECTED_REFUSED_ACTIONS = new Set(["actions/cache", "actions/github-script"]);
+// The protected job holds the OIDC grant, so every action input and shell command in it is
+// allowlisted: setup, the single candidate download, checksums, git tagging, publisher CLIs
+// over candidate paths, and reviewed scripts from a checkout made before the download.
+const PROTECTED_INPUTS: Record<string, ReadonlySet<string>> = {
+  "actions/checkout": new Set([
+    "persist-credentials",
+    "fetch-depth",
+    "fetch-tags",
+    "sparse-checkout",
+    "sparse-checkout-cone-mode",
+    "show-progress",
+    "filter",
+    "lfs",
+  ]),
+  "actions/setup-node": new Set([
+    "node-version",
+    "node-version-file",
+    "registry-url",
+    "scope",
+    "always-auth",
+    "package-manager-cache",
+    "check-latest",
+    "architecture",
+  ]),
+  "actions/setup-python": new Set([
+    "python-version",
+    "python-version-file",
+    "architecture",
+    "check-latest",
+  ]),
+  "actions/download-artifact": new Set(["name", "path"]),
+  "astral-sh/setup-uv": new Set(["version", "python-version"]),
+  "pnpm/action-setup": new Set(["version", "run_install"]),
+  "oven-sh/setup-bun": new Set(["bun-version", "bun-version-file"]),
+  "pypa/gh-action-pypi-publish": new Set([
+    "packages-dir",
+    "repository-url",
+    "attestations",
+    "print-hash",
+    "verbose",
+    "skip-existing",
+  ]),
+  "changesets/action": new Set([
+    "publish",
+    "createGithubReleases",
+    "commitMode",
+    "title",
+    "commit",
+    "setupGitUser",
+  ]),
+};
 const REGISTRY_HOSTS = new Set([
   "registry.npmjs.org",
   "upload.pypi.org",
   "test.pypi.org",
-  "pypi.org",
   "marketplace.visualstudio.com",
   "open-vsx.org",
-  "github.com",
-  "api.github.com",
-  "uploads.github.com",
 ]);
-// Variables that load code or reconfigure where a package manager sends credentials,
-// without appearing as a command in the reviewed diff.
+// Variables that load code, move configuration lookup, or redirect where a package
+// manager sends credentials, without appearing as a command in the reviewed diff.
 const LOADER_ENV =
-  /^(?:BASH_ENV|ENV|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|IFS|PATH|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT_UNAUTHORIZED|LD_\w+|DYLD_\w+|PYTHON\w*|PIP_\w+|UV_(?!PUBLISH_TOKEN$)\w+|TWINE_(?!USERNAME$|PASSWORD$)\w+|NPM_CONFIG_\w+|YARN_\w+|PNPM_\w+|COREPACK_\w+|BUN_\w+|(?:HTTPS?|ALL|NO)_PROXY|SSL_CERT_\w+|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|GIT_\w+|PERL5?\w*|RUBY\w*|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS)$/i;
+  /^(?:BASH_ENV|ENV|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|IFS|PATH|HOME|USERPROFILE|APPDATA|XDG_\w+|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT_UNAUTHORIZED|LD_\w+|DYLD_\w+|PYTHON\w*|PIP_\w+|UV_(?!PUBLISH_TOKEN$)\w+|TWINE_(?!USERNAME$|PASSWORD$)\w+|NPM_CONFIG_\w+|YARN_\w+|PNPM_\w+|COREPACK_\w+|BUN_\w+|(?:HTTPS?|ALL|NO)_PROXY|SSL_CERT_\w+|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|GIT_\w+|PERL5?\w*|RUBY\w*|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|ACTIONS_\w+)$/i;
 const REGISTRY_FLAG =
-  /(?:^|\s)--(?:registry|index-url|extra-index-url|index|publish-url|repository-url|check-url|userconfig|globalconfig)\b|--ignore-scripts[= ]false\b|\b(?:npm|pnpm|yarn)\s+config\s+set\b/;
-const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const PACKAGE_MANAGER_BUILDS = new Set([
-  "ci",
-  "i",
-  "install",
-  "add",
-  "rebuild",
-  "run",
-  "run-script",
-  "exec",
-  "dlx",
-  "x",
-  "pack",
-  "build",
-  "test",
-  "create",
-  "init",
-  "link",
-]);
-const BUILD_TOOLS = new Set([
-  "npx",
-  "pnpx",
-  "bunx",
-  "uvx",
-  "corepack",
-  "make",
-  "cmake",
-  "tsc",
-  "node-gyp",
-  "pip",
-  "pip3",
-]);
-const INTERPRETERS = new Set([
-  "node",
-  "python",
-  "python3",
-  "bash",
-  "sh",
-  "deno",
-  "tsx",
-  "ruby",
-  "perl",
-  "pwsh",
-]);
+  /--(?:registry|index-url|extra-index-url|index|publish-url|repository-url|check-url|userconfig|globalconfig|config-file|directory|project)\b|--ignore-scripts[= ]false\b/;
+const REGISTRY_TOKEN =
+  /^(?:NPM_TOKEN|NODE_AUTH_TOKEN|TWINE_PASSWORD|TWINE_USERNAME|UV_PUBLISH_TOKEN|VSCE_PAT|OVSX_PAT)$|NPM|PYPI|TWINE|VSCE|OVSX|REGISTRY|PUBLISH/i;
 const SHELLS = new Set(["bash", "sh", "pwsh", "powershell", "python", "cmd"]);
-
-// Installing or running a publisher CLI fetches the registry's tool, not repository code.
+const CANDIDATE_SUFFIX: Record<SetupAgentState["request"]["ecosystem"], RegExp> = {
+  npm: /\.tgz$/,
+  pypi: /(?:\*|\.whl|\.tar\.gz)$/,
+  vscode: /\.vsix$/,
+};
+// Installing a publisher CLI fetches the registry's tool, not repository code.
 const PUBLISHER_TOOL = /^(?:npm|twine|@vscode\/vsce|ovsx)(?:(?:@|==)[A-Za-z0-9.^~_-]+)?$/;
-function publisherTool(command: string, rest: string[]) {
-  const operands = rest.filter((token) => !token.startsWith("-"));
-  if (command === "npx") return PUBLISHER_TOOL.test(operands[0] ?? "") && operands[1] === "publish";
-  const install =
-    (command === "npm" &&
-      /^(?:i|install)$/.test(operands[0] ?? "") &&
-      rest.some((token) => /^(?:-g|--global)$/.test(token))) ||
-    (/^pip3?$/.test(command) && operands[0] === "install") ||
-    (/^python\d*(?:\.\d+)?$/.test(command) &&
-      rest[0] === "-m" &&
-      rest[1] === "pip" &&
-      operands[1] === "install");
-  const packages = operands.slice(command.startsWith("python") ? 2 : 1);
-  return install && packages.length > 0 && packages.every((token) => PUBLISHER_TOOL.test(token));
-}
+const VALUE_FLAGS = new Set([
+  "--access",
+  "--tag",
+  "--otp",
+  "-p",
+  "--pat",
+  "-u",
+  "--username",
+  "--password",
+  "--token",
+  "--trusted-publishing",
+]);
+
 function commandSegments(run: string) {
   return run
-    .split(/&&|\|\||[;|\n]/)
-    .map((segment) =>
-      segment
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .filter((token, index, all) => !all.slice(0, index + 1).every(isPrefixToken)),
-    )
+    .replace(/\\\n/g, " ")
+    .split(/&&|\|\||[;&|\n]/)
+    .map((segment) => segment.trim().split(/\s+/).filter(Boolean).map(unquote))
     .filter((tokens) => tokens.length);
-}
-function isPrefixToken(token: string) {
-  return /^(?:do|then|else|time|exec|env|[A-Za-z_][A-Za-z0-9_]*=\S*)$/.test(token);
 }
 function unquote(token: string) {
   return token.replace(/^["']|["']$/g, "");
 }
-function hosts(text: string) {
-  return [...text.matchAll(/(?:[a-z][a-z0-9+.-]*:)?\/\/([A-Za-z0-9.-]+)/gi)].map(([, host]) =>
-    host!.toLowerCase(),
-  );
+function operands(tokens: string[]) {
+  const result: string[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (VALUE_FLAGS.has(token)) index++;
+    else if (!token.startsWith("-")) result.push(token);
+  }
+  return result;
+}
+function workspacePath(token: string) {
+  const stripped = token.replace(/^(?:\$\{?GITHUB_WORKSPACE\}?|\$\{?PWD\}?)\//, "");
+  if (stripped.startsWith("/") || stripped.includes("$")) return null;
+  const parts: string[] = [];
+  for (const part of stripped.split("/"))
+    if (part === "..") {
+      if (!parts.pop()) return null;
+    } else if (part && part !== ".") parts.push(part);
+  return parts.join("/");
+}
+function urlIssues(text: string, allowed: Set<string>) {
+  const issues: string[] = [];
+  for (const [match] of text.matchAll(/(?:\b[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>`]+/gi)) {
+    let url: URL;
+    try {
+      url = new URL(match.startsWith("//") ? `https:${match}` : match);
+    } catch {
+      issues.push(`${match} is not a well-formed registry address.`);
+      continue;
+    }
+    if (url.username || url.password)
+      issues.push(`${url.hostname}: addresses carry no credentials.`);
+    else if (!REGISTRY_HOSTS.has(url.hostname) && !allowed.has(url.hostname))
+      issues.push(`${url.hostname} is not a package registry the protected job may contact.`);
+  }
+  return issues;
+}
+function urlHosts(text: string) {
+  const result = new Set<string>();
+  for (const [match] of text.matchAll(/(?:\b[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>`]+/gi))
+    try {
+      result.add(new URL(match.startsWith("//") ? `https:${match}` : match).hostname);
+    } catch {
+      /* Malformed addresses establish no trusted host. */
+    }
+  return result;
 }
 function envPairs(value: unknown) {
-  return isRecord(value?.constructor === Object ? value : null)
-    ? Object.entries(value as Record<string, unknown>).map(
-        ([key, item]) => `${key}=${canonicalJson(item)}`,
-      )
+  return isRecord(value)
+    ? Object.entries(value).map(([key, item]) => `${key}=${canonicalJson(item)}`)
     : [];
 }
 function allEnvPairs(value: Record<string, unknown>) {
@@ -276,14 +307,26 @@ function loaderEnvIssues(env: unknown, original: Set<string>, where: string) {
     .filter(([key, item]) => LOADER_ENV.test(key) && !original.has(`${key}=${canonicalJson(item)}`))
     .map(([key]) => `${where}: ${key} changes how code loads or where publishing connects.`);
 }
+function registryTokenUse(job: Record<string, unknown>) {
+  const envKeys = [job.env, ...steps(job).map((step) => step.env)].flatMap((env) =>
+    isRecord(env) ? Object.keys(env) : [],
+  );
+  return (
+    envKeys.some((key) => REGISTRY_TOKEN.test(key)) ||
+    [...secretNames(strings(job).join("\n"))].some(
+      (name) => name !== "GITHUB_TOKEN" && REGISTRY_TOKEN.test(name),
+    )
+  );
+}
 
 interface ProtectedContext {
   where: string;
   artifactName: string;
   ecosystem: SetupAgentState["request"]["ecosystem"];
-  trustedActions: Set<string>;
+  originalSteps: Set<string>;
   originalEnv: Set<string>;
   originalHosts: Set<string>;
+  workflowDefaults: unknown;
 }
 
 /** Issues for one protected job; the producer dependency is checked by the caller. */
@@ -292,13 +335,25 @@ function protectedJobIssues(job: Record<string, unknown>, context: ProtectedCont
   const issues: string[] = [];
   const jobSteps = steps(job);
   if (job["continue-on-error"]) issues.push(`${where}: the protected job cannot ignore failures.`);
-  for (const key of ["container", "services", "defaults", "uses"])
+  for (const key of ["container", "services", "defaults", "uses", "strategy"])
     if (job[key] !== undefined)
       issues.push(`${where}: the protected job cannot use ${key}; it runs on the plain runner.`);
+  const defaultsRun = isRecord(context.workflowDefaults) ? context.workflowDefaults.run : undefined;
+  if (
+    defaultsRun !== undefined &&
+    !(
+      isRecord(defaultsRun) &&
+      Object.keys(defaultsRun).every((key) => key === "shell") &&
+      typeof defaultsRun.shell === "string" &&
+      SHELLS.has(defaultsRun.shell)
+    )
+  )
+    issues.push(
+      `${where}: workflow run defaults other than a standard shell reach the protected job.`,
+    );
   issues.push(...loaderEnvIssues(job.env, context.originalEnv, where));
-  for (const host of new Set(hosts(strings(job).join("\n"))))
-    if (!REGISTRY_HOSTS.has(host) && !context.originalHosts.has(host))
-      issues.push(`${where}: ${host} is not a package registry the protected job may contact.`);
+  for (const issue of urlIssues(strings([job.env, job.steps]).join("\n"), context.originalHosts))
+    issues.push(`${where}: ${issue}`);
 
   const downloads = jobSteps
     .map((step, index) => ({ step, index }))
@@ -314,86 +369,163 @@ function protectedJobIssues(job: Record<string, unknown>, context: ProtectedCont
     issues.push(
       `${where}: download exactly one artifact, the current-run ${context.artifactName} candidate.`,
     );
-  const downloadWith = download && isRecord(download.step.with) ? download.step.with : {};
-  if (Object.keys(downloadWith).some((key) => key !== "name" && key !== "path"))
-    issues.push(`${where}: the candidate download takes only name and path.`);
-  const rawPath = downloadWith.path;
+  const rawPath = download && isRecord(download.step.with) ? download.step.with.path : undefined;
+  // A dedicated directory keeps candidate files from overwriting the checkout or supplying
+  // configuration (.npmrc, uv.toml, pyproject.toml) that publishers read from the workspace.
   const downloadPath =
     typeof rawPath === "string" ? rawPath.trim().replace(/^\.\//, "").replace(/\/+$/, "") : "";
-  if (
-    rawPath !== undefined &&
-    (typeof rawPath !== "string" || rawPath.includes("${{") || /(?:^|\/)\.\.(?:\/|$)/.test(rawPath))
-  )
-    issues.push(`${where}: the candidate download path is a literal workspace directory.`);
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(downloadPath))
+    issues.push(
+      `${where}: download candidates into one dedicated directory, for example path: candidates.`,
+    );
   const downloadIndex = download?.index ?? -1;
   const checkoutIndex = jobSteps.findIndex(
     (step) => typeof step.uses === "string" && actionIdentity(step.uses) === "actions/checkout",
   );
+  const isCandidate = (path: string | null) =>
+    path !== null &&
+    path.startsWith(`${downloadPath}/`) &&
+    CANDIDATE_SUFFIX[context.ecosystem].test(path);
 
-  function checkCommand(run: string, label: string, index: number) {
-    for (const tokens of commandSegments(run)) {
-      const [command, ...rest] = tokens.map(unquote);
-      if (!command) continue;
-      if (
-        !publisherTool(command, rest) &&
-        (BUILD_TOOLS.has(command) ||
-          (PACKAGE_MANAGERS.has(command) &&
-            rest.some((token) => PACKAGE_MANAGER_BUILDS.has(token))) ||
-          (/^python\d*(?:\.\d+)?$/.test(command) &&
-            rest[0] === "-m" &&
-            /^(?:build|pip)$/.test(rest[1] ?? "")) ||
-          (["uv", "poetry", "hatch"].includes(command) &&
-            rest.some((token) => /^(?:build|sync|run|pip|tool|add|install|venv)$/.test(token))) ||
-          (["vsce", "ovsx"].includes(command) && rest.includes("package")))
-      )
-        issues.push(`${label}: move builds and dependency installation before the protected job.`);
-      if (command === "gh" && rest.includes("download"))
-        issues.push(`${label}: download only the named candidate artifact.`);
-      if (
-        context.ecosystem === "npm" &&
-        ["npm", "pnpm", "yarn"].includes(command) &&
-        rest.includes("publish") &&
-        !rest.some((token) => /\.tgz$|^\$\{?\w+\}?$/.test(token))
-      )
-        issues.push(
-          `${label}: publish the downloaded .tgz candidates, not the checked-out source.`,
+  function commandIssues(run: string, index: number): string[] {
+    if (/[<>`]|\$\(|\$\{\{|ACTIONS_|GITHUB_ENV|GITHUB_PATH|GITHUB_OUTPUT/.test(run))
+      return [
+        "use plain commands without redirection, substitution, expressions, or runner files.",
+      ];
+    if (REGISTRY_FLAG.test(run)) return ["keep the default registry and configuration."];
+    const result: string[] = [];
+    const loops = new Map<string, boolean>();
+    const candidate = (token: string) => {
+      const variable = /^\$\{?(\w+)\}?$/.exec(token)?.[1];
+      return variable ? loops.get(variable) === true : isCandidate(workspacePath(token));
+    };
+    const publishes = (tokens: string[]) => {
+      const targets = operands(tokens);
+      return targets.length > 0 && targets.every(candidate);
+    };
+    for (let tokens of commandSegments(run)) {
+      if (tokens[0] === "do") tokens = tokens.slice(1);
+      const [command = "", ...rest] = tokens;
+      const args = operands(rest);
+      let allowed = false;
+      let target = true;
+      if (command === "done" && !rest.length) allowed = true;
+      else if (command === "for" && rest[1] === "in" && /^\w+$/.test(rest[0] ?? "")) {
+        const items = rest.slice(2);
+        loops.set(
+          rest[0]!,
+          items.length > 0 && items.every((item) => isCandidate(workspacePath(item))),
         );
-      if (publisherTool(command, rest)) continue;
-      const script = INTERPRETERS.has(command)
-        ? rest.find((token) => !token.startsWith("-"))
-        : command.includes("/")
-          ? command
-          : undefined;
-      if (script === undefined) continue;
-      const normalized = script.replace(/^\.\//, "");
-      // Candidate archives are unreviewed build output; only checked-out, reviewed source runs.
-      if (checkoutIndex < 0 || checkoutIndex > index)
-        issues.push(`${label}: check out the repository before running ${normalized}.`);
-      else if (
-        downloadIndex >= 0 &&
-        (!downloadPath || downloadPath === "." || normalized.startsWith(`${downloadPath}/`))
+        allowed = true;
+      } else if (
+        command === "set" &&
+        rest.every((token) => /^(?:[-+][euxo]+|pipefail)$/.test(token))
       )
-        issues.push(
-          `${label}: download candidates into their own directory and run scripts only from the checkout.`,
+        allowed = true;
+      else if (
+        command === "echo" ||
+        (command === "corepack" && canonicalJson(rest) === '["enable"]')
+      )
+        allowed = true;
+      else if (["ls", "sha256sum", "sha512sum", "shasum"].includes(command))
+        allowed = args.every(
+          (arg) => isCandidate(workspacePath(arg)) || workspacePath(arg) === downloadPath,
+        );
+      else if (command === "git")
+        allowed =
+          (rest[0] === "config" &&
+            /^user\.(?:name|email)$/.test(rest[1] ?? "") &&
+            rest.length === 3) ||
+          rest[0] === "tag" ||
+          (rest[0] === "push" &&
+            rest.every((token) => !token.includes(":") || token === "--follow-tags"));
+      else if (
+        (command === "npm" &&
+          /^(?:i|install)$/.test(args[0] ?? "") &&
+          rest.some((token) => /^(?:-g|--global)$/.test(token))) ||
+        (/^pip3?$/.test(command) && args[0] === "install") ||
+        (/^python3?$/.test(command) &&
+          rest[0] === "-m" &&
+          rest[1] === "pip" &&
+          args[1] === "install")
+      ) {
+        const packages = args.slice(command.startsWith("python") ? 2 : 1);
+        allowed = packages.length > 0 && packages.every((token) => PUBLISHER_TOOL.test(token));
+      } else if (context.ecosystem === "npm" && ["npm", "pnpm"].includes(command)) {
+        const publish =
+          rest[0] === "publish" ? 1 : rest[0] === "stage" && rest[1] === "publish" ? 2 : 0;
+        allowed = publish > 0;
+        target = publishes(rest.slice(publish));
+      } else if (
+        context.ecosystem === "pypi" &&
+        (command === "twine" ||
+          (/^python3?$/.test(command) && rest[0] === "-m" && rest[1] === "twine"))
+      ) {
+        const sub = command === "twine" ? rest : rest.slice(2);
+        allowed = sub[0] === "upload";
+        target = publishes(sub.slice(1));
+      } else if (context.ecosystem === "pypi" && command === "uv" && rest[0] === "publish") {
+        allowed = true;
+        target = operands(rest.slice(1)).length
+          ? publishes(rest.slice(1))
+          : downloadPath === "dist";
+      } else if (
+        context.ecosystem === "vscode" &&
+        (["vsce", "ovsx"].includes(command) || command === "npx")
+      ) {
+        const sub =
+          command === "npx" ? rest.filter((token) => !/^(?:-y|--yes)$/.test(token)) : rest;
+        const tool = command === "npx" ? sub[0] : command;
+        const args = command === "npx" ? sub.slice(1) : sub;
+        allowed =
+          /^(?:vsce|ovsx|@vscode\/vsce|ovsx)(?:@[A-Za-z0-9.^~_-]+)?$/.test(tool ?? "") &&
+          args[0] === "publish";
+        const packageFlag = args.findIndex((token) => token === "--packagePath" || token === "-i");
+        const paths = [
+          ...operands(args.slice(1)),
+          ...(packageFlag >= 0 ? [args[packageFlag + 1] ?? ""] : []),
+        ];
+        target = paths.length > 0 && paths.every(candidate);
+      } else if (["node", "python", "python3", "bash", "sh"].includes(command)) {
+        // A reviewed script from the checkout, invoked directly: interpreter flags (-e, -c,
+        // --require, -m) would run code that is not a reviewed file.
+        const script = workspacePath(rest[0] ?? "");
+        allowed = Boolean(script?.startsWith(".github/")) && !rest[0]!.startsWith("-");
+        if (allowed && (checkoutIndex < 0 || checkoutIndex > index))
+          result.push(`check out the repository before running ${script}.`);
+      }
+      if (!allowed)
+        result.push(
+          `${command} is not a setup, checksum, tagging, publisher, or reviewed .github/ script command.`,
+        );
+      else if (!target)
+        result.push(
+          `publish the downloaded candidates under ${downloadPath || "the download path"}/.`,
         );
     }
+    return result;
   }
 
   jobSteps.forEach((step, index) => {
     const label = `${where} step ${index + 1}`;
     issues.push(...loaderEnvIssues(step.env, context.originalEnv, label));
+    if (step["working-directory"] !== undefined)
+      issues.push(`${label}: run from the workspace root.`);
+    if (step.shell !== undefined && !(typeof step.shell === "string" && SHELLS.has(step.shell)))
+      issues.push(`${label}: use a standard shell.`);
     const stepWith = isRecord(step.with) ? step.with : {};
+    let commands = typeof step.run === "string" ? [step.run] : [];
     if (typeof step.uses === "string") {
       const identity = actionIdentity(step.uses);
-      if (
-        PROTECTED_REFUSED_ACTIONS.has(identity) ||
-        identity.startsWith("./") ||
-        identity.startsWith("docker://") ||
-        (!PROTECTED_ACTIONS.has(identity) && !context.trustedActions.has(identity))
-      )
+      const inputs = PROTECTED_INPUTS[identity];
+      // Other actions the original workflows trusted run only exactly as the original ran them.
+      const original = context.originalSteps.has(
+        canonicalJson({ uses: step.uses.trim(), with: step.with ?? null }),
+      );
+      if (!inputs && !original)
         issues.push(`${label}: ${identity} cannot run with the protected job's credentials.`);
-      if (identity === "actions/checkout" && ("ref" in stepWith || "repository" in stepWith))
-        issues.push(`${label}: check out this run's commit, not another ref or repository.`);
+      else if (inputs && Object.keys(stepWith).some((key) => !inputs.has(key)))
+        issues.push(`${label}: ${identity} takes only ${[...inputs].join(", ")} here.`);
       if (
         identity === "pnpm/action-setup" &&
         stepWith.run_install !== undefined &&
@@ -401,25 +533,24 @@ function protectedJobIssues(job: Record<string, unknown>, context: ProtectedCont
         stepWith.run_install !== "false"
       )
         issues.push(`${label}: install dependencies before the protected job.`);
-      if (identity === "actions/setup-python" && "pip-install" in stepWith)
-        issues.push(`${label}: install dependencies before the protected job.`);
+      if (identity === "pypa/gh-action-pypi-publish") {
+        const directory = workspacePath(String(stepWith["packages-dir"] ?? "dist/"))?.replace(
+          /\/+$/,
+          "",
+        );
+        if (directory !== downloadPath)
+          issues.push(
+            `${label}: publish the downloaded candidates from ${downloadPath || "the download path"}.`,
+          );
+      }
+      // changesets/action runs its publish input as a shell command.
+      if (identity === "changesets/action" && typeof stepWith.publish === "string")
+        commands = [stepWith.publish];
     }
-    if (step.shell !== undefined && !(typeof step.shell === "string" && SHELLS.has(step.shell)))
-      issues.push(`${label}: use a standard shell.`);
-    // changesets/action runs its version and publish inputs as shell commands.
-    const commands = [
-      step.run,
-      ...(typeof step.uses === "string" && actionIdentity(step.uses) === "changesets/action"
-        ? [stepWith.publish, stepWith.version]
-        : []),
-    ].filter((command): command is string => typeof command === "string");
-    for (const command of commands) {
-      if (REGISTRY_FLAG.test(command))
-        issues.push(`${label}: keep the default registry and package-manager configuration.`);
-      checkCommand(command, label, index);
-    }
+    for (const command of commands)
+      for (const issue of commandIssues(command, index)) issues.push(`${label}: ${issue}`);
   });
-  if (checkoutIndex > downloadIndex && downloadIndex >= 0)
+  if (downloadIndex >= 0 && checkoutIndex > downloadIndex)
     issues.push(`${where}: check out before downloading so candidates cannot be overwritten.`);
   if (jobSteps.some((step, index) => publisher(step) && index <= downloadIndex))
     issues.push(`${where}: publishing must follow the artifact download.`);
@@ -475,17 +606,21 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
         `${file.path}: only the selected workflow can change; other workflows and actions can run before review.`,
       );
     else if (
+      file.originalContent !== null ||
       !SUPPORTING_FILE.test(file.path) ||
       actionDirectories.some((directory) => file.path.startsWith(directory))
     )
       issues.push(
-        `${file.path}: supporting changes are limited to .mjs, .cjs, .js, .sh, .py, or .json files under .github/ outside workflows and actions; other repository files can run in CI, hooks, or package managers before review.`,
+        `${file.path}: supporting changes are new .mjs, .cjs, .js, .sh, .py, or .json files under .github/ outside workflows and actions; existing and other repository files can run in CI, hooks, or package managers before review.`,
       );
   }
   // Only the selected workflow's own source establishes a secret for it; documentation the
   // agent read, and secrets other workflows use for unrelated purposes, do not.
-  const originalSecrets =
-    selected.originalContent === null ? new Set() : workflowSecretNames(selected.originalContent);
+  // GITHUB_TOKEN is the run's own token, not a stored secret.
+  const originalSecrets = new Set([
+    "GITHUB_TOKEN",
+    ...(selected.originalContent === null ? [] : workflowSecretNames(selected.originalContent)),
+  ]);
   for (const file of changed) {
     const names = /\.ya?ml$/.test(file.path)
       ? workflowSecretNames(file.content)
@@ -501,6 +636,7 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
   const trustedActions = new Set(KNOWN_ACTIONS);
   const originalReferences = new Set<string>();
   const originalImages = new Set<string>();
+  const originalSteps = new Set<string>();
   for (const file of Object.values(state.files))
     if (file.originalContent !== null && /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.path))
       try {
@@ -509,8 +645,13 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
           originalReferences.add(reference);
           trustedActions.add(actionIdentity(reference));
         }
-        for (const job of Object.values(jobsOf(original)))
-          if (isRecord(job)) for (const image of images(job)) originalImages.add(image);
+        for (const job of Object.values(jobsOf(original))) {
+          if (!isRecord(job)) continue;
+          for (const image of images(job)) originalImages.add(image);
+          for (const step of steps(job))
+            if (typeof step.uses === "string")
+              originalSteps.add(canonicalJson({ uses: step.uses.trim(), with: step.with ?? null }));
+        }
       } catch {
         /* An unparseable original contributes no trusted actions. */
       }
@@ -525,6 +666,11 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
         if (canonicalJson(before.on) !== canonicalJson(after.on))
           issues.push(`${file.path}: preserve the existing workflow triggers.`);
       }
+      const triggers = strings(after.on);
+      if (REVIEW_EVENTS.some((event) => triggers.includes(event)))
+        issues.push(
+          `${file.path}: review events run this workflow from the pull request before review; set up this workflow manually.`,
+        );
     } catch {
       issues.push(
         `${file.path}: use valid YAML with direct jobs, no duplicate keys, aliases, or custom tags.`,
@@ -549,7 +695,7 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
     if (canonicalJson(before?.defaults ?? null) !== canonicalJson(after.defaults ?? null))
       issues.push(`${file.path}: workflow defaults stay unchanged.`);
     const originalEnv = before ? allEnvPairs(before) : new Set<string>();
-    const originalHosts = new Set(before ? hosts(strings(before).join("\n")) : []);
+    const originalHosts = before ? urlHosts(strings(before).join("\n")) : new Set<string>();
     const workflowPermissionsChanged =
       canonicalJson(before?.permissions ?? null) !== canonicalJson(after.permissions ?? null);
     // Write scopes stay within what the original workflow already granted somewhere.
@@ -598,14 +744,30 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
         issues.push(`${where}: grant id-token: write only to the protected job.`);
       if (steps(job).some(publisher) && !protectedJob)
         issues.push(`${where}: a known publisher is outside the requested environment.`);
+      if (!protectedJob && !unchanged && registryTokenUse(job))
+        issues.push(`${where}: registry credentials belong only to the protected job.`);
       if (!protectedJob) continue;
+      const originalJob = originalJobs[jobId];
+      if (
+        !unchanged &&
+        !(
+          isRecord(originalJob) &&
+          canonicalJson(originalJob["runs-on"]) === canonicalJson(job["runs-on"])
+        ) &&
+        !(
+          typeof job["runs-on"] === "string" &&
+          /^(?:ubuntu|windows|macos)-(?:latest|\d[\w.-]*)$/.test(job["runs-on"])
+        )
+      )
+        issues.push(`${where}: run the protected job on a GitHub-hosted runner label.`);
       const jobIssues = protectedJobIssues(job, {
         where,
         artifactName,
         ecosystem: state.request.ecosystem,
-        trustedActions,
+        originalSteps,
         originalEnv,
         originalHosts,
+        workflowDefaults: after.defaults,
       });
       const needs =
         typeof job.needs === "string" ? [job.needs] : Array.isArray(job.needs) ? job.needs : [];
@@ -627,8 +789,15 @@ export function validateSetupAgentChanges(state: SetupAgentState): SetupAgentVal
           `${where}: depend on an unprotected job that uploads the named release candidate.`,
         );
       if (!jobIssues.length) gateFound = true;
-      // An unchanged protected job is the maintainer's own; only drafted ones must meet the contract.
-      else if (!unchanged) issues.push(...jobIssues);
+      // An unchanged protected job that neither publishes nor holds OIDC is the maintainer's
+      // own (for example a deployment); anything that can release must meet the contract.
+      else if (
+        !unchanged ||
+        steps(job).some(publisher) ||
+        registryTokenUse(job) ||
+        grantsIdToken(job.permissions !== undefined ? job.permissions : after.permissions)
+      )
+        issues.push(...jobIssues);
     }
   }
   if (!gateFound)

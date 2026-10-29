@@ -81,13 +81,16 @@ describe("generic setup observable release checks", () => {
   });
   test.each([
     ["npm install -g npm@11", true],
-    ["npx --yes @vscode/vsce publish --packagePath candidates/extension.vsix", true],
+    ["npm i -g npm@11.4.0", true],
     ["python -m pip install --upgrade twine", true],
     ["npm install -g npm@11 left-pad", false],
     ["npx tsx scripts/publish.ts", false],
     ["pip install -r requirements.txt", false],
   ] as const)("protected publisher tool command %s is accepted: %s", (run, accepted) => {
-    const result = mutate(["jobs", "publish", "steps", 2, "run"], `${run}\nnpm publish *.tgz`);
+    const result = mutate(
+      ["jobs", "publish", "steps", 2, "run"],
+      `${run}\nnpm publish candidates/*.tgz`,
+    );
     expect(validateSetupAgentChanges(result).valid).toBe(accepted);
   });
   test.each([
@@ -154,9 +157,7 @@ describe("generic setup observable release checks", () => {
       };
       result.files[path] = { path, originalSha: null, originalContent: null, content: "{}\n" };
       expect(validateSetupAgentChanges(result).issues).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining(`${path}: supporting changes are limited`),
-        ]),
+        expect.arrayContaining([expect.stringContaining(`${path}: supporting changes are new`)]),
       );
     }
   });
@@ -167,7 +168,7 @@ describe("generic setup observable release checks", () => {
       "octo/checkout-mirror@v2",
     );
     const doc = parseDocument(result.files[result.request.workflowPath].content);
-    doc.setIn(["jobs", "publish", "steps", 0, "uses"], "octo/checkout-mirror@v3");
+    doc.setIn(["jobs", "build", "steps", 1], doc.createNode({ uses: "octo/checkout-mirror@v3" }));
     result.files[result.request.workflowPath].content = doc.toString();
     expect(validateSetupAgentChanges(result)).toEqual({ valid: true, issues: [] });
   });
@@ -271,7 +272,7 @@ describe("generic setup observable release checks", () => {
     });
     expect(validateSetupAgentChanges(result).valid).toBe(true);
   });
-  test("allows script-only edits to an already gated workflow", () => {
+  test("supporting scripts may be added but existing ones stay unchanged", () => {
     const result = state();
     const file = result.files[result.request.workflowPath];
     file.originalContent = file.content;
@@ -281,6 +282,11 @@ describe("generic setup observable release checks", () => {
       originalContent: "export const reviewed = false;",
       content: "export const reviewed = true;",
     };
+    expect(validateSetupAgentChanges(result)).toMatchObject({
+      valid: false,
+      issues: [expect.stringContaining(".github/scripts/release.mjs: supporting changes are new")],
+    });
+    result.files[".github/scripts/release.mjs"]!.originalContent = null;
     expect(validateSetupAgentChanges(result).valid).toBe(true);
   });
   test("rejects thirteen supporting edits when the selected workflow is unchanged", () => {

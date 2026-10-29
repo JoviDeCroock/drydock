@@ -159,7 +159,7 @@ ${BUILD.replace("  build:", "  release:").replace(
           path: candidates
       - run: npm publish --provenance
 `;
-    await expectRejected(proposal(content), /publish the downloaded \.tgz/);
+    await expectRejected(proposal(content), /publish the downloaded candidates/);
   });
 
   test("refuses protected job also downloads unreviewed artifacts (pattern, other run) into the publish glob", async () => {

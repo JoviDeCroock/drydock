@@ -56,7 +56,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: npm-release-candidates
-      - run: npm publish *.tgz --provenance
+          path: candidates
+      - run: npm publish candidates/*.tgz --provenance
 `;
 export function setupProposal(
   overrides: Partial<PublisherSetupProposal> = {},
