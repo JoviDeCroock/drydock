@@ -132,7 +132,7 @@ move it into `src/features/` instead.
 ## Authenticated dashboard pages
 
 Every signed-in page uses one header, `AppHeaderActions` in
-`src/features/account/`: the `Reviews` and `Settings` section links (the current
+`src/features/account/`: the `Reviews`, `Dependencies`, and `Settings` section links (the current
 one marked `aria-current="page"`, rendered as accent text), `Feedback`, the
 organization switcher where the page is organization-scoped, and the user menu.
 Feedback has the same place in the marketing header (`Package diff` · `Docs` ·
@@ -166,6 +166,15 @@ page composes its computeds and handlers in `ScanDetail/hooks/useScanDetailView.
 and renders them through sections that each subscribe to what they show.
 `useNow(intervalMs)` in `src/lib/use-now.ts` is the ticking clock behind
 "checked 2 minutes ago" labels.
+
+`/dashboard/dependency-reviews` lists the organization's dependency reviews
+and `/dashboard/dependency-reviews/:id` shows one, grouped the way the check
+run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads
+`?org=` like scan detail because the check run's details link carries it.
+Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with
+the check run. The settings section is
+`src/pages/Dashboard/Settings/DependencyReviewSection.tsx`. See
+`dependency-review.md`.
 
 ## Review page order
 

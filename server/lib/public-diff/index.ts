@@ -28,6 +28,7 @@ import {
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
 
 export { PublicDiffError } from "./error";
+export { publicDiffEgressAllowed } from "./egress";
 export type { PublicDiffInput } from "./types";
 
 /**
