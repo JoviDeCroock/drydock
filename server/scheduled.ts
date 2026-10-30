@@ -1,3 +1,4 @@
+import { prunePublisherSetupJobs } from "./db/publisher-setup-jobs";
 import { personalOrganizationId } from "./lib/auth/ownership";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
@@ -247,6 +248,13 @@ export async function scheduled(
     });
   }
   await runPublicationMonitorCron(env);
+  try {
+    await prunePublisherSetupJobs(createDb(env.DB), env.ARTIFACTS);
+  } catch {
+    emitOperationalEvent("warn", "github_app.setup_workflow.cleanup_failed", {
+      reason: "cleanup_unavailable",
+    });
+  }
   await pruneStaleAuditEvents(env);
   await pruneStaleAuthRows(env);
   await pruneStaleRateLimitBuckets(env);

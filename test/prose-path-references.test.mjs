@@ -31,6 +31,9 @@ const NON_REPO_PREFIXES = [
   ".context/", // gitignored agent scratch space
   ".wrangler/", // gitignored local Wrangler state
 ];
+const NON_REPO_PATHS = new Set([
+  ".changeset/config.json", // publisher setup evidence in the repository under review
+]);
 
 // Tracked files plus untracked ones git would not ignore. A doc an agent just
 // wrote is untracked at the moment `pnpm run verify` runs, and that is exactly
@@ -80,6 +83,7 @@ function buildResolver(files, fileExists = (file) => existsSync(path.join(repoRo
 }
 
 function isCheckable(reference) {
+  if (NON_REPO_PATHS.has(reference)) return false;
   if (!reference.includes("/")) return false;
   // URLs and package specifiers are not repository paths. Relative paths in
   // Markdown and source comments are resolved against the containing file.

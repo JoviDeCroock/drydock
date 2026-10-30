@@ -244,10 +244,12 @@ publish the reviewed artifact bundle after approval. See
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
 
 The optional [publisher setup assistant](publisher-setup.md) can inspect an
-installed repository and draft a workflow change with Workers AI. Draft creation
-uses the organization's existing `ai-review` flag and GLM-5.3-flash. Opening a
-draft PR additionally requires the installation to grant Contents, Pull requests,
-and Workflows write permissions; the assistant does not expand installed grants.
+installed repository and prepare a draft PR with Workers AI. The explicit start
+action authorizes drafting, validation, independent review, and automatic PR
+creation. Preparation uses the organization's existing `ai-review` flag and
+GLM-5.3-flash, and preflights the installation's Contents, Pull requests, and
+Workflows write permissions before calling the model. The assistant does not
+expand installed grants.
 Operators can keep a read-only installation for inspection and manual setup.
 Enable the environment's Drydock deployment-protection rule and map its release
 target before testing a release; the assistant's status check reports the
@@ -284,3 +286,7 @@ See [`artifact-storage.md`](artifact-storage.md) for object layout and rollback.
   and scan-workflow changes.
 - Review [`security-model.md`](security-model.md) before changing trust
   boundaries.
+
+### Durable publisher setup
+
+Repository-agent PR preparation requires the `PUBLISHER_SETUP_WORKFLOW` binding configured in the self-host template, with class `PublisherSetupWorkflow` exported from the same Worker. Deploy the Workflow with the Worker and apply D1 migrations before enabling the UI. It uses the existing private `ARTIFACTS` bucket, Workers AI, and the `ai-review` Flagship setting. Without the Workflow binding, drafting returns `503`; manual setup guides and existing release gates continue to work. Repository files, agent transcripts, proposed edits and judge evidence stay in private R2 rather than Workflow step history. Every model turn is checkpointed; agents have pinned read/edit proposal tools and no code-execution or GitHub mutation tools. Expired job payloads are pruned by the existing scheduled handler; retain the cron trigger. See [guided publisher setup](./publisher-setup.md).

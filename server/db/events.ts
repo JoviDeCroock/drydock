@@ -2,6 +2,7 @@ import type { AppDb } from "./client";
 import { scanEvents } from "./schema";
 
 export interface AuditEventInput {
+  idempotencyKey?: string;
   organizationId: string;
   actorUserId?: string | null;
   scanId?: string | null;
@@ -10,15 +11,18 @@ export interface AuditEventInput {
 }
 
 export async function recordScanEvent(db: AppDb, input: AuditEventInput) {
-  await db.insert(scanEvents).values({
-    id: crypto.randomUUID(),
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId || null,
-    scanId: input.scanId || null,
-    type: input.type,
-    metadataJson: input.metadata ?? null,
-    createdAt: new Date(),
-  });
+  await db
+    .insert(scanEvents)
+    .values({
+      id: input.idempotencyKey ?? crypto.randomUUID(),
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId || null,
+      scanId: input.scanId || null,
+      type: input.type,
+      metadataJson: input.metadata ?? null,
+      createdAt: new Date(),
+    })
+    .onConflictDoNothing({ target: scanEvents.id });
 }
 
 const SENSITIVE_EVENT_METADATA_KEYS = new Set([

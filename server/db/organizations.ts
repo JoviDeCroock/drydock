@@ -1,3 +1,4 @@
+import { deletePublisherSetupJobsForUser } from "./publisher-setup-jobs";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
@@ -14,6 +15,7 @@ import {
   organizationNotificationRecipients,
   organizationSlackConnections,
   organizations,
+  publisherSetupJobs,
   scanEvents,
   scans,
   twoFactor,
@@ -260,6 +262,7 @@ export async function deleteOrganization(
   artifactBucket?: R2Bucket,
 ): Promise<void> {
   await db.batch([
+    db.delete(publisherSetupJobs).where(eq(publisherSetupJobs.organizationId, organizationId)),
     reserveDeletedNpmPackages(db, eq(scans.organizationId, organizationId)),
     db
       .update(npmPackageClaims)
@@ -348,6 +351,7 @@ export async function deleteUserAccount(
   userId: string,
   artifactBucket?: R2Bucket,
 ): Promise<void> {
+  await deletePublisherSetupJobsForUser(db, artifactBucket, userId);
   const personalId = personalOrganizationId(userId);
   const owned = await db
     .select({ id: organizations.id })

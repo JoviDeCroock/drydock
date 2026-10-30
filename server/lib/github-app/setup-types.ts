@@ -25,6 +25,7 @@ export interface PublisherSetupDraftRequest extends PublisherSetupScope {
   baseSha: string;
   environment: string;
   ecosystem: SupportedEcosystem;
+  createPullRequest?: true;
 }
 
 export interface PublisherSetupProposal extends PublisherSetupDraftRequest {
@@ -35,11 +36,16 @@ export interface PublisherSetupProposal extends PublisherSetupDraftRequest {
   summary: string;
   manualSteps: string[];
   expiresAt: number;
+  supportingFiles?: {
+    path: string;
+    content: string;
+    originalSha: string | null;
+    originalContent: string | null;
+  }[];
 }
 
 export interface PublisherSetupDraft {
   proposal: PublisherSetupProposal;
-  proposalToken: string;
 }
 
 export interface PublisherSetupPullRequest {
@@ -64,4 +70,41 @@ export interface PublisherSetupStatus {
     completedAt: string | null;
   } | null;
   checks: { label: string; status: "passed" | "pending" | "unknown"; detail: string }[];
+}
+
+export interface PublisherSetupJudgeAssessment {
+  verdict: "pass" | "changes_requested";
+  summary: string;
+  issues: string[];
+  model: string;
+  digest: string;
+}
+
+export type PublisherSetupJobStage =
+  | "queued"
+  | "fetch_source"
+  | "draft"
+  | "validate"
+  | "judge"
+  | "create_pr"
+  | "ready";
+export type PublisherSetupJobStatus = "queued" | "running" | "ready" | "failed";
+
+export interface PublisherSetupDraftJob {
+  id: string;
+  status: PublisherSetupJobStatus;
+  stage: PublisherSetupJobStage;
+  request: PublisherSetupDraftRequest;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  failure: { code: string; message: string } | null;
+  judge: PublisherSetupJudgeAssessment | null;
+  feedback?: string[];
+  result:
+    | (PublisherSetupDraft & {
+        originalContent: string;
+        pullRequest: PublisherSetupPullRequest;
+      })
+    | null;
 }

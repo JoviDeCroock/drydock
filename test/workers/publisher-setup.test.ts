@@ -2,7 +2,6 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
-import { signSetupProposal } from "../../server/lib/github-app/setup-draft";
 import * as schema from "../../server/db/schema";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call } from "./helpers/app";
@@ -12,7 +11,7 @@ import {
   SETUP_BASE_SHA,
   SETUP_DRAFT_REQUEST,
   SETUP_ORIGINAL_WORKFLOW,
-  setupProposal,
+  SETUP_PROPOSED_WORKFLOW,
 } from "../helpers/publisher-setup-fixtures";
 
 let privateKeyPem = "";
@@ -34,7 +33,10 @@ beforeAll(async () => {
     .match(/.{1,64}/g)
     ?.join("\n")}\n-----END PRIVATE KEY-----`;
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 const STATE_SECRET = "publisher-setup-state-secret-at-least-32-characters";
 function setupEnv(overrides: Partial<Bindings> = {}): Partial<Bindings> {
   return {
@@ -61,12 +63,29 @@ function mockGithub(
   const calls: Request[] = [];
   let setupBranch = "";
   let pullRequestOpened = false;
+  let workflowWritten = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
       calls.push(request);
       const url = new URL(request.url);
+      if (url.pathname.includes("/git/commits/")) {
+        const sha = url.pathname.split("/").at(-1);
+        return Response.json({ sha, tree: { sha } });
+      }
+      if (url.pathname.includes("/git/trees/")) {
+        const sha = url.pathname.split("/").at(-1);
+        const tree =
+          sha === "1".repeat(40)
+            ? [{ path: "workflows", type: "tree", mode: "040000", sha: "2".repeat(40) }]
+            : sha === "2".repeat(40)
+              ? [{ path: "release.yml", type: "blob", mode: "100644", sha: "b".repeat(40) }]
+              : [{ path: ".github", type: "tree", mode: "040000", sha: "1".repeat(40) }];
+        return Response.json({ tree, truncated: false });
+      }
+      if (url.pathname.includes("/compare/"))
+        return Response.json({ files: [{ filename: ".github/workflows/release.yml" }] });
       if (url.pathname.endsWith("/access_tokens"))
         return Response.json({ token: "scoped-installation-token" });
       if (url.pathname === "/repos/octo/release")
@@ -100,13 +119,17 @@ function mockGithub(
         options.createPullRequest &&
         url.pathname.startsWith("/repos/octo/release/git/ref/heads/drydock")
       )
-        return new Response("missing", { status: 404 });
+        return workflowWritten
+          ? Response.json({ object: { sha: "c".repeat(40) } })
+          : new Response("missing", { status: 404 });
       if (
         options.createPullRequest &&
         request.method === "PUT" &&
         url.pathname === "/repos/octo/release/contents/.github/workflows/release.yml"
-      )
+      ) {
+        workflowWritten = true;
         return Response.json({});
+      }
       if (url.pathname === "/repos/octo/release/git/ref/heads/main")
         return Response.json({ object: { sha: SETUP_BASE_SHA } });
       if (url.pathname === "/repos/octo/release/contents/.github/workflows")
@@ -116,9 +139,16 @@ function mockGithub(
           type: "file",
           path: ".github/workflows/release.yml",
           sha: "b".repeat(40),
-          size: SETUP_ORIGINAL_WORKFLOW.length,
+          size: (url.searchParams.get("ref") === "c".repeat(40)
+            ? SETUP_PROPOSED_WORKFLOW
+            : SETUP_ORIGINAL_WORKFLOW
+          ).length,
           encoding: "base64",
-          content: btoa(SETUP_ORIGINAL_WORKFLOW),
+          content: btoa(
+            url.searchParams.get("ref") === "c".repeat(40)
+              ? SETUP_PROPOSED_WORKFLOW
+              : SETUP_ORIGINAL_WORKFLOW,
+          ),
         });
       if (url.pathname.endsWith("/deployment_protection_rules"))
         return Response.json({
@@ -247,7 +277,7 @@ describe("publisher setup HTTP boundaries", () => {
     const { app, scope } = await fixture();
     const calls = mockGithub();
     const result = await call(app, "POST", "/api/v1/github-app/setup/draft", {
-      body: { ...SETUP_DRAFT_REQUEST, ...scope },
+      body: { ...SETUP_DRAFT_REQUEST, ...scope, createPullRequest: true },
       envOverride: setupEnv({
         FLAGS: { getBooleanValue: async () => false } as unknown as Flagship,
       }),
@@ -255,59 +285,6 @@ describe("publisher setup HTTP boundaries", () => {
     expect(result.status).toBe(503);
     expect(await result.json()).toMatchObject({ code: "setup_ai_unavailable" });
     expect(calls).toHaveLength(0);
-  });
-  test("rejects unsigned, changed, expired, or foreign-user proposals before GitHub writes", async () => {
-    const { app, scope, owner } = await fixture();
-    const calls = mockGithub();
-    const proposal = setupProposal(scope);
-    const foreignToken = await signSetupProposal(
-      STATE_SECRET,
-      proposal,
-      owner.organizationId,
-      "someone-else",
-    );
-    const result = await call(app, "POST", "/api/v1/github-app/setup/pull-request", {
-      body: { proposal, proposalToken: foreignToken },
-      envOverride: setupEnv(),
-    });
-    expect(result.status).toBe(409);
-    expect(calls).toHaveLength(0);
-  });
-  test("valid signed proposals create a draft PR and audit once across retries", async () => {
-    const { app, scope, owner } = await fixture();
-    mockGithub(42, { createPullRequest: true });
-    const proposal = setupProposal(scope);
-    const proposalToken = await signSetupProposal(
-      STATE_SECRET,
-      proposal,
-      owner.organizationId,
-      owner.userId,
-    );
-    const options = { body: { proposal, proposalToken }, envOverride: setupEnv() };
-    const created = await call(app, "POST", "/api/v1/github-app/setup/pull-request", options);
-    expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({
-      pullRequest: { number: 12, url: "https://github.com/octo/release/pull/12" },
-    });
-    const recovered = await call(app, "POST", "/api/v1/github-app/setup/pull-request", options);
-    expect(recovered.status).toBe(200);
-    const events = await owner.db
-      .select()
-      .from(schema.scanEvents)
-      .where(
-        and(
-          eq(schema.scanEvents.organizationId, owner.organizationId),
-          eq(schema.scanEvents.type, "github_app_setup.pr_created"),
-        ),
-      );
-    expect(events).toHaveLength(1);
-    expect(events[0].metadataJson).toEqual({
-      repositoryFullName: "octo/release",
-      environment: "production",
-      pullRequestNumber: 12,
-    });
-    expect(JSON.stringify(events)).not.toContain(proposalToken);
-    expect(JSON.stringify(events)).not.toContain(proposal.content);
   });
   test("unverified email cannot inspect private workflows", async () => {
     const { owner, scope } = await fixture();

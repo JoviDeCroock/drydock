@@ -7,6 +7,7 @@ declare global {
       LOADER: WorkerLoader;
       DB: D1Database;
       ARTIFACTS: R2Bucket;
+      PUBLISHER_SETUP_WORKFLOW?: Workflow<{ jobId: string }>;
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
       // Better Auth session cache. Optional: without it Better Auth reads and

@@ -91,14 +91,24 @@ is untrusted evidence for drafting; Drydock never executes it. AI drafting uses
 the existing organization killswitch, and workflow payloads must not be retained
 in AI Gateway logs.
 
-The user reviews an expiring proposal bound to its organization, author,
-repository, source commit, file, and exact proposed content before explicitly
-creating a draft pull request. The server checks that source state again before
-writing. The optional write token is repository-scoped and requires already
-granted Contents, Pull requests, and Workflows permissions. Drafting cannot grant
+The user explicitly authorizes preparation of a draft pull request before the
+background job starts. The persisted request must include `createPullRequest: true`;
+older clients and queued jobs without that authorization cannot write to GitHub.
+After validation and independent review, the job opens or recovers a draft PR for
+maintainer review in GitHub. It rechecks the pinned source and current authority
+before each mutation. The write token is repository-scoped and requires already
+granted Contents, Pull requests, and Workflows permissions. Preparation cannot grant
 permissions, enable environment protection, approve a release, or publish a
 package. Setup status reports observed configuration and a real scoped gate
 review; it does not certify arbitrary workflow code or publication paths.
+
+### Durable publisher setup jobs
+
+Publisher preparation uses native-tool drafting and independent read-only judging agents. Repository reads are scoped to pinned Git objects; regular-file modes, paths and blob identities are checked. Proposed files, source and tool conversations are hostile evidence, never instructions or executable input. Tools expose no shell, package execution, installation, external URL fetching, or GitHub writes. Generic file edits live in a private revision-checked workspace; a complete immutable digest binds submission, full-diff judge inspection and the resulting PR.
+
+Each model turn saves complete private state in organization-scoped R2 before its Workflow checkpoint. Checkpoints return only opaque IDs/completion metadata. D1 stores authorization and safe job metadata, and logs exclude prompts, tool payloads and raw errors. Budgets bound turns, time, tokens, repository reads, files and bytes. Explicit blockers, incomplete evidence, failed static checks or negative review stop automatic PR creation.
+
+The persisted start authorization, creator/organization membership, installation, killswitch, source revision, proposal digest and independent verdict are rechecked before GitHub mutations. Multiple files are committed atomically; recovery checks the entire exact change set and never overwrites collaborator edits. v3 signatures invalidate older proposal formats. Jobs never merge PRs or configure protection. Account/organization deletion and expiry remove private data, and late writes cannot restore it. Static checks and AI review do not certify arbitrary script semantics; maintainer review is required. See `publisher-setup.md` for limits and API contracts.
 
 ### Release decisions
 

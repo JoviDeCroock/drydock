@@ -4,7 +4,9 @@
   // CLI from .claude/settings.json / .codex/hooks.json, which knip can't read.
   "entry": [
     "scripts/hooks/guard-protected-paths.mjs",
-    "scripts/hooks/post-edit-check.mjs"
+    "scripts/hooks/post-edit-check.mjs",
+    // Wrangler loads these exports as the test Worker's runtime entrypoints.
+    "test/workers/helpers/publisher-setup-workflow-entry.ts"
   ],
   "ignore": [
     // Package fixtures are hostile-evidence samples the fixture builder reads as

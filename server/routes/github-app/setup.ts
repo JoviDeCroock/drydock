@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { recordScanEvent } from "../../db/events";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { requireOrganizationRole } from "../../lib/auth/active-organization";
@@ -8,13 +7,15 @@ import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { type GithubAppConfig, readGithubAppConfig } from "../../lib/github-app/config";
 import {
   createSetupClient,
-  createSetupPullRequest,
   inspectPublisherSetup,
   PublisherSetupError,
-  readSetupWorkflow,
-  setupDefaultHead,
   validSetupEnvironment,
 } from "../../lib/github-app/setup-api";
+import {
+  cancelPublisherSetupDraftJob,
+  enqueuePublisherSetupDraft,
+  readPublisherSetupDraftJob,
+} from "../../lib/github-app/setup-jobs";
 import { publisherSetupStatus } from "../../lib/github-app/setup-status";
 import {
   normalizeGithubEnvironmentName,
@@ -35,9 +36,12 @@ publisherSetupRoutes.use(
   "/setup/*",
   bodyLimit({
     maxSize: 200_000,
-    onError: (c) =>
-      c.json(
-        { error: "The setup request exceeds the 200 KB limit.", code: "setup_request_too_large" },
+    onError: (context) =>
+      context.json(
+        {
+          error: "The setup request exceeds its supported size limit.",
+          code: "setup_request_too_large",
+        },
         413,
       ),
   }),
@@ -62,12 +66,12 @@ const statusSchema = scopeSchema
   })
   .strict();
 
-// Separate budgets so status refreshes cannot exhaust drafting or PR creation.
-// Drafting is the costly bucket: each call sends a workflow to Workers AI.
+// Separate budgets so status refreshes cannot exhaust drafting.
+// Drafting is the costly bucket: each job runs repository agents on Workers AI.
 const RATE_LIMITS = {
   read: 60,
   draft: 20,
-  "pull-request": 20,
+  poll: 120,
 } as const;
 
 async function route(
@@ -82,9 +86,9 @@ async function route(
   const limited = await guardRateLimit(
     c,
     {
-      key: `github-app:setup:${bucket}:${organizationId}`,
+      key: `github-app:setup:${bucket}:${organizationId}${bucket === "poll" ? `:${c.get("authSession").userId}` : ""}`,
       limit: RATE_LIMITS[bucket],
-      windowMs: 60 * 60_000,
+      windowMs: bucket === "poll" ? 60_000 : 60 * 60_000,
     },
     "Publisher setup rate limit exceeded",
   );
@@ -103,8 +107,7 @@ async function route(
     if (error instanceof z.ZodError)
       return c.json(
         {
-          error:
-            "Check the selected repository, workflow, environment, and proposal, then try again.",
+          error: "Check the selected repository, workflow, and environment, then try again.",
           code: "invalid_input",
         },
         400,
@@ -131,15 +134,12 @@ publisherSetupRoutes.post("/setup/inspect", (c) =>
 );
 
 publisherSetupRoutes.post("/setup/draft", (c) =>
-  route(c, "draft", async (config, organizationId) => {
-    const { setupDraftRequestSchema, generateSetupDraft, setupManualSteps, signSetupProposal } =
-      await import("../../lib/github-app/setup-draft");
-    const input = setupDraftRequestSchema.parse(await readJsonObject(c));
-    const installation = await ensureInstallationOwnedBy(
-      c.var.db,
-      organizationId,
-      input.installationRowId,
-    );
+  route(c, "draft", async (_config, organizationId) => {
+    const { setupDraftRequestSchema } = await import("../../lib/github-app/setup-draft");
+    const input = setupDraftRequestSchema
+      .extend({ createPullRequest: z.literal(true) })
+      .parse(await readJsonObject(c));
+    await ensureInstallationOwnedBy(c.var.db, organizationId, input.installationRowId);
     const aiEnabled = c.env.FLAGS
       ? await c.env.FLAGS.getBooleanValue("ai-review", true, {
           targetingKey: organizationId,
@@ -155,95 +155,44 @@ publisherSetupRoutes.post("/setup/draft", (c) =>
         },
         503,
       );
-    const client = await createSetupClient(
-      config,
-      installation.installationId,
-      input.repositoryFullName,
-    );
-    if ((await setupDefaultHead(client)) !== input.baseSha)
-      throw new PublisherSetupError(
-        "proposal_stale",
-        "The default branch changed. Inspect the repository again before drafting.",
-        409,
-      );
-    const original = await readSetupWorkflow(client, input.workflowPath, input.baseSha);
-    let generated: Awaited<ReturnType<typeof generateSetupDraft>>;
-    try {
-      generated = await generateSetupDraft(c.env, input, original.content);
-    } catch (error) {
-      if (error instanceof PublisherSetupError) throw error;
-      throw new PublisherSetupError(
-        "setup_ai_unavailable",
-        "The workflow draft could not be completed. Retry or use the release workflow guide; your repository has not been changed.",
-        503,
-      );
-    }
-    const proposal = {
-      ...input,
-      repositoryFullName: client.repository.fullName,
-      repositoryId: client.repository.id,
-      defaultBranch: client.repository.defaultBranch,
-      originalSha: original.sha,
-      ...generated,
-      manualSteps: setupManualSteps(input),
-      expiresAt: Date.now() + 20 * 60_000,
-    };
-    const proposalToken = await signSetupProposal(
-      config.stateSecret,
-      proposal,
+    const job = await enqueuePublisherSetupDraft(
+      c.env,
       organizationId,
       c.get("authSession").userId,
+      input,
     );
-    return c.json({ proposal, proposalToken });
+    c.header("Cache-Control", "no-store");
+    return c.json({ job }, 202);
   }),
 );
 
-publisherSetupRoutes.post("/setup/pull-request", (c) =>
-  route(c, "pull-request", async (config, organizationId) => {
-    const { setupProposalSchema, verifySetupProposal } =
-      await import("../../lib/github-app/setup-draft");
-    const input = z
-      .object({ proposal: setupProposalSchema, proposalToken: z.string().max(100) })
-      .strict()
-      .parse(await readJsonObject(c));
-    if (
-      !(await verifySetupProposal(
-        config.stateSecret,
-        input.proposal,
-        input.proposalToken,
-        organizationId,
-        c.get("authSession").userId,
-      ))
-    )
-      throw new PublisherSetupError(
-        "proposal_invalid",
-        "This proposal is expired or no longer valid. Inspect the repository and create a fresh draft.",
-        409,
-      );
-    const installation = await ensureInstallationOwnedBy(
-      c.var.db,
+publisherSetupRoutes.get("/setup/draft-jobs/:id", (c) =>
+  route(c, "poll", async (_config, organizationId) => {
+    const job = await readPublisherSetupDraftJob(
+      c.env,
+      c.req.param("id"),
       organizationId,
-      input.proposal.installationRowId,
+      c.get("authSession").userId,
     );
-    const client = await createSetupClient(
-      config,
-      installation.installationId,
-      input.proposal.repositoryFullName,
-      true,
+    if (!job)
+      return c.json({ error: "Draft job not found or expired.", code: "setup_job_not_found" }, 404);
+    c.header("Cache-Control", "no-store");
+    return c.json({ job });
+  }),
+);
+
+publisherSetupRoutes.post("/setup/draft-jobs/:id/cancel", (c) =>
+  route(c, "poll", async (_config, organizationId) => {
+    const job = await cancelPublisherSetupDraftJob(
+      c.env,
+      c.req.param("id"),
+      organizationId,
+      c.get("authSession").userId,
     );
-    const { created, ...pullRequest } = await createSetupPullRequest(client, input.proposal);
-    if (created)
-      await recordScanEvent(c.var.db, {
-        organizationId,
-        actorUserId: c.get("authSession").userId,
-        type: "github_app_setup.pr_created",
-        metadata: {
-          repositoryFullName: input.proposal.repositoryFullName,
-          environment: input.proposal.environment,
-          pullRequestNumber: pullRequest.number,
-        },
-      });
-    return c.json({ pullRequest }, created ? 201 : 200);
+    if (!job)
+      return c.json({ error: "Draft job not found or expired.", code: "setup_job_not_found" }, 404);
+    c.header("Cache-Control", "no-store");
+    return c.json({ job });
   }),
 );
 
