@@ -309,9 +309,13 @@ export async function runSetupAgentTurn(
   const limits = phaseLimits(state.phase);
   // Append server guidance after the stable history so the next turn extends
   // this exact prefix, including this turn's guidance and native tool results.
+  const overrunNote = state.reasoningOverrun?.pending
+    ? "Your previous turn spent its whole output allowance reasoning and recorded nothing. Keep reasoning brief and act with one tool call now.\n"
+    : "";
+  if (state.reasoningOverrun) state.reasoningOverrun.pending = false;
   state.messages.push({
     role: "user",
-    content: `${progressReminder}
+    content: `${overrunNote}${progressReminder}
 Current server work budget for this phase (supersedes earlier budget messages; drafting leaves a reserved share for review): ${JSON.stringify(
       {
         phase: state.phase,
@@ -353,13 +357,24 @@ Current server work budget for this phase (supersedes earlier budget messages; d
       durationMs: durationMsSince(callStartedAt),
       usage: { input: result.usage.inputTokens, output: result.usage.outputTokens },
     });
+  }
+  // GLM occasionally reasons until the output cap without calling a tool. One such turn is
+  // charged and retried with a correction instead of ending a long job.
+  const overran =
+    result.finishReason === "length" &&
+    !result.toolCalls.length &&
+    (state.reasoningOverrun?.count ?? 0) < 1;
+  if (!overran && result.finishReason !== "stop" && result.finishReason !== "tool-calls")
     throw new PublisherSetupError(
       "setup_agent_incomplete_response",
       "The setup agent returned an incomplete tool turn. Start a fresh preparation.",
       502,
     );
-  }
-  state.messages.push(...conciseToolInputErrors(result.response.messages));
+  if (overran) {
+    // Drop this turn's guidance with its empty answer; the next turn re-sends fresh guidance.
+    state.messages.pop();
+    state.reasoningOverrun = { count: (state.reasoningOverrun?.count ?? 0) + 1, pending: true };
+  } else state.messages.push(...conciseToolInputErrors(result.response.messages));
   if ((state.vagueBlockers ?? 0) >= 3)
     throw new PublisherSetupError(
       "setup_agent_no_progress",
@@ -398,7 +413,13 @@ Current server work budget for this phase (supersedes earlier budget messages; d
       usage: { input: measuredInput, cachedInput },
     });
   }
-  if (!result.toolCalls.length && !state.blocked && !state.submitted && !state.assessment)
+  if (
+    !overran &&
+    !result.toolCalls.length &&
+    !state.blocked &&
+    !state.submitted &&
+    !state.assessment
+  )
     state.messages.push({
       role: "user",
       content:

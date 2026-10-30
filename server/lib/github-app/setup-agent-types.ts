@@ -21,6 +21,8 @@ export interface SetupAgentState {
   submitted?: { summary: string; digest: string };
   /** Blocker calls refused for naming no concrete missing fact; repeated refusals end the job. */
   vagueBlockers?: number;
+  /** A turn that spent its whole output allowance reasoning; a second one ends the job. */
+  reasoningOverrun?: { count: number; pending: boolean };
   candidateDigest?: string;
   assessment?: {
     verdict: "pass" | "changes_requested";

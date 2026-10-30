@@ -515,6 +515,43 @@ describe("publisher setup native agent turns", () => {
     expect(JSON.stringify(judge.messages)).not.toContain("PRIVATE_ADVISORY_PLAN");
     expect(JSON.stringify(judge.messages)).not.toContain("PRIVATE_INVESTIGATION_RATIONALE");
   });
+  test("one reasoning-only turn that hits the output cap is charged and corrected, a second ends the job", async () => {
+    const state = start();
+    const overrun = {
+      choices: [
+        {
+          message: { role: "assistant", content: null, reasoning_content: "PRIVATE_REASONING" },
+          finish_reason: "length",
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 6000 },
+    };
+    const harness = binding([overrun, response("read_file", { path: state.request.workflowPath })]);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const next = await runSetupAgentTurn(harness.env, state, harness.client);
+      expect(next.progress).toMatchObject({ turns: 1, inputTokens: 100, outputTokens: 6000 });
+      expect(next.messages).toEqual(state.messages);
+      expect(JSON.stringify(next.messages)).not.toContain("PRIVATE_REASONING");
+      await runSetupAgentTurn(harness.env, next, harness.client);
+      const calls = harness.run.mock.calls as unknown as [
+        string,
+        { messages: { role: string; content: string }[] },
+      ][];
+      const sent = calls[1][1].messages.filter((message) => message.role !== "system");
+      expect(sent.at(-1)?.content).toMatch(/^Your previous turn spent its whole output allowance/);
+      expect(
+        sent.filter((message) => String(message.content).includes("Current server work budget")),
+      ).toHaveLength(1);
+      harness.run.mockImplementationOnce(async () => overrun);
+      const again = { ...next, reasoningOverrun: { count: 1, pending: false } };
+      await expect(runSetupAgentTurn(harness.env, again, harness.client)).rejects.toThrow(
+        /incomplete tool turn/,
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
   test("an incomplete investigation handoff cannot change active context or files", async () => {
     const state = start();
     state.progress.turns = 12;
