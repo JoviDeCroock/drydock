@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
   compactSetupAgentMessages,
   conciseToolInputErrors,
@@ -153,13 +154,14 @@ describe("conciseToolInputErrors", () => {
 });
 
 describe("modelText", () => {
-  test("states the overshoot so the model can cut once instead of guessing", () => {
-    const schema = modelText("summary", 10, "Short.");
-    expect(schema.safeParse("x".repeat(15)).error?.issues[0]?.message).toBe(
-      "summary is 15 characters; the limit is 10",
+  test("shortens oversized prose at a sentence instead of refusing it", () => {
+    const schema = modelText(40, "Short.");
+    expect(schema.parse("A first sentence here is long. Then more words follow it.")).toBe(
+      "A first sentence here is long.…",
     );
-    expect(schema.safeParse("  ok  ").data).toBe("ok");
+    expect(schema.parse("x".repeat(50))).toBe(`${"x".repeat(39)}…`);
+    expect(schema.parse("  ok  ")).toBe("ok");
     expect(schema.safeParse("   ").success).toBe(false);
-    expect(schema.description).toBe("Short.");
+    expect(z.toJSONSchema(schema)).toMatchObject({ type: "string", description: "Short." });
   });
 });

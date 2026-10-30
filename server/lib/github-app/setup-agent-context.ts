@@ -119,18 +119,24 @@ export function conciseToolInputErrors(messages: ModelMessage[]): ModelMessage[]
   });
 }
 
+function clip(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const cut = value.slice(0, max - 1);
+  const sentence = cut.lastIndexOf(". ");
+  return `${sentence > max * 0.6 ? cut.slice(0, sentence + 1) : cut.trimEnd()}…`;
+}
+
 /**
- * Model-written prose with a hard limit. The model cannot count characters, so the schema
- * asks for a shorter target and a rejection states the actual length to cut from.
+ * Model-written prose with a hard limit. GLM cannot hit a character limit: with the exact
+ * overshoot in the error it still trimmed ~50 characters per retry and once spent 18 turns
+ * resubmitting. This text is only presented, so the server shortens it instead of refusing.
  */
-export function modelText(label: string, max: number, guidance: string) {
+export function modelText(max: number, guidance: string) {
   return z
     .string()
     .trim()
     .min(1)
-    .max(max, {
-      error: (issue) => `${label} is ${String(issue.input).length} characters; the limit is ${max}`,
-    })
+    .overwrite((value) => clip(value, max))
     .describe(guidance);
 }
 

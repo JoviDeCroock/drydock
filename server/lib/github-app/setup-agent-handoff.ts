@@ -16,10 +16,10 @@ const encoder = new TextEncoder();
 
 export const setupInvestigationPlanSchema = z
   .object({
-    plan: modelText("plan", 6000, "Advisory plan under 4000 characters."),
+    plan: modelText(6000, "Advisory plan under 4000 characters."),
     evidencePaths: z.array(z.string().min(1).max(512).refine(validSetupFilePath)).max(20),
     openQuestions: z
-      .array(modelText("openQuestion", 500, "One fact an edit depends on, under 300 characters."))
+      .array(modelText(500, "One fact an edit depends on, under 300 characters."))
       .max(12)
       .optional(),
   })

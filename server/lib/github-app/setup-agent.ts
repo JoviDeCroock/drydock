@@ -270,7 +270,7 @@ export async function runSetupAgentTurn(
       description:
         "Stop the whole preparation because a named fact or capability cannot be obtained from this repository. The reason must state that fact. Not a way to continue investigating. Records private feedback; does not modify GitHub.",
       inputSchema: z.object({
-        reason: modelText("reason", 1000, "The specific missing fact, under 600 characters."),
+        reason: modelText(1000, "The specific missing fact, under 600 characters."),
       }),
       execute: ({ reason }) => {
         if (!specificBlockerReason(reason)) {

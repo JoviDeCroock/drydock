@@ -291,6 +291,15 @@ describe("private publisher setup agent tools", () => {
     expect(f.state.submitted).toBeUndefined();
   });
 
+  test("accepts an oversized submission summary and stores it shortened", async () => {
+    const f = fixture();
+    await changeWorkflow(f);
+    const summary = `Gate publication. ${"Package before the gate. ".repeat(80)}`;
+    expect(await call(f.tools, "submit_changes", { summary })).toMatchObject({ ok: true });
+    expect(f.state.submitted?.summary.length).toBeLessThanOrEqual(1000);
+    expect(f.state.submitted?.summary).toMatch(/^Gate publication\..*…$/);
+  });
+
   test("binds successful submission and independent assessment to the complete frozen digest", async () => {
     const f = fixture();
     await changeWorkflow(f);
@@ -567,10 +576,9 @@ describe("private publisher setup agent tools", () => {
     expect(restored.assessment?.digest).toBe(submitted.digest);
   });
 
-  test("requires actionable negative findings and bounds assessment/submission strings", async () => {
+  test("requires actionable negative findings and bounds the issue count", async () => {
     const f = fixture();
     await changeWorkflow(f);
-    await expect(call(f.tools, "submit_changes", { summary: "x".repeat(1001) })).rejects.toThrow();
     const submitted = await call(f.tools, "submit_changes", { summary: "Gate publication" });
     f.state.candidateDigest = String(submitted.digest);
     const judge = createSetupAgentTools({ request: f.request }, f.state, "judge", {
@@ -583,13 +591,6 @@ describe("private publisher setup agent tools", () => {
         issues: [],
       }),
     ).toMatchObject({ error: "changes_requested_requires_issues" });
-    await expect(
-      call(judge, "finish_review", {
-        verdict: "changes_requested",
-        summary: "Incomplete",
-        issues: ["x".repeat(501)],
-      }),
-    ).rejects.toThrow();
     await expect(
       call(judge, "finish_review", {
         verdict: "changes_requested",

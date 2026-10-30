@@ -501,14 +501,8 @@ export function createSetupAgentTools(
           "Record the independent assessment. Pass requires inspect_changes pages covering every changed file's complete original and proposed text, plus relevant source inspection. Missing evidence requires changes_requested with at least one issue.",
         inputSchema: z.object({
           verdict: z.enum(["pass", "changes_requested"]),
-          summary: modelText(
-            "summary",
-            1000,
-            "Assessment in two to four sentences, under 600 characters.",
-          ),
-          issues: z
-            .array(modelText("issue", 500, "One concrete defect, under 300 characters."))
-            .max(8),
+          summary: modelText(1000, "Assessment in two to four sentences, under 600 characters."),
+          issues: z.array(modelText(500, "One concrete defect, under 300 characters.")).max(8),
         }),
         execute: (assessment) =>
           guard(async () => {
@@ -595,7 +589,6 @@ export function createSetupAgentTools(
         "Validate and freeze the complete proposal for independent review. Requires a nonempty change, the selected workflow available in the workspace, and passing release validation. No PR or GitHub mutation occurs here.",
       inputSchema: z.object({
         summary: modelText(
-          "summary",
           1000,
           "Pull request summary: two to four sentences, under 600 characters.",
         ),
