@@ -60,6 +60,11 @@ function setOwn<T>(record: Record<string, T>, path: string, value: T): void {
   });
 }
 
+/** The edit revision read_file returns; the handoff brief carries it for bundled files. */
+export function setupAgentRevision(content: string, present = true): Promise<string> {
+  return sha256Hex(`${present ? "file" : "missing"}\0${content}`);
+}
+
 export function setupAgentChangedFiles(state: SetupAgentState): SetupAgentFile[] {
   return Object.values(state.files)
     .filter((file) => file.originalContent !== file.content)
@@ -204,7 +209,7 @@ export function createSetupAgentTools(
     return file;
   }
   async function revision(file: SetupAgentFile): Promise<string> {
-    return sha256Hex(`${!own(state.files, file.path) ? "missing" : "file"}\0${file.content}`);
+    return setupAgentRevision(file.content, Boolean(own(state.files, file.path)));
   }
   async function readFile(path: string, offset: number, maxChars: number) {
     const file = await load(path);
@@ -268,7 +273,7 @@ export function createSetupAgentTools(
     if (expectedRevision === undefined) {
       // Creating a file needs no prior read: the pinned tree lookup proves it is absent.
       file ??= await load(path);
-      if (own(state.files, path)) throw new ToolError("read_before_write_required");
+      if (own(state.files, path)) throw new ToolError("file_exists_read_first");
     } else {
       const read = own(state.readRevisions ?? {}, path);
       if (!file || !read) throw new ToolError("read_before_write_required");

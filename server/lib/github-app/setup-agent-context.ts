@@ -155,6 +155,14 @@ export function compactSetupAgentMessages(messages: ModelMessage[]): ModelMessag
   const end = messages.length - RECENT_MESSAGES;
   if (end <= start) return messages;
   const region = messages.slice(start, end);
-  if (JSON.stringify(region).length <= COMPACT_AFTER_CHARS) return messages;
-  return [...messages.slice(0, start), ...region.map(compactMessage), ...messages.slice(end)];
+  const compacted = region.map(compactMessage);
+  // Compaction is idempotent, so only text it would still remove counts toward the threshold;
+  // otherwise the already-compacted history alone would trigger it every turn.
+  const removable = region.reduce(
+    (total, message, index) =>
+      total + JSON.stringify(message).length - JSON.stringify(compacted[index]).length,
+    0,
+  );
+  if (removable <= COMPACT_AFTER_CHARS) return messages;
+  return [...messages.slice(0, start), ...compacted, ...messages.slice(end)];
 }

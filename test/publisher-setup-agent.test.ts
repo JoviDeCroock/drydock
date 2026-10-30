@@ -6,6 +6,7 @@ import {
   extractSetupAgentCandidate,
   SETUP_DRAFT_MAX_TURNS,
 } from "../server/lib/github-app/setup-agent";
+import { setupAgentRevision } from "../server/lib/github-app/setup-agent-tools";
 import {
   SETUP_DRAFT_REQUEST,
   SETUP_ORIGINAL_WORKFLOW,
@@ -456,7 +457,9 @@ describe("publisher setup native agent turns", () => {
       startedAt: state.progress.startedAt,
     });
     expect(current.budgets).toEqual(state.budgets);
-    expect(current.readRevisions).toEqual({});
+    const pinnedRevision = await setupAgentRevision(SETUP_ORIGINAL_WORKFLOW);
+    expect(current.readRevisions).toEqual({ [state.request.workflowPath]: pinnedRevision });
+    expect(JSON.stringify(current.messages)).toContain(pinnedRevision);
     expect(JSON.stringify(current.handoff?.conversation)).toContain(
       "PRIVATE_INVESTIGATION_RATIONALE",
     );

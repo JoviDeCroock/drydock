@@ -83,6 +83,16 @@ describe("setup agent context compaction", () => {
   });
 });
 
+test("already-compacted history does not re-trigger compaction on every turn", () => {
+  const history = compactSetupAgentMessages([
+    brief,
+    ...Array.from({ length: 120 }, (_, index) => turn(index)).flat(),
+  ]);
+  expect(JSON.stringify(history).length).toBeGreaterThan(48_000);
+  const next = [...history, { role: "user", content: "Budget update next" } satisfies ModelMessage];
+  expect(compactSetupAgentMessages(next)).toBe(next);
+});
+
 describe("conciseToolInputErrors", () => {
   const issues = JSON.stringify(
     [

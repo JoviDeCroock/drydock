@@ -214,10 +214,10 @@ describe("private publisher setup agent tools", () => {
     ]);
     expect(
       await call(f.tools, "stage_file", { path: "scripts/existing.mjs", content: "changed\n" }),
-    ).toMatchObject({ error: "read_before_write_required" });
+    ).toMatchObject({ error: "file_exists_read_first" });
     expect(
       await call(f.tools, "stage_file", { path: "scripts/new.mjs", content: "again\n" }),
-    ).toMatchObject({ error: "read_before_write_required" });
+    ).toMatchObject({ error: "file_exists_read_first" });
     expect(f.state.files["scripts/existing.mjs"]?.content).toBe("export {};\n");
   });
   test("refuses paths that differ only by letter case from a repository entry", async () => {

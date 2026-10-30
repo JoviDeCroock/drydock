@@ -12,6 +12,7 @@ import {
   createSetupAgentTools,
   setupAgentCandidateDigest,
   setupAgentChangedFiles,
+  setupAgentRevision,
 } from "./setup-agent-tools";
 import {
   compactSetupAgentMessages,
@@ -278,7 +279,7 @@ export async function runSetupAgentTurn(
             recorded: false as const,
             error: "blocker_not_specific",
             guidance: finishingInvestigation
-              ? "Nothing was stopped. Read tools are closed in this turn; hand off with finish_investigation and list remaining unknowns in openQuestions, or name the exact fact that cannot be obtained."
+              ? "Nothing was stopped. Read tools are closed in this turn; hand off with finish_investigation, or name the exact fact that cannot be obtained."
               : "Nothing was stopped. Continue with the repository tools, or name the exact fact or capability that cannot be obtained.",
           };
         }
@@ -408,8 +409,16 @@ Current server work budget for this phase (supersedes earlier budget messages; d
       plan: structuredClone(handoffResult.plan),
       conversation: structuredClone(state.messages),
     };
-    state.messages = buildSetupImplementationMessages(state, handoffResult.plan);
-    state.readRevisions = {};
+    // Nothing is edited before handoff, so bundled files still hold their pinned content and
+    // the brief can carry the revision a read would return.
+    const revisions: Record<string, string> = {};
+    for (const path of [state.request.workflowPath, ...handoffResult.plan.evidencePaths]) {
+      const file = Object.hasOwn(state.files, path) ? state.files[path] : undefined;
+      if (file && file.originalContent !== null)
+        revisions[path] = await setupAgentRevision(file.content);
+    }
+    state.messages = buildSetupImplementationMessages(state, handoffResult.plan, revisions);
+    state.readRevisions = revisions;
   }
   if (new TextEncoder().encode(JSON.stringify(state)).byteLength > 4_000_000)
     throw new PublisherSetupError(
