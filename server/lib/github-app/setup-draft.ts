@@ -37,7 +37,7 @@ export function setupManualSteps(
     `Map ${quote(proposal.repositoryFullName)} / ${environment} as a Drydock release target using the ${SETUP_ARTIFACT_NAMES[proposal.ecosystem]} artifact.`,
     "If your policy requires actions pinned to commit SHAs, pin the artifact upload and download actions before merging.",
     "The setup commit includes [skip ci], so CI does not run for it. Only after reviewing every file in this pull request, push a commit or re-run checks so CI runs.",
-    "Keep registry trusted-publishing/OIDC bound to the protected environment and ensure the publish job never rebuilds the reviewed artifact.",
+    `Bind the registry's trusted publisher (OIDC) to the ${environment} environment. If it currently names another environment, update it on the registry before releasing, or publishing fails. Ensure the publish job never rebuilds the reviewed artifact.`,
     "Run your next release, complete its review in Drydock, then refresh setup checks. Other workflows and manual publishing paths remain independent.",
   ];
 }
