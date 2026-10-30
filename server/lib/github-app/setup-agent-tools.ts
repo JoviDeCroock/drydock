@@ -2,6 +2,7 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { parseDocument } from "yaml";
 import { isRecord } from "../platform/guards";
+import { modelText } from "./setup-agent-context";
 import { sha256Hex } from "../platform/crypto-utils";
 import { canonicalJson } from "../platform/canonical-json";
 import {
@@ -255,18 +256,25 @@ export function createSetupAgentTools(
       return { valid: false, issues: ["Release validation is unavailable."] };
     return options.validateChanges(state);
   }
-  async function stage(path: string, expectedRevision: string, content: string) {
+  async function stage(path: string, expectedRevision: string | undefined, content: string) {
     safePath(path);
     if (phase !== "draft" || state.submitted) throw new ToolError("workspace_frozen");
     if (state.budgets.edits >= MAX_EDITS) throw new ToolError("edit_budget_exhausted");
-    const file =
+    let file =
       own(state.files, path) ??
       (state.missingFiles?.includes(path)
         ? { path, originalSha: null, originalContent: null, content: "" }
         : undefined);
-    if (!file || own(state.readRevisions ?? {}, path) !== expectedRevision)
-      throw new ToolError("read_before_write_required");
-    if ((await revision(file)) !== expectedRevision) throw new ToolError("stale_file_revision");
+    if (expectedRevision === undefined) {
+      // Creating a file needs no prior read: the pinned tree lookup proves it is absent.
+      file ??= await load(path);
+      if (own(state.files, path)) throw new ToolError("read_before_write_required");
+    } else {
+      const read = own(state.readRevisions ?? {}, path);
+      if (!file || !read) throw new ToolError("read_before_write_required");
+      if (read !== expectedRevision || (await revision(file)) !== expectedRevision)
+        throw new ToolError("stale_file_revision");
+    }
     if (content.includes("\0") || byteLength(content) > MAX_FILE_BYTES)
       throw new ToolError("candidate_file_too_large");
     const proposed = { ...file, content };
@@ -280,12 +288,11 @@ export function createSetupAgentTools(
       throw new ToolError("candidate_budget_exhausted");
     setOwn(state.files, path, proposed);
     state.budgets.edits++;
-    return {
-      ok: true as const,
-      path,
-      revision: await revision(proposed),
-      bytes: byteLength(content),
-    };
+    // The agent wrote this content, so the returned revision counts as read for its next edit.
+    const next = await revision(proposed);
+    state.readRevisions ??= {};
+    setOwn(state.readRevisions, path, next);
+    return { ok: true as const, path, revision: next, bytes: byteLength(content) };
   }
   const readTools = {
     workspace_status: tool({
@@ -489,8 +496,14 @@ export function createSetupAgentTools(
           "Record the independent assessment. Pass requires inspect_changes pages covering every changed file's complete original and proposed text, plus relevant source inspection. Missing evidence requires changes_requested with at least one issue.",
         inputSchema: z.object({
           verdict: z.enum(["pass", "changes_requested"]),
-          summary: z.string().min(1).max(1000),
-          issues: z.array(z.string().min(1).max(500)).max(8),
+          summary: modelText(
+            "summary",
+            1000,
+            "Assessment in two to four sentences, under 600 characters.",
+          ),
+          issues: z
+            .array(modelText("issue", 500, "One concrete defect, under 300 characters."))
+            .max(8),
         }),
         execute: (assessment) =>
           guard(async () => {
@@ -534,10 +547,10 @@ export function createSetupAgentTools(
     ...readTools,
     stage_file: tool({
       description:
-        "Stage complete UTF-8 file content in the private workspace. Requires read_file's exact current revision. Creates or replaces a normal file; makes no GitHub write and executes nothing.",
+        "Stage complete UTF-8 file content in the private workspace. Replacing a file requires its current revision from read_file or the previous edit; omit expectedRevision to create a file that does not exist yet. Makes no GitHub write and executes nothing.",
       inputSchema: z.object({
         path: pathSchema,
-        expectedRevision: revisionSchema,
+        expectedRevision: revisionSchema.optional(),
         content: z.string().max(MAX_FILE_BYTES),
       }),
       execute: ({ path, expectedRevision, content }) =>
@@ -545,7 +558,7 @@ export function createSetupAgentTools(
     }),
     edit_file: tool({
       description:
-        "Replace exactly one occurrence in a previously read file. The exact find text must be nonempty and unique; expectedRevision must match read_file. No generated or repository code is executed.",
+        "Replace exactly one occurrence in a previously read file. The exact find text must be nonempty and unique; expectedRevision is the revision from read_file or from the previous edit of this file. No generated or repository code is executed.",
       inputSchema: z.object({
         path: pathSchema,
         expectedRevision: revisionSchema,
@@ -575,7 +588,13 @@ export function createSetupAgentTools(
     submit_changes: tool({
       description:
         "Validate and freeze the complete proposal for independent review. Requires a nonempty change, the selected workflow available in the workspace, and passing release validation. No PR or GitHub mutation occurs here.",
-      inputSchema: z.object({ summary: z.string().min(1).max(1000) }),
+      inputSchema: z.object({
+        summary: modelText(
+          "summary",
+          1000,
+          "Pull request summary: two to four sentences, under 600 characters.",
+        ),
+      }),
       execute: ({ summary }) =>
         guard(async () => {
           if (state.submitted) throw new ToolError("workspace_frozen");

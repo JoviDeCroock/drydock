@@ -204,6 +204,22 @@ describe("private publisher setup agent tools", () => {
     ]);
   });
 
+  test("creates a confirmed-absent file without a prior read but never replaces one unread", async () => {
+    const f = fixture({ "scripts/existing.mjs": "export {};\n" });
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/new.mjs", content: "export {};\n" }),
+    ).toMatchObject({ ok: true });
+    expect(setupAgentChangedFiles(f.state)).toMatchObject([
+      { path: "scripts/new.mjs", originalSha: null },
+    ]);
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/existing.mjs", content: "changed\n" }),
+    ).toMatchObject({ error: "read_before_write_required" });
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/new.mjs", content: "again\n" }),
+    ).toMatchObject({ error: "read_before_write_required" });
+    expect(f.state.files["scripts/existing.mjs"]?.content).toBe("export {};\n");
+  });
   test("refuses paths that differ only by letter case from a repository entry", async () => {
     const f = fixture({ "scripts/release.mjs": "export {};\n" });
     expect(await call(f.tools, "read_file", { path: "Scripts/release.mjs" })).toMatchObject({
@@ -216,7 +232,7 @@ describe("private publisher setup agent tools", () => {
     });
     expect(f.state.missingFiles ?? []).toEqual([]);
   });
-  test("requires a unique exact edit and a fresh read after each edit", async () => {
+  test("requires a unique exact edit and the latest revision, which each edit returns", async () => {
     const f = fixture({ "text.txt": "same same" });
     const read = await call(f.tools, "read_file", { path: "text.txt" });
     expect(
@@ -227,14 +243,22 @@ describe("private publisher setup agent tools", () => {
         replace: "new",
       }),
     ).toMatchObject({ error: "find_must_match_once" });
-    await changeWorkflow(f);
+    const changed = await changeWorkflow(f);
     const updated = await call(f.tools, "read_file", { path: WORKFLOW });
+    expect(updated.revision).toBe(changed.revision);
+    const edited = await call(f.tools, "edit_file", {
+      path: WORKFLOW,
+      expectedRevision: changed.revision,
+      find: "Reviewed",
+      replace: "Gated",
+    });
+    expect(edited).toMatchObject({ ok: true });
     expect(
       await call(f.tools, "edit_file", {
         path: WORKFLOW,
-        expectedRevision: updated.revision,
-        find: "Reviewed",
-        replace: "Gated",
+        expectedRevision: edited.revision,
+        find: "Gated",
+        replace: "Protected",
       }),
     ).toMatchObject({ ok: true });
     expect(

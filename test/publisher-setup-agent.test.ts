@@ -404,7 +404,7 @@ describe("publisher setup native agent turns", () => {
       string,
       { tool_choice: string; messages: { role: string; content: string }[] },
     ][];
-    expect(calls[0][1].tool_choice).toBe("auto");
+    expect(calls[0][1].tool_choice).toBe("required");
     expect(calls[0][1].messages.find((message) => message.role === "system")?.content).toContain(
       "The bounded initial investigation has ended",
     );
@@ -465,13 +465,25 @@ describe("publisher setup native agent turns", () => {
     expect(JSON.stringify(current.messages)).toContain("pnpm stage publish accepts a tarball");
     const calls = harness.run.mock.calls as unknown as [
       string,
-      { tools: { function: { name: string } }[] },
+      {
+        tools: { function: { name: string } }[];
+        tool_choice?: unknown;
+        reasoning_effort?: string;
+      },
     ][];
     expect(calls[0][1].tools.map((entry) => entry.function.name).sort()).toEqual([
       "finish_investigation",
       "report_blocker",
     ]);
+    expect(calls[0][1]).toMatchObject({
+      tool_choice: "required",
+      reasoning_effort: "low",
+    });
     current = await runSetupAgentTurn(harness.env, current, harness.client);
+    expect(calls[1][1]).toMatchObject({
+      tool_choice: "auto",
+      reasoning_effort: "high",
+    });
     expect(calls[1][1].tools.map((entry) => entry.function.name)).toContain("edit_file");
     expect(calls[1][1].tools.map((entry) => entry.function.name)).not.toContain(
       "finish_investigation",
