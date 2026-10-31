@@ -5,7 +5,10 @@ import {
   dependencyReadinessApplies,
   dependencyReadinessView,
   dependencyReadinessHeadline,
+  dependencyReadinessUnavailableMessage,
+  dependencyRecheckLabel,
   dependencySectionLabel,
+  uncheckedDependencyLines,
 } from "../src/features/dependency-readiness";
 
 const issue = (overrides: Partial<DependencyReadinessIssue>): DependencyReadinessIssue => ({
@@ -45,11 +48,18 @@ describe("dependencyReadinessApplies", () => {
     );
   });
 
-  test("a gate review applies while its deployment is held", () => {
-    const gate = { status: "complete", source: "workflow_gate" };
-    expect(dependencyReadinessApplies(gate, "pending")).toBe(true);
-    expect(dependencyReadinessApplies(gate, "approved")).toBe(false);
-    expect(dependencyReadinessApplies(gate, null)).toBe(false);
+  test("an npm gate review applies while its deployment is held", () => {
+    const gate = (ecosystem?: string) => ({
+      status: "complete",
+      source: "workflow_gate",
+      summaryJson: ecosystem ? { stagedPublish: { provenance: { ecosystem } } } : {},
+    });
+    expect(dependencyReadinessApplies(gate("npm"), "pending")).toBe(true);
+    expect(dependencyReadinessApplies(gate("npm"), "approved")).toBe(false);
+    expect(dependencyReadinessApplies(gate("npm"), null)).toBe(false);
+    // Neither another ecosystem nor a gate without provenance asks the npm check.
+    expect(dependencyReadinessApplies(gate("pypi"), "pending")).toBe(false);
+    expect(dependencyReadinessApplies(gate(), "pending")).toBe(false);
   });
 });
 
@@ -75,12 +85,68 @@ describe("dependencyReadinessView", () => {
     ).toBe("info");
   });
 
-  test("unchecked dependencies are counted, never listed as blocking", () => {
+  test("unchecked dependencies are counted by why, never listed as blocking", () => {
     const view = dependencyReadinessView(
-      checked([issue({ kind: "unchecked", reason: "lookup-failed" }), issue({ name: "c" })]),
+      checked([
+        issue({ name: "f", kind: "unchecked", reason: "lookup-failed" }),
+        issue({ name: "s", kind: "unchecked", reason: "lookup-skipped" }),
+        issue({ name: "l", kind: "unchecked", reason: "lookup-limit" }),
+        issue({ name: "u", kind: "unchecked", reason: "unsupported-spec" }),
+        issue({ name: "c" }),
+      ]),
     );
     expect(view?.blocking.map((i) => i.name)).toEqual(["c"]);
-    expect(view?.unchecked).toBe(1);
+    expect(view).toMatchObject({ failed: 1, skipped: 1, uncheckable: 2 });
+  });
+});
+
+describe("dependencyRecheckLabel", () => {
+  const view = (issues: DependencyReadinessIssue[]) => dependencyReadinessView(checked(issues))!;
+  const unchecked = (reason: DependencyReadinessIssue["reason"]) =>
+    issue({ kind: "unchecked", reason });
+
+  test("offers the action only when a re-check has something to do", () => {
+    expect(dependencyRecheckLabel(view([unchecked("lookup-failed")]))).toBe("Check again");
+    expect(dependencyRecheckLabel(view([issue({}), unchecked("lookup-skipped")]))).toBe(
+      "Check again",
+    );
+    expect(dependencyRecheckLabel(view([unchecked("lookup-skipped")]))).toBe("Check the rest");
+    expect(dependencyRecheckLabel(view([unchecked("unsupported-spec")]))).toBeNull();
+    expect(dependencyRecheckLabel(view([unchecked("lookup-limit")]))).toBeNull();
+  });
+
+  test("says each kind of unchecked dependency once", () => {
+    expect(
+      uncheckedDependencyLines(
+        view([
+          unchecked("lookup-failed"),
+          unchecked("lookup-skipped"),
+          unchecked("lookup-skipped"),
+        ]),
+      ),
+    ).toEqual([
+      "Could not check 1 dependency against npm.",
+      "2 more dependencies not checked yet; each check reads a limited number from npm.",
+    ]);
+  });
+});
+
+describe("dependencyReadinessUnavailableMessage", () => {
+  test("a check that could not run says why, unlike a clean one", () => {
+    expect(
+      dependencyReadinessUnavailableMessage({
+        status: "unavailable",
+        reason: "report-unavailable",
+      }),
+    ).toContain("saved report is unavailable");
+    expect(
+      dependencyReadinessUnavailableMessage({
+        status: "unavailable",
+        reason: "npm-connection-changed",
+      }),
+    ).toContain("different registry");
+    expect(dependencyReadinessUnavailableMessage(checked([]))).toBeNull();
+    expect(dependencyReadinessUnavailableMessage({ status: "not-applicable" })).toBeNull();
   });
 });
 

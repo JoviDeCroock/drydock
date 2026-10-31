@@ -226,20 +226,27 @@ rather than approve it.
 Approving a stage on npm makes it installable, so approving `a@2.0.0` while it
 depends on `b@^2.0.0` and `b@2.0.0` is still staged publishes a release nobody
 can install. The decision view checks for this before the maintainer approves:
-`GET /api/v1/scans/:id/dependency-readiness` reads the reviewed manifest from the
-report artifact and asks whether each runtime dependency resolves to a public
-version.
+`GET /api/v1/scans/:id/dependency-readiness` asks whether each runtime
+dependency resolves to a public version.
 
+- **Which manifest.** The one npm installs from: for a staged review, the
+  registry's stage record (read live through the npm broker); the reviewed
+  tarball's manifest from the report artifact is the fallback when the stage
+  record is unavailable, and always for a gate review, which has no stage yet.
 - **What is checked.** `dependencies` and `optionalDependencies` (npm installs
   an optional dependency it cannot resolve without it, so it is labeled
   `optional`), and non-optional `peerDependencies`, labeled `peer`, since npm
   7+ installs those and fails when the range cannot resolve. Optional peers and
-  `devDependencies` are skipped, as are dependencies the tarball bundles under
-  `node_modules/<name>/`.
+  `devDependencies` are skipped, as are bundled dependencies: packed under
+  `node_modules/<name>/` and declared in the tarball's `bundleDependencies`
+  (`true` bundles every dependency). A packed directory the manifest does not
+  bundle is installed from the registry by npm, so it is checked.
 - **How specs resolve.** Ranges match with node-semver semantics, including its
-  prerelease rule (`^2.0.0` never resolves to `2.1.0-rc.1`), in
-  `server/lib/ecosystems/semver-range.ts`; a spec that is not a range is a
-  dist-tag. An `npm:` alias is checked against its target package. `workspace:`,
+  prerelease rule (`^2.0.0` never resolves to `2.1.0-rc.1`) and ASCII ordering
+  of prerelease identifiers, in `server/lib/ecosystems/semver-range.ts`; a spec
+  that is not a range is a dist-tag. Only the literal `*` (or an empty spec)
+  resolves to a prerelease `latest`; `x` or `>=0.0.0` needs a stable version.
+  An `npm:` alias is checked against its target package. `workspace:`,
   `catalog:`, `link:`, `file:`, and path specs are flagged: no consumer can
   resolve them from the registry, so the publish should have replaced them.
   Git, GitHub-shorthand, and URL specs are counted and not checked.
@@ -251,26 +258,40 @@ version.
   deleted is never offered; one npm already reports `published` counts as
   installable.
 - **Gated releases.** For a workflow-gate review, the other packages of the same
-  gated release satisfy each other: the gate releases them together. Without a
-  usable npm connection, a gate review reads the public registry anonymously
-  (`credentialed: false`), and a package it cannot see is described as not
-  publicly listed rather than missing.
+  gated release satisfy each other: the gate releases them together. The gate
+  contract does not name its publish target, so a gate review reads the
+  organization's npm connection's registry (as its baseline does), or the
+  public registry anonymously without a usable connection (`credentialed:
+false`), where a package it cannot see is described as not publicly listed
+  rather than missing. A gate publishing to a different registry is checked
+  against the wrong one.
 
 It is computed when the decision view loads, not at scan time: the answer
 changes after the scan (a sibling stage is approved) while the reviewed bytes do
 not, so nothing is persisted, no migration exists, and the report, risk, and
-findings are unchanged. Registry reads reuse the organization-scoped cached
-packument read (`fetchPackageMetadataCached`, 5-minute TTL) against the
-registry the scan was captured from, with the organization's credential; a
-connection edited to another registry since the scan fails closed
-(`npm-connection-changed`). A packument served from the cache that does not
-satisfy a spec is re-read fresh once, because "not published yet" is the answer
-that goes stale.
-Reads are bounded per request (40 packages, 6 at a time, a 10-second budget;
-changed specs first), rate limited per user, and fail open: a failed or skipped
-read is reported as "could not check" and never as missing, and nothing here
-blocks approval. Lookup failures emit `scan.dependency_readiness.lookup_failed`
-with a count only.
+findings are unchanged. Every credentialed registry request goes through the
+npm broker (`NpmBroker.fetchPackageVersions`, `connectionStatus`,
+`fetchStagedDetails`), which alone decrypts the organization's token and fails
+closed when the connection was edited to another registry since a staged scan
+(`npm-connection-changed`); the route never sees the token. Reads share the
+pipeline's `org:<id>|abbrev` packument cache (5-minute TTL), whose cache pass
+the route reads directly, since a KV read attaches no credential. A check that cannot run says so in one
+muted line (`unavailable`: report missing, or connection missing, unvalidated,
+or changed) rather than reading like a clean result.
+
+Each check first asks every target of the packument cache (no registry
+request), then spends at most 40 registry reads (6 at a time, a 10-second
+budget, changed specs first) on cache misses, and only then re-reads cached
+packuments that leave a spec unsatisfied, because "not published yet" is the
+answer that goes stale. Registry bodies are capped at 8 MiB. A dependency the
+budget did not reach is reported as not checked yet (`lookup-skipped`) and
+offered "Check the rest": the reads just made are now cached, so the next check
+answers the next batch, and a lockstep monorepo release with more than 40
+dependencies completes in a few checks. Targets past 300 are never read
+(`lookup-limit`). Everything fails open: a failed read is "could not check"
+(with "Check again"), never missing, and nothing here blocks approval. The
+endpoint is rate limited per user; lookup failures emit
+`scan.dependency_readiness.lookup_failed` with a count only.
 
 ## Compared with the workflow gate
 

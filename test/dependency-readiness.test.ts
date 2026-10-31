@@ -6,9 +6,11 @@ import {
   dependencyReadinessAppliesToScan,
   dependencyReadinessTargets,
   evaluateDependencyReadiness,
+  packedDependencyNames,
   planDependencyReadiness,
   runDependencyLookups,
   type PackageVersionsLookup,
+  type PackageVersionsReadMode,
   type StagedDependencyCandidate,
 } from "../server/lib/ecosystems/npm/dependency-readiness";
 
@@ -129,13 +131,15 @@ describe("planDependencyReadiness", () => {
   });
 
   test("bundled dependencies are satisfied by the tarball itself", () => {
-    const bundled = bundledDependencyNames([
+    const packed = packedDependencyNames([
       "package.json",
       "node_modules/local-only/package.json",
       "node_modules/@scope/inner/package.json",
       "node_modules/local-only/node_modules/deep/package.json",
     ]);
-    expect([...bundled].sort()).toEqual(["@scope/inner", "local-only"]);
+    expect([...packed].sort()).toEqual(["@scope/inner", "local-only"]);
+    const bundled = bundledDependencyNames(packed, { bundleDependencies: ["local-only"] });
+    expect([...bundled]).toEqual(["local-only"]);
     const plan = planDependencyReadiness(
       { dependencies: { "local-only": "file:./local-only" } },
       { bundled },
@@ -148,6 +152,37 @@ describe("planDependencyReadiness", () => {
     });
     expect(report.issues).toEqual([]);
     expect(dependencyReadinessTargets(plan)).toEqual([]);
+  });
+
+  test("a packed node_modules directory counts only when the manifest bundles it", () => {
+    const packed = new Set(["a", "b", "stray"]);
+    expect([...bundledDependencyNames(packed, { bundledDependencies: ["a", "missing"] })]).toEqual([
+      "a",
+    ]);
+    expect(
+      [
+        ...bundledDependencyNames(packed, {
+          bundleDependencies: true,
+          dependencies: { a: "^1", b: "^1" },
+        }),
+      ].sort(),
+    ).toEqual(["a", "b"]);
+    expect([...bundledDependencyNames(packed, {})]).toEqual([]);
+    expect([...bundledDependencyNames(packed, null)]).toEqual([]);
+  });
+
+  test("an oversized manifest keeps changed dependencies before truncating", () => {
+    const dependencies: Record<string, string> = {};
+    for (let i = 0; i < 1_005; i++) dependencies[`dep-${String(i).padStart(4, "0")}`] = "^1.0.0";
+    const plan = planDependencyReadiness(
+      { dependencies },
+      { changed: [{ key: "dep-1004", section: "dependencies", status: "modified" }] },
+    );
+    expect(plan.requirements).toHaveLength(1_000);
+    const names = plan.requirements.map((r) => r.name);
+    expect(names).toContain("dep-1004");
+    expect(names.at(-1)).toBe("dep-1004");
+    expect(names[0]).toBe("dep-0000");
   });
 });
 
@@ -233,6 +268,20 @@ describe("evaluateDependencyReadiness", () => {
     });
     expect(report.issues).toEqual([]);
   });
+
+  test.each(["x", ">=0.0.0", "* || 2.0.0-rc.1"])(
+    "%j matches every stable version but never a prerelease latest",
+    (spec) => {
+      const plan = planDependencyReadiness({ dependencies: { b: spec } });
+      const report = evaluate({
+        plan,
+        siblings: [],
+        candidates: [],
+        lookups: new Map([["b", found(["1.0.0-beta.1"], { latest: "1.0.0-beta.1" })]]),
+      });
+      expect(report.issues.map((i) => i.kind)).toEqual(["unpublished"]);
+    },
+  );
 
   test("aliases are checked against their target and report it", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "npm:@scope/real@^2.0.0" } });
@@ -323,54 +372,118 @@ describe("dependencyLookupQueue + runDependencyLookups", () => {
     expect(dependencyLookupQueue(plan, [], [])).toEqual(["z", "a", "o", "p"]);
   });
 
-  test("caps lookups, and an unsatisfied cached answer is re-read fresh once", async () => {
+  // A registry whose packuments land in a cache, like the real read path.
+  function cachedRegistry(packuments: (name: string) => PackageVersionsLookup) {
+    const cache = new Map<string, PackageVersionsLookup>();
+    const calls: Array<[string, PackageVersionsReadMode]> = [];
+    const lookup = async (name: string, mode: PackageVersionsReadMode) => {
+      calls.push([name, mode]);
+      if (mode === "cache") return cache.get(name) ?? null;
+      const answer = packuments(name);
+      if (answer.status === "found") cache.set(name, answer);
+      return answer;
+    };
+    return { cache, calls, lookup };
+  }
+
+  test("cache hits cost no registry read; misses come before revalidations", async () => {
     const plan = planDependencyReadiness({
-      dependencies: { a: "^2.0.0", b: "^1.0.0", c: "^1.0.0" },
+      dependencies: { a: "^2.0.0", b: "^1.0.0", c: "^1.0.0", d: "^1.0.0" },
     });
-    const calls: Array<[string, boolean]> = [];
-    const lookups = await runDependencyLookups(
-      plan,
-      ["a", "b", "c"],
-      async (name, { fresh }) => {
-        calls.push([name, fresh]);
-        if (name === "a") return found(fresh ? ["2.0.0"] : ["1.0.0"]);
-        if (name === "b") throw new Error("boom");
-        return found(["1.0.0"]);
-      },
-      { maxLookups: 2, concurrency: 1 },
+    const registry = cachedRegistry((name) =>
+      name === "b" ? { status: "error" } : found(name === "a" ? ["2.0.0"] : ["1.0.0"]),
     );
-    expect(calls).toEqual([
-      ["a", false],
-      ["a", true],
-      ["b", false],
-    ]);
-    expect(lookups.get("a")).toEqual(found(["2.0.0"]));
-    expect(lookups.get("b")).toEqual({ status: "error" });
-    expect(lookups.has("c")).toBe(false);
-  });
-
-  test("an answer just read from the registry is not read again", async () => {
-    const plan = planDependencyReadiness({ dependencies: { a: "^2.0.0" } });
-    const calls: boolean[] = [];
-    await runDependencyLookups(plan, ["a"], async (_name, { fresh }) => {
-      calls.push(fresh);
-      return { ...found(["1.0.0"]), fromCache: false };
+    registry.cache.set("a", found(["1.0.0"])); // stale "not yet"
+    registry.cache.set("c", found(["1.0.0"])); // satisfied
+    const { answers } = await runDependencyLookups(plan, ["a", "b", "c", "d"], registry.lookup, {
+      maxRegistryReads: 2,
+      concurrency: 1,
     });
-    expect(calls).toEqual([false]);
+    expect(registry.calls.filter(([, mode]) => mode === "network")).toEqual([
+      ["b", "network"],
+      ["d", "network"],
+    ]);
+    // `a` keeps its cached answer: the budget went to targets with no answer.
+    expect(answers.get("a")).toEqual(found(["1.0.0"]));
+    expect(answers.get("b")).toEqual({ status: "error" });
+    expect(answers.get("c")).toEqual(found(["1.0.0"]));
+    expect(answers.get("d")).toEqual(found(["1.0.0"]));
   });
 
-  test("stops starting lookups once the time budget is spent", async () => {
+  test("leftover budget re-reads an unsatisfied cached answer; a failed re-read keeps it", async () => {
+    const plan = planDependencyReadiness({ dependencies: { a: "^2.0.0", e: "^2.0.0" } });
+    const registry = cachedRegistry((name) =>
+      name === "a" ? found(["1.0.0", "2.0.0"]) : { status: "error" },
+    );
+    registry.cache.set("a", found(["1.0.0"]));
+    registry.cache.set("e", found(["1.0.0"]));
+    const { answers } = await runDependencyLookups(plan, ["a", "e"], registry.lookup);
+    expect(answers.get("a")).toEqual(found(["1.0.0", "2.0.0"]));
+    expect(answers.get("e")).toEqual(found(["1.0.0"]));
+  });
+
+  test("a lockstep release past the read budget is fully checked across re-checks", async () => {
+    // Babel-style: 70 dependencies all bumped to a version that is only staged.
+    const names = Array.from({ length: 70 }, (_, i) => `@babel/dep-${i}`);
+    const plan = planDependencyReadiness({
+      dependencies: Object.fromEntries(names.map((name) => [name, "^7.30.0"])),
+    });
+    const candidates = names.map((name) => staged(name, "7.30.0"));
+    const registry = cachedRegistry(() => found(["7.29.0"], { latest: "7.29.0" }));
+    const check = async () => {
+      const queue = dependencyLookupQueue(plan, [], candidates);
+      const { answers, beyondLimit } = await runDependencyLookups(plan, queue, registry.lookup);
+      return evaluate({ plan, siblings: [], candidates, lookups: answers, beyondLimit });
+    };
+    const count = (report: Awaited<ReturnType<typeof check>>, kind: string, reason?: string) =>
+      report.issues.filter((i) => i.kind === kind && (reason === undefined || i.reason === reason))
+        .length;
+
+    const networkReads = () => {
+      const reads = registry.calls.filter(([, mode]) => mode === "network").map(([n]) => n);
+      registry.calls.length = 0;
+      return reads;
+    };
+
+    const first = await check();
+    expect(count(first, "staged")).toBe(40);
+    expect(count(first, "unchecked", "lookup-skipped")).toBe(30);
+    expect(count(first, "unchecked", "lookup-failed")).toBe(0);
+    const firstReads = networkReads();
+    expect(firstReads).toHaveLength(40);
+
+    const second = await check();
+    expect(count(second, "staged")).toBe(70);
+    expect(count(second, "unchecked")).toBe(0);
+    // The second check read the 30 it had not answered before reusing the budget.
+    const unanswered = names.filter((name) => !firstReads.includes(name)).sort();
+    expect(networkReads().slice(0, 30).sort()).toEqual(unanswered);
+  });
+
+  test("targets past the check's limit are reported as beyond it, never read", async () => {
+    const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0", b: "^1.0.0" } });
+    const registry = cachedRegistry(() => found(["1.0.0"]));
+    const { answers, beyondLimit } = await runDependencyLookups(plan, ["a", "b"], registry.lookup, {
+      maxTargets: 1,
+    });
+    expect(registry.calls.map(([name]) => name)).not.toContain("b");
+    const report = evaluate({ plan, siblings: [], candidates: [], lookups: answers, beyondLimit });
+    expect(report.issues.map((i) => [i.name, i.reason])).toEqual([["b", "lookup-limit"]]);
+  });
+
+  test("stops starting registry reads once the time budget is spent", async () => {
     const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0", b: "^1.0.0" } });
     let clock = 0;
-    const lookups = await runDependencyLookups(
+    const { answers } = await runDependencyLookups(
       plan,
       ["a", "b"],
-      async () => {
+      async (_name, mode) => {
+        if (mode === "cache") return null;
         clock += 5_000;
         return found(["1.0.0"]);
       },
       { concurrency: 1, budgetMs: 4_000, now: () => clock },
     );
-    expect([...lookups.keys()]).toEqual(["a"]);
+    expect([...answers.keys()]).toEqual(["a"]);
   });
 });

@@ -148,7 +148,39 @@ test("a release waiting on a staged dependency says which one, beside the decisi
   page,
 }) => {
   await installWorkflowGateMocks(page);
-  // Registered later, so it takes precedence over the gate mocks' answer.
+  // Registered later, so these take precedence over the gate mocks. The demo
+  // gate is a PyPI release (never checked); this one is the npm release of it.
+  const npmGate = scanDetail(null);
+  await page.route(
+    (url) => url.pathname === `/api/v1/scans/${scanId}`,
+    async (route) => {
+      await fulfillJson(route, {
+        ...npmGate,
+        scan: {
+          ...npmGate.scan,
+          stageId: `workflow-gate:${gateId}:npm:@drydock/gate-demo`,
+          summaryJson: {
+            ...npmGate.scan.summaryJson,
+            stagedPublish: {
+              mode: "workflow_gate",
+              ecosystem: "npm",
+              provenance: {
+                ecosystem: "npm",
+                mode: "workflow_gate",
+                artifacts: [
+                  {
+                    path: "drydock-gate-demo-1.2.0.tgz",
+                    kind: "tarball",
+                    sha256: "d".repeat(64),
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    },
+  );
   await page.route(`**/api/v1/scans/${scanId}/dependency-readiness`, async (route) => {
     await fulfillJson(route, {
       status: "checked",
@@ -599,10 +631,6 @@ test("moving from one review to another shows the review the URL names", async (
       });
       return;
     }
-    if (path === `/api/v1/scans/${sidecarScanId}/dependency-readiness`) {
-      await fulfillJson(route, { status: "not-applicable" });
-      return;
-    }
     await fulfillJson(route, {
       version: "0.3.0",
       files: [],
@@ -807,12 +835,6 @@ async function installWorkflowGateMocks(
             ]
           : [],
       });
-      return;
-    }
-
-    // The demo gate publishes a PyPI package; dependency readiness is npm-only.
-    if (path === `/api/v1/scans/${scanId}/dependency-readiness`) {
-      await fulfillJson(route, { status: "not-applicable" });
       return;
     }
 

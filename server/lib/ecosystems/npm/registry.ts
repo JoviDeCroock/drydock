@@ -1,3 +1,4 @@
+import { readBoundedJson } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
@@ -75,7 +76,16 @@ export interface FetchPackageMetadataOptions {
    * publish times are needed: `time` exists only in the full document.
    */
   abbreviated?: boolean;
+  /**
+   * Refuse a body larger than this (bytes, also bounded in time). Unset keeps
+   * the scan pipeline's unbounded read, whose baseline needs even the largest
+   * packuments; a caller that can degrade to "could not check" sets it.
+   */
+  maxBytes?: number;
 }
+
+// Time allowed for a bounded body once headers have arrived.
+const BOUNDED_BODY_MS = 8_000;
 
 export async function fetchPackageMetadata(
   env: Cloudflare.Env,
@@ -109,7 +119,13 @@ export async function fetchPackageMetadata(
     res = await fetchWith("application/json");
   }
   if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  return projectRegistryMetadata(await res.json());
+  if (options.maxBytes === undefined) return projectRegistryMetadata(await res.json());
+  const body = await readBoundedJson(res, {
+    maxBytes: options.maxBytes,
+    deadlineMs: Date.now() + BOUNDED_BODY_MS,
+  });
+  if (body === null) throw new Error("metadata body over limit or unreadable");
+  return projectRegistryMetadata(body);
 }
 
 // Statuses a registry might answer with when it does not understand

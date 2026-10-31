@@ -5,13 +5,17 @@ import {
   dependencyIssueMessage,
   dependencyReadinessApplies,
   dependencyReadinessHeadline,
+  dependencyReadinessUnavailableMessage,
   dependencyReadinessView,
+  dependencyRecheckLabel,
   dependencySectionLabel,
-  uncheckedDependenciesMessage,
+  uncheckedDependencyLines,
 } from "../../../features/dependency-readiness";
 import { scanDetailPath } from "../../../lib/scan-detail-path";
 import { DependencyReadinessModel } from "../../../models/dependency-readiness";
 import type { ScanDetailModelInstance } from "../../../models/scan";
+
+const mutedLine = "m-0 flex flex-wrap items-center gap-2 text-[13px] text-ink-muted";
 
 /**
  * Sits directly under the verdict strip, beside the decision it informs:
@@ -28,30 +32,39 @@ export function DependencyReadinessNotice({ model }: { model: ScanDetailModelIns
 
   const organizationId = model.detail.value?.scan.organizationId ?? null;
   const loading = readiness.loading.value;
-  const checkAgain = (
+  const recheck = (label: string) => (
     <Button variant="ghost" size="sm" disabled={loading} onClick={() => void readiness.refresh()}>
-      {loading ? "Checking…" : "Check again"}
+      {loading ? "Checking…" : label}
     </Button>
   );
 
   if (readiness.failed.value) {
     return (
-      <p class="m-0 flex flex-wrap items-center gap-2 text-[13px] text-ink-muted">
+      <p class={mutedLine}>
         Could not check whether this release&rsquo;s dependencies are installable yet.
-        {checkAgain}
+        {recheck("Check again")}
       </p>
     );
   }
 
+  const unavailable = dependencyReadinessUnavailableMessage(readiness.result.value);
+  if (unavailable) return <p class={mutedLine}>{unavailable}</p>;
+
   const view = dependencyReadinessView(readiness.result.value);
   if (!view) return null;
+  const recheckLabel = dependencyRecheckLabel(view);
+  const unchecked = uncheckedDependencyLines(view);
 
   if (!view.blocking.length) {
     return (
-      <p class="m-0 flex flex-wrap items-center gap-2 text-[13px] text-ink-muted">
-        {uncheckedDependenciesMessage(view.unchecked)}
-        {checkAgain}
-      </p>
+      <div class="flex flex-col gap-1">
+        {unchecked.map((line, index) => (
+          <p key={line} class={mutedLine}>
+            {line}
+            {index === unchecked.length - 1 && recheckLabel ? recheck(recheckLabel) : null}
+          </p>
+        ))}
+      </div>
     );
   }
 
@@ -64,7 +77,7 @@ export function DependencyReadinessNotice({ model }: { model: ScanDetailModelIns
             <strong>{headline.title}</strong>
             <span>{headline.consequence}</span>
           </div>
-          {checkAgain}
+          {recheckLabel ? recheck(recheckLabel) : null}
         </div>
         <ul class="m-0 p-0 list-none flex flex-col gap-1.5">
           {view.blocking.map((issue) => {
@@ -96,11 +109,11 @@ export function DependencyReadinessNotice({ model }: { model: ScanDetailModelIns
             );
           })}
         </ul>
-        {view.unchecked ? (
-          <span class="text-[12px] text-ink-subtle">
-            {uncheckedDependenciesMessage(view.unchecked)}
+        {unchecked.map((line) => (
+          <span key={line} class="text-[12px] text-ink-subtle">
+            {line}
           </span>
-        ) : null}
+        ))}
       </div>
     </Alert>
   );

@@ -7,34 +7,41 @@
  * this organization's other stages look like when the maintainer is about to
  * approve. Advisory and fail-open — every registry or storage problem degrades
  * to "could not check", and nothing here moves risk, findings, or a decision.
+ *
+ * Every credentialed registry read goes through the npm broker, which alone
+ * decrypts the organization's token; this route never sees it.
  */
 import { Hono } from "hono";
-import { getNpmConnection } from "../../db/npm-connections";
 import {
   getScanForDependencyReadiness,
   listStagedDependencyCandidates,
 } from "../../db/scan-dependency-candidates";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
-import { decryptNpmToken } from "../../lib/ecosystems/npm/connection";
+import { createNpmBroker, type NpmBroker } from "../../lib/ecosystems/npm/broker";
 import {
   bundledDependencyNames,
   dependencyLookupQueue,
   dependencyReadinessAppliesToScan,
   dependencyReadinessTargets,
   evaluateDependencyReadiness,
+  packedDependencyNames,
   planDependencyReadiness,
   runDependencyLookups,
   type DependencyReadinessResponse,
-  type PackageVersionsLookup,
+  type PackageVersionsReadMode,
   type ReleaseSibling,
   type StagedDependencyCandidate,
 } from "../../lib/ecosystems/npm/dependency-readiness";
-import { fetchPackageMetadataCachedWithSource } from "../../lib/ecosystems/npm/registry-cache";
+import { readPackageVersions } from "../../lib/ecosystems/npm/registry-cache";
 import { listGatePackageScans } from "../../lib/github-app/webhook-gates";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { guardRateLimit } from "../../lib/rate-limit";
-import { loadScanReportManifest, scanArtifactReadBucket } from "../../lib/scan/artifacts";
+import {
+  loadScanArtifactFile,
+  loadScanReportManifest,
+  scanArtifactReadBucket,
+} from "../../lib/scan/artifacts";
 import type { Bindings, Variables } from "../../types";
 
 export const scanDependencyReadinessRoutes = new Hono<{
@@ -60,124 +67,140 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
   );
   if (limited) return limited;
 
-  const report = await loadScanReportManifest(scanArtifactReadBucket(c.env), scan);
+  const bucket = scanArtifactReadBucket(c.env);
+  const report = await loadScanReportManifest(bucket, scan);
   if (!report) return respond({ status: "unavailable", reason: "report-unavailable" });
 
-  const plan = planDependencyReadiness(report.packageJson, {
-    changed: report.dependencyChanges,
-    bundled: bundledDependencyNames(report.stagedPaths),
-  });
-
-  // A staged review must ask the registry it was captured from with the
-  // organization's own credential, exactly as its scan did; a connection
-  // edited since then fails closed rather than answering about another
-  // registry. (A legacy row that never captured its registry is asked of the
-  // current connection's, which is what its scan used.) A gate review needs no
-  // npm connection, so without a usable one it reads the public registry
-  // anonymously.
+  const ctx = workerExecutionContext(c.executionCtx);
   const isGate = scan.source === "workflow_gate";
-  const connection = await getNpmConnection(db, organizationId).catch(() => null);
-  const usable = connection?.validationStatus === "valid" ? connection : null;
-  if (!isGate && !usable) {
-    return respond({ status: "unavailable", reason: "npm-connection-unavailable" });
-  }
-  if (!isGate && usable && scan.registryUrl && usable.registryUrl !== scan.registryUrl) {
-    return respond({ status: "unavailable", reason: "npm-connection-changed" });
-  }
-  let token: string | undefined;
-  let registryUrl = c.env.NPM_REGISTRY || "https://registry.npmjs.org";
-  if (usable) {
-    try {
-      token = await decryptNpmToken(c.env, usable);
-      registryUrl = usable.registryUrl;
-    } catch (err) {
-      emitOperationalEvent("warn", "scan.dependency_readiness.credential_unavailable", {
+  // A staged review asks the registry it was captured from, so the broker
+  // fails closed when the connection now points elsewhere. (A legacy row that
+  // never captured its registry is asked of the current connection's, which
+  // is what its scan used.) A gate review has no captured registry: it reads
+  // the connection's registry, as its baseline did, or the public registry
+  // anonymously when the organization has no usable connection.
+  const broker = createNpmBroker(
+    { env: c.env, executionCtx: ctx, db, session: { userId: session.userId } },
+    { organizationId, registryUrl: isGate ? null : scan.registryUrl },
+  );
+  try {
+    const connection = await broker.connectionStatus();
+    if (connection.status === "unavailable") {
+      if (connection.reason === "credential") {
+        emitOperationalEvent("warn", "scan.dependency_readiness.credential_unavailable", {
+          organizationId,
+          scanId: scan.id,
+        });
+      }
+      if (!isGate) {
+        return respond({
+          status: "unavailable",
+          reason:
+            connection.reason === "changed"
+              ? "npm-connection-changed"
+              : "npm-connection-unavailable",
+        });
+      }
+    }
+    const credentialed = connection.status === "ready";
+    const registryUrl = credentialed
+      ? connection.registryUrl
+      : c.env.NPM_REGISTRY || "https://registry.npmjs.org";
+
+    // npm installs from the registry's own record of the release, so a staged
+    // review reads the stage metadata; the reviewed tarball's manifest is the
+    // fallback (always, for a gate review, which has no stage yet).
+    const stageManifest =
+      credentialed && !isGate ? await stagedManifest(broker, scan.stageId) : null;
+    const packed = packedDependencyNames(report.stagedPaths);
+    const rawManifest = packed.size ? await tarballManifest(bucket, scan) : null;
+    const plan = planDependencyReadiness(stageManifest ?? report.packageJson, {
+      changed: report.dependencyChanges,
+      bundled: bundledDependencyNames(packed, rawManifest),
+    });
+    if (!plan.requirements.length) {
+      return respond(
+        evaluateDependencyReadiness({
+          plan,
+          siblings: [],
+          candidates: [],
+          lookups: new Map(),
+          credentialed,
+        }),
+      );
+    }
+
+    const targets = dependencyReadinessTargets(plan);
+    const [siblings, candidates] = await Promise.all([
+      isGate && scan.gateId ? loadReleaseSiblings(db, organizationId, scan.gateId, scan.id) : [],
+      credentialed
+        ? listStagedDependencyCandidates(db, {
+            organizationId,
+            registryUrl,
+            packageNames: targets,
+          }).catch((err): StagedDependencyCandidate[] => {
+            emitOperationalEvent("warn", "scan.dependency_readiness.candidates_failed", {
+              organizationId,
+              scanId: scan.id,
+              error: describeOperationalError(err),
+            });
+            return [];
+          })
+        : [],
+    ]);
+
+    // The cache pass is a KV read of this organization's own partition and
+    // attaches no credential, so it stays here; every registry request, the
+    // only place the token is used, goes through the broker.
+    const cacheScope = credentialed ? `org:${organizationId}` : "public";
+    const lookup = (name: string, mode: PackageVersionsReadMode) =>
+      credentialed && mode === "network"
+        ? broker.fetchPackageVersions(name, mode)
+        : readPackageVersions(c.env, ctx, { packageName: name, registryUrl, cacheScope }, mode);
+    const queue = dependencyLookupQueue(plan, siblings, candidates);
+    const { answers, beyondLimit } = await runDependencyLookups(plan, queue, lookup);
+    const result = evaluateDependencyReadiness({
+      plan,
+      siblings,
+      candidates,
+      lookups: answers,
+      beyondLimit,
+      credentialed,
+    });
+    const failed = result.issues.filter((issue) => issue.reason === "lookup-failed").length;
+    if (failed) {
+      emitOperationalEvent("warn", "scan.dependency_readiness.lookup_failed", {
         organizationId,
         scanId: scan.id,
-        error: describeOperationalError(err),
+        failedLookups: failed,
       });
-      if (!isGate) return respond({ status: "unavailable", reason: "npm-connection-unavailable" });
     }
+    return respond(result);
+  } finally {
+    await broker.dispose();
   }
-  const credentialed = token !== undefined;
-  if (!plan.requirements.length) {
-    return respond(
-      evaluateDependencyReadiness({
-        plan,
-        siblings: [],
-        candidates: [],
-        lookups: new Map(),
-        credentialed,
-      }),
-    );
-  }
-  const targets = dependencyReadinessTargets(plan);
-  const [siblings, candidates] = await Promise.all([
-    isGate && scan.gateId ? loadReleaseSiblings(db, organizationId, scan.gateId, scan.id) : [],
-    token
-      ? listStagedDependencyCandidates(db, {
-          organizationId,
-          registryUrl,
-          packageNames: targets,
-        }).catch((err): StagedDependencyCandidate[] => {
-          emitOperationalEvent("warn", "scan.dependency_readiness.candidates_failed", {
-            organizationId,
-            scanId: scan.id,
-            error: describeOperationalError(err),
-          });
-          return [];
-        })
-      : [],
-  ]);
-
-  const ctx = workerExecutionContext(c.executionCtx);
-  const lookup = async (
-    packageName: string,
-    options: { fresh: boolean },
-  ): Promise<PackageVersionsLookup> => {
-    try {
-      const { metadata, fromCache } = await fetchPackageMetadataCachedWithSource(c.env, ctx, {
-        packageName,
-        registryUrl,
-        cacheScope: token ? `org:${organizationId}` : "public",
-        npmToken: token,
-        // Version keys and dist-tags are all this reads.
-        abbreviated: true,
-        revalidate: options.fresh,
-      });
-      return {
-        status: "found",
-        versions: Object.keys(metadata.versions ?? {}),
-        distTags: metadata["dist-tags"] ?? {},
-        fromCache,
-      };
-    } catch (err) {
-      // npm answers 404 for a package that does not exist and for one this
-      // token may not read; both mean "nothing installable is visible".
-      if (err instanceof Error && /\b404$/.test(err.message)) return { status: "not-found" };
-      return { status: "error" };
-    }
-  };
-
-  const queue = dependencyLookupQueue(plan, siblings, candidates);
-  const lookups = await runDependencyLookups(plan, queue, lookup);
-  const result = evaluateDependencyReadiness({
-    plan,
-    siblings,
-    candidates,
-    lookups,
-    credentialed,
-  });
-  const failed = result.issues.filter((issue) => issue.reason === "lookup-failed").length;
-  if (failed) {
-    emitOperationalEvent("warn", "scan.dependency_readiness.lookup_failed", {
-      organizationId,
-      scanId: scan.id,
-      failedLookups: failed,
-    });
-  }
-  return respond(result);
 });
+
+async function stagedManifest(broker: NpmBroker, stageId: string) {
+  const details = await broker.fetchStagedDetails(stageId).catch(() => null);
+  return details?.packageJson ?? null;
+}
+
+// The tarball's own package.json, for the fields the report's manifest
+// summary does not carry (`bundleDependencies`). Package bytes: parsed as
+// data, and unreadable means "nothing bundled".
+async function tarballManifest(
+  bucket: R2Bucket | undefined,
+  scan: Parameters<typeof loadScanArtifactFile>[1],
+): Promise<unknown> {
+  const file = await loadScanArtifactFile(bucket, scan, "package.json").catch(() => null);
+  if (!file?.textSample) return null;
+  try {
+    return JSON.parse(file.textSample) as unknown;
+  } catch {
+    return null;
+  }
+}
 
 // The other packages of the same gated release publish together with this
 // one (the gate releases only once every package is approved), so they satisfy

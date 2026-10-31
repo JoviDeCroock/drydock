@@ -126,4 +126,10 @@ describe("registry baseline selection", () => {
     expect(compareSemver("1.0.0-beta.10", "1.0.0-beta.2")).toBeGreaterThan(0);
     expect(compareSemver("1.0.0", "1.0.0-beta.10")).toBeGreaterThan(0);
   });
+
+  test("compares alphanumeric prerelease ids in ASCII order, as node-semver does", () => {
+    expect(compareSemver("1.0.0-RC.1", "1.0.0-beta")).toBeLessThan(0);
+    expect(compareSemver("1.0.0-alpha-b", "1.0.0-alphab")).toBeLessThan(0);
+    expect(compareSemver("1.0.0-beta", "1.0.0-beta")).toBe(0);
+  });
 });

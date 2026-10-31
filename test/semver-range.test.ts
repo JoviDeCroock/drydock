@@ -41,6 +41,9 @@ const cases: Array<[range: string, accepted: string[], rejected: string[]]> = [
   // sibling's prerelease opt-in.
   ["* || 2.0.0-rc.1", ["2.0.0"], ["2.0.0-rc.1"]],
   [">=0.0.0 || 2.0.0-rc.1", ["2.0.0"], ["2.0.0-rc.1"]],
+  // Prerelease identifiers compare in ASCII order: uppercase sorts first.
+  [">=1.0.0-beta", ["1.0.0-beta", "1.0.0-beta.1", "1.0.0-rc.1", "1.0.0"], ["1.0.0-RC.1"]],
+  ["<1.0.0-alpha", ["1.0.0-Zeta", "1.0.0-1"], ["1.0.0-alpha", "1.0.0-beta"]],
 ];
 
 describe("satisfiesSemverRange", () => {

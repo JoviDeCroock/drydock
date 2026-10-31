@@ -3,12 +3,13 @@ import { type AppDb, createDb } from "../../../db/client";
 import { getNpmConnection } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
-import { fetchPackageMetadataCached } from "./registry-cache";
+import { fetchPackageMetadataCached, readPackageVersions } from "./registry-cache";
 import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { ScanPreconditionError } from "../../scan/errors";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
+import type { PackageVersionsLookup, PackageVersionsReadMode } from "./dependency-readiness";
 
 // SHA-1 binds the review to npm's own stage record (`shasum`); SHA-256 is the
 // digest a workflow gate recomputes for the same `.tgz`, so a stage can be
@@ -20,7 +21,22 @@ export interface NpmBroker extends AdapterBroker {
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
   downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
+  /**
+   * Whether the organization's connection can serve credentialed reads for
+   * this ref (present, validated, still on the expected registry, token
+   * decryptable). Never returns the token.
+   */
+  connectionStatus(): Promise<NpmConnectionStatus>;
+  /** Published versions of a dependency, read with the organization's credential. */
+  fetchPackageVersions(
+    name: string,
+    mode: PackageVersionsReadMode,
+  ): Promise<PackageVersionsLookup | null>;
 }
+
+type NpmConnectionStatus =
+  | { status: "ready"; registryUrl: string }
+  | { status: "unavailable"; reason: "missing" | "unvalidated" | "changed" | "credential" };
 
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
@@ -99,6 +115,24 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     );
   }
 
+  async connectionStatus(): Promise<NpmConnectionStatus> {
+    return connectionStatusOf(this.readinessCredentials());
+  }
+
+  async fetchPackageVersions(
+    name: string,
+    mode: PackageVersionsReadMode,
+  ): Promise<PackageVersionsLookup | null> {
+    return readPackageVersionsWith(
+      this.env,
+      this.ctx,
+      this.ctx.props.organizationId,
+      this.readinessCredentials(),
+      name,
+      mode,
+    );
+  }
+
   private async resolveCredentials(): Promise<ResolvedCredentials> {
     return resolveNpmCredentials(
       this.env,
@@ -107,6 +141,62 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
       this.ctx.props.registryUrl,
     );
   }
+
+  // At most one resolution per broker instance for the readiness reads; an
+  // RPC-routed call may still land on a fresh instance and resolve again.
+  private readinessCreds?: Promise<ResolvedCredentials>;
+  private readinessCredentials(): Promise<ResolvedCredentials> {
+    this.readinessCreds ??= this.resolveCredentials();
+    return this.readinessCreds;
+  }
+}
+
+async function connectionStatusOf(
+  credentials: Promise<ResolvedCredentials>,
+): Promise<NpmConnectionStatus> {
+  try {
+    const { registry } = await credentials;
+    return { status: "ready", registryUrl: registry };
+  } catch (err) {
+    const code = err instanceof ScanPreconditionError ? err.code : null;
+    const reason =
+      code === "npm_connection_missing"
+        ? "missing"
+        : code === "npm_connection_unvalidated"
+          ? "unvalidated"
+          : code === "npm_connection_changed"
+            ? "changed"
+            : "credential";
+    return { status: "unavailable", reason };
+  }
+}
+
+async function readPackageVersionsWith(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  organizationId: string,
+  credentials: Promise<ResolvedCredentials>,
+  name: string,
+  mode: PackageVersionsReadMode,
+): Promise<PackageVersionsLookup | null> {
+  let creds: ResolvedCredentials;
+  try {
+    creds = await credentials;
+  } catch {
+    return mode === "cache" ? null : { status: "error" };
+  }
+  return readPackageVersions(
+    env,
+    ctx,
+    {
+      packageName: name,
+      registryUrl: creds.registry,
+      // The same partition as the pipeline's own abbreviated reads.
+      cacheScope: `org:${organizationId}`,
+      npmToken: creds.token,
+    },
+    mode,
+  );
 }
 
 async function resolveNpmCredentials(
@@ -200,6 +290,24 @@ class LocalNpmBroker implements NpmBroker {
     });
   }
 
+  async connectionStatus(): Promise<NpmConnectionStatus> {
+    return connectionStatusOf(this.readinessCredentials());
+  }
+
+  async fetchPackageVersions(
+    name: string,
+    mode: PackageVersionsReadMode,
+  ): Promise<PackageVersionsLookup | null> {
+    return readPackageVersionsWith(
+      this.ctx.env,
+      this.ctx.executionCtx,
+      this.props.organizationId,
+      this.readinessCredentials(),
+      name,
+      mode,
+    );
+  }
+
   private async resolve(): Promise<ResolvedCredentials> {
     return resolveNpmCredentials(
       this.ctx.env,
@@ -207,6 +315,12 @@ class LocalNpmBroker implements NpmBroker {
       this.props.organizationId,
       this.props.registryUrl,
     );
+  }
+
+  private readinessCreds?: Promise<ResolvedCredentials>;
+  private readinessCredentials(): Promise<ResolvedCredentials> {
+    this.readinessCreds ??= this.resolve();
+    return this.readinessCreds;
   }
 }
 

@@ -46,10 +46,18 @@ export function dependencyReadinessAppliesToScan(scan: {
 }
 
 // Bounded per request: a manifest declaring hundreds of dependencies cannot
-// turn one page load into hundreds of registry reads. Changed specs are looked
-// up first, so a truncated check still covers what this release changed.
-const MAX_DEPENDENCY_LOOKUPS = 40;
+// turn one page load into hundreds of registry reads. Every target is first
+// asked of the packument cache; only cache misses (then revalidations of a
+// cached "not yet") spend the registry budget, so each "Check again" answers
+// the next batch instead of re-reading the same one. Changed specs go first, so
+// a partial check still covers what this release changed.
+const MAX_REGISTRY_READS = 40;
+// Targets past this are never read (not even from the cache) and are reported
+// as beyond the check rather than "not checked yet", which a retry would never
+// fix.
+const MAX_CHECKED_TARGETS = 300;
 const DEPENDENCY_LOOKUP_CONCURRENCY = 6;
+const CACHE_LOOKUP_CONCURRENCY = 12;
 // Lookups still unstarted when the budget runs out are reported unchecked, so
 // a slow registry costs the reader seconds, not the Worker's request lifetime.
 const DEPENDENCY_LOOKUP_BUDGET_MS = 10_000;
@@ -64,7 +72,14 @@ const MAX_DECLARED_DEPENDENCIES = 1_000;
 type DependencyReadinessSection = "dependencies" | "optionalDependencies" | "peerDependencies";
 
 type ClassifiedSpec =
-  | { kind: "registry"; target: string; range: SemverRange | null; tag: string | null }
+  | {
+      kind: "registry";
+      target: string;
+      range: SemverRange | null;
+      tag: string | null;
+      /** The literal `*` or empty spec, which npm resolves to `latest` even when it is a prerelease. */
+      latestWildcard: boolean;
+    }
   | { kind: "local" }
   | { kind: "remote" }
   | { kind: "invalid" };
@@ -97,15 +112,15 @@ export interface StagedDependencyCandidate {
 }
 
 export type PackageVersionsLookup =
-  | {
-      status: "found";
-      versions: string[];
-      distTags: Record<string, string>;
-      /** False when this answer was just read from the registry, so re-reading is pointless. */
-      fromCache?: boolean;
-    }
+  | { status: "found"; versions: string[]; distTags: Record<string, string> }
   | { status: "not-found" }
   | { status: "error" };
+
+/**
+ * `cache` answers only from the packument cache (`null` on a miss, never a
+ * registry request); `network` reads the registry and refreshes the cache.
+ */
+export type PackageVersionsReadMode = "cache" | "network";
 
 type DependencyReadinessIssueKind =
   /** Not public yet, and this organization holds a stage that satisfies it. */
@@ -117,7 +132,14 @@ type DependencyReadinessIssueKind =
   /** Could not be checked; never a verdict. */
   | "unchecked";
 
-type DependencyUncheckedReason = "lookup-failed" | "lookup-skipped" | "unsupported-spec";
+type DependencyUncheckedReason =
+  /** The registry read failed; a retry may succeed. */
+  | "lookup-failed"
+  /** Not reached within this request's read or time budget; the next check reaches it. */
+  | "lookup-skipped"
+  /** Past `MAX_CHECKED_TARGETS`; no retry reaches it. */
+  | "lookup-limit"
+  | "unsupported-spec";
 
 export interface DependencyReadinessIssue {
   name: string;
@@ -184,11 +206,12 @@ function isPathSpec(spec: string): boolean {
 function classifyRegistrySpec(target: string, spec: string): ClassifiedSpec {
   if (!isValidLegacyNpmPackageName(target)) return { kind: "invalid" };
   const trimmed = spec.trim();
+  const latestWildcard = trimmed === "" || trimmed === "*";
   const range = parseSemverRange(trimmed);
-  if (range) return { kind: "registry", target, range, tag: null };
+  if (range) return { kind: "registry", target, range, tag: null, latestWildcard };
   // npm reads any other URL-safe spec as a dist-tag (`latest`, `next`).
   if (/^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(trimmed)) {
-    return { kind: "registry", target, range: null, tag: trimmed };
+    return { kind: "registry", target, range: null, tag: trimmed, latestWildcard: false };
   }
   return { kind: "invalid" };
 }
@@ -218,13 +241,38 @@ function changedKey(section: string, name: string) {
   return `${section}\u0000${name}`;
 }
 
-/** Top-level `node_modules/<name>/package.json` entries: dependencies the tarball bundles. */
-export function bundledDependencyNames(paths: Iterable<string>): Set<string> {
+/** Names with a top-level `node_modules/<name>/package.json` in the tarball. */
+export function packedDependencyNames(paths: Iterable<string>): Set<string> {
   const names = new Set<string>();
   for (const path of paths) {
     const match = /^node_modules\/((?:@[^/]+\/)?[^/@][^/]*)\/package\.json$/.exec(path);
     if (match) names.add(match[1]);
   }
+  return names;
+}
+
+/**
+ * Dependencies the consumer gets from the tarball itself: packed under
+ * `node_modules/` AND declared in `bundleDependencies` (`true` bundles every
+ * `dependencies` entry). npm installs a packed directory the manifest does not
+ * declare from the registry like any other dependency, so the packed path
+ * alone proves nothing. `rawManifest` is the tarball's parsed `package.json`;
+ * without it nothing counts as bundled.
+ */
+export function bundledDependencyNames(
+  packed: ReadonlySet<string>,
+  rawManifest: unknown,
+): Set<string> {
+  const names = new Set<string>();
+  if (!packed.size || !isRecord(rawManifest)) return names;
+  const declared = rawManifest.bundleDependencies ?? rawManifest.bundledDependencies;
+  const roots =
+    declared === true
+      ? Object.keys(isRecord(rawManifest.dependencies) ? rawManifest.dependencies : {})
+      : Array.isArray(declared)
+        ? declared.filter((name): name is string => typeof name === "string")
+        : [];
+  for (const name of roots) if (packed.has(name)) names.add(name);
   return names;
 }
 
@@ -262,15 +310,32 @@ export function planDependencyReadiness(
     entries.push(["peerDependencies", name, spec]);
   }
 
+  // An oversized manifest keeps what this release changed first, then the
+  // declaration order; the kept entries are reported in declaration order.
+  const isChanged = ([section, name]: (typeof entries)[number]) =>
+    changed.has(changedKey(section, name));
+  const kept =
+    entries.length <= MAX_DECLARED_DEPENDENCIES
+      ? entries
+      : entries
+          .map((entry, index) => ({ entry, index }))
+          .sort((a, b) => Number(isChanged(b.entry)) - Number(isChanged(a.entry)))
+          .slice(0, MAX_DECLARED_DEPENDENCIES)
+          .sort((a, b) => a.index - b.index)
+          .map(({ entry }) => entry);
+
   return {
-    requirements: entries.slice(0, MAX_DECLARED_DEPENDENCIES).map(([section, name, spec]) => ({
-      name,
-      spec,
-      section,
-      changed: changed.has(changedKey(section, name)),
-      bundled: options.bundled?.has(name) ?? false,
-      classified: classifyDependencySpec(name, spec),
-    })),
+    requirements: kept.map((entry) => {
+      const [section, name, spec] = entry;
+      return {
+        name,
+        spec,
+        section,
+        changed: isChanged(entry),
+        bundled: options.bundled?.has(name) ?? false,
+        classified: classifyDependencySpec(name, spec),
+      };
+    }),
   };
 }
 
@@ -318,10 +383,11 @@ function lookupSatisfies(spec: Registry, lookup: PackageVersionsLookup): boolean
     return Boolean(tagged && lookup.versions.includes(tagged));
   }
   if (!spec.range) return false;
-  // npm-pick-manifest resolves `*` and `""` to `latest` even when it is a prerelease.
-  if (spec.range.sets.length === 1 && spec.range.sets[0].length === 0 && lookup.distTags.latest) {
-    return true;
-  }
+  // npm-pick-manifest resolves the literal `*` (and `""`) to `latest` even when
+  // it is a prerelease. Only the literal: `x`, `>=0.0.0`, or `* || 2.0.0-rc.1`
+  // also match every stable version but never select a prerelease `latest`.
+  const latest = lookup.distTags.latest;
+  if (spec.latestWildcard && latest && lookup.versions.includes(latest)) return true;
   return maxSatisfyingVersion(lookup.versions, spec.range) !== null;
 }
 
@@ -371,63 +437,84 @@ export function dependencyLookupQueue(
 }
 
 export interface DependencyLookupOptions {
-  maxLookups?: number;
+  maxRegistryReads?: number;
+  maxTargets?: number;
   concurrency?: number;
   budgetMs?: number;
   now?: () => number;
 }
 
+export interface DependencyLookupResults {
+  answers: Map<string, PackageVersionsLookup>;
+  /** Targets past `MAX_CHECKED_TARGETS`, never read. */
+  beyondLimit: Set<string>;
+}
+
 /**
- * Runs the lookups. A cached packument that does not satisfy some spec is read
- * once more with `fresh: true`: a satisfying answer cannot go stale (npm
- * versions are immutable), but "not published yet" is exactly the answer that
- * changes minutes after a sibling stage is approved.
+ * Runs the lookups in two passes. The cache pass asks every target of the
+ * packument cache and costs no registry request. The registry pass then
+ * spends the read budget on cache misses first, in queue order, and only then
+ * re-reads cached packuments that leave some spec unsatisfied: a satisfying
+ * answer cannot go stale (npm versions are immutable), but "not published yet"
+ * is exactly the answer that changes minutes after a sibling stage is
+ * approved. A cached answer the budget cannot re-read is still an answer (at
+ * most one cache TTL old), so only a target with no answer at all is reported
+ * as not checked yet, and each run's registry reads land in the cache for the
+ * next one.
  */
 export async function runDependencyLookups(
   plan: DependencyReadinessPlan,
   queue: readonly string[],
-  lookup: (name: string, options: { fresh: boolean }) => Promise<PackageVersionsLookup>,
+  lookup: (name: string, mode: PackageVersionsReadMode) => Promise<PackageVersionsLookup | null>,
   options: DependencyLookupOptions = {},
-): Promise<Map<string, PackageVersionsLookup>> {
+): Promise<DependencyLookupResults> {
   const now = options.now ?? Date.now;
   const deadline = now() + (options.budgetMs ?? DEPENDENCY_LOOKUP_BUDGET_MS);
+  const concurrency = options.concurrency ?? DEPENDENCY_LOOKUP_CONCURRENCY;
   const specsByTarget = new Map<string, Registry[]>();
   for (const req of plan.requirements) {
-    if (req.classified.kind !== "registry") continue;
+    if (req.bundled || req.classified.kind !== "registry") continue;
     const list = specsByTarget.get(req.classified.target) ?? [];
     list.push(req.classified);
     specsByTarget.set(req.classified.target, list);
   }
-  const safeLookup = async (name: string, fresh: boolean): Promise<PackageVersionsLookup> => {
-    try {
-      return await lookup(name, { fresh });
-    } catch {
-      return { status: "error" };
-    }
-  };
-  const results = new Map<string, PackageVersionsLookup>();
-  const capped = queue.slice(0, options.maxLookups ?? MAX_DEPENDENCY_LOOKUPS);
+  const maxTargets = options.maxTargets ?? MAX_CHECKED_TARGETS;
+  const targets = queue.slice(0, maxTargets);
+  const beyondLimit = new Set(queue.slice(maxTargets));
+  const answers = new Map<string, PackageVersionsLookup>();
+
   await mapWithConcurrency(
-    capped,
-    options.concurrency ?? DEPENDENCY_LOOKUP_CONCURRENCY,
+    targets,
+    Math.max(concurrency, CACHE_LOOKUP_CONCURRENCY),
     async (name) => {
       if (now() > deadline) return;
-      let result = await safeLookup(name, false);
-      const specs = specsByTarget.get(name) ?? [];
-      if (
-        result.status === "found" &&
-        result.fromCache !== false &&
-        specs.some((spec) => !lookupSatisfies(spec, result))
-      ) {
-        if (now() <= deadline) {
-          const fresh = await safeLookup(name, true);
-          if (fresh.status === "found") result = fresh;
-        }
+      try {
+        const cached = await lookup(name, "cache");
+        if (cached?.status === "found") answers.set(name, cached);
+      } catch {
+        // A cache failure is a miss.
       }
-      results.set(name, result);
     },
   );
-  return results;
+
+  const misses = targets.filter((name) => !answers.has(name));
+  const stale = targets.filter((name) => {
+    const answer = answers.get(name);
+    return answer && (specsByTarget.get(name) ?? []).some((spec) => !lookupSatisfies(spec, answer));
+  });
+  const reads = [...misses, ...stale].slice(0, options.maxRegistryReads ?? MAX_REGISTRY_READS);
+  await mapWithConcurrency(reads, concurrency, async (name) => {
+    if (now() > deadline) return;
+    let result: PackageVersionsLookup;
+    try {
+      result = (await lookup(name, "network")) ?? { status: "error" };
+    } catch {
+      result = { status: "error" };
+    }
+    // A failed re-read keeps the cached answer it was revalidating.
+    if (result.status === "found" || !answers.has(name)) answers.set(name, result);
+  });
+  return { answers, beyondLimit };
 }
 
 export function evaluateDependencyReadiness(input: {
@@ -435,6 +522,7 @@ export function evaluateDependencyReadiness(input: {
   siblings: readonly ReleaseSibling[];
   candidates: readonly StagedDependencyCandidate[];
   lookups: ReadonlyMap<string, PackageVersionsLookup>;
+  beyondLimit?: ReadonlySet<string>;
   credentialed: boolean;
 }): DependencyReadinessReport {
   const issues: DependencyReadinessIssue[] = [];
@@ -462,7 +550,8 @@ export function evaluateDependencyReadiness(input: {
     if (pre) continue;
     const lookup = input.lookups.get(spec.target);
     if (!lookup) {
-      issues.push({ ...base, ...target, kind: "unchecked", reason: "lookup-skipped" });
+      const reason = input.beyondLimit?.has(spec.target) ? "lookup-limit" : "lookup-skipped";
+      issues.push({ ...base, ...target, kind: "unchecked", reason });
       continue;
     }
     if (lookup.status === "error") {

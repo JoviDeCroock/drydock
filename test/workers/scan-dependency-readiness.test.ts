@@ -18,15 +18,20 @@ interface RegistryCall {
   authorization: string | null;
 }
 
-// Packuments keyed by package name; anything else answers 404 like npm does.
-function stubRegistry(packuments: Record<string, unknown>, options: { failFor?: string[] } = {}) {
+// Packuments keyed by package name, stage records keyed by stage id; anything
+// else answers 404 like npm does.
+function stubRegistry(
+  packuments: Record<string, unknown>,
+  options: { failFor?: string[]; stages?: Record<string, unknown> } = {},
+) {
   const calls: RegistryCall[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const request = new Request(input as RequestInfo, init as RequestInit);
     calls.push({ url: request.url, authorization: request.headers.get("authorization") });
     const name = decodeURIComponent(new URL(request.url).pathname.slice(1));
     if (options.failFor?.includes(name)) return new Response("unavailable", { status: 503 });
-    const body = packuments[name];
+    const stage = name.startsWith("-/stage/") ? options.stages?.[name.slice(8)] : undefined;
+    const body = stage ?? packuments[name];
     if (!body) return new Response("not found", { status: 404 });
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -63,8 +68,10 @@ function seedStagedScan(
   name: string,
   version: string,
   manifest: Record<string, unknown> = {},
+  stageId?: string,
 ) {
   return seedCompletedScan(owner, {
+    ...(stageId ? { stageId } : {}),
     packageJson: { name, version, ...manifest },
     job: {
       source: "auto_discovery",
@@ -122,6 +129,53 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
       expect(registryCall.url.startsWith(`${REGISTRY}/`)).toBe(true);
       expect(registryCall.authorization).toBe(`Bearer ${TOKEN}`);
     }
+  });
+
+  test("checks the manifest npm will install from: the stage record, not the tarball", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const stageId = "stage-readiness-a-200";
+    const scanId = await seedStagedScan(
+      owner,
+      "a",
+      "2.0.0",
+      { dependencies: { b: "^2.0.0" } },
+      stageId,
+    );
+    const calls = stubRegistry(
+      { d: packument(["0.9.0"]) },
+      {
+        stages: {
+          [stageId]: {
+            id: stageId,
+            packageName: "a",
+            version: "2.0.0",
+            manifest: { name: "a", version: "2.0.0", dependencies: { d: "^1.0.0" } },
+          },
+        },
+      },
+    );
+
+    const { body } = await readiness(owner, scanId);
+
+    expect(body.issues).toEqual([
+      expect.objectContaining({ name: "d", kind: "unpublished", packageFound: true }),
+    ]);
+    expect(calls.map((c) => c.url)).not.toContain(`${REGISTRY}/b`);
+    for (const registryCall of calls) {
+      expect(registryCall.authorization).toBe(`Bearer ${TOKEN}`);
+    }
+  });
+
+  test("a staged review without a usable connection says it could not check", async () => {
+    const owner = await seedUser();
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", { dependencies: { b: "^2.0.0" } });
+    const calls = stubRegistry({});
+
+    const { body } = await readiness(owner, scanId);
+
+    expect(body).toEqual({ status: "unavailable", reason: "npm-connection-unavailable" });
+    expect(calls).toEqual([]);
   });
 
   test("never offers another organization's stage", async () => {
@@ -190,7 +244,7 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
     expect(body.issues).toEqual([
       expect.objectContaining({ name: "c", kind: "unpublished", packageFound: true }),
     ]);
-    // One read: an answer fetched cold is not re-read with revalidate.
+    // One read: a cache miss is read once, never re-read as a revalidation.
     expect(calls.map((registryCall) => registryCall.url)).toEqual([`${REGISTRY}/c`]);
     expect(calls.every((registryCall) => registryCall.authorization === null)).toBe(true);
   });

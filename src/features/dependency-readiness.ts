@@ -7,21 +7,26 @@ import type {
   DependencyReadinessIssue,
   DependencyReadinessResponse,
 } from "../../server/lib/ecosystems/npm/dependency-readiness";
+import { scanEcosystem } from "../../server/lib/public-feed";
 import { canOfferNpmStageFollowUp, type NpmStageFollowUpScan } from "../lib/npm-stage-follow-up";
 
 export interface DependencyReadinessScan extends NpmStageFollowUpScan {
   status?: string | null;
+  summaryJson?: unknown;
 }
 
 /**
- * Only while approving still lies ahead: a staged review whose npm stage is
- * still actionable, or a gate review whose held deployment is still pending.
+ * Only for an npm release while approving still lies ahead: a staged review
+ * whose npm stage is still actionable, or an npm gate review whose held
+ * deployment is still pending. Mirrors the endpoint's own eligibility, so a
+ * PyPI gate never asks.
  */
 export function dependencyReadinessApplies(
   scan: DependencyReadinessScan | null | undefined,
   gateStatus: string | null | undefined,
 ): boolean {
   if (!scan || scan.status !== "complete") return false;
+  if (scanEcosystem(scan.source ?? "", scan.summaryJson) !== "npm") return false;
   if (scan.source === "workflow_gate") return gateStatus === "pending";
   if (scan.source !== "manual" && scan.source !== "auto_discovery") return false;
   return canOfferNpmStageFollowUp(scan);
@@ -30,8 +35,12 @@ export function dependencyReadinessApplies(
 export interface DependencyReadinessView {
   /** Dependencies a consumer cannot install yet. */
   blocking: DependencyReadinessIssue[];
-  /** Dependencies that could not be checked: a lookup failed or was skipped. */
-  unchecked: number;
+  /** Registry reads that failed; "Check again" may answer them. */
+  failed: number;
+  /** Not reached by this check's read budget; the next check reaches them. */
+  skipped: number;
+  /** Never checked: a spec this check cannot read, or past the check's limit. */
+  uncheckable: number;
   /** `warn` when a required dependency is affected; optional and peer alone read as `info`. */
   tone: "warn" | "info";
   /** False when the registry was read anonymously (a gate review without an npm connection). */
@@ -43,14 +52,68 @@ export function dependencyReadinessView(
 ): DependencyReadinessView | null {
   if (!response || response.status !== "checked") return null;
   const blocking = response.issues.filter((issue) => issue.kind !== "unchecked");
-  const unchecked = response.issues.length - blocking.length;
-  if (!blocking.length && !unchecked) return null;
+  const count = (reason: string) =>
+    response.issues.filter((issue) => issue.kind === "unchecked" && issue.reason === reason).length;
+  const failed = count("lookup-failed");
+  const skipped = count("lookup-skipped");
+  const uncheckable = response.issues.length - blocking.length - failed - skipped;
+  if (!blocking.length && !failed && !skipped && !uncheckable) return null;
   return {
     blocking,
-    unchecked,
+    failed,
+    skipped,
+    uncheckable,
     tone: blocking.some((issue) => issue.section === "dependencies") ? "warn" : "info",
     credentialed: response.credentialed,
   };
+}
+
+/**
+ * The re-check action, labeled by what it would do. A blocking notice always
+ * offers it (the answer moves once a sibling stage is approved); otherwise
+ * only a failure or a skipped batch gives it something to do, and a check
+ * left with only uncheckable specs offers nothing.
+ */
+export function dependencyRecheckLabel(view: DependencyReadinessView): string | null {
+  if (view.failed || view.blocking.length) return "Check again";
+  if (view.skipped) return "Check the rest";
+  return null;
+}
+
+/** One muted line per kind of dependency the check did not answer. */
+export function uncheckedDependencyLines(view: DependencyReadinessView): string[] {
+  const noun = (count: number) => (count === 1 ? "dependency" : "dependencies");
+  const lines: string[] = [];
+  if (view.failed) lines.push(`Could not check ${view.failed} ${noun(view.failed)} against npm.`);
+  if (view.skipped) {
+    lines.push(
+      `${view.skipped} more ${noun(view.skipped)} not checked yet; each check reads a limited number from npm.`,
+    );
+  }
+  if (view.uncheckable) {
+    lines.push(
+      `${view.uncheckable} ${noun(view.uncheckable)} use a spec this check does not read, or are past its limit.`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * A check that could not run at all says so in one muted line, so it does not
+ * read like a clean result. `null` for a response that ran or does not apply.
+ */
+export function dependencyReadinessUnavailableMessage(
+  response: DependencyReadinessResponse | null,
+): string | null {
+  if (response?.status !== "unavailable") return null;
+  switch (response.reason) {
+    case "report-unavailable":
+      return "Could not check this release’s dependencies: its saved report is unavailable.";
+    case "npm-connection-changed":
+      return "Could not check this release’s dependencies: the npm connection now points at a different registry than this release was staged on.";
+    case "npm-connection-unavailable":
+      return "Could not check this release’s dependencies: the organization’s npm connection is missing or not validated.";
+  }
 }
 
 export function dependencySectionLabel(issue: DependencyReadinessIssue): string | null {
@@ -112,8 +175,4 @@ export function dependencyReadinessHeadline(view: DependencyReadinessView): {
     consequence:
       "npm installs this release without an optional dependency it cannot resolve; a peer the consumer does not already provide fails the install.",
   };
-}
-
-export function uncheckedDependenciesMessage(count: number): string {
-  return `Could not check ${count} ${count === 1 ? "dependency" : "dependencies"} against npm.`;
 }
