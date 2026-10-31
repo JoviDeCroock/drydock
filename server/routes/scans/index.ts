@@ -1,7 +1,8 @@
 /**
  * Scan routes, mounted under /api/v1/scans.
  *
- * Split by what the caller is doing with a scan: running it, deciding on it,
+ * Split by what the caller is doing with a scan: running it, deciding on it
+ * (and whether its dependencies are installable yet),
  * sharing the result, or diffing versions. No router-level middleware — each
  * handler establishes its own organization context — so the groups compose
  * without ordering constraints. Registration order is preserved anyway so the
@@ -14,6 +15,7 @@ import type { Bindings, Variables } from "../../types";
 import { scanBatchApprovalRoutes } from "./batch-approval";
 import { scanCompareRoutes } from "./compare";
 import { scanDecisionRoutes } from "./decisions";
+import { scanDependencyReadinessRoutes } from "./dependency-readiness";
 import { scanLifecycleRoutes } from "./lifecycle";
 import { scanOverviewRoutes } from "./overview";
 import { scanSharingRoutes } from "./sharing";
@@ -26,3 +28,4 @@ scansRoutes.route("/", scanLifecycleRoutes);
 scansRoutes.route("/", scanDecisionRoutes);
 scansRoutes.route("/", scanSharingRoutes);
 scansRoutes.route("/", scanCompareRoutes);
+scansRoutes.route("/", scanDependencyReadinessRoutes);

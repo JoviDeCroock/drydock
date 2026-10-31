@@ -12,6 +12,11 @@ export interface CachedPackageMetadataInput {
   cacheScope: string;
   npmToken?: string;
   abbreviated?: boolean;
+  /**
+   * Skip the cached copy (still refreshing it). For a caller whose negative
+   * answer ("no such version yet") is the one that goes stale within the TTL.
+   */
+  revalidate?: boolean;
 }
 
 export async function fetchPackageMetadataCached(
@@ -24,7 +29,7 @@ export async function fetchPackageMetadataCached(
     packageName: input.packageName,
     cacheScope: input.abbreviated ? `${input.cacheScope}|abbrev` : input.cacheScope,
   });
-  const cached = await readCompareMetadataCache(env, key);
+  const cached = input.revalidate ? null : await readCompareMetadataCache(env, key);
   if (cached) return cached;
 
   const metadata = await fetchPackageMetadata(env, input.packageName, {
