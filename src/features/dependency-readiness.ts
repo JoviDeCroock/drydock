@@ -39,7 +39,7 @@ export interface DependencyReadinessView {
   failed: number;
   /** Not reached by this check's read budget; the next check reaches them. */
   skipped: number;
-  /** Never checked: a spec this check cannot read, or past the check's limit. */
+  /** Never checked here: an unsupported spec, a registry document too large to read, or past the limit. */
   uncheckable: number;
   /** `warn` when a required dependency is affected; optional and peer alone read as `info`. */
   tone: "warn" | "info";
@@ -92,7 +92,7 @@ export function uncheckedDependencyLines(view: DependencyReadinessView): string[
   }
   if (view.uncheckable) {
     lines.push(
-      `${view.uncheckable} ${noun(view.uncheckable)} use a spec this check does not read, or are past its limit.`,
+      `${view.uncheckable} ${noun(view.uncheckable)} cannot be checked here: an unsupported spec, a registry document too large to read, or past the check’s limit.`,
     );
   }
   return lines;

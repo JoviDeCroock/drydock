@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   bundledDependencyNames,
+  clampLookupOffset,
   classifyDependencySpec,
   dependencyLookupQueue,
   dependencyReadinessAppliesToScan,
@@ -9,8 +10,8 @@ import {
   packedDependencyNames,
   planDependencyReadiness,
   runDependencyLookups,
+  type DependencyLookupSource,
   type PackageVersionsLookup,
-  type PackageVersionsReadMode,
   type StagedDependencyCandidate,
 } from "../server/lib/ecosystems/npm/dependency-readiness";
 
@@ -272,16 +273,34 @@ describe("evaluateDependencyReadiness", () => {
   test.each(["x", ">=0.0.0", "* || 2.0.0-rc.1"])(
     "%j matches every stable version but never a prerelease latest",
     (spec) => {
-      const plan = planDependencyReadiness({ dependencies: { b: spec } });
-      const report = evaluate({
-        plan,
-        siblings: [],
-        candidates: [],
-        lookups: new Map([["b", found(["1.0.0-beta.1"], { latest: "1.0.0-beta.1" })]]),
-      });
-      expect(report.issues.map((i) => i.kind)).toEqual(["unpublished"]);
+      // Only prereleases are published, and `latest` is one of them.
+      const prereleaseOnly = found(["1.0.0-beta.1", "1.0.0-beta.2"], { latest: "1.0.0-beta.2" });
+      const check = (s: string) =>
+        evaluate({
+          plan: planDependencyReadiness({ dependencies: { b: s } }),
+          siblings: [],
+          candidates: [],
+          lookups: new Map([["b", prereleaseOnly]]),
+        }).issues.map((i) => i.kind);
+      // Each spec parses to the same match-anything range as `*`; only the
+      // literal `*` takes npm's latest shortcut.
+      expect(check("*")).toEqual([]);
+      expect(check(spec)).toEqual(["unpublished"]);
     },
   );
+
+  test("a registry document too large to read is its own non-retryable reason", () => {
+    const plan = planDependencyReadiness({ dependencies: { next: "^15.0.0" } });
+    const report = evaluate({
+      plan,
+      siblings: [],
+      candidates: [],
+      lookups: new Map([["next", { status: "too-large" } as const]]),
+    });
+    expect(report.issues.map((i) => [i.name, i.kind, i.reason])).toEqual([
+      ["next", "unchecked", "too-large"],
+    ]);
+  });
 
   test("aliases are checked against their target and report it", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "npm:@scope/real@^2.0.0" } });
@@ -372,118 +391,181 @@ describe("dependencyLookupQueue + runDependencyLookups", () => {
     expect(dependencyLookupQueue(plan, [], [])).toEqual(["z", "a", "o", "p"]);
   });
 
-  // A registry whose packuments land in a cache, like the real read path.
-  function cachedRegistry(packuments: (name: string) => PackageVersionsLookup) {
-    const cache = new Map<string, PackageVersionsLookup>();
-    const calls: Array<[string, PackageVersionsReadMode]> = [];
-    const lookup = async (name: string, mode: PackageVersionsReadMode) => {
-      calls.push([name, mode]);
-      if (mode === "cache") return cache.get(name) ?? null;
-      const answer = packuments(name);
-      if (answer.status === "found") cache.set(name, answer);
-      return answer;
+  // Workers KV as one colo sees it: reading a missing key caches the miss for a
+  // minute, so a write made after that read stays invisible until the miss
+  // expires, and entries expire after the 5-minute TTL. A plain Map would hide
+  // exactly the behavior the resume offset exists for.
+  function kvRegistry(packuments: (name: string) => PackageVersionsLookup) {
+    const clock = { now: 0 };
+    const store = new Map<string, { value: PackageVersionsLookup; expires: number }>();
+    const cachedMisses = new Map<string, number>();
+    const batches: string[][] = [];
+    const source: DependencyLookupSource = {
+      async cached(name) {
+        const missUntil = cachedMisses.get(name);
+        if (missUntil !== undefined && missUntil > clock.now) return null;
+        const entry = store.get(name);
+        if (entry && entry.expires > clock.now) return entry.value;
+        cachedMisses.set(name, clock.now + 60_000);
+        return null;
+      },
+      async fetch(names) {
+        batches.push(names);
+        return names.map((name) => {
+          const lookup = packuments(name);
+          if (lookup.status !== "error") {
+            store.set(name, { value: lookup, expires: clock.now + 300_000 });
+          }
+          return { name, lookup };
+        });
+      },
     };
-    return { cache, calls, lookup };
+    const seed = (name: string, value: PackageVersionsLookup) =>
+      store.set(name, { value, expires: Number.POSITIVE_INFINITY });
+    return { source, clock, batches, seed };
   }
 
   test("cache hits cost no registry read; misses come before revalidations", async () => {
     const plan = planDependencyReadiness({
       dependencies: { a: "^2.0.0", b: "^1.0.0", c: "^1.0.0", d: "^1.0.0" },
     });
-    const registry = cachedRegistry((name) =>
+    const kv = kvRegistry((name) =>
       name === "b" ? { status: "error" } : found(name === "a" ? ["2.0.0"] : ["1.0.0"]),
     );
-    registry.cache.set("a", found(["1.0.0"])); // stale "not yet"
-    registry.cache.set("c", found(["1.0.0"])); // satisfied
-    const { answers } = await runDependencyLookups(plan, ["a", "b", "c", "d"], registry.lookup, {
+    kv.seed("a", found(["1.0.0"])); // a stale "not yet"
+    kv.seed("c", found(["1.0.0"])); // satisfied
+    const { answers } = await runDependencyLookups(plan, ["a", "b", "c", "d"], kv.source, {
       maxRegistryReads: 2,
-      concurrency: 1,
     });
-    expect(registry.calls.filter(([, mode]) => mode === "network")).toEqual([
-      ["b", "network"],
-      ["d", "network"],
-    ]);
+    expect(kv.batches).toEqual([["b", "d"]]);
     // `a` keeps its cached answer: the budget went to targets with no answer.
     expect(answers.get("a")).toEqual(found(["1.0.0"]));
     expect(answers.get("b")).toEqual({ status: "error" });
-    expect(answers.get("c")).toEqual(found(["1.0.0"]));
     expect(answers.get("d")).toEqual(found(["1.0.0"]));
   });
 
-  test("leftover budget re-reads an unsatisfied cached answer; a failed re-read keeps it", async () => {
-    const plan = planDependencyReadiness({ dependencies: { a: "^2.0.0", e: "^2.0.0" } });
-    const registry = cachedRegistry((name) =>
-      name === "a" ? found(["1.0.0", "2.0.0"]) : { status: "error" },
+  test("leftover budget re-reads cached negatives; a failed re-read keeps the cached answer", async () => {
+    const plan = planDependencyReadiness({
+      dependencies: { a: "^2.0.0", e: "^2.0.0", gone: "^1.0.0" },
+    });
+    const kv = kvRegistry((name) =>
+      name === "a"
+        ? found(["1.0.0", "2.0.0"])
+        : name === "gone"
+          ? found(["1.0.0"])
+          : { status: "error" },
     );
-    registry.cache.set("a", found(["1.0.0"]));
-    registry.cache.set("e", found(["1.0.0"]));
-    const { answers } = await runDependencyLookups(plan, ["a", "e"], registry.lookup);
+    kv.seed("a", found(["1.0.0"]));
+    kv.seed("e", found(["1.0.0"]));
+    kv.seed("gone", { status: "not-found" });
+    const { answers } = await runDependencyLookups(plan, ["a", "e", "gone"], kv.source);
+    expect(kv.batches).toEqual([["a", "e", "gone"]]);
     expect(answers.get("a")).toEqual(found(["1.0.0", "2.0.0"]));
     expect(answers.get("e")).toEqual(found(["1.0.0"]));
+    expect(answers.get("gone")).toEqual(found(["1.0.0"]));
   });
 
-  test("a lockstep release past the read budget is fully checked across re-checks", async () => {
+  test("a lockstep release past the read budget finishes across re-checks despite KV's cached misses", async () => {
     // Babel-style: 70 dependencies all bumped to a version that is only staged.
     const names = Array.from({ length: 70 }, (_, i) => `@babel/dep-${i}`);
     const plan = planDependencyReadiness({
       dependencies: Object.fromEntries(names.map((name) => [name, "^7.30.0"])),
     });
     const candidates = names.map((name) => staged(name, "7.30.0"));
-    const registry = cachedRegistry(() => found(["7.29.0"], { latest: "7.29.0" }));
-    const check = async () => {
+    const kv = kvRegistry(() => found(["7.29.0"], { latest: "7.29.0" }));
+    const check = async (offset?: number) => {
       const queue = dependencyLookupQueue(plan, [], candidates);
-      const { answers, beyondLimit } = await runDependencyLookups(plan, queue, registry.lookup);
-      return evaluate({ plan, siblings: [], candidates, lookups: answers, beyondLimit });
+      const { answers, beyondLimit, nextOffset } = await runDependencyLookups(
+        plan,
+        queue,
+        kv.source,
+        { offset },
+      );
+      return evaluate({
+        plan,
+        siblings: [],
+        candidates,
+        lookups: answers,
+        beyondLimit,
+        nextOffset,
+      });
     };
-    const count = (report: Awaited<ReturnType<typeof check>>, kind: string, reason?: string) =>
-      report.issues.filter((i) => i.kind === kind && (reason === undefined || i.reason === reason))
-        .length;
-
-    const networkReads = () => {
-      const reads = registry.calls.filter(([, mode]) => mode === "network").map(([n]) => n);
-      registry.calls.length = 0;
-      return reads;
-    };
+    const count = (report: Awaited<ReturnType<typeof check>>, reason?: string) =>
+      report.issues.filter((i) => (reason ? i.reason === reason : i.kind === "staged")).length;
 
     const first = await check();
-    expect(count(first, "staged")).toBe(40);
-    expect(count(first, "unchecked", "lookup-skipped")).toBe(30);
-    expect(count(first, "unchecked", "lookup-failed")).toBe(0);
-    const firstReads = networkReads();
-    expect(firstReads).toHaveLength(40);
+    expect(count(first)).toBe(40);
+    expect(count(first, "lookup-skipped")).toBe(30);
+    expect(first.nextOffset).toBe(40);
 
-    const second = await check();
-    expect(count(second, "staged")).toBe(70);
-    expect(count(second, "unchecked")).toBe(0);
-    // The second check read the 30 it had not answered before reusing the budget.
-    const unanswered = names.filter((name) => !firstReads.includes(name)).sort();
-    expect(networkReads().slice(0, 30).sort()).toEqual(unanswered);
+    // Clicked again at once: KV still hides the first check's 40 writes, so
+    // only the offset keeps this check from re-reading them.
+    const second = await check(first.nextOffset);
+    const [firstReads, secondReads] = kv.batches;
+    const unread = names.filter((name) => !firstReads.includes(name));
+    expect(secondReads.slice(0, 30).sort()).toEqual(unread.sort());
+    expect(secondReads.filter((name) => firstReads.includes(name))).toHaveLength(10);
+    expect(count(second)).toBe(40);
+
+    // Once KV's cached misses lapse (well inside the 5-minute TTL), every
+    // answer is readable and the check is complete.
+    kv.clock.now += 61_000;
+    const third = await check(second.nextOffset);
+    expect(count(third)).toBe(70);
+    expect(count(third, "lookup-skipped")).toBe(0);
+    expect(third.nextOffset).toBeUndefined();
+  });
+
+  test("failures that are never cached do not starve the dependencies after them", async () => {
+    const names = Array.from({ length: 45 }, (_, i) => `dep-${String(i).padStart(2, "0")}`);
+    const plan = planDependencyReadiness({
+      dependencies: Object.fromEntries(names.map((name) => [name, "^1.0.0"])),
+    });
+    const failing = new Set(names.slice(0, 40));
+    const kv = kvRegistry((name) => (failing.has(name) ? { status: "error" } : found(["1.0.0"])));
+    const queue = dependencyLookupQueue(plan, [], []);
+    const first = await runDependencyLookups(plan, queue, kv.source);
+    expect(names.slice(40).some((name) => first.answers.has(name))).toBe(false);
+    const second = await runDependencyLookups(plan, queue, kv.source, {
+      offset: first.nextOffset ?? 0,
+    });
+    for (const name of names.slice(40)) expect(second.answers.get(name)).toEqual(found(["1.0.0"]));
   });
 
   test("targets past the check's limit are reported as beyond it, never read", async () => {
     const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0", b: "^1.0.0" } });
-    const registry = cachedRegistry(() => found(["1.0.0"]));
-    const { answers, beyondLimit } = await runDependencyLookups(plan, ["a", "b"], registry.lookup, {
+    const kv = kvRegistry(() => found(["1.0.0"]));
+    const { answers, beyondLimit } = await runDependencyLookups(plan, ["a", "b"], kv.source, {
       maxTargets: 1,
     });
-    expect(registry.calls.map(([name]) => name)).not.toContain("b");
+    expect(kv.batches.flat()).not.toContain("b");
     const report = evaluate({ plan, siblings: [], candidates: [], lookups: answers, beyondLimit });
     expect(report.issues.map((i) => [i.name, i.reason])).toEqual([["b", "lookup-limit"]]);
   });
 
-  test("stops starting registry reads once the time budget is spent", async () => {
-    const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0", b: "^1.0.0" } });
+  test("no registry batch starts once the time budget is spent", async () => {
+    const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0" } });
     let clock = 0;
-    const { answers } = await runDependencyLookups(
-      plan,
-      ["a", "b"],
-      async (_name, mode) => {
-        if (mode === "cache") return null;
-        clock += 5_000;
-        return found(["1.0.0"]);
-      },
-      { concurrency: 1, budgetMs: 4_000, now: () => clock },
-    );
-    expect([...answers.keys()]).toEqual(["a"]);
+    const kv = kvRegistry(() => found(["1.0.0"]));
+    const cached = kv.source.cached;
+    kv.source.cached = async (name) => {
+      clock += 5_000;
+      return cached(name);
+    };
+    const { answers, nextOffset } = await runDependencyLookups(plan, ["a"], kv.source, {
+      budgetMs: 4_000,
+      now: () => clock,
+    });
+    expect(kv.batches).toEqual([]);
+    expect(answers.size).toBe(0);
+    expect(nextOffset).toBe(0);
+  });
+
+  test("a client resume offset is clamped to the queue", () => {
+    expect(clampLookupOffset("7")).toBe(7);
+    expect(clampLookupOffset("299")).toBe(299);
+    for (const value of [undefined, "", "-1", "1e3", "abc", "300", "99999", "4.5"]) {
+      expect(clampLookupOffset(value)).toBe(0);
+    }
   });
 });

@@ -11,7 +11,8 @@
  * The manifest is package bytes: names and specs here are hostile data. They
  * only select registry packument reads on the organization's own registry
  * (the same read the scan pipeline already makes for the package itself),
- * are bounded by `MAX_DEPENDENCY_LOOKUPS`, and are rendered as text.
+ * are bounded by `MAX_CHECKED_TARGETS` cache reads and `MAX_REGISTRY_READS`
+ * registry reads per check, and are rendered as text.
  */
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { isRecord } from "../../platform/guards";
@@ -47,10 +48,11 @@ export function dependencyReadinessAppliesToScan(scan: {
 
 // Bounded per request: a manifest declaring hundreds of dependencies cannot
 // turn one page load into hundreds of registry reads. Every target is first
-// asked of the packument cache; only cache misses (then revalidations of a
-// cached "not yet") spend the registry budget, so each "Check again" answers
-// the next batch instead of re-reading the same one. Changed specs go first, so
-// a partial check still covers what this release changed.
+// asked of the cache; only cache misses (then revalidations of a cached "not
+// yet") spend the registry budget. The client hands back the previous check's
+// `nextOffset`, so the next check reads the next batch even while the cache
+// still hides the last one's writes (KV keeps a miss for up to a minute).
+// Changed specs go first, so a first check covers what this release changed.
 const MAX_REGISTRY_READS = 40;
 // Targets past this are never read (not even from the cache) and are reported
 // as beyond the check rather than "not checked yet", which a retry would never
@@ -114,13 +116,9 @@ export interface StagedDependencyCandidate {
 export type PackageVersionsLookup =
   | { status: "found"; versions: string[]; distTags: Record<string, string> }
   | { status: "not-found" }
+  /** The registry document is past what one check reads; retrying cannot help. */
+  | { status: "too-large" }
   | { status: "error" };
-
-/**
- * `cache` answers only from the packument cache (`null` on a miss, never a
- * registry request); `network` reads the registry and refreshes the cache.
- */
-export type PackageVersionsReadMode = "cache" | "network";
 
 type DependencyReadinessIssueKind =
   /** Not public yet, and this organization holds a stage that satisfies it. */
@@ -139,6 +137,8 @@ type DependencyUncheckedReason =
   | "lookup-skipped"
   /** Past `MAX_CHECKED_TARGETS`; no retry reaches it. */
   | "lookup-limit"
+  /** Its registry document is too large to read; no retry reaches it. */
+  | "too-large"
   | "unsupported-spec";
 
 export interface DependencyReadinessIssue {
@@ -174,6 +174,11 @@ export interface DependencyReadinessReport {
    */
   credentialed: boolean;
   issues: DependencyReadinessIssue[];
+  /**
+   * Present when some dependency was not reached: where the next check should
+   * resume its registry reads. A hint the server clamps, never authority.
+   */
+  nextOffset?: number;
 }
 
 /** `GET /api/v1/scans/:id/dependency-readiness`. */
@@ -441,31 +446,55 @@ export interface DependencyLookupOptions {
   maxTargets?: number;
   concurrency?: number;
   budgetMs?: number;
+  /** Queue position to start the registry reads from (the previous check's `nextOffset`). */
+  offset?: number;
   now?: () => number;
+}
+
+/** Where the lookups come from: a cache that never reaches the registry, and a registry batch. */
+export interface DependencyLookupSource {
+  cached(name: string): Promise<PackageVersionsLookup | null>;
+  /** A name missing from the result was not reached within `budgetMs`. */
+  fetch(
+    names: string[],
+    options: { concurrency: number; budgetMs: number },
+  ): Promise<Array<{ name: string; lookup: PackageVersionsLookup }>>;
 }
 
 export interface DependencyLookupResults {
   answers: Map<string, PackageVersionsLookup>;
   /** Targets past `MAX_CHECKED_TARGETS`, never read. */
   beyondLimit: Set<string>;
+  /** Where the next check should resume, or null when every target was reached. */
+  nextOffset: number | null;
+}
+
+/** A client-supplied resume position, clamped to something the queue can use. */
+export function clampLookupOffset(value: unknown): number {
+  const parsed = typeof value === "string" && /^\d{1,4}$/.test(value) ? Number(value) : 0;
+  return parsed < MAX_CHECKED_TARGETS ? parsed : 0;
 }
 
 /**
  * Runs the lookups in two passes. The cache pass asks every target of the
- * packument cache and costs no registry request. The registry pass then
- * spends the read budget on cache misses first, in queue order, and only then
- * re-reads cached packuments that leave some spec unsatisfied: a satisfying
- * answer cannot go stale (npm versions are immutable), but "not published yet"
- * is exactly the answer that changes minutes after a sibling stage is
- * approved. A cached answer the budget cannot re-read is still an answer (at
- * most one cache TTL old), so only a target with no answer at all is reported
- * as not checked yet, and each run's registry reads land in the cache for the
- * next one.
+ * cache and costs no registry request. The registry pass then spends the read
+ * budget on targets with no answer, rotated to start at `offset`, and only
+ * then re-reads cached negative answers (a packument that leaves some spec
+ * unsatisfied, or "no such package"): a satisfying answer cannot go stale (npm
+ * versions are immutable), but "not published yet" is exactly the answer that
+ * changes minutes after a sibling stage is approved. A cached answer the budget
+ * cannot re-read is still an answer (at most one cache TTL old).
+ *
+ * The rotation is what lets a release with more dependencies than one check's
+ * budget finish: KV keeps a miss for up to a minute, so the previous check's
+ * writes may still read as misses, and without the offset the next check would
+ * spend its budget on exactly those again. Failed reads are not cached, and the
+ * rotation moves past them too.
  */
 export async function runDependencyLookups(
   plan: DependencyReadinessPlan,
   queue: readonly string[],
-  lookup: (name: string, mode: PackageVersionsReadMode) => Promise<PackageVersionsLookup | null>,
+  source: DependencyLookupSource,
   options: DependencyLookupOptions = {},
 ): Promise<DependencyLookupResults> {
   const now = options.now ?? Date.now;
@@ -489,32 +518,46 @@ export async function runDependencyLookups(
     async (name) => {
       if (now() > deadline) return;
       try {
-        const cached = await lookup(name, "cache");
-        if (cached?.status === "found") answers.set(name, cached);
+        const cached = await source.cached(name);
+        if (cached && cached.status !== "error") answers.set(name, cached);
       } catch {
         // A cache failure is a miss.
       }
     },
   );
 
-  const misses = targets.filter((name) => !answers.has(name));
-  const stale = targets.filter((name) => {
+  const start = targets.length ? (options.offset ?? 0) % targets.length : 0;
+  const rotated = [...targets.slice(start), ...targets.slice(0, start)];
+  const misses = rotated.filter((name) => !answers.has(name));
+  const stale = rotated.filter((name) => {
     const answer = answers.get(name);
-    return answer && (specsByTarget.get(name) ?? []).some((spec) => !lookupSatisfies(spec, answer));
+    if (answer?.status === "not-found") return true;
+    return (
+      answer?.status === "found" &&
+      (specsByTarget.get(name) ?? []).some((spec) => !lookupSatisfies(spec, answer))
+    );
   });
   const reads = [...misses, ...stale].slice(0, options.maxRegistryReads ?? MAX_REGISTRY_READS);
-  await mapWithConcurrency(reads, concurrency, async (name) => {
-    if (now() > deadline) return;
-    let result: PackageVersionsLookup;
-    try {
-      result = (await lookup(name, "network")) ?? { status: "error" };
-    } catch {
-      result = { status: "error" };
-    }
+  const remaining = deadline - now();
+  const fetched =
+    reads.length && remaining > 0
+      ? await source.fetch(reads, { concurrency, budgetMs: remaining }).catch(() => [])
+      : [];
+  for (const { name, lookup } of fetched) {
     // A failed re-read keeps the cached answer it was revalidating.
-    if (result.status === "found" || !answers.has(name)) answers.set(name, result);
+    if (lookup.status !== "error" || !answers.has(name)) answers.set(name, lookup);
+  }
+
+  // Resume after the furthest miss this check reached, in rotation order.
+  const missed = new Set(misses);
+  const reached = new Set(fetched.map(({ name }) => name));
+  let lastReached = -1;
+  rotated.forEach((name, index) => {
+    if (reached.has(name) && missed.has(name)) lastReached = index;
   });
-  return { answers, beyondLimit };
+  const unanswered = targets.some((name) => !answers.has(name));
+  const nextOffset = unanswered ? (start + lastReached + 1) % targets.length : null;
+  return { answers, beyondLimit, nextOffset };
 }
 
 export function evaluateDependencyReadiness(input: {
@@ -523,6 +566,7 @@ export function evaluateDependencyReadiness(input: {
   candidates: readonly StagedDependencyCandidate[];
   lookups: ReadonlyMap<string, PackageVersionsLookup>;
   beyondLimit?: ReadonlySet<string>;
+  nextOffset?: number | null;
   credentialed: boolean;
 }): DependencyReadinessReport {
   const issues: DependencyReadinessIssue[] = [];
@@ -554,8 +598,9 @@ export function evaluateDependencyReadiness(input: {
       issues.push({ ...base, ...target, kind: "unchecked", reason });
       continue;
     }
-    if (lookup.status === "error") {
-      issues.push({ ...base, ...target, kind: "unchecked", reason: "lookup-failed" });
+    if (lookup.status === "error" || lookup.status === "too-large") {
+      const reason = lookup.status === "error" ? "lookup-failed" : "too-large";
+      issues.push({ ...base, ...target, kind: "unchecked", reason });
       continue;
     }
     if (lookupSatisfies(spec, lookup)) continue;
@@ -588,5 +633,9 @@ export function evaluateDependencyReadiness(input: {
     satisfiedByRelease,
     credentialed: input.credentialed,
     issues,
+    ...(typeof input.nextOffset === "number" &&
+    issues.some((issue) => issue.reason === "lookup-skipped")
+      ? { nextOffset: input.nextOffset }
+      : {}),
   };
 }

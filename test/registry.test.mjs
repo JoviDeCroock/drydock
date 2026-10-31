@@ -129,7 +129,9 @@ describe("registry baseline selection", () => {
 
   test("compares alphanumeric prerelease ids in ASCII order, as node-semver does", () => {
     expect(compareSemver("1.0.0-RC.1", "1.0.0-beta")).toBeLessThan(0);
-    expect(compareSemver("1.0.0-alpha-b", "1.0.0-alphab")).toBeLessThan(0);
+    // localeCompare folds case and orders both pairs the other way round.
+    expect(compareSemver("1.0.0-Beta", "1.0.0-alpha")).toBeLessThan(0);
+    expect(compareSemver("1.0.0-rc.Z", "1.0.0-rc.a")).toBeLessThan(0);
     expect(compareSemver("1.0.0-beta", "1.0.0-beta")).toBe(0);
   });
 });

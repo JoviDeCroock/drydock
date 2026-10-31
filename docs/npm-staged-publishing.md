@@ -270,27 +270,42 @@ It is computed when the decision view loads, not at scan time: the answer
 changes after the scan (a sibling stage is approved) while the reviewed bytes do
 not, so nothing is persisted, no migration exists, and the report, risk, and
 findings are unchanged. Every credentialed registry request goes through the
-npm broker (`NpmBroker.fetchPackageVersions`, `connectionStatus`,
-`fetchStagedDetails`), which alone decrypts the organization's token and fails
-closed when the connection was edited to another registry since a staged scan
-(`npm-connection-changed`); the route never sees the token. Reads share the
-pipeline's `org:<id>|abbrev` packument cache (5-minute TTL), whose cache pass
-the route reads directly, since a KV read attaches no credential. A check that cannot run says so in one
-muted line (`unavailable`: report missing, or connection missing, unvalidated,
-or changed) rather than reading like a clean result.
+npm broker (`connectionStatus`, `fetchStagedDetails`, and
+`fetchPackageVersionsBatch`, which resolves the credential once per batch),
+which alone decrypts the organization's token and fails closed when the
+connection was edited to another registry since a staged scan
+(`npm-connection-changed`); the route never sees the token. A check that cannot
+run says so in one muted line (`unavailable`: report missing, or connection
+missing, unvalidated, or changed) rather than reading like a clean result.
 
-Each check first asks every target of the packument cache (no registry
-request), then spends at most 40 registry reads (6 at a time, a 10-second
-budget, changed specs first) on cache misses, and only then re-reads cached
-packuments that leave a spec unsatisfied, because "not published yet" is the
-answer that goes stale. Registry bodies are capped at 8 MiB. A dependency the
-budget did not reach is reported as not checked yet (`lookup-skipped`) and
-offered "Check the rest": the reads just made are now cached, so the next check
-answers the next batch, and a lockstep monorepo release with more than 40
-dependencies completes in a few checks. Targets past 300 are never read
-(`lookup-limit`). Everything fails open: a failed read is "could not check"
-(with "Check again"), never missing, and nothing here blocks approval. The
-endpoint is rate limited per user; lookup failures emit
+Packuments are streamed (`server/lib/ecosystems/npm/package-versions.ts`)
+through the packument extractor in version-keys-only mode, so memory stays flat
+and large documents work (`next`'s abbreviated packument is ~25 MB). A body
+past 64 MiB of decompressed JSON, or with more than 100,000 versions, is
+reported as too large to check (`too-large`): not a failure, no retry, no
+failure event. Answers (found, not found, too large; never a failed read) are
+cached for 5 minutes in their own partition, `org:<id>|versions` or
+`public|versions`, beside the pipeline's projected `|abbrev` packuments, which a
+versions-only document must never replace.
+
+Each check first asks every target of that cache (no registry request), then
+spends at most 40 registry reads (6 at a time, a 10-second budget) on targets
+with no answer, and only then re-reads cached negative answers, because "not
+published yet" is the one that goes stale. A dependency the budget did not
+reach is reported as not checked yet (`lookup-skipped`) with "Check the rest",
+and the response carries `nextOffset`: the client sends it back as `?offset=`,
+and the next check starts its registry reads there, rotating through the queue.
+The offset is only a hint for which advisory reads to make, clamped by the
+server. It is what makes progress independent of KV visibility: KV keeps a miss
+for up to a minute, so the previous check's writes can still read as misses,
+and failed reads are never cached, so without the rotation they would take the
+budget every time. A first check reads changed specs first. A release with more
+than 40 dependencies finishes once all its answers are cached at once: each
+check adds up to 40, so up to about 300 dependencies need their checks within
+the 5-minute TTL (an answer older than that is read again). Targets past 300
+are never read (`lookup-limit`). Everything fails open: a failed read is "could
+not check" (with "Check again"), never missing, and nothing here blocks
+approval. The endpoint is rate limited per user; lookup failures emit
 `scan.dependency_readiness.lookup_failed` with a count only.
 
 ## Compared with the workflow gate

@@ -148,9 +148,21 @@ function nextNumberState(state: number, c: number): number | null {
 }
 
 export function createPackumentExtractor(
-  limits: { maxVersions?: number; maxDistTags?: number; maxCapturedBytes?: number } = {},
+  limits: {
+    maxVersions?: number;
+    maxDistTags?: number;
+    maxCapturedBytes?: number;
+    /**
+     * Record each version key (with a null entry) and skip its object and the
+     * `time` map, for a reader that needs only which versions exist and the
+     * dist-tags: memory then scales with the version count, never with the
+     * per-version fields a publisher controls.
+     */
+    versionKeysOnly?: boolean;
+  } = {},
 ): { write(chunk: Uint8Array): void; end(): PackumentExtract } {
   const maxVersions = limits.maxVersions ?? 10_001;
+  const versionKeysOnly = limits.versionKeysOnly ?? false;
   const maxDistTags = limits.maxDistTags ?? 1_000;
   const maxCaptured = limits.maxCapturedBytes ?? 4_096;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -297,12 +309,16 @@ export function createPackumentExtractor(
         return VERSIONS;
       case SLOT_TIME:
         applyNonString();
-        return TIME;
+        return versionKeysOnly ? null : TIME;
       case SLOT_TAGS:
         applyNonString();
         return TAGS;
       case SLOT_VERSION:
         if (!versionAllowed()) return null;
+        if (versionKeysOnly) {
+          out.versions.set(pendingKey, null);
+          return null;
+        }
         entry = { name: null, version: null, tarball: null, shasum: null };
         out.versions.set(pendingKey, entry);
         return ENTRY;

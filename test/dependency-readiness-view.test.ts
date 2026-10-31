@@ -113,6 +113,9 @@ describe("dependencyRecheckLabel", () => {
     expect(dependencyRecheckLabel(view([unchecked("lookup-skipped")]))).toBe("Check the rest");
     expect(dependencyRecheckLabel(view([unchecked("unsupported-spec")]))).toBeNull();
     expect(dependencyRecheckLabel(view([unchecked("lookup-limit")]))).toBeNull();
+    // A registry document too large to read never offers a retry.
+    expect(dependencyRecheckLabel(view([unchecked("too-large")]))).toBeNull();
+    expect(view([unchecked("too-large")])).toMatchObject({ failed: 0, uncheckable: 1 });
   });
 
   test("says each kind of unchecked dependency once", () => {

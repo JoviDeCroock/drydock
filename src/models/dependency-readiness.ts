@@ -20,9 +20,17 @@ export const DependencyReadinessModel = createModel(
     async function load(): Promise<void> {
       const current = ++generation;
       loading.value = true;
+      // Resume where the last check stopped, so a release with more
+      // dependencies than one check reads finishes across re-checks. Only a
+      // hint: the server clamps it.
+      const previous = result.peek();
+      const offset =
+        previous?.status === "checked" && typeof previous.nextOffset === "number"
+          ? `?offset=${previous.nextOffset}`
+          : "";
       try {
         const data = await apiFetch<DependencyReadinessResponse>(
-          `/api/v1/scans/${encodeURIComponent(scanId)}/dependency-readiness`,
+          `/api/v1/scans/${encodeURIComponent(scanId)}/dependency-readiness${offset}`,
         );
         if (current !== generation) return;
         result.value = data;

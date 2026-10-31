@@ -20,6 +20,7 @@ import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { createNpmBroker, type NpmBroker } from "../../lib/ecosystems/npm/broker";
 import {
   bundledDependencyNames,
+  clampLookupOffset,
   dependencyLookupQueue,
   dependencyReadinessAppliesToScan,
   dependencyReadinessTargets,
@@ -27,12 +28,15 @@ import {
   packedDependencyNames,
   planDependencyReadiness,
   runDependencyLookups,
+  type DependencyLookupSource,
   type DependencyReadinessResponse,
-  type PackageVersionsReadMode,
   type ReleaseSibling,
   type StagedDependencyCandidate,
 } from "../../lib/ecosystems/npm/dependency-readiness";
-import { readPackageVersions } from "../../lib/ecosystems/npm/registry-cache";
+import {
+  fetchPackageVersionsMany,
+  readCachedPackageVersions,
+} from "../../lib/ecosystems/npm/package-versions";
 import { listGatePackageScans } from "../../lib/github-app/webhook-gates";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
@@ -151,20 +155,29 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
 
     // The cache pass is a KV read of this organization's own partition and
     // attaches no credential, so it stays here; every registry request, the
-    // only place the token is used, goes through the broker.
-    const cacheScope = credentialed ? `org:${organizationId}` : "public";
-    const lookup = (name: string, mode: PackageVersionsReadMode) =>
-      credentialed && mode === "network"
-        ? broker.fetchPackageVersions(name, mode)
-        : readPackageVersions(c.env, ctx, { packageName: name, registryUrl, cacheScope }, mode);
+    // only place the token is used, goes through the broker in one batch.
+    const versionsSource = {
+      registryUrl,
+      cacheScope: credentialed ? `org:${organizationId}` : "public",
+    };
+    const lookups: DependencyLookupSource = {
+      cached: (name) => readCachedPackageVersions(c.env, versionsSource, name),
+      fetch: (names, options) =>
+        credentialed
+          ? broker.fetchPackageVersionsBatch(names, options)
+          : fetchPackageVersionsMany(c.env, ctx, versionsSource, names, options),
+    };
     const queue = dependencyLookupQueue(plan, siblings, candidates);
-    const { answers, beyondLimit } = await runDependencyLookups(plan, queue, lookup);
+    const { answers, beyondLimit, nextOffset } = await runDependencyLookups(plan, queue, lookups, {
+      offset: clampLookupOffset(c.req.query("offset")),
+    });
     const result = evaluateDependencyReadiness({
       plan,
       siblings,
       candidates,
       lookups: answers,
       beyondLimit,
+      nextOffset,
       credentialed,
     });
     const failed = result.issues.filter((issue) => issue.reason === "lookup-failed").length;

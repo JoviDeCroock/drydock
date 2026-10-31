@@ -193,6 +193,21 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     expect(extract(`{}`)).toMatchObject({ versionsIsObject: false, name: null });
   });
 
+  test("version keys only: every key and the dist-tags, no entries and no times", () => {
+    const doc = `{"name":"p","dist-tags":{"latest":"2.0.0"},"time":{"2.0.0":"t"},"versions":{"1.0.0":{"name":"p","dist":{"tarball":"${"x".repeat(5_000)}"}},"2.0.0":{"name":"p"}}}`;
+    const result = extract(doc, [7, 40], { versionKeysOnly: true });
+    expect([...result.versions]).toEqual([
+      ["1.0.0", null],
+      ["2.0.0", null],
+    ]);
+    expect([...result.distTags]).toEqual([["latest", "2.0.0"]]);
+    expect(result.time.size).toBe(0);
+    expect(result.versionsIsObject).toBe(true);
+    expect(extract(doc, [], { versionKeysOnly: true, maxVersions: 1 }).versionLimitExceeded).toBe(
+      true,
+    );
+  });
+
   test("a match key too long to be a field name is skipped, not an error", () => {
     const result = extract(`{"${"k".repeat(10_000)}":{"name":"inner"},"name":"outer"}`);
     expect(result.name).toBe("outer");

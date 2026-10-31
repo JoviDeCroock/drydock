@@ -1,4 +1,3 @@
-import { readBoundedJson } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
@@ -64,7 +63,7 @@ export function isValidLegacyNpmPackageName(name: string): boolean {
 // negotiates content answers with the full document rather than refusing; one
 // that refuses anyway is caught by the retry below. Both project to the same
 // shape, so callers cannot tell which arrived.
-const ABBREVIATED_PACKUMENT_ACCEPT =
+export const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
 export interface FetchPackageMetadataOptions {
@@ -76,16 +75,7 @@ export interface FetchPackageMetadataOptions {
    * publish times are needed: `time` exists only in the full document.
    */
   abbreviated?: boolean;
-  /**
-   * Refuse a body larger than this (bytes, also bounded in time). Unset keeps
-   * the scan pipeline's unbounded read, whose baseline needs even the largest
-   * packuments; a caller that can degrade to "could not check" sets it.
-   */
-  maxBytes?: number;
 }
-
-// Time allowed for a bounded body once headers have arrived.
-const BOUNDED_BODY_MS = 8_000;
 
 export async function fetchPackageMetadata(
   env: Cloudflare.Env,
@@ -119,20 +109,14 @@ export async function fetchPackageMetadata(
     res = await fetchWith("application/json");
   }
   if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  if (options.maxBytes === undefined) return projectRegistryMetadata(await res.json());
-  const body = await readBoundedJson(res, {
-    maxBytes: options.maxBytes,
-    deadlineMs: Date.now() + BOUNDED_BODY_MS,
-  });
-  if (body === null) throw new Error("metadata body over limit or unreadable");
-  return projectRegistryMetadata(body);
+  return projectRegistryMetadata(await res.json());
 }
 
 // Statuses a registry might answer with when it does not understand
 // `application/vnd.npm.install-v1+json`. 401/403/404 are definitive answers
 // about the request itself, and 5xx has already been retried by reliableFetch,
 // so neither is worth a second round trip.
-function mayRejectVendorMediaType(status: number): boolean {
+export function mayRejectVendorMediaType(status: number): boolean {
   return status === 400 || status === 406 || status === 415 || status === 422;
 }
 

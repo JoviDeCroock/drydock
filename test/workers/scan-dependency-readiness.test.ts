@@ -4,6 +4,7 @@ import {
   upsertNpmConnection,
   updateNpmConnectionValidation,
 } from "../../server/db/npm-connections";
+import { computeCompareMetadataCacheKey } from "../../server/lib/compare-cache";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
@@ -82,13 +83,50 @@ function seedStagedScan(
   });
 }
 
-async function readiness(owner: SeededUser, scanId: string) {
+async function readiness(
+  owner: SeededUser,
+  scanId: string,
+  options: { kv?: KVNamespace; query?: string } = {},
+) {
   const res = await call(
     buildTestApp(mountScans, owner),
     "GET",
-    `/api/v1/scans/${scanId}/dependency-readiness`,
+    `/api/v1/scans/${scanId}/dependency-readiness${options.query ?? ""}`,
+    options.kv ? { envOverride: { COMPARE_CACHE: options.kv } } : {},
   );
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+// In-memory COMPARE_CACHE (unbound in tests), keyed exactly as production.
+function fakeKv() {
+  const store = new Map<string, string>();
+  const binding = {
+    async get(key: string, options?: { type?: string }) {
+      const raw = store.get(key);
+      if (raw === undefined) return null;
+      return options?.type === "json" ? JSON.parse(raw) : raw;
+    },
+    async put(key: string, value: string) {
+      store.set(key, value);
+    },
+  } as unknown as KVNamespace;
+  const versionsKey = (scope: string, name: string) =>
+    computeCompareMetadataCacheKey({
+      registryUrl: REGISTRY,
+      packageName: name,
+      cacheScope: `${scope}|versions`,
+    });
+  return {
+    store,
+    binding,
+    async seed(scope: string, name: string, value: unknown) {
+      store.set(await versionsKey(scope, name), JSON.stringify(value));
+    },
+    async read(scope: string, name: string) {
+      const raw = store.get(await versionsKey(scope, name));
+      return raw === undefined ? undefined : JSON.parse(raw);
+    },
+  };
 }
 
 afterEach(() => {
@@ -247,6 +285,112 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
     // One read: a cache miss is read once, never re-read as a revalidation.
     expect(calls.map((registryCall) => registryCall.url)).toEqual([`${REGISTRY}/c`]);
     expect(calls.every((registryCall) => registryCall.authorization === null)).toBe(true);
+  });
+
+  test("a credentialed cache hit in the organization's partition skips the registry", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", { dependencies: { b: "^2.0.0" } });
+    const kv = fakeKv();
+    await kv.seed(`org:${owner.organizationId}`, "b", {
+      status: "found",
+      versions: ["2.1.0"],
+      distTags: { latest: "2.1.0" },
+    });
+    // Another partition's answer must not be read for this organization.
+    await kv.seed("public", "b", { status: "found", versions: ["1.0.0"], distTags: {} });
+    const calls = stubRegistry({ b: packument(["1.0.0"]) });
+
+    // A malformed resume offset is clamped, never an error.
+    const { status, body } = await readiness(owner, scanId, {
+      kv: kv.binding,
+      query: "?offset=zz",
+    });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ status: "checked", issues: [] });
+    expect(calls.map((c) => c.url)).not.toContain(`${REGISTRY}/b`);
+  });
+
+  test("an anonymous gate review reads and writes only the public partition", async () => {
+    const owner = await seedUser();
+    const gateId = await seedWorkflowGate(owner, { decision: null });
+    const scanId = await seedCompletedScan(owner, {
+      packageJson: { name: "a", version: "2.0.0", dependencies: { c: "^3.0.0", d: "^1.0.0" } },
+      summary: {
+        diff: [],
+        stagedPublish: { mode: "workflow_gate", provenance: { ecosystem: "npm" } },
+      },
+      job: { source: "workflow_gate", gateId, packageName: "a", stagedVersion: "2.0.0" },
+    });
+    const kv = fakeKv();
+    await kv.seed("public", "c", { status: "found", versions: ["2.0.0"], distTags: {} });
+    await kv.seed(`org:${owner.organizationId}`, "c", {
+      status: "found",
+      versions: ["3.0.0"],
+      distTags: {},
+    });
+    const calls = stubRegistry({ d: packument(["1.0.0"]) });
+
+    const { body } = await readiness(owner, scanId, { kv: kv.binding });
+
+    // The public answer (no 3.x) is the one used; the org's is never read.
+    expect(body).toMatchObject({ credentialed: false });
+    expect(body.issues).toEqual([expect.objectContaining({ name: "c", kind: "unpublished" })]);
+    // `c` was revalidated with leftover budget, `d` read once; both anonymously.
+    expect(calls.every((c) => c.authorization === null)).toBe(true);
+    expect(await kv.read("public", "d")).toMatchObject({ status: "found", versions: ["1.0.0"] });
+    expect(await kv.read(`org:${owner.organizationId}`, "d")).toBeUndefined();
+  });
+
+  test("a packument larger than a few MiB is streamed and checked", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", {
+      peerDependencies: { typescript: "^5.9.0" },
+    });
+    // ~9 MB, like typescript's abbreviated packument: thousands of versions.
+    const versions = Array.from({ length: 3_000 }, (_, i) => `5.${Math.floor(i / 100)}.${i % 100}`);
+    const big = {
+      "dist-tags": { latest: "5.29.99" },
+      versions: Object.fromEntries(
+        versions.map((v) => [
+          v,
+          { dist: { tarball: `${REGISTRY}/x` }, description: "d".repeat(3_000) },
+        ]),
+      ),
+    };
+    expect(JSON.stringify(big).length).toBeGreaterThan(8 * 1024 * 1024);
+    stubRegistry({ typescript: big });
+
+    const { body } = await readiness(owner, scanId, { kv: fakeKv().binding });
+
+    expect(body).toMatchObject({ status: "checked", issues: [] });
+  });
+
+  test("a packument past the check's limit is too large to check: no retry, cached", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", { dependencies: { huge: "^1.0.0" } });
+    const versions = Object.fromEntries(
+      Array.from({ length: 100_001 }, (_, i) => [`0.0.${i}`, {}]),
+    );
+    const calls = stubRegistry({ huge: { "dist-tags": {}, versions } });
+    const kv = fakeKv();
+    const failures = vi.spyOn(console, "warn");
+
+    const first = await readiness(owner, scanId, { kv: kv.binding });
+
+    expect(first.body.issues).toEqual([
+      expect.objectContaining({ name: "huge", kind: "unchecked", reason: "too-large" }),
+    ]);
+    expect(first.body.nextOffset).toBeUndefined();
+    expect(JSON.stringify(failures.mock.calls)).not.toContain("lookup_failed");
+    expect(await kv.read(`org:${owner.organizationId}`, "huge")).toEqual({ status: "too-large" });
+
+    const reads = calls.filter((c) => c.url === `${REGISTRY}/huge`).length;
+    await readiness(owner, scanId, { kv: kv.binding });
+    expect(calls.filter((c) => c.url === `${REGISTRY}/huge`)).toHaveLength(reads);
   });
 
   test("published-pair reviews are not applicable", async () => {
