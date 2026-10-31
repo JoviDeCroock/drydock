@@ -236,7 +236,8 @@ function buildVscodeLiveCase(record) {
 }
 
 // Build every staged ecosystem through its production acquisition/review
-// helpers. atpm is public-diff-only, so it remains an explicit skip.
+// helpers. atpm is public-diff-only and registry-provenance fixtures carry no
+// package bytes, so both remain explicit skips.
 export function buildLiveCases(corpus = loadCorpus()) {
   const records = [...corpus.regression, ...corpus.frontier, ...corpus.benign];
   const cases = [];

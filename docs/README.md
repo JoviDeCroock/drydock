@@ -49,6 +49,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`registry-version-status.md`](./registry-version-status.md) — npm's own lifecycle status for a staged version (`blocked` / `validating` / `published` / …), the forgotten-approval reminder, and why an unresolved lookup is never a verdict.
 - [`publication-monitor.md`](./publication-monitor.md) — automatic and manual public npm package watches, direct releases outside staging, and comparison of published bytes with prior organization approvals.
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
+- [`provenance-continuity.md`](./provenance-continuity.md) — `release.provenance-dropped` / `release.provenance-publisher-changed`: npm and PyPI registry provenance compared between a published baseline and candidate, what is trusted, and the FP classes.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.

@@ -1,0 +1,74 @@
+{
+  "id": "legit-provenance-gained",
+  "title": "Release adopts provenance for the first time",
+  "category": "control",
+  "intent": "Moving onto attested CI is an improvement; absent to present never fires.",
+  "ecosystem": "npm",
+  "registryProvenance": {
+    "packageName": "example-widget",
+    "baseline": {
+      "version": "1.0.0",
+      "packumentProvenance": false
+    },
+    "candidate": {
+      "version": "1.0.1",
+      "packumentProvenance": true,
+      "statements": [
+        {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "pkg:npm/example-widget@1.0.1",
+              "digest": {
+                "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "refs/tags/v1.0.1",
+                  "repository": "https://github.com/example-org/widget",
+                  "path": ".github/workflows/release.yml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "push",
+                  "repository_id": "1001",
+                  "repository_owner_id": "1"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/example-org/widget@refs/tags/v1.0.1",
+                  "digest": {
+                    "gitCommit": "0000000000000000000000000000000000000000"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/actions/runner/github-hosted"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/example-org/widget/actions/runs/1/attempts/1"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "verdict": "benign",
+  "threatClass": "legit-provenance-continuity",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

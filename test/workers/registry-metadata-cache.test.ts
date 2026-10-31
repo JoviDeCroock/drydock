@@ -229,7 +229,9 @@ describe("projectRegistryMetadata", () => {
       readme: "big",
     });
 
-    expect(projected.versions).toEqual({ "1.0.0": {}, "0.9.0": {} });
+    // A dist object without attestations is npm saying "no provenance"; an
+    // entry with no dist object at all says nothing.
+    expect(projected.versions).toEqual({ "1.0.0": { hasProvenance: false }, "0.9.0": {} });
     expect(projected["dist-tags"]).toEqual({ latest: "1.0.0" });
     expect(projected.time).toEqual({ "1.0.0": "2026-01-01T00:00:00.000Z" });
     expect("readme" in projected).toBe(false);

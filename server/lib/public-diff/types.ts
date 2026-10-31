@@ -58,6 +58,12 @@ export interface PublicDiffAcquiredSources {
   displayName?: string;
   // Absolute expiry prevents downstream caches from restarting a mutable record's TTL.
   cacheExpiresAt?: string;
+  /**
+   * A registry read the findings depend on (provenance) was undetermined. The
+   * result is cached briefly so a transient failure does not stand in for the
+   * registry's answer for the immutable-pair TTL.
+   */
+  unsettledRegistryRead?: boolean;
 }
 
 export interface PublicDiffInput {

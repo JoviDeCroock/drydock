@@ -127,6 +127,8 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 | `package-json.parse-failed`               | deterministic | anchor               | no              |
 | `propagation.package-mutation`            | deterministic | anchor               | yes             |
 | `propagation.registry-publish`            | deterministic | anchor               | yes             |
+| `release.provenance-dropped`              | deterministic | anchor               | no              |
+| `release.provenance-publisher-changed`    | deterministic | anchor               | no              |
 | `release.source-drift`                    | deterministic | anchor               | no              |
 | `stage.metadata-mismatch`                 | deterministic | anchor               | no              |
 | `stage.tarball-digest-mismatch`           | deterministic | anchor               | no              |
@@ -183,7 +185,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.55.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.56.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -879,6 +881,19 @@ letters, backslashes and NUL stay unrepresentable too. Zip disclosures now carry
 Their reason describes pip for wheels and zip extractors in general for VSIX, instead of node-tar
 and `npm install`. Rule ID and severity are unchanged.
 
+`1.56.0` adds registry provenance continuity for published-pair reviews (npm and PyPI `/diff`,
+and authenticated published-pair reviews): `release.provenance-dropped` when the registry lists
+build provenance for the baseline and affirmatively none for the candidate (medium after three
+attested releases in a row, low otherwise), and `release.provenance-publisher-changed` (medium for
+a different attested repository or repository id; low for a same-owner repository change when no
+repository id is recorded on both sides, or a different workflow in the same repository). The
+baseline is an earlier release in the candidate's channel that was already published when the
+candidate was; a stable without provenance after an attested prerelease is a low drop when no earlier stable carries provenance. Unknown provenance never fires. See [`provenance-continuity.md`](./provenance-continuity.md).
+Goldens live in `cases-provenance/`; hard negatives (`legit-provenance-*` in `cases-benign/`) pin
+transfers that keep the repository id, the SLSA v0.2→v1 format change, first adoption, unknown
+candidates, PyPI's HTML 404, letter case, a local hotfix after two CI releases, a hand-published
+stable after a CI-attested prerelease, and a same-owner PyPI rename.
+
 ### Fixture format
 
 Required fields:
@@ -984,3 +999,25 @@ Run the atpm corpus alone with:
 ```sh
 pnpm test -- test/security-corpus-atpm.test.mjs --project node
 ```
+
+## Registry provenance corpus
+
+`release.provenance-dropped` and `release.provenance-publisher-changed` compare two registry records
+rather than package files, so their golden cases under `test/fixtures/security-corpus/cases-provenance/`
+are registry-record projections, evaluated by `test/security-corpus-provenance.test.mjs`.
+`test/helpers/provenance-security-corpus.mjs` feeds them through the production readers
+(`npmRegistryProvenance`, `classifyPyPiProvenanceResponse` + `combinePyPiFileProvenance`), the
+production lineage (`npmProvenanceLineage`, `pypiProvenanceLineage`), and
+`provenanceContinuityFindings`. The detection eval routes any fixture with `registryProvenance`
+(including `legit-provenance-*` hard negatives in `cases-benign/`) through the same helper.
+
+Fields: `id`, `title`, `category`, `intent`, `ecosystem` (`npm` or `pypi`), `expectedRisk`,
+`expectedFindings`, and `registryProvenance: { packageName, history?, baseline, candidate }`.
+`history` lists earlier published releases of any channel; the lineage picks the compared baseline
+and the prior releases the drop rule's history reads from them, so a medium drop needs two attested
+releases before the baseline. Any side may carry `publishedAt` (ISO time) to pin publish order. An
+npm side is `{ version, packumentProvenance?, statements? | attestations? }`: `packumentProvenance` is the
+packument's `dist.attestations.provenance` marker (omitted means unknown), `statements` are decoded
+in-toto statements the helper wraps in DSSE envelopes, and `attestations` is a raw attestations
+document for malformed shapes. A PyPI side is `{ version, files: [{ filename, status, body }] }`, one
+integrity-API response per selected file. Keep repositories and ids synthetic.

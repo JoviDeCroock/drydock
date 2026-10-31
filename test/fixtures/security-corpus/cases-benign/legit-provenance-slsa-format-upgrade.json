@@ -1,0 +1,108 @@
+{
+  "id": "legit-provenance-slsa-format-upgrade",
+  "title": "npm CLI moves from SLSA v0.2 to v1 statements for the same repository",
+  "category": "control",
+  "intent": "Mirrors sigstore-js between 1.x (SLSA v0.2, npm/cli gha/v2) and 3.x (SLSA v1): the statement format changed, the attested repository, id, and workflow did not.",
+  "ecosystem": "npm",
+  "registryProvenance": {
+    "packageName": "sigstore-like",
+    "baseline": {
+      "version": "1.9.0",
+      "packumentProvenance": true,
+      "statements": [
+        {
+          "_type": "https://in-toto.io/Statement/v0.1",
+          "subject": [
+            {
+              "name": "pkg:npm/sigstore-like@1.9.0",
+              "digest": {
+                "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v0.2",
+          "predicate": {
+            "buildType": "https://github.com/npm/cli/gha/v2",
+            "builder": {
+              "id": "https://github.com/actions/runner"
+            },
+            "invocation": {
+              "configSource": {
+                "uri": "git+https://github.com/sigstore/sigstore-js@refs/heads/main",
+                "digest": {
+                  "sha1": "0000000000000000000000000000000000000000"
+                },
+                "entryPoint": ".github/workflows/release.yml"
+              },
+              "parameters": {},
+              "environment": {
+                "GITHUB_REPOSITORY": "sigstore/sigstore-js",
+                "GITHUB_REPOSITORY_ID": "495574555"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "2.0.0",
+      "packumentProvenance": true,
+      "statements": [
+        {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "pkg:npm/sigstore-like@2.0.0",
+              "digest": {
+                "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "refs/tags/v2.0.0",
+                  "repository": "https://github.com/sigstore/sigstore-js",
+                  "path": ".github/workflows/release.yml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "push",
+                  "repository_id": "495574555",
+                  "repository_owner_id": "1"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/sigstore/sigstore-js@refs/tags/v2.0.0",
+                  "digest": {
+                    "gitCommit": "0000000000000000000000000000000000000000"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/actions/runner/github-hosted"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/sigstore/sigstore-js/actions/runs/1/attempts/1"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "verdict": "benign",
+  "threatClass": "legit-provenance-continuity",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}
