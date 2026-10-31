@@ -185,7 +185,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.56.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.57.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -893,6 +893,23 @@ Goldens live in `cases-provenance/`; hard negatives (`legit-provenance-*` in `ca
 transfers that keep the repository id, the SLSA v0.2→v1 format change, first adoption, unknown
 candidates, PyPI's HTML 404, letter case, a local hotfix after two CI releases, a hand-published
 stable after a CI-attested prerelease, and a same-owner PyPI rename.
+
+`1.57.0` makes the tar reader disclose extended-header shapes that tar readers resolve
+differently (the shapes uv's tar-codec refuses). node-tar merges every metadata header before a
+member into one record, last value winning. CPython's `tarfile` lets the first record win,
+family-strict readers keep GNU and pax records apart or refuse the archive, and POSIX treats an
+empty pax value as deleting the field. The reader still records node-tar's path, but now adds a
+high `parser-differential` `tar.suspicious-entry` naming the shape: a member carrying both a GNU
+long name (`L`/`N`) and a pax `path`, or a long link (`K`) and a pax `linkpath`; more than one
+long-name, long-link, or pax `path`/`linkpath`/`size` record for one member; a present-but-empty
+pax `path`, `linkpath`, or `size` (`key=` or a bare `key`, the tombstone node-tar applies as an empty
+value); and a global header that sets `path`/`linkpath` (node-tar ignores them) or `size` (node-tar
+applies it to later entries). Each member gets one entry with every shape joined into the detail.
+Metadata no member consumes is disclosed at `<archive>`. Global shapes are disclosed once per
+archive. Zero-length and over-1 MiB metadata entries, which node-tar never applies, do not count.
+`npm pack`, GNU tar, tar-rs, CPython `tarfile`, and `git archive` emit none of these shapes. Golden:
+`cases-pypi/20-sdist-repeated-gnu-long-name`, whose disclosure `test/tar-parser.test.mjs` derives
+from the sdist bytes it describes.
 
 ### Fixture format
 
