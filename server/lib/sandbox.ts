@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FileRecord, PackageJsonSummary } from "./review";
 import { STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
+import { pathWithinBaseUrl } from "./platform/url-scope";
 import * as tarParser from "./tar-parser.js";
 import type { TarRootStrip, TarSuspiciousEntry } from "./tar-parser.js";
 
@@ -105,11 +106,8 @@ export function evaluateNpmStageGatewayRequest(
     normalizedMethod === "GET" &&
     url.protocol === "https:" &&
     publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
-  // A self-hosted registry may live under a path (Verdaccio behind a reverse
-  // proxy at `/npm`), so endpoints are matched below the configured base path.
-  // A same-origin request outside that path is not this registry's and stays
-  // uncredentialed.
-  const registryPath = registryRelativePath(url, registry);
+  // A registry served under a path owns only that subtree of its origin.
+  const registryPath = pathWithinBaseUrl(url, registry);
   const packageMetadataPath =
     registryPath !== null && /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(registryPath);
   const isStagedTarball =
@@ -123,13 +121,6 @@ export function evaluateNpmStageGatewayRequest(
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
   if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
   return { allowed: false, credentialed: false, kind: "blocked" };
-}
-
-function registryRelativePath(url: URL, registry: URL): string | null {
-  if (url.origin !== registry.origin) return null;
-  const basePath = registry.pathname.replace(/\/+$/, "");
-  if (!basePath) return url.pathname;
-  return url.pathname.startsWith(`${basePath}/`) ? url.pathname.slice(basePath.length) : null;
 }
 
 /**

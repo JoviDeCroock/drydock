@@ -147,14 +147,21 @@ describe("Verdaccio staged publishing", () => {
     ).resolves.toEqual({ ok: false, reason: "not_found", httpStatus: 404 });
   });
 
-  test("the stage gateway credentials only the staged tarball below the registry base path", () => {
+  test("the stage gateway credentials only registry endpoints below the base path", () => {
     const tarball = `${REGISTRY}/-/stage/${STAGE_ID}/tarball`;
-    expect(evaluateNpmStageGatewayRequest(tarball, "GET", REGISTRY)).toEqual({
-      allowed: true,
-      credentialed: true,
-      kind: "staged-tarball",
-    });
+    for (const registry of [REGISTRY, `${REGISTRY}/`]) {
+      expect(evaluateNpmStageGatewayRequest(tarball, "GET", registry)).toEqual({
+        allowed: true,
+        credentialed: true,
+        kind: "staged-tarball",
+      });
+      expect(
+        evaluateNpmStageGatewayRequest(`${REGISTRY}/@drydock-test%2fpkg`, "GET", registry),
+      ).toEqual({ allowed: true, credentialed: true, kind: "package-metadata" });
+    }
     for (const url of [
+      "https://npm.example.test/@drydock-test%2fpkg",
+      "https://npm.example.test/verdaccio",
       `https://npm.example.test/-/stage/${STAGE_ID}/tarball`,
       `https://npm.example.test/other/-/stage/${STAGE_ID}/tarball`,
       `https://npm.example.test/verdaccio-evil/-/stage/${STAGE_ID}/tarball`,

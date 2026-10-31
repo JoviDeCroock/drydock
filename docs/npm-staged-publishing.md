@@ -299,11 +299,11 @@ nor rejects: the maintainer runs `npm stage approve|reject <stage-id> --registry
 
 3. **Connect the registry URL** in Settings, including any reverse-proxy path
    (`https://npm.example.com/verdaccio`). HTTPS is required. Drydock sends the
-   token only to that origin, and only to endpoints below that path. Behind a
-   proxy, set Verdaccio's `url_prefix` and forward `Host` and
-   `X-Forwarded-Proto`, so the tarball URLs in its metadata carry the public
-   origin. Drydock refuses a previous-version tarball URL on any other origin,
-   and the scan fails rather than send the token there.
+   token only to that origin, and builds or accepts registry URLs only below
+   that path. Behind a proxy, set Verdaccio's `url_prefix` and forward `Host`
+   and `X-Forwarded-Proto`, so the tarball URLs in its metadata carry the public
+   origin and path. Drydock refuses a previous-version tarball URL anywhere
+   else, and the scan fails rather than send the token there.
 
 4. **Make it reachable.** Drydock runs on Cloudflare Workers with
    `global_fetch_strictly_public`, so it reaches the registry over the public

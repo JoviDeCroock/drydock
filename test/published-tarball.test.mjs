@@ -78,6 +78,24 @@ describe("isPublishedTarballUrlAllowed", () => {
     ).toBe(false);
   });
 
+  test("a registry served under a path only vouches for tarballs below that path", () => {
+    const registry = "https://npm.example.test/verdaccio";
+    expect(
+      isPublishedTarballUrlAllowed(
+        "https://npm.example.test/verdaccio/pkg/-/pkg-1.0.0.tgz",
+        registry,
+        false,
+      ),
+    ).toBe(true);
+    for (const url of [
+      "https://npm.example.test/pkg/-/pkg-1.0.0.tgz",
+      "https://npm.example.test/other/pkg/-/pkg-1.0.0.tgz",
+      "https://npm.example.test/verdaccio-evil/pkg/-/pkg-1.0.0.tgz",
+    ]) {
+      expect(isPublishedTarballUrlAllowed(url, registry, false)).toBe(false);
+    }
+  });
+
   test("rejects http registries unless insecure localhost is allowed", () => {
     const httpUrl = "http://localhost:4873/pkg/-/pkg-1.0.0.tgz";
     expect(isPublishedTarballUrlAllowed(httpUrl, "http://localhost:4873", false)).toBe(false);

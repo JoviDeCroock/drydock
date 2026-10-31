@@ -1,5 +1,6 @@
 import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
 import { coloCache } from "../../platform/colo-cache";
+import { pathWithinBaseUrl } from "../../platform/url-scope";
 import { registryProtocolAllowed } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {
@@ -17,11 +18,12 @@ export function isPublishedTarballUrlAllowed(
   try {
     const tarball = new URL(tarballUrl);
     const registry = new URL(registryUrl);
+    const path = pathWithinBaseUrl(tarball, registry);
     return (
-      tarball.origin === registry.origin &&
+      path !== null &&
       registryProtocolAllowed(tarball, { allowInsecureLocalhost }) &&
-      tarball.pathname.endsWith(".tgz") &&
-      tarball.pathname.includes("/-/")
+      path.endsWith(".tgz") &&
+      path.includes("/-/")
     );
   } catch {
     return false;
