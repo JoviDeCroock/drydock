@@ -122,6 +122,8 @@ jobs:
 
 Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary. The `SHA256SUMS` record/check pair makes that checkable in CI: the digests match the ones Drydock recomputes and shows in the report Provenance section, and the publish job fails closed on any drift. The check runs in the repository's own job, so it holds only while the workflow keeps it. Drydock ignores `SHA256SUMS` in the bundle (it is not a `.tgz`).
 
+While a gate is pending, an npm package review checks that its runtime dependencies are installable; the other packages of the same gated release satisfy each other's dependencies, since the gate releases them together. See [dependency readiness](./npm-staged-publishing.md#dependency-readiness).
+
 To narrow npm's automated publish path to this gated workflow — trusted publishing pinned to the gate environment, tokens disallowed — see [`npm-trusted-publishing.md`](./npm-trusted-publishing.md). npm still permits interactive publication by an account holder using password, 2FA, and an OTP.
 
 ### Gated staging

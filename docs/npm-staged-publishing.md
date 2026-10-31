@@ -221,6 +221,53 @@ stage is discovered like any other, and for a package a live release target
 gates it reads as `ungated` — the signal a maintainer needs to reject it on npm
 rather than approve it.
 
+## Dependency readiness
+
+Approving a stage on npm makes it installable, so approving `a@2.0.0` while it
+depends on `b@^2.0.0` and `b@2.0.0` is still staged publishes a release nobody
+can install. The decision view checks for this before the maintainer approves:
+`GET /api/v1/scans/:id/dependency-readiness` reads the reviewed manifest from the
+report artifact and asks whether each runtime dependency resolves to a public
+version.
+
+- **What is checked.** `dependencies` and `optionalDependencies` (npm installs
+  an optional dependency it cannot resolve without it, so it is labeled
+  `optional`), and non-optional `peerDependencies`, labeled `peer`, since npm
+  7+ installs those and fails when the range cannot resolve. Optional peers and
+  `devDependencies` are skipped, as are dependencies the tarball bundles under
+  `node_modules/<name>/`.
+- **How specs resolve.** Ranges match with node-semver semantics, including its
+  prerelease rule (`^2.0.0` never resolves to `2.1.0-rc.1`), in
+  `server/lib/ecosystems/semver-range.ts`; a spec that is not a range is a
+  dist-tag. An `npm:` alias is checked against its target package. `workspace:`,
+  `catalog:`, `link:`, `file:`, and path specs are flagged: no consumer can
+  resolve them from the registry, so the publish should have replaced them.
+  Git, GitHub-shorthand, and URL specs are counted and not checked.
+- **Staged in this organization.** An unresolved dependency is matched against
+  the organization's own current staged reviews of that package on the same
+  registry, keyed on npm's stage record (`registry_package_name` /
+  `registry_version`, never a tarball's manifest). A satisfying stage is named
+  with a link to its review: approve it first. A stage npm has blocked is never
+  offered; one npm already reports `published` counts as installable.
+- **Gated releases.** For a workflow-gate review, the other packages of the same
+  gated release satisfy each other: the gate releases them together. Without a
+  usable npm connection, a gate review reads the public registry anonymously.
+
+It is computed when the decision view loads, not at scan time: the answer
+changes after the scan (a sibling stage is approved) while the reviewed bytes do
+not, so nothing is persisted, no migration exists, and the report, risk, and
+findings are unchanged. Registry reads reuse the organization-scoped cached
+packument read (`fetchPackageMetadataCached`, 5-minute TTL) against the
+registry the scan was captured from, with the organization's credential; a
+connection edited to another registry since the scan fails closed
+(`npm-connection-changed`). A cached packument that does not satisfy a spec is
+re-read fresh once, because "not published yet" is the answer that goes stale.
+Reads are bounded per request (40 packages, 6 at a time, a 10-second budget;
+changed specs first), rate limited per user, and fail open: a failed or skipped
+read is reported as "could not check" and never as missing, and nothing here
+blocks approval. Lookup failures emit `scan.dependency_readiness.lookup_failed`
+with a count only.
+
 ## Compared with the workflow gate
 
 They put the candidate in different places and give Drydock different authority.
