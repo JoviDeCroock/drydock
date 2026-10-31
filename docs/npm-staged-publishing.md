@@ -262,3 +262,77 @@ command inside the gate and gets both.
   publisher immediately afterwards.
 - **Drydock unavailability.** npm still owns the stage and its decision. A
   maintainer can approve, reject, or publish manually without a Drydock review.
+
+## Verdaccio
+
+[Verdaccio 7](https://verdaccio.org/docs/staged-publishing) implements the same
+`/-/stage` API behind an experimental flag, so a self-hosted registry can be an
+organization's npm connection. Discovery, the staged review, the previous-version
+baseline, SHA-1 verification of the staged bytes, and the registry status
+(`staged` / `published`) work as they do on npm. Drydock still neither approves
+nor rejects: the maintainer runs `npm stage approve|reject <stage-id> --registry
+<url>`, which the review prints for a custom registry.
+
+1. **Enable staging** in Verdaccio's `config.yaml` and split the permissions so
+   the identity that stages cannot publish:
+
+   ```yaml
+   flags:
+     stage: true
+   packages:
+     "@acme/*":
+       access: $authenticated
+       stage: ci-bot # may stage, may not publish
+       publish: release-managers # approves staged versions
+   ```
+
+   Verdaccio shows a staged version only to the user who staged it and to users
+   who may `publish` the package; everyone else gets an empty list and `404` for
+   the stage, never `403`.
+
+2. **Create the Drydock token as an approver.** Because of that visibility rule
+   the token must belong to an account with `publish` on the packages. Make it
+   read-only (`npm token create --read-only --registry <url>`): it can list,
+   view, and download stages, and Verdaccio refuses its approve or reject with
+   `403`. A token for an account that cannot publish the package validates but
+   discovers nothing, because the empty list looks the same as no stages.
+
+3. **Connect the registry URL** in Settings, including any reverse-proxy path
+   (`https://npm.example.com/verdaccio`). HTTPS is required. Drydock sends the
+   token only to that origin, and only to endpoints below that path. Behind a
+   proxy, set Verdaccio's `url_prefix` and forward `Host` and
+   `X-Forwarded-Proto`, so the tarball URLs in its metadata carry the public
+   origin. Drydock refuses a previous-version tarball URL on any other origin,
+   and the scan fails rather than send the token there.
+
+4. **Make it reachable.** Drydock runs on Cloudflare Workers with
+   `global_fetch_strictly_public`, so it reaches the registry over the public
+   internet only, and self-hosting Drydock does not change that. A registry on a
+   private network needs a public HTTPS hostname, such as a reverse proxy or a
+   Cloudflare Tunnel public hostname with Verdaccio's own authentication in
+   front. Drydock cannot send Cloudflare Access service-token headers.
+
+Discovery uses the 15-minute sweep and **Check npm**, as on npm. Verdaccio's
+`publishType: stage` notifications are not consumed.
+
+Differences from npm that the review reflects:
+
+- Verdaccio can stage a package's first version; npm cannot. The review then has
+  no baseline and reports every file as added.
+- The stage record carries no manifest, so the manifest comes from the tarball,
+  as it usually does on npm.
+- Registry status is only `staged` or `published`. A rejected stage is deleted
+  and its status lookup returns `404`, which Drydock records as unknown, never as
+  rejected, so the review stays undecided until someone records a decision.
+  There is no `validating`, `blocked`, or `deleted`.
+
+Verified on 2026-10-31 against a local Verdaccio 7.0.2 (Node 24.14) with npm
+11.21.1 (`npm stage` needs npm 11.17 or newer), both at the registry root and
+behind a reverse proxy at `/npm`. Drydock's local dev server covered credential
+validation, discovery across list pages, the scan with baseline and SHA-1
+verification, a first-version stage, and the status reads after approving
+(`published`) and rejecting (unknown) on Verdaccio. A hostile proxy that
+redirected the staged tarball, or rewrote metadata tarball URLs, to another
+origin got a failed scan, and that origin received no request.
+`test/helpers/verdaccio-registry.ts` replays the captured response shapes in
+tests.

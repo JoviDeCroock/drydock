@@ -14,6 +14,11 @@ test("npm connection card names the exact token permissions", async ({ page }) =
     "Use a granular access token with Read-only access to the packages or scopes you want to review.",
   );
   await expect(guide).toContainText("Set Organizations to No access.");
+  // Verdaccio lists a stage only to its stager and to users who may publish
+  // it, so an access-only token validates and then discovers nothing.
+  await expect(guide).toContainText(
+    "On Verdaccio, use a read-only token from an account that may publish those packages",
+  );
   await expect(guide.getByRole("link", { name: "Create a token" })).toHaveAttribute(
     "href",
     "https://docs.npmjs.com/creating-and-viewing-access-tokens/",

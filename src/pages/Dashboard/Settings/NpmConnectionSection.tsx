@@ -305,6 +305,8 @@ function NpmTokenScopeGuide() {
       >
         Create a token
       </a>
+      . On Verdaccio, use a read-only token from an account that may publish those packages;
+      Verdaccio hides staged versions from everyone else.
     </Muted>
   );
 }

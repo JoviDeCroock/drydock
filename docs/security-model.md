@@ -47,7 +47,7 @@ Implementation requirements:
 - record add/validate/use/rotate/remove audit events;
 - redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 
-Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
+Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls. The registry URL is customer-chosen and its responses are hostile input: the gateway credentials only the connection's own origin and, for a registry served under a path (Verdaccio behind a reverse proxy at `/npm`), only endpoints below that path; Drydock builds staged URLs from the connection rather than following registry-supplied ones, and a published tarball URL on another origin is refused. A staged-tarball redirect off the registry's origin reaches the gateway as a new request and is blocked; the parent Worker's own registry reads leave redirects to the Workers runtime, which drops `Authorization` when a redirect leaves the origin.
 
 ## Artifact handling and retention
 
