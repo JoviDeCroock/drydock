@@ -100,24 +100,36 @@ export function evaluateNpmStageGatewayRequest(
 ): NpmStageGatewayPolicy {
   const url = new URL(requestUrl);
   const registry = new URL(registryUrl || "https://registry.npmjs.org");
-  const sameOrigin = url.origin === registry.origin;
   const normalizedMethod = method.toUpperCase();
   const isPublicArtifact =
     normalizedMethod === "GET" &&
     url.protocol === "https:" &&
     publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
-  const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
+  // A self-hosted registry may live under a path (Verdaccio behind a reverse
+  // proxy at `/npm`), so endpoints are matched below the configured base path.
+  // A same-origin request outside that path is not this registry's and stays
+  // uncredentialed.
+  const registryPath = registryRelativePath(url, registry);
+  const packageMetadataPath =
+    registryPath !== null && /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(registryPath);
   const isStagedTarball =
-    sameOrigin &&
+    registryPath !== null &&
     normalizedMethod === "GET" &&
-    url.pathname.startsWith("/-/stage/") &&
-    url.pathname.endsWith("/tarball");
-  const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
+    registryPath.startsWith("/-/stage/") &&
+    registryPath.endsWith("/tarball");
+  const isRegistryMetadata = normalizedMethod === "GET" && packageMetadataPath;
 
   if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
   if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
   return { allowed: false, credentialed: false, kind: "blocked" };
+}
+
+function registryRelativePath(url: URL, registry: URL): string | null {
+  if (url.origin !== registry.origin) return null;
+  const basePath = registry.pathname.replace(/\/+$/, "");
+  if (!basePath) return url.pathname;
+  return url.pathname.startsWith(`${basePath}/`) ? url.pathname.slice(basePath.length) : null;
 }
 
 /**
