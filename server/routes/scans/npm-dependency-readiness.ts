@@ -19,6 +19,7 @@ import { decryptNpmToken } from "../../lib/ecosystems/npm/connection";
 import {
   bundledDependencyNames,
   dependencyLookupQueue,
+  dependencyReadinessAppliesToScan,
   dependencyReadinessTargets,
   evaluateDependencyReadiness,
   planDependencyReadiness,
@@ -32,12 +33,9 @@ import { fetchPackageMetadataCachedWithSource } from "../../lib/ecosystems/npm/r
 import { listGatePackageScans } from "../../lib/github-app/webhook-gates";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
-import { scanEcosystem } from "../../lib/public-feed";
 import { guardRateLimit } from "../../lib/rate-limit";
 import { loadScanReportManifest, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import type { Bindings, Variables } from "../../types";
-
-const ELIGIBLE_SOURCES = new Set(["manual", "auto_discovery", "workflow_gate"]);
 
 export const scanDependencyReadinessRoutes = new Hono<{
   Bindings: Bindings;
@@ -53,13 +51,7 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
 
   const respond = (body: DependencyReadinessResponse) =>
     c.json(body, 200, { "cache-control": "no-store" });
-  if (
-    scan.status !== "complete" ||
-    !ELIGIBLE_SOURCES.has(scan.source) ||
-    scanEcosystem(scan.source, scan.summaryJson) !== "npm"
-  ) {
-    return respond({ status: "not-applicable" });
-  }
+  if (!dependencyReadinessAppliesToScan(scan)) return respond({ status: "not-applicable" });
 
   const limited = await guardRateLimit(
     c,

@@ -15,7 +15,7 @@ import type { Bindings, Variables } from "../../types";
 import { scanBatchApprovalRoutes } from "./batch-approval";
 import { scanCompareRoutes } from "./compare";
 import { scanDecisionRoutes } from "./decisions";
-import { scanDependencyReadinessRoutes } from "./dependency-readiness";
+import { scanDependencyReadinessRoutes } from "./npm-dependency-readiness";
 import { scanLifecycleRoutes } from "./lifecycle";
 import { scanOverviewRoutes } from "./overview";
 import { scanSharingRoutes } from "./sharing";

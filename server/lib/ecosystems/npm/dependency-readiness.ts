@@ -15,6 +15,7 @@
  */
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { isRecord } from "../../platform/guards";
+import { scanEcosystem } from "../../public-feed";
 import { unusualDependencySpecKind } from "../../review/dependency-specs";
 import type { PackageJsonSummary } from "../../review/serialize";
 import {
@@ -24,6 +25,25 @@ import {
   type SemverRange,
 } from "../semver-range";
 import { isValidLegacyNpmPackageName } from "./registry";
+
+const DECISION_SOURCES = new Set(["manual", "auto_discovery", "workflow_gate"]);
+
+/**
+ * A completed npm review that a maintainer still decides on: a staged
+ * release or a held workflow-gate deployment. Published-pair and other
+ * ecosystems' scans have no approve control for this to sit beside.
+ */
+export function dependencyReadinessAppliesToScan(scan: {
+  status: string;
+  source: string;
+  summaryJson: unknown;
+}): boolean {
+  return (
+    scan.status === "complete" &&
+    DECISION_SOURCES.has(scan.source) &&
+    scanEcosystem(scan.source, scan.summaryJson) === "npm"
+  );
+}
 
 // Bounded per request: a manifest declaring hundreds of dependencies cannot
 // turn one page load into hundreds of registry reads. Changed specs are looked

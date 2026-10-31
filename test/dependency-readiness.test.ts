@@ -3,6 +3,7 @@ import {
   bundledDependencyNames,
   classifyDependencySpec,
   dependencyLookupQueue,
+  dependencyReadinessAppliesToScan,
   dependencyReadinessTargets,
   evaluateDependencyReadiness,
   planDependencyReadiness,
@@ -37,6 +38,28 @@ function staged(
     ...extra,
   };
 }
+
+describe("dependencyReadinessAppliesToScan", () => {
+  const gate = (ecosystem: string) => ({
+    status: "complete",
+    source: "workflow_gate",
+    summaryJson: { stagedPublish: { provenance: { ecosystem } } },
+  });
+
+  test("only completed npm reviews that still await a decision", () => {
+    const staged = { status: "complete", source: "auto_discovery", summaryJson: null };
+    expect(dependencyReadinessAppliesToScan(staged)).toBe(true);
+    expect(dependencyReadinessAppliesToScan({ ...staged, source: "manual" })).toBe(true);
+    expect(dependencyReadinessAppliesToScan(gate("npm"))).toBe(true);
+    expect(dependencyReadinessAppliesToScan(gate("pypi"))).toBe(false);
+    expect(dependencyReadinessAppliesToScan({ ...staged, status: "running" })).toBe(false);
+    expect(dependencyReadinessAppliesToScan({ ...staged, source: "published" })).toBe(false);
+  });
+
+  test("a gate scan without provenance is never guessed to be npm", () => {
+    expect(dependencyReadinessAppliesToScan({ ...gate("npm"), summaryJson: null })).toBe(false);
+  });
+});
 
 describe("classifyDependencySpec", () => {
   test.each([
