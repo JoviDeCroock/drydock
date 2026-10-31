@@ -907,7 +907,9 @@ value); and a global header that sets `path`/`linkpath` (node-tar ignores them) 
 applies it to later entries). Each member gets one entry with every shape joined into the detail.
 Metadata no member consumes is disclosed at `<archive>`. Global shapes are disclosed once per
 archive. Zero-length and over-1 MiB metadata entries, which node-tar never applies, do not count.
-`npm pack`, GNU tar, tar-rs, CPython `tarfile`, and `git archive` emit none of these shapes. Golden:
+Publisher toolchains emit at most one record of each kind per member. None of 318 popular npm
+packages from the FP sweep cache, 1,000 locally cached npm tarballs, or 20 PyPI sdists
+(setuptools, hatchling, flit, poetry-core, maturin, meson-python) carries one of these shapes. Golden:
 `cases-pypi/20-sdist-repeated-gnu-long-name`, whose disclosure `test/tar-parser.test.mjs` derives
 from the sdist bytes it describes.
 
