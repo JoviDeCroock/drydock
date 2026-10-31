@@ -167,7 +167,6 @@ describe("publisher setup source-investigation handoff", () => {
   test.each([
     { plan: "", evidencePaths: [] },
     { plan: "   ", evidencePaths: [] },
-    { plan: "x".repeat(6001), evidencePaths: [] },
     { plan: "text", evidencePaths: Array.from({ length: 21 }, (_, index) => `file${index}.js`) },
     { plan: "text", evidencePaths: ["same.js", "same.js"] },
     { plan: "text", evidencePaths: ["../escape.js"] },

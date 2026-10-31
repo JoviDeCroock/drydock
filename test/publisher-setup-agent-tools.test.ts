@@ -204,6 +204,22 @@ describe("private publisher setup agent tools", () => {
     ]);
   });
 
+  test("creates a confirmed-absent file without a prior read but never replaces one unread", async () => {
+    const f = fixture({ "scripts/existing.mjs": "export {};\n" });
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/new.mjs", content: "export {};\n" }),
+    ).toMatchObject({ ok: true });
+    expect(setupAgentChangedFiles(f.state)).toMatchObject([
+      { path: "scripts/new.mjs", originalSha: null },
+    ]);
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/existing.mjs", content: "changed\n" }),
+    ).toMatchObject({ error: "file_exists_read_first" });
+    expect(
+      await call(f.tools, "stage_file", { path: "scripts/new.mjs", content: "again\n" }),
+    ).toMatchObject({ error: "file_exists_read_first" });
+    expect(f.state.files["scripts/existing.mjs"]?.content).toBe("export {};\n");
+  });
   test("refuses paths that differ only by letter case from a repository entry", async () => {
     const f = fixture({ "scripts/release.mjs": "export {};\n" });
     expect(await call(f.tools, "read_file", { path: "Scripts/release.mjs" })).toMatchObject({
@@ -216,7 +232,7 @@ describe("private publisher setup agent tools", () => {
     });
     expect(f.state.missingFiles ?? []).toEqual([]);
   });
-  test("requires a unique exact edit and a fresh read after each edit", async () => {
+  test("requires a unique exact edit and the latest revision, which each edit returns", async () => {
     const f = fixture({ "text.txt": "same same" });
     const read = await call(f.tools, "read_file", { path: "text.txt" });
     expect(
@@ -227,14 +243,22 @@ describe("private publisher setup agent tools", () => {
         replace: "new",
       }),
     ).toMatchObject({ error: "find_must_match_once" });
-    await changeWorkflow(f);
+    const changed = await changeWorkflow(f);
     const updated = await call(f.tools, "read_file", { path: WORKFLOW });
+    expect(updated.revision).toBe(changed.revision);
+    const edited = await call(f.tools, "edit_file", {
+      path: WORKFLOW,
+      expectedRevision: changed.revision,
+      find: "Reviewed",
+      replace: "Gated",
+    });
+    expect(edited).toMatchObject({ ok: true });
     expect(
       await call(f.tools, "edit_file", {
         path: WORKFLOW,
-        expectedRevision: updated.revision,
-        find: "Reviewed",
-        replace: "Gated",
+        expectedRevision: edited.revision,
+        find: "Gated",
+        replace: "Protected",
       }),
     ).toMatchObject({ ok: true });
     expect(
@@ -265,6 +289,15 @@ describe("private publisher setup agent tools", () => {
       issues: [expect.stringContaining("Invalid bounded YAML")],
     });
     expect(f.state.submitted).toBeUndefined();
+  });
+
+  test("accepts an oversized submission summary and stores it shortened", async () => {
+    const f = fixture();
+    await changeWorkflow(f);
+    const summary = `Gate publication. ${"Package before the gate. ".repeat(80)}`;
+    expect(await call(f.tools, "submit_changes", { summary })).toMatchObject({ ok: true });
+    expect(f.state.submitted?.summary.length).toBeLessThanOrEqual(1000);
+    expect(f.state.submitted?.summary).toMatch(/^Gate publication\..*…$/);
   });
 
   test("binds successful submission and independent assessment to the complete frozen digest", async () => {
@@ -543,10 +576,9 @@ describe("private publisher setup agent tools", () => {
     expect(restored.assessment?.digest).toBe(submitted.digest);
   });
 
-  test("requires actionable negative findings and bounds assessment/submission strings", async () => {
+  test("requires actionable negative findings and bounds the issue count", async () => {
     const f = fixture();
     await changeWorkflow(f);
-    await expect(call(f.tools, "submit_changes", { summary: "x".repeat(1001) })).rejects.toThrow();
     const submitted = await call(f.tools, "submit_changes", { summary: "Gate publication" });
     f.state.candidateDigest = String(submitted.digest);
     const judge = createSetupAgentTools({ request: f.request }, f.state, "judge", {
@@ -559,13 +591,6 @@ describe("private publisher setup agent tools", () => {
         issues: [],
       }),
     ).toMatchObject({ error: "changes_requested_requires_issues" });
-    await expect(
-      call(judge, "finish_review", {
-        verdict: "changes_requested",
-        summary: "Incomplete",
-        issues: ["x".repeat(501)],
-      }),
-    ).rejects.toThrow();
     await expect(
       call(judge, "finish_review", {
         verdict: "changes_requested",

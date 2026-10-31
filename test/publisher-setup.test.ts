@@ -200,6 +200,12 @@ describe("publisher setup proposal", () => {
       `Create the ${environment} GitHub`,
     );
   });
+  test("warns that a trusted publisher bound to another environment must be updated", () => {
+    const step = setupManualSteps({ ...SETUP_DRAFT_REQUEST, environment: "drydock" }).find(
+      (value) => value.includes("trusted publisher"),
+    );
+    expect(step).toMatch(/to the drydock environment\. If it currently names another environment/);
+  });
   test("asks for CI only after the maintainer reviews every file", () => {
     const step = setupManualSteps(SETUP_DRAFT_REQUEST).find((value) => value.includes("[skip ci]"));
     expect(step).toMatch(
