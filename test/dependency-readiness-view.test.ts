@@ -4,6 +4,7 @@ import {
   dependencyIssueMessage,
   dependencyReadinessApplies,
   dependencyReadinessView,
+  dependencyReadinessHeadline,
   dependencySectionLabel,
 } from "../src/features/dependency-readiness";
 
@@ -21,6 +22,7 @@ const checked = (issues: DependencyReadinessIssue[]) => ({
   declared: issues.length,
   notRegistry: 0,
   satisfiedByRelease: 0,
+  credentialed: true,
   issues,
 });
 
@@ -101,6 +103,32 @@ describe("dependencyIssueMessage", () => {
       dependencyIssueMessage(issue({ spec: "npm:@scope/real@^2", target: "@scope/real" })),
     ).toBe("No published version of @scope/real matches.");
     expect(dependencyIssueMessage(issue({ packageFound: false }))).toContain("does not list b");
+  });
+
+  test("an anonymous read does not blame a token it never used", () => {
+    const missing = issue({ packageFound: false });
+    expect(dependencyIssueMessage(missing, { credentialed: true })).toContain("token");
+    expect(dependencyIssueMessage(missing, { credentialed: false })).toBe(
+      "npm does not list b publicly. If it is private, consumers need access to it.",
+    );
+  });
+
+  test("only a required dependency is said to break the install", () => {
+    const required = dependencyReadinessView(checked([issue({})]))!;
+    expect(dependencyReadinessHeadline(required)).toEqual({
+      title: "1 dependency cannot be installed from npm yet.",
+      consequence: "Approved now, this release would fail to install for its users.",
+    });
+    const optional = dependencyReadinessView(
+      checked([
+        issue({ section: "optionalDependencies" }),
+        issue({ name: "p", section: "peerDependencies" }),
+      ]),
+    )!;
+    expect(dependencyReadinessHeadline(optional).title).toBe(
+      "2 optional or peer dependencies cannot be resolved from npm yet.",
+    );
+    expect(dependencyReadinessHeadline(optional).consequence).not.toContain("fail to install for");
   });
 
   test("section labels name only the non-default sections", () => {

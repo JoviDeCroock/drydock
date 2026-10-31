@@ -20,6 +20,9 @@ const found = (
   distTags,
 });
 
+const evaluate = (input: Omit<Parameters<typeof evaluateDependencyReadiness>[0], "credentialed">) =>
+  evaluateDependencyReadiness({ credentialed: true, ...input });
+
 function staged(
   packageName: string,
   version: string,
@@ -89,6 +92,19 @@ describe("planDependencyReadiness", () => {
     expect(plan.requirements.map((r) => r.name)).toEqual(["ok"]);
   });
 
+  test("dependencies named like Object.prototype members are checked as themselves", () => {
+    const plan = planDependencyReadiness({
+      dependencies: { constructor: "^1.0.0", toString: "^2.0.0" },
+      peerDependencies: { valueOf: "^3.0.0", hasOwnProperty: "^1.0.0" },
+    });
+    expect(plan.requirements.map((r) => [r.section, r.name])).toEqual([
+      ["dependencies", "constructor"],
+      ["dependencies", "toString"],
+      ["peerDependencies", "valueOf"],
+      ["peerDependencies", "hasOwnProperty"],
+    ]);
+  });
+
   test("bundled dependencies are satisfied by the tarball itself", () => {
     const bundled = bundledDependencyNames([
       "package.json",
@@ -101,7 +117,7 @@ describe("planDependencyReadiness", () => {
       { dependencies: { "local-only": "file:./local-only" } },
       { bundled },
     );
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [],
@@ -115,7 +131,7 @@ describe("planDependencyReadiness", () => {
 describe("evaluateDependencyReadiness", () => {
   test("names the staged sibling to approve first", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [staged("b", "2.0.0"), staged("b", "3.0.0")],
@@ -139,7 +155,7 @@ describe("evaluateDependencyReadiness", () => {
 
   test("a published satisfying version is enough, whatever is staged", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [staged("b", "2.1.0")],
@@ -152,7 +168,7 @@ describe("evaluateDependencyReadiness", () => {
     const plan = planDependencyReadiness({
       dependencies: { b: "^2.0.0", ghost: "^1.0.0", tagged: "next" },
     });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       // A blocked stage will never install, so it is not offered as the fix.
@@ -172,7 +188,7 @@ describe("evaluateDependencyReadiness", () => {
 
   test("prerelease ranges follow npm: a stable range never resolves to a prerelease", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0", c: "^3.0.0-rc.0" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [staged("b", "2.0.0-rc.1")],
@@ -186,7 +202,7 @@ describe("evaluateDependencyReadiness", () => {
 
   test("`*` resolves to latest even when latest is a prerelease", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "*" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [],
@@ -197,7 +213,7 @@ describe("evaluateDependencyReadiness", () => {
 
   test("aliases are checked against their target and report it", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "npm:@scope/real@^2.0.0" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [],
@@ -212,7 +228,7 @@ describe("evaluateDependencyReadiness", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0", c: "^1.0.0" } });
     const siblings = [{ name: "b", version: "2.0.0" }];
     expect(dependencyLookupQueue(plan, siblings, [])).toEqual(["c"]);
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings,
       candidates: [],
@@ -221,20 +237,29 @@ describe("evaluateDependencyReadiness", () => {
     expect(report).toMatchObject({ satisfiedByRelease: 1, issues: [] });
   });
 
+  test("a stage npm rejected or removed is never offered as the fix", () => {
+    const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0" } });
+    const report = evaluate({
+      plan,
+      siblings: [],
+      candidates: [staged("b", "2.0.0", { registryVersionStatus: "deleted" })],
+      lookups: new Map([["b", found(["1.0.0"])]]),
+    });
+    expect(report.issues.map((i) => i.kind)).toEqual(["unpublished"]);
+  });
+
   test("a stage npm already reports published needs no registry read", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0" } });
     const candidates = [staged("b", "2.0.0", { registryVersionStatus: "published" })];
     expect(dependencyLookupQueue(plan, [], candidates)).toEqual([]);
-    expect(
-      evaluateDependencyReadiness({ plan, siblings: [], candidates, lookups: new Map() }).issues,
-    ).toEqual([]);
+    expect(evaluate({ plan, siblings: [], candidates, lookups: new Map() }).issues).toEqual([]);
   });
 
   test("local specs are flagged, remote specs are counted but not checked", () => {
     const plan = planDependencyReadiness({
       dependencies: { w: "workspace:^", g: "github:owner/repo", junk: "npm:b@file:x" },
     });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [],
@@ -249,7 +274,7 @@ describe("evaluateDependencyReadiness", () => {
 
   test("a failed or skipped lookup is unchecked, never unpublished", () => {
     const plan = planDependencyReadiness({ dependencies: { b: "^2.0.0", c: "^1.0.0" } });
-    const report = evaluateDependencyReadiness({
+    const report = evaluate({
       plan,
       siblings: [],
       candidates: [staged("b", "2.0.0")],
@@ -299,6 +324,16 @@ describe("dependencyLookupQueue + runDependencyLookups", () => {
     expect(lookups.get("a")).toEqual(found(["2.0.0"]));
     expect(lookups.get("b")).toEqual({ status: "error" });
     expect(lookups.has("c")).toBe(false);
+  });
+
+  test("an answer just read from the registry is not read again", async () => {
+    const plan = planDependencyReadiness({ dependencies: { a: "^2.0.0" } });
+    const calls: boolean[] = [];
+    await runDependencyLookups(plan, ["a"], async (_name, { fresh }) => {
+      calls.push(fresh);
+      return { ...found(["1.0.0"]), fromCache: false };
+    });
+    expect(calls).toEqual([false]);
   });
 
   test("stops starting lookups once the time budget is spent", async () => {

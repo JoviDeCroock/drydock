@@ -101,7 +101,12 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
     const { status, body } = await readiness(owner, scanId);
 
     expect(status).toBe(200);
-    expect(body).toMatchObject({ status: "checked", declared: 2, notRegistry: 0 });
+    expect(body).toMatchObject({
+      status: "checked",
+      declared: 2,
+      notRegistry: 0,
+      credentialed: true,
+    });
     expect(body.issues).toEqual([
       {
         name: "b",
@@ -181,14 +186,12 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
 
     const { body } = await readiness(owner, scanId);
 
-    expect(body).toMatchObject({ status: "checked", satisfiedByRelease: 1 });
+    expect(body).toMatchObject({ status: "checked", satisfiedByRelease: 1, credentialed: false });
     expect(body.issues).toEqual([
       expect.objectContaining({ name: "c", kind: "unpublished", packageFound: true }),
     ]);
-    expect(calls.map((registryCall) => registryCall.url)).toEqual([
-      `${REGISTRY}/c`,
-      `${REGISTRY}/c`,
-    ]);
+    // One read: an answer fetched cold is not re-read with revalidate.
+    expect(calls.map((registryCall) => registryCall.url)).toEqual([`${REGISTRY}/c`]);
     expect(calls.every((registryCall) => registryCall.authorization === null)).toBe(true);
   });
 

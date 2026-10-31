@@ -4,6 +4,7 @@ import { Button } from "../../../components/Button";
 import {
   dependencyIssueMessage,
   dependencyReadinessApplies,
+  dependencyReadinessHeadline,
   dependencyReadinessView,
   dependencySectionLabel,
   uncheckedDependenciesMessage,
@@ -54,17 +55,14 @@ export function DependencyReadinessNotice({ model }: { model: ScanDetailModelIns
     );
   }
 
-  const count = view.blocking.length;
+  const headline = dependencyReadinessHeadline(view);
   return (
     <Alert tone={view.tone}>
       <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="flex flex-col gap-1">
-            <strong>
-              {count} {count === 1 ? "dependency" : "dependencies"} cannot be installed from npm
-              yet.
-            </strong>
-            <span>Approved now, this release would not install cleanly for its users.</span>
+            <strong>{headline.title}</strong>
+            <span>{headline.consequence}</span>
           </div>
           {checkAgain}
         </div>
@@ -81,7 +79,7 @@ export function DependencyReadinessNotice({ model }: { model: ScanDetailModelIns
                   ) : null}
                 </span>
                 <span class="text-ink-muted">
-                  {dependencyIssueMessage(issue)}
+                  {dependencyIssueMessage(issue, { credentialed: view.credentialed })}
                   {issue.staged ? (
                     <>
                       {" "}

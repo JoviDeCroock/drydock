@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { StagedDependencyCandidate } from "../lib/ecosystems/npm/dependency-readiness";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
@@ -51,6 +51,8 @@ export async function listStagedDependencyCandidates(
           ne(scans.status, "failed"),
         ),
       )
+      // Newest first, so the bound can only drop old history.
+      .orderBy(desc(scans.createdAt))
       .limit(MAX_CANDIDATE_ROWS);
     for (const row of rows) {
       if (!row.packageName || !row.version) continue;

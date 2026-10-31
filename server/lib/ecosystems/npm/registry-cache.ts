@@ -24,13 +24,22 @@ export async function fetchPackageMetadataCached(
   ctx: ExecutionContext,
   input: CachedPackageMetadataInput,
 ): Promise<RegistryMetadata> {
+  return (await fetchPackageMetadataCachedWithSource(env, ctx, input)).metadata;
+}
+
+/** The same read, also saying whether the answer came from the cache. */
+export async function fetchPackageMetadataCachedWithSource(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  input: CachedPackageMetadataInput,
+): Promise<{ metadata: RegistryMetadata; fromCache: boolean }> {
   const key = await computeCompareMetadataCacheKey({
     registryUrl: input.registryUrl,
     packageName: input.packageName,
     cacheScope: input.abbreviated ? `${input.cacheScope}|abbrev` : input.cacheScope,
   });
   const cached = input.revalidate ? null : await readCompareMetadataCache(env, key);
-  if (cached) return cached;
+  if (cached) return { metadata: cached, fromCache: true };
 
   const metadata = await fetchPackageMetadata(env, input.packageName, {
     npmToken: input.npmToken,
@@ -42,5 +51,5 @@ export async function fetchPackageMetadataCached(
   } catch {
     // ignore
   }
-  return metadata;
+  return { metadata, fromCache: false };
 }

@@ -28,7 +28,7 @@ import {
   type ReleaseSibling,
   type StagedDependencyCandidate,
 } from "../../lib/ecosystems/npm/dependency-readiness";
-import { fetchPackageMetadataCached } from "../../lib/ecosystems/npm/registry-cache";
+import { fetchPackageMetadataCachedWithSource } from "../../lib/ecosystems/npm/registry-cache";
 import { listGatePackageScans } from "../../lib/github-app/webhook-gates";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
@@ -75,13 +75,14 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
     changed: report.dependencyChanges,
     bundled: bundledDependencyNames(report.stagedPaths),
   });
-  if (!plan.requirements.length) return respond(evaluateDependencyReadiness(emptyInputs(plan)));
 
   // A staged review must ask the registry it was captured from with the
   // organization's own credential, exactly as its scan did; a connection
   // edited since then fails closed rather than answering about another
-  // registry. A gate review needs no npm connection, so without a usable one it
-  // reads the public registry anonymously.
+  // registry. (A legacy row that never captured its registry is asked of the
+  // current connection's, which is what its scan used.) A gate review needs no
+  // npm connection, so without a usable one it reads the public registry
+  // anonymously.
   const isGate = scan.source === "workflow_gate";
   const connection = await getNpmConnection(db, organizationId).catch(() => null);
   const usable = connection?.validationStatus === "valid" ? connection : null;
@@ -105,6 +106,18 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
       });
       if (!isGate) return respond({ status: "unavailable", reason: "npm-connection-unavailable" });
     }
+  }
+  const credentialed = token !== undefined;
+  if (!plan.requirements.length) {
+    return respond(
+      evaluateDependencyReadiness({
+        plan,
+        siblings: [],
+        candidates: [],
+        lookups: new Map(),
+        credentialed,
+      }),
+    );
   }
   const targets = dependencyReadinessTargets(plan);
   const [siblings, candidates] = await Promise.all([
@@ -131,7 +144,7 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
     options: { fresh: boolean },
   ): Promise<PackageVersionsLookup> => {
     try {
-      const metadata = await fetchPackageMetadataCached(c.env, ctx, {
+      const { metadata, fromCache } = await fetchPackageMetadataCachedWithSource(c.env, ctx, {
         packageName,
         registryUrl,
         cacheScope: token ? `org:${organizationId}` : "public",
@@ -144,6 +157,7 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
         status: "found",
         versions: Object.keys(metadata.versions ?? {}),
         distTags: metadata["dist-tags"] ?? {},
+        fromCache,
       };
     } catch (err) {
       // npm answers 404 for a package that does not exist and for one this
@@ -155,7 +169,13 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
 
   const queue = dependencyLookupQueue(plan, siblings, candidates);
   const lookups = await runDependencyLookups(plan, queue, lookup);
-  const result = evaluateDependencyReadiness({ plan, siblings, candidates, lookups });
+  const result = evaluateDependencyReadiness({
+    plan,
+    siblings,
+    candidates,
+    lookups,
+    credentialed,
+  });
   const failed = result.issues.filter((issue) => issue.reason === "lookup-failed").length;
   if (failed) {
     emitOperationalEvent("warn", "scan.dependency_readiness.lookup_failed", {
@@ -166,10 +186,6 @@ scanDependencyReadinessRoutes.get("/:id/dependency-readiness", async (c) => {
   }
   return respond(result);
 });
-
-function emptyInputs(plan: ReturnType<typeof planDependencyReadiness>) {
-  return { plan, siblings: [], candidates: [], lookups: new Map() };
-}
 
 // The other packages of the same gated release publish together with this
 // one (the gate releases only once every package is approved), so they satisfy

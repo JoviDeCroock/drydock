@@ -247,11 +247,14 @@ version.
   the organization's own current staged reviews of that package on the same
   registry, keyed on npm's stage record (`registry_package_name` /
   `registry_version`, never a tarball's manifest). A satisfying stage is named
-  with a link to its review: approve it first. A stage npm has blocked is never
-  offered; one npm already reports `published` counts as installable.
+  with a link to its review: approve it first. A stage npm has blocked or
+  deleted is never offered; one npm already reports `published` counts as
+  installable.
 - **Gated releases.** For a workflow-gate review, the other packages of the same
   gated release satisfy each other: the gate releases them together. Without a
-  usable npm connection, a gate review reads the public registry anonymously.
+  usable npm connection, a gate review reads the public registry anonymously
+  (`credentialed: false`), and a package it cannot see is described as not
+  publicly listed rather than missing.
 
 It is computed when the decision view loads, not at scan time: the answer
 changes after the scan (a sibling stage is approved) while the reviewed bytes do
@@ -260,8 +263,9 @@ findings are unchanged. Registry reads reuse the organization-scoped cached
 packument read (`fetchPackageMetadataCached`, 5-minute TTL) against the
 registry the scan was captured from, with the organization's credential; a
 connection edited to another registry since the scan fails closed
-(`npm-connection-changed`). A cached packument that does not satisfy a spec is
-re-read fresh once, because "not published yet" is the answer that goes stale.
+(`npm-connection-changed`). A packument served from the cache that does not
+satisfy a spec is re-read fresh once, because "not published yet" is the answer
+that goes stale.
 Reads are bounded per request (40 packages, 6 at a time, a 10-second budget;
 changed specs first), rate limited per user, and fail open: a failed or skipped
 read is reported as "could not check" and never as missing, and nothing here

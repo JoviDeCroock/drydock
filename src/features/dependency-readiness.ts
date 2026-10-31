@@ -34,6 +34,8 @@ export interface DependencyReadinessView {
   unchecked: number;
   /** `warn` when a required dependency is affected; optional and peer alone read as `info`. */
   tone: "warn" | "info";
+  /** False when the registry was read anonymously (a gate review without an npm connection). */
+  credentialed: boolean;
 }
 
 export function dependencyReadinessView(
@@ -47,6 +49,7 @@ export function dependencyReadinessView(
     blocking,
     unchecked,
     tone: blocking.some((issue) => issue.section === "dependencies") ? "warn" : "info",
+    credentialed: response.credentialed,
   };
 }
 
@@ -56,7 +59,10 @@ export function dependencySectionLabel(issue: DependencyReadinessIssue): string 
   return null;
 }
 
-export function dependencyIssueMessage(issue: DependencyReadinessIssue): string {
+export function dependencyIssueMessage(
+  issue: DependencyReadinessIssue,
+  options: { credentialed?: boolean } = {},
+): string {
   const target = issue.target ?? issue.name;
   switch (issue.kind) {
     case "staged": {
@@ -72,14 +78,40 @@ export function dependencyIssueMessage(issue: DependencyReadinessIssue): string 
       return `${coordinate} is staged in this organization and not published yet. Approve it first.`;
     }
     case "unpublished":
-      return issue.packageFound
-        ? `No published version of ${target} matches.`
+      if (issue.packageFound) return `No published version of ${target} matches.`;
+      // An anonymous read cannot see a private package consumers may have access to.
+      return options.credentialed === false
+        ? `npm does not list ${target} publicly. If it is private, consumers need access to it.`
         : `npm does not list ${target}, or this organization's token cannot read it.`;
     case "local-spec":
       return "A local spec. npm cannot install it from the registry; the publish should have replaced it with a version.";
     case "unchecked":
       return "Could not be checked.";
   }
+}
+
+/**
+ * The notice's headline and consequence. npm installs a release without an
+ * optional dependency it cannot resolve, so only a required dependency makes
+ * the release fail to install.
+ */
+export function dependencyReadinessHeadline(view: DependencyReadinessView): {
+  title: string;
+  consequence: string;
+} {
+  const count = view.blocking.length;
+  const noun = count === 1 ? "dependency" : "dependencies";
+  if (view.tone === "warn") {
+    return {
+      title: `${count} ${noun} cannot be installed from npm yet.`,
+      consequence: "Approved now, this release would fail to install for its users.",
+    };
+  }
+  return {
+    title: `${count} optional or peer ${noun} cannot be resolved from npm yet.`,
+    consequence:
+      "npm installs this release without an optional dependency it cannot resolve; a peer the consumer does not already provide fails the install.",
+  };
 }
 
 export function uncheckedDependenciesMessage(count: number): string {

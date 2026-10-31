@@ -155,6 +155,7 @@ test("a release waiting on a staged dependency says which one, beside the decisi
       declared: 3,
       notRegistry: 0,
       satisfiedByRelease: 0,
+      credentialed: true,
       issues: [
         {
           name: "@drydock/core",

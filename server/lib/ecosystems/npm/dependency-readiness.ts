@@ -28,11 +28,11 @@ import { isValidLegacyNpmPackageName } from "./registry";
 // Bounded per request: a manifest declaring hundreds of dependencies cannot
 // turn one page load into hundreds of registry reads. Changed specs are looked
 // up first, so a truncated check still covers what this release changed.
-export const MAX_DEPENDENCY_LOOKUPS = 40;
-export const DEPENDENCY_LOOKUP_CONCURRENCY = 6;
+const MAX_DEPENDENCY_LOOKUPS = 40;
+const DEPENDENCY_LOOKUP_CONCURRENCY = 6;
 // Lookups still unstarted when the budget runs out are reported unchecked, so
 // a slow registry costs the reader seconds, not the Worker's request lifetime.
-export const DEPENDENCY_LOOKUP_BUDGET_MS = 10_000;
+const DEPENDENCY_LOOKUP_BUDGET_MS = 10_000;
 const MAX_DECLARED_DEPENDENCIES = 1_000;
 
 /**
@@ -41,10 +41,7 @@ const MAX_DECLARED_DEPENDENCIES = 1_000;
  * reader can weigh a peer the consumer may already provide. Optional peers are
  * never installed by npm and are skipped. `devDependencies` never install.
  */
-export type DependencyReadinessSection =
-  | "dependencies"
-  | "optionalDependencies"
-  | "peerDependencies";
+type DependencyReadinessSection = "dependencies" | "optionalDependencies" | "peerDependencies";
 
 type ClassifiedSpec =
   | { kind: "registry"; target: string; range: SemverRange | null; tag: string | null }
@@ -80,11 +77,17 @@ export interface StagedDependencyCandidate {
 }
 
 export type PackageVersionsLookup =
-  | { status: "found"; versions: string[]; distTags: Record<string, string> }
+  | {
+      status: "found";
+      versions: string[];
+      distTags: Record<string, string>;
+      /** False when this answer was just read from the registry, so re-reading is pointless. */
+      fromCache?: boolean;
+    }
   | { status: "not-found" }
   | { status: "error" };
 
-export type DependencyReadinessIssueKind =
+type DependencyReadinessIssueKind =
   /** Not public yet, and this organization holds a stage that satisfies it. */
   | "staged"
   /** No public version satisfies the spec, and nothing staged here does. */
@@ -94,7 +97,7 @@ export type DependencyReadinessIssueKind =
   /** Could not be checked; never a verdict. */
   | "unchecked";
 
-export type DependencyUncheckedReason = "lookup-failed" | "lookup-skipped" | "unsupported-spec";
+type DependencyUncheckedReason = "lookup-failed" | "lookup-skipped" | "unsupported-spec";
 
 export interface DependencyReadinessIssue {
   name: string;
@@ -122,6 +125,12 @@ export interface DependencyReadinessReport {
   notRegistry: number;
   /** Satisfied by another package in the same gated release. */
   satisfiedByRelease: number;
+  /**
+   * Whether registry reads used the organization's credential. A gate review
+   * without a usable npm connection reads anonymously, so a private package it
+   * cannot see may still install for consumers who have access.
+   */
+  credentialed: boolean;
   issues: DependencyReadinessIssue[];
 }
 
@@ -134,9 +143,11 @@ export type DependencyReadinessResponse =
       reason: "report-unavailable" | "npm-connection-unavailable" | "npm-connection-changed";
     };
 
+// Prototype-free, so a dependency named `constructor` or `toString` is looked
+// up as itself rather than shadowed by Object.prototype.
 function stringMap(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
+  if (!isRecord(value)) return out;
   for (const [key, spec] of Object.entries(value)) {
     if (typeof spec === "string") out[key] = spec;
   }
@@ -207,7 +218,10 @@ export function planDependencyReadiness(
   const dependencies = stringMap(manifest?.dependencies);
   const optional = stringMap(manifest?.optionalDependencies);
   const peers = stringMap(manifest?.peerDependencies);
-  const peerMeta = isRecord(manifest?.peerDependenciesMeta) ? manifest.peerDependenciesMeta : {};
+  const peerMeta: Record<string, unknown> = isRecord(manifest?.peerDependenciesMeta)
+    ? manifest.peerDependenciesMeta
+    : {};
+  const has = (map: object, name: string) => Object.hasOwn(map, name);
   const changed = new Set<string>();
   for (const entry of options.changed ?? []) {
     if (entry.status !== "removed" && entry.section)
@@ -217,13 +231,13 @@ export function planDependencyReadiness(
   const entries: Array<[DependencyReadinessSection, string, string]> = [];
   // npm lets an optionalDependencies entry replace a same-named dependency.
   for (const [name, spec] of Object.entries(dependencies)) {
-    if (!(name in optional)) entries.push(["dependencies", name, spec]);
+    if (!has(optional, name)) entries.push(["dependencies", name, spec]);
   }
   for (const [name, spec] of Object.entries(optional))
     entries.push(["optionalDependencies", name, spec]);
   for (const [name, spec] of Object.entries(peers)) {
-    if (name in dependencies || name in optional) continue;
-    const meta = peerMeta[name];
+    if (has(dependencies, name) || has(optional, name)) continue;
+    const meta = has(peerMeta, name) ? peerMeta[name] : undefined;
     if (isRecord(meta) && meta.optional === true) continue;
     entries.push(["peerDependencies", name, spec]);
   }
@@ -262,8 +276,13 @@ function bestStagedCandidate(
   candidates: readonly StagedDependencyCandidate[],
 ): StagedDependencyCandidate | null {
   if (!spec.range) return null;
+  // A stage npm blocked or deleted (rejected, or removed) will never install,
+  // so it is never offered as the fix; `published` stays, it already installs.
   const usable = candidates.filter(
-    (c) => c.packageName === spec.target && c.registryVersionStatus !== "blocked",
+    (c) =>
+      c.packageName === spec.target &&
+      c.registryVersionStatus !== "blocked" &&
+      c.registryVersionStatus !== "deleted",
   );
   const version = maxSatisfyingVersion(
     usable.map((c) => c.version),
@@ -375,7 +394,11 @@ export async function runDependencyLookups(
       if (now() > deadline) return;
       let result = await safeLookup(name, false);
       const specs = specsByTarget.get(name) ?? [];
-      if (result.status === "found" && specs.some((spec) => !lookupSatisfies(spec, result))) {
+      if (
+        result.status === "found" &&
+        result.fromCache !== false &&
+        specs.some((spec) => !lookupSatisfies(spec, result))
+      ) {
         if (now() <= deadline) {
           const fresh = await safeLookup(name, true);
           if (fresh.status === "found") result = fresh;
@@ -392,6 +415,7 @@ export function evaluateDependencyReadiness(input: {
   siblings: readonly ReleaseSibling[];
   candidates: readonly StagedDependencyCandidate[];
   lookups: ReadonlyMap<string, PackageVersionsLookup>;
+  credentialed: boolean;
 }): DependencyReadinessReport {
   const issues: DependencyReadinessIssue[] = [];
   let notRegistry = 0;
@@ -453,6 +477,7 @@ export function evaluateDependencyReadiness(input: {
     declared: input.plan.requirements.length,
     notRegistry,
     satisfiedByRelease,
+    credentialed: input.credentialed,
     issues,
   };
 }
