@@ -1,6 +1,6 @@
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connection";
 import { readBoundedJson } from "../../platform/bounded-body";
-import { reliableFetch } from "../../platform/reliable-fetch";
+import { fetchWithinBaseUrl } from "../../platform/url-scope";
 import type { ScanErrorCode } from "../../scan/errors";
 
 /**
@@ -121,8 +121,9 @@ export async function fetchNpmVersionStatus(
   }
 
   let url: string;
+  let registry: string;
   try {
-    const registry = normalizeRegistryUrl(registryUrl, options);
+    registry = normalizeRegistryUrl(registryUrl, options);
     // The spec requires scoped names URL-encoded "with the slash escaped", so
     // this is the one npm path where `@scope/name` must NOT be un-escaped back
     // to `@scope/name` the way the packument route does it.
@@ -135,7 +136,7 @@ export async function fetchNpmVersionStatus(
   const deadlineMs = Date.now() + timeoutMs;
   let response: Response;
   try {
-    response = await reliableFetch(url, {
+    response = await fetchWithinBaseUrl(url, registry, {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,

@@ -6,6 +6,8 @@ import {
   listStagedPublishes,
 } from "../server/lib/ecosystems/npm/staged-publishes";
 import { fetchNpmVersionStatus } from "../server/lib/ecosystems/npm/version-status";
+import { fetchPackageMetadata } from "../server/lib/ecosystems/npm/registry";
+import { fetchPublishedTarballStream } from "../server/lib/ecosystems/npm/published-tarball";
 import { createVerdaccioFake, verdaccioStage } from "./helpers/verdaccio-registry";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
@@ -176,5 +178,80 @@ describe("Verdaccio staged publishing", () => {
         kind: "blocked",
       });
     }
+  });
+
+  test("the stage gateway refuses traversal the URL parser leaves encoded", () => {
+    for (const registry of [REGISTRY, "https://npm.example.test"]) {
+      for (const path of [
+        "/-/stage/..%2f..%2f..%2f..%2fadmin/tarball",
+        "/-/stage/..%5c..%5cadmin/tarball",
+        "/-/stage/..;/admin/tarball",
+        "/-/stage/%252e%252e%252fadmin/tarball",
+        `/-/stage/${STAGE_ID}%2f..%2f..%2fadmin/tarball`,
+        `/-/stage/${STAGE_ID}/..%2f..%2fadmin/tarball`,
+        "/..%2f..%2fadmin",
+        "/..%5cadmin",
+        "/..;",
+        "/%252e%252e",
+        "/@scope%2f..%2fadmin",
+        // No dot segment, but not a stage tarball or a package name either.
+        `/-/stage/${STAGE_ID}/extra/tarball`,
+        "/-/stage/admin%2fsecrets/tarball",
+        "/_admin",
+        "/pkg%3Fx",
+      ]) {
+        expect(
+          evaluateNpmStageGatewayRequest(`${registry}${path}`, "GET", registry),
+          `${registry}${path}`,
+        ).toEqual({ allowed: false, credentialed: false, kind: "blocked" });
+      }
+    }
+  });
+
+  test("no credentialed registry read follows a same-origin redirect out of the base path with the token", async () => {
+    let adminHits = 0;
+    const leaked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async function respond(
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/admin/")) {
+          adminHits++;
+          if (request.headers.get("authorization")) leaked.push(url.pathname);
+          return new Response("{}", { status: 404 });
+        }
+        // Models workerd's default `follow`, which keeps Authorization on a
+        // same-origin hop: for a registry under a path, the rest of its origin.
+        if (request.redirect === "follow") {
+          return respond(new URL("/admin/y", url), { headers: request.headers });
+        }
+        return new Response(null, { status: 302, headers: { location: "/admin/y" } });
+      }),
+    );
+
+    await validateNpmCredential(REGISTRY, TOKEN, { stageId: STAGE_ID });
+    await listStagedPublishes(REGISTRY, TOKEN).catch(() => null);
+    await fetchStagedPublishDetails(REGISTRY, TOKEN, STAGE_ID).catch(() => null);
+    await checkStagedPublishAccess(REGISTRY, TOKEN, STAGE_ID);
+    await fetchNpmVersionStatus(REGISTRY, TOKEN, "drydock-verd-demo", "1.1.0");
+    await fetchPackageMetadata({} as Cloudflare.Env, "drydock-verd-demo", {
+      npmRegistry: REGISTRY,
+      npmToken: TOKEN,
+    }).catch(() => null);
+    await fetchPublishedTarballStream(
+      `${REGISTRY}/drydock-verd-demo/-/drydock-verd-demo-1.1.0.tgz`,
+      {
+        registryUrl: REGISTRY,
+        npmToken: TOKEN,
+      },
+    ).catch(() => null);
+
+    // Every read above reached the redirect target, so none passed vacuously.
+    expect(adminHits).toBeGreaterThanOrEqual(10);
+    expect(leaked).toEqual([]);
   });
 });

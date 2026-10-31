@@ -244,7 +244,7 @@ function NpmTokenForm({ npm, onSubmit }: { npm: NpmModel; onSubmit: (event: Even
   );
   return (
     <>
-      <NpmTokenScopeGuide />
+      <NpmTokenScopeGuide registry={npm.registry} />
 
       <form
         class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-3 items-end"
@@ -291,7 +291,8 @@ function NpmTokenForm({ npm, onSubmit }: { npm: NpmModel; onSubmit: (event: Even
   );
 }
 
-function NpmTokenScopeGuide() {
+function NpmTokenScopeGuide({ registry }: { registry: ReadonlySignal<string> }) {
+  const selfHosted = useComputed(() => !isPublicNpmRegistry(registry.value));
   return (
     <Muted class="text-[13px] m-0 max-w-[680px]">
       Use a granular access token with <span class="text-ink">Read-only</span> access to the
@@ -305,10 +306,24 @@ function NpmTokenScopeGuide() {
       >
         Create a token
       </a>
-      . On Verdaccio, use a read-only token from an account that may publish those packages;
-      Verdaccio hides staged versions from everyone else.
+      .
+      <Show when={selfHosted}>
+        {() =>
+          " On Verdaccio, use a read-only token from an account that may publish those packages; Verdaccio shows a staged version only to those accounts and to whoever staged it."
+        }
+      </Show>
     </Muted>
   );
+}
+
+function isPublicNpmRegistry(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  try {
+    return new URL(trimmed).hostname === "registry.npmjs.org";
+  } catch {
+    return true;
+  }
 }
 
 function MetadataField({ label, value }: { label: string; value: string }) {

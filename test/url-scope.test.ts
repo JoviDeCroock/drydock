@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { pathWithinBaseUrl } from "../server/lib/platform/url-scope";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { fetchWithinBaseUrl, pathWithinBaseUrl } from "../server/lib/platform/url-scope";
 
 const within = (url: string, base: string) => pathWithinBaseUrl(new URL(url), new URL(base));
 
@@ -27,6 +27,33 @@ describe("pathWithinBaseUrl", () => {
     expect(within("https://host.test/npm/a/../pkg", "https://host.test/npm")).toBe("/pkg");
   });
 
+  test("a dot segment hidden by encoding or a separator the parser keeps is outside any base", () => {
+    for (const base of ["https://host.test/npm", "https://host.test"]) {
+      const prefix = new URL(base).pathname.replace(/\/$/, "");
+      for (const hidden of [
+        "/-/stage/..%2f..%2f..%2f..%2fadmin/tarball",
+        "/..%2f..%2fadmin",
+        "/pkg/-/..%2F..%2Fadmin%2fx.tgz",
+        "/..%5c..%5cadmin",
+        "/..;/admin",
+        "/%252e%252e%252fadmin",
+        "/%25252e%25252e/admin",
+        "/%2e%2e%2fadmin",
+        "/.%2fpkg",
+        "/pkg%zz",
+      ]) {
+        expect(within(`https://host.test${prefix}${hidden}`, base), hidden).toBeNull();
+      }
+    }
+  });
+
+  test("dots inside a segment and encoded scope slashes stay inside", () => {
+    const base = "https://host.test/npm";
+    expect(within("https://host.test/npm/pkg/-/pkg-1.0.0.tgz", base)).toBe("/pkg/-/pkg-1.0.0.tgz");
+    expect(within("https://host.test/npm/@scope%2fpkg", base)).toBe("/@scope%2fpkg");
+    expect(within("https://host.test/npm/...pkg/a..b", base)).toBe("/...pkg/a..b");
+  });
+
   test("another scheme, host, or port is outside the base", () => {
     for (const url of [
       "http://host.test/npm/pkg",
@@ -35,5 +62,88 @@ describe("pathWithinBaseUrl", () => {
     ]) {
       expect(within(url, "https://host.test/npm")).toBeNull();
     }
+  });
+});
+
+describe("fetchWithinBaseUrl", () => {
+  const BASE = "https://host.test/npm";
+  const AUTH = "Bearer scoped-token";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Each entry answers one hop; the recorder keeps what every hop carried.
+  function stubHops(...responses: Array<() => Response>) {
+    const hops: Array<{ url: string; authorization: string | null; redirect: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        hops.push({
+          url: request.url,
+          authorization: request.headers.get("authorization"),
+          redirect: request.redirect,
+        });
+        const next = responses[hops.length - 1];
+        if (!next) throw new Error(`unexpected hop ${request.url}`);
+        return next();
+      }),
+    );
+    return hops;
+  }
+
+  const redirect =
+    (location: string, status = 302) =>
+    () =>
+      new Response(null, { status, headers: { location } });
+  const ok = () => new Response("ok");
+
+  test("a same-origin redirect out of the base path loses the credential", async () => {
+    const hops = stubHops(redirect("/admin/y"), ok);
+    const response = await fetchWithinBaseUrl(`${BASE}/same`, BASE, {
+      headers: { authorization: AUTH },
+    });
+    expect(await response.text()).toBe("ok");
+    expect(hops).toEqual([
+      { url: `${BASE}/same`, authorization: AUTH, redirect: "manual" },
+      { url: "https://host.test/admin/y", authorization: null, redirect: "manual" },
+    ]);
+  });
+
+  test("redirects inside the base keep the credential; once dropped it stays dropped", async () => {
+    const hops = stubHops(
+      redirect(`${BASE}/moved`, 301),
+      redirect("https://cdn.test/blob", 307),
+      redirect(`${BASE}/back`, 308),
+      ok,
+    );
+    await fetchWithinBaseUrl(`${BASE}/start`, BASE, { headers: { authorization: AUTH } });
+    expect(hops.map((hop) => [hop.url, hop.authorization])).toEqual([
+      [`${BASE}/start`, AUTH],
+      [`${BASE}/moved`, AUTH],
+      ["https://cdn.test/blob", null],
+      [`${BASE}/back`, null],
+    ]);
+  });
+
+  test("a redirect that hides a dot segment loses the credential", async () => {
+    const hops = stubHops(redirect("/npm/..%2fadmin"), ok);
+    await fetchWithinBaseUrl(`${BASE}/start`, BASE, { headers: { authorization: AUTH } });
+    expect(hops[1]).toMatchObject({ url: `${BASE}/..%2fadmin`, authorization: null });
+  });
+
+  test("a URL outside the base never carries the credential", async () => {
+    const hops = stubHops(ok);
+    await fetchWithinBaseUrl("https://host.test/admin", BASE, { headers: { authorization: AUTH } });
+    expect(hops[0]?.authorization).toBeNull();
+  });
+
+  test("a 3xx without a location is the answer, and a redirect loop is refused", async () => {
+    stubHops(() => new Response(null, { status: 304 }));
+    expect((await fetchWithinBaseUrl(`${BASE}/x`, BASE)).status).toBe(304);
+
+    stubHops(...Array.from({ length: 21 }, () => redirect(`${BASE}/loop`)));
+    await expect(fetchWithinBaseUrl(`${BASE}/loop`, BASE)).rejects.toThrow("too many redirects");
   });
 });

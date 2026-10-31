@@ -1,7 +1,7 @@
 import { isRecord } from "../../platform/guards";
 import { errorMessage } from "../../platform/errors";
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connection";
-import { reliableFetch } from "../../platform/reliable-fetch";
+import { fetchWithinBaseUrl } from "../../platform/url-scope";
 import { normalizePeerDependenciesMeta, normalizeStringRecord } from "../../tar-parser.js";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedArtifactIntegrity } from "../artifact-integrity";
@@ -92,7 +92,7 @@ export async function listStagedPublishes(
   if (options.packageName) params.set("package", options.packageName);
   let response: Response;
   try {
-    response = await reliableFetch(`${registry}/-/stage?${params.toString()}`, {
+    response = await fetchWithinBaseUrl(`${registry}/-/stage?${params.toString()}`, registry, {
       headers: npmStageHeaders(token, "staged-list"),
     });
   } catch (err) {
@@ -116,9 +116,13 @@ export async function fetchStagedPublishDetails(
   const registry = normalizeRegistryUrl(registryUrl, options);
   let response: Response;
   try {
-    response = await reliableFetch(`${registry}/-/stage/${encodeURIComponent(stageId)}`, {
-      headers: npmStageHeaders(token, "staged-view"),
-    });
+    response = await fetchWithinBaseUrl(
+      `${registry}/-/stage/${encodeURIComponent(stageId)}`,
+      registry,
+      {
+        headers: npmStageHeaders(token, "staged-view"),
+      },
+    );
   } catch (err) {
     throw new StagedPublishesFetchError(0, errorMessage(err));
   }
@@ -140,8 +144,9 @@ export async function checkStagedPublishAccess(
 ): Promise<StagedPublishAccessResult> {
   if (!isValidStageId(stageId)) throw new Error("invalid stageId");
   const registry = normalizeRegistryUrl(registryUrl, options);
-  const response = await reliableFetch(
+  const response = await fetchWithinBaseUrl(
     `${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`,
+    registry,
     {
       headers: npmStageTarballHeaders(token),
     },

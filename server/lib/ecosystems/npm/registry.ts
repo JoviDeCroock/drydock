@@ -1,5 +1,5 @@
 import { isRecord } from "../../platform/guards";
-import { reliableFetch } from "../../platform/reliable-fetch";
+import { fetchWithinBaseUrl } from "../../platform/url-scope";
 import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
 
 export { compareSemver } from "../semver";
@@ -95,7 +95,7 @@ export async function fetchPackageMetadata(
   const fetchWith = (accept: string) => {
     const headers = new Headers({ accept });
     if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
-    return reliableFetch(url, { headers });
+    return fetchWithinBaseUrl(url, registry, { headers });
   };
 
   let res = await fetchWith(

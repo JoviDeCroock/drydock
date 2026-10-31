@@ -93,6 +93,12 @@ export interface NpmStageGatewayPolicy {
   kind: "staged-tarball" | "package-metadata" | "public-artifact" | "blocked";
 }
 
+// Whole-path matches: a prefix/suffix test would let anything between them,
+// such as an encoded `..%2f` walk, ride along with the credential.
+const STAGED_TARBALL_PATH = new RegExp(`^/-/stage/${STAGE_ID_PATTERN}/tarball$`);
+const PACKAGE_METADATA_PATH =
+  /^\/(?:@[A-Za-z0-9][A-Za-z0-9._~-]*%2[fF])?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+
 export function evaluateNpmStageGatewayRequest(
   requestUrl: string,
   method: string,
@@ -108,14 +114,10 @@ export function evaluateNpmStageGatewayRequest(
     publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
   // A registry served under a path owns only that subtree of its origin.
   const registryPath = pathWithinBaseUrl(url, registry);
-  const packageMetadataPath =
-    registryPath !== null && /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(registryPath);
   const isStagedTarball =
-    registryPath !== null &&
-    normalizedMethod === "GET" &&
-    registryPath.startsWith("/-/stage/") &&
-    registryPath.endsWith("/tarball");
-  const isRegistryMetadata = normalizedMethod === "GET" && packageMetadataPath;
+    registryPath !== null && normalizedMethod === "GET" && STAGED_TARBALL_PATH.test(registryPath);
+  const isRegistryMetadata =
+    registryPath !== null && normalizedMethod === "GET" && PACKAGE_METADATA_PATH.test(registryPath);
 
   if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
@@ -144,8 +146,9 @@ const MAX_PINNED_ARTIFACT_REDIRECTS = 3;
  *
  * Same-origin redirects stay allowed because the origin is exactly what was
  * vetted; only leaving it is refused. Credentialed npm requests do not come
- * through here — their redirect behavior is unchanged, so a registry that moves
- * a staged tarball to a CDN keeps working.
+ * through here: the gateway hands their 3xx back to the sandbox, whose next hop
+ * is evaluated as a fresh request, so a staged tarball redirected off the
+ * registry's subtree (a CDN included) is blocked.
  */
 async function fetchPinnedArtifact(request: Request): Promise<Response> {
   const pinnedOrigin = new URL(request.url).origin;
@@ -201,7 +204,9 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     // A pinned artifact URL means the origin was vetted; keep redirects inside
-    // it. Credentialed registry requests keep the runtime's default handling.
+    // it. Incoming requests carry `redirect: "manual"`, so a credentialed
+    // registry response, 3xx included, goes back to the sandbox as is, and any
+    // hop the sandbox takes comes back through this policy.
     if (policy.kind === "public-artifact") return fetchPinnedArtifact(forwarded);
     return fetch(forwarded);
   }

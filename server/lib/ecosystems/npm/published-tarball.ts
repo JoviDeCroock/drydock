@@ -1,6 +1,6 @@
 import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
 import { coloCache } from "../../platform/colo-cache";
-import { pathWithinBaseUrl } from "../../platform/url-scope";
+import { fetchWithinBaseUrl, pathWithinBaseUrl } from "../../platform/url-scope";
 import { registryProtocolAllowed } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {
@@ -170,7 +170,10 @@ export async function fetchPublishedTarballStream(
 
   let response: Response;
   try {
-    response = await reliableFetch(tarballUrl, { headers, timeoutMs: 60_000 });
+    response = await fetchWithinBaseUrl(tarballUrl, options.registryUrl, {
+      headers,
+      timeoutMs: 60_000,
+    });
   } catch {
     throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
   }

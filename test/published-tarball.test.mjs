@@ -91,8 +91,12 @@ describe("isPublishedTarballUrlAllowed", () => {
       "https://npm.example.test/pkg/-/pkg-1.0.0.tgz",
       "https://npm.example.test/other/pkg/-/pkg-1.0.0.tgz",
       "https://npm.example.test/verdaccio-evil/pkg/-/pkg-1.0.0.tgz",
+      "https://npm.example.test/verdaccio/pkg/-/..%2f..%2f..%2fadmin%2fx.tgz",
+      "https://npm.example.test/verdaccio/pkg/-/..%5c..%5cadmin%5cx.tgz",
+      "https://npm.example.test/verdaccio/..;/pkg/-/pkg-1.0.0.tgz",
+      "https://npm.example.test/verdaccio/pkg/-/%252e%252e%252fx.tgz",
     ]) {
-      expect(isPublishedTarballUrlAllowed(url, registry, false)).toBe(false);
+      expect(isPublishedTarballUrlAllowed(url, registry, false), url).toBe(false);
     }
   });
 

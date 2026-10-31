@@ -14,14 +14,18 @@ test("npm connection card names the exact token permissions", async ({ page }) =
     "Use a granular access token with Read-only access to the packages or scopes you want to review.",
   );
   await expect(guide).toContainText("Set Organizations to No access.");
-  // Verdaccio lists a stage only to its stager and to users who may publish
-  // it, so an access-only token validates and then discovers nothing.
-  await expect(guide).toContainText(
-    "On Verdaccio, use a read-only token from an account that may publish those packages",
-  );
   await expect(guide.getByRole("link", { name: "Create a token" })).toHaveAttribute(
     "href",
     "https://docs.npmjs.com/creating-and-viewing-access-tokens/",
+  );
+
+  // Verdaccio lists a stage only to its stager and to users who may publish
+  // it, so an access-only token validates and then discovers nothing.
+  const verdaccio = "On Verdaccio, use a read-only token from an account that may publish";
+  await expect(guide).not.toContainText(verdaccio);
+  await page.getByLabel("Registry", { exact: true }).fill("https://npm.example.test/verdaccio");
+  await expect(guide).toContainText(
+    `${verdaccio} those packages; Verdaccio shows a staged version only to those accounts and to whoever staged it.`,
   );
 });
 

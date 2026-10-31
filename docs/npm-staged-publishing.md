@@ -300,8 +300,9 @@ nor rejects: the maintainer runs `npm stage approve|reject <stage-id> --registry
 3. **Connect the registry URL** in Settings, including any reverse-proxy path
    (`https://npm.example.com/verdaccio`). HTTPS is required. Drydock sends the
    token only to that origin, and builds or accepts registry URLs only below
-   that path. Behind a proxy, set Verdaccio's `url_prefix` and forward `Host`
-   and `X-Forwarded-Proto`, so the tarball URLs in its metadata carry the public
+   that path; a redirect out of the path is followed without the token. Behind
+   a proxy, set Verdaccio's `url_prefix` and forward `Host` and
+   `X-Forwarded-Proto`, so the tarball URLs in its metadata carry the public
    origin and path. Drydock refuses a previous-version tarball URL anywhere
    else, and the scan fails rather than send the token there.
 
@@ -331,8 +332,11 @@ Verified on 2026-10-31 against a local Verdaccio 7.0.2 (Node 24.14) with npm
 behind a reverse proxy at `/npm`. Drydock's local dev server covered credential
 validation, discovery across list pages, the scan with baseline and SHA-1
 verification, a first-version stage, and the status reads after approving
-(`published`) and rejecting (unknown) on Verdaccio. A hostile proxy that
-redirected the staged tarball, or rewrote metadata tarball URLs, to another
-origin got a failed scan, and that origin received no request.
+(`published`) and rejecting (unknown) on Verdaccio. A read-only token from a
+publishing account got `403` for both `npm stage approve` and `npm stage reject`
+(`POST /-/stage/{id}/approve`, `DELETE /-/stage/{id}`) on a live stage, which
+stayed `staged`. A hostile proxy that redirected the staged tarball, or rewrote
+metadata tarball URLs, to another origin got a failed scan, and that origin
+received no request.
 `test/helpers/verdaccio-registry.ts` replays the captured response shapes in
 tests.
