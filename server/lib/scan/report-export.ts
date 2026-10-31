@@ -6,7 +6,11 @@ import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import { toIsoOrNull } from "./iso-time";
 import { exportGateContinuity, normalizeGateContinuity } from "./gate-continuity-record";
-import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
+import type {
+  ReleaseProvenance,
+  ReleaseProvenanceArtifact,
+  ReleaseStageBinding,
+} from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
 import { canonicalJson } from "../platform/canonical-json";
@@ -196,7 +200,13 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
     return null;
   }
   if (!mapped.length) return null;
-  return { ecosystem, mode, artifacts: mapped };
+  const stage = extractStageBinding(provenance.stage);
+  return { ecosystem, mode, artifacts: mapped, ...(stage ? { stage } : {}) };
+}
+
+function extractStageBinding(raw: unknown): ReleaseStageBinding | null {
+  if (!isRecord(raw) || raw.protocol !== "pep694" || typeof raw.index !== "string") return null;
+  return { protocol: "pep694", index: raw.index, artifactBound: raw.artifactBound === true };
 }
 
 function extractArtifactIntegrity(stagedPublish: unknown) {

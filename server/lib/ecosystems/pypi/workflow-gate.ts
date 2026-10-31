@@ -9,6 +9,8 @@ import {
   type PyPiPreparedArtifact,
 } from "./";
 import { erasePackageAdapter } from "../package-adapter";
+import { PYPI_STAGE_REFERENCE_FILENAME } from "./stage";
+import { preparePyPiStagedCandidates } from "./stage-gate";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import { compactDuplicateTextSamples } from "../../workflow-gates/resolve";
@@ -62,6 +64,16 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
       ? normalizePyPiProjectName(prepared.summary.name)
       : artifact.path;
     return compactDuplicateTextSamples(artifact, retainedSamples, scope);
+  },
+
+  // PEP 694 (draft): a `pypi-stage.json` in the bundle registers a staged
+  // session; Drydock then reviews the staged bytes (see `stage-gate.ts`).
+  sidecarFileNames: [PYPI_STAGE_REFERENCE_FILENAME],
+
+  prepareStagedReleaseCandidates(input) {
+    return preparePyPiStagedCandidates(input, (artifacts) =>
+      pypiWorkflowGateAdapter.prepareReleaseCandidates(artifacts),
+    );
   },
 
   // Artifacts are grouped by normalized (PEP 503) name; one package version

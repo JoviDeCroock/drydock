@@ -1,5 +1,6 @@
 import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
+import type { ReleaseStageBinding } from "../package-adapter";
 
 export const PYPI_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 export const PYPI_RULES_VERSION = "0.5.0";
@@ -24,6 +25,17 @@ export const SHA256_RE = /^[a-f0-9]{64}$/i;
 // substantially more than the raw-byte collector's 20-file limit
 // (`fetchReleaseBundleWithToken`, exercised by the ingestion invariant tests).
 export const PYPI_ARTIFACT_LIMIT = 128;
+
+// PEP 694 stage egress policy: the indexes Drydock will read a stage view
+// from, each with the only origins its staged files may be downloaded from.
+// The stage host arrives in a workflow-controlled artifact, so this table is
+// the whole policy.
+export const PYPI_STAGE_FILE_ORIGINS: Readonly<Record<string, readonly string[]>> = {
+  "https://pypi.org": ["https://pypi.org", "https://files.pythonhosted.org"],
+  "https://test.pypi.org": ["https://test.pypi.org", "https://test-files.pythonhosted.org"],
+};
+
+export const PYPI_STAGE_INDEX_ORIGINS: readonly string[] = Object.keys(PYPI_STAGE_FILE_ORIGINS);
 
 export type PyPiArtifactKind = "wheel" | "sdist";
 
@@ -91,12 +103,15 @@ export interface PyPiAdapterInput {
   artifacts: PyPiArtifactInput[];
   previousArtifacts?: PyPiArtifactInput[];
   metadata?: PyPiProjectMetadata;
+  /** Set when the reviewed bytes came from a PEP 694 stage. */
+  stage?: ReleaseStageBinding;
 }
 
 export interface PyPiAdapterDetails {
   manifest: PyPiReleaseManifest;
   artifacts: PyPiArtifactSummary[];
   preparedArtifacts: PyPiPreparedArtifact[];
+  stage?: ReleaseStageBinding;
 }
 
 export interface PyPiProjectMetadata {

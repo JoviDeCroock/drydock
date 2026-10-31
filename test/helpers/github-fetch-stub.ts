@@ -17,6 +17,10 @@ export interface GithubFetchStubOptions {
   artifactsResponse?: () => Response;
   // `null` omits content-length on the zip download; a number overrides it.
   contentLength?: number | null;
+  // Extra hosts the code under test may reach (a PyPI stage index, the
+  // deployment-protection callback), matched by URL substring before the
+  // GitHub routes; first match wins.
+  routes?: Record<string, (request: Request) => Response | Promise<Response>>;
 }
 
 // Replaces global fetch with a GitHub Actions artifacts API double and returns
@@ -40,6 +44,9 @@ export function stubGithubFetch(options: GithubFetchStubOptions) {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+      for (const [needle, handler] of Object.entries(options.routes ?? {})) {
+        if (request.url.includes(needle)) return handler(request);
+      }
       if (options.installationToken && request.url.includes("/access_tokens")) {
         return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
       }

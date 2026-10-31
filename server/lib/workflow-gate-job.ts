@@ -533,8 +533,11 @@ async function rejectGateForArtifactError(
   gate: WorkflowGateRecord,
   error: WorkflowArtifactError,
 ): Promise<void> {
-  const comment =
-    "Drydock rejected this deployment: the published artifacts could not be verified against the reviewed manifest.";
+  // A maintainer-facing message (PEP 694 stage checks) names the file and
+  // digest prefixes that failed; GitHub trims the comment to 140 characters.
+  const comment = error.maintainerFacing
+    ? `Drydock rejected this deployment: ${error.message}`
+    : "Drydock rejected this deployment: the published artifacts could not be verified against the reviewed manifest.";
   const decided = await markGateDecided(db, {
     gateId: gate.id,
     decision: "rejected",

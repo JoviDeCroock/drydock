@@ -2,8 +2,10 @@ import { isRecord } from "../../platform/guards";
 import { isSafeManifestPath } from "../../platform/path-safety";
 import type { FileRecord } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
+import type { ReleaseStageBinding } from "../package-adapter";
 import {
   PYPI_ARTIFACT_LIMIT,
+  PYPI_STAGE_INDEX_ORIGINS,
   PYPI_PROJECT_NAME_RE,
   PYPI_RELEASE_MANIFEST_SCHEMA,
   type PyPiAdapterInput,
@@ -88,7 +90,18 @@ export function parsePyPiAdapterInput(raw: unknown): PyPiAdapterInput {
         ? undefined
         : parsePyPiArtifactInputs(raw.previousArtifacts, "previousArtifacts"),
     metadata: isRecord(raw.metadata) ? (raw.metadata as PyPiProjectMetadata) : undefined,
+    ...(parseStageBinding(raw.stage) ? { stage: parseStageBinding(raw.stage) } : {}),
   };
+}
+
+// Only the binding the gate produced survives: an index origin from the
+// allowlist and a boolean. Anything else is dropped rather than persisted.
+function parseStageBinding(raw: unknown): ReleaseStageBinding | undefined {
+  if (!isRecord(raw) || raw.protocol !== "pep694") return undefined;
+  if (typeof raw.index !== "string" || !PYPI_STAGE_INDEX_ORIGINS.includes(raw.index)) {
+    return undefined;
+  }
+  return { protocol: "pep694", index: raw.index, artifactBound: raw.artifactBound === true };
 }
 
 function parsePyPiArtifactInputs(raw: unknown, field: string): PyPiArtifactInput[] {

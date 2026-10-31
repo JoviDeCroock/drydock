@@ -112,6 +112,21 @@ export function classifyBundleArtifact(path: string): { ecosystem: string; kind:
   return { ecosystem: AMBIGUOUS_ARCHIVE_ECOSYSTEM, kind: "archive" };
 }
 
+/**
+ * The ecosystem whose adapter asked for this sidecar basename, searching the
+ * given adapters (one for a pinned target, every gate adapter for auto-detect).
+ */
+export function classifyBundleSidecar(
+  path: string,
+  adapters: readonly WorkflowGateAdapter[] = gateAdapters(),
+): string | null {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  for (const adapter of adapters) {
+    if (adapter.sidecarFileNames?.includes(name)) return adapter.ecosystem;
+  }
+  return null;
+}
+
 // Return every claim so ambiguous hostile archives fail closed at the caller.
 export function detectArchiveEcosystems(
   contents: ArchiveContents,

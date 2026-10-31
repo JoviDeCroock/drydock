@@ -40,10 +40,23 @@ export interface ReleaseProvenanceArtifact {
   sha256: string;
 }
 
+/**
+ * The reviewed bytes were read from a registry-held staged release (PyPI PEP
+ * 694, a draft spec). Only the index origin is recorded: the stage URL is a
+ * capability and is never persisted.
+ */
+export interface ReleaseStageBinding {
+  protocol: "pep694";
+  index: string;
+  /** The gate artifact also carried the distributions and they were byte-identical. */
+  artifactBound: boolean;
+}
+
 export interface ReleaseProvenance {
   ecosystem: EcosystemId;
   mode: "workflow_gate";
   artifacts: ReleaseProvenanceArtifact[];
+  stage?: ReleaseStageBinding;
 }
 
 type BaselineSelectionSource =

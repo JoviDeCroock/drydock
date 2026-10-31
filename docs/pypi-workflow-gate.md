@@ -1,8 +1,10 @@
 # PyPI workflow-gate mode
 
 This document covers PyPI review through a **GitHub deployment-protection
-workflow gate**. PyPI has no registry-staged artifact, so the workflow gate is
-the only review-before-publish path for PyPI packages.
+workflow gate**. pypi.org has no registry-staged artifact today, so the workflow
+gate is the only review-before-publish path for PyPI packages. When PEP 694
+staged previews ship, the same gate can review the staged bytes instead; see
+[PEP 694 staged releases](#pep-694-staged-releases-preview).
 
 It only describes what is PyPI-specific. The webhook ingestion, gate
 persistence, artifact download + SHA-256 recomputation, approve/reject callback,
@@ -269,6 +271,188 @@ jobs:
           rm SHA256SUMS-*
       - uses: pypa/gh-action-pypi-publish@release/v1
 ```
+
+## PEP 694 staged releases (preview)
+
+> **Preview, draft spec.** [PEP 694](https://peps.python.org/pep-0694/) (the
+> Upload 2.0 API with staged previews) is a draft and is not live on pypi.org.
+> The stage-reference schema and fetch code are versioned and tolerant so they
+> can follow the PEP, but nothing here has run against a real index yet.
+
+PEP 694 lets a workflow create a publishing session, upload files into it, and
+publish them later in one step. With staged previews, the index serves the
+session's files at an unguessable **stage URL** before anything is public.
+Drydock can review the bytes the stage holds, so the reviewed bytes are the
+bytes the index will publish, not a copy built elsewhere.
+
+There is no endpoint that lists sessions, so Drydock cannot discover a stage.
+The workflow registers it through the gate: it uploads a `pypi-stage.json`
+file in the `pypi-release-candidate*` artifact. The GitHub App already
+authenticates that artifact to the repository and run.
+
+### Mode A: credential-free review of the staged bytes (default)
+
+Drydock holds no PyPI credentials. The workflow creates the session and uploads
+the files with its own trusted-publishing credentials, then writes:
+
+```json
+{
+  "schema": "drydock.pypi-stage.v1",
+  "stages": [
+    {
+      "name": "demo-package",
+      "version": "1.2.0",
+      "stage-url": "https://pypi.org/<stage path from links.stage>/"
+    }
+  ]
+}
+```
+
+A single-project file may put `name` / `version` / `stage-url` at the top
+level. Unknown keys are ignored. An unknown `schema` fails closed: a workflow
+that tried to bind a stage never falls back to an unbound review. `session-url`
+(`links.session`) is optional and is used only by mode B below.
+
+For each registered project, the gate:
+
+1. reads the stage's simple-index project page (`<stage-url>/<normalized-name>/`),
+   asking for PEP 691 JSON and accepting PEP 503 HTML;
+2. selects every file for the registered version. Files for other versions are
+   ignored, because a session publishes exactly one name and version. A file
+   that names another project, cannot be attributed to a version, or has no
+   sha256 or URL fails the check;
+3. downloads each staged file, requires its sha256 to equal the digest the
+   index declares, and parses it in the credentials-free sandbox. **These staged
+   bytes are the release candidate**: the report's Provenance digests are the
+   staged files' digests;
+4. if the artifact also carries wheels/sdists for the project, requires byte
+   identity between the two: the same filenames, the same sha256, and nothing
+   extra on either side. Identical bytes reuse the artifact's parse;
+5. checks the staged metadata's `Name` / `Version` against the registered name
+   and version.
+
+Any failure rejects the held deployment with a `stage_*` reason that names the
+file and both digest prefixes, for example
+`stage_identity_mismatch: demo_package-1.2.0-py3-none-any.whl sha256 differs:
+artifact 1a2b3c4d5e6f…, stage 9f8e7d6c5b4a…`. Codes: `stage_reference_invalid`
+(bad or non-allowlisted reference), `stage_unavailable` (unreachable, refused
+redirect, oversized or malformed page), `stage_identity_mismatch`. A release
+without `pypi-stage.json` is reviewed exactly as before.
+
+The gate decision is the enforcement: approval releases the protected job, which
+publishes the session. A rejection, or a gate left pending, means the job never
+runs and the session is never published.
+
+**Egress.** The stage host comes from a workflow-controlled file, so every
+request, including each redirect hop, must be https on an allowlisted origin:
+index pages on `https://pypi.org` or `https://test.pypi.org`, and staged files
+on that index's own origins (`pypi.org` + `files.pythonhosted.org`, or
+`test.pypi.org` + `test-files.pythonhosted.org`). Stage URLs with credentials,
+ports, query strings, or fragments are refused. Pages are capped at 8 MiB,
+staged files at 25 MiB each (the same cap as artifact entries), and every
+request has a timeout. The allowlist is code, not configuration; a self-hosted
+index cannot be used yet.
+
+**Capability secrets.** A stage URL, and every file URL its page lists, lets
+anyone read the unpublished bytes. Drydock reads them in the parent Worker (they
+never enter the sandbox), keeps them in memory only, and never logs, persists,
+or displays them. Errors name projects, files, and digest prefixes. The report
+records only the index origin and whether the artifact was byte-bound
+(`provenance.stage`).
+
+**Residual risk.** Artifacts of a public repository's workflow runs can be
+downloaded by any signed-in GitHub user, so `pypi-stage.json` exposes the
+preview to them until the session is published or canceled. Keep the session
+short, do not extend it more than needed, and cancel it when the release is
+rejected. In mode A the session stays editable by anyone with upload rights to
+the project between Drydock's review and the publish step. Upload the
+distributions and `SHA256SUMS` in the artifact too (Drydock then binds them to
+the stage), and have the publish job re-check the stage against `SHA256SUMS`
+immediately before it publishes. Mode B closes the window for Drydock-held
+sessions.
+
+### Workflow sketch (mode A)
+
+```yaml
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    environment: pypi-stage # trusted publisher for the upload session
+    permissions: { id-token: write, contents: read }
+    outputs:
+      session-url: ${{ steps.session.outputs.session-url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build
+      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      # Creates the PEP 694 session, uploads dist/*, and writes
+      # dist/pypi-stage.json (see the Python sketch below).
+      - id: session
+        run: python ci/pep694_stage.py dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-release-candidate
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/pypi-stage.json
+          retention-days: 1
+
+  publish:
+    needs: stage
+    runs-on: ubuntu-latest
+    environment: pypi # Drydock's deployment protection rule
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: pypi-release-candidate, path: dist }
+      # Re-check the stage against the reviewed digests, then POST links.publish.
+      - run: python ci/pep694_publish.py "${{ needs.stage.outputs.session-url }}" dist
+
+  cancel:
+    needs: [stage, publish]
+    if: failure() && needs.stage.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pypi-stage
+    permissions: { id-token: write }
+    steps:
+      - run: python ci/pep694_cancel.py "${{ needs.stage.outputs.session-url }}" # DELETE links.session
+```
+
+```python
+# ci/pep694_stage.py (sketch; PEP 694 is a draft, field names may change)
+import hashlib, json, os, pathlib, sys, requests
+
+ROOT = "https://upload.pypi.org/2.0/"  # index-documented Upload 2.0 root
+CT = "application/vnd.pypi.upload.v2+json"
+token = mint_trusted_publishing_token()  # OIDC exchange, as gh-action-pypi-publish does
+auth = {"Authorization": f"Bearer {token}", "Content-Type": CT, "Accept": CT}
+dist = pathlib.Path(sys.argv[1])
+name, version = project_name_and_version(dist)
+
+session = requests.post(ROOT, headers=auth, json={
+    "meta": {"api-version": "2.0"}, "name": name, "version": version,
+}).json()
+for path in sorted(dist.glob("*.whl")) + sorted(dist.glob("*.tar.gz")):
+    upload_file(session["links"]["upload"], path, auth)  # one file-upload session per file
+if "stage" not in session["links"]:
+    sys.exit("index does not support staged previews")
+(dist / "pypi-stage.json").write_text(json.dumps({
+    "schema": "drydock.pypi-stage.v1",
+    "stages": [{"name": name, "version": version,
+                "stage-url": session["links"]["stage"],
+                "session-url": session["links"]["session"]}],
+}))
+with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+    out.write(f"session-url={session['links']['session']}\n")
+```
+
+`ci/pep694_publish.py` reads the stage page, fails unless every staged file's
+sha256 matches `SHA256SUMS` and nothing else is staged, then sends
+`POST links.publish` with `{"meta": {"api-version": "2.0"}}` and polls
+`links.session` through `processing` until `published` (or fails on `error`).
+`ci/pep694_cancel.py` sends `DELETE links.session`.
 
 ## Acceptance mapping (issue #308)
 

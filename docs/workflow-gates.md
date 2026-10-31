@@ -84,7 +84,8 @@ The PyPI adapter (`server/lib/ecosystems/pypi/`):
 - records `comparisonSkipped: "baseline-too-large"` when the published release
   exceeds the download budget, so findings stay `unknown` package context and the
   report names the missing comparison instead of grading an uncompared release;
-- reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
+- reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
+- (preview, PEP 694 draft) reads a `pypi-stage.json` sidecar through the optional `sidecarFileNames` / `prepareStagedReleaseCandidates` adapter hooks and reviews the bytes the PEP 694 stage holds, byte-bound to any distributions the artifact also carries. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md#pep-694-staged-releases-preview).
 
 ## npm workflow-gate notes
 
