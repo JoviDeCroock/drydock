@@ -63,7 +63,7 @@ export interface BundleSidecarFile {
 /** Returns the claiming ecosystem for a sidecar path, or null to ignore it. */
 export type ClassifySidecar = (path: string) => string | null;
 
-export const MAX_SIDECAR_BYTES = 16 * 1024;
+const MAX_SIDECAR_BYTES = 16 * 1024;
 const MAX_SIDECARS = 16;
 
 export interface ResolvedReleaseBundle<TArtifact = ResolvedReleaseFile> {

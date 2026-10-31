@@ -24,7 +24,7 @@ import { pyPiVersionsEquivalent } from "./version";
  */
 
 export const PYPI_STAGE_REFERENCE_FILENAME = "pypi-stage.json";
-export const PYPI_STAGE_REFERENCE_SCHEMA = "drydock.pypi-stage.v1";
+const PYPI_STAGE_REFERENCE_SCHEMA = "drydock.pypi-stage.v1";
 export const PYPI_STAGE_REFERENCE_MAX_BYTES = 16 * 1024;
 const MAX_STAGE_ENTRIES = 32;
 const MAX_URL_LENGTH = 2048;
@@ -174,13 +174,13 @@ export function mergeStageReferences(
 
 // ── Simple index project page (PEP 691 JSON, PEP 503 HTML) ───────────────────
 
-export const PEP691_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
+const PEP691_JSON_CONTENT_TYPE = "application/vnd.pypi.simple.v1+json";
 const PEP691_HTML_CONTENT_TYPE = "application/vnd.pypi.simple.v1+html";
 export const STAGE_INDEX_ACCEPT = `${PEP691_JSON_CONTENT_TYPE}, ${PEP691_HTML_CONTENT_TYPE};q=0.2, text/html;q=0.1`;
 const MAX_STAGE_FILES = 20_000;
 const SAFE_FILENAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+!-]{0,254}$/;
 
-export interface StageIndexFile {
+interface StageIndexFile {
   filename: string;
   sha256: string | null;
   /** Absolute download URL (a capability), or null when absent/unparseable. */

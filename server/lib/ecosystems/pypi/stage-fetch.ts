@@ -28,7 +28,7 @@ const MAX_STAGE_REDIRECTS = 3;
 export const MAX_STAGE_PAGE_BYTES = 8 * 1024 * 1024;
 // Matches the per-distribution cap on GitHub artifact entries, so a release
 // the artifact path can review is one the stage path can review.
-export const MAX_STAGED_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_STAGED_FILE_BYTES = 25 * 1024 * 1024;
 const USER_AGENT = "drydock-pep694-stage/0.1";
 
 export async function fetchStageProjectPage(
@@ -79,7 +79,7 @@ export async function downloadStagedFile(
  * of `allowedOrigins`. A refused hop, transport failure, or non-2xx answer is
  * a `stage_unavailable` error naming `what`, never the URL.
  */
-export async function fetchWithinOrigins(
+async function fetchWithinOrigins(
   url: URL,
   allowedOrigins: readonly string[],
   options: { accept: string; timeoutMs: number; what: string },
