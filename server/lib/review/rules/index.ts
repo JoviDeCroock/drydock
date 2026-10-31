@@ -18,7 +18,7 @@ import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.54.0";
+export const DETERMINISTIC_RULES_VERSION = "1.55.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export { safeJson } from "./helpers";
