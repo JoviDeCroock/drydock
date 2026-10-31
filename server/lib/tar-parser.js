@@ -256,6 +256,85 @@ export function parsePax(body) {
   return out;
 }
 
+// Where a pax body reads differently to node-tar's line split (`parsePax`)
+// than to CPython's tarfile, which walks the declared lengths over the raw
+// bytes, or carries keys only one of them honors. Returns noun phrases for the
+// caller's disclosure, empty for a body every reader parses the same way. Only
+// the keys that decide where bytes land are compared: macOS bsdtar writes raw
+// binary xattr values that node-tar's UTF-8 line split drops and a length walk
+// keeps, which changes nothing either reader installs.
+export function paxBodyAnomalies(body) {
+  const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+  const encoder = new TextEncoder();
+  const keys = new Set();
+  const repeated = [];
+  const byLine = {};
+  for (const line of decoder.decode(body).replace(/\n$/, "").split("\n")) {
+    if (parseInt(line, 10) !== encoder.encode(line).length + 1) continue;
+    const record = line.slice(String(parseInt(line, 10)).length + 1);
+    const equals = record.indexOf("=");
+    const key = equals === -1 ? record : record.slice(0, equals);
+    if (!key) continue;
+    if (keys.has(key) && !repeated.includes(key)) repeated.push(key);
+    keys.add(key);
+    byLine[key] = equals === -1 ? "" : record.slice(equals + 1);
+  }
+  // CPython's walk: `<len> <key>=<value>\n` records tiling the body up to the
+  // end or a NUL byte. Older releases stop at the first record that does not
+  // fit; newer ones refuse the header, which ends the archive for pip.
+  const byLength = {};
+  let tiles = true;
+  for (let pos = 0; pos < body.length && body[pos] !== 0;) {
+    let end = pos;
+    while (end < body.length && end - pos < 20 && body[end] >= 0x30 && body[end] <= 0x39) end += 1;
+    const length = Number(String.fromCharCode(...body.subarray(pos, end)));
+    const record = body.subarray(end + 1, pos + length - 1);
+    const equals = record.indexOf(0x3d);
+    if (
+      end === pos ||
+      body[end] !== 0x20 ||
+      length <= end - pos + 1 ||
+      pos + length > body.length ||
+      body[pos + length - 1] !== 0x0a ||
+      equals < 1
+    ) {
+      tiles = false;
+      break;
+    }
+    const key = decoder.decode(record.subarray(0, equals));
+    keys.add(key);
+    byLength[key] = decoder.decode(record.subarray(equals + 1));
+    pos += length;
+  }
+  const anomalies = [];
+  if (!tiles) {
+    anomalies.push(
+      "records a length-walking reader cannot parse (declared lengths that do not tile the body, or a record without `key=`)",
+    );
+  } else {
+    const differing = ["path", "linkpath", "size"].filter((key) => byLine[key] !== byLength[key]);
+    if (differing.length) {
+      anomalies.push(
+        `${differing.map((key) => `\`${key}\``).join(", ")} records that a line split and a length walk read differently`,
+      );
+    }
+  }
+  if (repeated.length) {
+    anomalies.push(
+      `the ${repeated.length === 1 ? "key" : "keys"} ${clipTextSample(repeated.map((key) => `\`${key}\``).join(", "), 120)} more than once, where readers that keep the first value (tar-rs) disagree with node-tar`,
+    );
+  }
+  const sparse = ["GNU.sparse.name", "GNU.sparse.size", "GNU.sparse.realsize"].filter((key) =>
+    keys.has(key),
+  );
+  if (sparse.length) {
+    anomalies.push(
+      `GNU sparse keys (${sparse.map((key) => `\`${key}\``).join(", ")}) that CPython tarfile applies and node-tar ignores`,
+    );
+  }
+  return anomalies;
+}
+
 // node-tar validates every header's checksum with the checksum field itself
 // counted as eight spaces, and both readers have to agree on the result: a
 // header node-tar rejects is skipped without consuming its body, so it re-reads
@@ -1007,10 +1086,31 @@ export async function readTarStream(
     }
   }
 
-  function noteMetadata(type, parsed) {
+  function currentMetaShape() {
     if (!metaShape) {
-      metaShape = { gnuName: 0, gnuLink: 0, paxPath: 0, paxLinkpath: 0, paxSize: 0, empty: [] };
+      metaShape = {
+        gnuName: 0,
+        gnuLink: 0,
+        paxPath: 0,
+        paxLinkpath: 0,
+        paxSize: 0,
+        empty: [],
+        oversized: [],
+        emptyGnu: [],
+        paxBody: [],
+        oldGnu: false,
+        sizedMeta: false,
+      };
     }
+    return metaShape;
+  }
+
+  function addOnce(list, value) {
+    if (!list.includes(value)) list.push(value);
+  }
+
+  function noteMetadata(type, parsed) {
+    currentMetaShape();
     if (type === "L" || type === "N") metaShape.gnuName += 1;
     else if (type === "K") metaShape.gnuLink += 1;
     else {
@@ -1021,7 +1121,7 @@ export async function readTarStream(
       // present-but-empty record node-tar applies and POSIX defines as deleting
       // the field. Only the keys that decide where bytes land are disclosed.
       for (const key of ["path", "linkpath", "size"]) {
-        if (parsed[key] === "" && !metaShape.empty.includes(key)) metaShape.empty.push(key);
+        if (parsed[key] === "") addOnce(metaShape.empty, key);
       }
     }
   }
@@ -1064,35 +1164,56 @@ export async function readTarStream(
           : `member's pax header carries an empty \`${key}\` record (a tombstone); node-tar takes the empty value, while a reader that treats it as deleting the field falls back to the header's own ${key === "path" ? "name" : "linkname"} field or an earlier record`,
       );
     }
+    if (shape.oldGnu) {
+      details.push(
+        "member is named by an old GNU `N` record; node-tar reads it as a long path, while extractors without that type (CPython tarfile) extract the record as a file of its own and keep the member's header name",
+      );
+    }
+    for (const type of shape.oversized) {
+      details.push(
+        `member is preceded by a \`${type}\` metadata header larger than node-tar's 1 MiB limit; node-tar ignores it, while extractors without that limit (CPython tarfile) apply it, so the member's path, link target or size depends on the extractor`,
+      );
+    }
+    for (const type of shape.emptyGnu) {
+      details.push(
+        `member is preceded by a zero-length GNU \`${type}\` record; node-tar ignores it, while CPython tarfile applies the empty ${type === "L" ? "name" : "link target"}`,
+      );
+    }
+    if (shape.paxBody.length) {
+      details.push(
+        `member's pax header carries ${shape.paxBody.join(", and ")}; node-tar splits a pax body on newlines and keeps the last value of a key, while CPython tarfile walks the declared lengths (newer releases refuse a body that does not tile), so the readers can apply different records`,
+      );
+    }
+    if (shape.sizedMeta) {
+      details.push(
+        "a pending pax `size` record also sized a metadata header before this member; node-tar applies it to that header's body, while CPython tarfile applies it only to the member, so the two read different block boundaries",
+      );
+    }
     if (details.length) {
       addSuspicious({ kind: "parser-differential", path, detail: details.join("; ") });
     }
   }
 
-  // A global header applies archive-wide, so each differential key is
+  // A global header applies archive-wide, so each differential shape is
   // disclosed once rather than per header.
+  function discloseGlobalNotice(key) {
+    if (globalNotices.has(key)) return;
+    globalNotices.add(key);
+    const details = {
+      path: "a pax global header sets `path` or `linkpath`; node-tar ignores both, while extractors that apply global records name the following entries by it",
+      size: "a pax global header sets `size`; node-tar applies it to every following entry without its own size, while extractors that ignore a global size read the header's own, so the two walk the archive on different block boundaries",
+      oversized:
+        "a pax global header larger than node-tar's 1 MiB limit was ignored; extractors without that limit (CPython tarfile) apply it to the entries that follow",
+      body: "a pax global header body carries records that node-tar (splitting on newlines) and CPython tarfile (walking the declared lengths) read differently, or GNU sparse keys only CPython applies",
+    };
+    addSuspicious({ kind: "parser-differential", path: "<archive>", detail: details[key] });
+  }
+
   function discloseGlobalRecord(parsed) {
-    if (
-      (typeof parsed.path === "string" || typeof parsed.linkpath === "string") &&
-      !globalNotices.has("path")
-    ) {
-      globalNotices.add("path");
-      addSuspicious({
-        kind: "parser-differential",
-        path: "<archive>",
-        detail:
-          "a pax global header sets `path` or `linkpath`; node-tar ignores both, while extractors that apply global records name the following entries by it",
-      });
+    if (typeof parsed.path === "string" || typeof parsed.linkpath === "string") {
+      discloseGlobalNotice("path");
     }
-    if (typeof parsed.size === "string" && !globalNotices.has("size")) {
-      globalNotices.add("size");
-      addSuspicious({
-        kind: "parser-differential",
-        path: "<archive>",
-        detail:
-          "a pax global header sets `size`; node-tar applies it to every following entry without its own size, while extractors that ignore a global size read the header's own, so the two walk the archive on different block boundaries",
-      });
-    }
+    if (typeof parsed.size === "string") discloseGlobalNotice("size");
   }
 
   try {
@@ -1304,15 +1425,21 @@ export async function readTarStream(
       if (!isRegular && !isMeta && size > maxTarBytes) throw tarError("invalid tar entry size");
 
       if (isMeta) {
+        // node-tar sizes a metadata body by a pending local `size` record too;
+        // CPython's tarfile applies that record only to the member it precedes.
+        if (pax !== null && typeof pax.size === "string") currentMetaShape().sizedMeta = true;
+        // CPython's tarfile has no `N` type: it extracts the record as a file of
+        // its own and leaves the member its header name.
+        if (type === "N") currentMetaShape().oldGnu = true;
         // node-tar ignores a metadata entry larger than 1 MiB outright: the body
         // is skipped and the pending record left untouched. Honoring a larger
-        // one would apply a path npm never sees.
+        // one would apply a path npm never sees, but readers without the limit
+        // do apply it.
         if (size > 1024 * 1024) {
           if (!(await discard(size))) throw tarError("truncated tar entry");
+          if (type === "g") discloseGlobalNotice("oversized");
+          else addOnce(currentMetaShape().oversized, type);
         } else if (size > 0) {
-          // A zero-length metadata entry never enters node-tar's meta state, so
-          // it changes nothing: an empty `L` must not set an empty path that
-          // rejects the file it precedes.
           if (!(await fill(size))) throw tarError("truncated tar entry");
           const body = take(size);
           if (type === "g") {
@@ -1322,11 +1449,15 @@ export async function readTarStream(
             // local record either.
             const parsed = parsePax(body);
             discloseGlobalRecord(parsed);
+            if (paxBodyAnomalies(body).length) discloseGlobalNotice("body");
             paxGlobal = { ...paxGlobal, ...parsed };
           } else if (type === "x" || type === "X") {
             const parsed = parsePax(body);
             if (typeof parsed.path === "string") paxPathNumeric = /^[0-9]+$/.test(parsed.path);
             noteMetadata(type, parsed);
+            for (const anomaly of paxBodyAnomalies(body)) {
+              addOnce(currentMetaShape().paxBody, anomaly);
+            }
             pax = { ...pax, ...parsed };
             if (typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
               throw tarError("invalid pax path");
@@ -1346,6 +1477,12 @@ export async function readTarStream(
               paxPathNumeric = false;
             }
           }
+        } else if (type === "L" || type === "K") {
+          // A zero-length metadata entry never enters node-tar's meta state, so
+          // it changes nothing: an empty `L` must not set an empty path that
+          // rejects the file it precedes. CPython's tarfile applies the empty
+          // value, and no writer emits one.
+          addOnce(currentMetaShape().emptyGnu, type);
         }
         if (padding > 0) await discard(padding);
         continue;

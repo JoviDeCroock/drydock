@@ -904,14 +904,34 @@ long name (`L`/`N`) and a pax `path`, or a long link (`K`) and a pax `linkpath`;
 long-name, long-link, or pax `path`/`linkpath`/`size` record for one member; a present-but-empty
 pax `path`, `linkpath`, or `size` (`key=` or a bare `key`, the tombstone node-tar applies as an empty
 value); and a global header that sets `path`/`linkpath` (node-tar ignores them) or `size` (node-tar
-applies it to later entries). Each member gets one entry with every shape joined into the detail.
-Metadata no member consumes is disclosed at `<archive>`. Global shapes are disclosed once per
-archive. Zero-length and over-1 MiB metadata entries, which node-tar never applies, do not count.
-Publisher toolchains emit at most one record of each kind per member. None of 318 popular npm
-packages from the FP sweep cache, 1,000 locally cached npm tarballs, or 20 PyPI sdists
-(setuptools, hatchling, flit, poetry-core, maturin, meson-python) carries one of these shapes. Golden:
-`cases-pypi/20-sdist-repeated-gnu-long-name`, whose disclosure `test/tar-parser.test.mjs` derives
-from the sdist bytes it describes.
+applies it to later entries).
+
+The same entry covers the shapes where node-tar and pip's CPython `tarfile` part ways:
+
+- A metadata header over node-tar's 1 MiB limit, which node-tar skips and `tarfile` applies (local
+  or global). It is disclosed, not counted as a repeat.
+- Any old GNU `N` record. node-tar reads it as a long path; `tarfile` has no `N` type, extracts it
+  as a file of its own, and leaves the member its header name.
+- A zero-length `L` or `K`. node-tar ignores it; `tarfile` applies the empty name or link target.
+- A pax body that a line split (node-tar) and a length walk (`tarfile`) read differently: records
+  a length walk cannot parse (lengths that do not tile the body, or a record without `key=`, which
+  newer `tarfile` releases refuse), or a `path`/`linkpath`/`size` value the two read differently.
+  Other keys are not compared, because macOS bsdtar writes raw binary xattr values that the UTF-8
+  line split drops harmlessly. A key repeated within one header (tar-rs keeps the first) and any
+  `GNU.sparse.name`/`size`/`realsize` key (`tarfile` applies them, node-tar ignores them) count too.
+- A pending pax `size` that node-tar also applies to a following metadata header's body, where
+  `tarfile` applies it only to the member.
+
+Each member gets one entry with every shape joined into the detail. Metadata no member consumes is
+disclosed at `<archive>`, and global shapes once per archive. Attribution never changes: the
+recorded path is still node-tar's. Publisher toolchains emit at most one record of each kind per
+member. None of 318 popular npm packages from the FP sweep cache, 1,000 locally cached npm
+tarballs, 20 PyPI sdists (setuptools, hatchling, flit, poetry-core, maturin, meson-python), or bsdtar
+pax/gnutar/ustar, CPython GNU/PAX-format, and `git archive` archives carries one of these shapes.
+Goldens: `cases-pypi/20-sdist-repeated-gnu-long-name`, `21-sdist-oversized-pax-header`,
+`22-sdist-old-gnu-name-record`, and `23-sdist-pax-body-length-mismatch`. `test/tar-parser.test.mjs`
+rebuilds each sdist and checks the fixture's file records and disclosures are exactly what the
+parser emits.
 
 ### Fixture format
 

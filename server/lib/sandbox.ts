@@ -43,6 +43,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.normalizeZipPath,
   tarParser.unrepresentableZipEntry,
   tarParser.parsePax,
+  tarParser.paxBodyAnomalies,
   tarParser.describeNonRegularType,
   tarParser.sha256Hex,
   tarParser.createSha256Digester,

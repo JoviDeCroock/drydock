@@ -606,7 +606,8 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
   const metadataDisclosures = (suspicious) =>
     suspicious.filter(
       (entry) =>
-        entry.kind === "parser-differential" && /^(member|a pax global header)/.test(entry.detail),
+        entry.kind === "parser-differential" &&
+        /^(member|a pax global header|a pending pax)/.test(entry.detail),
     );
 
   test("discloses a GNU long name and a pax path on one member, keeping node-tar's last-wins path", async () => {
@@ -649,7 +650,7 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
   test("discloses two GNU long-name records and records the last, as node-tar does", async () => {
     const tar = buildTar([
       { name: "././@LongLink", type: "L", body: "package/install.js\0" },
-      { name: "././@LongLink", type: "N", body: "package/docs/notes.txt\0" },
+      { name: "././@LongLink", type: "L", body: "package/docs/notes.txt\0" },
       { name: "ignored", body: "x = 1\n" },
     ]);
     const { files, suspicious } = await parseFull(tar);
@@ -662,26 +663,6 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
           "member carries 2 GNU long-name records (`L`/`N`); node-tar uses the last, other extractors may use the first, so the path depends on the extractor",
       },
     ]);
-  });
-
-  test("emits the disclosure the PyPI corpus fixture pins, for the sdist bytes it describes", async () => {
-    const fixture = JSON.parse(
-      readFileSync(
-        new URL(
-          "./fixtures/security-corpus/cases-pypi/20-sdist-repeated-gnu-long-name.json",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-    );
-    const tar = buildTar([
-      { name: "demo_package-1.2.0/PKG-INFO", body: "Metadata-Version: 2.3\n" },
-      { name: "././@LongLink", type: "L", body: "demo_package-1.2.0/setup.py\0" },
-      { name: "././@LongLink", type: "L", body: "demo_package-1.2.0/docs/notes.txt\0" },
-      { name: "././@LongLink", body: "Release notes for 1.2.0\n" },
-    ]);
-    const { suspicious } = await readTar(tar.buffer, 2_500, 25 * 1024 * 1024, 0, "keep");
-    expect(suspicious).toEqual(fixture.artifacts[0].suspiciousEntries);
   });
 
   test("discloses two GNU long-link records on one member", async () => {
@@ -833,8 +814,8 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
     // npm pack / node-tar: one `x` per long-named member. GNU tar and tar-rs
     // (maturin): one `L`, plus one `K` for a long link. A pax header carrying
     // only non-path keys beside an `L` disagrees on no field. git archive: a
-    // `g` header carrying only `comment`. A zero-length metadata entry never
-    // enters node-tar's record.
+    // `g` header carrying only `comment`. A zero-length `x` changes nothing
+    // for any reader.
     const longName = "package/" + "segment/".repeat(14) + "leaf.js";
     const tar = buildTar([
       { name: "GlobalPaxHeader", type: "g", body: paxBody([["comment", "0123abcd"]]) },
@@ -860,7 +841,7 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
       },
       { name: "././@LongLink", type: "L", body: "package/other/name.js\0" },
       { name: "ignored", body: "b\n" },
-      { name: "././@LongLink", type: "L", body: "" },
+      { name: "PaxHeader", type: "x", body: "" },
       { name: "././@LongLink", type: "L", body: "package/zero/name.js\0" },
       { name: "ignored", body: "c\n" },
     ]);
@@ -873,7 +854,8 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
     expect(metadataDisclosures(suspicious)).toEqual([]);
   });
 
-  test("an oversized metadata header node-tar ignores does not count toward repeats", async () => {
+  test("discloses an oversized metadata header node-tar ignores, without counting it as a repeat", async () => {
+    // CPython's tarfile has no 1 MiB limit and applies the skipped `path`.
     const oversized = paxBody([["path", "package/" + "a".repeat(1024 * 1024)]]);
     const tar = buildTar([
       { name: "PaxHeader", type: "x", body: oversized },
@@ -882,7 +864,273 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
     ]);
     const { files, suspicious } = await parseFull(tar);
     expect(files.map((f) => f.path)).toEqual(["real.js"]);
-    expect(metadataDisclosures(suspicious)).toEqual([]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "real.js",
+        detail:
+          "member is preceded by a `x` metadata header larger than node-tar's 1 MiB limit; node-tar ignores it, while extractors without that limit (CPython tarfile) apply it, so the member's path, link target or size depends on the extractor",
+      },
+    ]);
+  });
+
+  test("discloses an oversized GNU long name and an oversized global header", async () => {
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["comment", "a".repeat(1024 * 1024)]]) },
+      {
+        name: "././@LongLink",
+        type: "L",
+        body: "package/setup.js\0" + "\0".repeat(1024 * 1024),
+      },
+      { name: "package/README.txt", body: "x\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["README.txt"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringMatching(/^a pax global header larger than node-tar's 1 MiB limit/),
+      },
+      {
+        kind: "parser-differential",
+        path: "README.txt",
+        detail: expect.stringMatching(/^member is preceded by a `L` metadata header larger than/),
+      },
+    ]);
+  });
+
+  test("discloses any old GNU `N` record, which CPython extracts as a file of its own", async () => {
+    const tar = buildTar([
+      { name: "package/notes.txt", type: "N", body: "package/docs/readme.txt\0" },
+      { name: "package/setup.js", body: "x\n" },
+      { name: "package/empty-n", type: "N", body: "" },
+      { name: "package/after.js", body: "y\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["docs/readme.txt", "after.js"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "docs/readme.txt",
+        detail:
+          "member is named by an old GNU `N` record; node-tar reads it as a long path, while extractors without that type (CPython tarfile) extract the record as a file of its own and keep the member's header name",
+      },
+      {
+        kind: "parser-differential",
+        path: "after.js",
+        detail: expect.stringMatching(/^member is named by an old GNU `N` record/),
+      },
+    ]);
+  });
+
+  test("discloses zero-length GNU long-name and long-link records CPython applies as empty", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "L", body: "" },
+      { name: "package/setup.js", body: "x\n" },
+      { name: "././@LongLink", type: "K", body: "" },
+      { name: "package/link", type: "2", linkname: "target" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["setup.js"]);
+    expect(metadataDisclosures(suspicious).map((entry) => [entry.path, entry.detail])).toEqual([
+      [
+        "setup.js",
+        "member is preceded by a zero-length GNU `L` record; node-tar ignores it, while CPython tarfile applies the empty name",
+      ],
+      [
+        "link",
+        "member is preceded by a zero-length GNU `K` record; node-tar ignores it, while CPython tarfile applies the empty link target",
+      ],
+    ]);
+  });
+
+  test("discloses a pending pax size that node-tar also applies to a following metadata body", async () => {
+    // node-tar reads the `L` body as `size` bytes, swallowing `b.txt`'s
+    // header; CPython reads the `L` by its own header size.
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["size", "1024"]]) },
+      { name: "././@LongLink", type: "L", body: "package/a.txt\0" },
+      { name: "package/b.txt", body: "b\n" },
+      { name: "package/c.txt", body: "c\n" },
+    ]);
+    const { suspicious } = await parseFull(tar);
+    expect(metadataDisclosures(suspicious).map((entry) => entry.detail)).toContainEqual(
+      expect.stringMatching(/^a pending pax `size` record also sized a metadata header/),
+    );
+  });
+
+  test("discloses a pax body whose line split and length walk disagree on path", async () => {
+    // One record whose declared length spans two lines: CPython reads a
+    // `comment` and keeps the header name; node-tar drops the first line and
+    // applies the `path` on the second.
+    const hiddenPath = paxBody([["path", "package/README.txt"]]).slice(0, -1);
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["comment", `AAAA\n${hiddenPath}`]]) },
+      { name: "package/setup.js", body: "x\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["README.txt"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "README.txt",
+        detail: expect.stringMatching(
+          /^member's pax header carries `path` records that a line split and a length walk read differently; node-tar splits/,
+        ),
+      },
+    ]);
+  });
+
+  test("discloses a global header whose pax body readers parse differently", async () => {
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["GNU.sparse.name", "elsewhere"]]) },
+      { name: "package/index.js", body: "x\n" },
+    ]);
+    const disclosures = metadataDisclosures((await parseFull(tar)).suspicious);
+    expect(disclosures.map((entry) => entry.detail)).toEqual([
+      expect.stringMatching(/^a pax global header body carries records/),
+    ]);
+  });
+});
+
+// The PyPI golden corpus feeds post-parse records to the review; these pin
+// each tar-shape case to what the parser emits for the sdist bytes it
+// describes, so a fixture cannot drift from the reader it stands in for.
+describe("PyPI corpus tar-shape fixtures match the parser", () => {
+  const root = "demo_package-1.2.0";
+  const pkgInfo = {
+    name: `${root}/PKG-INFO`,
+    body: "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
+  };
+  const pyproject = {
+    name: `${root}/pyproject.toml`,
+    body: '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n',
+  };
+  const builders = {
+    "20-sdist-repeated-gnu-long-name.json": () => [
+      { name: "././@LongLink", type: "L", body: `${root}/setup.py\0` },
+      { name: "././@LongLink", type: "L", body: `${root}/docs/notes.txt\0` },
+      { name: "././@LongLink", body: "Release notes for 1.2.0\n" },
+    ],
+    "21-sdist-oversized-pax-header.json": () => [
+      {
+        name: "PaxHeader",
+        type: "x",
+        body: paxBody([
+          ["comment", "A".repeat(1024 * 1024)],
+          ["path", `${root}/setup.py`],
+        ]),
+      },
+      { name: `${root}/README.txt`, body: "Read me first.\n" },
+    ],
+    "22-sdist-old-gnu-name-record.json": () => [
+      { name: `${root}/notes.txt`, type: "N", body: `${root}/docs/readme.txt\0` },
+      { name: `${root}/setup.py`, body: "Read me first.\n" },
+    ],
+    "23-sdist-pax-body-length-mismatch.json": () => [
+      {
+        name: "PaxHeader",
+        type: "x",
+        body: paxBody([
+          ["comment", `AAAA\n${paxBody([["path", `${root}/README.txt`]]).slice(0, -1)}`],
+        ]),
+      },
+      { name: `${root}/setup.py`, body: "Read me first.\n" },
+    ],
+  };
+
+  for (const [file, members] of Object.entries(builders)) {
+    test(file, async () => {
+      const fixture = JSON.parse(
+        readFileSync(
+          new URL(`./fixtures/security-corpus/cases-pypi/${file}`, import.meta.url),
+          "utf8",
+        ),
+      );
+      const tar = buildTar([pkgInfo, pyproject, ...members()]);
+      const { files, suspicious } = await readTar(
+        tar.buffer,
+        2_500,
+        25 * 1024 * 1024,
+        1_000_000,
+        "keep",
+      );
+      expect(files).toEqual(fixture.artifacts[0].files);
+      expect(suspicious).toEqual(fixture.artifacts[0].suspiciousEntries);
+    });
+  }
+});
+
+describe("paxBodyAnomalies", () => {
+  const { paxBodyAnomalies } = tarParser;
+  const bytes = (text) => encoder.encode(text);
+  // A record with a raw byte value, length counted in bytes as writers do.
+  const rawRecord = (key, value) => {
+    const tail = concatBytes([encoder.encode(` ${key}=`), value, encoder.encode("\n")]);
+    let length = tail.length + 1;
+    while (String(length).length + tail.length !== length) {
+      length = String(length).length + tail.length;
+    }
+    return concatBytes([encoder.encode(String(length)), tail]);
+  };
+
+  test("is empty for the bodies publisher toolchains write", () => {
+    expect(
+      paxBodyAnomalies(
+        bytes(
+          paxBody([
+            ["path", "package/" + "é/".repeat(60) + "x.js"],
+            ["mtime", "1700000000.5"],
+            ["SCHILY.xattr.user.k", "v"],
+          ]),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("ignores binary xattr values node-tar's UTF-8 line split drops", () => {
+    // macOS bsdtar writes raw xattr bytes; neither reader installs anything
+    // different because of them.
+    const body = concatBytes([
+      rawRecord("SCHILY.xattr.com.apple.provenance", new Uint8Array([0x01, 0xff, 0xfe, 0x80])),
+      bytes(paxBody([["path", "package/index.js"]])),
+    ]);
+    expect(paxBodyAnomalies(body)).toEqual([]);
+  });
+
+  test("ignores NUL padding after the last record", () => {
+    expect(paxBodyAnomalies(bytes(paxBody([["path", "a.js"]]) + "\0\0\0"))).toEqual([]);
+  });
+
+  test("reports records a length walk cannot parse", () => {
+    for (const body of [
+      "30 path=package/short.js\n",
+      paxBody([["size"]]),
+      "﻿" + paxBody([["path", "a.js"]]),
+    ]) {
+      expect(paxBodyAnomalies(bytes(body))).toEqual([
+        expect.stringMatching(/^records a length-walking reader cannot parse/),
+      ]);
+    }
+  });
+
+  test("reports a repeated key and GNU sparse keys", () => {
+    expect(
+      paxBodyAnomalies(
+        bytes(
+          paxBody([
+            ["path", "a.js"],
+            ["path", "b.js"],
+            ["GNU.sparse.name", "c.js"],
+            ["GNU.sparse.realsize", "10"],
+          ]),
+        ),
+      ),
+    ).toEqual([
+      expect.stringMatching(/^the key `path` more than once/),
+      "GNU sparse keys (`GNU.sparse.name`, `GNU.sparse.realsize`) that CPython tarfile applies and node-tar ignores",
+    ]);
   });
 });
 

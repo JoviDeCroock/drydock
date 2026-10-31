@@ -75,6 +75,7 @@ export function normalizeTarPath(
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function unrepresentableZipEntry(rawPath: string | null | undefined): TarSuspiciousEntry | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
+export function paxBodyAnomalies(body: Uint8Array): string[];
 export function describeNonRegularType(type: string): string;
 export function sha256Hex(bytes: Uint8Array): Promise<string>;
 
