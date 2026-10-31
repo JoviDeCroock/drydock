@@ -627,6 +627,16 @@ export const ScanDetailModel = createModel((id: string) => {
       } catch (err) {
         this.gateDecisionError.value = errorMessage(err);
         this.gateDecisionStatus.value = "error";
+        // A refused publish changed the held release's state (stale, error,
+        // expired); show it now instead of on the next poll.
+        if (err instanceof ApiError && err.code === "held_release_not_publishable") {
+          try {
+            const refreshed = await getWorkflowGateByScan(packageScanId);
+            if (refreshed) this.gate.value = refreshed;
+          } catch {
+            // The decision error above is the message that matters.
+          }
+        }
       }
     },
 

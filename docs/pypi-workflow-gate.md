@@ -336,8 +336,9 @@ file and both digest prefixes, for example
 `stage_identity_mismatch: demo_package-1.2.0-py3-none-any.whl sha256 differs:
 artifact 1a2b3c4d5e6f…, stage 9f8e7d6c5b4a…`. Codes: `stage_reference_invalid`
 (bad or non-allowlisted reference), `stage_unavailable` (unreachable, refused
-redirect, oversized or malformed page), `stage_identity_mismatch`. A release
-without `pypi-stage.json` is reviewed exactly as before.
+redirect, oversized or malformed page), `stage_identity_mismatch`, and
+`stage_session_mismatch` (mode B only). A release without `pypi-stage.json` is
+reviewed exactly as before.
 
 The gate decision is the enforcement: approval releases the protected job, which
 publishes the session. A rejection, or a gate left pending, means the job never
@@ -453,6 +454,222 @@ sha256 matches `SHA256SUMS` and nothing else is staged, then sends
 `POST links.publish` with `{"meta": {"api-version": "2.0"}}` and polls
 `links.session` through `processing` until `published` (or fails on `error`).
 `ci/pep694_cancel.py` sends `DELETE links.session`.
+
+### Mode B: Drydock holds the session (opt-in per project)
+
+In mode B the organization stores a PyPI API token for one project, and Drydock
+publishes the session itself once a maintainer approves the gate. This removes
+the mode A gap between review and publish: Drydock re-checks the staged bytes
+and publishes them in the same step, and nobody else needs a publish step.
+
+**Opting in.** An owner or admin (the role that manages integrations) adds the
+token under Settings → PyPI project tokens, or with
+`POST /api/v1/pypi-project-tokens` (`{ project, index, token }`). The token must
+be a PyPI API token scoped to that **single project**. Drydock reads the
+token's caveats offline and refuses account-wide tokens, tokens for other or
+several projects, and tokens whose scope it cannot confirm. Rotate with
+`PUT /api/v1/pypi-project-tokens/:id`. `POST …/:id/validate` re-checks it
+offline: PEP 694 has no credential probe, so nothing is sent to PyPI. Remove it
+with `DELETE …/:id`. Every route needs a session and is scoped to the active
+organization. The token is write-only: responses carry the project, index,
+last four characters, and a fingerprint. Adding, rotating, checking, and
+removing a token are audit events (`pypi_token.*`).
+
+**Registering a session.** The workflow adds `session-url` (`links.session`) to
+its `pypi-stage.json` entry. Mode B applies only when that is present and the
+organization stores a token for the entry's project on the stage's index.
+Without a stored token, Drydock ignores `session-url` and the gate stays in
+mode A. After the mode A review, Drydock:
+
+1. checks `session-url` against the Upload 2.0 roots for the token's index
+   (`https://upload.pypi.org/2.0/` or `https://pypi.org/2.0/` for pypi.org,
+   `https://test.pypi.org/2.0/` for TestPyPI): https, no credentials, port,
+   query, fragment, or encoded path separator. A URL that fails is rejected
+   before any request is made;
+2. `GET`s the session and requires that it is `open`, that its `links.session`
+   is the registered URL, that its `links.stage` is the stage Drydock just
+   reviewed, that its file set is exactly the reviewed files with every file
+   `completed`, and that any name or version the index echoes agrees;
+3. stores the session's URLs sealed (AES-GCM, as for other organization
+   secrets) with the reviewed filenames and digests, and records
+   `pypi_session.held`. The report's `provenance.stage.managed` is `true`.
+
+Any failure rejects the deployment with `stage_session_mismatch`. A mismatch on
+one project leaves no project held.
+
+**Human decisions.** Drydock never publishes or cancels on its own.
+
+- _Approve._ When an approval looks like the one that completes the gate
+  (every package approved), Drydock first re-reads the session and the stage
+  page without changing anything. If the session is no longer open and bound,
+  or a staged digest differs from the reviewed one, the session becomes `stale`
+  and the approval is refused (HTTP 409, `held_release_not_publishable`). The
+  maintainer can still reject. Otherwise the approval is recorded and the gate
+  leaves `pending` in one compare-and-set. Only then does Drydock re-verify once
+  more and send `POST links.publish`. A concurrent rejection, an automatic
+  block, or a second approval can no longer land while the publish is in
+  flight. Every approval that completes the gate takes this path, including two
+  sibling-package approvals that race. The publish is recorded as
+  `pypi_session.published`, attributed to the approving maintainer.
+  - `201` means published. `202` is polled through `processing` for a few
+    seconds. A publish still processing when the request ends is accepted: the
+    approval is delivered and the cron keeps polling.
+  - A definite failure _within the decision request_ turns the approval into a
+    fail-closed rejection, normally before anything reaches GitHub (see the
+    redelivery residual risk below for the exception). The gate shows
+    `rejected`, the session settles as `error` or `stale`, and the route
+    answers 409 `held_release_not_publishable`. Definite failures are: `409`,
+    any other `4xx`, a refused URL or redirect, a `202` that ends in `error`
+    while the request is still polling, a session still `open` after a failed
+    publish request, and, at the second re-check, a changed stage or a session
+    or stage page that cannot be read. In a multi-project gate, one project may
+    publish before another fails. The review then shows the gate as rejected
+    and partially published, and the audit log has both events. The
+    maintainer's own package decision stays "publish", so the scan's decision
+    badge can still read approved while the gate is rejected.
+  - A transport failure or `5xx` after the publish request is an unknown
+    outcome. The session stays `publishing` and is polled, never handed back as
+    `held`, because PyPI may already have accepted it. A session still reading
+    `open` then was not accepted and becomes `error`. After a `202`, `open` may
+    be a lagging read, so it counts as a refusal only 30 minutes after the
+    claim.
+  - Drydock records when GitHub acknowledges a gate's decision
+    (`decision_delivered_at`). The gate job delivers an approval only while
+    every held session is `published` or `publishing`; `externally_published`
+    does not count, because those bytes were not re-checked after the
+    approval.
+  - An approval GitHub has not acknowledged 30 minutes after the decision is
+    settled by the cron. The approving request died, or its delivery was held
+    back by a session that is not publishing. If every session is
+    `published`, the cron delivers the approval, for up to six hours after the
+    decision; after that GitHub is assumed to be refusing it for good (the run
+    was canceled, for example) and the queue's own retries are all it gets. If
+    one is still `publishing`, it waits. Otherwise it records a fail-closed
+    rejection
+    (`decidedBy: automatic`, `reason: held_release_not_published`) and
+    delivers that. In a multi-project gate, another project may already be
+    published; the review then shows the gate as rejected and partially
+    published. The cron never publishes or cancels a session, and a re-run can
+    be approved. Each session is claimed for publishing only while the gate is
+    still `approved`, so a slow decision request stops at the next project
+    once the cron has settled the gate.
+  - An approval recorded as acknowledged by GitHub is never turned into a
+    rejection. A publish that fails after that (the cron sees `error`, an outside cancel,
+    or expiry) leaves the gate `approved`. The session's state in the review
+    shows that nothing was published. In mode B the protected job publishes
+    nothing, so no unreviewed bytes go out.
+- _Reject._ After the rejection is recorded, Drydock sends
+  `DELETE links.session` for each `held` or `stale` session. A failed cancel
+  stays `canceling` and the cron retries it. A session the index no longer
+  knows counts as canceled. A fail-closed rejection after a failed publish
+  cancels nothing.
+
+**Cron upkeep.** Every 15 minutes, in bounded batches, Drydock re-reads each
+held session at most every 10 minutes. It extends a session (`links.extend`,
+7 days) when less than 48 hours remain, at most once every 6 hours. It stops
+extending 30 days after registration, when GitHub drops the held deployment.
+It also stops once the gate closes without a maintainer's rejection (for
+example, an automatic block), leaving that session alone to expire. A session
+published, canceled, or errored outside Drydock settles as
+`externally_published`, `externally_canceled`, or `stale`. A session the index
+no longer knows becomes `expired`. The cron also polls `publishing` (a publish
+it resolves is still attributed to the approving maintainer; other outcomes
+carry no actor), retries `canceling`, and settles unacknowledged approvals as
+described above. It never publishes, and never cancels a session no maintainer
+rejected.
+
+**Removing a token.** Deleting a project token moves that token's held and
+canceling sessions to `token_removed`, which is terminal and shown in the
+review. Nothing can act on them any more, so they stop being polled. A
+`publishing` session keeps its state, because the publish request already went
+out and may have succeeded; its detail says the outcome can no longer be
+checked, and it is no longer polled. Re-adding a token does not revive these
+sessions; a new run registers a new session. A re-run review never resets a
+session that is publishing, published, or canceled. Only `held` and `stale`
+rows may be re-registered.
+
+```
+register ──► held ──(approval recorded; re-verify; claim)──► publishing ──► published
+              │  │                 │ changed           │ 409/4xx, index error,
+              │  │                 └──► stale          │ or still open ──► error
+              │  │                                     └─ transport/5xx: unknown, polled
+              │  └──(reject; also from stale)──► canceling ──► canceled
+              ├──(cron observes)──► expired | externally_published |
+              │                     externally_canceled | stale
+              └──(token deleted)──► token_removed  (also from canceling)
+
+gate approved, GitHub has not acknowledged it 30 min after the decision:
+  every session published     ──(cron)──► approval delivered
+  any session publishing      ──(cron)──► wait
+  otherwise                   ──(cron)──► gate rejected (fail-closed) and delivered;
+                                          sessions left as they are
+gate approved and acknowledged by GitHub: never changed by the cron
+```
+
+The gate review shows each held session's state beside the approve and reject
+controls. Every terminal transition is an audit event (`pypi_session.*`).
+
+**Token egress.** Only `PyPiSessionGateway` attaches the token, and it runs in
+the parent Worker. The token never enters the review sandbox. The gateway
+attaches the token only to the registered `links.session` (GET, DELETE) and to
+the `links.publish` / `links.extend` URLs from the index's own answer. Every
+such URL must sit under an allowlisted Upload 2.0 root for the token's index
+(origin and path prefix, for example `https://upload.pypi.org/2.0/`) and on the
+session's origin. Encoded path separators are refused. Token-bearing requests
+never follow redirects: a `3xx` is an error, so a `Location` header cannot
+carry the token elsewhere. Responses are capped at 1 MiB, and every request has
+a timeout.
+
+**Residual risk.**
+
+- A stored project token can upload and publish **any** release of that
+  project, not just reviewed ones. If Drydock were compromised, an attacker
+  could use every stored token. That is why mode B is opt-in per project, the
+  token must be project-scoped, and an organization can remove it at any time.
+  Prefer mode A unless the review-to-publish gap matters for the project.
+- Tokens belong to the organization, not to a repository. Any repository the
+  organization gates could name another project's session and stage in its
+  `pypi-stage.json`, if it knew both capability URLs. Drydock would then
+  review, and on a maintainer's approval publish, that project's real staged
+  bytes. The approval is still human and the bytes are still the reviewed
+  ones, but the gate belongs to a different repository. Binding a token to a
+  repository is a follow-up.
+- PEP 694's publish request names the session, not file digests. Drydock
+  re-checks the stage immediately before publishing, but a file replaced in
+  the session between that read and the publish would still be published. The
+  window is one round trip. Only the index can close it, by pinning digests at
+  publish.
+- A webhook or queue redelivery that lands after a session is claimed for
+  publishing, but before PyPI answers, can deliver the approval to GitHub. A
+  definite failure then leaves the gate `approved` with an `error` session,
+  because GitHub acknowledged it. In mode B the protected job publishes
+  nothing, so the only effect is a misleading deployment status.
+- A `publishing` session whose token was removed can no longer be polled. If
+  its approving request also died before delivery, the gate stays `approved`
+  and undelivered until GitHub's own decision window rejects the deployment.
+- If recording GitHub's acknowledgement fails after a successful delivery, the
+  cron may later turn that approval into a rejection GitHub will refuse, and
+  Drydock's record then disagrees with GitHub's.
+- After a failed publish request, a session read as `open` is treated as not
+  accepted and the gate is rejected. If the index accepted the request but
+  reports status lazily, it may still publish a release Drydock recorded as
+  refused.
+
+**Workflow sketch (mode B).** The stage job is the same as in mode A. It must
+write `session-url`. The protected job publishes nothing, because Drydock has
+already published the session when the gate approves it. Use the job for
+post-publish steps (for example, waiting for the version on the simple index).
+Drop the cancel job, because Drydock cancels the session when a maintainer
+rejects the gate.
+
+```yaml
+release:
+  needs: stage
+  runs-on: ubuntu-latest
+  environment: pypi # Drydock's deployment protection rule; approval publishes
+  steps:
+    - run: python ci/wait_for_release.py demo-package 1.2.0
+```
 
 ## Acceptance mapping (issue #308)
 

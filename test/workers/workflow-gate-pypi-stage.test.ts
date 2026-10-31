@@ -1,170 +1,19 @@
 import { env } from "cloudflare:test";
-import { eq } from "drizzle-orm";
-import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createDb } from "../../server/db/client";
 import { getScan } from "../../server/db/scans";
-import * as schema from "../../server/db/schema";
-import type { GithubAppEnv } from "../../server/lib/github-app/config";
-import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
-import { executeWorkflowGateJob } from "../../server/lib/workflow-gate-job";
-import { buildZip } from "../helpers/archive-fixtures";
+import { FAKE_STAGE_TOKEN, sha256HexOf, stageReference } from "../helpers/pep694-fake";
 import {
-  FAKE_STAGE_TOKEN,
-  type FakeStageFile,
-  buildFakeStage,
-  sha256HexOf,
-  stageReference,
-} from "../helpers/pep694-fake";
-import { buildCtxWithGateway, buildLoaderMock, stubGithubFetch } from "./helpers/gate";
-import { seedUser, seedWorkflowGate } from "./helpers/seed";
-
-const WHEEL = "demo_package-1.2.0-py3-none-any.whl";
-const SDIST = "demo_package-1.2.0.tar.gz";
+  type PyPiStageGateRun as GateRun,
+  runPyPiStageGate as runGate,
+  SDIST,
+  stagedBytes,
+  WHEEL,
+} from "./helpers/pypi-stage-gate";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-
-function configBindings(): GithubAppEnv {
-  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  return {
-    GITHUB_APP_ID: "12345",
-    GITHUB_APP_SLUG: "drydock-test",
-    GITHUB_APP_CLIENT_ID: "client-id",
-    GITHUB_APP_CLIENT_SECRET: "client-secret",
-    GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(),
-    GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
-    GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
-    BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
-  };
-}
-
-// The sandbox is mocked: every parse answers with demo-package's metadata,
-// so identity comes from here, not from the opaque fixture bytes.
-function pypiLoader(metadataVersion = "1.2.0") {
-  return buildLoaderMock({
-    respond: (request) =>
-      request.headers.get("x-archive-format") === "tgz"
-        ? Response.json({
-            files: [
-              {
-                path: "demo_package-1.2.0/PKG-INFO",
-                size: 40,
-                sha256: "03",
-                flags: [],
-                textSample: `Metadata-Version: 2.3\nName: demo-package\nVersion: ${metadataVersion}\n`,
-              },
-            ],
-            packageJson: null,
-          })
-        : Response.json({
-            files: [
-              {
-                path: "demo_package-1.2.0.dist-info/METADATA",
-                size: 40,
-                sha256: "00",
-                flags: [],
-                textSample: `Metadata-Version: 2.3\nName: demo-package\nVersion: ${metadataVersion}\n`,
-              },
-              {
-                path: "demo_package-1.2.0.dist-info/WHEEL",
-                size: 60,
-                sha256: "02",
-                flags: [],
-                textSample: "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-              },
-              {
-                path: "demo_package-1.2.0.dist-info/RECORD",
-                size: 10,
-                sha256: "01",
-                flags: [],
-                textSample: "demo_package-1.2.0.dist-info/METADATA,,\n",
-              },
-            ],
-            packageJson: null,
-          }),
-  });
-}
-
-const stagedBytes = (name: string) => new TextEncoder().encode(`staged bytes of ${name}`);
-
-interface ScenarioOptions {
-  stageFiles?: FakeStageFile[];
-  /** Distributions also uploaded in the gate artifact (path → bytes). */
-  artifactFiles?: Record<string, Uint8Array>;
-  /** Raw `pypi-stage.json`; defaults to a reference to the fake stage. */
-  reference?: (stageUrl: string) => string | null;
-  page?: () => Response | Promise<Response>;
-  file?: (filename: string) => Response | Promise<Response> | null;
-  format?: "json" | "html";
-  metadataVersion?: string;
-}
-
-async function runGate(options: ScenarioOptions = {}) {
-  const owner = await seedUser();
-  const gateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null });
-  const stage = await buildFakeStage({
-    project: "demo-package",
-    files: options.stageFiles ?? [
-      { filename: WHEEL, bytes: stagedBytes(WHEEL) },
-      { filename: SDIST, bytes: stagedBytes(SDIST) },
-    ],
-    page: options.page,
-    file: options.file,
-    format: options.format,
-  });
-  const reference = options.reference
-    ? options.reference(stage.stageUrl)
-    : stageReference([{ name: "demo-package", version: "1.2.0", stageUrl: stage.stageUrl }]);
-  const zipEntries = Object.entries(options.artifactFiles ?? {}).map(([path, body]) => ({
-    path,
-    body,
-  }));
-  if (reference !== null)
-    zipEntries.push({ path: "dist/pypi-stage.json", body: new TextEncoder().encode(reference) });
-
-  const decisions: Array<{ state: string; comment: string }> = [];
-  const calls = stubGithubFetch({
-    installationToken: true,
-    artifacts: [{ id: 4242, name: "pypi-release-candidate", bundleZip: buildZip(zipEntries) }],
-    routes: {
-      "/deployment_protection_rule": async (request) => {
-        decisions.push((await request.json()) as { state: string; comment: string });
-        return new Response(null, { status: 204 });
-      },
-      ...stage.routes,
-    },
-  });
-  const logs: string[] = [];
-  for (const level of ["log", "info", "warn", "error"] as const) {
-    vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
-      logs.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
-    });
-  }
-
-  const loader = pypiLoader(options.metadataVersion);
-  const db = createDb(env.DB);
-  await executeWorkflowGateJob(
-    {
-      ...env,
-      ...configBindings(),
-      LOADER: loader.binding as unknown as WorkerLoader,
-    } as Cloudflare.Env,
-    buildCtxWithGateway(),
-    { kind: "workflow_gate", organizationId: owner.organizationId, gateId },
-    db,
-  );
-  const gate = await getGateForOrganization(db, owner.organizationId, gateId);
-  const events = await db
-    .select({ metadataJson: schema.scanEvents.metadataJson })
-    .from(schema.scanEvents)
-    .where(eq(schema.scanEvents.organizationId, owner.organizationId));
-  return { owner, gate, decisions, calls, logs, loader, stage, events, db };
-}
-
-type GateRun = Awaited<ReturnType<typeof runGate>>;
 
 function expectNoTokenLeak(run: GateRun) {
   const surfaces = [

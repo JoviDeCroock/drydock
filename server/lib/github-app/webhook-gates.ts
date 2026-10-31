@@ -418,6 +418,59 @@ export async function markGateDecidedForPackageAggregate(
   return row ? readGateRow(row) : null;
 }
 
+/** Records that GitHub accepted the gate's stored decision (`decision`). */
+export async function markGateDecisionDelivered(
+  db: AppDb,
+  gate: Pick<WorkflowGateRecord, "id" | "decision">,
+): Promise<void> {
+  if (!gate.decision) return;
+  // Scoped to the decision that was posted: a gate the cron re-decided since
+  // keeps its own delivery state.
+  await db
+    .update(githubWorkflowGates)
+    .set({ decisionDeliveredAt: new Date() })
+    .where(
+      and(eq(githubWorkflowGates.id, gate.id), eq(githubWorkflowGates.decision, gate.decision)),
+    );
+}
+
+/**
+ * Turn a recorded approval into a fail-closed rejection, before the decision
+ * is delivered to GitHub. Used when a release Drydock holds for the gate (PyPI
+ * PEP 694 mode B) could not be published after the approval won the gate CAS.
+ */
+export async function markGateApprovalFailed(
+  db: AppDb,
+  input: { gateId: string; organizationId: string; comment: string },
+): Promise<WorkflowGateRecord | null> {
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      status: "rejected",
+      decision: "rejected",
+      decisionComment: input.comment,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "approved"),
+        // An approval GitHub already acknowledged stays approved: rejecting it
+        // here would only make Drydock's record disagree with GitHub's.
+        isNull(githubWorkflowGates.decisionDeliveredAt),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  if (updated.length === 0) return null;
+  const [row] = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(eq(githubWorkflowGates.id, input.gateId))
+    .limit(1);
+  return row ? readGateRow(row) : null;
+}
+
 export async function markGateErrored(
   db: AppDb,
   gateId: string,

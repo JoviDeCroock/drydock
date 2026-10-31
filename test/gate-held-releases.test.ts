@@ -1,0 +1,73 @@
+import { describe, expect, test } from "vitest";
+import type { HeldRelease } from "../src/models/github-app";
+import {
+  heldReleaseLine,
+  partiallyPublished,
+} from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
+
+function release(overrides: Partial<HeldRelease> = {}): HeldRelease {
+  return {
+    ecosystem: "pypi",
+    projectName: "demo-package",
+    version: "1.2.0",
+    index: "https://pypi.org",
+    state: "held",
+    stateDetail: null,
+    expiresAt: null,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+describe("held release line", () => {
+  test("a held session says approving publishes it", () => {
+    expect(heldReleaseLine(release())).toEqual({
+      text: "PyPI holds demo-package 1.2.0 on pypi.org",
+      badge: null,
+      note: "approving publishes it",
+    });
+    expect(heldReleaseLine(release({ index: "https://test.pypi.org" })).text).toBe(
+      "PyPI holds demo-package 1.2.0 on test.pypi.org",
+    );
+  });
+
+  test("expected states read as plain text", () => {
+    for (const state of [
+      "publishing",
+      "published",
+      "canceling",
+      "canceled",
+      "externally_canceled",
+    ] as const) {
+      expect(heldReleaseLine(release({ state })).badge).toBeNull();
+    }
+  });
+
+  test("states that stop or bypass the approval carry a badge and their detail", () => {
+    const stale = heldReleaseLine(
+      release({ state: "stale", stateDetail: "files changed since review" }),
+    );
+    expect(stale.badge).toEqual({
+      label: "changed since review, cannot publish",
+      tone: "critical",
+    });
+    expect(stale.note).toBe("files changed since review");
+    expect(heldReleaseLine(release({ state: "externally_published" })).badge?.label).toBe(
+      "published outside Drydock",
+    );
+    expect(heldReleaseLine(release({ state: "expired" })).badge?.label).toBe("expired");
+    expect(heldReleaseLine(release({ state: "error" })).badge?.label).toBe("error");
+    expect(heldReleaseLine(release({ state: "token_removed" })).badge?.label).toBe("token removed");
+  });
+
+  test("a blocked gate with one project live and one not is partially published", () => {
+    const mixed = [
+      release({ state: "published" }),
+      release({ projectName: "other", state: "error" }),
+    ];
+    expect(partiallyPublished("rejected", mixed)).toBe(true);
+    expect(partiallyPublished("approved", mixed)).toBe(false);
+    expect(partiallyPublished("rejected", [release({ state: "published" })])).toBe(false);
+    expect(partiallyPublished("rejected", [release({ state: "stale" })])).toBe(false);
+  });
+});

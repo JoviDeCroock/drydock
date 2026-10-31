@@ -29,3 +29,20 @@ export type GithubAppInstallationStatus = "active" | "suspended" | "uninstalled"
 export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 
 export type WorkflowGateDecision = "approved" | "rejected";
+
+/**
+ * Lifecycle of a PEP 694 session Drydock holds for a gate (mode B). See
+ * `docs/pypi-workflow-gate.md` for the transitions.
+ */
+export type PyPiStageSessionState =
+  | "held"
+  | "publishing"
+  | "published"
+  | "canceling"
+  | "canceled"
+  | "stale"
+  | "error"
+  | "expired"
+  | "externally_published"
+  | "externally_canceled"
+  | "token_removed";

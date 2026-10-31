@@ -31,6 +31,34 @@ export interface GatePackageScan {
   decision: GatePackageDecision | null;
 }
 
+type HeldReleaseState =
+  | "held"
+  | "publishing"
+  | "published"
+  | "canceling"
+  | "canceled"
+  | "stale"
+  | "error"
+  | "expired"
+  | "externally_published"
+  | "externally_canceled"
+  | "token_removed";
+
+// A release Drydock holds on the registry itself (a PyPI PEP 694 staged
+// session) rather than in the workflow: approving the gate publishes it and
+// rejecting cancels it.
+export interface HeldRelease {
+  ecosystem: string;
+  projectName: string;
+  version: string;
+  /** Registry index origin, e.g. `https://pypi.org`. */
+  index: string;
+  state: HeldReleaseState;
+  stateDetail: string | null;
+  expiresAt: number | null;
+  updatedAt: number;
+}
+
 export interface PublicWorkflowGate {
   id: string;
   organizationId: string;
@@ -48,10 +76,16 @@ export interface PublicWorkflowGate {
   // and a member who has not enrolled in 2FA cannot decide it at all.
   organizationRequiresTwoFactor: boolean;
   packages: GatePackageScan[];
+  heldReleases: HeldRelease[];
   requestedAt: string;
   decidedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// Gates from a server that predates held releases omit the field.
+function withHeldReleases(gate: PublicWorkflowGate): PublicWorkflowGate {
+  return Array.isArray(gate.heldReleases) ? gate : { ...gate, heldReleases: [] };
 }
 
 // Returns null when no gate is mapped to the scan (404) so callers can treat a
@@ -61,7 +95,7 @@ export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkf
     const data = await apiFetch<{ gate: PublicWorkflowGate }>(
       `/api/v1/github-app/workflow-gates/by-scan/${encodeURIComponent(scanId)}`,
     );
-    return data.gate;
+    return withHeldReleases(data.gate);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
@@ -89,41 +123,44 @@ export function decideWorkflowGate(
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
     payload,
-  ).catch((err) => {
-    if (err instanceof ApiError && err.status === 401) {
-      if (err.code === "two_factor_required") {
+  ).then(
+    (data) => ({ gate: withHeldReleases(data.gate) }),
+    (err) => {
+      if (err instanceof ApiError && err.status === 401) {
+        if (err.code === "two_factor_required") {
+          throw new ApiError(
+            "Enter your authentication code to decide this gate.",
+            401,
+            err.detail,
+            err.code,
+          );
+        }
+        if (err.code === "two_factor_invalid") {
+          throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
+        }
+      }
+      if (
+        err instanceof ApiError &&
+        err.status === 403 &&
+        err.code === "two_factor_enrollment_required"
+      ) {
         throw new ApiError(
-          "Enter your authentication code to decide this gate.",
-          401,
+          "Your organization requires two-factor authentication to decide releases. Enable it in Settings, then try again.",
+          403,
           err.detail,
           err.code,
         );
       }
-      if (err.code === "two_factor_invalid") {
-        throw new ApiError("That authentication code is invalid.", 401, err.detail, err.code);
-      }
-    }
-    if (
-      err instanceof ApiError &&
-      err.status === 403 &&
-      err.code === "two_factor_enrollment_required"
-    ) {
-      throw new ApiError(
-        "Your organization requires two-factor authentication to decide releases. Enable it in Settings, then try again.",
-        403,
-        err.detail,
-        err.code,
-      );
-    }
-    throw err;
-  });
+      throw err;
+    },
+  );
 }
 
 export function retryWorkflowGate(gateId: string): Promise<{ gate: PublicWorkflowGate }> {
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/retry`,
     {},
-  );
+  ).then((data) => ({ gate: withHeldReleases(data.gate) }));
 }
 
 export interface GithubAppConfigState {

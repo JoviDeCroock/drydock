@@ -23,6 +23,7 @@ import {
   type PyPiStageReferenceEntry,
 } from "./stage";
 import { downloadStagedFile, fetchStageProjectPage } from "./stage-fetch";
+import { registerManagedSessions } from "./session-lifecycle";
 import { PYPI_ARTIFACT_LIMIT } from "./types";
 import { pyPiVersionsEquivalent } from "./version";
 
@@ -130,14 +131,40 @@ async function prepareStaged(
       );
     }
   }
-  for (const [, registered] of bindings) {
+
+  // Mode B: projects whose organization stores a project token and whose
+  // reference names the session are held by Drydock from here on.
+  const held = await registerManagedSessions(
+    input,
+    [...bindings].map(([project, registered]) => ({
+      entry: registered.entry,
+      reviewed: staged
+        .filter((artifact) => stagedProject(artifact) === project)
+        .map((artifact) => ({ filename: artifact.path, sha256: artifact.sha256 })),
+    })),
+  );
+  for (const [project, registered] of bindings) {
     emitOperationalEvent("info", "pypi.stage.reviewed", {
       // Index origin only: the stage URL is a capability and never logged.
       index: registered.binding.index,
       artifactBound: registered.binding.artifactBound,
+      managed: held.has(project),
     });
   }
-  return result;
+  return result.map((candidate) => {
+    const project = normalizePyPiProjectName(candidate.package.name);
+    if (!held.has(project)) return candidate;
+    const binding = bindings.get(project)?.binding;
+    return {
+      ...candidate,
+      pipelineInput: { ...candidate.pipelineInput, stage: { ...binding, managed: true } },
+    };
+  });
+}
+
+function stagedProject(artifact: ParsedGateArtifact): string | null {
+  const name = preparePyPiArtifact({ path: artifact.path, files: artifact.files }).summary.name;
+  return name ? normalizePyPiProjectName(name) : null;
 }
 
 async function reviewStage(

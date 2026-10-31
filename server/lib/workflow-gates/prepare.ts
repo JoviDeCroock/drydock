@@ -159,7 +159,7 @@ export async function prepareReleaseCandidatesForGate(
       classifySidecar,
     );
     const packages = await prepareBundlePackages(
-      env,
+      { env, db, organizationId: gate.organizationId, gateId: gate.id },
       bundle.artifacts,
       bundle.sidecars ?? [],
       parse,
@@ -259,7 +259,7 @@ function resolveBundleClassifier(
  * bundle slice when the bundle carries distributions too.
  */
 async function prepareBundlePackages(
-  env: Cloudflare.Env,
+  scope: { env: Cloudflare.Env; db: AppDb; organizationId: string; gateId: string },
   resolved: ParsedGateArtifact[],
   sidecars: BundleSidecarFile[],
   parse: (file: ResolvedReleaseFile) => Promise<ParsedGateArtifact>,
@@ -285,7 +285,7 @@ async function prepareBundlePackages(
     let candidates: PreparedReleaseCandidate[];
     if (ecosystemSidecars.length > 0 && adapter.prepareStagedReleaseCandidates) {
       candidates = await adapter.prepareStagedReleaseCandidates({
-        env,
+        ...scope,
         sidecars: ecosystemSidecars.map(({ path, bytes }) => ({ path, bytes })),
         artifacts,
         parse,

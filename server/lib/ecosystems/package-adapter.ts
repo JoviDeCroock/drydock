@@ -50,6 +50,8 @@ export interface ReleaseStageBinding {
   index: string;
   /** The gate artifact also carried the distributions and they were byte-identical. */
   artifactBound: boolean;
+  /** Mode B: Drydock holds the session and publishes or cancels it on the human decision. */
+  managed?: boolean;
 }
 
 export interface ReleaseProvenance {

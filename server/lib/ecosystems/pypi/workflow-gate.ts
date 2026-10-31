@@ -11,6 +11,7 @@ import {
 import { erasePackageAdapter } from "../package-adapter";
 import { PYPI_STAGE_REFERENCE_FILENAME } from "./stage";
 import { preparePyPiStagedCandidates } from "./stage-gate";
+import { pypiHeldReleases } from "./session-lifecycle";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import { compactDuplicateTextSamples } from "../../workflow-gates/resolve";
@@ -75,6 +76,9 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
       pypiWorkflowGateAdapter.prepareReleaseCandidates(artifacts),
     );
   },
+
+  // Mode B (opt-in): sessions Drydock holds with an org-stored project token.
+  heldReleases: pypiHeldReleases,
 
   // Artifacts are grouped by normalized (PEP 503) name; one package version
   // legitimately spans many wheels plus an sdist, so several artifacts per

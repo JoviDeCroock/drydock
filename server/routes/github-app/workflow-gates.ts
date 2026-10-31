@@ -41,9 +41,12 @@ import {
   getGateByScanId,
   getGateForOrganization,
   listGatePackageScans,
+  markGateApprovalFailed,
   markGateDecidedForPackageAggregate,
   resetGateReviewForRetry,
 } from "../../lib/github-app/webhook-gates";
+import { heldReleaseHooks } from "../../lib/ecosystems";
+import type { PublicHeldRelease } from "../../lib/workflow-gates/types";
 import type { Bindings, Variables } from "../../types";
 import { type RouteContext } from "./shared";
 
@@ -65,7 +68,14 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
     db,
     organizationId,
   );
-  return c.json({ gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor) });
+  return c.json({
+    gate: publicWorkflowGate(
+      gate,
+      packages,
+      orgRequiresTwoFactor,
+      await gateHeldReleases(db, organizationId, gate.id),
+    ),
+  });
 });
 
 // Record a maintainer's decision on one package of a gate and, once the whole
@@ -128,6 +138,15 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   if (existing.status !== "pending") {
     return c.json({ error: "gate has already been decided" }, 409);
   }
+  // Every gate this route returns carries its held releases, so the dialog
+  // shows a refused or partial publish without waiting for the next poll.
+  const gateView = async (record: WorkflowGateRecord, packages: GatePackageScan[]) =>
+    publicWorkflowGate(
+      record,
+      packages,
+      orgRequiresTwoFactor,
+      await gateHeldReleases(db, organizationId, gateId),
+    );
 
   // The decision targets one package scan that has reached a human decision
   // point. A completed review gives the maintainer the full diff; a failed
@@ -150,7 +169,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const packages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+        gate: await gateView(existing, packages),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
@@ -206,6 +225,31 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
+  // Held releases (PyPI PEP 694 mode B, preview), step 1 of 2: when this
+  // approval looks like the one that completes the gate, re-verify what Drydock
+  // holds before recording anything, so a release whose bytes changed is
+  // refused while the maintainer can still reject. This publishes nothing; the
+  // irreversible publish happens only after the approval wins the gate CAS.
+  if (decision === "approved" && existing.scanId) {
+    const current = await listGatePackageScans(db, organizationId, gateId);
+    const completesApproval =
+      current.length > 0 &&
+      current.every((pkg) => pkg.scanId === packageScanId || pkg.decision === "publish");
+    if (completesApproval) {
+      const verified = await verifyHeldReleases(c.env, db, organizationId, gateId);
+      if (!verified.ok) {
+        return c.json(
+          {
+            gate: await gateView(existing, current),
+            error: verified.error,
+            code: "held_release_not_publishable",
+          },
+          409,
+        );
+      }
+    }
+  }
+
   // Persist the per-package decision while the gate is still pending.
   // `recordGatePackageDecision` also writes the `scan.decided` audit event and
   // keeps the workbench decision filters consistent (approved → publish,
@@ -228,7 +272,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor) : null,
+        gate: current ? await gateView(current, currentPackages) : null,
         error:
           current?.status === "pending"
             ? "package has already been decided"
@@ -260,21 +304,22 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
     // Other packages still need a decision; keep the deployment held.
-    return c.json({ gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor) });
+    return c.json({ gate: await gateView(existing, packages) });
   }
   if (allApproved && !existing.scanId) {
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+        gate: await gateView(existing, packages),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
     );
   }
 
-  const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";
+  const humanDecision: GateDecision = anyRejected ? "rejected" : "approved";
+  let gateDecision: GateDecision = humanDecision;
   const reportUrl = buildReportUrl(c.env, existing.scanId);
-  const decided = await markGateDecidedForPackageAggregate(db, {
+  let decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
     organizationId,
     decision: gateDecision,
@@ -286,24 +331,62 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const current = await getGateForOrganization(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, packages, orgRequiresTwoFactor) : null,
+        gate: current ? await gateView(current, packages) : null,
         error: "gate has already been decided",
       },
       409,
     );
   }
 
-  // Schedule delivery immediately after the CAS. Everything below is
-  // bookkeeping; if it throws, the durable gate decision still has a path to
-  // GitHub instead of getting stuck behind a future 409.
+  // Held releases, step 2 of 2: the approval is durably recorded and the gate
+  // is out of `pending`, so no concurrent human rejection or fail-closed block
+  // can land while the irreversible publish runs. Every approval that completes
+  // the gate passes here, including one whose step-1 snapshot raced a
+  // sibling package's approval. A definite publish failure turns the approval
+  // into a fail-closed rejection before anything reaches GitHub. Each session
+  // is claimed only while the gate is still `approved`, so the cron's
+  // undelivered-approval settlement (`runHeldReleaseUpkeep`) stops this loop
+  // rather than racing it.
+  let heldReleaseError: string | null = null;
+  if (humanDecision === "approved") {
+    const published = await publishHeldReleases(c.env, db, organizationId, gateId, session.userId);
+    if (!published.ok) {
+      heldReleaseError = published.error;
+      const failed = await markGateApprovalFailed(db, {
+        gateId,
+        organizationId,
+        comment:
+          `Drydock rejected this deployment: the approved release could not be published (${published.error})`.slice(
+            0,
+            500,
+          ),
+      });
+      // Null means the cron already settled the gate: deliver what it holds now.
+      const current = failed ?? (await getGateForOrganization(db, organizationId, gateId));
+      if (current) {
+        decided = current;
+        gateDecision = current.decision === "approved" ? "approved" : "rejected";
+      }
+    }
+  }
+
+  // Schedule delivery immediately after the decision is final. Everything
+  // below is bookkeeping; if it throws, the durable gate decision still has a
+  // path to GitHub instead of getting stuck behind a future 409.
   c.executionCtx.waitUntil(deliverDecidedGate(c, db, decided));
+  // A maintainer rejected the release: cancel any PEP 694 session Drydock
+  // holds for it. Best effort and never blocking; the cron retries `canceling`.
+  // A fail-closed rejection after a failed publish cancels nothing.
+  if (humanDecision === "rejected") {
+    c.executionCtx.waitUntil(cancelHeldReleases(c.env, db, organizationId, gateId));
+  }
 
   // Counted separately from the automatic block below, so approval rate stays
   // measurable against reviews instead of being diluted by auto-rejections.
   recordProductEvent(c.env, {
     name: "workflow_gate.decided",
     organizationId,
-    surface: "human",
+    surface: heldReleaseError && gateDecision === "rejected" ? "automatic" : "human",
     decision: gateDecision,
     packageCount: packages.length,
   });
@@ -314,7 +397,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       actorUserId: session.userId,
       scanId: decided.scanId,
       type:
-        gateDecision === "approved"
+        humanDecision === "approved"
           ? "github_workflow_gate.approved"
           : "github_workflow_gate.rejected",
       metadata: {
@@ -327,6 +410,14 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         twoFactorRequiredByOrg: orgRequiresTwoFactor,
       },
     });
+    if (heldReleaseError && gateDecision === "rejected") {
+      await recordScanEvent(db, {
+        organizationId,
+        scanId: decided.scanId,
+        type: "github_workflow_gate.rejected",
+        metadata: { gateId, decidedBy: "automatic", reason: "held_release_not_publishable" },
+      });
+    }
   } catch (err) {
     emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
       organizationId,
@@ -336,7 +427,14 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     });
   }
 
-  return c.json({ gate: publicWorkflowGate(decided, packages, orgRequiresTwoFactor) });
+  const view = await gateView(decided, packages);
+  if (heldReleaseError) {
+    return c.json(
+      { gate: view, error: heldReleaseError, code: "held_release_not_publishable" },
+      409,
+    );
+  }
+  return c.json({ gate: view });
 });
 
 // Re-run a failed workflow-gate review batch. The retry is intentionally scoped
@@ -461,6 +559,73 @@ async function runWorkflowGateJob(
   await executeWorkflowGateJob(c.env, workerExecutionContext(c.executionCtx), message, db);
 }
 
+async function gateHeldReleases(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<PublicHeldRelease[]> {
+  const lists = await Promise.all(
+    heldReleaseHooks().map((hooks) => hooks.list(db, organizationId, gateId)),
+  );
+  return lists.flat();
+}
+
+async function verifyHeldReleases(
+  env: Cloudflare.Env,
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (const hooks of heldReleaseHooks()) {
+    const result = await hooks.verify(env, db, organizationId, gateId);
+    if (!result.ok) return result;
+  }
+  return { ok: true };
+}
+
+async function publishHeldReleases(
+  env: Cloudflare.Env,
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+  actorUserId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (const hooks of heldReleaseHooks()) {
+    let result: { ok: true } | { ok: false; error: string };
+    try {
+      result = await hooks.publish(env, db, organizationId, gateId, actorUserId);
+    } catch (err) {
+      emitOperationalEvent("error", "workflow_gate.held_release_publish_failed", {
+        organizationId,
+        gateId,
+        error: describeOperationalError(err),
+      });
+      result = { ok: false, error: "the held release could not be published" };
+    }
+    if (!result.ok) return result;
+  }
+  return { ok: true };
+}
+
+async function cancelHeldReleases(
+  env: Cloudflare.Env,
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<void> {
+  for (const hooks of heldReleaseHooks()) {
+    try {
+      await hooks.cancel(env, db, organizationId, gateId);
+    } catch (err) {
+      emitOperationalEvent("error", "workflow_gate.held_release_cancel_failed", {
+        organizationId,
+        gateId,
+        error: describeOperationalError(err),
+      });
+    }
+  }
+}
+
 // Excludes the deployment callback URL (and other GitHub-internal identifiers)
 // so the credentialed egress target is never exposed to the browser. `packages`
 // is one entry per distinct package the release publishes (a monorepo fans out
@@ -472,6 +637,7 @@ function publicWorkflowGate(
   record: WorkflowGateRecord,
   packages: GatePackageScan[] = [],
   organizationRequiresTwoFactor = false,
+  heldReleases: PublicHeldRelease[] = [],
 ) {
   return {
     id: record.id,
@@ -495,6 +661,9 @@ function publicWorkflowGate(
       releaseRisk: pkg.releaseRisk,
       decision: pkg.decision,
     })),
+    // Registry-side releases Drydock holds for this gate (PyPI PEP 694 mode B,
+    // preview). Never carries session or stage URLs.
+    heldReleases,
     requestedAt: record.requestedAt.toISOString(),
     decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),

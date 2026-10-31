@@ -23,6 +23,7 @@ import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
+import { pypiProjectTokenRoutes } from "./routes/pypi-project-tokens";
 import { packagesRoutes } from "./routes/packages";
 import { npmPackageClaimRoutes } from "./routes/npm-package-claims";
 import { npmPublicationWatchRoutes } from "./routes/npm-publication-watches";
@@ -187,6 +188,8 @@ app.get("/api", (c) =>
         "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
       publicFeed:
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package[?tag=] (shields.io endpoint badge; tag defaults to latest)",
+      pypiProjectTokens:
+        "GET/POST /api/v1/pypi-project-tokens; PUT/DELETE /api/v1/pypi-project-tokens/:id; POST /api/v1/pypi-project-tokens/:id/validate (PEP 694 preview: organization-admin, project-scoped PyPI tokens Drydock uses to hold, publish on approval, and cancel on rejection; write-only)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       authConfig:
@@ -214,6 +217,7 @@ app.route("/api/v1/packages", packagesRoutes);
 app.route("/api/v1/publication-watches", npmPublicationWatchRoutes);
 app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes);
 app.route("/api/v1/slack", slackRoutes);
+app.route("/api/v1/pypi-project-tokens", pypiProjectTokenRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 

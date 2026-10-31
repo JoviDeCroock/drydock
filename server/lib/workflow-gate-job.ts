@@ -14,6 +14,7 @@ import {
   attachScanToGate,
   claimGateReviewStart,
   getGateForOrganization,
+  markGateApprovalFailed,
   markGateDecided,
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
@@ -24,6 +25,7 @@ import {
   emitOperationalEvent,
 } from "./platform/observability";
 import { recordProductEvent } from "./analytics";
+import { heldReleaseHooks } from "./ecosystems";
 import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
 import {
   type PreparedGatePackage,
@@ -75,6 +77,128 @@ export function classifyGateTimeout(
   if (elapsedMs >= windowMs) return "missed";
   if (elapsedMs >= windowMs * GATE_TIMEOUT_IMMINENT_FRACTION) return "imminent";
   return "ok";
+}
+
+// Held-release states in which an approved gate may be delivered to GitHub.
+// `publishing` is included because the decision route accepts a publish still
+// processing at the end of its polling and delivers it. `externally_published`
+// is not: those bytes were never re-checked after the approval.
+const DELIVERABLE_HELD_RELEASE_STATES: ReadonlySet<string> = new Set(["published", "publishing"]);
+
+async function approvalAwaitsHeldRelease(db: AppDb, gate: WorkflowGateRecord): Promise<boolean> {
+  for (const hooks of heldReleaseHooks()) {
+    const releases = await hooks.list(db, gate.organizationId, gate.id);
+    if (releases.some((release) => !DELIVERABLE_HELD_RELEASE_STATES.has(release.state))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const UNDELIVERED_APPROVAL_COMMENT =
+  "Drydock rejected this deployment: the approved release was not published before the approval could be delivered";
+
+/**
+ * Cron upkeep for held releases (`WorkflowGateAdapter.heldReleases`), run on
+ * the scheduled tick: each adapter's `sweep`, then its `undeliveredApprovals`.
+ * An approval GitHub never acknowledged (the decision request died, or the
+ * guard in `executeWorkflowGateJob` held delivery back) is delivered once every
+ * held release is published, or turned into a fail-closed rejection when one
+ * never will be. An acknowledged approval is never touched. Never publishes
+ * and never cancels: the maintainer can approve a re-run.
+ */
+export async function runHeldReleaseUpkeep(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb = createDb(env.DB),
+  now: number = Date.now(),
+): Promise<void> {
+  for (const hooks of heldReleaseHooks()) {
+    try {
+      await hooks.sweep(env, db, now);
+    } catch (err) {
+      emitOperationalEvent("error", "workflow_gate.held_release_cron_failed", {
+        error: describeOperationalError(err),
+      });
+    }
+
+    let undelivered: Awaited<ReturnType<typeof hooks.undeliveredApprovals>> = [];
+    try {
+      undelivered = await hooks.undeliveredApprovals(db, now);
+    } catch (err) {
+      emitOperationalEvent("error", "workflow_gate.held_release_cron_failed", {
+        error: describeOperationalError(err),
+      });
+    }
+    for (const { organizationId, gateId, settlement } of undelivered) {
+      if (settlement === "deliver") {
+        await deliverFromCron(env, executionCtx, db, { organizationId, gateId });
+        continue;
+      }
+      let failed: WorkflowGateRecord | null;
+      try {
+        failed = await markGateApprovalFailed(db, {
+          gateId,
+          organizationId,
+          comment: UNDELIVERED_APPROVAL_COMMENT,
+        });
+      } catch (err) {
+        emitOperationalEvent("error", "github_workflow_gate.held_release_recovery_failed", {
+          organizationId,
+          gateId,
+          error: describeOperationalError(err),
+        });
+        continue;
+      }
+      if (!failed) continue;
+      emitOperationalEvent("warn", "github_workflow_gate.held_release_approval_undelivered", {
+        organizationId,
+        gateId,
+      });
+      // Delivery first: once rejected, this gate is never selected again.
+      await deliverFromCron(env, executionCtx, db, { organizationId, gateId });
+      try {
+        await recordScanEvent(db, {
+          organizationId,
+          scanId: failed.scanId,
+          type: "github_workflow_gate.rejected",
+          metadata: { gateId, decidedBy: "automatic", reason: "held_release_not_published" },
+        });
+      } catch (err) {
+        emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
+          organizationId,
+          gateId,
+          decision: "rejected",
+          error: describeOperationalError(err),
+        });
+      }
+    }
+  }
+}
+
+async function deliverFromCron(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  gate: { organizationId: string; gateId: string },
+): Promise<void> {
+  const message = { kind: "workflow_gate" as const, ...gate };
+  if (env.SCAN_QUEUE) {
+    try {
+      await env.SCAN_QUEUE.send(message);
+      return;
+    } catch {
+      // Deliver inline below rather than leave the job held.
+    }
+  }
+  try {
+    await executeWorkflowGateJob(env, executionCtx, message, db);
+  } catch (err) {
+    emitOperationalEvent("error", "github_workflow_gate.held_release_recovery_failed", {
+      ...gate,
+      error: describeOperationalError(err),
+    });
+  }
 }
 
 /**
@@ -146,6 +270,17 @@ export async function executeWorkflowGateJob(
   // to GitHub (best effort) in case that delivery's callback POST failed, then
   // ack — we never re-run the review for a decided gate.
   if (gate.status === "approved" || gate.status === "rejected") {
+    // The decision route publishes held releases after the approval wins the
+    // gate CAS and delivers once that settles; a redelivery inside that window
+    // would release the job before the publish outcome is known.
+    if (gate.status === "approved" && (await approvalAwaitsHeldRelease(db, gate))) {
+      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+        organizationId,
+        gateId,
+        reason: "held_release_unpublished",
+      });
+      return;
+    }
     await redeliverGateDecision(config, db, gate);
     return;
   }

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { decryptSlackBotToken, encryptSlackBotToken } from "../server/lib/platform/secret-box";
+import { base64UrlEncode } from "../server/lib/platform/crypto-utils";
+import {
+  decryptSlackBotToken,
+  encryptSlackBotToken,
+  openSecret,
+  sealSecret,
+} from "../server/lib/platform/secret-box";
 
 const KEY = "0123456789abcdef0123456789abcdef";
 const env = { NPM_CONNECTIONS_ENCRYPTION_KEY: KEY };
@@ -46,5 +52,47 @@ describe("encryptSlackBotToken / decryptSlackBotToken", () => {
     await expect(
       encryptSlackBotToken({ NPM_CONNECTIONS_ENCRYPTION_KEY: "" }, BOT_TOKEN),
     ).rejects.toThrow("required");
+  });
+
+  test("still decrypts a token sealed under the original Slack-only derivation", async () => {
+    const material = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(KEY),
+      "HKDF",
+      false,
+      ["deriveKey"],
+    );
+    const legacyKey = await crypto.subtle.deriveKey(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new TextEncoder().encode("drydock:slack-bot-token:salt:v1"),
+        info: new TextEncoder().encode("aes-gcm-256"),
+      },
+      material,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt"],
+    );
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce },
+      legacyKey,
+      new TextEncoder().encode(BOT_TOKEN),
+    );
+    const plaintext = await decryptSlackBotToken(env, {
+      ciphertext: `v1:${base64UrlEncode(new Uint8Array(sealed))}`,
+      nonce: base64UrlEncode(nonce),
+    });
+    expect(plaintext).toBe(BOT_TOKEN);
+  });
+});
+
+describe("sealSecret / openSecret", () => {
+  test("a secret sealed for one purpose cannot be opened as another", async () => {
+    const sealed = await sealSecret(env, "pypi-project-token", "pypi-AgEIcHlwaS5vcmc");
+    expect(await openSecret(env, "pypi-project-token", sealed)).toBe("pypi-AgEIcHlwaS5vcmc");
+    await expect(openSecret(env, "pypi-session-links", sealed)).rejects.toThrow();
+    await expect(openSecret(env, "slack-bot-token", sealed)).rejects.toThrow();
   });
 });

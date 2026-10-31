@@ -206,7 +206,12 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
 
 function extractStageBinding(raw: unknown): ReleaseStageBinding | null {
   if (!isRecord(raw) || raw.protocol !== "pep694" || typeof raw.index !== "string") return null;
-  return { protocol: "pep694", index: raw.index, artifactBound: raw.artifactBound === true };
+  return {
+    protocol: "pep694",
+    index: raw.index,
+    artifactBound: raw.artifactBound === true,
+    ...(raw.managed === true ? { managed: true } : {}),
+  };
 }
 
 function extractArtifactIntegrity(stagedPublish: unknown) {

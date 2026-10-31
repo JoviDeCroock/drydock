@@ -101,7 +101,12 @@ function parseStageBinding(raw: unknown): ReleaseStageBinding | undefined {
   if (typeof raw.index !== "string" || !PYPI_STAGE_INDEX_ORIGINS.includes(raw.index)) {
     return undefined;
   }
-  return { protocol: "pep694", index: raw.index, artifactBound: raw.artifactBound === true };
+  return {
+    protocol: "pep694",
+    index: raw.index,
+    artifactBound: raw.artifactBound === true,
+    ...(raw.managed === true ? { managed: true } : {}),
+  };
 }
 
 function parsePyPiArtifactInputs(raw: unknown, field: string): PyPiArtifactInput[] {

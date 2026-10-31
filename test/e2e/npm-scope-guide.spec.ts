@@ -256,6 +256,11 @@ async function installSettingsMocks(
       return;
     }
 
+    if (path === "/api/v1/pypi-project-tokens") {
+      await fulfillJson(route, { tokens: [], indexes: ["https://pypi.org"] });
+      return;
+    }
+
     if (path.endsWith("/notification-recipients")) {
       await fulfillJson(route, { recipients: [] });
       return;
