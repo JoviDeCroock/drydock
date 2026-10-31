@@ -954,6 +954,14 @@ export async function readTarStream(
   // coerces that to a Number (and its typeflag-0 decode then throws on it),
   // but a GNU `L`/`N` long name of the same digits stays a string.
   let paxPathNumeric = false;
+  // How the pending record was built. node-tar merges every metadata header
+  // before a member into one record, last value winning. CPython's tarfile
+  // (pip's reader) lets the first record win, POSIX treats an empty pax value
+  // as deleting the field, and uv's tar-codec refuses these shapes outright.
+  // The path recorded here stays node-tar's; these counts only disclose that
+  // the answer depends on the reader.
+  let metaShape = null;
+  const globalNotices = new Set();
   let retainedBytes = 0;
   let entryCount = 0;
   let retainedTextCount = 0;
@@ -995,6 +1003,94 @@ export async function readTarStream(
         kind: "non-regular",
         path: "<archive>",
         detail: `suspicious entry limit reached (${suspiciousLimit}); additional entries omitted`,
+      });
+    }
+  }
+
+  function noteMetadata(type, parsed) {
+    if (!metaShape) {
+      metaShape = { gnuName: 0, gnuLink: 0, paxPath: 0, paxLinkpath: 0, paxSize: 0, empty: [] };
+    }
+    if (type === "L" || type === "N") metaShape.gnuName += 1;
+    else if (type === "K") metaShape.gnuLink += 1;
+    else {
+      if (typeof parsed.path === "string") metaShape.paxPath += 1;
+      if (typeof parsed.linkpath === "string") metaShape.paxLinkpath += 1;
+      if (typeof parsed.size === "string") metaShape.paxSize += 1;
+      // parsePax keeps `key=` and a bare `key` alike as "", the
+      // present-but-empty record node-tar applies and POSIX defines as deleting
+      // the field. Only the keys that decide where bytes land are disclosed.
+      for (const key of ["path", "linkpath", "size"]) {
+        if (parsed[key] === "" && !metaShape.empty.includes(key)) metaShape.empty.push(key);
+      }
+    }
+  }
+
+  // One entry per member, so repeating the shape cannot spend the suspicious
+  // cap faster than the archive spends entries.
+  function discloseMetadataShape(path) {
+    const shape = metaShape;
+    metaShape = null;
+    if (!shape) return;
+    const details = [];
+    if (shape.gnuName > 0 && shape.paxPath > 0) {
+      details.push(
+        "member carries both a GNU long-name record (`L`/`N`) and a pax `path` record; node-tar merges them and keeps whichever came last, while other extractors honor one tar family over the other or refuse the archive",
+      );
+    }
+    if (shape.gnuLink > 0 && shape.paxLinkpath > 0) {
+      details.push(
+        "member carries both a GNU long-link record (`K`) and a pax `linkpath` record; node-tar merges them and keeps whichever came last, while other extractors honor one tar family over the other or refuse the archive",
+      );
+    }
+    const repeated = [
+      [shape.gnuName, "GNU long-name records (`L`/`N`)", "path"],
+      [shape.gnuLink, "GNU long-link records (`K`)", "link target"],
+      [shape.paxPath, "pax extended headers that set `path`", "path"],
+      [shape.paxLinkpath, "pax extended headers that set `linkpath`", "link target"],
+      [shape.paxSize, "pax extended headers that set `size`", "body length"],
+    ];
+    for (const [count, what, field] of repeated) {
+      if (count > 1) {
+        details.push(
+          `member carries ${count} ${what}; node-tar uses the last, other extractors may use the first, so the ${field} depends on the extractor`,
+        );
+      }
+    }
+    for (const key of shape.empty) {
+      details.push(
+        key === "size"
+          ? "member's pax header carries an empty `size` record (a tombstone); node-tar reads a zero-length body, while a reader that treats it as deleting the field uses the header's own size, so the two walk the rest of the archive on different block boundaries"
+          : `member's pax header carries an empty \`${key}\` record (a tombstone); node-tar takes the empty value, while a reader that treats it as deleting the field falls back to the header's own ${key === "path" ? "name" : "linkname"} field or an earlier record`,
+      );
+    }
+    if (details.length) {
+      addSuspicious({ kind: "parser-differential", path, detail: details.join("; ") });
+    }
+  }
+
+  // A global header applies archive-wide, so each differential key is
+  // disclosed once rather than per header.
+  function discloseGlobalRecord(parsed) {
+    if (
+      (typeof parsed.path === "string" || typeof parsed.linkpath === "string") &&
+      !globalNotices.has("path")
+    ) {
+      globalNotices.add("path");
+      addSuspicious({
+        kind: "parser-differential",
+        path: "<archive>",
+        detail:
+          "a pax global header sets `path` or `linkpath`; node-tar ignores both, while extractors that apply global records name the following entries by it",
+      });
+    }
+    if (typeof parsed.size === "string" && !globalNotices.has("size")) {
+      globalNotices.add("size");
+      addSuspicious({
+        kind: "parser-differential",
+        path: "<archive>",
+        detail:
+          "a pax global header sets `size`; node-tar applies it to every following entry without its own size, while extractors that ignore a global size read the header's own, so the two walk the archive on different block boundaries",
       });
     }
   }
@@ -1224,10 +1320,13 @@ export async function readTarStream(
             // entries (node-tar drops both when merging it in) but its other
             // attributes, `size` among them, do. It does not clear the pending
             // local record either.
-            paxGlobal = { ...paxGlobal, ...parsePax(body) };
+            const parsed = parsePax(body);
+            discloseGlobalRecord(parsed);
+            paxGlobal = { ...paxGlobal, ...parsed };
           } else if (type === "x" || type === "X") {
             const parsed = parsePax(body);
             if (typeof parsed.path === "string") paxPathNumeric = /^[0-9]+$/.test(parsed.path);
+            noteMetadata(type, parsed);
             pax = { ...pax, ...parsed };
             if (typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
               throw tarError("invalid pax path");
@@ -1236,6 +1335,7 @@ export async function readTarStream(
             // readString already stops at the first NUL terminator, so the
             // long-name payload is implicitly trimmed at the NUL boundary.
             const candidate = readString(body, 0, body.length);
+            noteMetadata(type, null);
             if (type === "K") {
               // Long link target. Parsed only so it cannot be mistaken for an
               // entry of its own; link targets are not reviewed here.
@@ -1403,6 +1503,7 @@ export async function readTarStream(
           retainedByPath.set(path, contributed);
           retainedBytes += contributed;
         }
+        discloseMetadataShape(path || clipTextSample(rawCandidate, 256) || "<unnamed>");
         pax = null;
         paxPathNumeric = false;
       } else {
@@ -1419,6 +1520,7 @@ export async function readTarStream(
           path: reportedPath,
           detail: `typeflag ${reportedType} (${describeNonRegularType(reportedType)})`,
         });
+        discloseMetadataShape(reportedPath || "<unnamed>");
         if (!(await discard(size))) throw tarError("truncated tar entry");
         pax = null;
         paxPathNumeric = false;
@@ -1428,6 +1530,9 @@ export async function readTarStream(
       // buffer reader tolerated a trailing partial block.
       if (padding > 0) await discard(padding);
     }
+    // Metadata no member consumed (every later header rejected, or the archive
+    // ended) still decided how npm walked the blocks after it.
+    discloseMetadataShape("<archive>");
     // The aggregate demotion notices were pushed at first occurrence (so they
     // survive the suspicious-entry cap); the final counts only exist now.
     if (budgetNotice) {

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import * as tarParser from "../server/lib/tar-parser.js";
 import {
@@ -7,6 +8,7 @@ import {
   buildTarHeaderOnly,
   concatBytes,
   encoder,
+  paxBody,
   sealTarHeader,
   tarEntriesOnly,
 } from "./helpers/archive-fixtures";
@@ -593,6 +595,294 @@ describe("readTar PAX and GNU long-name handling", () => {
     ]);
     const { files } = await parseFull(tar);
     expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+});
+
+// node-tar merges every metadata header before a member into one record, last
+// value winning; first-wins readers (CPython tarfile), family-strict readers
+// (uv's tar-codec) and POSIX tombstone semantics resolve the same bytes to a
+// different tree. The recorded path stays node-tar's; the shape is disclosed.
+describe("readTar metadata headers other tar readers resolve differently", () => {
+  const metadataDisclosures = (suspicious) =>
+    suspicious.filter(
+      (entry) =>
+        entry.kind === "parser-differential" && /^(member|a pax global header)/.test(entry.detail),
+    );
+
+  test("discloses a GNU long name and a pax path on one member, keeping node-tar's last-wins path", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "L", body: "package/decoy.js\0" },
+      { name: "PaxHeader", type: "x", body: paxBody([["path", "package/index.js"]]) },
+      { name: "ignored", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "index.js",
+        detail: expect.stringMatching(
+          /^member carries both a GNU long-name record .* and a pax `path` record/,
+        ),
+      },
+    ]);
+  });
+
+  test("discloses a GNU long link and a pax linkpath on one link member", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "K", body: "target-a\0" },
+      { name: "PaxHeader", type: "x", body: paxBody([["linkpath", "target-b"]]) },
+      { name: "package/link", type: "2", linkname: "target" },
+    ]);
+    const { suspicious } = await parseFull(tar);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "link",
+        detail: expect.stringMatching(
+          /^member carries both a GNU long-link record \(`K`\) and a pax `linkpath` record/,
+        ),
+      },
+    ]);
+  });
+
+  test("discloses two GNU long-name records and records the last, as node-tar does", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "L", body: "package/install.js\0" },
+      { name: "././@LongLink", type: "N", body: "package/docs/notes.txt\0" },
+      { name: "ignored", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["docs/notes.txt"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "docs/notes.txt",
+        detail:
+          "member carries 2 GNU long-name records (`L`/`N`); node-tar uses the last, other extractors may use the first, so the path depends on the extractor",
+      },
+    ]);
+  });
+
+  test("emits the disclosure the PyPI corpus fixture pins, for the sdist bytes it describes", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "./fixtures/security-corpus/cases-pypi/20-sdist-repeated-gnu-long-name.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const tar = buildTar([
+      { name: "demo_package-1.2.0/PKG-INFO", body: "Metadata-Version: 2.3\n" },
+      { name: "././@LongLink", type: "L", body: "demo_package-1.2.0/setup.py\0" },
+      { name: "././@LongLink", type: "L", body: "demo_package-1.2.0/docs/notes.txt\0" },
+      { name: "././@LongLink", body: "Release notes for 1.2.0\n" },
+    ]);
+    const { suspicious } = await readTar(tar.buffer, 2_500, 25 * 1024 * 1024, 0, "keep");
+    expect(suspicious).toEqual(fixture.artifacts[0].suspiciousEntries);
+  });
+
+  test("discloses two GNU long-link records on one member", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "K", body: "target-a\0" },
+      { name: "././@LongLink", type: "K", body: "target-b\0" },
+      { name: "package/link", type: "2", linkname: "target" },
+    ]);
+    const { suspicious } = await parseFull(tar);
+    expect(metadataDisclosures(suspicious).map((entry) => entry.detail)).toEqual([
+      "member carries 2 GNU long-link records (`K`); node-tar uses the last, other extractors may use the first, so the link target depends on the extractor",
+    ]);
+  });
+
+  test("discloses two pax headers that each set path on one member", async () => {
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["path", "package/install.js"]]) },
+      { name: "PaxHeader", type: "X", body: paxBody([["path", "package/readme.txt"]]) },
+      { name: "ignored", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["readme.txt"]);
+    expect(metadataDisclosures(suspicious).map((entry) => entry.detail)).toEqual([
+      "member carries 2 pax extended headers that set `path`; node-tar uses the last, other extractors may use the first, so the path depends on the extractor",
+    ]);
+  });
+
+  test("joins every ambiguity on one member into a single entry", async () => {
+    const tar = buildTar([
+      { name: "././@LongLink", type: "L", body: "package/a.js\0" },
+      { name: "././@LongLink", type: "L", body: "package/b.js\0" },
+      { name: "PaxHeader", type: "x", body: paxBody([["path", "package/c.js"]]) },
+      { name: "ignored", body: "x = 1\n" },
+    ]);
+    const disclosures = metadataDisclosures((await parseFull(tar)).suspicious);
+    expect(disclosures).toHaveLength(1);
+    expect(disclosures[0].path).toBe("c.js");
+    expect(disclosures[0].detail.split("; member ")).toHaveLength(2);
+  });
+
+  test("discloses a present-but-empty pax size without changing node-tar's zero-length read", async () => {
+    // node-tar reads `size=` as a zero-length body, so the header's declared
+    // body is walked as further headers: here, the `hidden.js` entry.
+    const hidden = tarEntriesOnly(buildTar([{ name: "package/hidden.js", body: "y = 2\n" }]));
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: paxBody([["size", ""]]) }])),
+      buildTarHeaderOnly({ name: "package/cover.js", size: hidden.length }),
+      hidden,
+      new Uint8Array(TAR_BLOCK * 2),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["cover.js", "hidden.js"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "cover.js",
+        detail: expect.stringMatching(
+          /^member's pax header carries an empty `size` record \(a tombstone\)/,
+        ),
+      },
+    ]);
+  });
+
+  test("treats a bare `size` record as the same empty value node-tar applies", async () => {
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["size"]]) },
+      { name: "package/empty.js", body: "" },
+    ]);
+    const disclosures = metadataDisclosures((await parseFull(tar)).suspicious);
+    expect(disclosures.map((entry) => entry.detail)).toEqual([
+      expect.stringMatching(/empty `size` record \(a tombstone\)/),
+    ]);
+  });
+
+  test("discloses an empty pax path under a ustar prefix beside the unrepresentable-path entry", async () => {
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["path", ""]]) },
+      { name: "ignored.js", prefix: "package", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files).toEqual([]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        // The same placeholder the unrepresentable-path entry for it carries.
+        path: "<unnamed>",
+        detail: expect.stringMatching(
+          /^member's pax header carries an empty `path` record \(a tombstone\).*header's own name field/,
+        ),
+      },
+    ]);
+  });
+
+  test("discloses an empty pax path no member consumes at archive level", async () => {
+    // Without a prefix node-tar rejects every header under the empty path, so
+    // no member ever takes the pending record.
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["path", ""]]) },
+      { name: "package/index.js", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files).toEqual([]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringMatching(/empty `path` record \(a tombstone\)/),
+      },
+    ]);
+  });
+
+  test("discloses global headers that set path or size once per archive", async () => {
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["path", "package/decoy.txt"]]) },
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["linkpath", "elsewhere"]]) },
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["size", "6"]]) },
+      { name: "package/binding.gyp", body: "x = 1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(metadataDisclosures(suspicious)).toEqual([
+      {
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringMatching(
+          /^a pax global header sets `path` or `linkpath`; node-tar ignores both/,
+        ),
+      },
+      {
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringMatching(/^a pax global header sets `size`; node-tar applies it/),
+      },
+    ]);
+  });
+
+  test("discloses one entry per affected member", async () => {
+    const twoNames = (leaf) => [
+      { name: "././@LongLink", type: "L", body: `package/${leaf}-a.js\0` },
+      { name: "././@LongLink", type: "L", body: `package/${leaf}-b.js\0` },
+      { name: "ignored", body: "x = 1\n" },
+    ];
+    const tar = buildTar([...twoNames("one"), { name: "package/plain.js" }, ...twoNames("two")]);
+    const disclosures = metadataDisclosures((await parseFull(tar)).suspicious);
+    expect(disclosures.map((entry) => entry.path)).toEqual(["one-b.js", "two-b.js"]);
+  });
+
+  test("stays quiet on the shapes publisher toolchains emit", async () => {
+    // npm pack / node-tar: one `x` per long-named member. GNU tar and tar-rs
+    // (maturin): one `L`, plus one `K` for a long link. A pax header carrying
+    // only non-path keys beside an `L` disagrees on no field. git archive: a
+    // `g` header carrying only `comment`. A zero-length metadata entry never
+    // enters node-tar's record.
+    const longName = "package/" + "segment/".repeat(14) + "leaf.js";
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["comment", "0123abcd"]]) },
+      {
+        name: "PaxHeader",
+        type: "x",
+        body: paxBody([
+          ["path", longName],
+          ["mtime", "1700000000.5"],
+        ]),
+      },
+      { name: "ignored", body: "a\n" },
+      { name: "././@LongLink", type: "L", body: "package/long/name.js\0" },
+      { name: "././@LongLink", type: "K", body: "target\0" },
+      { name: "package/hardlink", type: "1", linkname: "target" },
+      {
+        name: "PaxHeader",
+        type: "x",
+        body: paxBody([
+          ["mtime", "1700000000"],
+          ["uname", "builder"],
+        ]),
+      },
+      { name: "././@LongLink", type: "L", body: "package/other/name.js\0" },
+      { name: "ignored", body: "b\n" },
+      { name: "././@LongLink", type: "L", body: "" },
+      { name: "././@LongLink", type: "L", body: "package/zero/name.js\0" },
+      { name: "ignored", body: "c\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual([
+      longName.replace(/^package\//, ""),
+      "other/name.js",
+      "zero/name.js",
+    ]);
+    expect(metadataDisclosures(suspicious)).toEqual([]);
+  });
+
+  test("an oversized metadata header node-tar ignores does not count toward repeats", async () => {
+    const oversized = paxBody([["path", "package/" + "a".repeat(1024 * 1024)]]);
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: oversized },
+      { name: "PaxHeader", type: "x", body: paxBody([["path", "package/real.js"]]) },
+      { name: "ignored", body: "x\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["real.js"]);
+    expect(metadataDisclosures(suspicious)).toEqual([]);
   });
 });
 

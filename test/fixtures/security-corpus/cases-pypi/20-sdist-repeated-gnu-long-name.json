@@ -1,0 +1,61 @@
+{
+  "id": "pypi-sdist-repeated-gnu-long-name",
+  "title": "sdist member carries two GNU long-name records",
+  "category": "archive-structure",
+  "intent": "the reviewer reads the member under node-tar's last long name (docs/notes.txt) while a first-wins extractor writes it under the first; the tar reader discloses the metadata shape instead of silently picking one",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 64,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 80,
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/docs/notes.txt",
+          "size": 24,
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "flags": [],
+          "textSample": "Release notes for 1.2.0\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "parser-differential",
+          "path": "demo_package-1.2.0/docs/notes.txt",
+          "detail": "member carries 2 GNU long-name records (`L`/`N`); node-tar uses the last, other extractors may use the first, so the path depends on the extractor"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/docs/notes.txt"
+    }
+  ]
+}
