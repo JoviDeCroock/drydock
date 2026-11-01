@@ -6,7 +6,7 @@
  * Every decision writes an audit event carrying the risk the reviewer actually
  * saw, so an override stays attributable after the fact.
  */
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
 import { scanEcosystem } from "../lib/public-feed";
@@ -53,6 +53,10 @@ export async function recordScanDecision(
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
+        // A gate package decides through `recordGatePackageDecision`, which
+        // also settles the gate; a bare verdict here would leave the gate and
+        // its held releases out of step with the scan.
+        ne(scans.source, "workflow_gate"),
       ),
     )
     .returning({

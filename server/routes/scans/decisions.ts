@@ -59,6 +59,9 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     // Existence check only — skip the R2 artifact load; the detail is discarded.
     const existing = await getScan(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
+    if (existing.scan.source === "workflow_gate") {
+      return c.json({ error: "decide a gated release on its workflow gate" }, 409);
+    }
     if (existing.scan.registryStatusSupersededAt) {
       return c.json(
         { error: "decision cannot be changed after this staged release was superseded" },
