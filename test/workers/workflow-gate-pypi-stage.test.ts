@@ -254,6 +254,73 @@ describe("PEP 694 two-gate staging (mode A)", () => {
     expectUnlinked(await runGate({ reviewGate: { environment: "pypi-publish" } }));
   });
 
+  test("an approved review in another run of the same repository is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { otherRun: true } }));
+  });
+
+  test("an approved review gate whose package is undecided is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { approve: "gate_only" } }));
+  });
+
+  test("an approved package on a review gate nobody approved is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { approve: "package_only" } }));
+  });
+
+  test("a scan of a Drydock-held session (mode B) is not a link", async () => {
+    const run = await runGate({
+      reviewGate: {
+        reviewSummary: (summary) => {
+          const stagedPublish = summary.stagedPublish as { provenance: Record<string, unknown> };
+          return {
+            ...summary,
+            stagedPublish: {
+              ...stagedPublish,
+              provenance: { ...stagedPublish.provenance, stage: { protocol: "pep694" } },
+            },
+          };
+        },
+      },
+    });
+    expectUnlinked(run);
+  });
+
+  test("another stage gate's verification is not a link", async () => {
+    const run = await runGate({
+      reviewGate: {
+        reviewSummary: (summary) => ({
+          ...summary,
+          stageVerification: {
+            protocol: "pep694",
+            index: "https://pypi.org",
+            reviewedGateId: crypto.randomUUID(),
+            reviewedScanId: crypto.randomUUID(),
+            files: [],
+            verifiedAt: new Date().toISOString(),
+          },
+        }),
+      },
+    });
+    expectUnlinked(run);
+  });
+
+  test("a review gate rejected on an earlier attempt and approved on a re-run links", async () => {
+    const run = await runGate({
+      reviewGate: { otherAttempt: { decision: "rejected", when: "before" } },
+    });
+    expect(run.gate).toMatchObject({ status: "pending" });
+    const [linked] = await gateScans(run);
+    expect(
+      (linked.summaryJson as { stageVerification?: { reviewedGateId: string } }).stageVerification
+        ?.reviewedGateId,
+    ).toBe(run.review!.gateId);
+  });
+
+  test("a review gate rejected on a re-run after its approval is not a link", async () => {
+    expectUnlinked(
+      await runGate({ reviewGate: { otherAttempt: { decision: "rejected", when: "after" } } }),
+    );
+  });
+
   test("a stage registered for a version the review did not cover blocks", async () => {
     const run = await runGate({
       artifactFiles: {},

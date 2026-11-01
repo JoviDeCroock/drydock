@@ -25,6 +25,7 @@ import {
   sealPyPiToken,
 } from "../lib/ecosystems/pypi/project-token";
 import { PYPI_STAGE_INDEX_ORIGINS } from "../lib/ecosystems/pypi/types";
+import { listReleaseTargetsForOrganization } from "../lib/github-app/persistence";
 import type { Bindings, Variables } from "../types";
 
 /**
@@ -39,13 +40,22 @@ pypiProjectTokenRoutes.get("/", async (c) => {
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const rows = await listPyPiProjectTokens(db, organizationId);
-  return c.json({ tokens: rows.map(publicPyPiProjectToken), indexes: PYPI_STAGE_INDEX_ORIGINS });
+  return c.json({
+    tokens: rows.map(publicPyPiProjectToken),
+    indexes: PYPI_STAGE_INDEX_ORIGINS,
+    repositories: await stagingRepositories(db, organizationId),
+  });
 });
 
 pypiProjectTokenRoutes.post("/", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = await readJsonObject<{ project?: unknown; index?: unknown; token?: unknown }>(c);
+  const body = await readJsonObject<{
+    project?: unknown;
+    index?: unknown;
+    token?: unknown;
+    repositoryId?: unknown;
+  }>(c);
   const project = typeof body.project === "string" ? body.project.trim() : "";
   const index = typeof body.index === "string" ? body.index.trim() : "https://pypi.org";
   const token = typeof body.token === "string" ? body.token.trim() : "";
@@ -64,6 +74,17 @@ pypiProjectTokenRoutes.post("/", async (c) => {
   const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
   const limited = await guardRateLimit(c, tokenWriteLimit(organizationId), TOKEN_LIMIT_MESSAGE);
   if (limited) return limited;
+  // One repository the organization already gates; no other repository's
+  // gate can stage with this token.
+  const repository = (await stagingRepositories(db, organizationId)).find(
+    (candidate) => candidate.repositoryId === body.repositoryId,
+  );
+  if (!repository) {
+    return c.json(
+      { error: "repositoryId must be a repository mapped to a PyPI release target" },
+      400,
+    );
+  }
   if (await findPyPiProjectToken(db, organizationId, index, normalized)) {
     return c.json({ error: "a token for this project is already stored; rotate it instead" }, 409);
   }
@@ -71,6 +92,8 @@ pypiProjectTokenRoutes.post("/", async (c) => {
     organizationId,
     projectName: normalized,
     indexOrigin: index,
+    repositoryId: repository.repositoryId,
+    repositoryFullName: repository.repositoryFullName,
     ...(await sealPyPiToken(c.env, token)),
     validatedAt: new Date(),
     lastUsedAt: null,
@@ -161,6 +184,23 @@ pypiProjectTokenRoutes.delete("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+/** Repositories with a release target that can gate PyPI (pinned or auto-detect). */
+async function stagingRepositories(
+  db: Parameters<typeof listReleaseTargetsForOrganization>[0],
+  organizationId: string,
+): Promise<Array<{ repositoryId: number; repositoryFullName: string }>> {
+  const targets = await listReleaseTargetsForOrganization(db, organizationId);
+  const byId = new Map<number, string>();
+  for (const target of targets) {
+    if (target.ecosystem === null || target.ecosystem === "pypi") {
+      byId.set(target.repositoryId, target.repositoryFullName);
+    }
+  }
+  return [...byId]
+    .map(([repositoryId, repositoryFullName]) => ({ repositoryId, repositoryFullName }))
+    .sort((a, b) => a.repositoryFullName.localeCompare(b.repositoryFullName));
+}
+
 const TOKEN_LIMIT_MESSAGE = "PyPI token rate limit exceeded";
 
 function tokenWriteLimit(organizationId: string) {
@@ -172,12 +212,16 @@ async function recordTokenEvent(
   organizationId: string,
   actorUserId: string,
   type: string,
-  row: { projectName: string; indexOrigin: string },
+  row: { projectName: string; indexOrigin: string; repositoryFullName: string },
 ): Promise<void> {
   await recordScanEvent(db, {
     organizationId,
     actorUserId,
     type,
-    metadata: { projectName: row.projectName, index: row.indexOrigin },
+    metadata: {
+      projectName: row.projectName,
+      index: row.indexOrigin,
+      repository: row.repositoryFullName,
+    },
   });
 }

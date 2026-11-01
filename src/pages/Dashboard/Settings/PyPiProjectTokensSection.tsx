@@ -15,6 +15,9 @@ export interface PyPiProjectToken {
   id: string;
   projectName: string;
   indexOrigin: string;
+  /** The only repository whose gates may stage with this token. */
+  repositoryId: number;
+  repositoryFullName: string;
   tokenFingerprint: string;
   tokenLast4: string | null;
   validatedAt: number | null;
@@ -25,6 +28,11 @@ export interface PyPiProjectToken {
 
 export type TokenActionResult = { ok: true } | { ok: false; message: string };
 
+interface StagingRepository {
+  repositoryId: number;
+  repositoryFullName: string;
+}
+
 const BASE = "/api/v1/pypi-project-tokens";
 const DEFAULT_INDEX = "https://pypi.org";
 
@@ -33,6 +41,7 @@ const DEFAULT_INDEX = "https://pypi.org";
 export const PyPiProjectTokensModel = createModel(() => {
   const tokens = signal<PyPiProjectToken[]>([]);
   const indexes = signal<string[]>([DEFAULT_INDEX]);
+  const repositories = signal<StagingRepository[]>([]);
   const loaded = signal(false);
   const loadError = signal<string | null>(null);
   // The in-flight request, as `add` or `<action>:<token id>`.
@@ -58,6 +67,7 @@ export const PyPiProjectTokensModel = createModel(() => {
   return {
     tokens,
     indexes,
+    repositories,
     loaded,
     loadError,
     pending,
@@ -66,9 +76,14 @@ export const PyPiProjectTokensModel = createModel(() => {
     async load(): Promise<void> {
       loadError.value = null;
       try {
-        const data = await apiFetch<{ tokens: PyPiProjectToken[]; indexes: string[] }>(BASE);
+        const data = await apiFetch<{
+          tokens: PyPiProjectToken[];
+          indexes: string[];
+          repositories?: StagingRepository[];
+        }>(BASE);
         tokens.value = data.tokens;
         if (data.indexes.length) indexes.value = data.indexes;
+        repositories.value = data.repositories ?? [];
       } catch (err) {
         loadError.value = errorMessage(err);
       } finally {
@@ -76,11 +91,17 @@ export const PyPiProjectTokensModel = createModel(() => {
       }
     },
 
-    add(project: string, index: string, token: string): Promise<TokenActionResult> {
+    add(
+      project: string,
+      index: string,
+      repositoryId: number,
+      token: string,
+    ): Promise<TokenActionResult> {
       return run("add", async () => {
         const data = await apiJson<{ token: PyPiProjectToken }>(BASE, {
           project: project.trim(),
           index,
+          repositoryId,
           token: token.trim(),
         });
         tokens.value = [...tokens.peek(), data.token];
@@ -164,8 +185,9 @@ export function PyPiProjectTokensSection({
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
           Preview of PyPI's draft Upload 2.0 (PEP 694). Store a token scoped to a single project and
-          Drydock holds that project's staged release, publishes it when a person approves the
-          workflow gate, and cancels it on rejection; the token never enters the review sandbox.
+          bound to one repository, and Drydock holds that project's staged release for that
+          repository's gates, publishes it when a person approves the workflow gate, and cancels it
+          on rejection; the token never enters the review sandbox.
         </Muted>
 
         <Show when={model.loaded} fallback={<LoadingLine>loading PyPI tokens</LoadingLine>}>
@@ -267,6 +289,7 @@ function TokenRow({
           <MonoDetail
             parts={[
               indexHost(token.indexOrigin),
+              token.repositoryFullName,
               token.tokenLast4 ? `…${token.tokenLast4}` : null,
               token.validatedAt === null
                 ? "not validated"
@@ -388,11 +411,19 @@ function TokenRow({
 function AddTokenForm({ model }: { model: TokensModel }) {
   const project = useSignal("");
   const index = useSignal(DEFAULT_INDEX);
+  const chosenRepository = useSignal("");
   const secret = useSignal("");
   const failure = useSignal<string | null>(null);
+  // The first mapped repository until the maintainer picks another.
+  const repository = useComputed(
+    () => chosenRepository.value || String(model.repositories.value[0]?.repositoryId ?? ""),
+  );
+  const noRepositories = useComputed(
+    () => model.loaded.value && model.repositories.value.length === 0,
+  );
   const addLabel = useComputed(() => (model.pending.value === "add" ? "Adding…" : "Add token"));
   const addDisabled = useComputed(
-    () => model.busy.value || !project.value.trim() || !secret.value.trim(),
+    () => model.busy.value || !project.value.trim() || !secret.value.trim() || !repository.value,
   );
 
   const onAdd = async (event: Event) => {
@@ -400,14 +431,20 @@ function AddTokenForm({ model }: { model: TokensModel }) {
     const token = secret.peek();
     secret.value = "";
     failure.value = null;
-    const result = await model.add(project.peek(), index.peek(), token);
+    const result = await model.add(project.peek(), index.peek(), Number(repository.peek()), token);
     if (result.ok) project.value = "";
     else failure.value = result.message;
   };
 
   return (
     <form class="flex flex-col gap-3" onSubmit={(event) => void onAdd(event)}>
-      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)_auto] gap-3 items-end">
+      <Show when={noRepositories}>
+        <Muted class="text-[13px] m-0">
+          Map a repository to a PyPI release target on the GitHub App settings first; each token is
+          bound to one of those repositories.
+        </Muted>
+      </Show>
+      <div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_160px_minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-end">
         <Field label="PyPI project" for="pypiTokenProject">
           <Input
             id="pypiTokenProject"
@@ -431,6 +468,22 @@ function AddTokenForm({ model }: { model: TokensModel }) {
               {(origin: string) => (
                 <option key={origin} value={origin}>
                   {indexHost(origin)}
+                </option>
+              )}
+            </For>
+          </Select>
+        </Field>
+        <Field label="Repository" for="pypiTokenRepository">
+          <Select
+            id="pypiTokenRepository"
+            value={repository}
+            disabled={model.busy}
+            onChange={(value) => (chosenRepository.value = value)}
+          >
+            <For each={model.repositories}>
+              {(entry: StagingRepository) => (
+                <option key={entry.repositoryId} value={String(entry.repositoryId)}>
+                  {entry.repositoryFullName}
                 </option>
               )}
             </For>

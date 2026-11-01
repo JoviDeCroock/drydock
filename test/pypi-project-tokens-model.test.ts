@@ -10,6 +10,8 @@ function token(overrides: Partial<PyPiProjectToken> = {}): PyPiProjectToken {
     id: "tok-1",
     projectName: "demo-package",
     indexOrigin: "https://pypi.org",
+    repositoryId: 42,
+    repositoryFullName: "octo/release",
     tokenFingerprint: "fp",
     tokenLast4: "abcd",
     validatedAt: 1,
@@ -30,7 +32,11 @@ describe("PyPiProjectTokensModel", () => {
     const fetchMock = stubFetchRoutes({
       "/api/v1/pypi-project-tokens": (_url, init) => {
         if (init?.method !== "POST") {
-          return jsonResponse({ tokens: [], indexes: ["https://pypi.org"] });
+          return jsonResponse({
+            tokens: [],
+            indexes: ["https://pypi.org"],
+            repositories: [{ repositoryId: 42, repositoryFullName: "octo/release" }],
+          });
         }
         if (denied) return jsonResponse({ error: "forbidden" }, 403);
         return jsonResponse({ token: token() }, 201);
@@ -39,20 +45,24 @@ describe("PyPiProjectTokensModel", () => {
     const model = new PyPiProjectTokensModel();
     await model.load();
     expect(model.loaded.value).toBe(true);
+    expect(model.repositories.value).toEqual([
+      { repositoryId: 42, repositoryFullName: "octo/release" },
+    ]);
 
-    expect(await model.add(" demo-package ", "https://pypi.org", " pypi-secret ")).toEqual({
+    expect(await model.add(" demo-package ", "https://pypi.org", 42, " pypi-secret ")).toEqual({
       ok: true,
     });
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(body).toEqual({
       project: "demo-package",
       index: "https://pypi.org",
+      repositoryId: 42,
       token: "pypi-secret",
     });
     expect(JSON.stringify(model.tokens.value)).not.toContain("pypi-secret");
 
     denied = true;
-    expect(await model.add("other", "https://pypi.org", "pypi-x")).toEqual({
+    expect(await model.add("other", "https://pypi.org", 42, "pypi-x")).toEqual({
       ok: false,
       message: "forbidden",
     });

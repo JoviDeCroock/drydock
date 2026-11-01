@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { getScan } from "../../server/db/scans";
 import { addOrganizationMember } from "../../server/db/invitations";
@@ -21,8 +21,11 @@ import {
   listGatePackageScans,
 } from "../../server/lib/github-app/webhook-gates";
 import { executeWorkflowGateJob, runHeldReleaseUpkeep } from "../../server/lib/workflow-gate-job";
+import type { QueueMessage } from "../../server/lib/scan/job";
+import { queue } from "../../server/queue";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { pypiProjectTokenRoutes } from "../../server/routes/pypi-project-tokens";
+import { scanDecisionRoutes } from "../../server/routes/scans/decisions";
 import type { Bindings } from "../../server/types";
 import {
   FAKE_SESSION_TOKEN,
@@ -34,6 +37,7 @@ import {
   fakePyPiToken,
   sha256HexOf,
 } from "../helpers/pep694-fake";
+import { buildZip } from "../helpers/archive-fixtures";
 import { buildTestApp, call } from "./helpers/app";
 import { buildCtxWithGateway } from "./helpers/gate";
 import {
@@ -56,15 +60,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The repository of the organization's newest gate (the gate under test), if any. */
+async function gateRepository(owner: SeededUser): Promise<number> {
+  const [gate] = await owner.db
+    .select({ repositoryId: schema.githubWorkflowGates.repositoryId })
+    .from(schema.githubWorkflowGates)
+    .where(eq(schema.githubWorkflowGates.organizationId, owner.organizationId))
+    .orderBy(desc(schema.githubWorkflowGates.createdAt))
+    .limit(1);
+  return gate?.repositoryId ?? 1;
+}
+
 async function seedProjectToken(
   owner: SeededUser,
   projectName = "demo-package",
   token = fakePyPiToken([projectName]),
+  repositoryId?: number,
 ) {
   const row = await insertPyPiProjectToken(owner.db, {
     organizationId: owner.organizationId,
     projectName,
     indexOrigin: "https://pypi.org",
+    repositoryId: repositoryId ?? (await gateRepository(owner)),
+    repositoryFullName: "octo/release",
     ...(await sealPyPiToken(env, token)),
     validatedAt: new Date(),
     lastUsedAt: null,
@@ -72,6 +90,41 @@ async function seedProjectToken(
   });
   if (!row) throw new Error("token seed failed");
   return row;
+}
+
+/** A held session row for `session` on a new gate of `repositoryId`; returns that gate's id. */
+async function seedHeldSessionOnOtherGate(
+  owner: SeededUser,
+  session: FakeUploadSession,
+  repositoryId: number,
+): Promise<string> {
+  const gateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null, repositoryId });
+  const [token] = await owner.db
+    .select({ id: schema.pypiProjectTokens.id })
+    .from(schema.pypiProjectTokens)
+    .where(eq(schema.pypiProjectTokens.organizationId, owner.organizationId));
+  const sealed = await sealSecret(
+    env,
+    "pypi-session-links",
+    JSON.stringify({ session: session.sessionUrl, stage: STAGE_URL }),
+  );
+  const stored = await upsertPyPiStageSession(owner.db, {
+    organizationId: owner.organizationId,
+    gateId,
+    tokenId: token.id,
+    projectName: "demo-package",
+    version: "1.2.0",
+    indexOrigin: "https://pypi.org",
+    linksCiphertext: sealed.ciphertext,
+    linksNonce: sealed.nonce,
+    sessionFingerprint: await sessionFingerprint(session.sessionUrl),
+    reviewedFilesJson: [],
+    expiresAt: null,
+    lastCheckedAt: new Date(),
+  });
+  if (!("row" in stored)) throw new Error("held row seed failed");
+  await transitionPyPiStageSession(owner.db, stored.row.id, ["staging"], "held");
+  return gateId;
 }
 
 function stagePage(digests: Map<string, string>, project = "demo-package"): Response {
@@ -395,7 +448,8 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
       },
     });
 
-    // Retryable: the deployment stays pending, nothing of the wheel remains.
+    // Retryable: back to the queue, the deployment stays pending, nothing of the wheel remains.
+    expect(run.retryError).not.toBeNull();
     expect(run.gate?.status).toBe("pending");
     expect(run.decisions).toEqual([]);
     expect(run.session.state.files.has(WHEEL)).toBe(false);
@@ -443,10 +497,43 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
   test("an existing session that is not open is not staged and the gate stays pending", async () => {
     const run = await runManaged({ session: { adopt: true, status: "processing" } });
 
+    expect(run.retryError).not.toBeNull();
     expect(run.gate?.status).toBe("pending");
     expect(run.decisions).toEqual([]);
     expect(await sessionRows(run)).toEqual([]);
     expect(run.session.requests.every((request) => request.method !== "DELETE")).toBe(true);
+  });
+
+  test("an artifact whose bytes changed between the review read and the staging read is never uploaded", async () => {
+    const reference = new TextEncoder().encode(
+      drydockSessionReference([{ name: "demo-package", version: "1.2.0" }]),
+    );
+    const bundle = (wheel: Uint8Array) =>
+      buildZip([
+        { path: `dist/${WHEEL}`, body: wheel },
+        { path: `dist/${SDIST}`, body: stagedBytes(SDIST) },
+        { path: "dist/pypi-stage.json", body: reference },
+      ]);
+    // Same length, different bytes: only the digest tells them apart.
+    const swapped = new TextEncoder().encode(`Staged bytes of ${WHEEL}`);
+    let reads = 0;
+    const run = await runManaged({
+      routes: {
+        "/actions/artifacts/4242/zip": () => {
+          reads += 1;
+          return new Response(bundle(reads === 1 ? stagedBytes(WHEEL) : swapped), {
+            headers: { "content-type": "application/zip" },
+          });
+        },
+      },
+    });
+
+    expect(reads).toBe(2);
+    expectRejected(run, "stage_session_mismatch", /changed between review and staging/);
+    expect(run.session.state.files.has(WHEEL)).toBe(false);
+    expect(run.session.requests.some((request) => request.url.endsWith(`/${WHEEL}/bytes`))).toBe(
+      false,
+    );
   });
 
   test("a stage that does not serve the uploaded digests fails closed as upload_failed", async () => {
@@ -467,33 +554,8 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
     const run = await runManaged({
       prebuilt: session,
       beforeRun: async (owner) => {
-        // An earlier run of the same release holds this index session.
-        olderGateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null });
-        const [token] = await owner.db
-          .select({ id: schema.pypiProjectTokens.id })
-          .from(schema.pypiProjectTokens)
-          .where(eq(schema.pypiProjectTokens.organizationId, owner.organizationId));
-        const sealed = await sealSecret(
-          env,
-          "pypi-session-links",
-          JSON.stringify({ session: session.sessionUrl, stage: STAGE_URL }),
-        );
-        const stored = await upsertPyPiStageSession(owner.db, {
-          organizationId: owner.organizationId,
-          gateId: olderGateId,
-          tokenId: token.id,
-          projectName: "demo-package",
-          version: "1.2.0",
-          indexOrigin: "https://pypi.org",
-          linksCiphertext: sealed.ciphertext,
-          linksNonce: sealed.nonce,
-          sessionFingerprint: await sessionFingerprint(session.sessionUrl),
-          reviewedFilesJson: [],
-          expiresAt: null,
-          lastCheckedAt: new Date(),
-        });
-        if (!("row" in stored)) throw new Error("older row seed failed");
-        await transitionPyPiStageSession(owner.db, stored.row.id, ["staging"], "held");
+        // An earlier run of the same release (same repository) holds this index session.
+        olderGateId = await seedHeldSessionOnOtherGate(owner, session, await gateRepository(owner));
       },
     });
 
@@ -506,9 +568,95 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
     // Superseded rows are not cancelable, so the older gate cannot cancel it.
     expect(run.session.requests.some((request) => request.method === "DELETE")).toBe(false);
   });
+
+  test("another repository's gate never takes over a session this repository's gate holds", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE_URL, adopt: true });
+    let holderGateId = "";
+    const run = await runManaged({
+      prebuilt: session,
+      beforeRun: async (owner) => {
+        holderGateId = await seedHeldSessionOnOtherGate(
+          owner,
+          session,
+          (await gateRepository(owner)) + 1,
+        );
+      },
+    });
+
+    const [holder] = await sessionRows({ db: run.db, gateId: holderGateId });
+    expect(holder.state).toBe("held");
+    expect(await sessionRows(run)).toEqual([]);
+    expect(run.retryError?.message).toContain("a gate of another repository still tracks");
+    expect(run.gate).toMatchObject({ status: "pending", scanId: null });
+    // Only the create/adopt and status reads: nothing removed from or uploaded to the session.
+    expect(run.session.requests.map((request) => request.method)).toEqual(["POST", "GET"]);
+  });
+
+  test("a gate of another repository cannot stage with a token bound to this one", async () => {
+    const run = await runManaged({
+      storeToken: false,
+      beforeRun: async (owner) => {
+        await seedProjectToken(
+          owner,
+          "demo-package",
+          PYPI_TOKEN,
+          (await gateRepository(owner)) + 1,
+        );
+      },
+    });
+
+    expect(run.gate).toMatchObject({ status: "rejected" });
+    expect(run.gate?.failureReason).toContain("bound to another repository");
+    expect(run.session.requests).toEqual([]);
+    expect(await sessionRows(run)).toEqual([]);
+  });
+
+  test("a second delivery while the first holds the staging lease stages nothing and retries", async () => {
+    const run = await runManaged({
+      beforeRun: async (owner) => {
+        const [gate] = await owner.db
+          .select({ id: schema.githubWorkflowGates.id })
+          .from(schema.githubWorkflowGates)
+          .where(eq(schema.githubWorkflowGates.organizationId, owner.organizationId));
+        await owner.db
+          .update(schema.githubWorkflowGates)
+          .set({
+            stagingLeaseId: "other-delivery",
+            stagingLeaseUntil: new Date(Date.now() + MINUTE),
+          })
+          .where(eq(schema.githubWorkflowGates.id, gate.id));
+      },
+    });
+
+    expect(run.retryError?.message).toContain("another delivery of this gate is staging it");
+    expect(run.session.requests).toEqual([]);
+    expect(await sessionRows(run)).toEqual([]);
+    expect(run.gate).toMatchObject({ status: "pending", scanId: null });
+    expect(run.gate?.failureReason).toContain("retrying: another delivery");
+  });
 });
 
 describe("PEP 694 mode B: human decisions", () => {
+  test("the generic scan decision route cannot decide a gate package around the gate", async () => {
+    const run = await runManaged();
+    const [pkg] = await listGatePackageScans(run.db, run.owner.organizationId, run.gateId);
+    const app = buildTestApp((root) => root.route("/api/v1/scans", scanDecisionRoutes), {
+      userId: run.owner.userId,
+      emailVerified: true,
+    });
+
+    const res = await call(app, "POST", `/api/v1/scans/${pkg.scanId}/decision`, {
+      activeOrganizationId: run.owner.organizationId,
+      body: { decision: "publish" },
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "decide a gated release on its workflow gate" });
+    const scan = await getScan(run.db, pkg.scanId, run.owner.organizationId);
+    expect(scan?.scan.decision).toBeNull();
+    expect((await sessionRows(run))[0].state).toBe("held");
+    expect(publishPosts(run)).toEqual([]);
+  });
+
   test("approval re-verifies the session and stage, then publishes (201)", async () => {
     const run = await runManaged();
     const { res, body } = await decide(run, "approved");
@@ -1144,6 +1292,25 @@ describe("PEP 694 mode B: cron upkeep", () => {
         ),
       );
     expect(errorEvent.actorUserId).toBeNull();
+    // Nothing on GitHub shows the failure, so maintainers hear it from Drydock.
+    const events = await run.readEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "github_workflow_gate.held_release_publish_failed",
+        metadataJson: expect.objectContaining({
+          gateId: run.gateId,
+          detail: "demo-package 1.2.0 ended error",
+        }),
+      }),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type.startsWith("github_workflow_gate.notification_") &&
+          (event.metadataJson as { trigger?: string } | null)?.trigger ===
+            "held_release_publish_failed",
+      ),
+    ).toBe(true);
   });
 
   test("a publish that fails before GitHub acknowledged the approval rejects the gate", async () => {
@@ -1245,6 +1412,165 @@ describe("PEP 694 mode B: cron upkeep", () => {
     );
     expect(result).toEqual({ ok: false, error: "the PyPI token for this project was removed" });
     expect((await sessionRows(run))[0].state).toBe("held");
+  });
+});
+
+describe("PEP 694 mode B: retryable staging faults", () => {
+  const DAY = 24 * 60 * MINUTE;
+
+  /** One workflow-gate message for the SCAN_QUEUE consumer, as the runtime hands it over. */
+  function queueBatch(run: ManagedRun, attempts: number) {
+    const message = {
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+      body: { kind: "workflow_gate", organizationId: run.owner.organizationId, gateId: run.gateId },
+      attempts,
+      retry: vi.fn(),
+      ack: vi.fn(),
+    };
+    const batch = {
+      queue: "drydock-scans",
+      messages: [message],
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<QueueMessage>;
+    return { batch, message };
+  }
+
+  function failingUploads() {
+    const control = { fail: true };
+    const session: Partial<FakeUploadSessionOptions> = {
+      respond: (request) =>
+        control.fail && request.method === "POST" && request.url.endsWith(`/${WHEEL}/bytes`)
+          ? new Response("upload broke", { status: 500 })
+          : null,
+    };
+    return { control, session };
+  }
+
+  test("the queue retries a staging fault with backoff and restages on a later attempt", async () => {
+    const uploads = failingUploads();
+    const run = await runManaged({ session: uploads.session });
+    expect(run.retryError).not.toBeNull();
+    expect(run.gate).toMatchObject({ status: "pending", scanId: null });
+    expect(run.gate?.failureReason).toMatch(/^retrying: /);
+
+    const first = queueBatch(run, 1);
+    await queue(first.batch, inlineEnv(run), buildCtxWithGateway());
+    expect(first.message.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
+    expect((await sessionRows(run))[0].state).toBe("upload_failed");
+
+    uploads.control.fail = false;
+    const second = queueBatch(run, 2);
+    await queue(second.batch, inlineEnv(run), buildCtxWithGateway());
+    expect(second.message.retry).not.toHaveBeenCalled();
+    expect((await sessionRows(run))[0].state).toBe("held");
+    const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
+    expect(gate?.scanId).not.toBeNull();
+    expect(gate?.status).toBe("pending");
+  });
+
+  test("after the queue gives up, a maintainer can retry a gate that has no scan yet", async () => {
+    const uploads = failingUploads();
+    const run = await runManaged({ session: uploads.session });
+    const last = queueBatch(run, 3);
+    await expect(queue(last.batch, inlineEnv(run), buildCtxWithGateway())).rejects.toThrow(
+      /upload of/,
+    );
+    expect(last.message.retry).not.toHaveBeenCalled();
+    expect(await listGatePackageScans(run.db, run.owner.organizationId, run.gateId)).toEqual([]);
+
+    const sent: unknown[] = [];
+    const res = await call(
+      gateApp(run.owner),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${run.gateId}/retry`,
+      {
+        activeOrganizationId: run.owner.organizationId,
+        envOverride: {
+          ...routeEnv(),
+          SCAN_QUEUE: { send: async (body: unknown) => void sent.push(body) },
+        } as unknown as Partial<Bindings>,
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(sent).toEqual([
+      { kind: "workflow_gate", organizationId: run.owner.organizationId, gateId: run.gateId },
+    ]);
+    const reset = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
+    expect(reset?.failureReason).toBeNull();
+
+    uploads.control.fail = false;
+    await queue(queueBatch(run, 1).batch, inlineEnv(run), buildCtxWithGateway());
+    expect((await sessionRows(run))[0].state).toBe("held");
+  });
+
+  test("a gate without a scan or a failure reason is not retryable by hand", async () => {
+    const run = await runManaged({ session: { adopt: true, status: "processing" } });
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({ failureReason: null })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+
+    const res = await call(
+      gateApp(run.owner),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${run.gateId}/retry`,
+      { activeOrganizationId: run.owner.organizationId, envOverride: routeEnv() },
+    );
+    expect(res.status).toBe(409);
+  });
+
+  test("the cron rejects staging that never reached a review fail-closed and cancels its session", async () => {
+    const uploads = failingUploads();
+    const run = await runManaged({ session: uploads.session });
+    expect((await sessionRows(run))[0].state).toBe("upload_failed");
+
+    await runHeldReleaseUpkeep(
+      inlineEnv(run),
+      buildCtxWithGateway(),
+      run.db,
+      Date.now() + DAY + MINUTE,
+    );
+
+    const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect(gate?.decisionComment).toMatch(/staging the release never completed/);
+    // The cron is global: earlier tests' stalled gates may be delivered in the same tick.
+    expect(run.decisions.map((decision) => decision.state)).toContain("rejected");
+    expect(run.decisions.every((decision) => decision.state === "rejected")).toBe(true);
+    expect((await sessionRows(run))[0].state).toBe("canceled");
+    expect(afterStaging(run).map((request) => request.method)).toContain("DELETE");
+    expect((await run.readEvents()).map((event) => event.metadataJson)).toContainEqual(
+      expect.objectContaining({ decidedBy: "automatic", reason: "staging_abandoned" }),
+    );
+  });
+
+  test("the cron leaves recent staging faults and reviewed gates alone", async () => {
+    const uploads = failingUploads();
+    const failed = await runManaged({ session: uploads.session });
+    await runHeldReleaseUpkeep(inlineEnv(failed), buildCtxWithGateway(), failed.db);
+    expect((await sessionRows(failed))[0].state).toBe("upload_failed");
+    expect(
+      (await getGateForOrganization(failed.db, failed.owner.organizationId, failed.gateId))?.status,
+    ).toBe("pending");
+
+    // Held and reviewed: waiting on a human, however long.
+    const reviewed = await runManaged();
+    await runHeldReleaseUpkeep(
+      inlineEnv(reviewed),
+      buildCtxWithGateway(),
+      reviewed.db,
+      Date.now() + DAY + MINUTE,
+    );
+    const gate = await getGateForOrganization(
+      reviewed.db,
+      reviewed.owner.organizationId,
+      reviewed.gateId,
+    );
+    expect(gate?.status).toBe("pending");
+    expect((await sessionRows(reviewed))[0].state).toBe("held");
+    expect(afterStaging(reviewed).some((request) => request.method === "DELETE")).toBe(false);
   });
 });
 
@@ -1370,19 +1696,31 @@ describe("PyPI project token routes", () => {
     const owner = await seedUser();
     const app = tokenApp(owner.userId);
     const org = { activeOrganizationId: owner.organizationId };
+    await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null });
+    const repositoryId = await gateRepository(owner);
 
+    const initial = (await (await call(app, "GET", "/api/v1/pypi-project-tokens", org)).json()) as {
+      repositories: unknown[];
+    };
+    expect(initial.repositories).toEqual([{ repositoryId, repositoryFullName: "octo/release" }]);
     const created = await call(app, "POST", "/api/v1/pypi-project-tokens", {
       ...org,
-      body: { project: "Demo_Package", index: "https://pypi.org", token: PYPI_TOKEN },
+      body: { project: "Demo_Package", index: "https://pypi.org", repositoryId, token: PYPI_TOKEN },
     });
     const createdText = await created.text();
     expect(created.status).toBe(201);
-    const { token } = JSON.parse(createdText) as { token: { id: string; projectName: string } };
-    expect(token.projectName).toBe("demo-package");
+    const { token } = JSON.parse(createdText) as {
+      token: { id: string; projectName: string; repositoryId: number; repositoryFullName: string };
+    };
+    expect(token).toMatchObject({
+      projectName: "demo-package",
+      repositoryId,
+      repositoryFullName: "octo/release",
+    });
 
     const duplicate = await call(app, "POST", "/api/v1/pypi-project-tokens", {
       ...org,
-      body: { project: "demo-package", token: PYPI_TOKEN },
+      body: { project: "demo-package", repositoryId, token: PYPI_TOKEN },
     });
     expect(duplicate.status).toBe(409);
 
@@ -1422,6 +1760,33 @@ describe("PyPI project token routes", () => {
       expect(surface).not.toContain(rotatedToken);
       expect(surface).not.toContain("tokenCiphertext");
     }
+  });
+
+  test("a token is bound to one PyPI-gated repository of the organization", async () => {
+    const owner = await seedUser();
+    const stranger = await seedUser();
+    await seedWorkflowGate(owner, { ecosystem: "npm", decision: null });
+    const npmRepository = await gateRepository(owner);
+    await seedWorkflowGate(stranger, { ecosystem: "pypi", decision: null });
+    const foreignRepository = await gateRepository(stranger);
+    const app = tokenApp(owner.userId);
+
+    for (const repositoryId of [undefined, "1", npmRepository, foreignRepository]) {
+      const res = await call(app, "POST", "/api/v1/pypi-project-tokens", {
+        activeOrganizationId: owner.organizationId,
+        body: { project: "demo-package", repositoryId, token: PYPI_TOKEN },
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        error: "repositoryId must be a repository mapped to a PyPI release target",
+      });
+    }
+    expect(
+      await owner.db
+        .select()
+        .from(schema.pypiProjectTokens)
+        .where(eq(schema.pypiProjectTokens.organizationId, owner.organizationId)),
+    ).toEqual([]);
   });
 
   test("a token not scoped to exactly this project is refused", async () => {

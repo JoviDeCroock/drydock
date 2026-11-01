@@ -3,7 +3,7 @@ import { type AppDb, createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationOwnerUserId } from "../db/organizations";
 import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
-import { WorkflowArtifactError } from "./github-app/artifacts";
+import { RetryableGateError, WorkflowArtifactError } from "./github-app/artifacts";
 import {
   type GithubAppConfig,
   GithubAppConfigError,
@@ -16,6 +16,7 @@ import {
   getGateForOrganization,
   markGateApprovalFailed,
   markGateDecided,
+  markGateStagingAbandoned,
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
@@ -28,6 +29,7 @@ import { recordProductEvent } from "./analytics";
 import { heldReleaseHooks } from "./ecosystems";
 import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
 import { completeFromLinkedReview } from "./workflow-gates/linked-review";
+import type { HeldReleaseHooks } from "./workflow-gates/types";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -98,15 +100,18 @@ async function approvalAwaitsHeldRelease(db: AppDb, gate: WorkflowGateRecord): P
 
 const UNDELIVERED_APPROVAL_COMMENT =
   "Drydock rejected this deployment: the approved release was not published before the approval could be delivered";
+const ABANDONED_STAGING_COMMENT =
+  "Drydock rejected this deployment: staging the release never completed, so there was nothing to review; the staged session was canceled";
 
 /**
  * Cron upkeep for held releases (`WorkflowGateAdapter.heldReleases`), run on
- * the scheduled tick: each adapter's `sweep`, then its `undeliveredApprovals`.
- * An approval GitHub never acknowledged (the decision request died, or the
- * guard in `executeWorkflowGateJob` held delivery back) is delivered once every
- * held release is published, or turned into a fail-closed rejection when one
- * never will be. An acknowledged approval is never touched. Never publishes
- * and never cancels: the maintainer can approve a re-run.
+ * the scheduled tick: each adapter's `sweep`, its `undeliveredApprovals`, then
+ * its `abandonedStaging`. An approval GitHub never acknowledged (the decision
+ * request died, or the guard in `executeWorkflowGateJob` held delivery back)
+ * is delivered once every held release is published, or turned into a
+ * fail-closed rejection when one never will be. An acknowledged approval is
+ * never touched. Never publishes; the only cancel is the fail-closed cleanup
+ * of staging that never reached a review. The maintainer can approve a re-run.
  */
 export async function runHeldReleaseUpkeep(
   env: Cloudflare.Env,
@@ -173,6 +178,57 @@ export async function runHeldReleaseUpkeep(
           error: describeOperationalError(err),
         });
       }
+    }
+
+    await cleanUpAbandonedStaging(env, executionCtx, db, hooks, now);
+  }
+}
+
+/**
+ * Fail-closed cleanup, not a release decision: these gates never reached a
+ * review, so nothing a human could approve exists. Reject the held deployment
+ * and cancel the staged sessions so unreviewed bytes do not sit on the index.
+ */
+async function cleanUpAbandonedStaging(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  hooks: HeldReleaseHooks,
+  now: number,
+): Promise<void> {
+  let abandoned: Array<{ organizationId: string; gateId: string }> = [];
+  try {
+    abandoned = await hooks.abandonedStaging(db, now);
+  } catch (err) {
+    emitOperationalEvent("error", "workflow_gate.held_release_cron_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+  for (const { organizationId, gateId } of abandoned) {
+    try {
+      const rejected = await markGateStagingAbandoned(db, {
+        gateId,
+        organizationId,
+        comment: ABANDONED_STAGING_COMMENT,
+      });
+      if (!rejected) continue;
+      emitOperationalEvent("warn", "github_workflow_gate.staging_abandoned", {
+        organizationId,
+        gateId,
+      });
+      await deliverFromCron(env, executionCtx, db, { organizationId, gateId });
+      await recordScanEvent(db, {
+        organizationId,
+        type: "github_workflow_gate.rejected",
+        metadata: { gateId, decidedBy: "automatic", reason: "staging_abandoned" },
+      });
+      await hooks.cancel(env, db, organizationId, gateId);
+    } catch (err) {
+      emitOperationalEvent("error", "github_workflow_gate.held_release_recovery_failed", {
+        organizationId,
+        gateId,
+        error: describeOperationalError(err),
+      });
     }
   }
 }
@@ -353,6 +409,9 @@ export async function executeWorkflowGateJob(
       durationMs: durationMsSince(startedAtMs),
       error: safe,
     });
+    // Nothing else re-runs this gate: no scan exists for the retry route or the
+    // decision route to act on, so a transient fault goes back to the queue.
+    if (err instanceof RetryableGateError) throw err;
     return;
   }
 

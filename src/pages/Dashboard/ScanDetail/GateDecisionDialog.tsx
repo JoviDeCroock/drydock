@@ -225,7 +225,7 @@ export function stageVerificationLine(pkg: GatePackageScan): string | null {
   const verification = pkg.stageVerification;
   if (!verification) return null;
   const count = verification.files.length;
-  return `${packageLabel(pkg)} · ${count} ${count === 1 ? "file" : "files"} · installable preview on ${indexHost(verification.index)} (stage URL in the stage job)`;
+  return `${packageLabel(pkg)} · ${count} ${count === 1 ? "file" : "files"} · verified ${formatDateTime(verification.verifiedAt)} · installable preview on ${indexHost(verification.index)} (stage URL in the stage job)`;
 }
 
 function StageVerifications({
@@ -245,7 +245,8 @@ function StageVerifications({
   return (
     <div class="flex flex-col gap-1">
       <Muted class="m-0 font-mono text-[11px]">
-        Staged bytes verified identical to reviewed release · PEP 694 preview
+        Staged bytes verified identical to reviewed release · PEP 694 preview · the session can
+        change until published; the publish job re-checks the digests
       </Muted>
       <ul class="m-0 p-0 list-none flex flex-col gap-1">
         {verified.map(({ pkg, line, reviewedScanId }) => (

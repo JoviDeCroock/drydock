@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "48a249ce-39e1-40bc-8a8e-4a0cfaa39e76",
+  "id": "3c739e5f-de8d-41f1-b251-6d6d80227ee3",
   "prevId": "f11dd94a-bae8-42a8-9450-3256ce58b62a",
   "tables": {
     "account": {
@@ -569,6 +569,20 @@
         },
         "decision_delivered_at": {
           "name": "decision_delivered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "staging_lease_id": {
+          "name": "staging_lease_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "staging_lease_until": {
+          "name": "staging_lease_until",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -2331,6 +2345,20 @@
         },
         "project_name": {
           "name": "project_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "repository_id": {
+          "name": "repository_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "repository_full_name": {
+          "name": "repository_full_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

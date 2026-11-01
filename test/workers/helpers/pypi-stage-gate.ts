@@ -4,6 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { vi } from "vitest";
 import { createDb } from "../../../server/db/client";
 import * as schema from "../../../server/db/schema";
+import { RetryableGateError } from "../../../server/lib/github-app/artifacts";
 import type { GithubAppEnv } from "../../../server/lib/github-app/config";
 import { getGateForOrganization } from "../../../server/lib/github-app/webhook-gates";
 import { executeWorkflowGateJob } from "../../../server/lib/workflow-gate-job";
@@ -110,22 +111,37 @@ export interface PyPiStageScenario {
 export interface ReviewGateSetup {
   /** Distributions the review gate reviews (path → bytes); defaults to WHEEL + SDIST. */
   files?: Record<string, Uint8Array>;
-  /** Record the human approval of the review gate (default true). */
-  approve?: boolean;
+  /**
+   * Record the human approval of the review gate (default true); `gate_only`
+   * approves the gate but leaves its package undecided, `package_only` the
+   * reverse.
+   */
+  approve?: boolean | "gate_only" | "package_only";
   environment?: string;
   /** Seed the review gate in another organization (same repository id and run). */
   otherOrganization?: boolean;
   /** Seed the review gate on another repository of the same organization. */
   otherRepository?: boolean;
+  /** Seed the review gate in another workflow run of the same repository. */
+  otherRun?: boolean;
+  /** Rewrite the reviewed scan's summary (e.g. to look like another kind of scan). */
+  reviewSummary?: (summary: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * Another attempt of the review gate in the same run (a GitHub re-run),
+   * decided a minute before or after the review gate's approval.
+   */
+  otherAttempt?: { decision: "approved" | "rejected"; when: "before" | "after" };
 }
 
 /** Review a plain PyPI build artifact on a gate of its own and, by default, approve it. */
 async function runReviewGate(owner: SeededUser, setup: ReviewGateSetup) {
   const reviewOwner = setup.otherOrganization ? await seedUser() : owner;
+  const environment = setup.environment ?? "pypi-stage";
   const gateId = await seedWorkflowGate(reviewOwner, {
     ecosystem: "pypi",
     decision: null,
-    environment: setup.environment ?? "pypi-stage",
+    environment,
+    ...(setup.otherRun ? { runId: 123456 } : {}),
   });
   const files = setup.files ?? {
     [`dist/${WHEEL}`]: stagedBytes(WHEEL),
@@ -155,16 +171,40 @@ async function runReviewGate(owner: SeededUser, setup: ReviewGateSetup) {
   );
   const gate = await getGateForOrganization(db, reviewOwner.organizationId, gateId);
   if (!gate?.scanId) throw new Error("review gate did not reach a decision point");
-  if (setup.approve !== false) {
-    const now = new Date();
+  const approve = setup.approve ?? true;
+  const now = new Date();
+  if (approve === true || approve === "package_only") {
     await db
       .update(schema.scans)
       .set({ decision: "publish", decidedAt: now, decidedByUserId: reviewOwner.userId })
       .where(eq(schema.scans.gateId, gateId));
+  }
+  if (approve === true || approve === "gate_only") {
     await db
       .update(schema.githubWorkflowGates)
       .set({ status: "approved", decision: "approved", decidedAt: now })
       .where(eq(schema.githubWorkflowGates.id, gateId));
+  }
+  if (setup.reviewSummary) {
+    const [scan] = await db.select().from(schema.scans).where(eq(schema.scans.gateId, gateId));
+    await db
+      .update(schema.scans)
+      .set({ summaryJson: setup.reviewSummary(scan.summaryJson as Record<string, unknown>) })
+      .where(eq(schema.scans.id, scan.id));
+  }
+  if (setup.otherAttempt) {
+    const attemptId = await seedWorkflowGate(reviewOwner, {
+      ecosystem: "pypi",
+      decision: setup.otherAttempt.decision,
+      environment,
+      repositoryId: gate.repositoryId,
+      ...(setup.otherRun ? { runId: 123456 } : {}),
+    });
+    const offset = setup.otherAttempt.when === "before" ? -60_000 : 60_000;
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ decidedAt: new Date(now.getTime() + offset) })
+      .where(eq(schema.githubWorkflowGates.id, attemptId));
   }
   const scans = await db
     .select({ id: schema.scans.id })
@@ -256,7 +296,14 @@ export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
       { kind: "workflow_gate", organizationId: owner.organizationId, gateId },
       db,
     );
-  await deliver();
+  // A retryable fault is thrown back to the queue; keep it for assertions.
+  const retryError = await deliver().then(
+    () => null,
+    (err: unknown) => {
+      if (err instanceof RetryableGateError) return err;
+      throw err;
+    },
+  );
   const gate = await getGateForOrganization(db, owner.organizationId, gateId);
   const readEvents = () =>
     db
@@ -278,6 +325,8 @@ export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
     readEvents,
     db,
     review,
+    /** Set when the first delivery threw a retryable fault for the queue to retry. */
+    retryError,
     /** Run the gate job again, as a re-delivered queue message would. */
     deliver,
   };

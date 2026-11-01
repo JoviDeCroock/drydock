@@ -7,6 +7,7 @@ import {
   type ClassifyArtifact,
   type ClassifySidecar,
   type ResolvedReleaseFile,
+  RetryableGateError,
   WorkflowArtifactError,
   processReleaseBundleForGate,
   workflowArtifactFailureReason,
@@ -181,7 +182,9 @@ export async function prepareReleaseCandidatesForGate(
         ? workflowArtifactFailureReason(err)
         : err instanceof UnsupportedEcosystemError
           ? "unsupported_ecosystem"
-          : "preparation_failed";
+          : err instanceof RetryableGateError
+            ? `retrying: ${err.message}`.slice(0, 500)
+            : "preparation_failed";
     await markGateErroredSafe(db, gate.id, reason);
     emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
       gateId: gate.id,

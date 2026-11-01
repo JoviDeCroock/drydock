@@ -595,6 +595,11 @@ export const githubWorkflowGates = sqliteTable(
     // held-release upkeep (PEP 694 mode B) tell an approval GitHub never
     // received, which it may still settle, from one it must leave alone.
     decisionDeliveredAt: integer("decision_delivered_at", { mode: "timestamp_ms" }),
+    // Per-gate lease for registry-side staging (PEP 694 mode B), which runs
+    // before the review claim: two deliveries of one gate must not delete each
+    // other's uploads. Expires so a crashed job cannot hold it forever.
+    stagingLeaseId: text("staging_lease_id"),
+    stagingLeaseUntil: integer("staging_lease_until", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -624,6 +629,11 @@ export const pypiProjectTokens = sqliteTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     // PEP 503-normalized project name the token is bound to.
     projectName: text("project_name").notNull(),
+    // The one GitHub repository whose gates may stage with this token, chosen
+    // when the token is added. A gate from any other repository of the
+    // organization is refused, so it cannot take over this project's session.
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
     // Index origin (`https://pypi.org` / `https://test.pypi.org`).
     indexOrigin: text("index_origin").notNull(),
     tokenCiphertext: text("token_ciphertext").notNull(),

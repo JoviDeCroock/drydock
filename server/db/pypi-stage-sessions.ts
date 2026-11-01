@@ -26,6 +26,8 @@ export interface PublicPyPiProjectToken {
   id: string;
   projectName: string;
   indexOrigin: string;
+  repositoryId: number;
+  repositoryFullName: string;
   tokenFingerprint: string;
   tokenLast4: string | null;
   validatedAt: number | null;
@@ -39,6 +41,8 @@ export function publicPyPiProjectToken(row: PyPiProjectTokenRow): PublicPyPiProj
     id: row.id,
     projectName: row.projectName,
     indexOrigin: row.indexOrigin,
+    repositoryId: row.repositoryId,
+    repositoryFullName: row.repositoryFullName,
     tokenFingerprint: row.tokenFingerprint,
     tokenLast4: row.tokenLast4,
     validatedAt: row.validatedAt?.getTime() ?? null,
@@ -227,18 +231,51 @@ export async function upsertPyPiStageSession(
  * (PEP 694 hands the existing session back for a re-run of one release).
  * Rows that can still be restaged or canceled are retired as `superseded`, so
  * an old gate's rejection never cancels the session a newer gate now holds.
- * Returns the state of a row that cannot be retired (publishing, canceling),
- * or null when the session is free to adopt.
+ *
+ * Only a gate of the same repository may take a session over. A live row from
+ * another repository is never retired here: that would hand one repository's
+ * held release to another with no human involved. Returns what blocks the
+ * adoption (`other_repository`, or the state of a row that cannot be retired:
+ * publishing, canceling), or null when the session is free to adopt.
  */
 export async function supersedePyPiStageSessions(
   db: AppDb,
-  input: { organizationId: string; sessionFingerprint: string; exceptGateId: string },
-): Promise<PyPiStageSessionState | null> {
+  input: {
+    organizationId: string;
+    sessionFingerprint: string;
+    exceptGateId: string;
+    repositoryId: number;
+  },
+): Promise<PyPiStageSessionState | "other_repository" | null> {
+  const gatesOf = (sameRepository: boolean) =>
+    db
+      .select({ id: githubWorkflowGates.id })
+      .from(githubWorkflowGates)
+      .where(
+        and(
+          eq(githubWorkflowGates.organizationId, input.organizationId),
+          sameRepository
+            ? eq(githubWorkflowGates.repositoryId, input.repositoryId)
+            : ne(githubWorkflowGates.repositoryId, input.repositoryId),
+        ),
+      );
   const sameSession = and(
     eq(pypiStageSessions.organizationId, input.organizationId),
     eq(pypiStageSessions.sessionFingerprint, input.sessionFingerprint),
     ne(pypiStageSessions.gateId, input.exceptGateId),
   );
+  const [foreign] = await db
+    .select({ state: pypiStageSessions.state })
+    .from(pypiStageSessions)
+    .where(
+      and(
+        sameSession,
+        inArray(pypiStageSessions.gateId, gatesOf(false)),
+        inArray(pypiStageSessions.state, [...RESTAGEABLE_STATES, "publishing", "canceling"]),
+      ),
+    )
+    .limit(1);
+  if (foreign) return "other_repository";
   const [busy] = await db
     .select({ state: pypiStageSessions.state })
     .from(pypiStageSessions)
@@ -252,7 +289,13 @@ export async function supersedePyPiStageSessions(
       stateDetail: "a later run of this release took over the session",
       updatedAt: new Date(),
     })
-    .where(and(sameSession, inArray(pypiStageSessions.state, RESTAGEABLE_STATES)));
+    .where(
+      and(
+        sameSession,
+        inArray(pypiStageSessions.gateId, gatesOf(true)),
+        inArray(pypiStageSessions.state, RESTAGEABLE_STATES),
+      ),
+    );
   return null;
 }
 
@@ -435,6 +478,50 @@ export async function listUndeliveredApprovedGates(
     ...gate,
     states: sessions.filter((row) => row.gateId === gate.gateId).map((row) => row.state),
   }));
+}
+
+/**
+ * Pending gates whose staging never reached a review: no scan, no review
+ * started, no live staging lease, and every session row (at least one still
+ * `staging`, `upload_failed`, or `held`) plus the gate itself untouched since
+ * `staleBefore`. Nothing was reviewed or approved for these, so cleaning them
+ * up is not a release decision.
+ */
+export async function listAbandonedStagingGates(
+  db: AppDb,
+  input: { staleBefore: Date; now: Date },
+  limit: number,
+): Promise<Array<{ organizationId: string; gateId: string }>> {
+  const gateSessions = (...conditions: SQL[]) =>
+    db
+      .select({ id: pypiStageSessions.id })
+      .from(pypiStageSessions)
+      .where(and(eq(pypiStageSessions.gateId, githubWorkflowGates.id), ...conditions));
+  return db
+    .select({
+      organizationId: githubWorkflowGates.organizationId,
+      gateId: githubWorkflowGates.id,
+    })
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.status, "pending"),
+        isNull(githubWorkflowGates.scanId),
+        isNull(githubWorkflowGates.reviewStartedAt),
+        lt(githubWorkflowGates.updatedAt, input.staleBefore),
+        or(
+          isNull(githubWorkflowGates.stagingLeaseUntil),
+          lt(githubWorkflowGates.stagingLeaseUntil, input.now),
+        ),
+        exists(
+          gateSessions(inArray(pypiStageSessions.state, ["staging", "upload_failed", "held"])),
+        ),
+        notExists(gateSessions(eq(pypiStageSessions.state, "publishing"))),
+        notExists(gateSessions(gte(pypiStageSessions.updatedAt, input.staleBefore))),
+      ),
+    )
+    .orderBy(asc(githubWorkflowGates.updatedAt))
+    .limit(limit);
 }
 
 /**

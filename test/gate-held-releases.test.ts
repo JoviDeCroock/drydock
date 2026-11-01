@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { formatDateTime } from "../src/lib/format";
 import type { GatePackageScan, HeldRelease } from "../src/models/github-app";
 import {
   heldReleaseLine as lineFor,
@@ -116,9 +117,9 @@ describe("stage verification line", () => {
     verifiedAt: "2026-11-01T00:00:00.000Z",
   };
 
-  test("names the package, file count, and preview index, never a stage URL", () => {
+  test("names the package, file count, verification time, and preview index, never a stage URL", () => {
     expect(stageVerificationLine(pkg({ stageVerification: verification }))).toBe(
-      "demo-package@1.2.0 · 2 files · installable preview on test.pypi.org (stage URL in the stage job)",
+      `demo-package@1.2.0 · 2 files · verified ${formatDateTime(verification.verifiedAt)} · installable preview on test.pypi.org (stage URL in the stage job)`,
     );
   });
 

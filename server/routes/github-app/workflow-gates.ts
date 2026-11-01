@@ -22,6 +22,7 @@ import {
 } from "../../lib/platform/execution-context";
 import { badgeLookupKey, purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
 import { recordProductEvent } from "../../lib/analytics";
+import { notifyHeldReleasePublishFailed } from "../../lib/notify";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import {
@@ -380,6 +381,29 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   if (humanDecision === "rejected") {
     c.executionCtx.waitUntil(cancelHeldReleases(c.env, db, organizationId, gateId));
   }
+  // The publish failed but the approval stands (GitHub already accepted it):
+  // the job runs on without the release, which only Drydock can tell.
+  if (heldReleaseError && gateDecision === "approved") {
+    c.executionCtx.waitUntil(
+      notifyHeldReleasePublishFailed({
+        env: c.env,
+        db,
+        organizationId,
+        gateId,
+        repositoryFullName: decided.repositoryFullName,
+        environment: decided.environment,
+        scanId: decided.scanId,
+        detail: heldReleaseError,
+      }).catch((err: unknown) => {
+        emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
+          organizationId,
+          gateId,
+          decision: gateDecision,
+          error: describeOperationalError(err),
+        });
+      }),
+    );
+  }
 
   // Counted separately from the automatic block below, so approval rate stays
   // measurable against reviews instead of being diluted by auto-rejections.
@@ -556,7 +580,17 @@ async function runWorkflowGateJob(
       // failure after markGateDecided does not leave the GitHub job held.
     }
   }
-  await executeWorkflowGateJob(c.env, workerExecutionContext(c.executionCtx), message, db);
+  // A retryable fault has no queue to go back to here; the gate keeps its
+  // failure reason, so the maintainer can retry again.
+  await executeWorkflowGateJob(c.env, workerExecutionContext(c.executionCtx), message, db).catch(
+    (err: unknown) => {
+      emitOperationalEvent("warn", "github_workflow_gate.inline_job_failed", {
+        organizationId: message.organizationId,
+        gateId: message.gateId,
+        error: describeOperationalError(err),
+      });
+    },
+  );
 }
 
 async function gateHeldReleases(

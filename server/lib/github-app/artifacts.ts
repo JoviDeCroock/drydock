@@ -115,6 +115,20 @@ export class WorkflowArtifactError extends Error {
   }
 }
 
+/**
+ * A transient fault a later delivery of the same gate can fix (an index was
+ * unreachable, another delivery holds the staging lease). The gate job
+ * rethrows it so the queue retries with backoff instead of leaving the gate
+ * pending with nothing scheduled. `message` is maintainer-safe: no URLs or
+ * credentials.
+ */
+export class RetryableGateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RetryableGateError";
+  }
+}
+
 /** Stored as the gate's `failure_reason`: the code, plus a maintainer detail when safe. */
 export function workflowArtifactFailureReason(err: WorkflowArtifactError): string {
   return err.maintainerFacing ? `${err.code}: ${err.message}`.slice(0, 500) : err.code;

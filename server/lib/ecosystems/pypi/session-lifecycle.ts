@@ -7,6 +7,7 @@ import {
   findPyPiProjectToken,
   getPyPiProjectToken,
   claimPyPiStageSessionForPublish,
+  listAbandonedStagingGates,
   listUndeliveredApprovedGates,
   listGatePyPiStageSessions,
   listPyPiStageSessionsDue,
@@ -16,7 +17,16 @@ import {
   updatePyPiProjectToken,
   upsertPyPiStageSession,
 } from "../../../db/pypi-stage-sessions";
-import { MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES } from "../../github-app/artifacts";
+import {
+  MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES,
+  RetryableGateError,
+} from "../../github-app/artifacts";
+import {
+  acquireGateStagingLease,
+  getGateForOrganization,
+  releaseGateStagingLease,
+} from "../../github-app/webhook-gates";
+import { notifyHeldReleasePublishFailed } from "../../notify/gate-notifications";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { isRecord } from "../../platform/guards";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
@@ -73,9 +83,14 @@ import type {
  * blocked by an unpublished session) is settled by the cron: delivered once
  * every session is `published`, left alone while one is `publishing`,
  * otherwise rejected. A failure observed after GitHub acknowledged the
- * approval leaves the gate `approved`; the session's state shows it. `open`
- * counts as a refused publish only after a failed request or 30 minutes after
- * the claim, since a read right after a 202 may lag.
+ * approval leaves the gate `approved`; the session's state shows it and the
+ * maintainers are notified. `open` counts as a refused publish only after a
+ * failed request or 30 minutes after the claim, since a read right after a
+ * 202 may lag.
+ *
+ * One cleanup is not a release decision: a gate whose staging stalled before
+ * any review existed (no scan, nothing approved) for a day is rejected
+ * fail-closed by the cron and its sessions canceled (`abandonedStaging`).
  */
 
 const EXTEND_FOR_SECONDS = 7 * 24 * 60 * 60;
@@ -103,6 +118,13 @@ const SWEEP_BATCH = 25;
 const SWEEP_CONCURRENCY = 3;
 const DEFAULT_PUBLISH_POLL_DELAYS_MS = [1_000, 2_000, 3_000];
 const TOKEN_REMOVED_DETAIL = "the PyPI token for this project was removed";
+// Longer than staging a full 768 MiB release takes; a crashed holder's lease
+// lapses after this.
+const STAGING_LEASE_MS = 30 * 60 * 1000;
+// The queue's retries finish within minutes; a gate whose staging still has
+// not reached a review a day later (and that nobody retried) is cleaned up
+// fail-closed by the cron.
+const ABANDONED_STAGING_AFTER_MS = 24 * 60 * 60 * 1000;
 
 interface SessionLinks {
   session: string;
@@ -130,10 +152,10 @@ export interface StagingContext {
 /**
  * A staging step failed in a way a retry can fix (the index was unreachable,
  * an upload failed and was removed). Not a `WorkflowArtifactError`, so the gate
- * stays pending; the session row records what happened. Messages carry no
- * URLs or token material.
+ * stays pending and the queue retries the delivery; the session row records
+ * what happened. Messages carry no URLs or token material.
  */
-class PyPiStagingError extends Error {
+class PyPiStagingError extends RetryableGateError {
   constructor(message: string) {
     super(message);
     this.name = "PyPiStagingError";
@@ -170,19 +192,44 @@ export async function stageManagedReleases(
   releases: ManagedRelease[],
 ): Promise<Set<string>> {
   if (releases.length === 0) return new Set();
-  // Every project needs its token before any project's session is touched.
+  const gate = await getGateForOrganization(ctx.db, ctx.organizationId, ctx.gateId);
+  if (!gate) throw new PyPiStagingError("the workflow gate disappeared while staging");
+  // Every project needs its token, bound to this gate's repository, before any
+  // project's session is touched. The binding is what keeps another
+  // repository of the organization from staging over this project's session.
   for (const release of releases) {
     const project = normalizePyPiProjectName(release.name);
-    if (!(await findPyPiProjectToken(ctx.db, ctx.organizationId, release.index, project))) {
+    const token = await findPyPiProjectToken(ctx.db, ctx.organizationId, release.index, project);
+    if (!token) {
       throw new PyPiStageError(
         "stage_reference_invalid",
         `Drydock-held staging for ${release.name} needs a PyPI token for the project on ${release.index} (Settings, Integrations, PyPI project tokens)`,
       );
     }
+    if (token.repositoryId !== gate.repositoryId) {
+      throw new PyPiStageError(
+        "stage_reference_invalid",
+        `the stored PyPI token for ${release.name} is bound to another repository; only that repository's gates can stage it`,
+      );
+    }
+  }
+  // Staging runs before the review claim, so two deliveries of one gate could
+  // otherwise delete each other's uploads.
+  const leaseId = crypto.randomUUID();
+  const leased = await acquireGateStagingLease(ctx.db, {
+    gateId: ctx.gateId,
+    organizationId: ctx.organizationId,
+    leaseId,
+    ttlMs: STAGING_LEASE_MS,
+  });
+  if (!leased) {
+    throw new PyPiStagingError("another delivery of this gate is staging it, or its review began");
   }
   const sessions: StagingSession[] = [];
   try {
-    for (const release of releases) sessions.push(await openStagingSession(ctx, release));
+    for (const release of releases) {
+      sessions.push(await openStagingSession(ctx, release, gate.repositoryId));
+    }
     return await uploadAndVerify(ctx, sessions);
   } catch (err) {
     // A row a specific failure already marked keeps its detail; any other
@@ -196,6 +243,8 @@ export async function stageManagedReleases(
       );
     }
     throw err;
+  } finally {
+    await releaseGateStagingLease(ctx.db, { gateId: ctx.gateId, leaseId });
   }
 }
 
@@ -288,11 +337,15 @@ async function uploadFromArtifacts(
 async function openStagingSession(
   ctx: StagingContext,
   release: ManagedRelease,
+  repositoryId: number,
 ): Promise<StagingSession> {
   const project = normalizePyPiProjectName(release.name);
   const tokenRow = await findPyPiProjectToken(ctx.db, ctx.organizationId, release.index, project);
-  // Checked up front in `stageManagedReleases`; gone now means it was just removed.
-  if (!tokenRow) throw new PyPiStagingError(`the PyPI token for ${release.name} was removed`);
+  // Checked up front in `stageManagedReleases`; gone or rebound now means it
+  // just changed.
+  if (!tokenRow || tokenRow.repositoryId !== repositoryId) {
+    throw new PyPiStagingError(`the PyPI token for ${release.name} was removed or rebound`);
+  }
   let opened: Awaited<ReturnType<typeof openPyPiSession>>;
   try {
     opened = await openPyPiSession(
@@ -326,7 +379,13 @@ async function openStagingSession(
     organizationId: ctx.organizationId,
     sessionFingerprint: fingerprint,
     exceptGateId: ctx.gateId,
+    repositoryId,
   });
+  if (busy === "other_repository") {
+    throw new PyPiStagingError(
+      `a gate of another repository still tracks the ${release.name} session; staging waits for it`,
+    );
+  }
   if (busy) {
     throw new PyPiStagingError(
       `another gate's ${release.name} session is ${describeState(busy)}; staging waits for it`,
@@ -756,9 +815,12 @@ async function sweepOne(
   }
   if (row.state === "publishing") {
     const claimedAt = row.publishClaimedAt?.getTime() ?? row.updatedAt.getTime();
-    await observePublishing(db, row, opened.gateway, {
+    const outcome = await observePublishing(db, row, opened.gateway, {
       openIsRefusal: now - claimedAt > OPEN_AFTER_PUBLISH_GRACE_MS,
     });
+    if (outcome !== "published" && outcome !== "publishing") {
+      await notifyIfApprovalDelivered(env, db, row, outcome);
+    }
     return;
   }
 
@@ -913,6 +975,32 @@ async function verifyHeldSession(
     return { error: `the ${row.projectName} PyPI session ${detail}` };
   }
   return { snapshot };
+}
+
+/**
+ * A publish failed after GitHub accepted the approval: the gate stays
+ * `approved` (GitHub's record cannot be taken back), so tell the maintainers.
+ * Before delivery, the undelivered-approval settlement rejects the gate
+ * instead, which GitHub shows.
+ */
+async function notifyIfApprovalDelivered(
+  env: Cloudflare.Env,
+  db: AppDb,
+  row: PyPiStageSessionRow,
+  outcome: PyPiStageSessionState,
+): Promise<void> {
+  const gate = await getGateForOrganization(db, row.organizationId, row.gateId);
+  if (gate?.status !== "approved" || !gate.decisionDeliveredAt) return;
+  await notifyHeldReleasePublishFailed({
+    env,
+    db,
+    organizationId: row.organizationId,
+    gateId: row.gateId,
+    repositoryFullName: gate.repositoryFullName,
+    environment: gate.environment,
+    scanId: gate.scanId,
+    detail: `${row.projectName} ${row.version} ended ${outcome.replace(/_/g, " ")}`,
+  });
 }
 
 async function observePublishing(
@@ -1125,6 +1213,12 @@ export const pypiHeldReleases: HeldReleaseHooks = {
       return settlement ? [{ organizationId, gateId, settlement }] : [];
     });
   },
+  abandonedStaging: (db, now) =>
+    listAbandonedStagingGates(
+      db,
+      { staleBefore: new Date(now - ABANDONED_STAGING_AFTER_MS), now: new Date(now) },
+      UNDELIVERED_APPROVAL_BATCH,
+    ),
 };
 
 /**

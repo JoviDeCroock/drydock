@@ -135,6 +135,15 @@ export interface HeldReleaseHooks {
     db: AppDb,
     now: number,
   ): Promise<Array<{ organizationId: string; gateId: string; settlement: "deliver" | "reject" }>>;
+  /**
+   * Pending gates whose staging stalled before any review existed (retries
+   * ran out, the worker died mid-upload). The cron rejects each fail-closed
+   * and cancels its sessions; nothing reviewed or approved is ever selected.
+   */
+  abandonedStaging(
+    db: AppDb,
+    now: number,
+  ): Promise<Array<{ organizationId: string; gateId: string }>>;
 }
 
 /** Browser-safe view of a held release; never carries URLs or credentials. */

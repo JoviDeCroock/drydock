@@ -2,6 +2,8 @@ CREATE TABLE `pypi_project_tokens` (
 	`id` text PRIMARY KEY NOT NULL,
 	`organization_id` text NOT NULL,
 	`project_name` text NOT NULL,
+	`repository_id` integer NOT NULL,
+	`repository_full_name` text NOT NULL,
 	`index_origin` text NOT NULL,
 	`token_ciphertext` text NOT NULL,
 	`token_nonce` text NOT NULL,
@@ -46,4 +48,6 @@ CREATE TABLE `pypi_stage_sessions` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `pypi_stage_sessions_gate_project_unique_idx` ON `pypi_stage_sessions` (`gate_id`,`project_name`);--> statement-breakpoint
 CREATE INDEX `pypi_stage_sessions_state_idx` ON `pypi_stage_sessions` (`state`,`last_checked_at`);--> statement-breakpoint
-ALTER TABLE `github_workflow_gates` ADD `decision_delivered_at` integer;
+ALTER TABLE `github_workflow_gates` ADD `decision_delivered_at` integer;--> statement-breakpoint
+ALTER TABLE `github_workflow_gates` ADD `staging_lease_id` text;--> statement-breakpoint
+ALTER TABLE `github_workflow_gates` ADD `staging_lease_until` integer;

@@ -1,5 +1,6 @@
 import { type AppDb } from "../../db/client";
-import { getOrganizationName } from "../../db/organizations";
+import { recordScanEvent } from "../../db/events";
+import { getOrganizationName, getOrganizationOwnerUserId } from "../../db/organizations";
 import type { RiskLevel } from "../review";
 import { deliverOrganizationNotification } from "./deliver";
 import { formatPackageLabel } from "./format";
@@ -165,6 +166,67 @@ export async function notifyWorkflowGateTimeout(
         dashboardUrl ? `See the completed review: ${dashboardUrl}` : null,
         "",
         "Re-run the workflow to request a fresh review.",
+        "",
+        "— Drydock",
+      ],
+    },
+    slack: null,
+  });
+}
+
+export interface NotifyHeldReleasePublishFailedInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  gateId: string;
+  repositoryFullName: string;
+  environment: string;
+  scanId: string | null;
+  /** Maintainer-safe summary (project names and states only, never URLs). */
+  detail: string;
+}
+
+/**
+ * A held release did not publish after GitHub already accepted the approval:
+ * the deployment job runs on, but the release is not on the index. Nothing in
+ * GitHub shows this, so record it and tell the maintainers directly.
+ */
+export async function notifyHeldReleasePublishFailed(
+  input: NotifyHeldReleasePublishFailedInput,
+): Promise<void> {
+  const { env, db, organizationId, gateId, repositoryFullName, environment, scanId, detail } =
+    input;
+  await recordScanEvent(db, {
+    organizationId,
+    scanId,
+    type: "github_workflow_gate.held_release_publish_failed",
+    metadata: { gateId, detail },
+  });
+  const ownerUserId = await getOrganizationOwnerUserId(db, organizationId);
+  if (!ownerUserId) return;
+  const organizationName = await getOrganizationName(db, organizationId);
+  const dashboardUrl = scanId ? scanUrl(env, scanId, organizationId) : null;
+  await deliverOrganizationNotification(env, db, {
+    organizationId,
+    ownerUserId,
+    ...(scanId ? { scanId } : {}),
+    eventPrefix: "github_workflow_gate",
+    eventMetadata: { gateId, trigger: "held_release_publish_failed" },
+    email: {
+      subject: `Approved release in ${repositoryFullName} was not published`,
+      lines: [
+        "Hi there,",
+        "",
+        `GitHub accepted the approval for ${repositoryFullName} (${environment}), but Drydock could not publish the held release: ${detail}.`,
+        "The deployment job continues on GitHub; the release is not on the index.",
+        "",
+        organizationName ? `Organization: ${organizationName}` : null,
+        `Repository: ${repositoryFullName}`,
+        `Environment: ${environment}`,
+        "",
+        dashboardUrl ? `See the gate: ${dashboardUrl}` : null,
+        "",
+        "Re-run the workflow to stage and review the release again.",
         "",
         "— Drydock",
       ],
