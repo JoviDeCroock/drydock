@@ -296,7 +296,7 @@ export const PublicPackageFile = z
     after: publicFileRecord.nullable(),
     textSamplesOmitted: z.boolean(),
   })
-  .meta({ id: "PublicPackageFile" });
+  .register(openApiSchemas, { id: "PublicPackageFile" });
 
 export const OpenApiDocument = z
   .looseObject({ openapi: z.string(), info: z.looseObject({}), paths: z.looseObject({}) })
