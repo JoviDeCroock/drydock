@@ -1,0 +1,61 @@
+{
+  "id": "pypi-sdist-gnu-sparse-map-reorder",
+  "title": "sdist member with a GNU sparse 0.1 map that reorders its bytes",
+  "category": "archive-structure",
+  "intent": "GNU.sparse.map=13,11,0,13 makes pip's CPython tarfile write the body's bytes 13.. then 0..13, `import os;os.system('x')`, while node-tar installs and Drydock scans the raw body `system('x')import os;os.`, splitting the payload past the content rules",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 74,
+          "sha256": "1be9b82eff188babac4fc0e2c99d8bf7a48ea1307544bcf032bce3ec57a3e779",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/demo_package/_hook.py",
+          "size": 24,
+          "sha256": "96c7e1f38a2785c87e0dd7d00ab4ce43228be06e1c1e7f901d9791beb767bec5",
+          "flags": [],
+          "textSample": "system('x')import os;os."
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "parser-differential",
+          "path": "demo_package-1.2.0/demo_package/_hook.py",
+          "detail": "member's pax header carries GNU sparse keys (`GNU.sparse.map`), which make CPython tarfile rebuild the member from a sparse map, changing the bytes, size or name it writes, while node-tar ignores them and installs the raw body"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/demo_package/_hook.py"
+    }
+  ]
+}

@@ -262,12 +262,14 @@ export function parsePax(body) {
 // caller's disclosure, empty for a body every reader parses the same way. Only
 // the keys that decide where bytes land are compared: macOS bsdtar writes raw
 // binary xattr values that node-tar's UTF-8 line split drops and a length walk
-// keeps, which changes nothing either reader installs.
+// keeps, which changes nothing either reader installs. A body is up to 1 MiB
+// of attacker-chosen records, so every pass is linear in its size.
 export function paxBodyAnomalies(body) {
   const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+  const strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const encoder = new TextEncoder();
   const keys = new Set();
-  const repeated = [];
+  const repeated = new Set();
   const byLine = {};
   for (const line of decoder.decode(body).replace(/\n$/, "").split("\n")) {
     if (parseInt(line, 10) !== encoder.encode(line).length + 1) continue;
@@ -275,14 +277,17 @@ export function paxBodyAnomalies(body) {
     const equals = record.indexOf("=");
     const key = equals === -1 ? record : record.slice(0, equals);
     if (!key) continue;
-    if (keys.has(key) && !repeated.includes(key)) repeated.push(key);
+    if (keys.has(key)) repeated.add(key);
     keys.add(key);
-    byLine[key] = equals === -1 ? "" : record.slice(equals + 1);
+    if (key === "path" || key === "linkpath" || key === "size") {
+      byLine[key] = equals === -1 ? "" : record.slice(equals + 1);
+    }
   }
   // CPython's walk: `<len> <key>=<value>\n` records tiling the body up to the
   // end or a NUL byte. Older releases stop at the first record that does not
   // fit; newer ones refuse the header, which ends the archive for pip.
   const byLength = {};
+  const notUtf8 = [];
   let tiles = true;
   for (let pos = 0; pos < body.length && body[pos] !== 0;) {
     let end = pos;
@@ -303,33 +308,57 @@ export function paxBodyAnomalies(body) {
     }
     const key = decoder.decode(record.subarray(0, equals));
     keys.add(key);
-    byLength[key] = decoder.decode(record.subarray(equals + 1));
+    if (key === "path" || key === "linkpath" || key === "size") {
+      const value = record.subarray(equals + 1);
+      byLength[key] = decoder.decode(value);
+      // CPython keeps undecodable bytes (surrogateescape) where node-tar
+      // writes U+FFFD, even when the two happen to be the same length.
+      if (key !== "size" && !notUtf8.includes(key)) {
+        try {
+          strict.decode(value);
+        } catch {
+          notUtf8.push(key);
+        }
+      }
+    }
     pos += length;
   }
+  const quoted = (list) =>
+    clipTextSample(
+      list
+        .slice(0, 8)
+        .map((key) => `\`${key}\``)
+        .join(", ") + (list.length > 8 ? `, and ${list.length - 8} more` : ""),
+      160,
+    );
   const anomalies = [];
   if (!tiles) {
     anomalies.push(
-      "records a length-walking reader cannot parse (declared lengths that do not tile the body, or a record without `key=`)",
+      "records a length-walking reader cannot parse (declared lengths that do not tile the body, or a record without `key=`), which node-tar reads line by line while CPython tarfile stops at them or, in newer releases, refuses the header and ends the archive",
     );
   } else {
     const differing = ["path", "linkpath", "size"].filter((key) => byLine[key] !== byLength[key]);
     if (differing.length) {
       anomalies.push(
-        `${differing.map((key) => `\`${key}\``).join(", ")} records that a line split and a length walk read differently`,
+        `${quoted(differing)} records that node-tar's line split and CPython tarfile's length walk read differently`,
+      );
+    }
+    if (notUtf8.length) {
+      anomalies.push(
+        `${quoted(notUtf8)} values that are not valid UTF-8, which node-tar writes with replacement characters and CPython tarfile writes as the raw bytes`,
       );
     }
   }
-  if (repeated.length) {
+  if (repeated.size) {
+    const list = [...repeated];
     anomalies.push(
-      `the ${repeated.length === 1 ? "key" : "keys"} ${clipTextSample(repeated.map((key) => `\`${key}\``).join(", "), 120)} more than once, where readers that keep the first value (tar-rs) disagree with node-tar`,
+      `the ${list.length === 1 ? "key" : "keys"} ${quoted(list)} more than once, where readers that keep the first value (tar-rs) disagree with node-tar`,
     );
   }
-  const sparse = ["GNU.sparse.name", "GNU.sparse.size", "GNU.sparse.realsize"].filter((key) =>
-    keys.has(key),
-  );
+  const sparse = [...keys].filter((key) => key.startsWith("GNU.sparse."));
   if (sparse.length) {
     anomalies.push(
-      `GNU sparse keys (${sparse.map((key) => `\`${key}\``).join(", ")}) that CPython tarfile applies and node-tar ignores`,
+      `GNU sparse keys (${quoted(sparse)}), which make CPython tarfile rebuild the member from a sparse map, changing the bytes, size or name it writes, while node-tar ignores them and installs the raw body`,
     );
   }
   return anomalies;
@@ -1097,7 +1126,7 @@ export async function readTarStream(
         empty: [],
         oversized: [],
         emptyGnu: [],
-        paxBody: [],
+        paxBody: new Set(),
         oldGnu: false,
         sizedMeta: false,
       };
@@ -1179,10 +1208,8 @@ export async function readTarStream(
         `member is preceded by a zero-length GNU \`${type}\` record; node-tar ignores it, while CPython tarfile applies the empty ${type === "L" ? "name" : "link target"}`,
       );
     }
-    if (shape.paxBody.length) {
-      details.push(
-        `member's pax header carries ${shape.paxBody.join(", and ")}; node-tar splits a pax body on newlines and keeps the last value of a key, while CPython tarfile walks the declared lengths (newer releases refuse a body that does not tile), so the readers can apply different records`,
-      );
+    if (shape.paxBody.size) {
+      details.push(`member's pax header carries ${[...shape.paxBody].join("; and ")}`);
     }
     if (shape.sizedMeta) {
       details.push(
@@ -1204,7 +1231,7 @@ export async function readTarStream(
       size: "a pax global header sets `size`; node-tar applies it to every following entry without its own size, while extractors that ignore a global size read the header's own, so the two walk the archive on different block boundaries",
       oversized:
         "a pax global header larger than node-tar's 1 MiB limit was ignored; extractors without that limit (CPython tarfile) apply it to the entries that follow",
-      body: "a pax global header body carries records that node-tar (splitting on newlines) and CPython tarfile (walking the declared lengths) read differently, or GNU sparse keys only CPython applies",
+      body: "a pax global header body carries records that node-tar (splitting on newlines) and CPython tarfile (walking the declared lengths) read differently, or GNU sparse keys that change the bytes CPython tarfile writes",
     };
     addSuspicious({ kind: "parser-differential", path: "<archive>", detail: details[key] });
   }
@@ -1455,8 +1482,11 @@ export async function readTarStream(
             const parsed = parsePax(body);
             if (typeof parsed.path === "string") paxPathNumeric = /^[0-9]+$/.test(parsed.path);
             noteMetadata(type, parsed);
+            // Bounded: a member can sit behind any number of `x` headers, and
+            // the phrases name attacker-chosen keys, so they can all differ.
+            const anomalies = currentMetaShape().paxBody;
             for (const anomaly of paxBodyAnomalies(body)) {
-              addOnce(currentMetaShape().paxBody, anomaly);
+              if (anomalies.size < 8) anomalies.add(anomaly);
             }
             pax = { ...pax, ...parsed };
             if (typeof pax.path === "string" && !isSafePaxPath(pax.path)) {

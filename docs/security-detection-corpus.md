@@ -915,10 +915,16 @@ The same entry covers the shapes where node-tar and pip's CPython `tarfile` part
 - A zero-length `L` or `K`. node-tar ignores it; `tarfile` applies the empty name or link target.
 - A pax body that a line split (node-tar) and a length walk (`tarfile`) read differently: records
   a length walk cannot parse (lengths that do not tile the body, or a record without `key=`, which
-  newer `tarfile` releases refuse), or a `path`/`linkpath`/`size` value the two read differently.
-  Other keys are not compared, because macOS bsdtar writes raw binary xattr values that the UTF-8
-  line split drops harmlessly. A key repeated within one header (tar-rs keeps the first) and any
-  `GNU.sparse.name`/`size`/`realsize` key (`tarfile` applies them, node-tar ignores them) count too.
+  newer `tarfile` releases refuse), a `path`/`linkpath`/`size` value the two read differently, or a
+  `path`/`linkpath` value that is not valid UTF-8 (node-tar writes replacement characters,
+  `tarfile` the raw bytes, even where both are the same length). Other keys are not compared,
+  because macOS bsdtar writes raw binary xattr values that the UTF-8 line split drops harmlessly.
+  A key repeated within one header (tar-rs keeps the first) counts too.
+- Any `GNU.sparse.*` key. `tarfile` rebuilds the member from a sparse map: 0.0 `numblocks`/
+  `offset`/`numbytes`, 0.1 `map`, 1.0 `major`/`minor` with an in-data map, plus `name`/`size`/
+  `realsize`. That changes the bytes, size or name pip writes, while node-tar installs the raw
+  body. A 0.1 map can reorder segments, so the scanner reads `system('x')import os;os.` where pip
+  writes `import os;os.system('x')`.
 - A pending pax `size` that node-tar also applies to a following metadata header's body, where
   `tarfile` applies it only to the member.
 
@@ -929,9 +935,10 @@ member. None of 318 popular npm packages from the FP sweep cache, 1,000 locally 
 tarballs, 20 PyPI sdists (setuptools, hatchling, flit, poetry-core, maturin, meson-python), or bsdtar
 pax/gnutar/ustar, CPython GNU/PAX-format, and `git archive` archives carries one of these shapes.
 Goldens: `cases-pypi/20-sdist-repeated-gnu-long-name`, `21-sdist-oversized-pax-header`,
-`22-sdist-old-gnu-name-record`, and `23-sdist-pax-body-length-mismatch`. `test/tar-parser.test.mjs`
-rebuilds each sdist and checks the fixture's file records and disclosures are exactly what the
-parser emits.
+`22-sdist-old-gnu-name-record`, `23-sdist-pax-body-length-mismatch`, and
+`24-sdist-gnu-sparse-map-reorder`. `test/tar-parser.test.mjs` rebuilds each sdist and checks the
+fixture's file records and disclosures are exactly what the parser emits. The pax-body checks are
+linear in the body, which is up to 1 MiB of attacker-chosen records.
 
 ### Fixture format
 

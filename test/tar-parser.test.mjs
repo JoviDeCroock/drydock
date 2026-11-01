@@ -976,7 +976,7 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
         kind: "parser-differential",
         path: "README.txt",
         detail: expect.stringMatching(
-          /^member's pax header carries `path` records that a line split and a length walk read differently; node-tar splits/,
+          /^member's pax header carries `path` records that node-tar's line split and CPython tarfile's length walk read differently$/,
         ),
       },
     ]);
@@ -1037,6 +1037,12 @@ describe("PyPI corpus tar-shape fixtures match the parser", () => {
         ]),
       },
       { name: `${root}/setup.py`, body: "Read me first.\n" },
+    ],
+    // A GNU sparse 0.1 map: CPython writes bytes 13.. then 0..13 of the body,
+    // `import os;os.system('x')`, where node-tar installs the raw body.
+    "24-sdist-gnu-sparse-map-reorder.json": () => [
+      { name: "PaxHeader", type: "x", body: paxBody([["GNU.sparse.map", "13,11,0,13"]]) },
+      { name: `${root}/demo_package/_hook.py`, body: "system('x')import os;os." },
     ],
   };
 
@@ -1129,9 +1135,50 @@ describe("paxBodyAnomalies", () => {
       ),
     ).toEqual([
       expect.stringMatching(/^the key `path` more than once/),
-      "GNU sparse keys (`GNU.sparse.name`, `GNU.sparse.realsize`) that CPython tarfile applies and node-tar ignores",
+      "GNU sparse keys (`GNU.sparse.name`, `GNU.sparse.realsize`), which make CPython tarfile rebuild the member from a sparse map, changing the bytes, size or name it writes, while node-tar ignores them and installs the raw body",
     ]);
   });
+
+  test("reports every GNU sparse format's keys, which change the bytes CPython writes", () => {
+    for (const records of [
+      [["GNU.sparse.map", "13,11,0,13"]],
+      [
+        ["GNU.sparse.major", "1"],
+        ["GNU.sparse.minor", "0"],
+      ],
+      [
+        ["GNU.sparse.numblocks", "1"],
+        ["GNU.sparse.offset", "0"],
+        ["GNU.sparse.numbytes", "3"],
+      ],
+    ]) {
+      const [anomaly] = paxBodyAnomalies(bytes(paxBody(records)));
+      expect(anomaly).toMatch(/^GNU sparse keys \(.*\), which make CPython tarfile rebuild/);
+      for (const [key] of records) expect(anomaly).toContain(`\`${key}\``);
+    }
+  });
+
+  test("reports a path that is not valid UTF-8 even when it re-encodes to the same length", () => {
+    // A truncated 4-byte sequence decodes to one U+FFFD, also three bytes,
+    // so the line split and the length walk agree on the replaced text.
+    const body = rawRecord(
+      "path",
+      concatBytes([bytes("pkg/a"), new Uint8Array([0xf0, 0x9f, 0x98]), bytes(".py")]),
+    );
+    expect(paxBodyAnomalies(body)).toEqual([
+      "`path` values that are not valid UTF-8, which node-tar writes with replacement characters and CPython tarfile writes as the raw bytes",
+    ]);
+  });
+
+  test("stays linear on a 1 MiB body of tens of thousands of repeated keys", () => {
+    const half = paxBody(Array.from({ length: 40_000 }, (_, index) => [`k${index}`, ""]));
+    const body = bytes(half + half).subarray(0, 1024 * 1024);
+    const started = performance.now();
+    const anomalies = paxBodyAnomalies(body);
+    // The quadratic version took about a minute; linear work takes well under a second.
+    expect(performance.now() - started).toBeLessThan(15_000);
+    expect(anomalies.join(" ")).toMatch(/keys `k0`, .*, and \d+ more/);
+  }, 60_000);
 });
 
 describe("readTar suspicious entries", () => {
@@ -3039,6 +3086,7 @@ describe("rendered sandbox parser source", () => {
     "normalizeZipPath",
     "unrepresentableZipEntry",
     "parsePax",
+    "paxBodyAnomalies",
     "describeNonRegularType",
     "sha256Hex",
     "createSha256Digester",

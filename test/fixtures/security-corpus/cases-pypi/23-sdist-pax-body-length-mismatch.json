@@ -45,7 +45,7 @@
         {
           "kind": "parser-differential",
           "path": "demo_package-1.2.0/README.txt",
-          "detail": "member's pax header carries `path` records that a line split and a length walk read differently; node-tar splits a pax body on newlines and keeps the last value of a key, while CPython tarfile walks the declared lengths (newer releases refuse a body that does not tile), so the readers can apply different records"
+          "detail": "member's pax header carries `path` records that node-tar's line split and CPython tarfile's length walk read differently"
         }
       ]
     }
