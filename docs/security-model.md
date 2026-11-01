@@ -80,9 +80,11 @@ separator. A redirect is an error and is never followed with the token.
 creates the session, uploads only bytes whose sha256 equals the reviewed
 digest, and holds the session only after the index's answer and the stage page
 bind it to exactly the reviewed files. The workflow holds no PyPI credential in
-mode B. PEP 694 has no stage-only credential, so mode A (a workflow-created
-stage) leaves publish authority with the workflow's own credential, outside the
-gate; see the mode A residual risk in `pypi-workflow-gate.md`.
+mode B. PEP 694 has no stage-only credential, so mode A (two gates) leaves
+publish authority with the workflow's trusted publisher. Its stage job mints a
+publish-capable token only after a human approved gate 1's review, and gate 2
+links to that approval only through signed webhook fields (same organization,
+repository, and run). See the mode A residual risk in `pypi-workflow-gate.md`.
 
 Publish runs only after the maintainer approval that completes the gate has
 been recorded and the gate has left `pending` in a compare-and-set. No

@@ -291,15 +291,18 @@ That decides where publish authority sits:
 - **Mode B (Drydock-held staging)** keeps it inside the gate. Drydock creates
   the session and uploads the reviewed bytes itself with an org-stored,
   project-scoped token. The workflow holds **no PyPI credential** at all.
-- **Mode A (credential-free review)** does not. The workflow creates the
-  session with its own credential. That credential can publish without
-  Drydock, so the gate only reviews the stage. A compromised dependency in the
-  ungated staging job (the ChainDrop pattern) can publish directly. Mode A is a
-  review aid until PyPI offers stage-only trusted publishing; it is not
-  enforcement.
+- **Mode A (two gates, no Drydock credential)** keeps it in the workflow, but
+  only after a human approved the reviewed bytes. Gate 1 reviews the build
+  artifact. Once a maintainer approves it, the workflow's stage job mints a
+  trusted-publishing token, stages exactly those files, and registers the stage.
+  Gate 2 checks that the stage holds the reviewed bytes, and a maintainer
+  approves the publish. The stage job holds a publish-capable credential
+  between the two gates. That is the same exposure as today's gated publish
+  job. Gate 2 adds staged-bytes verification and a window for consumers to test
+  the preview. It does not add a stronger credential boundary.
 
 There is no endpoint that lists sessions. The workflow names the release
-through the gate: it uploads a `pypi-stage.json` file in the
+through the gate: it uploads a `pypi-stage.json` file in a
 `pypi-release-candidate*` artifact, which the GitHub App already authenticates
 to the repository and run. A release without `pypi-stage.json` is reviewed
 exactly as before.
@@ -310,11 +313,17 @@ entry's keys at the top level:
 ```json
 {
   "schema": "drydock.pypi-stage.v1",
+  "stages": [{ "name": "demo-package", "version": "1.2.0", "session": "drydock" }]
+}
+```
+
+```json
+{
+  "schema": "drydock.pypi-stage.v1",
   "stages": [
-    { "name": "demo-package", "version": "1.2.0", "session": "drydock" },
     {
-      "name": "other-package",
-      "version": "3.0.0",
+      "name": "demo-package",
+      "version": "1.2.0",
       "stage-url": "https://pypi.org/<stage path from links.stage>/"
     }
   ]
@@ -324,7 +333,10 @@ entry's keys at the top level:
 - `"session": "drydock"` (mode B) asks Drydock to create and hold the session.
   `index` is optional (`https://pypi.org` by default, or
   `https://test.pypi.org`).
-- `stage-url` (mode A) names a stage the workflow created.
+- `stage-url` (mode A, gate 2) names a stage the workflow created after gate 1
+  was approved.
+- One file uses one mode. Mixing `stage-url` and `"session": "drydock"`
+  entries is rejected, because the two answer different gates.
 - `session-url` is refused in every form. A workflow-created session must
   never become the one Drydock holds and publishes.
 
@@ -336,11 +348,13 @@ bind by basename.
 
 Failures reject the held deployment with a `stage_*` reason that names the file
 and digest prefixes, for example `stage_identity_mismatch:
-demo_package-1.2.0-py3-none-any.whl sha256 differs: artifact 1a2b3c4d5e6f…,
-stage 9f8e7d6c5b4a…`. Codes: `stage_reference_invalid` (bad or non-allowlisted
-reference, or a mode B project without a stored token), `stage_unavailable`
-(unreachable, refused redirect, oversized or malformed page, over the byte
-budget), `stage_identity_mismatch`, and `stage_session_mismatch` (mode B).
+demo_package-1.2.0-py3-none-any.whl sha256 differs: reviewed release
+1a2b3c4d5e6f…, stage 9f8e7d6c5b4a…`. Codes: `stage_reference_invalid` (bad,
+mixed, or non-allowlisted reference, or a mode B project without a stored
+token), `stage_unavailable` (unreachable, refused redirect, oversized or
+malformed page, over the byte budget), `stage_identity_mismatch`,
+`stage_review_unlinked` (mode A: no approved gate-1 review to verify against),
+and `stage_session_mismatch` (mode B).
 
 ### Mode B: Drydock creates, stages, and holds the session (opt-in per project)
 
@@ -623,15 +637,50 @@ and bypass the gate.
   reports status lazily, it may still publish a release Drydock recorded as
   refused.
 
-### Mode A: credential-free review of a workflow-created stage
+### Mode A: two gates, no Drydock credential
 
-Drydock holds no PyPI credentials. The workflow creates the session and uploads
-the files with its own credentials, then writes a `stage-url` entry. **The
-credential that creates the session can publish it, so in mode A the gate does
-not hold publish authority.** Use mode A to review what a stage holds; use mode
-B where the gate must be the only way to publish.
+Drydock holds no PyPI credential. The workflow's trusted publisher creates and
+publishes the session, and two Drydock gates sit in front of it. Each gate needs
+its own human approval:
 
-For each registered project, the gate:
+1. **Gate 1 (`pypi-stage` environment)** is the ordinary PyPI gate. The build
+   job uploads `pypi-release-candidate` (the distributions and `SHA256SUMS`),
+   and Drydock reviews those bytes. A maintainer approves. Only then does
+   GitHub run the stage job and let it mint an OIDC trusted-publishing token.
+2. **The stage job** downloads the artifact, re-checks `SHA256SUMS`, creates
+   the PEP 694 session, uploads exactly those files, and reads `links.stage`.
+   The installable preview exists from this point. The job then uploads a
+   second artifact, `pypi-release-candidate-stage`, holding only
+   `pypi-stage.json` with the `stage-url`.
+3. **Gate 2 (`pypi-publish` environment)** links to gate 1 (see below), reads
+   the stage, and requires the staged files to be exactly the files gate 1
+   reviewed. It does not review again. The gate-2 package scan copies gate 1's
+   report and adds a verification record. The decision dialog shows "Staged
+   bytes verified identical to reviewed release", the preview's index, and a
+   link to the approved review, beside the approve and reject controls. Any
+   mismatch rejects the deployment automatically. Otherwise a maintainer
+   approves the publish, typically after consumers have tested the preview.
+4. **The publish job** re-checks the session against `SHA256SUMS` and sends
+   `POST links.publish`.
+
+**How gate 2 links to gate 1.** The link comes only from GitHub-signed webhook
+fields already stored on both gates, never from anything the workflow uploads:
+
+- the same organization (through the GitHub App installation), the same
+  repository id, and the same workflow run id;
+- a different gate, in a different environment. A re-run of gate 2's own
+  environment is not its own approval;
+- gate 1 is `approved`, and its package scan for this project and version is
+  complete and approved (`decision = publish`);
+- the gate-1 scan is a plain artifact review. It is not itself a stage
+  verification or a mode B held session.
+
+The reviewed digests come from that scan's Provenance (the sha256 of every
+reviewed wheel and sdist). If gate 1 ran in more than one attempt of the run,
+only a review whose files the stage holds exactly is accepted. With no link,
+gate 2 rejects with `stage_review_unlinked`.
+
+**What gate 2 checks**, per registered project:
 
 1. reads the stage's simple-index project page (`<stage-url>/<normalized-name>/`),
    asking for PEP 691 JSON and accepting PEP 503 HTML;
@@ -644,20 +693,18 @@ For each registered project, the gate:
 3. checks declared sizes (PEP 700 `size`, when the page lists it) against the
    25 MiB per-file cap and the release-wide 768 MiB budget before downloading
    anything;
-4. downloads each staged file within the remaining budget and a total body
-   deadline, requires its sha256 to equal the digest the index declares, and
-   parses it in the credentials-free sandbox. **These staged bytes are the
-   release candidate**: the report's Provenance digests are the staged files'
-   digests;
-5. if the artifact also carries wheels/sdists for the project, requires byte
-   identity between the two: the same filenames, the same sha256, and nothing
-   extra on either side. Identical bytes reuse the artifact's parse;
-6. checks the staged metadata's `Name` / `Version` against the registered name
-   and version.
+4. requires the staged filenames and declared sha256 to equal the gate-1
+   reviewed set: nothing extra, nothing missing, no duplicate basenames;
+5. downloads each staged file within the remaining budget and a total body
+   deadline, and requires its sha256 to equal the declared digest. The index's
+   declared digest is only its claim; the download shows what a consumer gets.
+   Staged bytes are hashed, never parsed or executed;
+6. if gate 2's bundle also carries the build artifact's wheels and sdists (the
+   default `pypi-release-candidate*` prefix picks it up), requires them to
+   equal the reviewed set too.
 
-The gate decision releases the protected job, which is meant to publish the
-session. A rejection, or a gate left pending, keeps that job from running, but
-it does not stop the staging job's credential from publishing on its own.
+A re-delivered gate-2 job is idempotent. Once the package scan is attached it
+neither reads the stage again nor adds a scan.
 
 **Egress.** The stage host comes from a workflow-controlled file, so every
 request, including each redirect hop, must be https on an allowlisted origin:
@@ -669,28 +716,104 @@ staged files at 25 MiB each, within the release budget above, and every
 request and body read has a timeout. The allowlist is code, not configuration;
 a self-hosted index cannot be used yet.
 
+**Trusted publishing for both environments.** The stage job and the publish
+job each need a PyPI token. PyPI's GitHub trusted publisher pins one workflow
+file and, optionally, one environment. Configure **two trusted publishers** on
+the project, one per environment: same owner, repository, and workflow file,
+with environment `pypi-stage` on one and `pypi-publish` on the other. Each
+token can then be minted only by a job that passed its Drydock gate. Do not
+leave the environment field empty to cover both jobs. An empty field lets any
+job in that workflow mint a token, including the ungated build job that runs
+the build backend and its third-party dependencies (the ChainDrop pattern).
+Attach Drydock's deployment protection rule to both environments, and map
+both environments to the repository on `Organization settings → GitHub App`.
+
+```yaml
+jobs:
+  build-release-artifacts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # no id-token: this job runs third-party build code
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build
+      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-release-candidate
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  stage:
+    needs: build-release-artifacts
+    runs-on: ubuntu-latest
+    environment: pypi-stage # gate 1: Drydock reviews the build artifact
+    permissions:
+      id-token: write # trusted publisher pinned to pypi-stage
+      contents: read
+    steps:
+      # This job holds a publish-capable credential: no third-party actions,
+      # no checkout of release code, nothing but the reviewed files.
+      - uses: actions/download-artifact@v4
+        with: { name: pypi-release-candidate, path: dist }
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      # Your PEP 694 client. It mints a PyPI token from the OIDC token,
+      # POSTs the session for name + version, uploads every file listed in
+      # SHA256SUMS (nothing else), and writes pypi-stage.json with
+      # "stage-url" set to the session's links.stage. It never prints the
+      # stage URL or the token.
+      - run: python .github/pep694.py stage --sums dist/SHA256SUMS --out stage/pypi-stage.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-release-candidate-stage
+          path: stage/pypi-stage.json
+          retention-days: 1
+
+  publish:
+    needs: stage
+    runs-on: ubuntu-latest
+    environment: pypi-publish # gate 2: Drydock verifies the staged bytes
+    permissions:
+      id-token: write # trusted publisher pinned to pypi-publish
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: pypi-release-candidate, path: dist }
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      # Mints a token, re-opens the session (a create for the same name +
+      # version answers 409 with the session's Location), requires its files
+      # to equal SHA256SUMS exactly, then POSTs links.publish.
+      - run: python .github/pep694.py publish --sums dist/SHA256SUMS
+```
+
+The `.github/pep694.py` client is yours: PEP 694 is a draft, and Drydock does
+not ship an uploader for the workflow. The requests it makes are the ones
+`PyPiSessionGateway` makes in mode B. A rejection at either gate keeps the
+later jobs from running. After a gate-2 rejection, cancel the session (or let
+it expire) so the preview stops being served.
+
 **Residual risk (mode A).**
 
-- The staging job's credential can publish the session, or any other release,
-  without Drydock. A compromised dependency in that ungated job can publish
-  directly. Until PyPI offers stage-only trusted publishing, mode A cannot
-  enforce the gate.
+- Between gate 1 and gate 2 the stage job holds a token that can publish the
+  session, or any other release of the project, without gate 2. It runs only
+  after a human approved the reviewed bytes, and it should run nothing but
+  first-party actions and your client. This is the same exposure as the
+  non-staged gated publish job. Gate 2 adds verification and a testing window,
+  not a stronger credential boundary. Use mode B where the gate must hold
+  publish authority.
+- The session stays editable by anyone with upload rights to the project
+  until it is published, including the stage job's token while it is valid.
+  Gate 2 proves what the stage held when it checked. The publish job's
+  `SHA256SUMS` check narrows the window to the seconds before it publishes.
 - Artifacts of a public repository's workflow runs can be downloaded by any
   signed-in GitHub user, so `pypi-stage.json` exposes the preview to them until
-  the session is published or canceled. Keep the session short and cancel it
-  when the release is rejected.
-- The session stays editable by anyone with upload rights to the project
-  between Drydock's review and the publish step. Upload the distributions and
-  `SHA256SUMS` in the artifact too (Drydock then binds them to the stage), and
-  have the publish job re-check the stage against `SHA256SUMS` immediately
-  before it publishes.
-
-A mode A workflow has a staging job with a trusted publisher that creates the
-session, uploads `dist/*`, and writes `pypi-stage.json` with `stage-url` (from
-`links.stage`), and a protected job that re-checks the stage against
-`SHA256SUMS` and sends `POST links.publish`. Because the staging job's
-credential can publish, Drydock does not ship a full mode A sketch; prefer
-mode B.
+  the session is published or canceled. The preview holds only bytes a human
+  already approved. Keep `retention-days` short and cancel rejected sessions.
+- A run where gate 1 is re-run in its own environment after a stage exists is
+  rejected rather than guessed at: start a new run.
 
 ### Capability secrets (both modes)
 
@@ -698,8 +821,11 @@ A stage URL, every file URL its page lists, and a session URL each grant
 access to unpublished bytes or to the session. Drydock reads them in the
 parent Worker (they never enter the sandbox), seals session and stage links
 in D1 (mode B), and never writes them to logs, errors, scan artifacts, public
-reports, or the UI. Errors name projects, files, and digest prefixes. The
-report records only the index origin, `artifactBound`, and `managed`.
+reports, or the UI. Errors name projects, files, and digest prefixes. A mode B
+report records only the index origin, `artifactBound`, and `managed`. A mode A
+gate-2 scan records the index origin, the reviewed gate and scan ids, and each
+staged file's name and sha256 (`stageVerification`). Mode A never stores the
+stage URL; gate 2 holds it in memory for the one check.
 
 **Residual risk: Workers traces.** Production has Workers traces enabled with
 `head_sampling_rate: 1` and `persist: true` (`wrangler.jsonc`). Automatic fetch
