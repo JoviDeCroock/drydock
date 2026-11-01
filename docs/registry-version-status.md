@@ -261,7 +261,7 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 ## Storage
 
 Eight columns on `scans` (migration `0027`), plus one from `0030` and one from
-`0040_futuristic_zombie`:
+`0041_tough_randall_flagg`:
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.
@@ -282,7 +282,7 @@ Eight columns on `scans` (migration `0027`), plus one from `0030` and one from
   reviews of it, matched by the immutable registry coordinates and by the
   stage's SHA-1 against the published bytes, when its
   [publication monitor](./publication-monitor.md) observes the release
-  (migration `0041`). Null when no watch saw the release; the status columns
+  (migration `0041_tough_randall_flagg`). Null when no watch saw the release; the status columns
   above then only bound publication from above.
 
 Exported additively as `registryStatus: { status, observedAt } | null` on
