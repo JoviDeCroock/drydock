@@ -22,6 +22,7 @@ import { isValidPyPiProjectName, normalizePyPiProjectName } from "../lib/ecosyst
 import {
   openPyPiToken,
   pyPiTokenProblem,
+  releaseTargetGatesPyPi,
   sealPyPiToken,
 } from "../lib/ecosystems/pypi/project-token";
 import { PYPI_STAGE_INDEX_ORIGINS } from "../lib/ecosystems/pypi/types";
@@ -192,7 +193,7 @@ async function stagingRepositories(
   const targets = await listReleaseTargetsForOrganization(db, organizationId);
   const byId = new Map<number, string>();
   for (const target of targets) {
-    if (target.ecosystem === null || target.ecosystem === "pypi") {
+    if (releaseTargetGatesPyPi(target.ecosystem)) {
       byId.set(target.repositoryId, target.repositoryFullName);
     }
   }

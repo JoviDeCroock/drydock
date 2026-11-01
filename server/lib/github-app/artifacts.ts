@@ -130,12 +130,21 @@ export class RetryableGateError extends Error {
    * nothing failed, so no failure reason or failure event is recorded.
    */
   readonly busy: boolean;
+  /**
+   * With `busy`: another delivery already began the review, or the gate
+   * closed. A retry has nothing left to do, so the job acknowledges instead.
+   */
+  readonly settled: boolean;
 
-  constructor(message: string, options: { retryAfterSeconds?: number; busy?: boolean } = {}) {
+  constructor(
+    message: string,
+    options: { retryAfterSeconds?: number; busy?: boolean; settled?: boolean } = {},
+  ) {
     super(message);
     this.name = "RetryableGateError";
     this.retryAfterSeconds = options.retryAfterSeconds ?? null;
-    this.busy = options.busy === true;
+    this.busy = options.busy === true || options.settled === true;
+    this.settled = options.settled === true;
   }
 }
 

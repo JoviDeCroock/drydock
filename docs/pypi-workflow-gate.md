@@ -386,10 +386,11 @@ installable stage preview) contains bytes still under review; nothing publishes
 until a human approves. One delivery of a gate stages at a time: a staging
 lease on the gate (30 minutes, taken over once it lapses) makes a concurrent
 delivery wait instead of deleting the first one's uploads. A failed staging
-releases the lease; a successful one keeps it until it lapses or the review
-starts, so no other delivery restages the held session in between. A delivery
-that finds the lease taken records no failure and is retried by the queue
-once the lease lapses. Drydock:
+releases the lease; a successful one keeps it until the review claim clears it
+(or it lapses), so no other delivery restages the held session in between. A
+delivery that finds the lease taken records no failure and is retried by the
+queue once the lease lapses; one that finds the review already begun is
+acknowledged and dropped. Drydock:
 
 1. looks up the organization's token for the project on the entry's index. If
    there is none, or it is bound to another repository, the deployment is
@@ -525,8 +526,9 @@ unacknowledged approvals as described above. `staging` and `upload_failed`
 sessions are not extended. The cron never publishes.
 
 The cron cancels without a maintainer's rejection in one case, a fail-closed
-cleanup rather than a release decision: a pending gate with no scan, no
-review started, and no live staging lease, whose sessions are `staging`,
+cleanup rather than a release decision: a pending gate with no scans at all
+(a failed review batch's scans, and any package decision on them, exclude
+it), no review started, and no live staging lease, whose sessions are `staging`,
 `upload_failed`, or `held` and whose gate row has not changed for 24 hours
 (staging, a recorded fault, and a retry write it; the cron's own session
 upkeep does not). Nothing was reviewed or approved for such a gate. The cron rejects it

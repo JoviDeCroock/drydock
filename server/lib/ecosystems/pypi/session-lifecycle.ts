@@ -230,6 +230,7 @@ export async function stageManagedReleases(
       : undefined;
     throw new PyPiStagingError("another delivery of this gate is staging it, or its review began", {
       busy: true,
+      settled: lease.reviewOwned,
       ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
     });
   }

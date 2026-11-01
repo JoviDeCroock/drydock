@@ -324,14 +324,18 @@ export async function listApprovedRunReviews(
  * preparation, before `claimGateReviewStart`). Granted only to one holder at a
  * time, only while the gate is pending and its review has not started, and
  * an expired lease can be taken over. A refusal says when the current lease
- * lapses (null once the review began or the gate closed). The holder keeps
- * the lease after staging succeeds: it lapses on its own, and a review claim
- * makes it moot, so no other delivery restages in between.
+ * lapses, or that the review began or the gate closed. The holder keeps the
+ * lease after staging succeeds, until the review claim clears it (or it
+ * lapses), so no other delivery restages in between.
  */
 export async function acquireGateStagingLease(
   db: AppDb,
   input: { gateId: string; organizationId: string; leaseId: string; ttlMs: number },
-): Promise<{ acquired: true } | { acquired: false; leaseUntil: Date | null }> {
+): Promise<
+  | { acquired: true }
+  /** `reviewOwned`: the review began or the gate closed; nothing is left to retry. */
+  | { acquired: false; leaseUntil: Date | null; reviewOwned: boolean }
+> {
   const now = new Date();
   const updated = await db
     .update(githubWorkflowGates)
@@ -375,6 +379,7 @@ export async function acquireGateStagingLease(
   return {
     acquired: false,
     leaseUntil: leaseOnly && current.stagingLeaseUntil ? new Date(current.stagingLeaseUntil) : null,
+    reviewOwned: !leaseOnly,
   };
 }
 
@@ -407,8 +412,15 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
   const updated = await db
     .update(githubWorkflowGates)
     // Preparation succeeded: an earlier delivery's retryable fault no longer
-    // describes this gate.
-    .set({ reviewStartedAt: now, failureReason: null, updatedAt: now })
+    // describes this gate, and the staging lease has done its job (a retried
+    // review after a failed batch must not wait for it to lapse).
+    .set({
+      reviewStartedAt: now,
+      failureReason: null,
+      stagingLeaseId: null,
+      stagingLeaseUntil: null,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(githubWorkflowGates.id, gateId),
@@ -683,8 +695,9 @@ export async function markGateApprovalFailed(
 
 /**
  * Fail-closed cleanup of a gate whose staging never reached a review: rejects
- * it only while it is still pending with no scan, no review started, and no
- * live staging lease, so it can never overturn a reviewed or approved gate.
+ * it only while it is still pending with no scans at all (not even a failed
+ * batch's), no review started, and no live staging lease, so it can never
+ * overturn a reviewed or approved gate.
  */
 export async function markGateStagingAbandoned(
   db: AppDb,
@@ -716,6 +729,11 @@ export async function markGateStagingAbandoned(
         eq(githubWorkflowGates.updatedAt, input.observedUpdatedAt),
         isNull(githubWorkflowGates.scanId),
         isNull(githubWorkflowGates.reviewStartedAt),
+        sql`not exists (
+          select 1 from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+        )`,
         or(
           isNull(githubWorkflowGates.stagingLeaseUntil),
           lt(githubWorkflowGates.stagingLeaseUntil, now),

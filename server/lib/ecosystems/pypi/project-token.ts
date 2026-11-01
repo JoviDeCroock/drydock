@@ -82,6 +82,11 @@ export function pyPiTokenProblem(token: string, project: string): string | null 
   return null;
 }
 
+/** A release target that can gate PyPI (pinned to it, or auto-detecting). */
+export function releaseTargetGatesPyPi(ecosystem: string | null): boolean {
+  return ecosystem === null || ecosystem === "pypi";
+}
+
 export interface SealedPyPiToken {
   tokenCiphertext: string;
   tokenNonce: string;

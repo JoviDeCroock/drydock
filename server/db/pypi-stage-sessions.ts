@@ -15,7 +15,7 @@ import {
 } from "drizzle-orm";
 import type { AppDb } from "./client";
 import type { PyPiStageSessionState, WorkflowGateStatus } from "./enums";
-import { githubWorkflowGates, pypiProjectTokens, pypiStageSessions } from "./schema";
+import { githubWorkflowGates, pypiProjectTokens, pypiStageSessions, scans } from "./schema";
 
 // ── Project tokens ───────────────────────────────────────────────────────────
 
@@ -521,6 +521,11 @@ export async function listAbandonedStagingGates(
           gateSessions(inArray(pypiStageSessions.state, ["staging", "upload_failed", "held"])),
         ),
         notExists(gateSessions(eq(pypiStageSessions.state, "publishing"))),
+        // A failed review batch leaves scans (possibly with a human decision)
+        // while the gate has no representative scan: that is reviewed state.
+        notExists(
+          db.select({ id: scans.id }).from(scans).where(eq(scans.gateId, githubWorkflowGates.id)),
+        ),
       ),
     )
     .orderBy(asc(githubWorkflowGates.updatedAt))

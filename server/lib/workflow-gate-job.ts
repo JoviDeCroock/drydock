@@ -397,6 +397,14 @@ export async function executeWorkflowGateJob(
       });
       return;
     }
+    if (err instanceof RetryableGateError && err.settled) {
+      emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
+        organizationId,
+        gateId,
+        reason: "review_claim_lost",
+      });
+      return;
+    }
     if (err instanceof RetryableGateError && err.busy) {
       emitOperationalEvent("info", "github_workflow_gate.job_deferred", {
         organizationId,

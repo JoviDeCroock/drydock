@@ -644,16 +644,40 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
   test("a delivery after staging but before the review claim does not restage the held session", async () => {
     const run = await runManaged();
     const requests = run.session.requests.length;
-    // The window between a successful staging and the review claim.
+    // The window between a successful staging (lease kept) and the review claim.
     await run.db
       .update(schema.githubWorkflowGates)
-      .set({ scanId: null, reviewStartedAt: null })
+      .set({
+        scanId: null,
+        reviewStartedAt: null,
+        stagingLeaseId: "first-delivery",
+        stagingLeaseUntil: new Date(Date.now() + 30 * MINUTE),
+      })
       .where(eq(schema.githubWorkflowGates.id, run.gateId));
 
-    await expect(run.deliver()).rejects.toMatchObject({ busy: true });
+    await expect(run.deliver()).rejects.toMatchObject({ busy: true, settled: false });
     expect(run.session.requests).toHaveLength(requests);
     expect((await sessionRows(run))[0].state).toBe("held");
     expect([...run.session.state.files.keys()].sort()).toEqual([WHEEL, SDIST].sort());
+  });
+
+  test("the review claim clears the staging lease, and a duplicate delivery during the review is acknowledged", async () => {
+    const run = await runManaged();
+    const [reviewed] = await run.db
+      .select({ stagingLeaseUntil: schema.githubWorkflowGates.stagingLeaseUntil })
+      .from(schema.githubWorkflowGates)
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+    expect(reviewed.stagingLeaseUntil).toBeNull();
+    const requests = run.session.requests.length;
+    // A review in progress: claimed, no representative scan yet.
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId: null })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+
+    await expect(run.deliver()).resolves.toBeUndefined();
+    expect(run.session.requests).toHaveLength(requests);
+    expect((await sessionRows(run))[0].state).toBe("held");
   });
 });
 
@@ -1608,6 +1632,31 @@ describe("PEP 694 mode B: retryable staging faults", () => {
     const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
     expect(gate?.status).toBe("rejected");
     expect((await sessionRows(run))[0].state).toBe("canceled");
+  });
+
+  test("the cron never cleans up a gate whose review batch failed, even with no representative scan", async () => {
+    const run = await runManaged();
+    // A failed batch releases the review claim and leaves its scans (and any
+    // human package decision on them) behind.
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId: null, reviewStartedAt: null })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+    await run.db
+      .update(schema.scans)
+      .set({ decision: "publish", decidedAt: new Date() })
+      .where(eq(schema.scans.gateId, run.gateId));
+
+    await runHeldReleaseUpkeep(
+      inlineEnv(run),
+      buildCtxWithGateway(),
+      run.db,
+      Date.now() + DAY + MINUTE,
+    );
+
+    const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
+    expect(gate?.status).toBe("pending");
+    expect((await sessionRows(run))[0].state).toBe("held");
   });
 
   test("the cron leaves recent staging faults and reviewed gates alone", async () => {
