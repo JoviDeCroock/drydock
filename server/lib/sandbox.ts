@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FileRecord, PackageJsonSummary } from "./review";
-import { STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
+import { isValidStageId, STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
 import { pathWithinBaseUrl } from "./platform/url-scope";
 import * as tarParser from "./tar-parser.js";
 import type { TarRootStrip, TarSuspiciousEntry } from "./tar-parser.js";
@@ -90,14 +90,23 @@ interface NpmStageGatewayProps {
 export interface NpmStageGatewayPolicy {
   allowed: boolean;
   credentialed: boolean;
-  kind: "staged-tarball" | "package-metadata" | "public-artifact" | "blocked";
+  kind: "staged-tarball" | "public-artifact" | "blocked";
 }
 
-// Whole-path matches: a prefix/suffix test would let anything between them,
-// such as an encoded `..%2f` walk, ride along with the credential.
-const STAGED_TARBALL_PATH = new RegExp(`^/-/stage/${STAGE_ID_PATTERN}/tarball$`);
-const PACKAGE_METADATA_PATH =
-  /^\/(?:@[A-Za-z0-9][A-Za-z0-9._~-]*%2[fF])?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+// A whole-path match: a prefix/suffix test would let anything between them,
+// such as an encoded `..%2f` walk, ride along with the credential. The id is
+// matched decoded because the sandbox URL-encodes it (`:` arrives as `%3A`).
+const STAGED_TARBALL_PATH = /^\/-\/stage\/([^/]+)\/tarball$/;
+
+function isStagedTarballPath(path: string): boolean {
+  const encodedId = STAGED_TARBALL_PATH.exec(path)?.[1];
+  if (!encodedId) return false;
+  try {
+    return isValidStageId(decodeURIComponent(encodedId));
+  } catch {
+    return false;
+  }
+}
 
 export function evaluateNpmStageGatewayRequest(
   requestUrl: string,
@@ -114,14 +123,13 @@ export function evaluateNpmStageGatewayRequest(
     publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
   // A registry served under a path owns only that subtree of its origin.
   const registryPath = pathWithinBaseUrl(url, registry);
+  // The sandbox fetches only staged tarballs from the registry; packuments and
+  // published tarballs are read by the parent Worker.
   const isStagedTarball =
-    registryPath !== null && normalizedMethod === "GET" && STAGED_TARBALL_PATH.test(registryPath);
-  const isRegistryMetadata =
-    registryPath !== null && normalizedMethod === "GET" && PACKAGE_METADATA_PATH.test(registryPath);
+    registryPath !== null && normalizedMethod === "GET" && isStagedTarballPath(registryPath);
 
   if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
-  if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
   return { allowed: false, credentialed: false, kind: "blocked" };
 }
 
@@ -199,14 +207,15 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     }
 
     const token = this.ctx.props.npmToken;
-    const forwarded = new Request(request);
+    // Never follow here: a credentialed registry response, 3xx included, goes
+    // back to the sandbox as is, and any hop it takes comes back through this
+    // policy as a new request.
+    const forwarded = new Request(request, { redirect: "manual" });
     if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     // A pinned artifact URL means the origin was vetted; keep redirects inside
-    // it. Incoming requests carry `redirect: "manual"`, so a credentialed
-    // registry response, 3xx included, goes back to the sandbox as is, and any
-    // hop the sandbox takes comes back through this policy.
+    // it.
     if (policy.kind === "public-artifact") return fetchPinnedArtifact(forwarded);
     return fetch(forwarded);
   }

@@ -7,6 +7,7 @@ interface CapturedRequest {
   method: string;
   authorization: string | null;
   userAgent: string | null;
+  redirect: RequestRedirect;
 }
 
 function setupGateway(
@@ -27,6 +28,7 @@ function setupGateway(
       method: request.method,
       authorization: request.headers.get("authorization"),
       userAgent: request.headers.get("user-agent"),
+      redirect: request.redirect,
     });
     return respond(request);
   });
@@ -66,12 +68,23 @@ describe("NpmStageGateway runtime credential injection", () => {
     expect(captured).toHaveLength(0);
   });
 
-  test("attaches Authorization on package-metadata requests", async () => {
+  // The sandbox never reads packuments; the parent Worker does.
+  test("blocks package-metadata requests without forwarding the token", async () => {
     const { gateway, captured } = setupGateway({ npmToken: "npm_secret_meta" });
     const res = await gateway.fetch(new Request("https://registry.npmjs.org/@scope%2fpkg"));
+    expect(res.status).toBe(403);
+    expect(captured).toHaveLength(0);
+  });
+
+  test("forwards a stage id the sandbox URL-encoded, colon included", async () => {
+    const { gateway, captured } = setupGateway({ npmToken: "npm_secret_colon" });
+    const res = await gateway.fetch(
+      new Request(
+        `https://registry.npmjs.org/-/stage/${encodeURIComponent("npm:stage:abc123")}/tarball`,
+      ),
+    );
     expect(res.status).toBe(200);
-    expect(captured).toHaveLength(1);
-    expect(captured[0].authorization).toBe("Bearer npm_secret_meta");
+    expect(captured[0].authorization).toBe("Bearer npm_secret_colon");
   });
 
   test("blocks foreign origins without forwarding or sending the token", async () => {
@@ -247,10 +260,10 @@ describe("NpmStageGateway pinned-artifact redirects", () => {
     expect((await gateway.fetch(new Request(BLOB))).status).toBe(403);
   });
 
-  test("credentialed registry requests keep the runtime's own redirect handling", async () => {
-    // Unchanged on purpose: a registry that moves a staged tarball to a CDN must
-    // keep working, and that path is same-origin-pinned by the registry policy
-    // rather than by an artifact URL.
+  test("credentialed registry requests hand a 3xx back to the sandbox unfollowed", async () => {
+    // The sandbox's next hop comes back through the gateway as a new request,
+    // so a staged tarball redirected off the registry (a CDN included) is
+    // blocked there rather than followed here with the token.
     const { gateway, captured } = setupGateway(
       { npmToken: "npm_token" },
       redirectOnce("https://cdn.npmjs.example/stage.tgz"),
@@ -260,10 +273,18 @@ describe("NpmStageGateway pinned-artifact redirects", () => {
       new Request("https://registry.npmjs.org/-/stage/stage-abc123/tarball"),
     );
 
-    // The gateway forwards once and lets the runtime resolve the 302, so the
-    // spy sees exactly one request and the 302 comes straight back through.
     expect(res.status).toBe(302);
     expect(captured).toHaveLength(1);
     expect(captured[0].authorization).toBe("Bearer npm_token");
+    // Set explicitly, not inherited: an incoming request in "follow" mode
+    // must not make the gateway resolve the redirect itself.
+    expect(captured[0].redirect).toBe("manual");
+
+    await gateway.fetch(
+      new Request("https://registry.npmjs.org/-/stage/stage-abc123/tarball", {
+        redirect: "follow",
+      }),
+    );
+    expect(captured[1].redirect).toBe("manual");
   });
 });

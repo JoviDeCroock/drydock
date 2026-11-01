@@ -41,9 +41,19 @@ describe("pathWithinBaseUrl", () => {
         "/%2e%2e%2fadmin",
         "/.%2fpkg",
         "/pkg%zz",
+        "/..%3fadmin",
+        "/..%23admin",
+        "/..%00/admin",
+        "/%252e%252e%253fadmin",
       ]) {
         expect(within(`https://host.test${prefix}${hidden}`, base), hidden).toBeNull();
       }
+    }
+  });
+
+  test("a decoded control character is outside any base", () => {
+    for (const path of ["/pkg%00", "/pkg%0a", "/pkg%0D%0Ax", "/pkg%7f", "/pkg%2500"]) {
+      expect(within(`https://host.test/npm${path}`, "https://host.test/npm"), path).toBeNull();
     }
   });
 
@@ -145,5 +155,45 @@ describe("fetchWithinBaseUrl", () => {
 
     stubHops(...Array.from({ length: 21 }, () => redirect(`${BASE}/loop`)));
     await expect(fetchWithinBaseUrl(`${BASE}/loop`, BASE)).rejects.toThrow("too many redirects");
+  });
+
+  test("a redirect to a non-http(s) URL is refused, not followed", async () => {
+    for (const location of [
+      "data:application/octet-stream;base64,AAAA",
+      "file:///etc/passwd",
+      "blob:https://host.test/x",
+    ]) {
+      const hops = stubHops(redirect(location), ok);
+      await expect(
+        fetchWithinBaseUrl(`${BASE}/x`, BASE, { headers: { authorization: AUTH } }),
+        location,
+      ).rejects.toThrow("non-http(s)");
+      expect(hops).toHaveLength(1);
+    }
+  });
+
+  test("redirect hops share one deadline instead of each getting a fresh timeout", async () => {
+    let hops = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        hops++;
+        const signal = init?.signal;
+        // Each hop is slow but inside the per-attempt timeout on its own.
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 40);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          });
+        });
+        return new Response(null, { status: 302, headers: { location: `${BASE}/next` } });
+      }),
+    );
+
+    await expect(
+      fetchWithinBaseUrl(`${BASE}/slow`, BASE, { timeoutMs: 100, attempts: 1 }),
+    ).rejects.toThrow("fetch timeout");
+    expect(hops).toBeLessThanOrEqual(4);
   });
 });

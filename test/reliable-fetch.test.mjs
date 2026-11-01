@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { reliableFetch } from "../server/lib/platform/reliable-fetch";
+import { reliableFetch, reliableFetchBudgetMs } from "../server/lib/platform/reliable-fetch";
 
 const originalFetch = globalThis.fetch;
 
@@ -52,5 +52,14 @@ describe("reliableFetch", () => {
 
     expect(response.status).toBe(204);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reliableFetchBudgetMs", () => {
+  test("covers every attempt timing out plus the capped delays between them", () => {
+    expect(reliableFetchBudgetMs()).toBe(3 * 15_000 + 2 * 2_000);
+    expect(reliableFetchBudgetMs({ timeoutMs: 5_000, attempts: 1 })).toBe(5_000);
+    expect(reliableFetchBudgetMs({ timeoutMs: 60_000, maxDelayMs: 500 })).toBe(181_000);
+    expect(reliableFetchBudgetMs({ timeoutMs: 0 })).toBe(Infinity);
   });
 });

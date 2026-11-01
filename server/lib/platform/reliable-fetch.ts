@@ -14,6 +14,19 @@ export interface ReliableFetchOptions extends RequestInit {
   retryStatuses?: readonly number[];
 }
 
+/**
+ * The longest one {@link reliableFetch} call can wait for response headers:
+ * every attempt timing out plus the capped delays between them. Infinity when
+ * the per-attempt timeout is disabled.
+ */
+export function reliableFetchBudgetMs(options: ReliableFetchOptions = {}): number {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Infinity;
+  const attempts = Math.max(1, Math.floor(options.attempts ?? DEFAULT_ATTEMPTS));
+  const maxDelayMs = Math.max(0, options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS);
+  return attempts * timeoutMs + (attempts - 1) * maxDelayMs;
+}
+
 export async function reliableFetch(
   input: RequestInfo | URL,
   options: ReliableFetchOptions = {},

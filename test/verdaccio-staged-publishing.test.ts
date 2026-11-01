@@ -149,19 +149,17 @@ describe("Verdaccio staged publishing", () => {
     ).resolves.toEqual({ ok: false, reason: "not_found", httpStatus: 404 });
   });
 
-  test("the stage gateway credentials only registry endpoints below the base path", () => {
-    const tarball = `${REGISTRY}/-/stage/${STAGE_ID}/tarball`;
+  test("the stage gateway credentials only staged tarballs below the base path", () => {
+    const colonId = encodeURIComponent("verdaccio:stage:abc123");
     for (const registry of [REGISTRY, `${REGISTRY}/`]) {
-      expect(evaluateNpmStageGatewayRequest(tarball, "GET", registry)).toEqual({
-        allowed: true,
-        credentialed: true,
-        kind: "staged-tarball",
-      });
-      expect(
-        evaluateNpmStageGatewayRequest(`${REGISTRY}/@drydock-test%2fpkg`, "GET", registry),
-      ).toEqual({ allowed: true, credentialed: true, kind: "package-metadata" });
+      for (const id of [STAGE_ID, colonId]) {
+        expect(
+          evaluateNpmStageGatewayRequest(`${REGISTRY}/-/stage/${id}/tarball`, "GET", registry),
+        ).toEqual({ allowed: true, credentialed: true, kind: "staged-tarball" });
+      }
     }
     for (const url of [
+      `${REGISTRY}/@drydock-test%2fpkg`,
       "https://npm.example.test/@drydock-test%2fpkg",
       "https://npm.example.test/verdaccio",
       `https://npm.example.test/-/stage/${STAGE_ID}/tarball`,
@@ -194,7 +192,10 @@ describe("Verdaccio staged publishing", () => {
         "/..;",
         "/%252e%252e",
         "/@scope%2f..%2fadmin",
-        // No dot segment, but not a stage tarball or a package name either.
+        "/-/stage/..%3f/tarball",
+        "/-/stage/..%23/tarball",
+        "/-/stage/..%00/tarball",
+        // No dot segment, but not a stage tarball.
         `/-/stage/${STAGE_ID}/extra/tarball`,
         "/-/stage/admin%2fsecrets/tarball",
         "/_admin",
