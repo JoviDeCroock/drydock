@@ -206,11 +206,13 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
                 </div>
-                {/* Loads its own data on mount; keyed so an organization switch reloads it. */}
-                <PyPiProjectTokensSection
-                  key={organizations.active.value?.id}
-                  canManage={canManageIntegrations(organizations)}
-                />
+                <div id={SETTINGS_SECTION.pypiProjectTokens} class={SECTION_ANCHOR_CLASS}>
+                  {/* Loads its own data on mount; keyed so an organization switch reloads it. */}
+                  <PyPiProjectTokensSection
+                    key={organizations.active.value?.id}
+                    canManage={canManageIntegrations(organizations)}
+                  />
+                </div>
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? (

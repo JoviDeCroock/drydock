@@ -53,26 +53,80 @@ describe("parsePyPiStageReference", () => {
   test("accepts a single top-level stage and a stages array", () => {
     const [single] = parsePyPiStageReference(reference());
     expect(single.name).toBe("demo-package");
-    expect(single.stageUrl.href).toBe(STAGE);
-    expect(single.sessionUrl).toBeNull();
+    expect(single.stageUrl?.href).toBe(STAGE);
+    expect(single.index).toBe("https://pypi.org");
 
     const many = parsePyPiStageReference(
       JSON.stringify({
         schema: "drydock.pypi-stage.v1",
         stages: [
-          {
-            name: "a",
-            version: "1.0",
-            stage_url: STAGE,
-            "session-url": "https://upload.example/s/1",
-          },
+          { name: "a", version: "1.0", stage_url: STAGE },
           { name: "b", version: "2.0", "stage-url": "https://test.pypi.org/stage/x/" },
         ],
         future_field: true,
       }),
     );
-    expect(many.map((entry) => entry.name)).toEqual(["a", "b"]);
-    expect(many[0].sessionUrl).toBe("https://upload.example/s/1");
+    expect(many.map((entry) => [entry.name, entry.index])).toEqual([
+      ["a", "https://pypi.org"],
+      ["b", "https://test.pypi.org"],
+    ]);
+  });
+
+  test("an opt-in entry asks Drydock to create the session, defaulting to pypi.org", () => {
+    const [entry] = parsePyPiStageReference(
+      JSON.stringify({
+        schema: "drydock.pypi-stage.v1",
+        name: "demo-package",
+        version: "1.2.0",
+        session: "drydock",
+      }),
+    );
+    expect(entry).toEqual({
+      name: "demo-package",
+      version: "1.2.0",
+      index: "https://pypi.org",
+      stageUrl: null,
+    });
+    const optIn = (extra: Record<string, unknown>) =>
+      JSON.stringify({
+        schema: "drydock.pypi-stage.v1",
+        name: "demo-package",
+        version: "1.2.0",
+        session: "drydock",
+        ...extra,
+      });
+    expect(parsePyPiStageReference(optIn({ index: "https://test.pypi.org" }))[0].index).toBe(
+      "https://test.pypi.org",
+    );
+    expectStageError(
+      () => parsePyPiStageReference(optIn({ index: "https://evil.example" })),
+      "stage_reference_invalid",
+      /index must be one of/,
+    );
+    expectStageError(
+      () => parsePyPiStageReference(optIn({ "stage-url": STAGE })),
+      "stage_reference_invalid",
+      /both a stage-url and/,
+    );
+    expectStageError(
+      () => parsePyPiStageReference(optIn({ session: "ci" })),
+      "stage_reference_invalid",
+      /session must be "drydock"/,
+    );
+  });
+
+  test("a session-url is refused in every form: Drydock never holds a session CI created", () => {
+    for (const extra of [
+      { "session-url": "https://upload.pypi.org/2.0/sessions/ci" },
+      { session_url: "https://upload.pypi.org/2.0/sessions/ci" },
+      { session: "drydock", "session-url": "https://upload.pypi.org/2.0/sessions/ci" },
+    ]) {
+      expectStageError(
+        () => parsePyPiStageReference(reference(extra)),
+        "stage_reference_invalid",
+        /session-url is not accepted/,
+      );
+    }
   });
 
   test("fails closed on an unknown schema or malformed JSON", () => {

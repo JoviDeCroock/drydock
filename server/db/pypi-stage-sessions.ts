@@ -173,31 +173,96 @@ export function publicPyPiStageSession(row: PyPiStageSessionRow): PublicPyPiStag
   };
 }
 
+/** States a re-run review may restage from: nothing irreversible happened yet. */
+const RESTAGEABLE_STATES: PyPiStageSessionState[] = ["staging", "upload_failed", "held", "stale"];
+
+/**
+ * Record (or re-record) the session Drydock is staging for a gate's project,
+ * in state `staging`. Returns the row, or null with the existing row's state
+ * when that row is past the point of restaging (publishing, published,
+ * canceled, ...).
+ */
 export async function upsertPyPiStageSession(
   db: AppDb,
   values: Omit<typeof pypiStageSessions.$inferInsert, "id" | "createdAt" | "updatedAt" | "state">,
-): Promise<boolean> {
+): Promise<{ row: PyPiStageSessionRow } | { blockedBy: PyPiStageSessionState | null }> {
   const now = new Date();
-  // A re-run review may re-register a session only while nothing irreversible
-  // happened to it: a publishing, published, or canceled row is never reset.
-  const rows = await db
+  const [row] = await db
     .insert(pypiStageSessions)
-    .values({ ...values, id: crypto.randomUUID(), state: "held", createdAt: now, updatedAt: now })
+    .values({
+      ...values,
+      id: crypto.randomUUID(),
+      state: "staging",
+      createdAt: now,
+      updatedAt: now,
+    })
     .onConflictDoUpdate({
       target: [pypiStageSessions.gateId, pypiStageSessions.projectName],
-      set: { ...values, state: "held", stateDetail: null, updatedAt: now },
-      setWhere: inArray(pypiStageSessions.state, ["held", "stale"]),
+      set: {
+        ...values,
+        state: "staging",
+        stateDetail: null,
+        lastExtendedAt: null,
+        updatedAt: now,
+      },
+      setWhere: inArray(pypiStageSessions.state, RESTAGEABLE_STATES),
     })
-    .returning({ id: pypiStageSessions.id });
-  return rows.length > 0;
+    .returning();
+  if (row) return { row };
+  const [existing] = await db
+    .select({ state: pypiStageSessions.state })
+    .from(pypiStageSessions)
+    .where(
+      and(
+        eq(pypiStageSessions.gateId, values.gateId),
+        eq(pypiStageSessions.projectName, values.projectName),
+      ),
+    )
+    .limit(1);
+  return { blockedBy: existing?.state ?? null };
 }
 
 /**
- * A removed token can never act on its sessions again; stop tracking them. A
- * `publishing` row keeps its state: the publish request already went out and
- * may have succeeded, so calling it `token_removed` (unpublished) would let the
- * interrupted-approval recovery reject a gate whose release is live. Its
- * outcome just can no longer be checked.
+ * Another gate of this organization that still tracks the same index session
+ * (PEP 694 hands the existing session back for a re-run of one release).
+ * Rows that can still be restaged or canceled are retired as `superseded`, so
+ * an old gate's rejection never cancels the session a newer gate now holds.
+ * Returns the state of a row that cannot be retired (publishing, canceling),
+ * or null when the session is free to adopt.
+ */
+export async function supersedePyPiStageSessions(
+  db: AppDb,
+  input: { organizationId: string; sessionFingerprint: string; exceptGateId: string },
+): Promise<PyPiStageSessionState | null> {
+  const sameSession = and(
+    eq(pypiStageSessions.organizationId, input.organizationId),
+    eq(pypiStageSessions.sessionFingerprint, input.sessionFingerprint),
+    ne(pypiStageSessions.gateId, input.exceptGateId),
+  );
+  const [busy] = await db
+    .select({ state: pypiStageSessions.state })
+    .from(pypiStageSessions)
+    .where(and(sameSession, inArray(pypiStageSessions.state, ["publishing", "canceling"])))
+    .limit(1);
+  if (busy) return busy.state;
+  await db
+    .update(pypiStageSessions)
+    .set({
+      state: "superseded",
+      stateDetail: "a later run of this release took over the session",
+      updatedAt: new Date(),
+    })
+    .where(and(sameSession, inArray(pypiStageSessions.state, RESTAGEABLE_STATES)));
+  return null;
+}
+
+/**
+ * A removed token can never act on its sessions again; stop tracking them,
+ * including `stale` and not-yet-held rows, which a rejection would otherwise
+ * try to cancel. A `publishing` row keeps its state: the publish request
+ * already went out and may have succeeded, so calling it `token_removed`
+ * (unpublished) would let the interrupted-approval recovery reject a gate
+ * whose release is live. Its outcome just can no longer be checked.
  */
 export async function markTokenSessionsRemoved(
   db: AppDb,
@@ -224,7 +289,18 @@ export async function markTokenSessionsRemoved(
       stateDetail: "the PyPI token for this project was removed",
       updatedAt: now,
     })
-    .where(and(ownedByToken, inArray(pypiStageSessions.state, ["held", "canceling"])))
+    .where(
+      and(
+        ownedByToken,
+        inArray(pypiStageSessions.state, [
+          "staging",
+          "upload_failed",
+          "held",
+          "stale",
+          "canceling",
+        ]),
+      ),
+    )
     .returning();
 }
 

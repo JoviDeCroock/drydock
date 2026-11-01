@@ -32,6 +32,9 @@ export interface GatePackageScan {
 }
 
 type HeldReleaseState =
+  | "staging"
+  | "upload_failed"
+  | "superseded"
   | "held"
   | "publishing"
   | "published"

@@ -145,24 +145,35 @@ export async function prepareReleaseCandidatesForGate(
       const adapter = getEcosystem(resolved.ecosystem)?.gate;
       return adapter?.narrowParsedArtifact?.(resolved, retainedSamples) ?? resolved;
     };
+    const source = {
+      installationExternalId: installation.installationId,
+      repositoryFullName: gate.repositoryFullName,
+      runId: gate.runId,
+      ...(artifactName ? { artifactName } : {}),
+      ...(artifactNamePrefix ? { artifactNamePrefix } : {}),
+    };
     const bundle = await processReleaseBundleForGate(
       input.config,
-      {
-        installationExternalId: installation.installationId,
-        repositoryFullName: gate.repositoryFullName,
-        runId: gate.runId,
-        ...(artifactName ? { artifactName } : {}),
-        ...(artifactNamePrefix ? { artifactNamePrefix } : {}),
-      },
+      source,
       classify,
       parse,
       classifySidecar,
     );
+    // Same run, same narrowing, same classifier and limits as the first pass.
+    const rereadReleaseFiles = async (
+      ecosystem: string,
+      onFile: (file: ResolvedReleaseFile) => Promise<void>,
+    ) => {
+      await processReleaseBundleForGate(input.config, source, classify, async (file) => {
+        if (file.ecosystem === ecosystem) await onFile(file);
+      });
+    };
     const packages = await prepareBundlePackages(
       { env, db, organizationId: gate.organizationId, gateId: gate.id },
       bundle.artifacts,
       bundle.sidecars ?? [],
       parse,
+      rereadReleaseFiles,
     );
     return { gate, packages };
   } catch (err) {
@@ -263,6 +274,10 @@ async function prepareBundlePackages(
   resolved: ParsedGateArtifact[],
   sidecars: BundleSidecarFile[],
   parse: (file: ResolvedReleaseFile) => Promise<ParsedGateArtifact>,
+  rereadReleaseFiles: (
+    ecosystem: string,
+    onFile: (file: ResolvedReleaseFile) => Promise<void>,
+  ) => Promise<void>,
 ): Promise<PreparedGatePackage[]> {
   const byEcosystem = new Map<string, ParsedGateArtifact[]>();
   for (const artifact of resolved) {
@@ -289,6 +304,7 @@ async function prepareBundlePackages(
         sidecars: ecosystemSidecars.map(({ path, bytes }) => ({ path, bytes })),
         artifacts,
         parse,
+        rereadReleaseFiles: (onFile) => rereadReleaseFiles(ecosystem, onFile),
       });
     } else if (artifacts.length > 0) {
       candidates = adapter.prepareReleaseCandidates(artifacts);

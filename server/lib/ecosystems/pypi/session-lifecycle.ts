@@ -11,10 +11,12 @@ import {
   listGatePyPiStageSessions,
   listPyPiStageSessionsDue,
   publicPyPiStageSession,
+  supersedePyPiStageSessions,
   transitionPyPiStageSession,
   updatePyPiProjectToken,
   upsertPyPiStageSession,
 } from "../../../db/pypi-stage-sessions";
+import { MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES } from "../../github-app/artifacts";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { isRecord } from "../../platform/guards";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
@@ -22,35 +24,46 @@ import { openSecret, sealSecret } from "../../platform/secret-box";
 import { normalizePyPiProjectName } from "./manifest";
 import { openPyPiToken } from "./project-token";
 import {
+  type PyPiFileUpload,
   type PyPiSessionGateway,
   type PyPiSessionSnapshot,
   PyPiSessionError,
   createPyPiSessionGateway,
+  openPyPiSession,
   sessionBindingProblems,
   sessionFingerprint,
 } from "./session-gateway";
 import {
   PyPiStageError,
+  basename,
   compareDistributionSets,
+  digestPrefix,
   parseAllowedStageUrl,
   selectStagedReleaseFiles,
   summarizeProblems,
-  type PyPiStageReferenceEntry,
 } from "./stage";
 import { fetchStageProjectPage } from "./stage-fetch";
-import type { HeldReleaseHooks, PublicHeldRelease } from "../../workflow-gates/types";
+import type {
+  HeldReleaseHooks,
+  PublicHeldRelease,
+  StagedReleaseInput,
+} from "../../workflow-gates/types";
 
 /**
- * PEP 694 mode B (preview, opt-in per project): Drydock holds the session.
+ * PEP 694 mode B (preview, opt-in per project): Drydock creates, stages,
+ * holds, and publishes the session. The workflow holds no PyPI credential.
  *
- *   register ──► held ──(approval recorded; re-verify)──► publishing ──► published
- *                 │  │                  │ files changed        │ 409/4xx, index error, or
- *                 │  │                  └──► stale             │ still open (see below) ──► error
- *                 │  │                                         └─(transport/5xx: unknown, poll)
- *                 │  └──(human reject; also from stale)──► canceling ──► canceled
- *                 ├──(cron observes)──► expired | externally_published |
- *                 │                     externally_canceled | stale
- *                 └──(token deleted)──► token_removed   (also from canceling)
+ *   create/adopt ──► staging ──(uploads verified on the stage)──► held
+ *                      │  └──(upload or verify failed; file removed)──► upload_failed
+ *                      │                       (a retried review restages it)
+ *   held ──(approval recorded; re-verify)──► publishing ──► published
+ *    │  │                  │ files changed        │ 409/4xx, index error, or
+ *    │  │                  └──► stale             │ still open (see below) ──► error
+ *    │  │                                         └─(transport/5xx: unknown, poll)
+ *    │  └──(human reject; also from stale, staging, upload_failed)──► canceling ──► canceled
+ *    ├──(cron observes)──► expired | externally_published | externally_canceled | stale
+ *    ├──(a later gate adopts the same index session)──► superseded
+ *    └──(token deleted; also from stale, staging, upload_failed, canceling)──► token_removed
  *
  * Drydock never publishes or cancels on its own: publish runs only after the
  * maintainer approval that completes the gate is recorded, cancel only after
@@ -96,113 +109,393 @@ interface SessionLinks {
   stage: string;
 }
 
-export interface ManagedSessionRegistration {
-  entry: PyPiStageReferenceEntry;
-  reviewed: ReviewedStagedFile[];
+export interface ManagedRelease {
+  name: string;
+  version: string;
+  index: string;
+  /** The reviewed bundle files for this project: artifact path + digest. */
+  reviewed: Array<{ path: string; sha256: string }>;
 }
 
-export interface RegistrationContext {
+export interface StagingContext {
   env: Cloudflare.Env;
   db: AppDb;
   organizationId: string;
   gateId: string;
+  rereadReleaseFiles: StagedReleaseInput["rereadReleaseFiles"];
   fetchImpl?: typeof fetch;
+  completionPollDelaysMs?: number[];
 }
 
 /**
- * Take over the sessions an organization opted into: the entry names a
- * `session-url` and the organization stores a token for that project on that
- * index. Everything is verified before anything is persisted, so a mismatch on
- * one project leaves no held rows. Returns the normalized projects now held.
+ * A staging step failed in a way a retry can fix (the index was unreachable,
+ * an upload failed and was removed). Not a `WorkflowArtifactError`, so the gate
+ * stays pending; the session row records what happened. Messages carry no
+ * URLs or token material.
  */
-export async function registerManagedSessions(
-  ctx: RegistrationContext,
-  registrations: ManagedSessionRegistration[],
+class PyPiStagingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PyPiStagingError";
+  }
+}
+
+interface StagingSession {
+  release: ManagedRelease;
+  project: string;
+  row: PyPiStageSessionRow;
+  tokenId: string;
+  gateway: PyPiSessionGateway;
+  snapshot: PyPiSessionSnapshot;
+  links: SessionLinks;
+  /** basename → reviewed sha256 */
+  expected: Map<string, string>;
+  uploaded: Set<string>;
+}
+
+/**
+ * Mode B: Drydock creates each opted-in project's PEP 694 session with the
+ * organization's stored project token, uploads the reviewed artifact bytes
+ * itself, and verifies through the stage page that the session holds exactly
+ * those bytes. The workflow holds no PyPI credential and never names a
+ * session. Returns the normalized projects now held.
+ *
+ * Bytes come from a second read of the workflow run's artifacts, and each
+ * file's sha256 must equal the reviewed digest before it is uploaded. A
+ * failed upload is deleted from the session and the row is left
+ * `upload_failed` (never publishable); the gate stays pending for a retry.
+ */
+export async function stageManagedReleases(
+  ctx: StagingContext,
+  releases: ManagedRelease[],
 ): Promise<Set<string>> {
-  const verified: Array<{
-    registration: ManagedSessionRegistration;
-    sessionUrl: string;
-    tokenId: string;
-    snapshot: PyPiSessionSnapshot;
-  }> = [];
-  for (const registration of registrations) {
-    const { entry } = registration;
-    if (!entry.sessionUrl) continue;
-    const project = normalizePyPiProjectName(entry.name);
-    const tokenRow = await findPyPiProjectToken(
-      ctx.db,
-      ctx.organizationId,
-      entry.stageUrl.origin,
-      project,
-    );
-    if (!tokenRow) continue;
-    const gateway = createGatewayOrThrow({
-      token: await openPyPiToken(ctx.env, tokenRow),
-      indexOrigin: tokenRow.indexOrigin,
-      sessionUrl: entry.sessionUrl,
-      fetchImpl: ctx.fetchImpl,
-    });
-    let snapshot: PyPiSessionSnapshot;
-    try {
-      snapshot = await gateway.status();
-    } catch (err) {
-      throw sessionStageError(entry.name, err);
-    }
-    const problems = sessionBindingProblems(snapshot, {
-      project: entry.name,
-      version: entry.version,
-      stageUrl: entry.stageUrl.href,
-      filenames: registration.reviewed.map((file) => file.filename),
-    });
-    if (snapshot.links.session !== entry.sessionUrl) {
-      problems.push("session status names a different session URL");
-    }
-    if (problems.length > 0) {
+  if (releases.length === 0) return new Set();
+  // Every project needs its token before any project's session is touched.
+  for (const release of releases) {
+    const project = normalizePyPiProjectName(release.name);
+    if (!(await findPyPiProjectToken(ctx.db, ctx.organizationId, release.index, project))) {
       throw new PyPiStageError(
-        "stage_session_mismatch",
-        `${entry.name} session: ${summarizeProblems(problems)}`,
+        "stage_reference_invalid",
+        `Drydock-held staging for ${release.name} needs a PyPI token for the project on ${release.index} (Settings, Integrations, PyPI project tokens)`,
       );
     }
-    verified.push({ registration, sessionUrl: entry.sessionUrl, tokenId: tokenRow.id, snapshot });
   }
+  const sessions: StagingSession[] = [];
+  try {
+    for (const release of releases) sessions.push(await openStagingSession(ctx, release));
+    return await uploadAndVerify(ctx, sessions);
+  } catch (err) {
+    // A row a specific failure already marked keeps its detail; any other
+    // row still `staging` is never left looking like work in progress.
+    for (const session of sessions) {
+      await markUploadFailed(
+        ctx.db,
+        session.row,
+        "staging stopped before this project's session was verified",
+        ["staging"],
+      );
+    }
+    throw err;
+  }
+}
+
+async function uploadAndVerify(
+  ctx: StagingContext,
+  sessions: StagingSession[],
+): Promise<Set<string>> {
+  const byPath = new Map<string, StagingSession>();
+  for (const session of sessions) {
+    for (const file of session.release.reviewed) byPath.set(file.path, session);
+  }
+  await uploadFromArtifacts(ctx, byPath, { remaining: MAX_MANAGED_UPLOAD_BYTES });
 
   const held = new Set<string>();
-  for (const { registration, sessionUrl, tokenId, snapshot } of verified) {
-    const { entry } = registration;
-    const project = normalizePyPiProjectName(entry.name);
-    const sealed = await sealSecret(
-      ctx.env,
-      "pypi-session-links",
-      JSON.stringify({ session: sessionUrl, stage: entry.stageUrl.href } satisfies SessionLinks),
-    );
-    const stored = await upsertPyPiStageSession(ctx.db, {
-      organizationId: ctx.organizationId,
-      gateId: ctx.gateId,
-      tokenId,
-      projectName: project,
-      version: entry.version,
-      indexOrigin: entry.stageUrl.origin,
-      linksCiphertext: sealed.ciphertext,
-      linksNonce: sealed.nonce,
-      sessionFingerprint: await sessionFingerprint(sessionUrl),
-      reviewedFilesJson: registration.reviewed,
-      expiresAt: snapshot.expiresAt,
-      lastCheckedAt: new Date(),
-    });
-    if (!stored) {
+  for (const session of sessions) {
+    const missing = [...session.expected.keys()].filter((name) => !session.uploaded.has(name));
+    if (missing.length > 0) {
+      await markUploadFailed(ctx.db, session.row, `not uploaded: ${missing.join(", ")}`);
       throw new PyPiStageError(
         "stage_session_mismatch",
-        `${entry.name} session: this gate already published, canceled, or is publishing a session for the project`,
+        `the workflow run no longer carries ${summarizeProblems(missing)} for ${session.release.name}`,
       );
     }
-    await updatePyPiProjectToken(ctx.db, ctx.organizationId, tokenId, { lastUsedAt: new Date() });
-    await recordSessionEvent(ctx.db, ctx.organizationId, ctx.gateId, "pypi_session.held", {
-      projectName: project,
-      version: entry.version,
+    const checked = await verifyStagedSession(session);
+    if ("error" in checked) {
+      await markUploadFailed(ctx.db, session.row, checked.error);
+      throw new PyPiStageError(
+        "stage_session_mismatch",
+        `${session.release.name} session: ${checked.error}`,
+      );
+    }
+    const moved = await transitionPyPiStageSession(ctx.db, session.row.id, ["staging"], "held", {
+      stateDetail: null,
+      expiresAt: checked.snapshot.expiresAt,
+      lastCheckedAt: new Date(),
     });
-    held.add(project);
+    if (!moved) {
+      throw new PyPiStagingError(`the ${session.project} PyPI session changed state while staging`);
+    }
+    await updatePyPiProjectToken(ctx.db, ctx.organizationId, session.tokenId, {
+      lastUsedAt: new Date(),
+    });
+    await recordSessionEvent(ctx.db, ctx.organizationId, ctx.gateId, "pypi_session.held", {
+      projectName: session.project,
+      version: session.release.version,
+    });
+    held.add(session.project);
   }
   return held;
+}
+
+// The same release-wide budget the artifact path and the mode A stage path
+// spend; the second artifact read is bounded by it as well.
+const MAX_MANAGED_UPLOAD_BYTES = MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES;
+
+/**
+ * Upload each reviewed file as the second artifact read streams it, one file
+ * in memory at a time. A file whose bytes no longer hash to the reviewed
+ * digest is never uploaded.
+ */
+async function uploadFromArtifacts(
+  ctx: StagingContext,
+  byPath: Map<string, StagingSession>,
+  budget: { remaining: number },
+): Promise<void> {
+  await ctx.rereadReleaseFiles(async (file) => {
+    const session = byPath.get(file.path);
+    if (!session) return;
+    const filename = basename(file.path);
+    const reviewedSha = session.expected.get(filename) ?? "";
+    if (reviewedSha !== file.sha256) {
+      throw new PyPiStageError(
+        "stage_session_mismatch",
+        `${filename} changed between review and staging: reviewed ${digestPrefix(reviewedSha)}, now ${digestPrefix(file.sha256)}`,
+      );
+    }
+    if (session.uploaded.has(filename)) return;
+    budget.remaining -= file.bytes.byteLength;
+    if (budget.remaining < 0) {
+      throw new PyPiStageError(
+        "stage_unavailable",
+        `the release exceeds the ${MAX_MANAGED_UPLOAD_BYTES}-byte upload budget`,
+      );
+    }
+    await uploadReviewedFile(ctx, session, filename, file.bytes, file.sha256);
+    session.uploaded.add(filename);
+  });
+}
+
+async function openStagingSession(
+  ctx: StagingContext,
+  release: ManagedRelease,
+): Promise<StagingSession> {
+  const project = normalizePyPiProjectName(release.name);
+  const tokenRow = await findPyPiProjectToken(ctx.db, ctx.organizationId, release.index, project);
+  // Checked up front in `stageManagedReleases`; gone now means it was just removed.
+  if (!tokenRow) throw new PyPiStagingError(`the PyPI token for ${release.name} was removed`);
+  let opened: Awaited<ReturnType<typeof openPyPiSession>>;
+  try {
+    opened = await openPyPiSession(
+      {
+        token: await openPyPiToken(ctx.env, tokenRow),
+        indexOrigin: tokenRow.indexOrigin,
+        fetchImpl: ctx.fetchImpl,
+        completionPollDelaysMs: ctx.completionPollDelaysMs,
+      },
+      { name: release.name, version: release.version },
+    );
+  } catch (err) {
+    throw stagingFailure(release.name, "could not open a session", err);
+  }
+  const { gateway, snapshot } = opened;
+  if (snapshot.status !== "open") {
+    throw new PyPiStagingError(
+      `${release.name} ${release.version} already has a PyPI session that is ${snapshot.status}; it cannot be staged until that session ends`,
+    );
+  }
+  const stage = snapshot.links.stage;
+  if (!stage || parseAllowedStageUrl(stage)?.origin !== release.index) {
+    throw new PyPiStageError(
+      "stage_session_mismatch",
+      `${release.name} session: the index's stage link is not on ${release.index}`,
+    );
+  }
+  const links: SessionLinks = { session: snapshot.links.session, stage };
+  const fingerprint = await sessionFingerprint(links.session);
+  const busy = await supersedePyPiStageSessions(ctx.db, {
+    organizationId: ctx.organizationId,
+    sessionFingerprint: fingerprint,
+    exceptGateId: ctx.gateId,
+  });
+  if (busy) {
+    throw new PyPiStagingError(
+      `another gate's ${release.name} session is ${describeState(busy)}; staging waits for it`,
+    );
+  }
+  const sealed = await sealSecret(ctx.env, "pypi-session-links", JSON.stringify(links));
+  const reviewed: ReviewedStagedFile[] = release.reviewed.map((file) => ({
+    filename: basename(file.path),
+    sha256: file.sha256,
+  }));
+  const stored = await upsertPyPiStageSession(ctx.db, {
+    organizationId: ctx.organizationId,
+    gateId: ctx.gateId,
+    tokenId: tokenRow.id,
+    projectName: project,
+    version: release.version,
+    indexOrigin: release.index,
+    linksCiphertext: sealed.ciphertext,
+    linksNonce: sealed.nonce,
+    sessionFingerprint: fingerprint,
+    reviewedFilesJson: reviewed,
+    expiresAt: snapshot.expiresAt,
+    lastCheckedAt: new Date(),
+  });
+  if (!("row" in stored)) {
+    throw new PyPiStageError(
+      "stage_session_mismatch",
+      `${release.name} session: this gate's session for the project is ${describeState(stored.blockedBy ?? "error")} and cannot be staged again`,
+    );
+  }
+  const session: StagingSession = {
+    release,
+    project,
+    row: stored.row,
+    tokenId: tokenRow.id,
+    gateway,
+    snapshot,
+    links,
+    expected: new Map(reviewed.map((file) => [file.filename, file.sha256])),
+    uploaded: new Set(),
+  };
+  // An adopted session (a retry, or a re-run of the same release) may hold
+  // files from an earlier attempt. Drydock cannot tell from the session which
+  // bytes they are, so it removes them all and uploads the reviewed set.
+  for (const [filename, file] of snapshot.files) {
+    if (!file.link) {
+      await markUploadFailed(ctx.db, stored.row, `${filename} cannot be removed from the session`);
+      throw new PyPiStagingError(
+        `${release.name} session holds ${filename}, which the index offers no way to remove`,
+      );
+    }
+    try {
+      await gateway.deleteFile(file.link);
+    } catch (err) {
+      await markUploadFailed(
+        ctx.db,
+        stored.row,
+        `could not remove ${filename} left by an earlier attempt: ${safeSessionMessage(err)}`,
+      );
+      throw stagingFailure(release.name, `could not remove ${filename}`, err);
+    }
+  }
+  return session;
+}
+
+async function uploadReviewedFile(
+  ctx: StagingContext,
+  session: StagingSession,
+  filename: string,
+  bytes: Uint8Array,
+  sha256: string,
+): Promise<void> {
+  let upload: PyPiFileUpload | null = null;
+  try {
+    upload = await session.gateway.createFileUpload(session.snapshot, {
+      filename,
+      size: bytes.byteLength,
+      sha256,
+    });
+    await session.gateway.uploadFileBytes(upload, bytes);
+    await session.gateway.completeFileUpload(upload);
+  } catch (err) {
+    let removed = upload === null;
+    if (upload) {
+      try {
+        await session.gateway.deleteFile(upload.link);
+        removed = true;
+      } catch {
+        removed = false;
+      }
+    }
+    const detail = `upload of ${filename} failed: ${safeSessionMessage(err)}; ${
+      removed ? "nothing of it is left in the session" : "removing the partial upload also failed"
+    }`;
+    await markUploadFailed(ctx.db, session.row, detail);
+    throw indexMisbehaved(err)
+      ? new PyPiStageError("stage_session_mismatch", `${session.release.name}: ${detail}`)
+      : new PyPiStagingError(`${session.release.name}: ${detail}`);
+  }
+}
+
+/** The created session holds exactly the reviewed files, and its stage serves their digests. */
+async function verifyStagedSession(
+  session: StagingSession,
+): Promise<{ snapshot: PyPiSessionSnapshot } | { error: string }> {
+  let snapshot: PyPiSessionSnapshot;
+  try {
+    snapshot = await session.gateway.status();
+  } catch (err) {
+    throw stagingFailure(session.release.name, "could not re-read the session", err);
+  }
+  const reviewed = [...session.expected].map(([filename, sha256]) => ({ filename, sha256 }));
+  const problems = sessionBindingProblems(snapshot, {
+    project: session.release.name,
+    version: session.release.version,
+    stageUrl: session.links.stage,
+    filenames: reviewed.map((file) => file.filename),
+  });
+  if (problems.length === 0) {
+    let page: Awaited<ReturnType<typeof fetchStageProjectPage>>;
+    try {
+      // Validated in `openStagingSession`.
+      page = await fetchStageProjectPage(new URL(session.links.stage), session.release.name);
+    } catch (err) {
+      throw stagingFailure(session.release.name, "could not read the stage", err);
+    }
+    const selected = selectStagedReleaseFiles(page, session.release.name, session.release.version);
+    problems.push(
+      ...selected.problems,
+      ...compareDistributionSets(
+        "review",
+        reviewed.map((file) => ({ path: file.filename, sha256: file.sha256 })),
+        "stage",
+        selected.files.map((file) => ({ path: file.filename, sha256: file.sha256 })),
+      ),
+    );
+  }
+  return problems.length > 0 ? { error: summarizeProblems(problems) } : { snapshot };
+}
+
+async function markUploadFailed(
+  db: AppDb,
+  row: PyPiStageSessionRow,
+  detail: string,
+  from: readonly PyPiStageSessionState[] = ["staging", "upload_failed"],
+): Promise<void> {
+  await settle(db, row, from, "upload_failed", detail);
+}
+
+// A refused URL, a redirect, or a malformed answer is the index misbehaving,
+// not a transient fault: fail closed. Everything else can be retried.
+function indexMisbehaved(err: unknown): boolean {
+  return (
+    err instanceof PyPiSessionError &&
+    (err.code === "session_url_refused" ||
+      err.code === "session_redirect_refused" ||
+      err.code === "session_malformed")
+  );
+}
+
+function stagingFailure(project: string, what: string, err: unknown): Error {
+  if (err instanceof PyPiStageError) return err;
+  if (indexMisbehaved(err)) {
+    return new PyPiStageError(
+      "stage_session_mismatch",
+      `${project} session: ${safeSessionMessage(err)}`,
+    );
+  }
+  return new PyPiStagingError(`${project}: ${what}: ${safeSessionMessage(err)}`);
 }
 
 // ── Human approval: verify, record, then publish ─────────────────────────────
@@ -229,17 +522,25 @@ async function verifyManagedSessions(
   gateId: string,
   options: SessionActionOptions = {},
 ): Promise<ManagedPublishResult> {
-  const prepared = await prepareHeldSessions(env, db, organizationId, gateId, options);
-  return "error" in prepared ? { ok: false, error: prepared.error } : { ok: true };
+  const rows = await listGatePyPiStageSessions(db, organizationId, gateId);
+  const blocked = notPublishable(rows);
+  if (blocked) return { ok: false, error: blocked };
+  for (const row of rows) {
+    const checked = await prepareHeldSession(env, db, row, options);
+    if ("error" in checked) return { ok: false, error: checked.error };
+  }
+  return { ok: true };
 }
 
 /**
  * Runs only after the approval that completes the gate is durably recorded
  * (the gate CAS out of `pending`), so no concurrent rejection can land while
- * an irreversible publish is in flight. Re-verifies every held session, then
- * publishes them one by one. A definite failure returns `ok: false`; the
- * caller turns the approval into a fail-closed rejection. An unknown outcome
- * (transport failure, 5xx) stays `publishing` for the cron to resolve.
+ * an irreversible publish is in flight. Publishes the held sessions one by
+ * one, re-verifying each session and its stage right before its own claim:
+ * publishing an earlier project takes time a later stage could change in. A
+ * definite failure returns `ok: false`; the caller turns the approval into a
+ * fail-closed rejection. An unknown outcome (transport failure, 5xx) stays
+ * `publishing` for the cron to resolve.
  */
 export async function publishManagedSessions(
   env: Cloudflare.Env,
@@ -248,10 +549,14 @@ export async function publishManagedSessions(
   gateId: string,
   options: SessionActionOptions = {},
 ): Promise<ManagedPublishResult> {
-  const prepared = await prepareHeldSessions(env, db, organizationId, gateId, options);
-  if ("error" in prepared) return { ok: false, error: prepared.error };
+  const rows = await listGatePyPiStageSessions(db, organizationId, gateId);
+  const blocked = notPublishable(rows);
+  if (blocked) return { ok: false, error: blocked };
 
-  for (const { row, gateway, snapshot } of prepared.ready) {
+  for (const row of rows) {
+    const checked = await prepareHeldSession(env, db, row, options);
+    if ("error" in checked) return { ok: false, error: checked.error };
+    const { gateway, snapshot } = checked;
     const claimed = await claimPyPiStageSessionForPublish(db, row.id, options.actorUserId ?? null);
     if (!claimed) {
       return {
@@ -313,45 +618,27 @@ async function publishClaimedSession(
   return { ok: true };
 }
 
-async function prepareHeldSessions(
+function notPublishable(rows: PyPiStageSessionRow[]): string | null {
+  const row = rows.find((candidate) => candidate.state !== "held");
+  return row
+    ? `the ${row.projectName} PyPI session is ${describeState(row.state)}; it cannot be published`
+    : null;
+}
+
+/** Open one held session and re-verify it and its stage against the review. */
+async function prepareHeldSession(
   env: Cloudflare.Env,
   db: AppDb,
-  organizationId: string,
-  gateId: string,
+  row: PyPiStageSessionRow,
   options: SessionActionOptions,
-): Promise<
-  | {
-      ready: Array<{
-        row: PyPiStageSessionRow;
-        gateway: PyPiSessionGateway;
-        snapshot: PyPiSessionSnapshot;
-      }>;
-    }
-  | { error: string }
-> {
-  const rows = await listGatePyPiStageSessions(db, organizationId, gateId);
-  for (const row of rows) {
-    if (row.state !== "held") {
-      return {
-        error: `the ${row.projectName} PyPI session is ${describeState(row.state)}; it cannot be published`,
-      };
-    }
-  }
-  const ready: Array<{
-    row: PyPiStageSessionRow;
-    gateway: PyPiSessionGateway;
-    snapshot: PyPiSessionSnapshot;
-  }> = [];
-  for (const row of rows) {
-    const opened = await openSession(env, db, row, options);
-    if ("error" in opened) return { error: opened.error };
-    const checked = await verifyHeldSession(db, row, opened.gateway, opened.links, {
-      checkStage: true,
-    });
-    if ("error" in checked) return { error: checked.error };
-    ready.push({ row, gateway: opened.gateway, snapshot: checked.snapshot });
-  }
-  return { ready };
+): Promise<{ gateway: PyPiSessionGateway; snapshot: PyPiSessionSnapshot } | { error: string }> {
+  const opened = await openSession(env, db, row, options);
+  if ("error" in opened) return { error: opened.error };
+  const checked = await verifyHeldSession(db, row, opened.gateway, opened.links, {
+    checkStage: true,
+  });
+  if ("error" in checked) return { error: checked.error };
+  return { gateway: opened.gateway, snapshot: checked.snapshot };
 }
 
 // A transport failure or a 5xx may hide an accepted publish; a refused URL,
@@ -374,10 +661,15 @@ async function cancelManagedSessions(
 ): Promise<void> {
   const rows = await listGatePyPiStageSessions(db, organizationId, gateId);
   for (const row of rows) {
-    // A stale session is still open on the index with bytes nobody approved.
-    const claimed = await transitionPyPiStageSession(db, row.id, ["held", "stale"], "canceling", {
-      stateDetail: null,
-    });
+    // Stale and not-yet-held sessions are still open on the index with bytes
+    // nobody approved.
+    const claimed = await transitionPyPiStageSession(
+      db,
+      row.id,
+      ["held", "stale", "staging", "upload_failed"],
+      "canceling",
+      { stateDetail: null },
+    );
     if (!claimed) continue;
     await attemptCancel(env, db, claimed, options);
   }
@@ -748,23 +1040,6 @@ async function recordSessionEvent(
       error: describeOperationalError(err),
     });
   }
-}
-
-function createGatewayOrThrow(
-  options: Parameters<typeof createPyPiSessionGateway>[0],
-): PyPiSessionGateway {
-  try {
-    return createPyPiSessionGateway(options);
-  } catch (err) {
-    throw new PyPiStageError("stage_session_mismatch", safeSessionMessage(err));
-  }
-}
-
-function sessionStageError(project: string, err: unknown): PyPiStageError {
-  return new PyPiStageError(
-    "stage_session_mismatch",
-    `${project} session: ${safeSessionMessage(err)}`,
-  );
 }
 
 // Gateway errors are written without URLs or tokens; anything else is

@@ -324,7 +324,10 @@ function TokenRow({
                 </>
               }
             >
-              <span class="text-[13px] text-ink-muted">Remove this token?</span>
+              <span class="text-[13px] text-ink-muted">
+                Remove this token? Sessions Drydock holds with it end here: Drydock can no longer
+                publish or cancel them, and they stay on PyPI until they expire.
+              </span>
               <Button
                 variant="danger"
                 size="sm"

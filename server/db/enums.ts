@@ -35,6 +35,9 @@ export type WorkflowGateDecision = "approved" | "rejected";
  * `docs/pypi-workflow-gate.md` for the transitions.
  */
 export type PyPiStageSessionState =
+  | "staging"
+  | "upload_failed"
+  | "superseded"
   | "held"
   | "publishing"
   | "published"

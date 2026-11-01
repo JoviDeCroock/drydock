@@ -5,14 +5,17 @@ import { getScan } from "../../server/db/scans";
 import { addOrganizationMember } from "../../server/db/invitations";
 import {
   insertPyPiProjectToken,
+  transitionPyPiStageSession,
   upsertPyPiStageSession,
 } from "../../server/db/pypi-stage-sessions";
 import * as schema from "../../server/db/schema";
 import { sealPyPiToken } from "../../server/lib/ecosystems/pypi/project-token";
+import { sessionFingerprint } from "../../server/lib/ecosystems/pypi/session-gateway";
 import {
   publishManagedSessions,
   sweepManagedSessions,
 } from "../../server/lib/ecosystems/pypi/session-lifecycle";
+import { sealSecret } from "../../server/lib/platform/secret-box";
 import {
   getGateForOrganization,
   listGatePackageScans,
@@ -27,9 +30,9 @@ import {
   type FakeUploadSession,
   type FakeUploadSessionOptions,
   buildFakeUploadSession,
+  drydockSessionReference,
   fakePyPiToken,
   sha256HexOf,
-  stageReference,
 } from "../helpers/pep694-fake";
 import { buildTestApp, call } from "./helpers/app";
 import { buildCtxWithGateway } from "./helpers/gate";
@@ -41,7 +44,7 @@ import {
   runPyPiStageGate,
   stagedBytes,
 } from "./helpers/pypi-stage-gate";
-import { type SeededUser, seedUser } from "./helpers/seed";
+import { type SeededUser, seedUser, seedWorkflowGate } from "./helpers/seed";
 
 const STAGE_URL = `https://pypi.org/stage/${FAKE_STAGE_TOKEN}/`;
 const FILES_ROOT = `https://files.pythonhosted.org/stage-files/${FAKE_STAGE_TOKEN}/`;
@@ -53,10 +56,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function seedProjectToken(owner: SeededUser, token = PYPI_TOKEN) {
+async function seedProjectToken(
+  owner: SeededUser,
+  projectName = "demo-package",
+  token = fakePyPiToken([projectName]),
+) {
   const row = await insertPyPiProjectToken(owner.db, {
     organizationId: owner.organizationId,
-    projectName: "demo-package",
+    projectName,
     indexOrigin: "https://pypi.org",
     ...(await sealPyPiToken(env, token)),
     validatedAt: new Date(),
@@ -67,68 +74,65 @@ async function seedProjectToken(owner: SeededUser, token = PYPI_TOKEN) {
   return row;
 }
 
+function stagePage(digests: Map<string, string>, project = "demo-package"): Response {
+  return Response.json(
+    {
+      meta: { "api-version": "1.1" },
+      name: project,
+      files: [...digests].map(([filename, sha256]) => ({
+        filename,
+        url: `${FILES_ROOT}${filename}`,
+        hashes: { sha256 },
+      })),
+    },
+    { headers: { "content-type": "application/vnd.pypi.simple.v1+json" } },
+  );
+}
+
 interface ManagedScenario extends PyPiStageScenario {
   session?: Partial<FakeUploadSessionOptions>;
-  /** The `session-url` the artifact registers; defaults to the fake session. */
-  sessionUrl?: (session: FakeUploadSession) => string;
+  /** A fake built by the test (to know its session URL before the run). */
+  prebuilt?: FakeUploadSession;
   storeToken?: boolean;
-  /** Mutable staged digests served by the stage page (filename → sha256). */
-  digests?: Map<string, string>;
-  /** Called before each stage page answer with its 1-based read count. */
-  onPageRead?: (count: number, digests: Map<string, string>) => void;
+  /**
+   * Called before each stage page answer with its 1-based read count and the
+   * override map; entries set there replace what the session really holds.
+   */
+  onPageRead?: (count: number, overrides: Map<string, string>) => void;
 }
 
 async function runManaged(options: ManagedScenario = {}) {
-  const session = buildFakeUploadSession({
-    stageUrl: STAGE_URL,
-    filenames: [WHEEL, SDIST],
-    ...options.session,
-  });
-  const digests =
-    options.digests ??
-    new Map([
-      [WHEEL, await sha256HexOf(stagedBytes(WHEEL))],
-      [SDIST, await sha256HexOf(stagedBytes(SDIST))],
-    ]);
+  const session =
+    options.prebuilt ?? buildFakeUploadSession({ stageUrl: STAGE_URL, ...options.session });
+  const digests = new Map<string, string>();
   let pageReads = 0;
   const run = await runPyPiStageGate({
+    artifactFiles: {
+      [`dist/${WHEEL}`]: stagedBytes(WHEEL),
+      [`dist/${SDIST}`]: stagedBytes(SDIST),
+    },
+    reference: () => drydockSessionReference([{ name: "demo-package", version: "1.2.0" }]),
     ...options,
     beforeRun: async (owner) => {
-      if (options.storeToken !== false) await seedProjectToken(owner);
+      if (options.storeToken !== false) await seedProjectToken(owner, "demo-package", PYPI_TOKEN);
+      await options.beforeRun?.(owner);
     },
     page: () => {
       pageReads += 1;
       options.onPageRead?.(pageReads, digests);
-      return Response.json(
-        {
-          meta: { "api-version": "1.1" },
-          name: "demo-package",
-          files: [...digests].map(([filename, sha256]) => ({
-            filename,
-            url: `${FILES_ROOT}${filename}`,
-            hashes: { sha256 },
-          })),
-        },
-        { headers: { "content-type": "application/vnd.pypi.simple.v1+json" } },
-      );
+      return stagePage(new Map([...session.completedDigests(), ...digests]));
     },
-    reference: (stageUrl) =>
-      stageReference([
-        {
-          name: "demo-package",
-          version: "1.2.0",
-          stageUrl,
-          sessionUrl: options.sessionUrl ? options.sessionUrl(session) : session.sessionUrl,
-        },
-      ]),
     routes: { ...session.routes, ...options.routes },
   });
-  return { ...run, session, digests };
+  return { ...run, session, digests, stagingRequests: session.requests.length };
 }
 
 type ManagedRun = Awaited<ReturnType<typeof runManaged>>;
 
-async function sessionRows(run: ManagedRun) {
+/** Session requests made after the gate job staged the release. */
+const afterStaging = (run: ManagedRun) => run.session.requests.slice(run.stagingRequests);
+
+async function sessionRows(run: { db: ManagedRun["db"]; gateId: string }) {
   return run.db
     .select()
     .from(schema.pypiStageSessions)
@@ -190,10 +194,15 @@ const inlineEnv = (run: ManagedRun) =>
 const publishPosts = (run: ManagedRun) =>
   run.session.requests.filter((request) => request.url.endsWith("/publish"));
 
-/** Every request that carried the PyPI token went to the fake session itself. */
-function expectTokenOnlyToSession(run: ManagedRun) {
+/** Every request that carried the PyPI token went to the fake Upload 2.0 root. */
+function expectTokenOnlyToUploadRoot(run: ManagedRun) {
   const bearing = run.calls.filter((entry) => entry.authorization?.includes(PYPI_TOKEN));
-  for (const entry of bearing) expect(entry.url.startsWith(run.session.sessionUrl)).toBe(true);
+  expect(bearing.length).toBeGreaterThan(0);
+  for (const entry of bearing) {
+    expect(
+      entry.url === run.session.createUrl || entry.url.startsWith(run.session.sessionUrl),
+    ).toBe(true);
+  }
 }
 
 async function expectNoSecretLeak(run: ManagedRun, extra: string[] = []) {
@@ -215,27 +224,42 @@ async function expectNoSecretLeak(run: ManagedRun, extra: string[] = []) {
   }
 }
 
-function expectRejectedSessionMismatch(run: ManagedRun, detail: RegExp) {
+function expectRejected(run: ManagedRun, code: string, detail: RegExp) {
   expect(run.gate?.status).toBe("rejected");
-  expect(run.gate?.failureReason).toMatch(/^stage_session_mismatch: /);
+  expect(run.gate?.failureReason?.startsWith(`${code}: `)).toBe(true);
   expect(run.gate?.failureReason).toMatch(detail);
   expect(run.decisions.map((decision) => decision.state)).toEqual(["rejected"]);
 }
 
-describe("PEP 694 mode B: registration", () => {
-  test("holds the session when the organization stores a token for the project", async () => {
+describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
+  test("creates the session, uploads the reviewed artifact bytes, verifies the stage, and holds it", async () => {
     const run = await runManaged();
 
     expect(run.gate?.status).toBe("pending");
     const [row] = await sessionRows(run);
     expect(row).toMatchObject({ state: "held", projectName: "demo-package", version: "1.2.0" });
     expect(row.sessionFingerprint).toMatch(/^[0-9a-f]{16}$/);
+    const wheelSha = await sha256HexOf(stagedBytes(WHEEL));
     expect(row.reviewedFilesJson).toEqual(
-      expect.arrayContaining([{ filename: WHEEL, sha256: run.digests.get(WHEEL) }]),
+      expect.arrayContaining([{ filename: WHEEL, sha256: wheelSha }]),
     );
-    expect(run.session.requests).toEqual([
-      { method: "GET", url: run.session.sessionUrl, authorization: `Bearer ${PYPI_TOKEN}` },
+    // The bytes in the session are exactly the reviewed artifact bytes.
+    expect(run.session.state.files.get(WHEEL)?.bytes).toEqual(stagedBytes(WHEEL));
+    expect(run.session.state.files.get(SDIST)?.bytes).toEqual(stagedBytes(SDIST));
+    expect([...run.session.state.files.values()].map((file) => file.status)).toEqual([
+      "completed",
+      "completed",
     ]);
+    // Create, then per file: open the upload, POST the bytes, complete; then
+    // re-read the session. Every request carries the token; nothing publishes.
+    const requests = run.session.requests;
+    expect(requests[0]).toMatchObject({ method: "POST", url: run.session.createUrl });
+    expect(requests.at(-1)).toMatchObject({ method: "GET", url: run.session.sessionUrl });
+    expect(requests).toHaveLength(8);
+    expect(requests.every((request) => request.authorization === `Bearer ${PYPI_TOKEN}`)).toBe(
+      true,
+    );
+    expect(publishPosts(run)).toEqual([]);
     expect(run.events.map((event) => event.type)).toContain("pypi_session.held");
 
     const persisted = await getScan(
@@ -250,7 +274,7 @@ describe("PEP 694 mode B: registration", () => {
     expect(provenance?.stage).toEqual({
       protocol: "pep694",
       index: "https://pypi.org",
-      artifactBound: false,
+      artifactBound: true,
       managed: true,
     });
 
@@ -264,35 +288,73 @@ describe("PEP 694 mode B: registration", () => {
     expect(JSON.parse(text).gate.heldReleases).toEqual([
       expect.objectContaining({ ecosystem: "pypi", projectName: "demo-package", state: "held" }),
     ]);
-    expectTokenOnlyToSession(run);
+    expectTokenOnlyToUploadRoot(run);
     await expectNoSecretLeak(run, [text, JSON.stringify(persisted)]);
   });
 
-  test("without a stored token the session-url is ignored and the gate stays credential-free", async () => {
+  test("without a stored token the opt-in fails closed before any Upload 2.0 request", async () => {
     const run = await runManaged({ storeToken: false });
 
-    expect(run.gate?.status).toBe("pending");
+    expectRejected(run, "stage_reference_invalid", /needs a PyPI token for the project/);
     expect(run.session.requests).toEqual([]);
     expect(await sessionRows(run)).toEqual([]);
   });
 
-  test.each([
-    ["a foreign host", () => "https://evil.example/2.0/sessions/abc"],
-    ["a look-alike host", () => "https://upload.pypi.org.evil.example/2.0/sessions/abc"],
-    ["plain http", () => `http://upload.pypi.org/2.0/sessions/${FAKE_SESSION_TOKEN}`],
-    ["another index's upload origin", () => "https://test.pypi.org/2.0/sessions/abc"],
-    ["a query string", (s: FakeUploadSession) => `${s.sessionUrl}?to=https://evil.example`],
-  ])("a session-url on %s is rejected and never receives the token", async (_label, sessionUrl) => {
-    const run = await runManaged({ sessionUrl });
+  test("a session-url in pypi-stage.json is refused: a workflow-created session is never held", async () => {
+    const run = await runManaged({
+      reference: () =>
+        JSON.stringify({
+          schema: "drydock.pypi-stage.v1",
+          name: "demo-package",
+          version: "1.2.0",
+          session: "drydock",
+          "session-url": "https://upload.pypi.org/2.0/sessions/ci-made",
+        }),
+    });
 
-    expectRejectedSessionMismatch(run, /not an allowed Upload 2\.0 URL/);
+    expectRejected(run, "stage_reference_invalid", /session-url is not accepted/);
     expect(run.calls.some((entry) => entry.authorization?.includes(PYPI_TOKEN))).toBe(false);
-    expect(run.calls.some((entry) => entry.url.includes("evil.example"))).toBe(false);
     expect(await sessionRows(run)).toEqual([]);
+  });
+
+  test("the opt-in needs the artifact's distributions, which are what Drydock uploads", async () => {
+    const run = await runManaged({ artifactFiles: {} });
+
+    expectRejected(run, "stage_reference_invalid", /carries no distributions/);
+    expect(run.session.requests).toEqual([]);
+  });
+
+  test.each([
+    ["a foreign host", () => `https://evil.example/2.0/${FAKE_SESSION_TOKEN}`],
+    ["a look-alike host", () => "https://upload.pypi.org.evil.example/2.0/x"],
+    ["plain http", (_name: string, url: string) => url.replace("https://", "http://")],
+    ["the legacy upload API on the same host", () => "https://upload.pypi.org/legacy/"],
+    ["another allowed root's origin", () => "https://pypi.org/2.0/files/x"],
+  ])("a file_url on %s never receives the token or the bytes", async (_label, fileUrl) => {
+    const evil: string[] = [];
+    const run = await runManaged({
+      session: { fileUrl },
+      routes: {
+        "evil.example": (request) => {
+          evil.push(request.headers.get("authorization") ?? "");
+          return new Response("ok");
+        },
+      },
+    });
+
+    expectRejected(run, "stage_session_mismatch", /not an allowed Upload 2\.0 URL/);
+    expect(evil).toEqual([]);
+    expectTokenOnlyToUploadRoot(run);
+    expect(run.session.requests.some((request) => request.url.includes("/bytes"))).toBe(false);
+    // The opened upload was removed again; the session holds nothing unreviewed.
+    expect(run.session.state.files.size).toBe(0);
+    const [row] = await sessionRows(run);
+    expect(row.state).toBe("upload_failed");
+    expect(row.stateDetail).toMatch(/nothing of it is left in the session/);
     await expectNoSecretLeak(run);
   });
 
-  test("a session that redirects never forwards the token", async () => {
+  test("a create answer that redirects never forwards the token", async () => {
     const evil: string[] = [];
     const run = await runManaged({
       session: {
@@ -307,30 +369,142 @@ describe("PEP 694 mode B: registration", () => {
       },
     });
 
-    expectRejectedSessionMismatch(run, /redirect/);
+    expectRejected(run, "stage_session_mismatch", /redirect/);
     expect(evil).toEqual([]);
-    expectTokenOnlyToSession(run);
     expect(await sessionRows(run)).toEqual([]);
   });
 
-  test("a session bound to a different stage is rejected", async () => {
+  test("a session the index names off its Upload 2.0 origin is refused before any request to it", async () => {
     const run = await runManaged({
-      session: { links: { stage: "https://pypi.org/stage/someone-elses/" } },
+      session: { links: { session: "https://evil.example/2.0/sessions/abc" } },
     });
-    expectRejectedSessionMismatch(run, /stage link is not the stage Drydock reviewed/);
+
+    expectRejected(run, "stage_session_mismatch", /outside its Upload 2\.0 root/);
+    expect(run.calls.some((entry) => entry.url.includes("evil.example"))).toBe(false);
     expect(await sessionRows(run)).toEqual([]);
   });
 
-  test("a session carrying a file the review did not see is rejected", async () => {
+  test("a failed byte upload is removed, leaves upload_failed, and a retried review restages the adopted session", async () => {
+    let failBytes = true;
     const run = await runManaged({
-      session: { filenames: [WHEEL, SDIST, "demo_package-1.2.0-cp312-abi3-linux_x86_64.whl"] },
+      session: {
+        respond: (request) =>
+          failBytes && request.method === "POST" && request.url.endsWith(`/${WHEEL}/bytes`)
+            ? new Response("upload broke", { status: 500 })
+            : null,
+      },
     });
-    expectRejectedSessionMismatch(run, /in the session but was not reviewed/);
+
+    // Retryable: the deployment stays pending, nothing of the wheel remains.
+    expect(run.gate?.status).toBe("pending");
+    expect(run.decisions).toEqual([]);
+    expect(run.session.state.files.has(WHEEL)).toBe(false);
+    const [failed] = await sessionRows(run);
+    expect(failed.state).toBe("upload_failed");
+    expect(failed.stateDetail).toMatch(
+      new RegExp(
+        `upload of ${WHEEL.replace(/\./g, "\\.")} failed: .*HTTP 500; nothing of it is left`,
+      ),
+    );
+    failBytes = false;
+    const before = run.session.requests.length;
+    await executeWorkflowGateJob(
+      run.gateEnv,
+      buildCtxWithGateway(),
+      { kind: "workflow_gate", organizationId: run.owner.organizationId, gateId: run.gateId },
+      run.db,
+    );
+    const retry = run.session.requests.slice(before);
+    // PEP 694 hands back the existing session (409 + Location), which
+    // Drydock reads, then uploads the reviewed set into.
+    expect(retry[0]).toMatchObject({ method: "POST", url: run.session.createUrl });
+    expect(retry[1]).toMatchObject({ method: "GET", url: run.session.sessionUrl });
+    const [held] = await sessionRows(run);
+    expect(held.state).toBe("held");
+    expect(held.id).toBe(failed.id);
+    expect(run.session.state.files.get(WHEEL)?.bytes).toEqual(stagedBytes(WHEEL));
   });
 
-  test("a session that is not open is rejected", async () => {
-    const run = await runManaged({ session: { status: "processing" } });
-    expectRejectedSessionMismatch(run, /not open/);
+  test("an adopted session's leftover files are removed before the reviewed bytes go in", async () => {
+    const leftover = "demo_package-1.2.0-py2-none-any.whl";
+    const run = await runManaged({ session: { adopt: true, filenames: [leftover] } });
+
+    expect(run.gate?.status).toBe("pending");
+    expect([...run.session.state.files.keys()].sort()).toEqual([WHEEL, SDIST].sort());
+    expect(run.session.requests).toContainEqual(
+      expect.objectContaining({
+        method: "DELETE",
+        url: `${run.session.sessionUrl}/files/${leftover}`,
+      }),
+    );
+    expect((await sessionRows(run))[0].state).toBe("held");
+  });
+
+  test("an existing session that is not open is not staged and the gate stays pending", async () => {
+    const run = await runManaged({ session: { adopt: true, status: "processing" } });
+
+    expect(run.gate?.status).toBe("pending");
+    expect(run.decisions).toEqual([]);
+    expect(await sessionRows(run)).toEqual([]);
+    expect(run.session.requests.every((request) => request.method !== "DELETE")).toBe(true);
+  });
+
+  test("a stage that does not serve the uploaded digests fails closed as upload_failed", async () => {
+    const run = await runManaged({
+      onPageRead: (count, overrides) => {
+        if (count === 1) overrides.set(WHEEL, "f".repeat(64));
+      },
+    });
+
+    expectRejected(run, "stage_session_mismatch", /sha256 differs/);
+    expect((await sessionRows(run))[0].state).toBe("upload_failed");
+    expect(publishPosts(run)).toEqual([]);
+  });
+
+  test("an older gate's row for the same index session is superseded, so its rejection cannot cancel it", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE_URL, adopt: true });
+    let olderGateId = "";
+    const run = await runManaged({
+      prebuilt: session,
+      beforeRun: async (owner) => {
+        // An earlier run of the same release holds this index session.
+        olderGateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null });
+        const [token] = await owner.db
+          .select({ id: schema.pypiProjectTokens.id })
+          .from(schema.pypiProjectTokens)
+          .where(eq(schema.pypiProjectTokens.organizationId, owner.organizationId));
+        const sealed = await sealSecret(
+          env,
+          "pypi-session-links",
+          JSON.stringify({ session: session.sessionUrl, stage: STAGE_URL }),
+        );
+        const stored = await upsertPyPiStageSession(owner.db, {
+          organizationId: owner.organizationId,
+          gateId: olderGateId,
+          tokenId: token.id,
+          projectName: "demo-package",
+          version: "1.2.0",
+          indexOrigin: "https://pypi.org",
+          linksCiphertext: sealed.ciphertext,
+          linksNonce: sealed.nonce,
+          sessionFingerprint: await sessionFingerprint(session.sessionUrl),
+          reviewedFilesJson: [],
+          expiresAt: null,
+          lastCheckedAt: new Date(),
+        });
+        if (!("row" in stored)) throw new Error("older row seed failed");
+        await transitionPyPiStageSession(owner.db, stored.row.id, ["staging"], "held");
+      },
+    });
+
+    expect((await sessionRows(run))[0].state).toBe("held");
+    const [olderRow] = await sessionRows({ db: run.db, gateId: olderGateId });
+    expect(olderRow).toMatchObject({
+      state: "superseded",
+      stateDetail: "a later run of this release took over the session",
+    });
+    // Superseded rows are not cancelable, so the older gate cannot cancel it.
+    expect(run.session.requests.some((request) => request.method === "DELETE")).toBe(false);
   });
 });
 
@@ -343,14 +517,10 @@ describe("PEP 694 mode B: human decisions", () => {
     expect((body.gate as { status: string }).status).toBe("approved");
     const [row] = await sessionRows(run);
     expect(row.state).toBe("published");
-    // Registration, the pre-record check, the post-CAS re-check, then publish.
-    expect(run.session.requests.map((request) => request.method)).toEqual([
-      "GET",
-      "GET",
-      "GET",
-      "POST",
-    ]);
-    expect(run.session.requests[3].url).toBe(`${run.session.sessionUrl}/publish`);
+    // After staging: the pre-record check, the post-CAS re-check, then publish.
+    const decided = afterStaging(run);
+    expect(decided.map((request) => request.method)).toEqual(["GET", "GET", "POST"]);
+    expect(decided[2].url).toBe(`${run.session.sessionUrl}/publish`);
     expect(run.decisions.map((decision) => decision.state)).toEqual(["approved"]);
     expect(run.stage.requests.filter((url) => url.endsWith("/demo-package/"))).toHaveLength(3);
     const published = (await run.readEvents()).find(
@@ -367,7 +537,7 @@ describe("PEP 694 mode B: human decisions", () => {
       .from(schema.githubWorkflowGates)
       .where(eq(schema.githubWorkflowGates.id, run.gateId));
     expect(delivered.at).not.toBeNull();
-    expectTokenOnlyToSession(run);
+    expectTokenOnlyToUploadRoot(run);
     await expectNoSecretLeak(run, [JSON.stringify(body)]);
   });
 
@@ -404,6 +574,103 @@ describe("PEP 694 mode B: human decisions", () => {
     expect(
       (await run.readEvents()).filter((event) => event.type === "github_workflow_gate.rejected"),
     ).toHaveLength(1);
+  });
+
+  test("a 200 from publish counts as processing and is polled, never as published", async () => {
+    const run = await runManaged({ session: { publish: 200, afterPublish: "published" } });
+    await markApprovedAt(run, Date.now());
+    const first = await publishManagedSessions(
+      run.gateEnv,
+      run.db,
+      run.owner.organizationId,
+      run.gateId,
+      { publishPollDelaysMs: [] },
+    );
+    expect(first).toEqual({ ok: true });
+    expect((await sessionRows(run))[0].state).toBe("publishing");
+
+    await sweepManagedSessions(run.gateEnv, run.db, { now: Date.now() + 11 * MINUTE });
+    expect((await sessionRows(run))[0].state).toBe("published");
+  });
+
+  test("each project is re-verified right before its own claim, not all up front", async () => {
+    const SECOND_STAGE = "https://pypi.org/stage/second-project-stage/";
+    const SECOND_WHEEL = "second_project-1.0-py3-none-any.whl";
+    const secondSha = await sha256HexOf(new TextEncoder().encode("second wheel"));
+    const secondDigests = new Map([[SECOND_WHEEL, secondSha]]);
+    // A second Upload 2.0 root for pypi.org, so its routes do not collide.
+    const second = buildFakeUploadSession({
+      stageUrl: SECOND_STAGE,
+      uploadOrigin: "https://pypi.org",
+      filenames: [SECOND_WHEEL],
+    });
+    const run = await runManaged({
+      session: {
+        // Publishing the first project changes the second project's stage.
+        respond: (request) => {
+          if (request.method === "POST" && request.url.endsWith("/publish")) {
+            secondDigests.set(SECOND_WHEEL, "f".repeat(64));
+          }
+          return null;
+        },
+      },
+      routes: {
+        ...second.routes,
+        [SECOND_STAGE]: () => stagePage(secondDigests, "second-project"),
+      },
+      beforeRun: async (owner) => {
+        await seedProjectToken(owner, "second-project");
+      },
+    });
+    const [token] = await run.db
+      .select({ id: schema.pypiProjectTokens.id })
+      .from(schema.pypiProjectTokens)
+      .where(
+        and(
+          eq(schema.pypiProjectTokens.organizationId, run.owner.organizationId),
+          eq(schema.pypiProjectTokens.projectName, "second-project"),
+        ),
+      );
+    const sealed = await sealSecret(
+      env,
+      "pypi-session-links",
+      JSON.stringify({ session: second.sessionUrl, stage: SECOND_STAGE }),
+    );
+    const stored = await upsertPyPiStageSession(run.db, {
+      organizationId: run.owner.organizationId,
+      gateId: run.gateId,
+      tokenId: token.id,
+      projectName: "second-project",
+      version: "1.0",
+      indexOrigin: "https://pypi.org",
+      linksCiphertext: sealed.ciphertext,
+      linksNonce: sealed.nonce,
+      sessionFingerprint: await sessionFingerprint(second.sessionUrl),
+      reviewedFilesJson: [{ filename: SECOND_WHEEL, sha256: secondSha }],
+      expiresAt: null,
+      lastCheckedAt: new Date(),
+    });
+    if (!("row" in stored)) throw new Error("second row seed failed");
+    second.state.files.set(SECOND_WHEEL, { status: "completed", sha256: secondSha, bytes: null });
+    await transitionPyPiStageSession(run.db, stored.row.id, ["staging"], "held");
+    await markApprovedAt(run, Date.now());
+
+    const result = await publishManagedSessions(
+      run.gateEnv,
+      run.db,
+      run.owner.organizationId,
+      run.gateId,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/second-project PyPI session changed since review/),
+    });
+    const states = Object.fromEntries(
+      (await sessionRows(run)).map((row) => [row.projectName, row.state]),
+    );
+    expect(states).toEqual({ "demo-package": "published", "second-project": "stale" });
+    expect(second.requests.some((request) => request.url.endsWith("/publish"))).toBe(false);
   });
 
   test("bytes that change after the approval is recorded are not published and the gate is rejected", async () => {
@@ -540,13 +807,17 @@ describe("PEP 694 mode B: human decisions", () => {
     expect(body.error).toMatch(/changed since review/);
     const [row] = await sessionRows(run);
     expect(row.state).toBe("stale");
-    expect(run.session.requests.some((request) => request.method === "POST")).toBe(false);
+    expect(afterStaging(run).some((request) => request.method === "POST")).toBe(false);
     expect((await run.readEvents()).map((event) => event.type)).toContain("pypi_session.stale");
   });
 
   test("a file replaced in the session since review marks it stale", async () => {
     const run = await runManaged();
-    run.session.state.files.set("demo_package-1.2.0-py2-none-any.whl", "completed");
+    run.session.state.files.set("demo_package-1.2.0-py2-none-any.whl", {
+      status: "completed",
+      sha256: "e".repeat(64),
+      bytes: null,
+    });
     const { res } = await decide(run, "approved");
 
     expect(res.status).toBe(409);
@@ -612,7 +883,7 @@ describe("PEP 694 mode B: cron upkeep", () => {
       state: "held",
       stateDetail: "no longer extended: the gate is no longer waiting for a decision",
     });
-    expect(run.session.requests.map((request) => request.method)).toEqual(["GET", "GET"]);
+    expect(afterStaging(run).map((request) => request.method)).toEqual(["GET"]);
   });
 
   test.each([
@@ -734,14 +1005,19 @@ describe("PEP 694 mode B: cron upkeep", () => {
     );
     // No publish, no cancel: the maintainer never rejected this release.
     expect((await sessionRows(run))[0].state).toBe("held");
-    expect(run.session.requests.every((request) => request.method === "GET")).toBe(true);
+    expect(afterStaging(run).every((request) => request.method === "GET")).toBe(true);
   });
 
   test("a multi-project approval interrupted after one publish is rejected and shows partial", async () => {
     const run = await runManaged();
     const [row] = await sessionRows(run);
     const { id: _id, createdAt: _c, updatedAt: _u, state: _s, ...values } = row;
-    await upsertPyPiStageSession(run.db, { ...values, projectName: "second-project" });
+    const second = await upsertPyPiStageSession(run.db, {
+      ...values,
+      projectName: "second-project",
+    });
+    if (!("row" in second)) throw new Error("second row seed failed");
+    await transitionPyPiStageSession(run.db, second.row.id, ["staging"], "held");
     await run.db
       .update(schema.pypiStageSessions)
       .set({ state: "published", publishClaimedAt: new Date() })
@@ -982,15 +1258,41 @@ describe("PEP 694 mode B: records and token removal", () => {
       .where(eq(schema.pypiStageSessions.id, row.id));
     const { id: _id, createdAt: _c, updatedAt: _u, state: _s, ...values } = row;
 
-    expect(await upsertPyPiStageSession(run.db, values)).toBe(false);
+    expect(await upsertPyPiStageSession(run.db, values)).toEqual({ blockedBy: "published" });
     expect((await sessionRows(run))[0].state).toBe("published");
 
     await run.db
       .update(schema.pypiStageSessions)
       .set({ state: "stale" })
       .where(eq(schema.pypiStageSessions.id, row.id));
-    expect(await upsertPyPiStageSession(run.db, values)).toBe(true);
-    expect((await sessionRows(run))[0].state).toBe("held");
+    expect(await upsertPyPiStageSession(run.db, values)).toMatchObject({
+      row: { id: row.id, state: "staging" },
+    });
+  });
+
+  test("deleting a token also retires stale and not-yet-held sessions, so no rejection acts on them", async () => {
+    const run = await runManaged();
+    await run.db
+      .update(schema.pypiStageSessions)
+      .set({ state: "stale" })
+      .where(eq(schema.pypiStageSessions.gateId, run.gateId));
+    const [token] = await run.db
+      .select()
+      .from(schema.pypiProjectTokens)
+      .where(eq(schema.pypiProjectTokens.organizationId, run.owner.organizationId));
+    const app = buildTestApp(
+      (routes) => routes.route("/api/v1/pypi-project-tokens", pypiProjectTokenRoutes),
+      { userId: run.owner.userId, emailVerified: true },
+    );
+    const res = await call(app, "DELETE", `/api/v1/pypi-project-tokens/${token.id}`, {
+      activeOrganizationId: run.owner.organizationId,
+    });
+
+    expect(res.status).toBe(200);
+    expect((await sessionRows(run))[0].state).toBe("token_removed");
+    const before = run.session.requests.length;
+    await decide(run, "rejected");
+    expect(run.session.requests.length).toBe(before);
   });
 
   test("deleting a token settles its held sessions as token_removed and stops polling them", async () => {

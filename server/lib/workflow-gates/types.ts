@@ -137,6 +137,13 @@ export interface StagedReleaseInput {
   artifacts: ParsedGateArtifact[];
   /** Parse fetched bytes through the same credentials-free sandbox router. */
   parse(file: GateStagedFile): Promise<ParsedGateArtifact>;
+  /**
+   * Stream this ecosystem's release files from the workflow run again, one at
+   * a time, for an adapter that must hand the reviewed bytes on (PEP 694 mode
+   * B uploads them). Parsed evidence keeps no raw bytes; callers check each
+   * file's sha256 against the reviewed digest before using it.
+   */
+  rereadReleaseFiles(onFile: (file: GateStagedFile) => Promise<void>): Promise<void>;
 }
 
 interface GateStagedFile {

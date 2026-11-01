@@ -48,9 +48,15 @@ export interface ReleaseProvenanceArtifact {
 export interface ReleaseStageBinding {
   protocol: "pep694";
   index: string;
-  /** The gate artifact also carried the distributions and they were byte-identical. */
+  /**
+   * Mode A: the gate artifact also carried the distributions and they were
+   * byte-identical. Always true in mode B, where the artifact is the source.
+   */
   artifactBound: boolean;
-  /** Mode B: Drydock holds the session and publishes or cancels it on the human decision. */
+  /**
+   * Mode B: Drydock staged the reviewed bytes in a session it holds and
+   * publishes or cancels it on the human decision.
+   */
   managed?: boolean;
 }
 

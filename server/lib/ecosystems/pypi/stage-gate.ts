@@ -27,7 +27,7 @@ import {
   type PyPiStageReferenceEntry,
 } from "./stage";
 import { MAX_STAGED_FILE_BYTES, downloadStagedFile, fetchStageProjectPage } from "./stage-fetch";
-import { registerManagedSessions } from "./session-lifecycle";
+import { stageManagedReleases } from "./session-lifecycle";
 import { PYPI_ARTIFACT_LIMIT } from "./types";
 import { pyPiVersionsEquivalent } from "./version";
 
@@ -40,18 +40,23 @@ interface ByteBudget {
 }
 
 /**
- * PEP 694 mode A: review the bytes a PEP 694 stage holds.
+ * PEP 694 releases registered in `pypi-stage.json`.
  *
- * The workflow registered a stage in `pypi-stage.json`. For each registered
- * project Drydock reads the stage page and downloads every staged file for
- * that version (credential-free, allowlisted origins only), checks each
- * download against the digest the index declares, and parses the staged
- * bytes in the sandbox. Those parsed staged files are the release candidate.
- * If the bundle also carries distributions for the project, both sides must
- * be byte-identical: same filenames, same sha256, nothing extra on either.
+ * Mode A (`stage-url`): the workflow created a stage. Drydock reads the stage
+ * page and downloads every staged file for that version (credential-free,
+ * allowlisted origins only), checks each download against the digest the
+ * index declares, and parses the staged bytes in the sandbox. Those parsed
+ * staged files are the release candidate. If the bundle also carries
+ * distributions for the project, both sides must be byte-identical: same
+ * filenames, same sha256, nothing extra on either.
+ *
+ * Mode B (`"session": "drydock"`): the bundle's distributions are the
+ * candidate, and Drydock stages exactly those bytes in a session it creates
+ * and holds (`stageManagedReleases`).
  *
  * Every mismatch throws a maintainer-facing `WorkflowArtifactError`, which
- * rejects the held deployment; there is no partial review of a stage.
+ * rejects the held deployment; there is no partial review of a stage. A
+ * retryable staging fault (`PyPiStagingError`) leaves the gate pending.
  */
 export async function preparePyPiStagedCandidates(
   input: StagedReleaseInput,
@@ -102,7 +107,7 @@ async function prepareStaged(
     }
   }
 
-  const staged: ParsedGateArtifact[] = [];
+  const reviewed: ParsedGateArtifact[] = [];
   const bindings = new Map<
     string,
     { entry: PyPiStageReferenceEntry; binding: ReleaseStageBinding }
@@ -111,18 +116,29 @@ async function prepareStaged(
   // Sequential on purpose: one staged distribution is held in memory at a time.
   for (const [project, entry] of references) {
     const bundle = bundleByProject.get(project)?.artifacts ?? [];
-    staged.push(...(await reviewStage(entry, bundle, input, budget)));
+    if (entry.stageUrl) {
+      reviewed.push(...(await reviewStage(entry, entry.stageUrl, bundle, input, budget)));
+      bindings.set(project, {
+        entry,
+        binding: { protocol: "pep694", index: entry.index, artifactBound: bundle.length > 0 },
+      });
+      continue;
+    }
+    // Mode B: the artifact's distributions are the review and the upload source.
+    if (bundle.length === 0) {
+      throw new PyPiStageError(
+        "stage_reference_invalid",
+        `${entry.name} opts into Drydock-held staging, but the artifact carries no distributions for it`,
+      );
+    }
+    reviewed.push(...bundle);
     bindings.set(project, {
       entry,
-      binding: {
-        protocol: "pep694",
-        index: entry.stageUrl.origin,
-        artifactBound: bundle.length > 0,
-      },
+      binding: { protocol: "pep694", index: entry.index, artifactBound: true, managed: true },
     });
   }
 
-  const candidates = prepareReleaseCandidates(staged);
+  const candidates = prepareReleaseCandidates(reviewed);
   const bound = new Set<string>();
   const result = candidates.map((candidate) => {
     const project = normalizePyPiProjectName(candidate.package.name);
@@ -154,48 +170,41 @@ async function prepareStaged(
     }
   }
 
-  // Mode B: projects whose organization stores a project token and whose
-  // reference names the session are held by Drydock from here on.
-  const held = await registerManagedSessions(
+  // Mode B: Drydock stages the reviewed bytes itself and holds the sessions.
+  // Every opted-in project is held when this returns, or it threw.
+  await stageManagedReleases(
     input,
-    [...bindings].map(([project, registered]) => ({
-      entry: registered.entry,
-      reviewed: staged
-        .filter((artifact) => stagedProject(artifact) === project)
-        .map((artifact) => ({ filename: artifact.path, sha256: artifact.sha256 })),
-    })),
+    [...bindings]
+      .filter(([, registered]) => registered.binding.managed)
+      .map(([project, registered]) => ({
+        name: registered.entry.name,
+        version: registered.entry.version,
+        index: registered.entry.index,
+        reviewed: (bundleByProject.get(project)?.artifacts ?? []).map((artifact) => ({
+          path: artifact.path,
+          sha256: artifact.sha256,
+        })),
+      })),
   );
-  for (const [project, registered] of bindings) {
+  for (const registered of bindings.values()) {
     emitOperationalEvent("info", "pypi.stage.reviewed", {
-      // Index origin only: the stage URL is a capability and never logged.
+      // Index origin only: stage and session URLs are capabilities, never logged.
       index: registered.binding.index,
       artifactBound: registered.binding.artifactBound,
-      managed: held.has(project),
+      managed: registered.binding.managed === true,
     });
   }
-  return result.map((candidate) => {
-    const project = normalizePyPiProjectName(candidate.package.name);
-    if (!held.has(project)) return candidate;
-    const binding = bindings.get(project)?.binding;
-    return {
-      ...candidate,
-      pipelineInput: { ...candidate.pipelineInput, stage: { ...binding, managed: true } },
-    };
-  });
-}
-
-function stagedProject(artifact: ParsedGateArtifact): string | null {
-  const name = preparePyPiArtifact({ path: artifact.path, files: artifact.files }).summary.name;
-  return name ? normalizePyPiProjectName(name) : null;
+  return result;
 }
 
 async function reviewStage(
   entry: PyPiStageReferenceEntry,
+  stageUrl: URL,
   bundle: ParsedGateArtifact[],
   input: StagedReleaseInput,
   budget: ByteBudget,
 ): Promise<ParsedGateArtifact[]> {
-  const page = await fetchStageProjectPage(entry.stageUrl, entry.name);
+  const page = await fetchStageProjectPage(stageUrl, entry.name);
   const { files, problems } = selectStagedReleaseFiles(page, entry.name, entry.version);
   if (problems.length > 0) {
     throw new PyPiStageError("stage_identity_mismatch", summarizeProblems(problems));
@@ -254,12 +263,7 @@ async function reviewStage(
         `staged release exceeds the ${MAX_STAGED_RELEASE_BYTES}-byte review budget`,
       );
     }
-    const bytes = await downloadStagedFile(
-      file.url,
-      entry.stageUrl.origin,
-      file.filename,
-      budget.remaining,
-    );
+    const bytes = await downloadStagedFile(file.url, entry.index, file.filename, budget.remaining);
     budget.remaining -= bytes.byteLength;
     const sha256 = await sha256Hex(bytes);
     if (sha256 !== file.sha256) {

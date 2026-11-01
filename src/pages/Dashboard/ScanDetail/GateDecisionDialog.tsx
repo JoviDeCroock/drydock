@@ -87,21 +87,51 @@ function indexHost(index: string): string {
  * One line of registry-held session state for the decision dialog. Expected
  * states read as plain text; only the ones that stop or bypass the approval
  * (changed bytes, an expired or failed session, a publish outside Drydock)
- * carry a badge.
+ * carry a badge. What approving does depends on the gate: only the approval
+ * that completes a pending gate publishes, and a closed gate publishes nothing.
  */
-export function heldReleaseLine(release: HeldRelease): HeldReleaseLine {
+export function heldReleaseLine(
+  release: HeldRelease,
+  gate: { gateStatus: string; packageCount: number },
+): HeldReleaseLine {
   const registry = release.ecosystem === "pypi" ? "PyPI" : release.ecosystem;
   const subject = `${release.projectName} ${release.version} on ${indexHost(release.index)}`;
   const note = release.stateDetail;
   switch (release.state) {
-    case "held":
+    case "held": {
+      if (gate.gateStatus !== "pending") {
+        return {
+          text: `${registry} holds ${subject}`,
+          badge: null,
+          note: note ?? "not published; the gate is closed",
+        };
+      }
+      const effect =
+        gate.packageCount > 1
+          ? "publishes once every package is approved"
+          : "approving publishes it";
       return {
         text: `${registry} holds ${subject}`,
         badge: null,
         note:
           release.expiresAt === null
-            ? "approving publishes it"
-            : `approving publishes it · expires ${formatDateTime(release.expiresAt)}`,
+            ? effect
+            : `${effect} · expires ${formatDateTime(release.expiresAt)}`,
+      };
+    }
+    case "staging":
+      return { text: `Staging ${subject}…`, badge: null, note };
+    case "upload_failed":
+      return {
+        text: subject,
+        badge: { label: "upload failed, cannot publish", tone: "critical" },
+        note,
+      };
+    case "superseded":
+      return {
+        text: subject,
+        badge: { label: "taken over by a later run", tone: "medium" },
+        note: null,
       };
     case "publishing":
       return { text: `Publishing ${subject}…`, badge: null, note };
@@ -146,7 +176,15 @@ export function partiallyPublished(gateStatus: string, releases: HeldRelease[]):
   );
 }
 
-function HeldReleases({ releases, gateStatus }: { releases: HeldRelease[]; gateStatus: string }) {
+function HeldReleases({
+  releases,
+  gateStatus,
+  packageCount,
+}: {
+  releases: HeldRelease[];
+  gateStatus: string;
+  packageCount: number;
+}) {
   if (releases.length === 0) return null;
   return (
     <div class="flex flex-col gap-1">
@@ -161,7 +199,7 @@ function HeldReleases({ releases, gateStatus }: { releases: HeldRelease[]; gateS
       ) : null}
       <ul class="m-0 p-0 list-none flex flex-col gap-1">
         {releases.map((release) => {
-          const line = heldReleaseLine(release);
+          const line = heldReleaseLine(release, { gateStatus, packageCount });
           return (
             <li
               key={`${release.index} ${release.projectName} ${release.version}`}
@@ -520,7 +558,11 @@ export function GateDecisionDialog({
         </Field>
       ) : null}
 
-      <HeldReleases releases={gate.heldReleases} gateStatus={gate.status} />
+      <HeldReleases
+        releases={gate.heldReleases}
+        gateStatus={gate.status}
+        packageCount={gate.packages.length}
+      />
 
       {gateDecided ? (
         <Muted class="m-0 text-[13px]">

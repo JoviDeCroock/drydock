@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { HeldRelease } from "../src/models/github-app";
 import {
-  heldReleaseLine,
+  heldReleaseLine as lineFor,
   partiallyPublished,
 } from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
+
+const PENDING_SINGLE = { gateStatus: "pending", packageCount: 1 };
+const heldReleaseLine = (held: HeldRelease, gate = PENDING_SINGLE) => lineFor(held, gate);
 
 function release(overrides: Partial<HeldRelease> = {}): HeldRelease {
   return {
@@ -31,8 +34,19 @@ describe("held release line", () => {
     );
   });
 
+  test("approving publishes only when it completes a pending gate", () => {
+    expect(heldReleaseLine(release(), { gateStatus: "pending", packageCount: 3 }).note).toBe(
+      "publishes once every package is approved",
+    );
+    // An automatic block closed the gate: approving can no longer publish it.
+    expect(heldReleaseLine(release(), { gateStatus: "rejected", packageCount: 1 }).note).toBe(
+      "not published; the gate is closed",
+    );
+  });
+
   test("expected states read as plain text", () => {
     for (const state of [
+      "staging",
       "publishing",
       "published",
       "canceling",
@@ -58,6 +72,13 @@ describe("held release line", () => {
     expect(heldReleaseLine(release({ state: "expired" })).badge?.label).toBe("expired");
     expect(heldReleaseLine(release({ state: "error" })).badge?.label).toBe("error");
     expect(heldReleaseLine(release({ state: "token_removed" })).badge?.label).toBe("token removed");
+    expect(heldReleaseLine(release({ state: "upload_failed" })).badge).toEqual({
+      label: "upload failed, cannot publish",
+      tone: "critical",
+    });
+    expect(heldReleaseLine(release({ state: "superseded" })).badge?.label).toBe(
+      "taken over by a later run",
+    );
   });
 
   test("a blocked gate with one project live and one not is partially published", () => {

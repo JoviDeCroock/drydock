@@ -21,6 +21,9 @@ describe("settings tab addresses", () => {
     expect(settingsTabHref("integrations", SETTINGS_SECTION.npmAccess)).toBe(
       "/dashboard/settings?tab=integrations#npm-access",
     );
+    expect(settingsTabHref("integrations", SETTINGS_SECTION.pypiProjectTokens)).toBe(
+      "/dashboard/settings?tab=integrations#pypi-project-tokens",
+    );
   });
 
   test("renders every tab as a link that can be opened or copied", async () => {

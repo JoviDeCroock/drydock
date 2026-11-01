@@ -11,11 +11,12 @@ import { pyPiVersionsEquivalent } from "./version";
 /**
  * PEP 694 (Upload 2.0) staged previews for the PyPI workflow gate.
  *
- * PEP 694 is a draft and is not live on pypi.org. The workflow creates the
- * publishing session and uploads with its own credentials, then registers the
- * session through the gate artifact (`pypi-stage.json`). Drydock reviews the
- * bytes the stage holds. Everything here is pure so the parsing and identity
- * rules can be tested without a network.
+ * PEP 694 is a draft and is not live on pypi.org. `pypi-stage.json` in the
+ * gate artifact either names a stage the workflow created (mode A: Drydock
+ * reviews the bytes it holds) or opts a project into Drydock-held staging
+ * (mode B: Drydock creates the session and uploads the reviewed artifact
+ * bytes itself). Everything here is pure so the parsing and identity rules
+ * can be tested without a network.
  *
  * A stage URL, and every file URL a stage page lists, is a capability: anyone
  * holding it can read the unpublished bytes. It must never reach logs, errors,
@@ -52,15 +53,17 @@ export class PyPiStageError extends Error {
 export interface PyPiStageReferenceEntry {
   name: string;
   version: string;
-  /** Capability URL. Keep in memory only; see the module comment. */
-  stageUrl: URL;
+  /** Index origin: the stage URL's origin, or the opt-in entry's `index`. */
+  index: string;
   /**
-   * PEP 694 `links.session`, used only when the organization opted this
-   * project into Drydock-managed sessions. The session gateway validates it
-   * before any credential is attached; nothing here trusts it.
+   * Mode A: the stage the workflow created (a capability URL; keep in memory
+   * only, see the module comment). Null for a mode B entry
+   * (`"session": "drydock"`), where Drydock creates the session itself.
    */
-  sessionUrl: string | null;
+  stageUrl: URL | null;
 }
+
+const DRYDOCK_SESSION_MARKER = "drydock";
 
 /**
  * Parse one `pypi-stage.json`. Unknown keys are ignored so the schema can grow
@@ -96,9 +99,37 @@ function parseStageEntry(entry: unknown, index: number): PyPiStageReferenceEntry
   const version = typeof entry.version === "string" ? entry.version : "";
   if (!isValidPyPiProjectName(name)) throw invalid(`${label} name is not a valid project name`);
   if (!SAFE_VERSION_RE.test(version)) throw invalid(`${label} version is not a safe version`);
+  // A workflow-created session must never become the one Drydock holds and
+  // publishes: that would let whatever created it (and so can publish it)
+  // choose what Drydock approves.
+  if ((entry["session-url"] ?? entry.session_url) !== undefined) {
+    throw invalid(
+      `${label} (${name}) session-url is not accepted; for Drydock-held staging use "session": "${DRYDOCK_SESSION_MARKER}" and let Drydock create the session`,
+    );
+  }
   const rawUrl = entry["stage-url"] ?? entry.stage_url;
+  const marker = entry.session;
+  if (marker !== undefined) {
+    if (marker !== DRYDOCK_SESSION_MARKER) {
+      throw invalid(`${label} (${name}) session must be "${DRYDOCK_SESSION_MARKER}"`);
+    }
+    if (rawUrl !== undefined) {
+      throw invalid(
+        `${label} (${name}) names both a stage-url and "session": "${DRYDOCK_SESSION_MARKER}"`,
+      );
+    }
+    const index = entry.index ?? PYPI_STAGE_INDEX_ORIGINS[0];
+    if (typeof index !== "string" || !PYPI_STAGE_INDEX_ORIGINS.includes(index)) {
+      throw invalid(
+        `${label} (${name}) index must be one of ${PYPI_STAGE_INDEX_ORIGINS.join(", ")}`,
+      );
+    }
+    return { name, version, index, stageUrl: null };
+  }
   if (typeof rawUrl !== "string" || rawUrl.length > MAX_URL_LENGTH) {
-    throw invalid(`${label} (${name}) needs a stage-url string`);
+    throw invalid(
+      `${label} (${name}) needs a stage-url string, or "session": "${DRYDOCK_SESSION_MARKER}"`,
+    );
   }
   const stageUrl = parseAllowedStageUrl(rawUrl);
   if (!stageUrl) {
@@ -106,14 +137,7 @@ function parseStageEntry(entry: unknown, index: number): PyPiStageReferenceEntry
       `${label} (${name}) stage-url must be an https URL on ${PYPI_STAGE_INDEX_ORIGINS.join(" or ")}`,
     );
   }
-  const rawSession = entry["session-url"] ?? entry.session_url;
-  if (
-    rawSession !== undefined &&
-    (typeof rawSession !== "string" || rawSession.length > MAX_URL_LENGTH)
-  ) {
-    throw invalid(`${label} (${name}) session-url must be a string`);
-  }
-  return { name, version, stageUrl, sessionUrl: rawSession ?? null };
+  return { name, version, index: stageUrl.origin, stageUrl };
 }
 
 /**
@@ -163,8 +187,8 @@ export function mergeStageReferences(
     }
     if (
       !pyPiVersionsEquivalent(seen.version, entry.version) ||
-      seen.stageUrl.href !== entry.stageUrl.href ||
-      seen.sessionUrl !== entry.sessionUrl
+      seen.index !== entry.index ||
+      seen.stageUrl?.href !== entry.stageUrl?.href
     ) {
       throw invalid(`more than one stage reference names project ${entry.name}`);
     }

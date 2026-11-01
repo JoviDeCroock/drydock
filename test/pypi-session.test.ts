@@ -3,6 +3,7 @@ import {
   PyPiSessionError,
   createPyPiSessionGateway,
   evaluatePyPiSessionRequest,
+  openPyPiSession,
   parseSessionSnapshot,
   sessionBindingProblems,
 } from "../server/lib/ecosystems/pypi/session-gateway";
@@ -11,7 +12,12 @@ import {
   pyPiTokenProblem,
   sealPyPiToken,
 } from "../server/lib/ecosystems/pypi/project-token";
-import { FAKE_SESSION_TOKEN, buildFakeUploadSession, fakePyPiToken } from "./helpers/pep694-fake";
+import {
+  FAKE_SESSION_TOKEN,
+  buildFakeUploadSession,
+  fakePyPiToken,
+  sha256HexOf,
+} from "./helpers/pep694-fake";
 
 const STAGE = "https://pypi.org/stage/stgtok-1/";
 const SESSION = `https://upload.pypi.org/2.0/sessions/${FAKE_SESSION_TOKEN}`;
@@ -34,6 +40,7 @@ describe("evaluatePyPiSessionRequest", () => {
     ["DELETE", SESSION, "https://pypi.org"],
     ["POST", `${SESSION}/publish`, "https://pypi.org"],
     ["GET", "https://test.pypi.org/2.0/sessions/abc", "https://test.pypi.org"],
+    ["POST", "https://upload.pypi.org/2.0/", "https://pypi.org"],
   ])("allows %s %s for %s", (method, url, index) => {
     expect(evaluatePyPiSessionRequest(url, method, index).allowed).toBe(true);
   });
@@ -55,7 +62,8 @@ describe("evaluatePyPiSessionRequest", () => {
       "DELETE",
       "https://pypi.org",
     ],
-    ["the bare root", "https://upload.pypi.org/2.0/", "GET", "https://pypi.org"],
+    ["GET on the bare root", "https://upload.pypi.org/2.0/", "GET", "https://pypi.org"],
+    ["DELETE on the bare root", "https://upload.pypi.org/2.0/", "DELETE", "https://pypi.org"],
     ["a dot-segment escape", "https://pypi.org/2.0/../legacy/", "GET", "https://pypi.org"],
     ["an encoded escape", "https://pypi.org/2.0/%2e%2e/legacy/", "GET", "https://pypi.org"],
     ["an encoded slash", "https://pypi.org/2.0/x%2F..%2Flegacy", "GET", "https://pypi.org"],
@@ -158,6 +166,102 @@ describe("PyPiSessionGateway", () => {
   });
 });
 
+describe("Drydock-created sessions and uploads", () => {
+  const options = (fetchImpl: typeof fetch) => ({
+    token: TOKEN,
+    indexOrigin: "https://pypi.org",
+    fetchImpl,
+    completionPollDelaysMs: [0, 0, 0],
+  });
+
+  test("creates the session at the index's Upload 2.0 root and binds to the issued URL", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE });
+    const opened = await openPyPiSession(options(routedFetch(session.routes)), {
+      name: "demo-package",
+      version: "1.2.0",
+    });
+    expect(opened.adopted).toBe(false);
+    expect(opened.gateway.sessionUrl).toBe(session.sessionUrl);
+    expect(session.requests).toEqual([
+      { method: "POST", url: "https://upload.pypi.org/2.0/", authorization: `Bearer ${TOKEN}` },
+    ]);
+  });
+
+  test("adopts the session a 409 points at, reading it before any change", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE, adopt: true });
+    const opened = await openPyPiSession(options(routedFetch(session.routes)), {
+      name: "demo-package",
+      version: "1.2.0",
+    });
+    expect(opened.adopted).toBe(true);
+    expect(session.requests.map((request) => request.method)).toEqual(["POST", "GET"]);
+  });
+
+  test.each([
+    ["a foreign host", "https://evil.example/2.0/sessions/x"],
+    ["another allowed root's origin", "https://pypi.org/2.0/sessions/x"],
+    ["the legacy upload API", "https://upload.pypi.org/legacy/"],
+  ])("a 409 Location on %s never receives the token", async (_label, location) => {
+    const fetchImpl = routedFetch({
+      "https://upload.pypi.org/2.0/": () =>
+        new Response("exists", { status: 409, headers: { location } }),
+    });
+    await expect(
+      openPyPiSession(options(fetchImpl), { name: "demo-package", version: "1.2.0" }),
+    ).rejects.toMatchObject({ code: "session_url_refused" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("uploads bytes to the index's file_url and waits for processing to complete", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE, processingReads: 2 });
+    const { gateway, snapshot } = await openPyPiSession(options(routedFetch(session.routes)), {
+      name: "demo-package",
+      version: "1.2.0",
+    });
+    const bytes = new TextEncoder().encode("reviewed wheel");
+    const upload = await gateway.createFileUpload(snapshot, {
+      filename: WHEEL,
+      size: bytes.byteLength,
+      sha256: await sha256HexOf(bytes),
+    });
+    await gateway.uploadFileBytes(upload, bytes);
+    await gateway.completeFileUpload(upload);
+    expect(session.state.files.get(WHEEL)).toMatchObject({ status: "completed", bytes });
+    for (const request of session.requests) expect(request.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  test("a file_url off the session's root is refused before the bytes or token go out", async () => {
+    const session = buildFakeUploadSession({
+      stageUrl: STAGE,
+      fileUrl: () => "https://upload.pypi.org/legacy/",
+    });
+    const fetchImpl = routedFetch(session.routes);
+    const { gateway, snapshot } = await openPyPiSession(options(fetchImpl), {
+      name: "demo-package",
+      version: "1.2.0",
+    });
+    const upload = await gateway.createFileUpload(snapshot, {
+      filename: WHEEL,
+      size: 1,
+      sha256: "a".repeat(64),
+    });
+    const calls = fetchImpl.mock.calls.length;
+    await expect(gateway.uploadFileBytes(upload, new Uint8Array(1))).rejects.toMatchObject({
+      code: "session_url_refused",
+    });
+    expect(fetchImpl.mock.calls.length).toBe(calls);
+  });
+
+  test("a 200 from publish is reported as processing, not published", async () => {
+    const session = buildFakeUploadSession({ stageUrl: STAGE, filenames: [WHEEL], publish: 200 });
+    const gateway = createPyPiSessionGateway({
+      ...options(routedFetch(session.routes)),
+      sessionUrl: session.sessionUrl,
+    });
+    expect(await gateway.publish(await gateway.status())).toEqual({ status: 202 });
+  });
+});
+
 describe("parseSessionSnapshot", () => {
   const valid = {
     meta: { "api-version": "2.0" },
@@ -176,6 +280,7 @@ describe("parseSessionSnapshot", () => {
       publish: `${SESSION}/publish`,
       extend: null,
       stage: STAGE,
+      upload: null,
     });
     expect([...(snapshot?.files.keys() ?? [])]).toEqual([WHEEL]);
   });

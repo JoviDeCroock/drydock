@@ -293,6 +293,12 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "info",
     summarize: summarizePyPiSession,
   },
+  "pypi_session.upload_failed": {
+    category: "release_decision",
+    label: "PyPI staged upload failed",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
   "pypi_session.published": {
     category: "release_decision",
     label: "PyPI staged release published",
