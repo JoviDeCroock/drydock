@@ -264,7 +264,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
       ? await getPublicationMonitor(ecosystem)?.resolvePostReleaseReview(db, c.env, {
           organizationId,
           scanId: updated.scan.id,
-          actorUserId: session.userId,
+          actorUserId: requestActorUserId(c),
         })
       : null;
     for (const tag of resolved?.badgeTags ?? []) {

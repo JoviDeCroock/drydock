@@ -122,7 +122,7 @@ export const StartScanRequest = z
   .register(openApiSchemas, { id: "StartScanRequest" });
 
 export const StagedDecisionRequest = z
-  .object({
+  .looseObject({
     decision: z.enum(SCAN_DECISIONS),
     reason: z.string().max(500).optional().describe("Shown with the decision in Drydock"),
     totpCode: z
@@ -131,7 +131,7 @@ export const StagedDecisionRequest = z
         "Current 6-digit code from the key creator's authenticator app, accepted once; never stored",
       ),
   })
-  .meta({ id: "StagedDecisionRequest" });
+  .register(openApiSchemas, { id: "StagedDecisionRequest" });
 
 export const StartedScan = z
   .looseObject({
