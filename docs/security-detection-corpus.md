@@ -185,7 +185,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.56.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.57.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -893,6 +893,52 @@ Goldens live in `cases-provenance/`; hard negatives (`legit-provenance-*` in `ca
 transfers that keep the repository id, the SLSA v0.2→v1 format change, first adoption, unknown
 candidates, PyPI's HTML 404, letter case, a local hotfix after two CI releases, a hand-published
 stable after a CI-attested prerelease, and a same-owner PyPI rename.
+
+`1.57.0` makes the tar reader disclose extended-header shapes that tar readers resolve
+differently (the shapes uv's tar-codec refuses). node-tar merges every metadata header before a
+member into one record, last value winning. CPython's `tarfile` lets the first record win,
+family-strict readers keep GNU and pax records apart or refuse the archive, and POSIX treats an
+empty pax value as deleting the field. The reader still records node-tar's path, but now adds a
+high `parser-differential` `tar.suspicious-entry` naming the shape: a member carrying both a GNU
+long name (`L`/`N`) and a pax `path`, or a long link (`K`) and a pax `linkpath`; more than one
+long-name, long-link, or pax `path`/`linkpath`/`size` record for one member; a present-but-empty
+pax `path`, `linkpath`, or `size` (`key=` or a bare `key`, the tombstone node-tar applies as an empty
+value); and a global header that sets `path`/`linkpath` (node-tar ignores them) or `size` (node-tar
+applies it to later entries).
+
+The same entry covers the shapes where node-tar and pip's CPython `tarfile` part ways:
+
+- A metadata header over node-tar's 1 MiB limit, which node-tar skips and `tarfile` applies (local
+  or global). It is disclosed, not counted as a repeat.
+- Any old GNU `N` record. node-tar reads it as a long path; `tarfile` has no `N` type, extracts it
+  as a file of its own, and leaves the member its header name.
+- A zero-length `L` or `K`. node-tar ignores it; `tarfile` applies the empty name or link target.
+- A pax body that a line split (node-tar) and a length walk (`tarfile`) read differently: records
+  a length walk cannot parse (lengths that do not tile the body, or a record without `key=`, which
+  newer `tarfile` releases refuse), a `path`/`linkpath`/`size` value the two read differently, or a
+  `path`/`linkpath` value that is not valid UTF-8 (node-tar writes replacement characters,
+  `tarfile` the raw bytes, even where both are the same length). Other keys are not compared,
+  because macOS bsdtar writes raw binary xattr values that the UTF-8 line split drops harmlessly.
+  A key repeated within one header (tar-rs keeps the first) counts too.
+- Any `GNU.sparse.*` key. `tarfile` rebuilds the member from a sparse map: 0.0 `numblocks`/
+  `offset`/`numbytes`, 0.1 `map`, 1.0 `major`/`minor` with an in-data map, plus `name`/`size`/
+  `realsize`. That changes the bytes, size or name pip writes, while node-tar installs the raw
+  body. A 0.1 map can reorder segments, so the scanner reads `system('x')import os;os.` where pip
+  writes `import os;os.system('x')`.
+- A pending pax `size` that node-tar also applies to a following metadata header's body, where
+  `tarfile` applies it only to the member.
+
+Each member gets one entry with every shape joined into the detail. Metadata no member consumes is
+disclosed at `<archive>`, and global shapes once per archive. Attribution never changes: the
+recorded path is still node-tar's. Publisher toolchains emit at most one record of each kind per
+member. None of 318 popular npm packages from the FP sweep cache, 1,000 locally cached npm
+tarballs, 20 PyPI sdists (setuptools, hatchling, flit, poetry-core, maturin, meson-python), or bsdtar
+pax/gnutar/ustar, CPython GNU/PAX-format, and `git archive` archives carries one of these shapes.
+Goldens: `cases-pypi/20-sdist-repeated-gnu-long-name`, `21-sdist-oversized-pax-header`,
+`22-sdist-old-gnu-name-record`, `23-sdist-pax-body-length-mismatch`, and
+`24-sdist-gnu-sparse-map-reorder`. `test/tar-parser.test.mjs` rebuilds each sdist and checks the
+fixture's file records and disclosures are exactly what the parser emits. The pax-body checks are
+linear in the body, which is up to 1 MiB of attacker-chosen records.
 
 ### Fixture format
 

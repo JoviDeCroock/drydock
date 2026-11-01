@@ -43,9 +43,13 @@ interface SandboxFile {
 }
 
 async function parseTgz(
-  entries: Array<{ name: string; body: string }>,
+  entries: Array<{ name: string; body: string; type?: string }>,
   env: Record<string, unknown> = {},
-): Promise<{ files: SandboxFile[]; packageJson: { name?: string; version?: string } | null }> {
+): Promise<{
+  files: SandboxFile[];
+  packageJson: { name?: string; version?: string } | null;
+  suspiciousEntries?: Array<{ kind: string; path: string; detail: string }>;
+}> {
   const body = await gzip(buildTar(entries));
   const sandbox = loadRenderedSandbox();
   const res = await sandbox.fetch(
@@ -60,6 +64,7 @@ async function parseTgz(
   return (await res.json()) as {
     files: SandboxFile[];
     packageJson: { name?: string; version?: string } | null;
+    suspiciousEntries?: Array<{ kind: string; path: string; detail: string }>;
   };
 }
 
@@ -124,6 +129,25 @@ describe("rendered sandbox module: per-file sample retention", () => {
     expect(packageJson?.textSample).toBe(manifest);
     expect(packageJson?.flags).not.toContain("baseline-truncated");
     expect(parsed.packageJson).toMatchObject({ name: "pkg", version: "1.0.0" });
+  });
+
+  test("discloses a pax header body readers parse differently", async () => {
+    // Runs the pax-body checks inside the rendered module, so an export the
+    // sandbox source list drops fails here rather than in production.
+    // Two-digit record lengths: the digits, a space, the record, a newline.
+    const pax = (record: string) => `${record.length + 4} ${record}\n`;
+    const parsed = await parseTgz([
+      { name: "package/package.json", body: MANIFEST },
+      { name: "PaxHeader", type: "x", body: pax("path=package/a.js") + pax("path=package/b.js") },
+      { name: "package/ignored.js", body: "x\n" },
+    ]);
+
+    expect(parsed.files.map((file) => file.path)).toContain("b.js");
+    expect(parsed.suspiciousEntries).toContainEqual({
+      kind: "parser-differential",
+      path: "b.js",
+      detail: expect.stringContaining("the key `path` more than once"),
+    });
   });
 
   test("no credential material is reachable from the sandbox env", async () => {

@@ -1,0 +1,61 @@
+{
+  "id": "pypi-sdist-oversized-pax-header",
+  "title": "sdist pax header larger than node-tar's 1 MiB metadata limit",
+  "category": "archive-structure",
+  "intent": "a pax header padded past 1 MiB with a comment carries path=setup.py; node-tar ignores it and Drydock reviews the member as README.txt, while pip's CPython tarfile has no limit and writes it as setup.py",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 74,
+          "sha256": "1be9b82eff188babac4fc0e2c99d8bf7a48ea1307544bcf032bce3ec57a3e779",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/README.txt",
+          "size": 15,
+          "sha256": "49ff8a159c339268d607076eae916603d1b587221696305542879da0561b60ad",
+          "flags": [],
+          "textSample": "Read me first.\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "parser-differential",
+          "path": "demo_package-1.2.0/README.txt",
+          "detail": "member is preceded by a `x` metadata header larger than node-tar's 1 MiB limit; node-tar ignores it, while extractors without that limit (CPython tarfile) apply it, so the member's path, link target or size depends on the extractor"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/README.txt"
+    }
+  ]
+}
