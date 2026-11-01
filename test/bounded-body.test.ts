@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   parseContentLength,
+  readBoundedBytes,
   readBoundedJson,
   readBoundedText,
 } from "../server/lib/platform/bounded-body";
@@ -114,6 +115,20 @@ describe("readBoundedText", () => {
       deadlineMs: Date.now() - 1,
     });
     expect(result === "ok" || result === null).toBe(true);
+  });
+});
+
+describe("readBoundedBytes", () => {
+  test("returns the raw bytes under the cap and null over it or past the deadline", async () => {
+    expect(await readBoundedBytes(streamed(["ab", "c"]), { maxBytes: 3 })).toEqual(
+      new TextEncoder().encode("abc"),
+    );
+    expect(await readBoundedBytes(streamed(["ab", "cd"]), { maxBytes: 3 })).toBeNull();
+    const { response, cancelled } = stalled("x");
+    expect(
+      await readBoundedBytes(response, { maxBytes: 1024, deadlineMs: Date.now() + 20 }),
+    ).toBeNull();
+    expect(cancelled()).toBe(true);
   });
 });
 

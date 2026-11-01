@@ -185,6 +185,8 @@ interface StageIndexFile {
   sha256: string | null;
   /** Absolute download URL (a capability), or null when absent/unparseable. */
   url: URL | null;
+  /** PEP 700 `size` (simple API 1.1+), or null when the page declares none. */
+  size: number | null;
 }
 
 export interface StageProjectPage {
@@ -230,6 +232,10 @@ function parsePep691Json(body: string, pageUrl: URL): StageProjectPage {
       filename: safeFilename(file.filename),
       sha256: normalizeSha256(hashes.sha256),
       url: resolveFileUrl(typeof file.url === "string" ? file.url : "", pageUrl),
+      size:
+        typeof file.size === "number" && Number.isSafeInteger(file.size) && file.size >= 0
+          ? file.size
+          : null,
     };
   });
   return { name: typeof raw.name === "string" ? raw.name : null, files };
@@ -251,7 +257,12 @@ function parsePep503Html(body: string, pageUrl: URL): StageProjectPage {
     const filename = safeFilename(decodeEntities(match[2]).trim());
     const fragment = href.includes("#") ? href.slice(href.indexOf("#") + 1) : "";
     const sha256 = /^sha256=([a-f0-9]{64})$/i.exec(fragment)?.[1] ?? null;
-    files.push({ filename, sha256: normalizeSha256(sha256), url: resolveFileUrl(href, pageUrl) });
+    files.push({
+      filename,
+      sha256: normalizeSha256(sha256),
+      url: resolveFileUrl(href, pageUrl),
+      size: null,
+    });
   }
   return { name: null, files };
 }
@@ -314,6 +325,7 @@ export interface StagedReleaseFile {
   filename: string;
   sha256: string;
   url: URL;
+  size: number | null;
 }
 
 /**
@@ -321,8 +333,10 @@ export interface StagedReleaseFile {
  * stage page lists them.
  *
  * A session publishes one name + version, so stage entries for other versions
- * cannot be published by it and are ignored. An entry that cannot be
- * attributed to a version, or that names another project, fails the check
+ * cannot be published by it and are ignored, and so is an unparseable
+ * filename that does not name this release (an index may overlay older
+ * releases with legacy filenames). An entry that names another project, or an
+ * unparseable one that starts with this project and version, fails the check
  * rather than riding along unreviewed. Every in-scope entry needs a sha256 and
  * a download URL, because Drydock reviews the staged bytes and checks them
  * against the digest the index declares.
@@ -341,7 +355,9 @@ export function selectStagedReleaseFiles(
   for (const file of page.files) {
     const parsed = parseDistributionFilename(file.filename);
     if (!parsed) {
-      problems.push(`stage lists ${file.filename}, which is not a wheel or sdist of ${project}`);
+      if (mayNameRelease(file.filename, project, version)) {
+        problems.push(`stage lists ${file.filename}, which is not a wheel or sdist of ${project}`);
+      }
       continue;
     }
     if (normalizePyPiProjectName(parsed.name) !== normalized) {
@@ -362,12 +378,27 @@ export function selectStagedReleaseFiles(
       problems.push(`stage lists ${file.filename} more than once with different digests`);
       continue;
     }
-    byName.set(file.filename, { filename: file.filename, sha256: file.sha256, url: file.url });
+    byName.set(file.filename, {
+      filename: file.filename,
+      sha256: file.sha256,
+      url: file.url,
+      size: file.size,
+    });
   }
   if (byName.size === 0 && problems.length === 0) {
     problems.push(`stage has no files for ${project} ${version}`);
   }
   return { files: [...byName.values()], problems };
+}
+
+// Separator-insensitive prefix test: `demo_package-1.2.0-x.exe` names
+// demo-package 1.2.0, `demo_package-1.1.0.egg` does not. Erring towards a
+// match is deliberate, since a match fails the review rather than passing it.
+function mayNameRelease(filename: string, project: string, version: string): boolean {
+  const fold = (value: string) => value.toLowerCase().replace(/[-_.]+/g, "-");
+  const prefix = `${fold(project)}-${fold(version)}`;
+  const folded = fold(filename);
+  return folded === prefix || folded.startsWith(`${prefix}-`);
 }
 
 export interface NamedDigest {
@@ -379,7 +410,9 @@ export interface NamedDigest {
 /**
  * Byte identity between two release file sets: the same filenames, each with
  * the same sha256, and nothing extra on either side. The labels name the
- * sides in maintainer-facing messages ("artifact", "stage").
+ * sides in maintainer-facing messages ("artifact", "stage"). A basename that
+ * appears twice on one side is a problem in itself: comparing only one copy
+ * would let the other ride along unbound.
  */
 export function compareDistributionSets(
   leftLabel: string,
@@ -387,7 +420,12 @@ export function compareDistributionSets(
   rightLabel: string,
   right: NamedDigest[],
 ): string[] {
-  const problems: string[] = [];
+  const problems = [
+    ...duplicateBasenames(left).map((name) => `${name} appears more than once in the ${leftLabel}`),
+    ...duplicateBasenames(right).map(
+      (name) => `${name} appears more than once on the ${rightLabel}`,
+    ),
+  ];
   const leftByName = digestsByBasename(left);
   const rightByName = digestsByBasename(right);
   for (const [filename, sha256] of leftByName) {
@@ -406,6 +444,17 @@ export function compareDistributionSets(
     }
   }
   return problems;
+}
+
+export function duplicateBasenames(entries: Array<{ path: string }>): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const entry of entries) {
+    const name = basename(entry.path);
+    if (seen.has(name)) duplicates.add(name);
+    seen.add(name);
+  }
+  return [...duplicates];
 }
 
 function digestsByBasename(entries: NamedDigest[]): Map<string, string> {

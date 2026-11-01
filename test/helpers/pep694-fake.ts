@@ -11,6 +11,8 @@ export interface FakeStageFile {
   declaredSha256?: string;
   /** Absolute download URL override (e.g. an off-allowlist host). */
   url?: string;
+  /** PEP 700 `size` the JSON page declares; omitted when unset. */
+  size?: number;
 }
 
 export interface FakeStageOptions {
@@ -73,6 +75,7 @@ export async function buildFakeStage(options: FakeStageOptions): Promise<FakeSta
           filename: entry.file.filename,
           url: entry.url,
           hashes: { sha256: entry.sha256 },
+          ...(entry.file.size === undefined ? {} : { size: entry.file.size }),
         })),
       }),
       { headers: { "content-type": "application/vnd.pypi.simple.v1+json" } },

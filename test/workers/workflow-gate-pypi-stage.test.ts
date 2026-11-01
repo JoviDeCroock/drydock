@@ -157,6 +157,41 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
     );
   });
 
+  test("two artifact files with one basename block, even when one matches the stage", async () => {
+    const run = await runGate({
+      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL) }],
+      artifactFiles: {
+        [`a/${WHEEL}`]: new TextEncoder().encode("a different wheel"),
+        [`b/${WHEEL}`]: stagedBytes(WHEEL),
+      },
+    });
+    expectRejected(
+      run,
+      "stage_identity_mismatch",
+      `${WHEEL} appears more than once in the artifact`,
+    );
+    expect(run.stage.requests).toEqual([]);
+  });
+
+  test("declared staged sizes over the release byte budget block before any download", async () => {
+    const stageFiles = Array.from({ length: 31 }, (_, index) => {
+      const filename = `demo_package-1.2.0-cp3${index}-cp3${index}-linux_x86_64.whl`;
+      return { filename, bytes: stagedBytes(filename), size: 25 * 1024 * 1024 };
+    });
+    const run = await runGate({ stageFiles });
+    expectRejected(run, "stage_unavailable", /staged release exceeds the \d+-byte review budget/);
+    expect(run.stage.requests).toHaveLength(1);
+    expect(run.loader.calls).toHaveLength(0);
+  });
+
+  test("a staged file declaring more than the per-file cap blocks before any download", async () => {
+    const run = await runGate({
+      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL), size: 25 * 1024 * 1024 + 1 }],
+    });
+    expectRejected(run, "stage_unavailable", `staged file ${WHEEL} declares`);
+    expect(run.stage.requests).toHaveLength(1);
+  });
+
   test("staged bytes that do not match the index's own digest block", async () => {
     const run = await runGate({
       stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL), declaredSha256: "c".repeat(64) }],

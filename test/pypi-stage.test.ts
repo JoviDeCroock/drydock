@@ -152,6 +152,7 @@ describe("stage project pages", () => {
             filename: "demo_package-1.2.0.tar.gz",
             url: "../f/demo.tar.gz#x",
             hashes: { sha256: SHA_A.toUpperCase() },
+            size: 1234,
           },
         ],
       }),
@@ -163,6 +164,7 @@ describe("stage project pages", () => {
       filename: "demo_package-1.2.0.tar.gz",
       sha256: SHA_A,
       url: new URL("https://pypi.org/stage/t/f/demo.tar.gz"),
+      size: 1234,
     });
   });
 
@@ -178,6 +180,7 @@ describe("stage project pages", () => {
         filename: "demo_package-1.2.0-py3-none-any.whl",
         sha256: SHA_B,
         url: new URL("https://files.pythonhosted.org/x/demo_package-1.2.0-py3-none-any.whl"),
+        size: null,
       },
     ]);
   });
@@ -215,9 +218,9 @@ describe("selectStagedReleaseFiles", () => {
       {
         name: "demo-package",
         files: [
-          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url },
-          { filename: "demo_package-1.2.0.tar.gz", sha256: SHA_B, url },
-          { filename: "demo_package-1.1.0.tar.gz", sha256: SHA_B, url },
+          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url, size: null },
+          { filename: "demo_package-1.2.0.tar.gz", sha256: SHA_B, url, size: null },
+          { filename: "demo_package-1.1.0.tar.gz", sha256: SHA_B, url, size: null },
         ],
       },
       "Demo.Package",
@@ -235,12 +238,12 @@ describe("selectStagedReleaseFiles", () => {
       {
         name: "other",
         files: [
-          { filename: "evil-1.2.0.tar.gz", sha256: SHA_A, url },
-          { filename: "demo_package-1.2.0.exe", sha256: SHA_A, url },
-          { filename: "demo_package-1.2.0.tar.gz", sha256: null, url },
-          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url },
-          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_B, url },
-          { filename: "demo_package-1.2.0-py2-none-any.whl", sha256: SHA_A, url: null },
+          { filename: "evil-1.2.0.tar.gz", sha256: SHA_A, url, size: null },
+          { filename: "demo_package-1.2.0.exe", sha256: SHA_A, url, size: null },
+          { filename: "demo_package-1.2.0.tar.gz", sha256: null, url, size: null },
+          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url, size: null },
+          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_B, url, size: null },
+          { filename: "demo_package-1.2.0-py2-none-any.whl", sha256: SHA_A, url: null, size: null },
         ],
       },
       "demo-package",
@@ -253,6 +256,34 @@ describe("selectStagedReleaseFiles", () => {
       "stage lists demo_package-1.2.0.tar.gz without a sha256 digest",
       "stage lists demo_package-1.2.0-py3-none-any.whl more than once with different digests",
       "stage lists demo_package-1.2.0-py2-none-any.whl without a download URL",
+    ]);
+  });
+
+  test("ignores unparseable filenames of other releases on an overlaid page", () => {
+    const { files, problems } = selectStagedReleaseFiles(
+      {
+        name: "demo-package",
+        files: [
+          { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url, size: 12 },
+          { filename: "demo_package-0.9.0-py2.6.egg", sha256: SHA_B, url, size: null },
+          { filename: "demo-package-1.1.win32.exe", sha256: SHA_B, url, size: null },
+          { filename: "README.txt", sha256: null, url: null, size: null },
+          {
+            filename: "Demo.Package-1.2.0-x-y-z-w-py3-none-any.whl",
+            sha256: SHA_B,
+            url,
+            size: null,
+          },
+        ],
+      },
+      "demo-package",
+      "1.2.0",
+    );
+    expect(files).toEqual([
+      { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: SHA_A, url, size: 12 },
+    ]);
+    expect(problems).toEqual([
+      "stage lists Demo.Package-1.2.0-x-y-z-w-py3-none-any.whl, which is not a wheel or sdist of demo-package",
     ]);
   });
 
@@ -288,6 +319,20 @@ describe("compareDistributionSets", () => {
       "a-1.0-py3-none-any.whl is in the artifact but not on the stage",
       "a-1.0-cp312-cp312-linux_x86_64.whl is on the stage but not in the artifact",
     ]);
+  });
+
+  test("a basename twice on one side is a problem even when one copy matches", () => {
+    expect(
+      compareDistributionSets(
+        "artifact",
+        [
+          { path: "a/a-1.0.tar.gz", sha256: SHA_B },
+          { path: "b/a-1.0.tar.gz", sha256: SHA_A },
+        ],
+        "stage",
+        [{ path: "a-1.0.tar.gz", sha256: SHA_A }],
+      ),
+    ).toContain("a-1.0.tar.gz appears more than once in the artifact");
   });
 
   test("parses wheel and sdist filenames", () => {
@@ -359,6 +404,45 @@ describe("stage fetch egress", () => {
       });
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a staged download stops at the caller's remaining byte budget", async () => {
+    const fileUrl = "https://files.pythonhosted.org/stage-files/t/f.whl";
+    stubFetchRoutes({ [fileUrl]: () => new Response(new Uint8Array(64)) });
+    await expect(
+      downloadStagedFile(new URL(fileUrl), "https://pypi.org", "f.whl", 32),
+    ).rejects.toMatchObject({
+      code: "stage_unavailable",
+      message: "staged file f.whl is too large, too slow, or could not be read",
+    });
+    await expect(
+      downloadStagedFile(new URL(fileUrl), "https://pypi.org", "f.whl", 64),
+    ).resolves.toHaveLength(64);
+  });
+
+  test("a staged download whose body stalls is bounded by a total deadline", async () => {
+    const fileUrl = "https://files.pythonhosted.org/stage-files/t/f.whl";
+    stubFetchRoutes({
+      [fileUrl]: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(8));
+            },
+          }),
+        ),
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const download = downloadStagedFile(new URL(fileUrl), "https://pypi.org", "f.whl");
+      const settled = expect(download).rejects.toMatchObject({
+        message: "staged file f.whl is too large, too slow, or could not be read",
+      });
+      await vi.advanceTimersByTimeAsync(61_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("oversized, failing, and unreachable stages are stage_unavailable", async () => {

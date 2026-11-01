@@ -124,7 +124,7 @@ const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
 // Production consumes large releases one shard at a time. The whole release
 // still has a work budget, but it no longer needs to fit in the parent Worker's
 // heap the way the raw-byte collector (`fetchReleaseBundleWithToken`) does.
-const MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES = 768 * 1024 * 1024;
+export const MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES = 768 * 1024 * 1024;
 export const MAX_OUTER_ZIP_ENTRIES = 256;
 export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_RELEASE_ARTIFACTS = 20;

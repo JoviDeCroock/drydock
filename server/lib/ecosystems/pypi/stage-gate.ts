@@ -1,6 +1,9 @@
 import { sha1Hex, sha256Hex } from "../../platform/crypto-utils";
 import { emitOperationalEvent } from "../../platform/observability";
-import { WorkflowArtifactError } from "../../github-app/artifacts";
+import {
+  MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES,
+  WorkflowArtifactError,
+} from "../../github-app/artifacts";
 import type {
   ParsedGateArtifact,
   PreparedReleaseCandidate,
@@ -16,16 +19,25 @@ import {
   basename,
   compareDistributionSets,
   digestPrefix,
+  duplicateBasenames,
   mergeStageReferences,
   parsePyPiStageReference,
   selectStagedReleaseFiles,
   summarizeProblems,
   type PyPiStageReferenceEntry,
 } from "./stage";
-import { downloadStagedFile, fetchStageProjectPage } from "./stage-fetch";
+import { MAX_STAGED_FILE_BYTES, downloadStagedFile, fetchStageProjectPage } from "./stage-fetch";
 import { registerManagedSessions } from "./session-lifecycle";
 import { PYPI_ARTIFACT_LIMIT } from "./types";
 import { pyPiVersionsEquivalent } from "./version";
+
+// The stage path spends the same release-wide byte budget as the sharded
+// artifact path, so neither can be used to make Drydock read more.
+const MAX_STAGED_RELEASE_BYTES = MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES;
+
+interface ByteBudget {
+  remaining: number;
+}
 
 /**
  * PEP 694 mode A: review the bytes a PEP 694 stage holds.
@@ -71,6 +83,15 @@ async function prepareStaged(
     }),
   );
 
+  // Bundle files bind to staged files by basename, so two bundle files with
+  // one basename (`a/x.whl`, `b/x.whl`) would let one ride along unbound.
+  const duplicates = duplicateBasenames(input.artifacts);
+  if (duplicates.length > 0) {
+    throw new PyPiStageError(
+      "stage_identity_mismatch",
+      summarizeProblems(duplicates.map((name) => `${name} appears more than once in the artifact`)),
+    );
+  }
   const bundleByProject = groupBundleArtifacts(input.artifacts);
   for (const [project, group] of bundleByProject) {
     if (!references.has(project)) {
@@ -86,10 +107,11 @@ async function prepareStaged(
     string,
     { entry: PyPiStageReferenceEntry; binding: ReleaseStageBinding }
   >();
+  const budget: ByteBudget = { remaining: MAX_STAGED_RELEASE_BYTES };
   // Sequential on purpose: one staged distribution is held in memory at a time.
   for (const [project, entry] of references) {
     const bundle = bundleByProject.get(project)?.artifacts ?? [];
-    staged.push(...(await reviewStage(entry, bundle, input)));
+    staged.push(...(await reviewStage(entry, bundle, input, budget)));
     bindings.set(project, {
       entry,
       binding: {
@@ -171,6 +193,7 @@ async function reviewStage(
   entry: PyPiStageReferenceEntry,
   bundle: ParsedGateArtifact[],
   input: StagedReleaseInput,
+  budget: ByteBudget,
 ): Promise<ParsedGateArtifact[]> {
   const page = await fetchStageProjectPage(entry.stageUrl, entry.name);
   const { files, problems } = selectStagedReleaseFiles(page, entry.name, entry.version);
@@ -197,6 +220,24 @@ async function reviewStage(
     }
   }
 
+  // Declared sizes (PEP 700) are checked before any download; undeclared
+  // sizes are bounded while streaming against the same budget.
+  for (const file of files) {
+    if (file.size !== null && file.size > MAX_STAGED_FILE_BYTES) {
+      throw new PyPiStageError(
+        "stage_unavailable",
+        `staged file ${file.filename} declares ${file.size} bytes, over the ${MAX_STAGED_FILE_BYTES}-byte cap`,
+      );
+    }
+  }
+  const declared = files.reduce((sum, file) => sum + (file.size ?? 0), 0);
+  if (declared > budget.remaining) {
+    throw new PyPiStageError(
+      "stage_unavailable",
+      `staged release exceeds the ${MAX_STAGED_RELEASE_BYTES}-byte review budget`,
+    );
+  }
+
   const bundleByFilename = new Map(bundle.map((artifact) => [basename(artifact.path), artifact]));
   const parsed: ParsedGateArtifact[] = [];
   for (const file of files) {
@@ -207,7 +248,19 @@ async function reviewStage(
         `${file.filename} is not a reviewable wheel or sdist`,
       );
     }
-    const bytes = await downloadStagedFile(file.url, entry.stageUrl.origin, file.filename);
+    if (budget.remaining <= 0) {
+      throw new PyPiStageError(
+        "stage_unavailable",
+        `staged release exceeds the ${MAX_STAGED_RELEASE_BYTES}-byte review budget`,
+      );
+    }
+    const bytes = await downloadStagedFile(
+      file.url,
+      entry.stageUrl.origin,
+      file.filename,
+      budget.remaining,
+    );
+    budget.remaining -= bytes.byteLength;
     const sha256 = await sha256Hex(bytes);
     if (sha256 !== file.sha256) {
       throw new PyPiStageError(

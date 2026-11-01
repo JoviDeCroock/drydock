@@ -1,6 +1,5 @@
-import { parseContentLength, readBoundedText } from "../../platform/bounded-body";
+import { readBoundedBytes, readBoundedText } from "../../platform/bounded-body";
 import { reliableFetch } from "../../platform/reliable-fetch";
-import { readStreamBounded } from "../../tar-parser.js";
 import {
   PyPiStageError,
   STAGE_INDEX_ACCEPT,
@@ -28,7 +27,7 @@ const MAX_STAGE_REDIRECTS = 3;
 export const MAX_STAGE_PAGE_BYTES = 8 * 1024 * 1024;
 // Matches the per-distribution cap on GitHub artifact entries, so a release
 // the artifact path can review is one the stage path can review.
-const MAX_STAGED_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_STAGED_FILE_BYTES = 25 * 1024 * 1024;
 const USER_AGENT = "drydock-pep694-stage/0.1";
 
 export async function fetchStageProjectPage(
@@ -52,26 +51,30 @@ export async function fetchStageProjectPage(
   return parseStageProjectPage(body, response.response.headers.get("content-type"), response.url);
 }
 
+/**
+ * Download one staged file. `maxBytes` lets the caller spend a release-wide
+ * byte budget; it never exceeds the per-file cap. The body read has its own
+ * deadline, because the fetch timeout stops at headers.
+ */
 export async function downloadStagedFile(
   url: URL,
   indexOrigin: string,
   filename: string,
+  maxBytes: number = MAX_STAGED_FILE_BYTES,
 ): Promise<Uint8Array> {
   const { response } = await fetchWithinOrigins(url, stageFileOrigins(indexOrigin), {
     accept: "application/octet-stream",
     timeoutMs: STAGE_FILE_TIMEOUT_MS,
     what: `staged file ${filename}`,
   });
-  const declared = parseContentLength(response.headers.get("content-length"));
-  if (declared !== null && declared > MAX_STAGED_FILE_BYTES) {
-    await response.body?.cancel().catch(() => undefined);
-    throw unavailable(`staged file ${filename} exceeds ${MAX_STAGED_FILE_BYTES} bytes`);
+  const bytes = await readBoundedBytes(response, {
+    maxBytes: Math.min(maxBytes, MAX_STAGED_FILE_BYTES),
+    deadlineMs: Date.now() + STAGE_FILE_TIMEOUT_MS,
+  });
+  if (bytes === null) {
+    throw unavailable(`staged file ${filename} is too large, too slow, or could not be read`);
   }
-  try {
-    return await readStreamBounded(response.body, MAX_STAGED_FILE_BYTES);
-  } catch {
-    throw unavailable(`staged file ${filename} is too large or could not be read`);
-  }
+  return bytes;
 }
 
 /**
