@@ -361,34 +361,46 @@ and `stage_session_mismatch` (mode B).
 **Opting in.** An owner or admin (the role that manages integrations) adds a
 token under Settings → Integrations → PyPI project tokens
 (`/dashboard/settings?tab=integrations#pypi-project-tokens`), or with
-`POST /api/v1/pypi-project-tokens` (`{ project, index, token }`). The token must
-be a PyPI API token scoped to that **single project**. Drydock reads the
+`POST /api/v1/pypi-project-tokens` (`{ project, index, repositoryId, token }`).
+Each token is bound to **one repository**, chosen from the repositories the
+organization maps to a PyPI (or auto-detect) release target; only that
+repository's gates can stage with it, and a gate of any other repository is
+rejected (`stage_reference_invalid`) before any request to the index. The
+binding is fixed: to move a token to another repository, remove it and add it
+again. The token must be a PyPI API token scoped to that **single project**.
+Drydock reads the
 token's caveats offline and refuses account-wide tokens, tokens for other or
 several projects, and tokens whose scope it cannot confirm. Rotate with
 `PUT /api/v1/pypi-project-tokens/:id`. `POST …/:id/validate` re-checks it
 offline: PEP 694 has no credential probe, so nothing is sent to PyPI. Remove it
 with `DELETE …/:id`. Every route needs a session and is scoped to the active
 organization. The token is write-only: responses carry the project, index,
-last four characters, and a fingerprint. Adding, rotating, checking, and
+repository, last four characters, and a fingerprint. Adding, rotating, checking, and
 removing a token are audit events (`pypi_token.*`). The workflow then adds a
 `"session": "drydock"` entry for the project.
 
 **Staging.** The artifact's wheels and sdists are the release candidate,
-reviewed as for any PyPI gate. Then Drydock:
+reviewed as for any PyPI gate. Staging runs while the gate's review is being
+prepared, before the review result exists, so the held session (and its
+installable stage preview) contains bytes still under review; nothing publishes
+until a human approves. One delivery of a gate stages at a time: a staging
+lease on the gate (30 minutes, taken over once it lapses) makes a concurrent
+delivery wait and retry instead of deleting the first one's uploads. Drydock:
 
 1. looks up the organization's token for the project on the entry's index. If
-   there is none, the deployment is rejected (`stage_reference_invalid`) before
-   any request to the index;
+   there is none, or it is bound to another repository, the deployment is
+   rejected (`stage_reference_invalid`) before any request to the index;
 2. `POST`s `{meta, name, version}` to the index's Upload 2.0 root
    (`https://upload.pypi.org/2.0/` for pypi.org, `https://test.pypi.org/2.0/`
    for TestPyPI). On `409` (a session for that release already exists, for
    example from an earlier attempt), it adopts the session the `Location`
    header names, after checking it against the same policy. The session must
-   be `open`; otherwise the gate stays pending and staging can be retried once
-   the session ends. If another gate of the organization still tracks the same
-   index session, that row becomes `superseded`, so the older gate can neither
-   publish nor cancel it; a session another gate is publishing or canceling
-   blocks staging;
+   be `open`; otherwise the gate stays pending and staging is retried. If an
+   older gate of the same repository still tracks the same index session, that
+   row becomes `superseded`, so the older gate can neither publish nor cancel
+   it. A session another gate is publishing or canceling, or one a gate of
+   another repository still tracks (left from before a token was re-added for
+   another repository), blocks staging, which is retried;
 3. stores the session and stage links sealed (AES-GCM) with the reviewed
    filenames and digests, in state `staging`;
 4. removes any file an adopted session already holds, because Drydock cannot
@@ -409,12 +421,20 @@ A failed upload is deleted from the session (`DELETE file-upload-session`).
 The row becomes `upload_failed` with a detail that says whether the deletion
 worked, and the session stays open but can never be published from that
 state. Transient faults (unreachable index, `5xx`, an upload the index reports
-as `error`) leave the gate pending for a retried review, which adopts the same
-session and restages it. Faults that show the index misbehaving (a refused
-link, a redirect, a malformed answer, a stage that does not serve the uploaded
-digests) reject the deployment.
+as `error`, a held staging lease) leave the gate pending with a `retrying: …`
+reason and go back to the queue, which retries the delivery with backoff (up
+to three attempts); the retry adopts the same session and restages it. Once the
+queue's attempts run out, a maintainer can retry the gate
+(`POST /api/v1/github-app/workflow-gates/:gateId/retry`), which is allowed for
+a pending gate with a failure reason and no scans or decisions. A gate whose
+staging still has not reached a review 24 hours later, with no staging
+activity since, is cleaned up by the cron (see Cron upkeep). Faults that show
+the index misbehaving (a refused link, a redirect, a malformed answer, a stage
+that does not serve the uploaded digests, an artifact whose bytes changed
+between the review read and the staging read) reject the deployment.
 
-**Human decisions.** Drydock never publishes or cancels on its own.
+**Human decisions.** Drydock never publishes on its own, and cancels on its
+own only in the fail-closed cleanup of staging that never reached a review.
 
 - _Approve._ When an approval looks like the one that completes the gate
   (every package approved), Drydock first re-reads each session and its stage
@@ -470,8 +490,10 @@ digests) reject the deployment.
     the gate.
   - An approval recorded as acknowledged by GitHub is never turned into a
     rejection. A publish that fails after that leaves the gate `approved`; the
-    session's state in the review shows that nothing was published. The
-    protected job holds no PyPI credential, so no unreviewed bytes go out.
+    session's state in the review shows that nothing was published, Drydock
+    records `github_workflow_gate.held_release_publish_failed`, and the
+    organization's notification recipients get an email. The protected job
+    holds no PyPI credential, so no unreviewed bytes go out.
 - _Reject._ After the rejection is recorded, Drydock sends
   `DELETE links.session` for each `held`, `stale`, `staging`, or
   `upload_failed` session. A failed cancel stays `canceling` and the cron
@@ -494,8 +516,16 @@ canceled, or errored outside Drydock settles as `externally_published`,
 `externally_canceled`, or `stale`. A session the index no longer knows becomes
 `expired`. The cron also polls `publishing`, retries `canceling`, and settles
 unacknowledged approvals as described above. `staging` and `upload_failed`
-sessions are not extended. The cron never publishes, and never cancels a
-session no maintainer rejected.
+sessions are not extended. The cron never publishes.
+
+The cron cancels without a maintainer's rejection in one case, a fail-closed
+cleanup rather than a release decision: a pending gate with no scan, no
+review started, and no live staging lease, whose sessions are `staging`,
+`upload_failed`, or `held` and whose gate and sessions have not changed for 24
+hours. Nothing was reviewed or approved for such a gate. The cron rejects it
+(`decidedBy: automatic`, `reason: staging_abandoned`), delivers the rejection,
+and cancels its sessions so unreviewed bytes do not stay on the index. A
+reviewed gate waiting on a human is never selected.
 
 **Removing a token.** Deleting a project token moves that token's `held`,
 `stale`, `staging`, `upload_failed`, and `canceling` sessions to
@@ -529,6 +559,8 @@ gate approved, GitHub has not acknowledged it 30 min after the decision:
   otherwise                   ──(cron)──► gate rejected (fail-closed) and delivered;
                                           sessions left as they are
 gate approved and acknowledged by GitHub: never changed by the cron
+gate pending, never reviewed, staging idle 24 h ──(cron)──► gate rejected (fail-closed),
+                                                            delivered, sessions canceled
 ```
 
 Every terminal transition and `upload_failed` is an audit event
@@ -605,12 +637,18 @@ and bypass the gate.
   project, not just reviewed ones. If Drydock were compromised, an attacker
   could use every stored token. That is why mode B is opt-in per project, the
   token must be project-scoped, and an organization can remove it at any time.
-- Tokens belong to the organization, not to a repository. Any repository the
-  organization gates can opt a project into Drydock-held staging, and Drydock
-  will stage that repository's reviewed artifact under the organization's
-  token for the project. The approval is still human and the bytes are still
-  the reviewed ones, but the gate may belong to a different repository than
-  the project's own. Binding a token to a repository is a follow-up.
+- A token is bound to the repository an admin chose when adding it. Drydock
+  cannot confirm that this repository is the PyPI project's source: an admin
+  who picks the wrong repository lets that repository's gates stage the
+  project. The approval is still human and the bytes are still the reviewed
+  ones.
+- Two organizations can each store a token for the same PyPI project. PEP 694
+  allows one session per release, so both adopt the same index session: one
+  organization's staging replaces the other's uploads, and one organization's
+  rejection cancels the session for the other. An approval still publishes
+  only bytes that organization reviewed, because the per-project re-check
+  runs first. Drydock scopes session rows per organization and cannot see the
+  other organization's.
 - PEP 694's publish request names the session, not file digests. Drydock
   re-checks the stage immediately before each project's publish, but a file
   replaced in the session between that read and the publish (by someone else
@@ -677,8 +715,18 @@ fields already stored on both gates, never from anything the workflow uploads:
 
 The reviewed digests come from that scan's Provenance (the sha256 of every
 reviewed wheel and sdist). If gate 1 ran in more than one attempt of the run,
-only a review whose files the stage holds exactly is accepted. With no link,
+only a review whose files the stage holds exactly is accepted, and an
+approval is void once a later attempt of gate 1 was rejected. With no link,
 gate 2 rejects with `stage_review_unlinked`.
+
+Gate 2 checks the stage when its job runs, and the dialog shows that time
+beside the verified line, with a note that the session can change until it is
+published. Drydock does not re-read the stage when the maintainer approves:
+the stage URL is a capability Drydock never stores, so re-checking would mean
+minting an installation token and downloading the run's artifacts and every
+staged file again inside the decision request, and the workflow can still
+change the session after that check. The publish job's `SHA256SUMS` re-check,
+right before `POST links.publish`, is the check closest to the publish.
 
 **What gate 2 checks**, per registered project:
 
@@ -721,7 +769,12 @@ job each need a PyPI token. PyPI's GitHub trusted publisher pins one workflow
 file and, optionally, one environment. Configure **two trusted publishers** on
 the project, one per environment: same owner, repository, and workflow file,
 with environment `pypi-stage` on one and `pypi-publish` on the other. Each
-token can then be minted only by a job that passed its Drydock gate. Do not
+token can then be minted only by a job that reached its environment, which
+normally means passing its Drydock gate. GitHub lets repository
+administrators bypass deployment protection rules unless "Allow
+administrators to bypass configured protection rules" is unchecked on each
+environment (it is on by default), and an admin can remove the rule; see
+[Workflow Gate](workflow-gates.md). Uncheck it on both environments. Do not
 leave the environment field empty to cover both jobs. An empty field lets any
 job in that workflow mint a token, including the ungated build job that runs
 the build backend and its third-party dependencies (the ChainDrop pattern).

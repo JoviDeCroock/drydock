@@ -21,7 +21,7 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 
 ## Non-negotiable boundaries
 
-- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval. The one exception is opt-in and runs only inside a human decision: PEP 694 mode B (preview). There, a maintainer's approval of a PyPI gate makes Drydock publish the PEP 694 session it reviewed and re-verified, and a maintainer's rejection makes it cancel the session. Drydock never publishes or cancels on its own (see [PyPI project tokens](#pypi-project-tokens-pep-694-mode-b-preview)).
+- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval. The one exception is opt-in and runs only inside a human decision: PEP 694 mode B (preview). There, a maintainer's approval of a PyPI gate makes Drydock publish the PEP 694 session it reviewed and re-verified, and a maintainer's rejection makes it cancel the session. Drydock never publishes on its own; its only unprompted cancel is the fail-closed cleanup of staging that never reached a review (see [PyPI project tokens](#pypi-project-tokens-pep-694-mode-b-preview)).
 - **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
 - **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
@@ -58,7 +58,8 @@ checks the token's macaroon caveats offline and refuses account-wide tokens,
 tokens for several or other projects, and tokens whose scope it cannot confirm.
 Storage follows the npm token rules: the token is sealed with a per-purpose
 HKDF key under `NPM_CONNECTIONS_ENCRYPTION_KEY` and never returned. Responses
-show only project, index, last four characters, and fingerprint. Add, rotate,
+show only project, index, bound repository, last four characters, and
+fingerprint. Add, rotate,
 check, and remove are audit events, and every route needs a session, is scoped
 to the organization, and needs the integration-management role.
 
@@ -95,7 +96,12 @@ approval into a fail-closed rejection. An approval GitHub has not acknowledged
 30 minutes later is delivered by the cron only once every held session is
 published, and otherwise becomes the same fail-closed rejection; the cron never
 publishes on its own, and sessions are claimed only while the gate is still
-approved. Cancel runs only after a maintainer rejection. The session's URLs are
+approved. Cancel runs after a maintainer rejection, and in one fail-closed
+cleanup: the cron rejects a pending gate whose staging never reached a review
+(no scan, idle for 24 hours) and cancels its sessions, so unreviewed bytes do
+not stay on the index. Each token is bound to the one repository an admin
+chose when adding it; a gate of any other repository cannot stage with it, and
+staging never supersedes another repository's session. The session's URLs are
 capabilities, sealed at rest under their own purpose key. Only a fingerprint
 appears in plaintext.
 
