@@ -1055,7 +1055,9 @@ export async function readTarStream(
   const retainedByPath = new Map();
   // Pending extended-header state: `pax` is the local record (PAX `x`/`X` plus
   // GNU `L`/`N`/`K` long names, merged), cleared by the next non-metadata entry;
-  // `paxGlobal` is the archive-wide record, which is not.
+  // `paxGlobal` is the archive-wide record, which is not. Both are merged in
+  // place, last value winning: copying the pending record per header costs
+  // headers × pending keys, which a run of large headers turns quadratic.
   let pax = null;
   let paxGlobal = null;
   // Whether the pending path came through a PAX record as all digits: node-tar
@@ -1477,7 +1479,7 @@ export async function readTarStream(
             const parsed = parsePax(body);
             discloseGlobalRecord(parsed);
             if (paxBodyAnomalies(body).length) discloseGlobalNotice("body");
-            paxGlobal = { ...paxGlobal, ...parsed };
+            paxGlobal = Object.assign(paxGlobal ?? {}, parsed);
           } else if (type === "x" || type === "X") {
             const parsed = parsePax(body);
             if (typeof parsed.path === "string") paxPathNumeric = /^[0-9]+$/.test(parsed.path);
@@ -1488,7 +1490,7 @@ export async function readTarStream(
             for (const anomaly of paxBodyAnomalies(body)) {
               if (anomalies.size < 8) anomalies.add(anomaly);
             }
-            pax = { ...pax, ...parsed };
+            pax = Object.assign(pax ?? {}, parsed);
             if (typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
               throw tarError("invalid pax path");
             }
@@ -1500,10 +1502,10 @@ export async function readTarStream(
             if (type === "K") {
               // Long link target. Parsed only so it cannot be mistaken for an
               // entry of its own; link targets are not reviewed here.
-              pax = { ...pax, linkpath: candidate };
+              pax = Object.assign(pax ?? {}, { linkpath: candidate });
             } else {
               if (!isSafePaxPath(candidate)) throw tarError("invalid long-name path");
-              pax = { ...pax, path: candidate };
+              pax = Object.assign(pax ?? {}, { path: candidate });
               paxPathNumeric = false;
             }
           }

@@ -982,6 +982,41 @@ describe("readTar metadata headers other tar readers resolve differently", () =>
     ]);
   });
 
+  test("merges a long run of large local or global headers in linear time", async () => {
+    // 200 headers of 4,000 distinct keys each: copying the pending record per
+    // header took about a minute here; merging in place takes seconds.
+    for (const type of ["x", "g"]) {
+      const headers = Array.from({ length: 200 }, (_, header) => ({
+        name: "PaxHeader",
+        type,
+        body: paxBody(Array.from({ length: 4_000 }, (_, key) => [`k${header}_${key}`, "v"])),
+      }));
+      const tar = buildTar([...headers, { name: "package/index.js", body: "x\n" }]);
+      const started = performance.now();
+      const files = await parse(tar);
+      expect(performance.now() - started).toBeLessThan(20_000);
+      expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    }
+  }, 180_000);
+
+  test("keeps last-wins merging across local, long-name and global headers", async () => {
+    // node-tar sizes metadata bodies by a global `size` too, so it comes last.
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: paxBody([["path", "package/first.js"]]) },
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["path", "package/global.js"]]) },
+      { name: "././@LongLink", type: "L", body: "package/second.js\0" },
+      { name: "GlobalPaxHeader", type: "g", body: paxBody([["size", "2"]]) },
+      { name: "package/header.js", body: "ab" },
+      // The global `size` still applies; the global `path` never does.
+      { name: "package/next.js", body: "cd" },
+    ]);
+    const files = await parse(tar);
+    expect(files.map((f) => [f.path, f.size])).toEqual([
+      ["second.js", 2],
+      ["next.js", 2],
+    ]);
+  });
+
   test("discloses a global header whose pax body readers parse differently", async () => {
     const tar = buildTar([
       { name: "GlobalPaxHeader", type: "g", body: paxBody([["GNU.sparse.name", "elsewhere"]]) },
