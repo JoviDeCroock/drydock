@@ -1,11 +1,14 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   upsertNpmConnection,
   updateNpmConnectionValidation,
 } from "../../server/db/npm-connections";
 import { computeCompareMetadataCacheKey } from "../../server/lib/compare-cache";
+import { createNpmBroker } from "../../server/lib/ecosystems/npm/broker";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import { fetchPackageVersionsMany } from "../../server/lib/ecosystems/npm/package-versions";
+import type { AdapterContext } from "../../server/lib/ecosystems/package-adapter";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { type SeededUser, seedCompletedScan, seedUser, seedWorkflowGate } from "./helpers/seed";
@@ -40,6 +43,31 @@ function stubRegistry(
     });
   });
   return calls;
+}
+
+// Raw packument responses by package name, for bodies JSON cannot describe:
+// declared lengths, streams that stall or never end. Stage records are 404.
+function stubRawRegistry(
+  respond: (name: string, signal?: AbortSignal | null) => Response | Promise<Response>,
+) {
+  const names: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input as RequestInfo, init as RequestInit);
+    const name = decodeURIComponent(new URL(request.url).pathname.slice(1));
+    if (name.startsWith("-/stage/")) return new Response("not found", { status: 404 });
+    names.push(name);
+    return respond(name, (init as RequestInit | undefined)?.signal);
+  });
+  return names;
+}
+
+// A body that sends `head` and then never another byte.
+function stalledBody(head = '{"versions":{') {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(head));
+    },
+  });
 }
 
 function packument(versions: string[], latest = versions.at(-1)) {
@@ -393,6 +421,84 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
     expect(calls.filter((c) => c.url === `${REGISTRY}/huge`)).toHaveLength(reads);
   });
 
+  test("a declared body past the ceiling is too large without reading it", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", { dependencies: { huge: "^1.0.0" } });
+    // The body never ends: only the declared length can answer before the budget.
+    stubRawRegistry(
+      () =>
+        new Response(stalledBody(), {
+          headers: { "content-length": String(64 * 1024 * 1024 + 1) },
+        }),
+    );
+
+    const { body } = await readiness(owner, scanId, { kv: fakeKv().binding });
+
+    expect(body.issues).toEqual([
+      expect.objectContaining({ name: "huge", kind: "unchecked", reason: "too-large" }),
+    ]);
+  });
+
+  test("a streamed body past the ceiling is too large, with no length declared", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", { dependencies: { huge: "^1.0.0" } });
+    const encoder = new TextEncoder();
+    const mib = new Uint8Array(1024 * 1024).fill(0x78);
+    // A valid packument whose readme alone is past 64 MiB.
+    stubRawRegistry(() => {
+      let sent = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent === 0) {
+              controller.enqueue(encoder.encode('{"versions":{"1.0.0":{}},"readme":"'));
+            }
+            if (sent === 65) {
+              controller.enqueue(encoder.encode('"}'));
+              controller.close();
+              return;
+            }
+            sent += 1;
+            controller.enqueue(mib);
+          },
+        }),
+      );
+    });
+
+    const { body } = await readiness(owner, scanId, { kv: fakeKv().binding });
+
+    expect(body.issues).toEqual([
+      expect.objectContaining({ name: "huge", kind: "unchecked", reason: "too-large" }),
+    ]);
+  });
+
+  test("the client's offset decides where the registry reads start", async () => {
+    const owner = await seedUser();
+    await seedConnection(owner);
+    const names = Array.from({ length: 45 }, (_, i) => `d${String(i).padStart(2, "0")}`);
+    const scanId = await seedStagedScan(owner, "a", "2.0.0", {
+      dependencies: Object.fromEntries(names.map((name) => [name, "^1.0.0"])),
+    });
+    const calls = stubRegistry(
+      Object.fromEntries(names.map((name) => [name, packument(["1.0.0"])])),
+    );
+    const read = () =>
+      calls
+        .map((c) => decodeURIComponent(new URL(c.url).pathname.slice(1)))
+        .filter((name) => !name.startsWith("-/stage/"));
+
+    const first = await readiness(owner, scanId);
+    expect(first.body.nextOffset).toBe(40);
+    expect(read().sort()).toEqual(names.slice(0, 40));
+
+    calls.length = 0;
+    const resumed = await readiness(owner, scanId, { query: "?offset=40" });
+    expect(read().sort()).toEqual([...names.slice(0, 35), ...names.slice(40)]);
+    expect(resumed.body.nextOffset).toBe(35);
+  });
+
   test("published-pair reviews are not applicable", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner, {
@@ -417,5 +523,75 @@ describe("GET /api/v1/scans/:id/dependency-readiness", () => {
 
     expect(status).toBe(404);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("fetchPackageVersionsMany", () => {
+  const source = { registryUrl: REGISTRY, cacheScope: "public" };
+
+  test("a read that stalls in its body or its headers is abandoned at the budget", async () => {
+    stubRawRegistry((name, signal) =>
+      name === "body"
+        ? new Response(stalledBody())
+        : new Promise<Response>((_, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason));
+          }),
+    );
+    const started = Date.now();
+
+    const results = await fetchPackageVersionsMany(
+      env,
+      createExecutionContext(),
+      source,
+      ["body", "headers"],
+      { concurrency: 2, budgetMs: 200 },
+    );
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(results.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: "body", lookup: { status: "error" } },
+      { name: "headers", lookup: { status: "error" } },
+    ]);
+  });
+
+  test("a packument without versions has none published; a non-object one is unreadable", async () => {
+    stubRawRegistry(
+      (name) => new Response(name === "empty" ? '{"name":"empty"}' : '{"versions":"x"}'),
+    );
+
+    const results = await fetchPackageVersionsMany(
+      env,
+      createExecutionContext(),
+      source,
+      ["empty", "odd"],
+      { concurrency: 1, budgetMs: 5_000 },
+    );
+
+    expect(results).toEqual([
+      { name: "empty", lookup: { status: "found", versions: [], distTags: {} } },
+      { name: "odd", lookup: { status: "error" } },
+    ]);
+  });
+});
+
+describe("npm broker fetchPackageVersionsBatch", () => {
+  test("a credential that cannot be resolved fails every name, reading nothing", async () => {
+    const owner = await seedUser();
+    const names = stubRawRegistry(() => new Response("{}"));
+    const broker = createNpmBroker(
+      { env, executionCtx: createExecutionContext(), db: owner.db } as unknown as AdapterContext,
+      { organizationId: owner.organizationId, registryUrl: REGISTRY },
+    );
+
+    const results = await broker.fetchPackageVersionsBatch(["a", "b"], {
+      concurrency: 2,
+      budgetMs: 5_000,
+    });
+
+    expect(results).toEqual([
+      { name: "a", lookup: { status: "error" } },
+      { name: "b", lookup: { status: "error" } },
+    ]);
+    expect(names).toEqual([]);
   });
 });

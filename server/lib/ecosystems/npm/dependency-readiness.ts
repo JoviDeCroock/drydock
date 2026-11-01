@@ -60,8 +60,9 @@ const MAX_REGISTRY_READS = 40;
 const MAX_CHECKED_TARGETS = 300;
 const DEPENDENCY_LOOKUP_CONCURRENCY = 6;
 const CACHE_LOOKUP_CONCURRENCY = 12;
-// Lookups still unstarted when the budget runs out are reported unchecked, so
-// a slow registry costs the reader seconds, not the Worker's request lifetime.
+// A ceiling, not a start cutoff: lookups still unstarted when it runs out are
+// reported unchecked and reads in flight are abandoned as failed, so a slow
+// registry costs the reader seconds, not the Worker's request lifetime.
 const DEPENDENCY_LOOKUP_BUDGET_MS = 10_000;
 const MAX_DECLARED_DEPENDENCIES = 1_000;
 
@@ -539,9 +540,14 @@ export async function runDependencyLookups(
   });
   const reads = [...misses, ...stale].slice(0, options.maxRegistryReads ?? MAX_REGISTRY_READS);
   const remaining = deadline - now();
+  // A rejected batch (a crashed or dropped broker call) failed every read in
+  // it: "could not check", never "not reached", or the next check would stall
+  // on the same offset without a failure ever being reported.
   const fetched =
     reads.length && remaining > 0
-      ? await source.fetch(reads, { concurrency, budgetMs: remaining }).catch(() => [])
+      ? await source
+          .fetch(reads, { concurrency, budgetMs: remaining })
+          .catch(() => reads.map((name) => ({ name, lookup: { status: "error" } as const })))
       : [];
   for (const { name, lookup } of fetched) {
     // A failed re-read keeps the cached answer it was revalidating.

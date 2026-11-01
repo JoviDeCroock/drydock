@@ -6,7 +6,8 @@
  * (`next` is ~25 MB), so the body is streamed through the packument extractor
  * in version-keys-only mode: memory stays flat and only version keys and
  * dist-tags survive. A body past `MAX_PACKUMENT_BYTES` of decompressed JSON, or
- * with more than `MAX_VERSIONS` versions, is `too-large`, an answer rather than
+ * with more than `MAX_VERSIONS` versions (or `MAX_VERSION_KEY_CHARS` of version
+ * keys), is `too-large`, an answer rather than
  * a failure.
  *
  * Answers are cached in their own partition (`<scope>|versions`) next to the
@@ -34,8 +35,12 @@ import {
 
 const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
 const MAX_VERSIONS = 100_000;
-// Time allowed for a body once its headers have arrived.
-const PACKUMENT_BODY_MS = 15_000;
+// A JSON string token, quotes included: semver caps a version at 256 chars.
+const MAX_CAPTURED_BYTES = 258;
+// Kept version-key characters per document. With at most 1,000 dist-tags of
+// 258 bytes each, and JSON's worst case of 6 bytes per escaped char, the
+// cached answer stays under ~16 MiB, below KV's 25 MiB value limit.
+const MAX_VERSION_KEY_CHARS = 2 * 1024 * 1024;
 
 export interface PackageVersionsSource {
   registryUrl: string;
@@ -82,8 +87,9 @@ export async function readCachedPackageVersions(
 }
 
 /**
- * Reads each package from the registry, `concurrency` at a time, starting no
- * read after `budgetMs`; a name missing from the result was not reached.
+ * Reads each package from the registry, `concurrency` at a time, within
+ * `budgetMs`: no read starts after it and every read (headers and body) is
+ * abandoned at it, as `error`. A name missing from the result was not reached.
  * `npmToken` is attached only by the npm broker. Every answer but `error` is
  * cached for the next check.
  */
@@ -97,8 +103,8 @@ export async function fetchPackageVersionsMany(
   const deadline = Date.now() + options.budgetMs;
   const results: Array<{ name: string; lookup: PackageVersionsLookup }> = [];
   await mapWithConcurrency(names, options.concurrency, async (name) => {
-    if (Date.now() > deadline) return;
-    const lookup = await fetchPackageVersions(source, name);
+    if (Date.now() >= deadline) return;
+    const lookup = await fetchPackageVersions(source, name, deadline);
     results.push({ name, lookup });
     if (lookup.status === "error") return;
     try {
@@ -113,13 +119,18 @@ export async function fetchPackageVersionsMany(
 async function fetchPackageVersions(
   source: PackageVersionsSource & { npmToken?: string },
   name: string,
+  deadline: number,
 ): Promise<PackageVersionsLookup> {
   if (!isValidLegacyNpmPackageName(name)) return { status: "error" };
   const url = `${source.registryUrl.replace(/\/$/, "")}/${encodeURIComponent(name).replace(/^%40/, "@")}`;
   const request = (accept: string) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("budget spent");
     const headers = new Headers({ accept });
     if (source.npmToken) headers.set("authorization", `Bearer ${source.npmToken}`);
-    return reliableFetch(url, { headers });
+    // One attempt: a retry could not finish inside the check's budget, and a
+    // failed read is offered again as "Check again".
+    return reliableFetch(url, { headers, attempts: 1, timeoutMs: remaining });
   };
   let response: Response;
   try {
@@ -137,12 +148,17 @@ async function fetchPackageVersions(
     await response.body?.cancel().catch(() => undefined);
     return response.status === 404 ? { status: "not-found" } : { status: "error" };
   }
-  return streamVersions(response.body, parseContentLength(response.headers.get("content-length")));
+  return streamVersions(
+    response.body,
+    parseContentLength(response.headers.get("content-length")),
+    deadline,
+  );
 }
 
 async function streamVersions(
   body: ReadableStream<Uint8Array>,
   declaredBytes: number | null,
+  deadline: number,
 ): Promise<PackageVersionsLookup> {
   // A declared length is the encoded size, never more than the decoded one.
   if (declaredBytes !== null && declaredBytes > MAX_PACKUMENT_BYTES) {
@@ -151,13 +167,14 @@ async function streamVersions(
   }
   const extractor = createPackumentExtractor({
     maxVersions: MAX_VERSIONS,
-    maxCapturedBytes: 512,
+    maxCapturedBytes: MAX_CAPTURED_BYTES,
+    maxVersionKeyChars: MAX_VERSION_KEY_CHARS,
     versionKeysOnly: true,
   });
   const reader = body.getReader();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
-    timeoutId = setTimeout(() => resolve(null), PACKUMENT_BODY_MS);
+    timeoutId = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
   });
   let total = 0;
   let outcome: PackageVersionsLookup | null = null;
@@ -173,7 +190,11 @@ async function streamVersions(
     }
     const extract = extractor.end();
     if (extract.versionLimitExceeded) return (outcome = { status: "too-large" });
-    if (!extract.versionsIsObject) return (outcome = { status: "error" });
+    // No `versions` key is a package with nothing published; a non-object one
+    // is a document this check cannot read.
+    if (!extract.versionsIsObject && extract.versionsPresent) {
+      return (outcome = { status: "error" });
+    }
     const distTags: Record<string, string> = Object.create(null);
     for (const [tag, version] of extract.distTags) distTags[tag] = version;
     return (outcome = { status: "found", versions: [...extract.versions.keys()], distTags });

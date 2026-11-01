@@ -208,6 +208,25 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     );
   });
 
+  test("a budget on total version-key length stops the document like the version cap", () => {
+    const doc = `{"versions":{"1.0.0":{},"2.0.0":{},"1.0.0":1}}`;
+    expect(extract(doc, [], { versionKeysOnly: true, maxVersionKeyChars: 10 })).toMatchObject({
+      versionLimitExceeded: false,
+    });
+    const over = extract(doc, [], { versionKeysOnly: true, maxVersionKeyChars: 9 });
+    expect([...over.versions.keys()]).toEqual(["1.0.0"]);
+    expect(over.versionLimitExceeded).toBe(true);
+  });
+
+  test("tells a missing versions key from a non-object one", () => {
+    expect(extract(`{"name":"p"}`)).toMatchObject({ versionsPresent: false });
+    expect(extract(`{"versions":"x"}`)).toMatchObject({
+      versionsPresent: true,
+      versionsIsObject: false,
+    });
+    expect(extract(`{"x":{"versions":{}}}`)).toMatchObject({ versionsPresent: false });
+  });
+
   test("a match key too long to be a field name is skipped, not an error", () => {
     const result = extract(`{"${"k".repeat(10_000)}":{"name":"inner"},"name":"outer"}`);
     expect(result.name).toBe("outer");

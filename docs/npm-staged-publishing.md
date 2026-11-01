@@ -281,16 +281,20 @@ missing, unvalidated, or changed) rather than reading like a clean result.
 Packuments are streamed (`server/lib/ecosystems/npm/package-versions.ts`)
 through the packument extractor in version-keys-only mode, so memory stays flat
 and large documents work (`next`'s abbreviated packument is ~25 MB). A body
-past 64 MiB of decompressed JSON, or with more than 100,000 versions, is
-reported as too large to check (`too-large`): not a failure, no retry, no
-failure event. Answers (found, not found, too large; never a failed read) are
+past 64 MiB of decompressed JSON, with more than 100,000 versions, or with
+more than 2 Mi characters of version keys (a key longer than semver's 256
+characters is skipped) is reported as too large to check (`too-large`): not a
+failure, no retry, no failure event. These bounds keep every cached answer well
+under KV's 25 MiB value limit. A packument with no `versions` key has nothing
+published; one whose `versions` is not an object could not be checked. Answers (found, not found, too large; never a failed read) are
 cached for 5 minutes in their own partition, `org:<id>|versions` or
 `public|versions`, beside the pipeline's projected `|abbrev` packuments, which a
 versions-only document must never replace.
 
 Each check first asks every target of that cache (no registry request), then
-spends at most 40 registry reads (6 at a time, a 10-second budget) on targets
-with no answer, and only then re-reads cached negative answers, because "not
+spends at most 40 registry reads (6 at a time, within a 10-second budget that
+is a ceiling: each read gets one attempt, and its headers and body are
+abandoned as a failed read when the budget runs out) on targets with no answer, and only then re-reads cached negative answers, because "not
 published yet" is the one that goes stale. A dependency the budget did not
 reach is reported as not checked yet (`lookup-skipped`) with "Check the rest",
 and the response carries `nextOffset`: the client sends it back as `?offset=`,
@@ -303,8 +307,9 @@ budget every time. A first check reads changed specs first. A release with more
 than 40 dependencies finishes once all its answers are cached at once: each
 check adds up to 40, so up to about 300 dependencies need their checks within
 the 5-minute TTL (an answer older than that is read again). Targets past 300
-are never read (`lookup-limit`). Everything fails open: a failed read is "could
-not check" (with "Check again"), never missing, and nothing here blocks
+are never read (`lookup-limit`). Everything fails open: a failed read, or a
+batch whose broker call failed outright, is "could not check" (with "Check
+again"), never missing, and nothing here blocks
 approval. The endpoint is rate limited per user; lookup failures emit
 `scan.dependency_readiness.lookup_failed` with a count only.
 

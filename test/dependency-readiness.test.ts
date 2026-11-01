@@ -532,6 +532,25 @@ describe("dependencyLookupQueue + runDependencyLookups", () => {
     for (const name of names.slice(40)) expect(second.answers.get(name)).toEqual(found(["1.0.0"]));
   });
 
+  test("a rejected batch fails every read in it and still advances the offset", async () => {
+    const names = Array.from({ length: 45 }, (_, i) => `dep-${String(i).padStart(2, "0")}`);
+    const plan = planDependencyReadiness({
+      dependencies: Object.fromEntries(names.map((name) => [name, "^1.0.0"])),
+    });
+    const kv = kvRegistry(() => found(["1.0.0"]));
+    kv.seed("dep-00", found(["0.9.0"])); // a cached negative the batch would re-read
+    kv.source.fetch = async () => {
+      throw new Error("broker call dropped");
+    };
+    const queue = dependencyLookupQueue(plan, [], []);
+    const { answers, nextOffset } = await runDependencyLookups(plan, queue, kv.source);
+    expect(answers.get("dep-01")).toEqual({ status: "error" });
+    expect(answers.get("dep-00")).toEqual(found(["0.9.0"]));
+    expect(nextOffset).toBe(41);
+    const report = evaluate({ plan, siblings: [], candidates: [], lookups: answers, nextOffset });
+    expect(report.issues.filter((i) => i.reason === "lookup-failed")).toHaveLength(40);
+  });
+
   test("targets past the check's limit are reported as beyond it, never read", async () => {
     const plan = planDependencyReadiness({ dependencies: { a: "^1.0.0", b: "^1.0.0" } });
     const kv = kvRegistry(() => found(["1.0.0"]));
