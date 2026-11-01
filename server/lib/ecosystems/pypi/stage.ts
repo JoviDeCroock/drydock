@@ -12,8 +12,9 @@ import { pyPiVersionsEquivalent } from "./version";
  * PEP 694 (Upload 2.0) staged previews for the PyPI workflow gate.
  *
  * PEP 694 is a draft and is not live on pypi.org. `pypi-stage.json` in the
- * gate artifact either names a stage the workflow created (mode A: Drydock
- * reviews the bytes it holds) or opts a project into Drydock-held staging
+ * gate artifact either names a stage the workflow created after an approved
+ * review gate (mode A: a second gate checks the staged bytes are exactly the
+ * reviewed ones) or opts a project into Drydock-held staging
  * (mode B: Drydock creates the session and uploads the reviewed artifact
  * bytes itself). Everything here is pure so the parsing and identity rules
  * can be tested without a network.
@@ -38,7 +39,8 @@ export type PyPiStageErrorCode =
   | "stage_reference_invalid"
   | "stage_unavailable"
   | "stage_identity_mismatch"
-  | "stage_session_mismatch";
+  | "stage_session_mismatch"
+  | "stage_review_unlinked";
 
 export class PyPiStageError extends Error {
   constructor(

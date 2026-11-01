@@ -153,38 +153,58 @@ export async function seedWorkflowGate(
   options: {
     ecosystem?: "npm" | "pypi" | "vscode";
     decision?: "approved" | "rejected" | null;
+    environment?: string;
+    repositoryId?: number;
+    runId?: number;
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
   const now = new Date();
-  const installationId = crypto.randomUUID();
-  const releaseTargetId = crypto.randomUUID();
   const gateId = crypto.randomUUID();
   const decision = options.decision === undefined ? "approved" : options.decision;
-  const repositoryId = Math.floor(Math.random() * 1_000_000_000);
-  await db.insert(schema.githubAppInstallations).values({
-    id: installationId,
-    organizationId: owner.organizationId,
-    installationId: crypto.randomUUID(),
-    accountLogin: "octo",
-    accountType: "Organization",
-    targetType: "Organization",
-    status: "active",
-    installedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await db.insert(schema.githubReleaseTargets).values({
-    id: releaseTargetId,
-    organizationId: owner.organizationId,
-    installationRowId: installationId,
-    ecosystem: options.ecosystem ?? "npm",
-    repositoryId,
-    repositoryFullName: "octo/release",
-    environment: "production",
-    createdAt: now,
-    updatedAt: now,
-  });
+  const repositoryId = options.repositoryId ?? Math.floor(Math.random() * 1_000_000_000);
+  const environment = options.environment ?? "production";
+  const runId = options.runId ?? 987654;
+  // A second gate on the same repository + environment (a re-run) shares the
+  // release target, as a real one would.
+  const [existingTarget] = await db
+    .select()
+    .from(schema.githubReleaseTargets)
+    .where(
+      and(
+        eq(schema.githubReleaseTargets.organizationId, owner.organizationId),
+        eq(schema.githubReleaseTargets.repositoryId, repositoryId),
+        eq(schema.githubReleaseTargets.environment, environment),
+      ),
+    )
+    .limit(1);
+  const installationId = existingTarget?.installationRowId ?? crypto.randomUUID();
+  const releaseTargetId = existingTarget?.id ?? crypto.randomUUID();
+  if (!existingTarget) {
+    await db.insert(schema.githubAppInstallations).values({
+      id: installationId,
+      organizationId: owner.organizationId,
+      installationId: crypto.randomUUID(),
+      accountLogin: "octo",
+      accountType: "Organization",
+      targetType: "Organization",
+      status: "active",
+      installedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(schema.githubReleaseTargets).values({
+      id: releaseTargetId,
+      organizationId: owner.organizationId,
+      installationRowId: installationId,
+      ecosystem: options.ecosystem ?? "npm",
+      repositoryId,
+      repositoryFullName: "octo/release",
+      environment,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
   await db.insert(schema.githubWorkflowGates).values({
     id: gateId,
     organizationId: owner.organizationId,
@@ -193,8 +213,8 @@ export async function seedWorkflowGate(
     deliveryId: crypto.randomUUID(),
     repositoryId,
     repositoryFullName: "octo/release",
-    environment: "production",
-    runId: 987654,
+    environment,
+    runId,
     deploymentId: 123,
     deploymentCallbackUrl:
       "https://api.github.com/repos/octo/release/actions/runs/987654/deployment_protection_rule",

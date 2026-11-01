@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
-import type { HeldRelease } from "../src/models/github-app";
+import type { GatePackageScan, HeldRelease } from "../src/models/github-app";
 import {
   heldReleaseLine as lineFor,
   partiallyPublished,
+  stageVerificationLine,
 } from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
 
 const PENDING_SINGLE = { gateStatus: "pending", packageCount: 1 };
@@ -90,5 +91,39 @@ describe("held release line", () => {
     expect(partiallyPublished("approved", mixed)).toBe(false);
     expect(partiallyPublished("rejected", [release({ state: "published" })])).toBe(false);
     expect(partiallyPublished("rejected", [release({ state: "stale" })])).toBe(false);
+  });
+});
+
+describe("stage verification line", () => {
+  const pkg = (overrides: Partial<GatePackageScan> = {}): GatePackageScan => ({
+    scanId: "scan-2",
+    packageName: "demo-package",
+    version: "1.2.0",
+    status: "complete",
+    releaseRisk: "low",
+    decision: null,
+    ...overrides,
+  });
+  const verification = {
+    protocol: "pep694" as const,
+    index: "https://test.pypi.org",
+    reviewedGateId: "gate-1",
+    reviewedScanId: "scan-1",
+    files: [
+      { filename: "demo_package-1.2.0-py3-none-any.whl", sha256: "a".repeat(64) },
+      { filename: "demo_package-1.2.0.tar.gz", sha256: "b".repeat(64) },
+    ],
+    verifiedAt: "2026-11-01T00:00:00.000Z",
+  };
+
+  test("names the package, file count, and preview index, never a stage URL", () => {
+    expect(stageVerificationLine(pkg({ stageVerification: verification }))).toBe(
+      "demo-package@1.2.0 · 2 files · installable preview on test.pypi.org (stage URL in the stage job)",
+    );
+  });
+
+  test("a package without a verification has no line", () => {
+    expect(stageVerificationLine(pkg())).toBeNull();
+    expect(stageVerificationLine(pkg({ stageVerification: null }))).toBeNull();
   });
 });

@@ -1,19 +1,45 @@
 import { env } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import * as schema from "../../server/db/schema";
 import { getScan } from "../../server/db/scans";
-import { FAKE_STAGE_TOKEN, sha256HexOf, stageReference } from "../helpers/pep694-fake";
+import { listGatePackageScans } from "../../server/lib/github-app/webhook-gates";
+import { githubAppRoutes } from "../../server/routes/github-app";
+import type { Bindings } from "../../server/types";
+import {
+  FAKE_STAGE_TOKEN,
+  drydockSessionReference,
+  sha256HexOf,
+  stageReference,
+} from "../helpers/pep694-fake";
+import { buildTestApp, call } from "./helpers/app";
 import {
   type PyPiStageGateRun as GateRun,
-  runPyPiStageGate as runGate,
+  type PyPiStageScenario,
   SDIST,
-  stagedBytes,
   WHEEL,
+  githubAppBindings,
+  runPyPiStageGate,
+  stagedBytes,
 } from "./helpers/pypi-stage-gate";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+// The second gate of a two-gate run: by default a review gate in the same run
+// reviewed WHEEL + SDIST and a human approved it, the stage serves exactly
+// those bytes, and the build artifact is still on the run.
+const runGate = (options: PyPiStageScenario = {}) =>
+  runPyPiStageGate({
+    reviewGate: {},
+    artifactFiles: {
+      [`dist/${WHEEL}`]: stagedBytes(WHEEL),
+      [`dist/${SDIST}`]: stagedBytes(SDIST),
+    },
+    ...options,
+  });
 
 function expectNoTokenLeak(run: GateRun) {
   const surfaces = [
@@ -37,129 +63,233 @@ function expectRejected(run: GateRun, code: string, detail: string | RegExp) {
   expectNoTokenLeak(run);
 }
 
-describe("PEP 694 staged PyPI gate (mode A)", () => {
-  test("reviews the staged bytes when the artifact only registers the stage", async () => {
+const expectUnlinked = (run: GateRun) =>
+  expectRejected(
+    run,
+    "stage_review_unlinked",
+    "demo-package 1.2.0 has no approved Drydock review in this workflow run",
+  );
+
+const gateApp = (run: GateRun) =>
+  buildTestApp((app) => app.route("/api/v1/github-app", githubAppRoutes), {
+    userId: run.owner.userId,
+    emailVerified: true,
+  });
+
+// Inline delivery (no queue) so the GitHub decision lands on the stubbed callback.
+const routeEnv = (): Partial<Bindings> =>
+  ({ ...githubAppBindings(), SCAN_QUEUE: undefined }) as unknown as Partial<Bindings>;
+
+async function decide(run: GateRun, decision: "approved" | "rejected") {
+  const [pkg] = await listGatePackageScans(run.db, run.owner.organizationId, run.gateId);
+  const res = await call(
+    gateApp(run),
+    "POST",
+    `/api/v1/github-app/workflow-gates/${run.gateId}/decision`,
+    {
+      body: { decision, scanId: pkg.scanId },
+      activeOrganizationId: run.owner.organizationId,
+      envOverride: routeEnv(),
+    },
+  );
+  return { res, body: (await res.json()) as Record<string, unknown> };
+}
+
+async function gateScans(run: GateRun, gateId = run.gateId) {
+  return run.db.select().from(schema.scans).where(eq(schema.scans.gateId, gateId));
+}
+
+describe("PEP 694 two-gate staging (mode A)", () => {
+  test("verifies the stage against the approved review, then waits for a human to approve", async () => {
     const run = await runGate();
 
     expect(run.gate?.status).toBe("pending");
     expect(run.gate?.scanId).toBeTruthy();
     expect(run.decisions).toHaveLength(0);
-    // Both staged distributions were parsed in the sandbox.
-    expect(run.loader.calls).toHaveLength(2);
 
-    const persisted = await getScan(
-      run.db,
-      run.gate!.scanId!,
-      run.owner.organizationId,
-      env.ARTIFACTS,
-    );
-    const summary = persisted?.scan.summaryJson as {
-      stagedPublish?: { provenance?: unknown };
-    } | null;
-    expect(summary?.stagedPublish?.provenance).toEqual({
-      ecosystem: "pypi",
-      mode: "workflow_gate",
-      artifacts: expect.arrayContaining([
-        { path: WHEEL, kind: "wheel", sha256: await sha256HexOf(stagedBytes(WHEEL)) },
-        { path: SDIST, kind: "sdist", sha256: await sha256HexOf(stagedBytes(SDIST)) },
+    // The review is reused, not re-run: same report, same risk, undecided.
+    const [reviewed] = await gateScans(run, run.review!.gateId);
+    const [linked] = await gateScans(run);
+    expect(linked.status).toBe("complete");
+    expect(linked.decision).toBeNull();
+    expect(linked.reportDigest).toBe(reviewed.reportDigest);
+    expect(linked.risk).toBe(reviewed.risk);
+    expect(linked.reportArtifactKey).not.toBe(reviewed.reportArtifactKey);
+    const persisted = await getScan(run.db, linked.id, run.owner.organizationId, env.ARTIFACTS);
+    expect(persisted?.scan.status).toBe("complete");
+    expect(persisted?.files.length).toBeGreaterThan(0);
+    const verification = {
+      protocol: "pep694",
+      index: "https://pypi.org",
+      reviewedGateId: run.review!.gateId,
+      reviewedScanId: reviewed.id,
+      files: expect.arrayContaining([
+        { filename: WHEEL, sha256: await sha256HexOf(stagedBytes(WHEEL)) },
+        { filename: SDIST, sha256: await sha256HexOf(stagedBytes(SDIST)) },
       ]),
-      stage: { protocol: "pep694", index: "https://pypi.org", artifactBound: false },
-    });
+      verifiedAt: expect.any(String),
+    };
+    expect((linked.summaryJson as { stageVerification?: unknown }).stageVerification).toEqual(
+      verification,
+    );
     expect(JSON.stringify(persisted)).not.toContain(FAKE_STAGE_TOKEN);
+
+    const view = await call(
+      gateApp(run),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/${linked.id}`,
+      { activeOrganizationId: run.owner.organizationId },
+    );
+    const viewText = await view.text();
+    expect(viewText).not.toContain(FAKE_STAGE_TOKEN);
+    const { gate } = JSON.parse(viewText) as {
+      gate: { packages: Array<{ stageVerification: unknown }> };
+    };
+    expect(gate.packages[0].stageVerification).toEqual(verification);
+
+    const { res } = await decide(run, "approved");
+    expect(res.status).toBe(200);
+    expect(run.decisions.map((decision) => decision.state)).toEqual(["approved"]);
     expectNoTokenLeak(run);
   });
 
-  test("binds the artifact's distributions to the stage when they are byte-identical", async () => {
-    const run = await runGate({
-      format: "html",
-      artifactFiles: {
-        [`dist/${WHEEL}`]: stagedBytes(WHEEL),
-        [`dist/${SDIST}`]: stagedBytes(SDIST),
-      },
-    });
-    expect(run.gate?.status).toBe("pending");
-    // The artifact parse is reused for byte-identical staged files.
-    expect(run.loader.calls).toHaveLength(2);
-    const persisted = await getScan(
-      run.db,
-      run.gate!.scanId!,
-      run.owner.organizationId,
-      env.ARTIFACTS,
-    );
-    const summary = persisted?.scan.summaryJson as {
-      stagedPublish?: { provenance?: { stage?: unknown } };
-    } | null;
-    expect(summary?.stagedPublish?.provenance?.stage).toEqual({
-      protocol: "pep694",
-      index: "https://pypi.org",
-      artifactBound: true,
-    });
+  test("a human can reject the verified stage", async () => {
+    const run = await runGate();
+    const { res } = await decide(run, "rejected");
+    expect(res.status).toBe(200);
+    expect(run.decisions.map((decision) => decision.state)).toEqual(["rejected"]);
   });
 
-  test("an artifact without a stage reference is reviewed exactly as before", async () => {
-    const run = await runGate({
-      reference: () => null,
-      artifactFiles: { [`dist/${WHEEL}`]: stagedBytes(WHEEL) },
-    });
-    expect(run.gate?.status).toBe("pending");
-    expect(run.stage.requests).toEqual([]);
-    const persisted = await getScan(
-      run.db,
-      run.gate!.scanId!,
-      run.owner.organizationId,
-      env.ARTIFACTS,
-    );
-    const summary = persisted?.scan.summaryJson as {
-      stagedPublish?: { provenance?: { stage?: unknown } };
-    } | null;
-    expect(summary?.stagedPublish?.provenance?.stage).toBeUndefined();
+  test("a re-delivered job neither re-reads the stage nor duplicates the scan", async () => {
+    const run = await runGate();
+    const stageRequests = run.stage.requests.length;
+    await run.deliver();
+    await run.deliver();
+    expect(run.stage.requests).toHaveLength(stageRequests);
+    expect(await gateScans(run)).toHaveLength(1);
+    expect(run.decisions).toHaveLength(0);
   });
 
-  test("an extra staged file the artifact does not carry blocks", async () => {
+  test("an extra staged file the review did not cover blocks", async () => {
     const run = await runGate({
+      reviewGate: { files: { [`dist/${WHEEL}`]: stagedBytes(WHEEL) } },
       artifactFiles: { [`dist/${WHEEL}`]: stagedBytes(WHEEL) },
     });
     expectRejected(
       run,
       "stage_identity_mismatch",
-      `${SDIST} is on the stage but not in the artifact`,
+      `${SDIST} is on the stage but not in the reviewed release`,
     );
-    expect(run.loader.calls).toHaveLength(1);
   });
 
-  test("an artifact file missing from the stage blocks", async () => {
+  test("a reviewed file missing from the stage blocks", async () => {
+    const run = await runGate({ stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL) }] });
+    expectRejected(
+      run,
+      "stage_identity_mismatch",
+      `${SDIST} is in the reviewed release but not on the stage`,
+    );
+  });
+
+  test("staged bytes that differ from the reviewed bytes block with both digest prefixes", async () => {
+    const other = new TextEncoder().encode("a wheel nobody reviewed");
     const run = await runGate({
-      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL) }],
+      stageFiles: [
+        { filename: WHEEL, bytes: other },
+        { filename: SDIST, bytes: stagedBytes(SDIST) },
+      ],
+    });
+    const reviewedSha = await sha256HexOf(stagedBytes(WHEEL));
+    const stageSha = await sha256HexOf(other);
+    expectRejected(
+      run,
+      "stage_identity_mismatch",
+      `${WHEEL} sha256 differs: reviewed release ${reviewedSha.slice(0, 12)}…, stage ${stageSha.slice(0, 12)}…`,
+    );
+    // Decided on the declared digests: nothing was downloaded.
+    expect(run.stage.requests).toHaveLength(1);
+  });
+
+  test("served bytes that differ from the digest the stage declares block", async () => {
+    const run = await runGate({
+      stageFiles: [
+        {
+          filename: WHEEL,
+          bytes: new TextEncoder().encode("swapped after listing"),
+          declaredSha256: await sha256HexOf(stagedBytes(WHEEL)),
+        },
+        { filename: SDIST, bytes: stagedBytes(SDIST) },
+      ],
+    });
+    expectRejected(run, "stage_identity_mismatch", `${WHEEL} downloaded bytes hash to`);
+  });
+
+  test("a build artifact that differs from the reviewed release blocks", async () => {
+    const run = await runGate({
       artifactFiles: {
-        [`dist/${WHEEL}`]: stagedBytes(WHEEL),
+        [`dist/${WHEEL}`]: new TextEncoder().encode("rebuilt wheel"),
         [`dist/${SDIST}`]: stagedBytes(SDIST),
       },
     });
-    expectRejected(
-      run,
-      "stage_identity_mismatch",
-      `${SDIST} is in the artifact but not on the stage`,
-    );
+    expectRejected(run, "stage_identity_mismatch", `${WHEEL} sha256 differs: reviewed release`);
   });
 
-  test("different bytes between artifact and stage block with both digest prefixes", async () => {
-    const artifactBytes = new TextEncoder().encode("the artifact the workflow built");
+  test("a review gate nobody approved is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { approve: false } }));
+  });
+
+  test("a stage without any review gate in the run blocks", async () => {
+    expectUnlinked(await runGate({ reviewGate: undefined }));
+  });
+
+  test("an approved review on another repository is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { otherRepository: true } }));
+  });
+
+  test("an approved review in another organization is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { otherOrganization: true } }));
+  });
+
+  test("an approval of the same environment (a re-run of this gate) is not a link", async () => {
+    expectUnlinked(await runGate({ reviewGate: { environment: "pypi-publish" } }));
+  });
+
+  test("a stage registered for a version the review did not cover blocks", async () => {
     const run = await runGate({
-      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL) }],
-      artifactFiles: { [`dist/${WHEEL}`]: artifactBytes },
+      artifactFiles: {},
+      reference: (stageUrl) =>
+        stageReference([{ name: "demo-package", version: "1.2.1", stageUrl }]),
     });
-    const artifactSha = await sha256HexOf(artifactBytes);
-    const stageSha = await sha256HexOf(stagedBytes(WHEEL));
     expectRejected(
       run,
-      "stage_identity_mismatch",
-      `${WHEEL} sha256 differs: artifact ${artifactSha.slice(0, 12)}…, stage ${stageSha.slice(0, 12)}…`,
+      "stage_review_unlinked",
+      "demo-package 1.2.1 has no approved Drydock review",
     );
   });
 
-  test("two artifact files with one basename block, even when one matches the stage", async () => {
+  test("build-artifact distributions the reference does not stage block", async () => {
     const run = await runGate({
-      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL) }],
+      reference: (stageUrl) =>
+        stageReference([{ name: "other-project", version: "1.2.0", stageUrl }]),
+    });
+    expectRejected(run, "stage_reference_invalid", "registers no stage for it");
+  });
+
+  test("a reference mixing stage-url entries with Drydock-held sessions blocks", async () => {
+    const run = await runGate({
+      reference: (stageUrl) => {
+        const workflow = JSON.parse(
+          stageReference([{ name: "demo-package", version: "1.2.0", stageUrl }]),
+        );
+        const held = JSON.parse(drydockSessionReference([{ name: "other", version: "1.0.0" }]));
+        return JSON.stringify({ ...workflow, stages: [...workflow.stages, ...held.stages] });
+      },
+    });
+    expectRejected(run, "stage_reference_invalid", "mixes stage-url entries");
+  });
+
+  test("two artifact files with one basename block before the stage is read", async () => {
+    const run = await runGate({
       artifactFiles: {
         [`a/${WHEEL}`]: new TextEncoder().encode("a different wheel"),
         [`b/${WHEEL}`]: stagedBytes(WHEEL),
@@ -181,47 +311,17 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
     const run = await runGate({ stageFiles });
     expectRejected(run, "stage_unavailable", /staged release exceeds the \d+-byte review budget/);
     expect(run.stage.requests).toHaveLength(1);
-    expect(run.loader.calls).toHaveLength(0);
   });
 
   test("a staged file declaring more than the per-file cap blocks before any download", async () => {
     const run = await runGate({
-      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL), size: 25 * 1024 * 1024 + 1 }],
+      stageFiles: [
+        { filename: WHEEL, bytes: stagedBytes(WHEEL), size: 25 * 1024 * 1024 + 1 },
+        { filename: SDIST, bytes: stagedBytes(SDIST) },
+      ],
     });
     expectRejected(run, "stage_unavailable", `staged file ${WHEEL} declares`);
     expect(run.stage.requests).toHaveLength(1);
-  });
-
-  test("staged bytes that do not match the index's own digest block", async () => {
-    const run = await runGate({
-      stageFiles: [{ filename: WHEEL, bytes: stagedBytes(WHEEL), declaredSha256: "c".repeat(64) }],
-    });
-    expectRejected(
-      run,
-      "stage_identity_mismatch",
-      /downloaded bytes hash to .*declares cccccccccccc…/,
-    );
-    expect(run.loader.calls).toHaveLength(0);
-  });
-
-  test("a registered version that differs from the staged metadata blocks", async () => {
-    const run = await runGate({ metadataVersion: "1.2.1" });
-    // The staged filenames say 1.2.0 while the metadata says 1.2.1.
-    expect(run.gate?.status).toBe("rejected");
-    expect(run.gate?.failureReason).toMatch(
-      /^(stage_identity_mismatch|artifact_identity_inconsistent)/,
-    );
-    expectNoTokenLeak(run);
-  });
-
-  test("a registered project name that differs from the staged files blocks", async () => {
-    const run = await runGate({
-      reference: (stageUrl) =>
-        stageReference([{ name: "other-project", version: "1.2.0", stageUrl }]),
-    });
-    expect(run.gate?.status).toBe("rejected");
-    expect(run.gate?.failureReason).toMatch(/^stage_(identity_mismatch|unavailable): /);
-    expectNoTokenLeak(run);
   });
 
   test("a stage host outside the allowlist is refused before any request", async () => {
@@ -236,7 +336,7 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
         ]),
     });
     expectRejected(run, "stage_reference_invalid", /stage-url must be an https URL on/);
-    expect(run.calls.map((call) => call.url)).not.toContainEqual(
+    expect(run.calls.map((entry) => entry.url)).not.toContainEqual(
       expect.stringContaining("evil.example"),
     );
   });
@@ -250,7 +350,7 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
         }),
     });
     expectRejected(run, "stage_unavailable", "redirected off the allowed index origins");
-    expect(run.calls.map((call) => call.url)).not.toContainEqual(
+    expect(run.calls.map((entry) => entry.url)).not.toContainEqual(
       expect.stringContaining("evil.example"),
     );
   });
@@ -259,6 +359,7 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
     const run = await runGate({
       stageFiles: [
         { filename: WHEEL, bytes: stagedBytes(WHEEL), url: `https://evil.example/${WHEEL}` },
+        { filename: SDIST, bytes: stagedBytes(SDIST) },
       ],
     });
     expectRejected(
@@ -266,7 +367,7 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
       "stage_unavailable",
       `staged file ${WHEEL} is not on an allowed index origin`,
     );
-    expect(run.calls.map((call) => call.url)).not.toContainEqual(
+    expect(run.calls.map((entry) => entry.url)).not.toContainEqual(
       expect.stringContaining("evil.example"),
     );
   });
@@ -294,6 +395,12 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
     expectRejected(run, "stage_unavailable", "stage index JSON is malformed");
   });
 
+  test("an HTML (PEP 503) stage page verifies the same way", async () => {
+    const run = await runGate({ format: "html" });
+    expect(run.gate?.status).toBe("pending");
+    expect(run.gate?.scanId).toBeTruthy();
+  });
+
   test("an unreachable stage blocks", async () => {
     const run = await runGate({ page: () => new Response("unavailable", { status: 503 }) });
     expectRejected(run, "stage_unavailable", "answered HTTP 503");
@@ -302,5 +409,23 @@ describe("PEP 694 staged PyPI gate (mode A)", () => {
   test("a malformed stage reference blocks", async () => {
     const run = await runGate({ reference: () => '{"schema":"drydock.pypi-stage.v9"}' });
     expectRejected(run, "stage_reference_invalid", "schema must be drydock.pypi-stage.v1");
+  });
+});
+
+describe("PyPI gate without a stage reference", () => {
+  test("an artifact without a stage reference is reviewed exactly as before", async () => {
+    const run = await runPyPiStageGate({
+      reference: () => null,
+      artifactFiles: { [`dist/${WHEEL}`]: stagedBytes(WHEEL) },
+    });
+    expect(run.gate?.status).toBe("pending");
+    expect(run.stage.requests).toEqual([]);
+    const [scan] = await gateScans(run);
+    const summary = scan.summaryJson as {
+      stagedPublish?: { provenance?: { stage?: unknown } };
+      stageVerification?: unknown;
+    } | null;
+    expect(summary?.stagedPublish?.provenance?.stage).toBeUndefined();
+    expect(summary?.stageVerification).toBeUndefined();
   });
 });

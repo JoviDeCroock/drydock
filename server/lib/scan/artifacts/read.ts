@@ -152,7 +152,7 @@ export async function loadScanArtifactFile(
 // thrown, so it can't abort the surrounding D1 teardown (account/org deletion
 // must still complete). A leaked object is recoverable by re-running the sweep.
 
-async function loadScanArtifactsManifest(
+export async function loadScanArtifactsManifest(
   bucket: R2Bucket | undefined,
   scan: ScanArtifactScanRow,
 ): Promise<ScanArtifactsManifestDetail | null> {

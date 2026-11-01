@@ -88,10 +88,13 @@ export type WorkflowArtifactErrorCode =
   // PEP 694 staged releases (PyPI): a bad `pypi-stage.json`, a stage Drydock
   // could not read within its egress policy, staged bytes that differ from the
   // artifact or the index's own digests, or a session that does not match.
+  // `stage_review_unlinked`: no approved review earlier in the run to verify
+  // a stage against.
   | "stage_reference_invalid"
   | "stage_unavailable"
   | "stage_identity_mismatch"
-  | "stage_session_mismatch";
+  | "stage_session_mismatch"
+  | "stage_review_unlinked";
 
 export class WorkflowArtifactError extends Error {
   /**

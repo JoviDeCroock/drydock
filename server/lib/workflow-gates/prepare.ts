@@ -172,7 +172,6 @@ export async function prepareReleaseCandidatesForGate(
       { env, db, organizationId: gate.organizationId, gateId: gate.id },
       bundle.artifacts,
       bundle.sidecars ?? [],
-      parse,
       rereadReleaseFiles,
     );
     return { gate, packages };
@@ -266,14 +265,12 @@ function resolveBundleClassifier(
  * Group the parsed artifacts by their (possibly content-resolved) ecosystem and
  * let each ecosystem's adapter split its slice into one prepared candidate per
  * distinct package. An adapter whose sidecars are present (a PEP 694 stage
- * reference) prepares from registry-held staged bytes instead, bound to its
- * bundle slice when the bundle carries distributions too.
+ * reference) prepares through `prepareStagedReleaseCandidates` instead.
  */
 async function prepareBundlePackages(
   scope: { env: Cloudflare.Env; db: AppDb; organizationId: string; gateId: string },
   resolved: ParsedGateArtifact[],
   sidecars: BundleSidecarFile[],
-  parse: (file: ResolvedReleaseFile) => Promise<ParsedGateArtifact>,
   rereadReleaseFiles: (
     ecosystem: string,
     onFile: (file: ResolvedReleaseFile) => Promise<void>,
@@ -303,7 +300,6 @@ async function prepareBundlePackages(
         ...scope,
         sidecars: ecosystemSidecars.map(({ path, bytes }) => ({ path, bytes })),
         artifacts,
-        parse,
         rereadReleaseFiles: (onFile) => rereadReleaseFiles(ecosystem, onFile),
       });
     } else if (artifacts.length > 0) {

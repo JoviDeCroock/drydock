@@ -27,6 +27,7 @@ import {
 import { recordProductEvent } from "./analytics";
 import { heldReleaseHooks } from "./ecosystems";
 import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
+import { completeFromLinkedReview } from "./workflow-gates/linked-review";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -601,15 +602,28 @@ async function reviewGatePackages(
     });
     // Counted per package scan, not per gate: a monorepo bundle creates several
     // scans under one gate and each emits its own `scan.completed`, so counting
-    // the gate would make the queued -> completed drop-off unreadable.
-    recordProductEvent(env, {
-      name: "scan.queued",
-      organizationId,
-      ecosystem: candidate.ecosystem,
-      source: "workflow_gate",
-    });
+    // the gate would make the queued -> completed drop-off unreadable. A
+    // linked review runs no pipeline and emits no `scan.completed`.
+    if (!candidate.linkedReview) {
+      recordProductEvent(env, {
+        name: "scan.queued",
+        organizationId,
+        ecosystem: candidate.ecosystem,
+        source: "workflow_gate",
+      });
+    }
 
     try {
+      if (candidate.linkedReview) {
+        // The adapter proved these bytes are the ones an approved gate of
+        // this run reviewed; reuse that review rather than run it again.
+        const linked = await completeFromLinkedReview(env, db, {
+          organizationId,
+          scanId,
+          linked: candidate.linkedReview,
+        });
+        return { scanId, ...linked };
+      }
       const result = await runScanPipeline(
         { env, executionCtx, db, session: { userId: ownerUserId } },
         packageAdapter,

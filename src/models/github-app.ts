@@ -29,6 +29,21 @@ export interface GatePackageScan {
   status: string;
   releaseRisk: string | null;
   decision: GatePackageDecision | null;
+  /**
+   * Set when this gate verified a PEP 694 stage against an approved review
+   * earlier in the same workflow run. Absent from older servers.
+   */
+  stageVerification?: StageVerification | null;
+}
+
+interface StageVerification {
+  protocol: "pep694";
+  /** Registry index origin the stage lives on, e.g. `https://pypi.org`. */
+  index: string;
+  reviewedGateId: string;
+  reviewedScanId: string;
+  files: Array<{ filename: string; sha256: string }>;
+  verifiedAt: string;
 }
 
 type HeldReleaseState =

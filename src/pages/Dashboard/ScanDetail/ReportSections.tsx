@@ -315,11 +315,10 @@ function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
     <div class="flex flex-col gap-3">
       {provenance.stage ? (
         <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
-          SHA-256 digests of the staged files Drydock downloaded from a PEP 694 stage on{" "}
-          {provenance.stage.index.replace(/^https:\/\//, "")}, checked against the index's own
-          digests
-          {provenance.stage.artifactBound ? " and byte-identical to the workflow artifact" : ""}.
-          PEP 694 is a draft standard, so this is a preview.
+          SHA-256 digests recomputed from the reviewed workflow artifact. Drydock uploaded exactly
+          these bytes to a PEP 694 stage on {provenance.stage.index.replace(/^https:\/\//, "")} and
+          checked what the stage serves against them. PEP 694 is a draft standard, so this is a
+          preview.
         </p>
       ) : (
         <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">

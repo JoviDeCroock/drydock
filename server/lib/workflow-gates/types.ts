@@ -25,6 +25,31 @@ export interface PreparedReleaseCandidate {
   ecosystem: string;
   pipelineInput: Record<string, unknown>;
   package: { name: string; version: string };
+  /**
+   * Set when this gate verifies bytes an earlier gate of the same workflow run
+   * already reviewed and a human approved (PyPI PEP 694 two-gate staging). The
+   * gate job reuses that review instead of running the pipeline again.
+   */
+  linkedReview?: LinkedGateReview;
+}
+
+export interface LinkedGateReview {
+  /** The approved gate, same organization, repository, and run. */
+  gateId: string;
+  /** Its completed, approved package scan whose report this gate reuses. */
+  scanId: string;
+  verification: GateStageVerification;
+}
+
+/** Browser-safe record of a stage verification; never carries URLs. */
+export interface GateStageVerification {
+  protocol: "pep694";
+  /** Index origin the stage lives on, e.g. `https://pypi.org`. */
+  index: string;
+  reviewedGateId: string;
+  reviewedScanId: string;
+  files: Array<{ filename: string; sha256: string }>;
+  verifiedAt: string;
 }
 
 export interface WorkflowGateAdapter {
@@ -58,10 +83,12 @@ export interface WorkflowGateAdapter {
   readonly sidecarFileNames?: readonly string[];
 
   /**
-   * Review registry-held staged bytes named by a sidecar instead of (or bound
-   * to) the bundle's own distributions. Runs only when this adapter's sidecars
-   * are present; otherwise the gate calls `prepareReleaseCandidates` as before.
-   * Failures throw `WorkflowArtifactError`, which rejects the deployment.
+   * Prepare a release whose sidecar names registry-side staging: verify a
+   * staged release against an approved review earlier in the run (candidates
+   * carry `linkedReview`), or review the bundle and stage it. Runs only when
+   * this adapter's sidecars are present; otherwise the gate calls
+   * `prepareReleaseCandidates` as before. Failures throw
+   * `WorkflowArtifactError`, which rejects the deployment.
    */
   prepareStagedReleaseCandidates?(input: StagedReleaseInput): Promise<PreparedReleaseCandidate[]>;
 
@@ -135,8 +162,6 @@ export interface StagedReleaseInput {
   sidecars: GateSidecarFile[];
   /** This ecosystem's slice of the bundle's parsed distributions (may be empty). */
   artifacts: ParsedGateArtifact[];
-  /** Parse fetched bytes through the same credentials-free sandbox router. */
-  parse(file: GateStagedFile): Promise<ParsedGateArtifact>;
   /**
    * Stream this ecosystem's release files from the workflow run again, one at
    * a time, for an adapter that must hand the reviewed bytes on (PEP 694 mode

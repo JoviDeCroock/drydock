@@ -247,7 +247,7 @@ async function uploadAndVerify(
   return held;
 }
 
-// The same release-wide budget the artifact path and the mode A stage path
+// The same release-wide budget the artifact path and the mode A stage check
 // spend; the second artifact read is bounded by it as well.
 const MAX_MANAGED_UPLOAD_BYTES = MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES;
 

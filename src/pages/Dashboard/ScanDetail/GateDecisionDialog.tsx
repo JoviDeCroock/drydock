@@ -217,6 +217,54 @@ function HeldReleases({
 }
 
 /**
+ * One line per package this gate verified against an approved review earlier
+ * in the workflow run (PEP 694 two-gate staging). The stage URL is a secret
+ * held by the workflow, so the preview is named by its index only.
+ */
+export function stageVerificationLine(pkg: GatePackageScan): string | null {
+  const verification = pkg.stageVerification;
+  if (!verification) return null;
+  const count = verification.files.length;
+  return `${packageLabel(pkg)} · ${count} ${count === 1 ? "file" : "files"} · installable preview on ${indexHost(verification.index)} (stage URL in the stage job)`;
+}
+
+function StageVerifications({
+  packages,
+  organizationId,
+}: {
+  packages: GatePackageScan[];
+  organizationId: string;
+}) {
+  const verified = packages.flatMap((pkg) => {
+    const line = stageVerificationLine(pkg);
+    return line && pkg.stageVerification
+      ? [{ pkg, line, reviewedScanId: pkg.stageVerification.reviewedScanId }]
+      : [];
+  });
+  if (verified.length === 0) return null;
+  return (
+    <div class="flex flex-col gap-1">
+      <Muted class="m-0 font-mono text-[11px]">
+        Staged bytes verified identical to reviewed release · PEP 694 preview
+      </Muted>
+      <ul class="m-0 p-0 list-none flex flex-col gap-1">
+        {verified.map(({ pkg, line, reviewedScanId }) => (
+          <li
+            key={pkg.scanId}
+            class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink"
+          >
+            <span>{line}</span>
+            <a class="underline text-accent" href={scanDetailPath(reviewedScanId, organizationId)}>
+              approved review
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * Roster of every package the gated release publishes. A monorepo fans the gate
  * out into one scan per package and the held deployment only releases once all
  * of them are approved — so this panel makes the sibling packages and their
@@ -557,6 +605,8 @@ export function GateDecisionDialog({
           </Muted>
         </Field>
       ) : null}
+
+      <StageVerifications packages={gate.packages} organizationId={gate.organizationId} />
 
       <HeldReleases
         releases={gate.heldReleases}

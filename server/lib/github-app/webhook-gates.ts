@@ -1,6 +1,8 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
+import { isRecord } from "../platform/guards";
+import type { GateStageVerification } from "../workflow-gates/types";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -153,6 +155,8 @@ export interface GatePackageScan {
   status: string;
   decision: string | null;
   releaseRisk: string | null;
+  /** Set on a gate that verified staged bytes against an earlier approved review. */
+  stageVerification: GateStageVerification | null;
 }
 
 /**
@@ -175,6 +179,7 @@ export async function listGatePackageScans(
       status: scans.status,
       decision: scans.decision,
       riskSummaryJson: scans.riskSummaryJson,
+      summaryJson: scans.summaryJson,
       createdAt: scans.createdAt,
     })
     .from(scans)
@@ -190,6 +195,7 @@ export async function listGatePackageScans(
       status: row.status,
       decision: row.decision,
       releaseRisk: readReleaseRisk(row.riskSummaryJson),
+      stageVerification: readStageVerification(row.summaryJson),
     }));
 }
 
@@ -199,6 +205,94 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
   }
   const value = (riskSummaryJson as { releaseRisk?: unknown }).releaseRisk;
   return typeof value === "string" ? value : null;
+}
+
+export function readStageVerification(summaryJson: unknown): GateStageVerification | null {
+  const value = isRecord(summaryJson) ? summaryJson.stageVerification : null;
+  if (
+    !isRecord(value) ||
+    value.protocol !== "pep694" ||
+    typeof value.index !== "string" ||
+    typeof value.reviewedGateId !== "string" ||
+    typeof value.reviewedScanId !== "string" ||
+    typeof value.verifiedAt !== "string" ||
+    !Array.isArray(value.files)
+  ) {
+    return null;
+  }
+  const files = value.files.filter(
+    (file): file is { filename: string; sha256: string } =>
+      isRecord(file) && typeof file.filename === "string" && typeof file.sha256 === "string",
+  );
+  return {
+    protocol: "pep694",
+    index: value.index,
+    reviewedGateId: value.reviewedGateId,
+    reviewedScanId: value.reviewedScanId,
+    files: files.map(({ filename, sha256 }) => ({ filename, sha256 })),
+    verifiedAt: value.verifiedAt,
+  };
+}
+
+/** A completed, human-approved package review from another gate of the same run. */
+export interface ApprovedRunReview {
+  gateId: string;
+  scanId: string;
+  packageName: string | null;
+  stagedVersion: string | null;
+  summaryJson: unknown;
+}
+
+/**
+ * Approved package reviews from the other gates of `gate`'s workflow run,
+ * newest decision first: what a later gate in the run (PyPI PEP 694 staging)
+ * may link to instead of reviewing again.
+ *
+ * Trust boundary: the link is derived only from GitHub-signed webhook fields
+ * already on the gate rows (organization via the installation, repository id,
+ * run id), never from anything the workflow uploads. Another organization's
+ * or repository's gates are unreachable, a gate never links to itself or to a
+ * gate of its own environment (a re-run of the review gate is not its own
+ * approval), and both the gate and the package must carry a human approval.
+ */
+export async function listApprovedRunReviews(
+  db: AppDb,
+  gate: Pick<
+    WorkflowGateRecord,
+    "id" | "organizationId" | "repositoryId" | "runId" | "environment"
+  >,
+): Promise<ApprovedRunReview[]> {
+  return db
+    .select({
+      gateId: githubWorkflowGates.id,
+      scanId: scans.id,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      summaryJson: scans.summaryJson,
+    })
+    .from(githubWorkflowGates)
+    .innerJoin(
+      scans,
+      and(
+        eq(scans.gateId, githubWorkflowGates.id),
+        eq(scans.organizationId, githubWorkflowGates.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(githubWorkflowGates.organizationId, gate.organizationId),
+        eq(githubWorkflowGates.repositoryId, gate.repositoryId),
+        eq(githubWorkflowGates.runId, gate.runId),
+        ne(githubWorkflowGates.id, gate.id),
+        ne(githubWorkflowGates.environment, gate.environment),
+        eq(githubWorkflowGates.status, "approved"),
+        eq(githubWorkflowGates.decision, "approved"),
+        eq(scans.source, "workflow_gate"),
+        eq(scans.status, "complete"),
+        eq(scans.decision, "publish"),
+      ),
+    )
+    .orderBy(desc(githubWorkflowGates.decidedAt), desc(scans.createdAt));
 }
 
 /**

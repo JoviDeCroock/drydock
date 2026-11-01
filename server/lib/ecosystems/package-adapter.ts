@@ -41,17 +41,15 @@ export interface ReleaseProvenanceArtifact {
 }
 
 /**
- * The reviewed bytes were read from a registry-held staged release (PyPI PEP
- * 694, a draft spec). Only the index origin is recorded: the stage URL is a
- * capability and is never persisted.
+ * The reviewed bytes were staged on the registry for this gate (PyPI PEP 694
+ * mode B, a draft spec). Only the index origin is recorded: session and stage
+ * URLs are capabilities and are never persisted. A two-gate stage
+ * verification (mode A) records a `GateStageVerification` on its scan instead.
  */
 export interface ReleaseStageBinding {
   protocol: "pep694";
   index: string;
-  /**
-   * Mode A: the gate artifact also carried the distributions and they were
-   * byte-identical. Always true in mode B, where the artifact is the source.
-   */
+  /** The staged bytes are the gate artifact's own distributions. */
   artifactBound: boolean;
   /**
    * Mode B: Drydock staged the reviewed bytes in a session it holds and

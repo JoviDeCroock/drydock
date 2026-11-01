@@ -100,11 +100,91 @@ export interface PyPiStageScenario {
   beforeRun?: (owner: SeededUser) => Promise<void>;
   /** Extra fetch routes (e.g. a fake Upload 2.0 server), matched before GitHub's. */
   routes?: Record<string, (request: Request) => Response | Promise<Response>>;
+  /**
+   * Two-gate staging: run a review gate (env `pypi-stage`) in the same run
+   * first; the gate under test then protects `pypi-publish`.
+   */
+  reviewGate?: ReviewGateSetup;
+}
+
+export interface ReviewGateSetup {
+  /** Distributions the review gate reviews (path → bytes); defaults to WHEEL + SDIST. */
+  files?: Record<string, Uint8Array>;
+  /** Record the human approval of the review gate (default true). */
+  approve?: boolean;
+  environment?: string;
+  /** Seed the review gate in another organization (same repository id and run). */
+  otherOrganization?: boolean;
+  /** Seed the review gate on another repository of the same organization. */
+  otherRepository?: boolean;
+}
+
+/** Review a plain PyPI build artifact on a gate of its own and, by default, approve it. */
+async function runReviewGate(owner: SeededUser, setup: ReviewGateSetup) {
+  const reviewOwner = setup.otherOrganization ? await seedUser() : owner;
+  const gateId = await seedWorkflowGate(reviewOwner, {
+    ecosystem: "pypi",
+    decision: null,
+    environment: setup.environment ?? "pypi-stage",
+  });
+  const files = setup.files ?? {
+    [`dist/${WHEEL}`]: stagedBytes(WHEEL),
+    [`dist/${SDIST}`]: stagedBytes(SDIST),
+  };
+  stubGithubFetch({
+    installationToken: true,
+    artifacts: [
+      {
+        id: 4141,
+        name: "pypi-release-candidate",
+        bundleZip: buildZip(Object.entries(files).map(([path, body]) => ({ path, body }))),
+      },
+    ],
+    routes: { "/deployment_protection_rule": () => new Response(null, { status: 204 }) },
+  });
+  const db = createDb(env.DB);
+  await executeWorkflowGateJob(
+    {
+      ...env,
+      ...githubAppBindings(),
+      LOADER: pypiLoader().binding as unknown as WorkerLoader,
+    } as Cloudflare.Env,
+    buildCtxWithGateway(),
+    { kind: "workflow_gate", organizationId: reviewOwner.organizationId, gateId },
+    db,
+  );
+  const gate = await getGateForOrganization(db, reviewOwner.organizationId, gateId);
+  if (!gate?.scanId) throw new Error("review gate did not reach a decision point");
+  if (setup.approve !== false) {
+    const now = new Date();
+    await db
+      .update(schema.scans)
+      .set({ decision: "publish", decidedAt: now, decidedByUserId: reviewOwner.userId })
+      .where(eq(schema.scans.gateId, gateId));
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "approved", decision: "approved", decidedAt: now })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+  }
+  const scans = await db
+    .select({ id: schema.scans.id })
+    .from(schema.scans)
+    .where(eq(schema.scans.gateId, gateId));
+  return {
+    gateId,
+    scanIds: scans.map((scan) => scan.id),
+    repositoryId: gate.repositoryId + (setup.otherRepository ? 1 : 0),
+  };
 }
 
 export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
   const owner = await seedUser();
-  const gateId = await seedWorkflowGate(owner, { ecosystem: "pypi", decision: null });
+  const review = options.reviewGate ? await runReviewGate(owner, options.reviewGate) : null;
+  const gateId = await seedWorkflowGate(owner, {
+    ecosystem: "pypi",
+    decision: null,
+    ...(review ? { environment: "pypi-publish", repositoryId: review.repositoryId } : {}),
+  });
   await options.beforeRun?.(owner);
   const stage = await buildFakeStage({
     project: "demo-package",
@@ -123,13 +203,29 @@ export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
     path,
     body,
   }));
-  if (reference !== null)
-    zipEntries.push({ path: "dist/pypi-stage.json", body: new TextEncoder().encode(reference) });
+  const referenceEntry =
+    reference === null
+      ? []
+      : [{ path: "dist/pypi-stage.json", body: new TextEncoder().encode(reference) }];
+  // Two-gate staging uploads the reference as a second artifact from the
+  // stage job, next to the build artifact the review gate read.
+  const artifacts = review
+    ? [
+        { id: 4242, name: "pypi-release-candidate", bundleZip: buildZip(zipEntries) },
+        { id: 4343, name: "pypi-release-candidate-stage", bundleZip: buildZip(referenceEntry) },
+      ]
+    : [
+        {
+          id: 4242,
+          name: "pypi-release-candidate",
+          bundleZip: buildZip([...zipEntries, ...referenceEntry]),
+        },
+      ];
 
   const decisions: Array<{ state: string; comment: string }> = [];
   const calls = stubGithubFetch({
     installationToken: true,
-    artifacts: [{ id: 4242, name: "pypi-release-candidate", bundleZip: buildZip(zipEntries) }],
+    artifacts,
     routes: {
       ...options.routes,
       "/deployment_protection_rule": async (request) => {
@@ -153,12 +249,14 @@ export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
     ...githubAppBindings(),
     LOADER: loader.binding as unknown as WorkerLoader,
   } as Cloudflare.Env;
-  await executeWorkflowGateJob(
-    gateEnv,
-    buildCtxWithGateway(),
-    { kind: "workflow_gate", organizationId: owner.organizationId, gateId },
-    db,
-  );
+  const deliver = () =>
+    executeWorkflowGateJob(
+      gateEnv,
+      buildCtxWithGateway(),
+      { kind: "workflow_gate", organizationId: owner.organizationId, gateId },
+      db,
+    );
+  await deliver();
   const gate = await getGateForOrganization(db, owner.organizationId, gateId);
   const readEvents = () =>
     db
@@ -179,6 +277,9 @@ export async function runPyPiStageGate(options: PyPiStageScenario = {}) {
     events,
     readEvents,
     db,
+    review,
+    /** Run the gate job again, as a re-delivered queue message would. */
+    deliver,
   };
 }
 

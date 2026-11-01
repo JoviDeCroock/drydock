@@ -660,6 +660,9 @@ function publicWorkflowGate(
       status: pkg.status,
       releaseRisk: pkg.releaseRisk,
       decision: pkg.decision,
+      // Two-gate PEP 694 staging: what this gate verified against the earlier
+      // approved review. File names, digests, and the index origin only.
+      stageVerification: pkg.stageVerification,
     })),
     // Registry-side releases Drydock holds for this gate (PyPI PEP 694 mode B,
     // preview). Never carries session or stage URLs.
