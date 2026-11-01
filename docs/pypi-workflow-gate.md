@@ -385,7 +385,11 @@ prepared, before the review result exists, so the held session (and its
 installable stage preview) contains bytes still under review; nothing publishes
 until a human approves. One delivery of a gate stages at a time: a staging
 lease on the gate (30 minutes, taken over once it lapses) makes a concurrent
-delivery wait and retry instead of deleting the first one's uploads. Drydock:
+delivery wait instead of deleting the first one's uploads. A failed staging
+releases the lease; a successful one keeps it until it lapses or the review
+starts, so no other delivery restages the held session in between. A delivery
+that finds the lease taken records no failure and is retried by the queue
+once the lease lapses. Drydock:
 
 1. looks up the organization's token for the project on the entry's index. If
    there is none, or it is bound to another repository, the deployment is
@@ -421,12 +425,14 @@ A failed upload is deleted from the session (`DELETE file-upload-session`).
 The row becomes `upload_failed` with a detail that says whether the deletion
 worked, and the session stays open but can never be published from that
 state. Transient faults (unreachable index, `5xx`, an upload the index reports
-as `error`, a held staging lease) leave the gate pending with a `retrying: …`
+as `error`) leave the gate pending with a `retrying: …`
 reason and go back to the queue, which retries the delivery with backoff (up
-to three attempts); the retry adopts the same session and restages it. Once the
-queue's attempts run out, a maintainer can retry the gate
-(`POST /api/v1/github-app/workflow-gates/:gateId/retry`), which is allowed for
-a pending gate with a failure reason and no scans or decisions. A gate whose
+to three attempts); the retry adopts the same session and restages it, and the
+reason clears once a review starts. Once the queue's attempts run out, the
+retry API (`POST /api/v1/github-app/workflow-gates/:gateId/retry`) accepts a
+pending gate with a failure reason, no review started, and no scans or
+decisions. The dashboard's Retry review control lives on a scan's page, so a
+gate with no scan yet is retried through the API. A gate whose
 staging still has not reached a review 24 hours later, with no staging
 activity since, is cleaned up by the cron (see Cron upkeep). Faults that show
 the index misbehaving (a refused link, a redirect, a malformed answer, a stage
@@ -521,8 +527,9 @@ sessions are not extended. The cron never publishes.
 The cron cancels without a maintainer's rejection in one case, a fail-closed
 cleanup rather than a release decision: a pending gate with no scan, no
 review started, and no live staging lease, whose sessions are `staging`,
-`upload_failed`, or `held` and whose gate and sessions have not changed for 24
-hours. Nothing was reviewed or approved for such a gate. The cron rejects it
+`upload_failed`, or `held` and whose gate row has not changed for 24 hours
+(staging, a recorded fault, and a retry write it; the cron's own session
+upkeep does not). Nothing was reviewed or approved for such a gate. The cron rejects it
 (`decidedBy: automatic`, `reason: staging_abandoned`), delivers the rejection,
 and cancels its sessions so unreviewed bytes do not stay on the index. A
 reviewed gate waiting on a human is never selected.

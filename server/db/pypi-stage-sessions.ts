@@ -482,16 +482,19 @@ export async function listUndeliveredApprovedGates(
 
 /**
  * Pending gates whose staging never reached a review: no scan, no review
- * started, no live staging lease, and every session row (at least one still
- * `staging`, `upload_failed`, or `held`) plus the gate itself untouched since
- * `staleBefore`. Nothing was reviewed or approved for these, so cleaning them
- * up is not a release decision.
+ * started, no live staging lease, at least one session still `staging`,
+ * `upload_failed`, or `held`, and the gate row untouched since `staleBefore`.
+ * Staging activity (taking or releasing the lease, a recorded fault, a retry)
+ * writes the gate row; the cron's own upkeep of a held session does not, so
+ * session timestamps are not a staleness signal. Nothing was reviewed or
+ * approved for these, so cleaning them up is not a release decision. Each
+ * carries the `updatedAt` it was selected at, for the cleanup's CAS.
  */
 export async function listAbandonedStagingGates(
   db: AppDb,
   input: { staleBefore: Date; now: Date },
   limit: number,
-): Promise<Array<{ organizationId: string; gateId: string }>> {
+): Promise<Array<{ organizationId: string; gateId: string; updatedAt: Date }>> {
   const gateSessions = (...conditions: SQL[]) =>
     db
       .select({ id: pypiStageSessions.id })
@@ -501,6 +504,7 @@ export async function listAbandonedStagingGates(
     .select({
       organizationId: githubWorkflowGates.organizationId,
       gateId: githubWorkflowGates.id,
+      updatedAt: githubWorkflowGates.updatedAt,
     })
     .from(githubWorkflowGates)
     .where(
@@ -517,7 +521,6 @@ export async function listAbandonedStagingGates(
           gateSessions(inArray(pypiStageSessions.state, ["staging", "upload_failed", "held"])),
         ),
         notExists(gateSessions(eq(pypiStageSessions.state, "publishing"))),
-        notExists(gateSessions(gte(pypiStageSessions.updatedAt, input.staleBefore))),
       ),
     )
     .orderBy(asc(githubWorkflowGates.updatedAt))

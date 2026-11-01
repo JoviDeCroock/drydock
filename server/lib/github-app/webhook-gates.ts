@@ -323,13 +323,15 @@ export async function listApprovedRunReviews(
  * Take the gate's staging lease (PEP 694 mode B staging runs during review
  * preparation, before `claimGateReviewStart`). Granted only to one holder at a
  * time, only while the gate is pending and its review has not started, and
- * an expired lease can be taken over. Returns false when another delivery holds
- * it or the review already began.
+ * an expired lease can be taken over. A refusal says when the current lease
+ * lapses (null once the review began or the gate closed). The holder keeps
+ * the lease after staging succeeds: it lapses on its own, and a review claim
+ * makes it moot, so no other delivery restages in between.
  */
 export async function acquireGateStagingLease(
   db: AppDb,
   input: { gateId: string; organizationId: string; leaseId: string; ttlMs: number },
-): Promise<boolean> {
+): Promise<{ acquired: true } | { acquired: false; leaseUntil: Date | null }> {
   const now = new Date();
   const updated = await db
     .update(githubWorkflowGates)
@@ -352,17 +354,38 @@ export async function acquireGateStagingLease(
       ),
     )
     .returning({ id: githubWorkflowGates.id });
-  return updated.length > 0;
+  if (updated.length > 0) return { acquired: true };
+  const [current] = await db
+    .select({
+      status: githubWorkflowGates.status,
+      scanId: githubWorkflowGates.scanId,
+      reviewStartedAt: githubWorkflowGates.reviewStartedAt,
+      stagingLeaseUntil: githubWorkflowGates.stagingLeaseUntil,
+    })
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1);
+  const leaseOnly =
+    current?.status === "pending" && current.scanId === null && current.reviewStartedAt === null;
+  return {
+    acquired: false,
+    leaseUntil: leaseOnly && current.stagingLeaseUntil ? new Date(current.stagingLeaseUntil) : null,
+  };
 }
 
-/** Release the staging lease, only if this holder still has it. */
+/** Release the staging lease after a failed staging, only if this holder still has it. */
 export async function releaseGateStagingLease(
   db: AppDb,
   input: { gateId: string; leaseId: string },
 ): Promise<void> {
   await db
     .update(githubWorkflowGates)
-    .set({ stagingLeaseId: null, stagingLeaseUntil: null })
+    .set({ stagingLeaseId: null, stagingLeaseUntil: null, updatedAt: new Date() })
     .where(
       and(
         eq(githubWorkflowGates.id, input.gateId),
@@ -383,7 +406,9 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
   const now = new Date();
   const updated = await db
     .update(githubWorkflowGates)
-    .set({ reviewStartedAt: now, updatedAt: now })
+    // Preparation succeeded: an earlier delivery's retryable fault no longer
+    // describes this gate.
+    .set({ reviewStartedAt: now, failureReason: null, updatedAt: now })
     .where(
       and(
         eq(githubWorkflowGates.id, gateId),
@@ -451,6 +476,7 @@ export async function resetGateReviewForRetry(
           and(
             isNotNull(githubWorkflowGates.failureReason),
             isNull(githubWorkflowGates.scanId),
+            isNull(githubWorkflowGates.reviewStartedAt),
             sql`not exists (
               select 1
               from ${scans}
@@ -662,9 +688,17 @@ export async function markGateApprovalFailed(
  */
 export async function markGateStagingAbandoned(
   db: AppDb,
-  input: { gateId: string; organizationId: string; comment: string },
+  input: {
+    gateId: string;
+    organizationId: string;
+    comment: string;
+    /** The `updatedAt` it was selected at: any write since (a retry, a lease) wins. */
+    observedUpdatedAt: Date;
+    /** The cron tick's clock, also used to judge the staging lease. */
+    now: Date;
+  },
 ): Promise<WorkflowGateRecord | null> {
-  const now = new Date();
+  const now = input.now;
   const updated = await db
     .update(githubWorkflowGates)
     .set({
@@ -679,6 +713,7 @@ export async function markGateStagingAbandoned(
         eq(githubWorkflowGates.id, input.gateId),
         eq(githubWorkflowGates.organizationId, input.organizationId),
         eq(githubWorkflowGates.status, "pending"),
+        eq(githubWorkflowGates.updatedAt, input.observedUpdatedAt),
         isNull(githubWorkflowGates.scanId),
         isNull(githubWorkflowGates.reviewStartedAt),
         or(

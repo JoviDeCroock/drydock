@@ -123,9 +123,19 @@ export class WorkflowArtifactError extends Error {
  * credentials.
  */
 export class RetryableGateError extends Error {
-  constructor(message: string) {
+  /** Retry no sooner than this (e.g. when another delivery's lease lapses). */
+  readonly retryAfterSeconds: number | null;
+  /**
+   * Another delivery owns the work (it holds the lease or began the review):
+   * nothing failed, so no failure reason or failure event is recorded.
+   */
+  readonly busy: boolean;
+
+  constructor(message: string, options: { retryAfterSeconds?: number; busy?: boolean } = {}) {
     super(message);
     this.name = "RetryableGateError";
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.busy = options.busy === true;
   }
 }
 

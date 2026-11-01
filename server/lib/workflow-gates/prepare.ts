@@ -177,6 +177,9 @@ export async function prepareReleaseCandidatesForGate(
     );
     return { gate, packages };
   } catch (err) {
+    // Another delivery is doing this gate's work; recording a failure would
+    // put an alarm on a healthy gate.
+    if (err instanceof RetryableGateError && err.busy) throw err;
     const reason =
       err instanceof WorkflowArtifactError
         ? workflowArtifactFailureReason(err)

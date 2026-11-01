@@ -196,7 +196,7 @@ async function cleanUpAbandonedStaging(
   hooks: HeldReleaseHooks,
   now: number,
 ): Promise<void> {
-  let abandoned: Array<{ organizationId: string; gateId: string }> = [];
+  let abandoned: Awaited<ReturnType<HeldReleaseHooks["abandonedStaging"]>> = [];
   try {
     abandoned = await hooks.abandonedStaging(db, now);
   } catch (err) {
@@ -204,12 +204,14 @@ async function cleanUpAbandonedStaging(
       error: describeOperationalError(err),
     });
   }
-  for (const { organizationId, gateId } of abandoned) {
+  for (const { organizationId, gateId, updatedAt } of abandoned) {
     try {
       const rejected = await markGateStagingAbandoned(db, {
         gateId,
         organizationId,
         comment: ABANDONED_STAGING_COMMENT,
+        observedUpdatedAt: updatedAt,
+        now: new Date(now),
       });
       if (!rejected) continue;
       emitOperationalEvent("warn", "github_workflow_gate.staging_abandoned", {
@@ -394,6 +396,14 @@ export async function executeWorkflowGateJob(
         durationMs: durationMsSince(startedAtMs),
       });
       return;
+    }
+    if (err instanceof RetryableGateError && err.busy) {
+      emitOperationalEvent("info", "github_workflow_gate.job_deferred", {
+        organizationId,
+        gateId,
+        reason: "another_delivery_owns_the_gate",
+      });
+      throw err;
     }
     // A review/processing error (e.g. the sandbox parser). Leave the deployment
     // pending so GitHub waits for a human; record the failure for the dashboard.

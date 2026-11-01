@@ -156,8 +156,8 @@ export interface StagingContext {
  * what happened. Messages carry no URLs or token material.
  */
 class PyPiStagingError extends RetryableGateError {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ConstructorParameters<typeof RetryableGateError>[1]) {
+    super(message, options);
     this.name = "PyPiStagingError";
   }
 }
@@ -214,16 +214,24 @@ export async function stageManagedReleases(
     }
   }
   // Staging runs before the review claim, so two deliveries of one gate could
-  // otherwise delete each other's uploads.
+  // otherwise delete each other's uploads. On success the lease is kept until
+  // it lapses: until this delivery claims the review, another one must not
+  // restage the held session underneath it.
   const leaseId = crypto.randomUUID();
-  const leased = await acquireGateStagingLease(ctx.db, {
+  const lease = await acquireGateStagingLease(ctx.db, {
     gateId: ctx.gateId,
     organizationId: ctx.organizationId,
     leaseId,
     ttlMs: STAGING_LEASE_MS,
   });
-  if (!leased) {
-    throw new PyPiStagingError("another delivery of this gate is staging it, or its review began");
+  if (!lease.acquired) {
+    const retryAfterSeconds = lease.leaseUntil
+      ? Math.ceil((lease.leaseUntil.getTime() - Date.now()) / 1000) + 5
+      : undefined;
+    throw new PyPiStagingError("another delivery of this gate is staging it, or its review began", {
+      busy: true,
+      ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+    });
   }
   const sessions: StagingSession[] = [];
   try {
@@ -242,9 +250,18 @@ export async function stageManagedReleases(
         ["staging"],
       );
     }
+    // The original fault is what matters; a failed release only delays the
+    // next attempt until the lease lapses.
+    await releaseGateStagingLease(ctx.db, { gateId: ctx.gateId, leaseId }).catch(
+      (releaseErr: unknown) => {
+        emitOperationalEvent("warn", "pypi.session.lease_release_failed", {
+          organizationId: ctx.organizationId,
+          gateId: ctx.gateId,
+          error: describeOperationalError(releaseErr),
+        });
+      },
+    );
     throw err;
-  } finally {
-    await releaseGateStagingLease(ctx.db, { gateId: ctx.gateId, leaseId });
   }
 }
 
@@ -819,7 +836,15 @@ async function sweepOne(
       openIsRefusal: now - claimedAt > OPEN_AFTER_PUBLISH_GRACE_MS,
     });
     if (outcome !== "published" && outcome !== "publishing") {
-      await notifyIfApprovalDelivered(env, db, row, outcome);
+      // The row is terminal now and never selected again: a lost notice is
+      // logged, the session's state still shows the failure.
+      await notifyIfApprovalDelivered(env, db, row, outcome).catch((err: unknown) => {
+        emitOperationalEvent("error", "pypi.session.publish_failure_notice_failed", {
+          organizationId: row.organizationId,
+          gateId: row.gateId,
+          error: describeOperationalError(err),
+        });
+      });
     }
     return;
   }

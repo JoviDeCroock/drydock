@@ -143,7 +143,7 @@ export interface HeldReleaseHooks {
   abandonedStaging(
     db: AppDb,
     now: number,
-  ): Promise<Array<{ organizationId: string; gateId: string }>>;
+  ): Promise<Array<{ organizationId: string; gateId: string; updatedAt: Date }>>;
 }
 
 /** Browser-safe view of a held release; never carries URLs or credentials. */

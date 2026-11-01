@@ -629,10 +629,31 @@ describe("PEP 694 mode B: Drydock stages the reviewed bytes", () => {
     });
 
     expect(run.retryError?.message).toContain("another delivery of this gate is staging it");
+    // Retried once the other delivery's lease lapses, not on the short backoff.
+    expect(run.retryError).toMatchObject({ busy: true });
+    expect(run.retryError?.retryAfterSeconds).toBeGreaterThan(55);
     expect(run.session.requests).toEqual([]);
     expect(await sessionRows(run)).toEqual([]);
-    expect(run.gate).toMatchObject({ status: "pending", scanId: null });
-    expect(run.gate?.failureReason).toContain("retrying: another delivery");
+    // Nothing failed, so the healthy gate carries no alarm.
+    expect(run.gate).toMatchObject({ status: "pending", scanId: null, failureReason: null });
+    expect(run.events.map((event) => event.type)).not.toContain(
+      "github_workflow_gate.review_failed",
+    );
+  });
+
+  test("a delivery after staging but before the review claim does not restage the held session", async () => {
+    const run = await runManaged();
+    const requests = run.session.requests.length;
+    // The window between a successful staging and the review claim.
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId: null, reviewStartedAt: null })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+
+    await expect(run.deliver()).rejects.toMatchObject({ busy: true });
+    expect(run.session.requests).toHaveLength(requests);
+    expect((await sessionRows(run))[0].state).toBe("held");
+    expect([...run.session.state.files.keys()].sort()).toEqual([WHEEL, SDIST].sort());
   });
 });
 
@@ -1468,6 +1489,27 @@ describe("PEP 694 mode B: retryable staging faults", () => {
     const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
     expect(gate?.scanId).not.toBeNull();
     expect(gate?.status).toBe("pending");
+    // The earlier attempt's fault no longer describes the gate.
+    expect(gate?.failureReason).toBeNull();
+  });
+
+  test("a delivery that finds another one's staging lease is retried after the lease lapses", async () => {
+    const run = await runManaged();
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({
+        scanId: null,
+        reviewStartedAt: null,
+        stagingLeaseId: "other-delivery",
+        stagingLeaseUntil: new Date(Date.now() + 10 * MINUTE),
+      })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+
+    const { batch, message } = queueBatch(run, 1);
+    await queue(batch, inlineEnv(run), buildCtxWithGateway());
+    const [{ delaySeconds }] = message.retry.mock.calls[0] as [{ delaySeconds: number }];
+    expect(delaySeconds).toBeGreaterThan(9 * 60);
+    expect(delaySeconds).toBeLessThanOrEqual(11 * 60);
   });
 
   test("after the queue gives up, a maintainer can retry a gate that has no scan yet", async () => {
@@ -1544,6 +1586,28 @@ describe("PEP 694 mode B: retryable staging faults", () => {
     expect((await run.readEvents()).map((event) => event.metadataJson)).toContainEqual(
       expect.objectContaining({ decidedBy: "automatic", reason: "staging_abandoned" }),
     );
+  });
+
+  test("the cron also cleans up a held session whose delivery died before the review", async () => {
+    const run = await runManaged();
+    // Staged and held, then the worker died before claiming the review.
+    await run.db.delete(schema.scans).where(eq(schema.scans.gateId, run.gateId));
+    await run.db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId: null, reviewStartedAt: null })
+      .where(eq(schema.githubWorkflowGates.id, run.gateId));
+
+    // The sweep re-reads (and so rewrites) the held row in the same tick.
+    await runHeldReleaseUpkeep(
+      inlineEnv(run),
+      buildCtxWithGateway(),
+      run.db,
+      Date.now() + DAY + MINUTE,
+    );
+
+    const gate = await getGateForOrganization(run.db, run.owner.organizationId, run.gateId);
+    expect(gate?.status).toBe("rejected");
+    expect((await sessionRows(run))[0].state).toBe("canceled");
   });
 
   test("the cron leaves recent staging faults and reviewed gates alone", async () => {
