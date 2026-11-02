@@ -81,6 +81,10 @@ Current structured events cover:
   `registry-record-unavailable` when npm's stage record was missing for an
   organization with a live release target); the scan persists an `unknown`
   record rather than none unless the organization has no live release target.
+- `scan.dependency_readiness.lookup_failed` (scan, organization, and a count of
+  failed registry reads), `scan.dependency_readiness.candidates_failed`, and
+  `scan.dependency_readiness.credential_unavailable` (no error detail; the broker keeps it) when the
+  decision-time dependency check degrades to "could not check".
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.

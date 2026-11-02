@@ -221,6 +221,98 @@ stage is discovered like any other, and for a package a live release target
 gates it reads as `ungated` — the signal a maintainer needs to reject it on npm
 rather than approve it.
 
+## Dependency readiness
+
+Approving a stage on npm makes it installable, so approving `a@2.0.0` while it
+depends on `b@^2.0.0` and `b@2.0.0` is still staged publishes a release nobody
+can install. The decision view checks for this before the maintainer approves:
+`GET /api/v1/scans/:id/dependency-readiness` asks whether each runtime
+dependency resolves to a public version.
+
+- **Which manifest.** The one npm installs from: for a staged review, the
+  registry's stage record (read live through the npm broker); the reviewed
+  tarball's manifest from the report artifact is the fallback when the stage
+  record is unavailable, and always for a gate review, which has no stage yet.
+- **What is checked.** `dependencies` and `optionalDependencies` (npm installs
+  an optional dependency it cannot resolve without it, so it is labeled
+  `optional`), and non-optional `peerDependencies`, labeled `peer`, since npm
+  7+ installs those and fails when the range cannot resolve. Optional peers and
+  `devDependencies` are skipped, as are bundled dependencies: packed under
+  `node_modules/<name>/` and declared in the tarball's `bundleDependencies`
+  (`true` bundles every dependency). A packed directory the manifest does not
+  bundle is installed from the registry by npm, so it is checked.
+- **How specs resolve.** Ranges match with node-semver semantics, including its
+  prerelease rule (`^2.0.0` never resolves to `2.1.0-rc.1`) and ASCII ordering
+  of prerelease identifiers, in `server/lib/ecosystems/semver-range.ts`; a spec
+  that is not a range is a dist-tag. Only the literal `*` (or an empty spec)
+  resolves to a prerelease `latest`; `x` or `>=0.0.0` needs a stable version.
+  An `npm:` alias is checked against its target package. `workspace:`,
+  `catalog:`, `link:`, `file:`, and path specs are flagged: no consumer can
+  resolve them from the registry, so the publish should have replaced them.
+  Git, GitHub-shorthand, and URL specs are counted and not checked.
+- **Staged in this organization.** An unresolved dependency is matched against
+  the organization's own current staged reviews of that package on the same
+  registry, keyed on npm's stage record (`registry_package_name` /
+  `registry_version`, never a tarball's manifest). A satisfying stage is named
+  with a link to its review: approve it first. A stage npm has blocked or
+  deleted is never offered; one npm already reports `published` counts as
+  installable.
+- **Gated releases.** For a workflow-gate review, the other packages of the same
+  gated release satisfy each other: the gate releases them together. The gate
+  contract does not name its publish target, so a gate review reads the
+  organization's npm connection's registry (as its baseline does), or the
+  public registry anonymously without a usable connection (`credentialed:
+false`), where a package it cannot see is described as not publicly listed
+  rather than missing. A gate publishing to a different registry is checked
+  against the wrong one.
+
+It is computed when the decision view loads, not at scan time: the answer
+changes after the scan (a sibling stage is approved) while the reviewed bytes do
+not, so nothing is persisted, no migration exists, and the report, risk, and
+findings are unchanged. Every credentialed registry request goes through the
+npm broker (`connectionStatus`, `fetchStagedDetails`, and
+`fetchPackageVersionsBatch`, which resolves the credential once per batch),
+which alone decrypts the organization's token and fails closed when the
+connection was edited to another registry since a staged scan
+(`npm-connection-changed`); the route never sees the token. A check that cannot
+run says so in one muted line (`unavailable`: report missing, or connection
+missing, unvalidated, or changed) rather than reading like a clean result.
+
+Packuments are streamed (`server/lib/ecosystems/npm/package-versions.ts`)
+through the packument extractor in version-keys-only mode, so memory stays flat
+and large documents work (`next`'s abbreviated packument is ~25 MB). A body
+past 64 MiB of decompressed JSON, with more than 100,000 versions, or with
+more than 2 Mi characters of version keys (a key longer than semver's 256
+characters is skipped) is reported as too large to check (`too-large`): not a
+failure, no retry, no failure event. These bounds keep every cached answer well
+under KV's 25 MiB value limit. A packument with no `versions` key has nothing
+published; one whose `versions` is not an object could not be checked. Answers (found, not found, too large; never a failed read) are
+cached for 5 minutes in their own partition, `org:<id>|versions` or
+`public|versions`, beside the pipeline's projected `|abbrev` packuments, which a
+versions-only document must never replace.
+
+Each check first asks every target of that cache (no registry request), then
+spends at most 40 registry reads (6 at a time, within a 10-second budget that
+is a ceiling: each read gets one attempt, and its headers and body are
+abandoned as a failed read when the budget runs out) on targets with no answer, and only then re-reads cached negative answers, because "not
+published yet" is the one that goes stale. A dependency the budget did not
+reach is reported as not checked yet (`lookup-skipped`) with "Check the rest",
+and the response carries `nextOffset`: the client sends it back as `?offset=`,
+and the next check starts its registry reads there, rotating through the queue.
+The offset is only a hint for which advisory reads to make, clamped by the
+server. It is what makes progress independent of KV visibility: KV keeps a miss
+for up to a minute, so the previous check's writes can still read as misses,
+and failed reads are never cached, so without the rotation they would take the
+budget every time. A first check reads changed specs first. A release with more
+than 40 dependencies finishes once all its answers are cached at once: each
+check adds up to 40, so up to about 300 dependencies need their checks within
+the 5-minute TTL (an answer older than that is read again). Targets past 300
+are never read (`lookup-limit`). Everything fails open: a failed read, or a
+batch whose broker call failed outright, is "could not check" (with "Check
+again"), never missing, and nothing here blocks
+approval. The endpoint is rate limited per user; lookup failures emit
+`scan.dependency_readiness.lookup_failed` with a count only.
+
 ## Compared with the workflow gate
 
 They put the candidate in different places and give Drydock different authority.
