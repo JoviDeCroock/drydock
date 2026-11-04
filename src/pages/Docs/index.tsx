@@ -843,7 +843,23 @@ export default function DocsPage() {
           </section>
 
           <section id="agent-package-review" class="flex flex-col gap-4 scroll-mt-6">
-            <SectionLabel as="p">Package review for coding agents</SectionLabel>
+            <SectionLabel as="p">Coding agents</SectionLabel>
+            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+              Set up your release flow with an agent.
+            </h2>
+            <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
+              Start with one of two maintainer-and-agent prompts: audit and adapt an existing
+              publishing workflow, or design secure publishing for a new project. Both distinguish
+              workflow enforcement from advisory review and leave release authority with you.
+            </p>
+            <div class="flex flex-wrap gap-3">
+              <LinkButton href="/agents#existing-project" variant="secondary" size="sm">
+                Existing project prompt
+              </LinkButton>
+              <LinkButton href="/agents#new-project" variant="secondary" size="sm">
+                New project prompt
+              </LinkButton>
+            </div>
             <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
               Ask your agent to read the published upgrade.
             </h2>

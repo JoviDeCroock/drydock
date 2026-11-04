@@ -148,9 +148,9 @@ export const docsPageSeo: PageSeoMetadata = {
 };
 
 export const agentsPageSeo: PageSeoMetadata = {
-  title: "Package review for coding agents: npm and PyPI upgrades | Drydock",
+  title: "Set up publishing and package review with coding agents | Drydock",
   description:
-    "Give your coding agent a copyable instruction to compare exact npm or PyPI dependency versions, inspect artifact findings, and link the evidence for human review.",
+    "Copy a Drydock setup prompt for an existing or new project, or review exact npm and PyPI dependency upgrades. Keep publishing authority and human approval explicit.",
   path: "/agents",
 };
 

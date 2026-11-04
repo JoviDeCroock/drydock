@@ -3,6 +3,7 @@ import { CodeBlock } from "../../components/CodeBlock";
 import { PageShell } from "../../components/PageShell";
 import { SectionLabel } from "../../components/Typography";
 import { ProjectInstruction } from "../../features/agent-quickstart/ProjectInstruction";
+import { PublisherSetup } from "../../features/agent-quickstart/PublisherSetup";
 import {
   ContentArticleHero,
   ContentArticleLinks,
@@ -40,18 +41,23 @@ export default function AgentsPage() {
     <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={agentsPageSeo} />
       <ContentArticleHero
-        heading="Review dependency upgrades with your coding agent."
-        lead="Ask your agent to compare the exact published npm or PyPI versions in an upgrade. Drydock returns changed files and deterministic findings over HTTPS, without an account or package installation."
-        details={["anonymous HTTPS", "exact version pairs", "human review"]}
+        heading="Set up Drydock with your coding agent."
+        lead="Add artifact review to an existing release flow, design publishing for a new project, or review dependency upgrades. Start with a copyable prompt, keep the human decisions explicit, and verify what is actually protected."
+        details={["existing or new projects", "exact artifacts", "human approval"]}
         actions={
           <>
-            <LinkButton href="#project-instruction">Add a project instruction</LinkButton>
-            <LinkButton href="/diff" variant="secondary">
-              Read a diff
+            <LinkButton href="#existing-project">Existing project</LinkButton>
+            <LinkButton href="#new-project" variant="secondary">
+              New project
+            </LinkButton>
+            <LinkButton href="#project-instruction" variant="secondary">
+              Review dependencies
             </LinkButton>
           </>
         }
       />
+
+      <PublisherSetup />
 
       <section id="project-instruction" class="flex flex-col gap-3 scroll-mt-6">
         <SectionLabel as="p" aside="01">

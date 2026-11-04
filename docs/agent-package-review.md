@@ -1,16 +1,28 @@
 # Agent package-review quickstart
 
-The public `/agents` guide teaches coding agents and their users to review exact
-published npm/PyPI dependency upgrades through the existing anonymous package-diff
-API. It adds no backend capability, MCP server, account authentication, or
-package execution. atpm remains available in the API and `/diff`; this first
-recipe deliberately covers the npm/PyPI manifest and lockfile workflow.
+The public `/agents` guide has two publisher setup prompts—one for an existing
+project and one for a new project—and a dependency-review instruction. The setup
+prompts guide a maintainer and coding agent through repository discovery,
+release-path selection, a reviewable workflow change, and explicit checks before
+claiming enforcement. They grant no permission to change credentials or settings,
+open a PR, or publish a release. A draft workflow is not a completed setup.
+
+The dependency-review recipe compares exact published npm/PyPI dependency upgrades
+through the existing anonymous package-diff API. This guide adds no backend
+capability, MCP server, account authentication, or package execution. atpm remains
+available in the API and `/diff`; the dependency recipe deliberately covers the
+npm/PyPI manifest and lockfile workflow.
 
 ## Entry points and ownership
 
 - `/agents`: prerendered, indexable guide with its own canonical SEO metadata.
-- `/docs#agent-package-review`: copyable project instruction and guide link in
-  the Docs rail and mobile jump list.
+- `/agents#existing-project` and `/agents#new-project`: copyable publisher setup
+  prompts with byte-identical plain-text downloads at
+  https://drydock.org/agents/existing-project.md and
+  https://drydock.org/agents/new-project.md. Sources live in `src/features/agent-quickstart/`;
+  `PublisherSetup.tsx` presents them using the shared copyable `CodeBlock`.
+- `/docs#agent-package-review`: links to both setup prompts, plus the copyable
+  dependency-review project instruction in the Docs rail and mobile jump list.
 - `https://drydock.org/agents/package-review.md`: static, agent-readable instruction suitable for
   a project's `AGENTS.md` or equivalent rules. The `ProjectInstruction` component
   imports the source instruction in `src/features/agent-quickstart/package-review.md`.
