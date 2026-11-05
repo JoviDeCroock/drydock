@@ -51,6 +51,13 @@ Never ask me to paste secrets into this conversation, a file, or a log.
 
 ## 5. Verify, then wait for the first release
 
-Review the full diff again and run the project's checks. If I authorize a test run, show that a pending or rejected gate stops the publish job and that a changed artifact fails the checksum check. Do not publish to test this.
+Review the full diff again and run the project's checks. Then read back what is configured, using my own signed-in tools:
+
+- `gh api repos/OWNER/REPO/environments/ENVIRONMENT`: `can_admins_bypass` is `false` and `deployment_branch_policy` is not `null`.
+- `gh api repos/OWNER/REPO/environments/ENVIRONMENT/deployment_protection_rules`: one enabled custom rule whose `app.slug` is the Drydock App I installed.
+- npm: `npm trust list PACKAGE` names this repository, workflow file, and environment. PyPI and the VS Code Marketplace have no read-back command, so ask me to confirm their settings.
+- Ask me to run **Check setup status** in Drydock settings and paste the text from **Copy for your agent**. Drydock has no setup API, so this is how its release-target and first-review checks reach you.
+
+If I authorize a test run, show that a pending or rejected gate stops the publish job and that a changed artifact fails the checksum check. Do not publish to test this.
 
 Report setup as "ready, pending first release" until a real release has gone through a Drydock review before publication. A merged PR or an enabled rule alone does not complete setup.

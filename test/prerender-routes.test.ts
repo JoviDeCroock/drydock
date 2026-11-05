@@ -175,6 +175,8 @@ describe("public route parity", () => {
     expect(result.html).toContain('href="/agents#existing-project"');
     expect(result.html).toContain('href="/agents#new-project"');
     expect(result.html).toContain("AGENTS.md · package review");
+    expect(result.html).toContain('id="release-walkthrough"');
+    expect(result.html).toContain('href="#release-walkthrough"');
   });
 
   it.each(["package-review", "existing-project", "new-project"])(

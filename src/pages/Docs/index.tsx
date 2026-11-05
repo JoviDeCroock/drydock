@@ -7,7 +7,7 @@ import { Card } from "../../components/Card";
 import { CodeBlock } from "../../components/CodeBlock";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
-import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
+import { InlineCode, MonoLabel, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { ProjectInstruction } from "../../features/agent-quickstart/ProjectInstruction";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -341,6 +341,55 @@ export default function DocsPage() {
                 compose: run <InlineCode>npm stage publish</InlineCode> inside the gated job and the
                 gate reviews the tarball before npm holds it.
               </Callout>
+            </Subsection>
+
+            <Subsection id="release-walkthrough" title="Your release, start to finish">
+              <Prose>
+                With a workflow gate, Drydock sits between the GitHub Actions job that builds your
+                release and the job that publishes it. You set it up once, then release the way you
+                already do.
+              </Prose>
+              <MonoLabel as="p">Once</MonoLabel>
+              <Steps
+                items={[
+                  <>
+                    Install the Drydock GitHub App, create a GitHub Environment with Drydock as its
+                    protection rule, and map the repository in Drydock settings.
+                  </>,
+                  <>
+                    Split the release workflow into a build job that uploads the packed files and a
+                    publish job that uses the protected environment. The guided setup in Drydock
+                    settings can open this change as a draft pull request.
+                  </>,
+                  <>
+                    Pin the registry&apos;s trusted publisher to that environment and remove other
+                    ways to publish, such as long-lived tokens.
+                  </>,
+                ]}
+              />
+              <MonoLabel as="p">Every release</MonoLabel>
+              <Steps
+                items={[
+                  <>
+                    Start the release as you do today: push a tag, merge a Changesets PR, or run the
+                    workflow. GitHub Actions builds and uploads the files.
+                  </>,
+                  <>
+                    GitHub pauses the publish job. Drydock reviews the uploaded files against the
+                    last published version.
+                  </>,
+                  <>
+                    Read the report in Drydock and approve or reject. After approval, the job
+                    publishes the same files it uploaded.
+                  </>,
+                ]}
+              />
+              <Prose>
+                With Stage Watchtower, you run <InlineCode>npm stage publish</InlineCode> instead,
+                review in Drydock, and finish the publish in npm; see{" "}
+                <a href="#staged-lifecycle">Run a release review</a>. To work through the setup with
+                a coding agent, copy a prompt from <a href="/agents">the agent guide</a>.
+              </Prose>
             </Subsection>
           </section>
 

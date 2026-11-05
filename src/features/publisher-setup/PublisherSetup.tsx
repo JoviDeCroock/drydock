@@ -8,6 +8,7 @@ import type { PublicGithubAppInstallation } from "../../models/github-app";
 import { PublisherSetupModel, type SetupOperation } from "../../models/publisher-setup";
 import { ReleaseTargetsModel } from "../../models/release-targets";
 import { scanDetailPath } from "../../lib/scan-detail-path";
+import { setupStatusAgentSummary } from "./agent-summary";
 import { Alert } from "../../components/Alert";
 import { Button, LinkButton } from "../../components/Button";
 import { SettingsCardBody, SettingsCardHeader } from "../../components/Card";
@@ -692,6 +693,9 @@ function StatusResult({
           </li>
         ))}
       </ul>
+      <div>
+        <CopyButton text={setupStatusAgentSummary(status)} label="Copy for your agent" />
+      </div>
       <Show when={() => !model.setupStatus.value!.targetMapped}>
         <div>
           <Button disabled={model.busy} variant="secondary" onClick={() => void onMapTarget()}>

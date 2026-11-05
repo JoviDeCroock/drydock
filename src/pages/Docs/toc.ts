@@ -23,7 +23,10 @@ export const TOC: Array<{
   {
     id: "choose-path",
     label: "Choose a release path",
-    children: [{ id: "path-comparison", label: "Compare the paths" }],
+    children: [
+      { id: "path-comparison", label: "Compare the paths" },
+      { id: "release-walkthrough", label: "Start to finish" },
+    ],
   },
   {
     id: "staged-publishing",

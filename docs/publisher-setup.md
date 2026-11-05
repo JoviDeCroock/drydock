@@ -51,7 +51,7 @@ The setup branch is created at the pinned base and then moved to the setup commi
 
 ## Finish setup
 
-Configure the selected GitHub Environment and Drydock custom deployment-protection rule, bind registry trusted publishing to that environment, and map the repository/environment/ecosystem/artifact as a release target. Existing conflicting mappings must be removed explicitly. Run a real release and refresh setup checks. A requested workflow gate, an observed Environment rule, and a completed pre-publication review are separate states; an already-published package review does not finish publisher setup.
+Configure the selected GitHub Environment and Drydock custom deployment-protection rule, bind registry trusted publishing to that environment, and map the repository/environment/ecosystem/artifact as a release target. Existing conflicting mappings must be removed explicitly. Run a real release and refresh setup checks. A requested workflow gate, an observed Environment rule, and a completed pre-publication review are separate states; an already-published package review does not finish publisher setup. **Copy for your agent** on the checks copies them as plain text (repository, environment, each check's label, status and detail; no gate or scan IDs) so a maintainer can hand them to a coding agent following the `/agents` setup prompts. Drydock exposes no agent-callable setup API; the checks stay behind the owner/admin session.
 
 ## HTTP contract
 

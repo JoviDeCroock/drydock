@@ -17,6 +17,14 @@ version. Local edits by either prompt hold the protected publish job to that doc
 protected-job rules.
 Drydock has no setup CLI or MCP server, so the App installation, Environment
 rule, release-target mapping and setup checks remain maintainer steps in the UI.
+To verify, the prompts read GitHub's side back with the maintainer's own `gh`
+login (Environment admin bypass, branch policy, and the Drydock custom
+protection rule) and npm's with `npm trust list`. Drydock's own checks reach the
+agent when the maintainer pastes **Copy for your agent** from the setup checks
+(`src/features/publisher-setup/agent-summary.ts`).
+
+`/docs#release-walkthrough` is the human counterpart: one-time setup and
+per-release steps for the workflow gate, with a pointer to the agent prompts.
 
 The dependency-review recipe compares exact published npm/PyPI dependency upgrades
 through the existing anonymous package-diff API. This guide adds no backend
