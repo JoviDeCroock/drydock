@@ -42,7 +42,7 @@ describe("setup status agent summary", () => {
         "- Administrator bypass: passed. Disabled.",
         "- First release review: pending. Run a real release.",
         "",
-        "Configuration checks pass. Setup is ready, pending first release, until a real release completes review.",
+        "Configuration checks pass. Report setup as ready, pending first release, until a real release completes review.",
       ].join("\n"),
     );
   });

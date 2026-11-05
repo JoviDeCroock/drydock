@@ -22,7 +22,7 @@ export function setupStatusAgentSummary(status: PublisherSetupStatus): string {
     ? "Not ready: a configuration check above is pending or unknown. Do not describe the release as protected."
     : reviewed
       ? "Configuration checks pass and a workflow-gated release completed review. Confirm it was a real release, not a test run, before calling setup complete."
-      : "Configuration checks pass. Setup is ready, pending first release, until a real release completes review.";
+      : "Configuration checks pass. Report setup as ready, pending first release, until a real release completes review.";
   return [
     `Drydock setup checks for ${status.repositoryFullName}, environment ${status.environment}`,
     `${passed} of ${status.checks.length} passed.`,

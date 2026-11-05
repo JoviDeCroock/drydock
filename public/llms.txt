@@ -23,7 +23,7 @@ account or API key and sends no registry credentials. Use it for public packages
 only when the project permits contacting an external service. Authenticated
 organization APIs and unlisted report links have separate access boundaries.
 
-Publisher setup is different: it requires maintainer-owned GitHub/registry
-configuration and appropriate account access. Setup prompts grant no authority.
-Workflow Gates (the GitHub Actions integration) hold only the configured protected job; npm Stage Watchtower
-is advisory and cannot block npm approval or every alternate publish path.
+Publisher setup needs the maintainer's own GitHub and registry access; the
+setup prompts grant none. A Workflow Gate, Drydock's GitHub Actions
+integration, holds only the configured protected job. npm Stage Watchtower is
+advisory: it cannot block npm approval or other ways to publish.

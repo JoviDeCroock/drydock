@@ -42,7 +42,7 @@ export default function AgentsPage() {
       <PageSeo metadata={agentsPageSeo} />
       <ContentArticleHero
         heading="Set up Drydock with your coding agent."
-        lead="Copy a prompt into your coding agent and work through the setup together: add a Drydock review to an existing release workflow, or set up a new project to publish from GitHub Actions only after you approve the build."
+        lead="Copy a prompt into your coding agent and work through the setup together: add a Drydock review to an existing release workflow, or set up a new project whose GitHub Actions publish job waits for your approval."
         details={["existing or new projects", "exact artifacts", "human approval"]}
         actions={
           <>

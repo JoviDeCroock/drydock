@@ -1,26 +1,26 @@
 # Agent package-review quickstart
 
 The public `/agents` guide has two publisher setup prompts—one for an existing
-project and one for a new project—and a dependency-review instruction. Each setup
-prompt is a walkthrough with five checkpoints where the agent stops for the
-maintainer: explain the current or intended release contract, choose a mode
-(Workflow Gate, Stage Watchtower, or gated staging), prepare the workflow change,
-hand over the settings only the maintainer can change, and verify without
-publishing. They grant no permission to change credentials or settings, open a
-PR, or publish a release. Setup stays "ready, pending first release" until a
-real release gets a pre-publication review.
+project and one for a new project—and a dependency-review instruction. Each
+setup prompt is a walkthrough with five checkpoints where the agent stops for
+the maintainer: explain the current or intended release contract, choose a
+release path (Workflow Gate, Stage Watchtower, or gated staging), prepare the
+workflow change, hand over the settings only the maintainer can change, and
+verify without publishing. They grant no permission to change credentials or
+settings, open a PR, or publish a release. Setup stays "ready, pending first
+release" until a real release gets a pre-publication review.
 
-Agents and the in-product guided setup ([`publisher-setup.md`](./publisher-setup.md))
-should reach the same result. The existing-project prompt offers the guided
-setup's draft PR first and has the agent review it rather than write a second
-version. Local edits by either prompt hold the protected publish job to that document's
-protected-job rules.
-Drydock has no setup CLI or MCP server, so the App installation, Environment
-rule, release-target mapping and setup checks remain maintainer steps in the UI.
-To verify, the prompts read GitHub's side back with the maintainer's own `gh`
-login (Environment admin bypass, branch policy, and the Drydock custom
-protection rule) and npm's with `npm trust list`. Drydock's own checks reach the
-agent when the maintainer pastes **Copy for your agent** from the setup checks
+Agents and the in-product guided setup
+([`publisher-setup.md`](./publisher-setup.md)) should reach the same result. The
+existing-project prompt offers the guided setup's draft PR first and has the
+agent review it rather than write a second version. Local edits by either prompt
+hold the protected publish job to that document's protected-job rules. Drydock
+has no setup CLI or MCP server, so the App installation, Environment rule,
+release-target mapping and setup checks remain maintainer steps in the UI. To
+verify, the prompts read GitHub's side back with the maintainer's own `gh` login
+(Environment admin bypass, branch policy, and the Drydock custom protection
+rule) and npm's with `npm trust list`. Drydock's own checks reach the agent when
+the maintainer pastes **Copy for your agent** from the setup checks
 (`src/features/publisher-setup/agent-summary.ts`).
 
 `/docs#release-walkthrough` is the human counterpart: one-time setup and
@@ -56,9 +56,10 @@ block now lives in `src/components/CodeBlock.tsx`, with unchanged folding/copy
 behavior and fold arithmetic in `src/components/code-fold.ts`.
 
 Edit a source prompt or instruction in `src/features/agent-quickstart/` and copy
-it to the same name under `public/agents/` when its contract changes. Vite cannot import raw text from its public directory;
-keeping the import under `src/features/` also avoids the Worker-owned `/public`
-route in the local harness.
+it to the same name under `public/agents/` when its contract changes. Vite
+cannot import raw text from its public directory; keeping the import under
+`src/features/` also avoids the Worker-owned `/public` route in the local
+harness.
 
 ## API and evidence contract
 

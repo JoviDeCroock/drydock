@@ -8,7 +8,7 @@ const setupPrompts = [
     id: "existing-project",
     title: "Add Drydock to an existing project",
     description:
-      "Your agent maps the release flow you already have, helps you choose a mode, then reviews the draft PR from Drydock's guided setup or prepares the change locally.",
+      "Your agent maps how you release today, helps you choose a release path, then reviews the draft PR from Drydock's guided setup or prepares the change itself.",
     prompt: existingProject,
   },
   {
@@ -29,7 +29,7 @@ export function PublisherSetup() {
           Review the build in Drydock before GitHub Actions publishes it.
         </h2>
         <ol class="m-0 pl-5 list-decimal text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          <li>A build job builds and packs the release once and uploads the files.</li>
+          <li>A build job packs the release once and uploads the files.</li>
           <li>
             A GitHub Environment holds the publish job while you review those files in Drydock.
           </li>
@@ -44,8 +44,8 @@ export function PublisherSetup() {
           stage instead, but npm approval does not wait for Drydock.
         </p>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          Copy the prompt that fits your repository into your coding agent. It walks you through the
-          setup in checkpoints and stops before anything that needs your approval.
+          Each prompt stops at checkpoints for your answers and before anything that needs your
+          approval.
         </p>
       </div>
       {setupPrompts.map(({ id, title, description, prompt }) => (

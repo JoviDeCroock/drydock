@@ -362,8 +362,8 @@ export default function DocsPage() {
                     settings can open this change as a draft pull request.
                   </>,
                   <>
-                    Pin the registry&apos;s trusted publisher to that environment and remove other
-                    ways to publish, such as long-lived tokens.
+                    On npm and PyPI, pin trusted publishing to that environment. Remove other ways
+                    to publish, such as long-lived tokens.
                   </>,
                 ]}
               />
@@ -375,20 +375,20 @@ export default function DocsPage() {
                     workflow. GitHub Actions builds and uploads the files.
                   </>,
                   <>
-                    GitHub pauses the publish job. Drydock reviews the uploaded files against the
-                    last published version.
+                    GitHub pauses the publish job. Drydock compares the uploaded files with the most
+                    relevant published version.
                   </>,
                   <>
                     Read the report in Drydock and approve or reject. After approval, the job
-                    publishes the same files it uploaded.
+                    publishes the files it uploaded; after a rejection, GitHub keeps it blocked.
                   </>,
                 ]}
               />
               <Prose>
-                With Stage Watchtower, you run <InlineCode>npm stage publish</InlineCode> instead,
-                review in Drydock, and finish the publish in npm; see{" "}
-                <a href="#staged-lifecycle">Run a release review</a>. To work through the setup with
-                a coding agent, copy a prompt from <a href="/agents">the agent guide</a>.
+                Stage Watchtower is advisory: you run <InlineCode>npm stage publish</InlineCode>,
+                review in Drydock, and finish the publish in npm, which does not wait for Drydock.
+                See <a href="#staged-lifecycle">Run a release review</a>. To work through the setup
+                with a coding agent, copy a prompt from <a href="/agents">the agent guide</a>.
               </Prose>
             </Subsection>
           </section>

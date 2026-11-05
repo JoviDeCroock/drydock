@@ -8,22 +8,22 @@ request, or publish unless I authorize that step.
 
 Read current documentation instead of relying on memory:
 
-- Drydock: [guide](https://drydock.org/docs), [workflow
-  gates](https://github.com/JoviDeCroock/drydock/blob/main/docs/workflow-gates.md),
-  [guided publisher
-  setup](https://github.com/JoviDeCroock/drydock/blob/main/docs/publisher-setup.md),
-  npm
-  [staging](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-staged-publishing.md)
-  and [trusted
-  publishing](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md).
-- Registries and GitHub: npm [trusted
-  publishers](https://docs.npmjs.com/trusted-publishers/) and [staged
-  publishing](https://docs.npmjs.com/staged-publishing/), [PyPI trusted
-  publishers](https://docs.pypi.org/trusted-publishers/) (including pending
-  publishers), [VS Code
-  publishing](https://code.visualstudio.com/api/working-with-extensions/publishing-extension),
-  [GitHub
-  environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+Drydock:
+
+- [Guide](https://drydock.org/docs)
+- [Workflow gates](https://github.com/JoviDeCroock/drydock/blob/main/docs/workflow-gates.md)
+- [Guided publisher setup](https://github.com/JoviDeCroock/drydock/blob/main/docs/publisher-setup.md)
+- [npm staging](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-staged-publishing.md)
+- [npm trusted publishing](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md)
+
+Registries and GitHub:
+
+- [npm staged publishing](https://docs.npmjs.com/staged-publishing/)
+- [npm trusted publishers](https://docs.npmjs.com/trusted-publishers/)
+- [PyPI trusted publishers](https://docs.pypi.org/trusted-publishers/)
+  (including pending publishers)
+- [VS Code extension publishing](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
+- [GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
 
 Drydock has no CLI or MCP server for setup. If a link is unreachable or
 contradicts this prompt, tell me instead of guessing.
@@ -35,28 +35,29 @@ Read the repository and its instructions first. Confirm with me the ecosystem
 runtimes, build tool, versioning, release trigger, and channels. Ask only about
 choices the files do not answer. Then stop.
 
-## 2. Choose the Drydock mode with me
+## 2. Choose a release path with me
 
 Recommend a **Workflow Gate (GitHub Actions), enforced**: a GitHub Environment
 holds the publish job until I approve the build artifacts in Drydock.
 
-For npm, also explain the alternatives:
+For npm, also explain the other paths:
 
 - **Stage Watchtower, advisory**: Drydock reviews packages after
   `npm stage publish`, but npm approval does not require Drydock.
-- **Gated staging**: the gated job runs `npm stage publish`.
+- **Gated staging**: the gated job runs `npm stage publish`, so Drydock reviews
+  before npm holds the package.
 
-npm cannot stage a package's first version, so every npm mode starts with a
+npm cannot stage a package's first version, so every npm path starts with a
 gated direct first release, which I must authorize separately. Steps 3 to 5 set
 that up. Afterwards, gated staging switches the publish command to
 `npm stage publish` and grants the trusted publisher stage-only permission
-(`--allow-stage-publish`); Watchtower alone stages from CI and keeps no gate.
-Drydock never
-publishes, and its AI review is advisory.
+(`--allow-stage-publish`); Stage Watchtower alone stages from CI and keeps no
+gate. A gate covers only the configured job, and repository admins can bypass or
+remove it. Drydock never publishes, and its AI review is advisory.
 
 Wait for my choice.
 
-## 3. Build the release path
+## 3. Build the release workflow
 
 Create the manifest, package contents, tests, and build or pack scripts with
 minimal dependencies. Exclude credentials and development files, and check the
@@ -92,8 +93,8 @@ Give me a checklist with the exact values:
   stays pending;
 - protect the workflow file with a ruleset or branch protection and `CODEOWNERS`
   review;
-- for Watchtower or gated staging, connect a read-only npm token in Drydock
-  under Settings → Integrations → npm access.
+- for Stage Watchtower or gated staging, connect a read-only npm token in
+  Drydock under Settings → Integrations → npm access.
 
 For the registry:
 
