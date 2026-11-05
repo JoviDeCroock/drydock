@@ -97,19 +97,22 @@ For a Workflow Gate or gated staging:
 - install the Drydock GitHub App on this repository;
 - create the GitHub Environment, add Drydock as its protection rule, turn off
   administrator bypass, and limit which branches or tags can deploy;
-- in Drydock settings, map the repository, environment, ecosystem, and artifact
-  name as a release target;
+- in **Prepare a release workflow**, run **Check setup status** and use **Map
+  this release target**, which records the ecosystem and artifact name; the
+  separate Release targets form leaves them on auto-detect and the setup check
+  stays pending;
 - protect the workflow file with a ruleset or branch protection and `CODEOWNERS`
   review.
 
 For Stage Watchtower or gated staging, connect a read-only npm token in Drydock
-under Organization settings → npm access.
+under Settings → Integrations → npm access.
 
 For the registry:
 
-- npm and PyPI: pin the trusted publisher to this repository, workflow file, and
-  environment. For npm, grant stage-only permission when staging, and disallow
-  token publishing once trusted publishing works.
+- npm and PyPI: pin the trusted publisher to this repository and workflow file,
+  plus the environment when there is a gate. For npm, grant stage-only
+  permission (`--allow-stage-publish`) when staging, and disallow token
+  publishing once trusted publishing works.
 - VS Code Marketplace: there is no trusted publisher; store the publishing token
   only as a secret of the protected environment.
 - Remove or restrict the other publishing paths from step 1.
@@ -138,7 +141,8 @@ Then read back what is configured, using my own signed-in tools:
 - Watchtower only: say that there is no enforcing gate, and ask me to confirm
   Drydock shows the next staged version.
 
-Report setup as "ready, pending first release" only when every configuration
-check passes. It is complete only after a real release, not a test run, has gone
+With a gate, report setup as "ready, pending first release" only when every
+configuration check passes. It is complete only after a real release, not a test
+run, has gone
 through a Drydock review before publication. A merged PR, an enabled rule, or a
 scan of a package that is already published does not complete setup.

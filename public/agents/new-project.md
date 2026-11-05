@@ -46,8 +46,12 @@ For npm, also explain the alternatives:
   `npm stage publish`, but npm approval does not require Drydock.
 - **Gated staging**: the gated job runs `npm stage publish`.
 
-npm cannot stage a package's first version, so gated staging starts with a gated
-direct first release, which I must authorize separately. Drydock never
+npm cannot stage a package's first version, so every npm mode starts with a
+gated direct first release, which I must authorize separately. Steps 3 to 5 set
+that up. Afterwards, gated staging switches the publish command to
+`npm stage publish` and grants the trusted publisher stage-only permission
+(`--allow-stage-publish`); Watchtower alone stages from CI and keeps no gate.
+Drydock never
 publishes, and its AI review is advisory.
 
 Wait for my choice.
@@ -82,12 +86,14 @@ Give me a checklist with the exact values:
 - install the Drydock GitHub App on this repository;
 - create the GitHub Environment, add Drydock as its protection rule, turn off
   administrator bypass, and limit which branches or tags can deploy;
-- in Drydock settings, map the repository, environment, ecosystem, and artifact
-  name as a release target;
+- in **Prepare a release workflow**, run **Check setup status** and use **Map
+  this release target**, which records the ecosystem and artifact name; the
+  separate Release targets form leaves them on auto-detect and the setup check
+  stays pending;
 - protect the workflow file with a ruleset or branch protection and `CODEOWNERS`
   review;
 - for Watchtower or gated staging, connect a read-only npm token in Drydock
-  under Organization settings → npm access.
+  under Settings → Integrations → npm access.
 
 For the registry:
 
