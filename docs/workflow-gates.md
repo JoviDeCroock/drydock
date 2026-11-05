@@ -84,7 +84,9 @@ The PyPI adapter (`server/lib/ecosystems/pypi/`):
 - records `comparisonSkipped: "baseline-too-large"` when the published release
   exceeds the download budget, so findings stay `unknown` package context and the
   report names the missing comparison instead of grading an uncompared release;
-- reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
+- reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions;
+- (preview, PEP 694 draft) reads a `pypi-stage.json` sidecar through the optional `sidecarFileNames` / `prepareStagedReleaseCandidates` adapter hooks. A `stage-url` entry (mode A) is the second of two gates: it links to the approved review of the same run (see [Linked gates](#linked-gates)), requires the workflow-created stage to hold exactly the reviewed files, and reuses that review for its own human decision. A `"session": "drydock"` entry (mode B) has Drydock create the session and upload the reviewed artifact bytes itself, re-read through the `rereadReleaseFiles` hook and sha256-checked, so the workflow holds no PyPI credential. See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md#pep-694-staged-releases-preview).
+- (preview, opt-in) holds registry-side releases through the optional `heldReleases` adapter hook (PEP 694 mode B). The decision route calls `verify` before recording an approval that looks like it completes the gate; a refusal blocks that approval with 409 `held_release_not_publishable`. It calls `publish` only after the completing approval wins the gate CAS. A refusal then turns the approval into a fail-closed rejection, also answered with 409, unless GitHub has already acknowledged the approval (see the residual risks in `pypi-workflow-gate.md`). It calls `cancel` after a human rejection is recorded. The scheduled tick (`runHeldReleaseUpkeep`) calls `sweep`, then `undeliveredApprovals`: an approval GitHub has not acknowledged (`decision_delivered_at`, set on every successful delivery) 30 minutes after the decision is delivered once every held release is published, or turned into a fail-closed rejection when one never will be. An approval recorded as acknowledged is never changed; a fully published approval GitHub keeps refusing is re-delivered only for six hours. The gate job delivers an approval only while every held release is published or publishing. Gate payloads carry `heldReleases`, which hold state only and never URLs.
 
 ## npm workflow-gate notes
 
@@ -190,7 +192,13 @@ VS Code publication outcomes.
 - Artifact digests are recomputed by Drydock from downloaded bytes.
 - Package identity comes from artifact metadata, not GitHub paths or artifact names alone.
 - If artifact resolution, baseline acquisition, validation, scan, or callback fails, the gate remains blocked or is rejected; do not fail open.
-- Drydock never publishes. It only posts the GitHub deployment-protection decision.
+- Drydock never publishes on its own. Outside PEP 694 mode B, where a maintainer's approval publishes the session Drydock holds, it only posts the GitHub deployment-protection decision.
+
+## Linked gates
+
+A later gate of the same workflow run can verify bytes an earlier gate already reviewed instead of reviewing them again. PyPI PEP 694 mode A uses this for its stage gate. An adapter's `prepareStagedReleaseCandidates` returns candidates carrying `linkedReview` (`server/lib/workflow-gates/types.ts`). For those, the gate job copies the linked scan's report and artifacts into a new package scan of its own gate (`completeFromLinkedReview`) and adds the adapter's browser-safe verification record. It does not run the pipeline. The new scan starts undecided, so the later gate still needs its own human decision.
+
+`listApprovedRunReviews` (`server/lib/github-app/webhook-gates.ts`) is the only way to find a link. It takes the organization, repository id, and run id from the gate rows, which come from signed webhooks, and never from uploaded files. It returns only approved gates in a different environment from the requesting gate, with completed scans a human approved. A gate in another organization or repository, an unapproved gate, or a re-run of the requesting gate's own environment is never a link. A candidate that finds no link fails closed (`stage_review_unlinked` for PyPI). Gate payloads expose the record as `packages[].stageVerification`, with file names, digests, and the index origin only.
 
 ## Maintainer workbench
 

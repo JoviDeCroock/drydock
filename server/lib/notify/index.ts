@@ -12,7 +12,11 @@ import {
 } from "./format";
 import { scanUrl, settingsUrl } from "./links";
 
-export { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./gate-notifications";
+export {
+  notifyHeldReleasePublishFailed,
+  notifyWorkflowGateReview,
+  notifyWorkflowGateTimeout,
+} from "./gate-notifications";
 export { notifyOrganizationInvite } from "./organization-invite";
 export { notifyPublicationCoverageGap, notifyPublicationDiscrepancy } from "./publication-alerts";
 

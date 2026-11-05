@@ -49,8 +49,27 @@ export interface ResolvedReleaseFile {
   kind: string;
 }
 
+/**
+ * A small non-distribution file an adapter asked to read from the bundle
+ * (`pypi-stage.json`). It is evidence of the workflow's intent, never parsed
+ * as a release artifact, and is capped well below any distribution size.
+ */
+export interface BundleSidecarFile {
+  path: string;
+  ecosystem: string;
+  bytes: Uint8Array;
+}
+
+/** Returns the claiming ecosystem for a sidecar path, or null to ignore it. */
+export type ClassifySidecar = (path: string) => string | null;
+
+const MAX_SIDECAR_BYTES = 16 * 1024;
+const MAX_SIDECARS = 16;
+
 export interface ResolvedReleaseBundle<TArtifact = ResolvedReleaseFile> {
   artifacts: TArtifact[];
+  /** Adapter-requested sidecar files; absent when none were requested. */
+  sidecars?: BundleSidecarFile[];
   /** First downloaded GitHub Actions artifact id; retained for old callers/tests. */
   artifactId: number;
   /** First downloaded GitHub Actions artifact name, or "all" when several were inspected. */
@@ -65,16 +84,73 @@ export type WorkflowArtifactErrorCode =
   | "bundle_empty"
   | "artifact_path_unsafe"
   | "artifact_identity_missing"
-  | "artifact_identity_inconsistent";
+  | "artifact_identity_inconsistent"
+  // PEP 694 staged releases (PyPI): a bad `pypi-stage.json`, a stage Drydock
+  // could not read within its egress policy, staged bytes that differ from the
+  // artifact or the index's own digests, or a session that does not match.
+  // `stage_review_unlinked`: no approved review earlier in the run to verify
+  // a stage against.
+  | "stage_reference_invalid"
+  | "stage_unavailable"
+  | "stage_identity_mismatch"
+  | "stage_session_mismatch"
+  | "stage_review_unlinked";
 
 export class WorkflowArtifactError extends Error {
+  /**
+   * When set, `message` was written for the maintainer (file names and digest
+   * prefixes only, never URLs or credentials) and may be stored on the gate and
+   * shown in the GitHub decision comment. Other messages stay operator-only.
+   */
+  readonly maintainerFacing: boolean;
+
   constructor(
     public code: WorkflowArtifactErrorCode,
     message: string,
+    options: { maintainerFacing?: boolean } = {},
   ) {
     super(message);
     this.name = "WorkflowArtifactError";
+    this.maintainerFacing = options.maintainerFacing === true;
   }
+}
+
+/**
+ * A transient fault a later delivery of the same gate can fix (an index was
+ * unreachable, another delivery holds the staging lease). The gate job
+ * rethrows it so the queue retries with backoff instead of leaving the gate
+ * pending with nothing scheduled. `message` is maintainer-safe: no URLs or
+ * credentials.
+ */
+export class RetryableGateError extends Error {
+  /** Retry no sooner than this (e.g. when another delivery's lease lapses). */
+  readonly retryAfterSeconds: number | null;
+  /**
+   * Another delivery owns the work (it holds the lease or began the review):
+   * nothing failed, so no failure reason or failure event is recorded.
+   */
+  readonly busy: boolean;
+  /**
+   * With `busy`: another delivery already began the review, or the gate
+   * closed. A retry has nothing left to do, so the job acknowledges instead.
+   */
+  readonly settled: boolean;
+
+  constructor(
+    message: string,
+    options: { retryAfterSeconds?: number; busy?: boolean; settled?: boolean } = {},
+  ) {
+    super(message);
+    this.name = "RetryableGateError";
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+    this.busy = options.busy === true || options.settled === true;
+    this.settled = options.settled === true;
+  }
+}
+
+/** Stored as the gate's `failure_reason`: the code, plus a maintainer detail when safe. */
+export function workflowArtifactFailureReason(err: WorkflowArtifactError): string {
+  return err.maintainerFacing ? `${err.code}: ${err.message}`.slice(0, 500) : err.code;
 }
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -84,7 +160,7 @@ const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
 // Production consumes large releases one shard at a time. The whole release
 // still has a work budget, but it no longer needs to fit in the parent Worker's
 // heap the way the raw-byte collector (`fetchReleaseBundleWithToken`) does.
-const MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES = 768 * 1024 * 1024;
+export const MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES = 768 * 1024 * 1024;
 export const MAX_OUTER_ZIP_ENTRIES = 256;
 export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_RELEASE_ARTIFACTS = 20;
@@ -200,6 +276,7 @@ export async function processReleaseBundleWithToken<TArtifact>(
   source: WorkflowArtifactSource,
   classifyArtifact: ClassifyArtifact,
   processArtifact: (artifact: ResolvedReleaseFile) => Promise<TArtifact>,
+  classifySidecar?: ClassifySidecar,
 ): Promise<ResolvedReleaseBundle<TArtifact>> {
   const narrowed = Boolean(source.artifactName?.trim() || source.artifactNamePrefix?.trim());
   return processReleaseBundle(
@@ -216,6 +293,7 @@ export async function processReleaseBundleWithToken<TArtifact>(
           maxTotalZipBytes: MAX_TOTAL_ARTIFACT_ZIP_BYTES,
         },
     processArtifact,
+    classifySidecar,
   );
 }
 
@@ -230,6 +308,7 @@ async function processReleaseBundle<TArtifact>(
   classifyArtifact: ClassifyArtifact,
   limits: ReleaseBundleLimits,
   processArtifact: (artifact: ResolvedReleaseFile) => Promise<TArtifact>,
+  classifySidecar?: ClassifySidecar,
 ): Promise<ResolvedReleaseBundle<TArtifact>> {
   if (!REPOSITORY_FULL_NAME_RE.test(source.repositoryFullName)) {
     throw new WorkflowArtifactError(
@@ -263,6 +342,7 @@ async function processReleaseBundle<TArtifact>(
   // ambiguity: the manifest and provenance record one path per distribution, so
   // fail closed rather than bind two digests to it.
   const releaseFileDigests = new Map<string, string>();
+  const sidecars: BundleSidecarFile[] = [];
   let releaseArtifactCount = 0;
   let totalZipBytes = 0;
   for (const artifact of runArtifacts) {
@@ -281,6 +361,15 @@ async function processReleaseBundle<TArtifact>(
 
     const entries = await extractOuterZipEntries(zipBytes);
     for (const entry of entries) {
+      const sidecarEcosystem = classifySidecar?.(entry.path) ?? null;
+      if (sidecarEcosystem) {
+        collectSidecar(sidecars, {
+          path: entry.path,
+          ecosystem: sidecarEcosystem,
+          bytes: entry.bytes,
+        });
+        continue;
+      }
       const classified = classifyArtifact(entry.path);
       if (!classified) continue;
       const sha256 = await sha256Hex(entry.bytes);
@@ -314,7 +403,9 @@ async function processReleaseBundle<TArtifact>(
       );
     }
   }
-  if (candidateArtifacts.length === 0) {
+  // A sidecar alone is a reviewable bundle: a PEP 694 stage reference names
+  // registry-held bytes the adapter fetches and reviews itself.
+  if (candidateArtifacts.length === 0 && sidecars.length === 0) {
     throw new WorkflowArtifactError(
       "bundle_empty",
       "artifact bundle contained no reviewable artifacts",
@@ -323,6 +414,7 @@ async function processReleaseBundle<TArtifact>(
 
   return {
     artifacts: candidateArtifacts,
+    ...(classifySidecar ? { sidecars } : {}),
     artifactId: runArtifacts[0]?.id ?? 0,
     artifactName: runArtifacts.length === 1 ? (runArtifacts[0]?.name ?? "") : "all",
     artifactSizeBytes: totalZipBytes,
@@ -339,9 +431,41 @@ export async function processReleaseBundleForGate<TArtifact>(
   source: WorkflowArtifactSource,
   classifyArtifact: ClassifyArtifact,
   processArtifact: (artifact: ResolvedReleaseFile) => Promise<TArtifact>,
+  classifySidecar?: ClassifySidecar,
 ): Promise<ResolvedReleaseBundle<TArtifact>> {
   const token = await getInstallationAccessToken(config, source.installationExternalId);
-  return processReleaseBundleWithToken(token, source, classifyArtifact, processArtifact);
+  return processReleaseBundleWithToken(
+    token,
+    source,
+    classifyArtifact,
+    processArtifact,
+    classifySidecar,
+  );
+}
+
+// Shards may each carry the same sidecar; identical bytes at one path count
+// once, and the adapter decides what distinct copies mean.
+function collectSidecar(sidecars: BundleSidecarFile[], sidecar: BundleSidecarFile): void {
+  if (sidecar.bytes.byteLength > MAX_SIDECAR_BYTES) {
+    throw new WorkflowArtifactError(
+      "bundle_too_large",
+      `${sidecar.path} exceeds ${MAX_SIDECAR_BYTES} bytes`,
+    );
+  }
+  const duplicate = sidecars.some(
+    (seen) =>
+      seen.path === sidecar.path &&
+      seen.bytes.byteLength === sidecar.bytes.byteLength &&
+      seen.bytes.every((byte, index) => byte === sidecar.bytes[index]),
+  );
+  if (duplicate) return;
+  if (sidecars.length >= MAX_SIDECARS) {
+    throw new WorkflowArtifactError(
+      "bundle_too_large",
+      `artifact bundle contains more than ${MAX_SIDECARS} sidecar files`,
+    );
+  }
+  sidecars.push(sidecar);
 }
 
 // ── GitHub API: list + download ──────────────────────────────────────────────

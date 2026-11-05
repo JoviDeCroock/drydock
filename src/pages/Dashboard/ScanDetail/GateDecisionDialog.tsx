@@ -2,9 +2,11 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import type { DecisionStatus } from "../../../models/scan";
 import { scanDetailPath } from "../../../lib/scan-detail-path";
+import { formatDateTime } from "../../../lib/format";
 import type {
   GatePackageDecision,
   GatePackageScan,
+  HeldRelease,
   PublicWorkflowGate,
   WorkflowGateDecision,
 } from "../../../models/github-app";
@@ -64,6 +66,203 @@ function packageDecisionLabel(pkg: GatePackageScan): string {
 function packageLabel(pkg: GatePackageScan): string {
   if (pkg.packageName && pkg.version) return `${pkg.packageName}@${pkg.version}`;
   return pkg.packageName ?? "package";
+}
+
+export interface HeldReleaseLine {
+  text: string;
+  /** Set only for states that need a person's attention. */
+  badge: { label: string; tone: "critical" | "medium" } | null;
+  note: string | null;
+}
+
+function indexHost(index: string): string {
+  try {
+    return new URL(index).host;
+  } catch {
+    return index;
+  }
+}
+
+/**
+ * One line of registry-held session state for the decision dialog. Expected
+ * states read as plain text; only the ones that stop or bypass the approval
+ * (changed bytes, an expired or failed session, a publish outside Drydock)
+ * carry a badge. What approving does depends on the gate: only the approval
+ * that completes a pending gate publishes, and a closed gate publishes nothing.
+ */
+export function heldReleaseLine(
+  release: HeldRelease,
+  gate: { gateStatus: string; packageCount: number },
+): HeldReleaseLine {
+  const registry = release.ecosystem === "pypi" ? "PyPI" : release.ecosystem;
+  const subject = `${release.projectName} ${release.version} on ${indexHost(release.index)}`;
+  const note = release.stateDetail;
+  switch (release.state) {
+    case "held": {
+      if (gate.gateStatus !== "pending") {
+        return {
+          text: `${registry} holds ${subject}`,
+          badge: null,
+          note: note ?? "not published; the gate is closed",
+        };
+      }
+      const effect =
+        gate.packageCount > 1
+          ? "publishes once every package is approved"
+          : "approving publishes it";
+      return {
+        text: `${registry} holds ${subject}`,
+        badge: null,
+        note:
+          release.expiresAt === null
+            ? effect
+            : `${effect} · expires ${formatDateTime(release.expiresAt)}`,
+      };
+    }
+    case "staging":
+      return { text: `Staging ${subject}…`, badge: null, note };
+    case "upload_failed":
+      return {
+        text: subject,
+        badge: { label: "upload failed, cannot publish", tone: "critical" },
+        note,
+      };
+    case "superseded":
+      return {
+        text: subject,
+        badge: { label: "taken over by a later run", tone: "medium" },
+        note: null,
+      };
+    case "publishing":
+      return { text: `Publishing ${subject}…`, badge: null, note };
+    case "published":
+      return { text: `Published ${subject}`, badge: null, note };
+    case "canceling":
+      return { text: `Canceling ${subject}…`, badge: null, note };
+    case "canceled":
+      return { text: `Canceled ${subject}`, badge: null, note };
+    case "externally_canceled":
+      return { text: `${subject} was canceled outside Drydock`, badge: null, note };
+    case "stale":
+      return {
+        text: subject,
+        badge: { label: "changed since review, cannot publish", tone: "critical" },
+        note,
+      };
+    case "expired":
+      return { text: subject, badge: { label: "expired", tone: "medium" }, note };
+    case "externally_published":
+      return {
+        text: subject,
+        badge: { label: "published outside Drydock", tone: "critical" },
+        note,
+      };
+    case "token_removed":
+      return { text: subject, badge: { label: "token removed", tone: "medium" }, note };
+    default:
+      return { text: subject, badge: { label: "error", tone: "critical" }, note };
+  }
+}
+
+/**
+ * A blocked gate whose release already partly reached the registry: one
+ * project published before another failed, so the approval became a block.
+ */
+export function partiallyPublished(gateStatus: string, releases: HeldRelease[]): boolean {
+  return (
+    gateStatus === "rejected" &&
+    releases.some((release) => release.state === "published") &&
+    releases.some((release) => release.state !== "published")
+  );
+}
+
+function HeldReleases({
+  releases,
+  gateStatus,
+  packageCount,
+}: {
+  releases: HeldRelease[];
+  gateStatus: string;
+  packageCount: number;
+}) {
+  if (releases.length === 0) return null;
+  return (
+    <div class="flex flex-col gap-1">
+      <Muted class="m-0 font-mono text-[11px]">PEP 694 staged upload · preview</Muted>
+      {partiallyPublished(gateStatus, releases) ? (
+        <span class="flex flex-wrap items-center gap-2 text-[13px] text-ink">
+          <Badge tone="critical">partially published</Badge>
+          <span class="text-ink-muted">
+            Some projects are live on the index; the rest did not publish.
+          </span>
+        </span>
+      ) : null}
+      <ul class="m-0 p-0 list-none flex flex-col gap-1">
+        {releases.map((release) => {
+          const line = heldReleaseLine(release, { gateStatus, packageCount });
+          return (
+            <li
+              key={`${release.index} ${release.projectName} ${release.version}`}
+              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink"
+            >
+              <span>{line.text}</span>
+              {line.badge ? <Badge tone={line.badge.tone}>{line.badge.label}</Badge> : null}
+              {line.note ? <span class="text-ink-muted">· {line.note}</span> : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One line per package this gate verified against an approved review earlier
+ * in the workflow run (PEP 694 two-gate staging). The stage URL is a secret
+ * held by the workflow, so the preview is named by its index only.
+ */
+export function stageVerificationLine(pkg: GatePackageScan): string | null {
+  const verification = pkg.stageVerification;
+  if (!verification) return null;
+  const count = verification.files.length;
+  return `${packageLabel(pkg)} · ${count} ${count === 1 ? "file" : "files"} · verified ${formatDateTime(verification.verifiedAt)} · installable preview on ${indexHost(verification.index)} (stage URL in the stage job)`;
+}
+
+function StageVerifications({
+  packages,
+  organizationId,
+}: {
+  packages: GatePackageScan[];
+  organizationId: string;
+}) {
+  const verified = packages.flatMap((pkg) => {
+    const line = stageVerificationLine(pkg);
+    return line && pkg.stageVerification
+      ? [{ pkg, line, reviewedScanId: pkg.stageVerification.reviewedScanId }]
+      : [];
+  });
+  if (verified.length === 0) return null;
+  return (
+    <div class="flex flex-col gap-1">
+      <Muted class="m-0 font-mono text-[11px]">
+        Staged bytes verified identical to reviewed release · PEP 694 preview · the session can
+        change until published; the publish job re-checks the digests
+      </Muted>
+      <ul class="m-0 p-0 list-none flex flex-col gap-1">
+        {verified.map(({ pkg, line, reviewedScanId }) => (
+          <li
+            key={pkg.scanId}
+            class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-ink"
+          >
+            <span>{line}</span>
+            <a class="underline text-accent" href={scanDetailPath(reviewedScanId, organizationId)}>
+              approved review
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /**
@@ -321,11 +520,15 @@ export function GateDecisionDialog({
       open={open}
       onClose={handleClose}
       title={multi ? "Package decision" : "Release decision"}
-      description={
+      description={`${
         multi
-          ? "Decide this package. The configured protected GitHub Actions publish job continues only after every package is approved; rejecting any package blocks that job. Your workflow publishes with its own registry credentials."
-          : "Approve to continue the configured protected GitHub Actions publish job, or reject to block that job. Your workflow publishes with its own registry credentials."
-      }
+          ? "Decide this package. The configured protected GitHub Actions publish job continues only after every package is approved; rejecting any package blocks that job."
+          : "Approve to continue the configured protected GitHub Actions publish job, or reject to block that job."
+      } ${
+        gate.heldReleases.length > 0
+          ? "Drydock publishes the held release when the gate is approved and cancels it when it is rejected."
+          : "Your workflow publishes with its own registry credentials."
+      }`}
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
         <MonoDetail
@@ -403,6 +606,14 @@ export function GateDecisionDialog({
           </Muted>
         </Field>
       ) : null}
+
+      <StageVerifications packages={gate.packages} organizationId={gate.organizationId} />
+
+      <HeldReleases
+        releases={gate.heldReleases}
+        gateStatus={gate.status}
+        packageCount={gate.packages.length}
+      />
 
       {gateDecided ? (
         <Muted class="m-0 text-[13px]">

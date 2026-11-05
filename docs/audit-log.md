@@ -32,7 +32,9 @@ un-audited.
 
 Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
-`organization.*`, and notification-delivery events.
+`organization.*`, `pypi_token.{added,rotated,validated,deleted}` and
+`pypi_session.*` (PEP 694 mode B, preview; project, index, and version only),
+and notification-delivery events.
 
 A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view

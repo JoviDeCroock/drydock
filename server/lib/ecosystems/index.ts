@@ -10,7 +10,11 @@ import { type AnyPackageAdapter, erasePackageAdapter } from "./package-adapter";
 import { publishedPairAdapter, type PublishedPairAdapter } from "./published-pair";
 import { ECOSYSTEM_LABELS } from "./labels";
 import type { EcosystemId, EcosystemModule, PublicationMonitorAdapter } from "./types";
-import type { ArchiveContents, WorkflowGateAdapter } from "../workflow-gates/types";
+import type {
+  ArchiveContents,
+  HeldReleaseHooks,
+  WorkflowGateAdapter,
+} from "../workflow-gates/types";
 import type { PublicDiffAdapter } from "../public-diff/types";
 
 const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
@@ -110,6 +114,26 @@ export function classifyBundleArtifact(path: string): { ecosystem: string; kind:
   if (claims.length === 0) return null;
   if (claims.length === 1) return claims[0];
   return { ecosystem: AMBIGUOUS_ARCHIVE_ECOSYSTEM, kind: "archive" };
+}
+
+/** Gate adapters that hold registry-side releases (PyPI PEP 694 mode B). */
+export function heldReleaseHooks(): HeldReleaseHooks[] {
+  return gateAdapters().flatMap((adapter) => (adapter.heldReleases ? [adapter.heldReleases] : []));
+}
+
+/**
+ * The ecosystem whose adapter asked for this sidecar basename, searching the
+ * given adapters (one for a pinned target, every gate adapter for auto-detect).
+ */
+export function classifyBundleSidecar(
+  path: string,
+  adapters: readonly WorkflowGateAdapter[] = gateAdapters(),
+): string | null {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  for (const adapter of adapters) {
+    if (adapter.sidecarFileNames?.includes(name)) return adapter.ecosystem;
+  }
+  return null;
 }
 
 // Return every claim so ambiguous hostile archives fail closed at the caller.

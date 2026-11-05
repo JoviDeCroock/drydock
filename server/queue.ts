@@ -11,7 +11,18 @@ import {
   retryDelaySeconds,
   type QueueMessage,
 } from "./lib/scan/job";
+import { RetryableGateError } from "./lib/github-app/artifacts";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
+
+// An hour covers the longest gate lease; Queues allows up to 12 hours.
+const MAX_GATE_RETRY_DELAY_SECONDS = 60 * 60;
+
+/** Backoff, or later when the fault names when a retry can succeed (a lapsing lease). */
+function gateRetryDelaySeconds(err: unknown, attempt: number): number {
+  const backoff = retryDelaySeconds(attempt);
+  if (!(err instanceof RetryableGateError) || err.retryAfterSeconds === null) return backoff;
+  return Math.min(MAX_GATE_RETRY_DELAY_SECONDS, Math.max(backoff, err.retryAfterSeconds));
+}
 
 /**
  * The SCAN_QUEUE consumer `server/index.ts` exports. Scan and workflow-gate
@@ -37,12 +48,13 @@ export async function queue(
         });
       } catch (err) {
         if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
-          message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+          const delaySeconds = gateRetryDelaySeconds(err, message.attempts);
+          message.retry({ delaySeconds });
           emitOperationalEvent("warn", "workflow_gate.queue.retry_scheduled", {
             organizationId: gateMessage.organizationId,
             gateId: gateMessage.gateId,
             attempt: message.attempts,
-            nextDelaySeconds: retryDelaySeconds(message.attempts),
+            nextDelaySeconds: delaySeconds,
             durationMs: durationMsSince(messageStartedAtMs),
             error: describeOperationalError(err),
           });

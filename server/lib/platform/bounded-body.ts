@@ -31,6 +31,15 @@ export async function readBoundedText(
   response: Response,
   options: BoundedBodyOptions,
 ): Promise<string | null> {
+  const bytes = await readBoundedBytes(response, options);
+  return bytes === null ? null : new TextDecoder().decode(bytes);
+}
+
+/** `readBoundedText` without the decode, for binary bodies. */
+export async function readBoundedBytes(
+  response: Response,
+  options: BoundedBodyOptions,
+): Promise<Uint8Array | null> {
   const declared = parseContentLength(response.headers.get("content-length"));
   if (declared !== null && declared > options.maxBytes) {
     await response.body?.cancel().catch(() => undefined);
@@ -79,7 +88,7 @@ export async function readBoundedText(
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  return merged;
 }
 
 export async function readBoundedJson<T = unknown>(

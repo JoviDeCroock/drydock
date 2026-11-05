@@ -3,9 +3,14 @@ import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
 import type { AnyPackageAdapter } from "../ecosystems/package-adapter";
 import {
+  type BundleSidecarFile,
   type ClassifyArtifact,
+  type ClassifySidecar,
+  type ResolvedReleaseFile,
+  RetryableGateError,
   WorkflowArtifactError,
   processReleaseBundleForGate,
+  workflowArtifactFailureReason,
 } from "../github-app/artifacts";
 import { type GithubAppConfig } from "../github-app/config";
 import {
@@ -16,6 +21,7 @@ import {
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import {
   classifyBundleArtifact,
+  classifyBundleSidecar,
   getEcosystem,
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
@@ -123,7 +129,7 @@ export async function prepareReleaseCandidatesForGate(
   }
 
   const ecosystemLabel = releaseTarget.ecosystem ?? "auto";
-  const { classify, artifactName, artifactNamePrefix } = resolveBundleClassifier(
+  const { classify, classifySidecar, artifactName, artifactNamePrefix } = resolveBundleClassifier(
     db,
     gate,
     releaseTarget,
@@ -132,34 +138,56 @@ export async function prepareReleaseCandidatesForGate(
 
   try {
     const retainedSamples = new Map<string, string>();
+    const parse = async (file: ResolvedReleaseFile) => {
+      const resolved = await resolveBundleArtifact(env, ctx, file);
+      // Ecosystems whose releases fan out into many near-identical artifacts
+      // narrow them here, while the bundle's bytes are still being streamed.
+      // Which ecosystems need it is the adapter's call, not this runner's.
+      const adapter = getEcosystem(resolved.ecosystem)?.gate;
+      return adapter?.narrowParsedArtifact?.(resolved, retainedSamples) ?? resolved;
+    };
+    const source = {
+      installationExternalId: installation.installationId,
+      repositoryFullName: gate.repositoryFullName,
+      runId: gate.runId,
+      ...(artifactName ? { artifactName } : {}),
+      ...(artifactNamePrefix ? { artifactNamePrefix } : {}),
+    };
     const bundle = await processReleaseBundleForGate(
       input.config,
-      {
-        installationExternalId: installation.installationId,
-        repositoryFullName: gate.repositoryFullName,
-        runId: gate.runId,
-        ...(artifactName ? { artifactName } : {}),
-        ...(artifactNamePrefix ? { artifactNamePrefix } : {}),
-      },
+      source,
       classify,
-      async (file) => {
-        const resolved = await resolveBundleArtifact(env, ctx, file);
-        // Ecosystems whose releases fan out into many near-identical artifacts
-        // narrow them here, while the bundle's bytes are still being streamed.
-        // Which ecosystems need it is the adapter's call, not this runner's.
-        const adapter = getEcosystem(resolved.ecosystem)?.gate;
-        return adapter?.narrowParsedArtifact?.(resolved, retainedSamples) ?? resolved;
-      },
+      parse,
+      classifySidecar,
     );
-    const packages = prepareBundlePackages(bundle.artifacts);
+    // Same run, same narrowing, same classifier and limits as the first pass.
+    const rereadReleaseFiles = async (
+      ecosystem: string,
+      onFile: (file: ResolvedReleaseFile) => Promise<void>,
+    ) => {
+      await processReleaseBundleForGate(input.config, source, classify, async (file) => {
+        if (file.ecosystem === ecosystem) await onFile(file);
+      });
+    };
+    const packages = await prepareBundlePackages(
+      { env, db, organizationId: gate.organizationId, gateId: gate.id },
+      bundle.artifacts,
+      bundle.sidecars ?? [],
+      rereadReleaseFiles,
+    );
     return { gate, packages };
   } catch (err) {
+    // Another delivery is doing this gate's work; recording a failure would
+    // put an alarm on a healthy gate.
+    if (err instanceof RetryableGateError && err.busy) throw err;
     const reason =
       err instanceof WorkflowArtifactError
-        ? err.code
+        ? workflowArtifactFailureReason(err)
         : err instanceof UnsupportedEcosystemError
           ? "unsupported_ecosystem"
-          : "preparation_failed";
+          : err instanceof RetryableGateError
+            ? `retrying: ${err.message}`.slice(0, 500)
+            : "preparation_failed";
     await markGateErroredSafe(db, gate.id, reason);
     emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
       gateId: gate.id,
@@ -167,7 +195,7 @@ export async function prepareReleaseCandidatesForGate(
       repositoryFullName: gate.repositoryFullName,
       runId: gate.runId,
       ecosystem: ecosystemLabel,
-      reason,
+      reason: err instanceof WorkflowArtifactError ? err.code : reason,
       error: describeOperationalError(err),
     });
     throw err;
@@ -188,11 +216,17 @@ function resolveBundleClassifier(
   gate: WorkflowGateRecord,
   releaseTarget: { ecosystem: string | null; artifactName: string | null },
   input: PrepareForGateInput,
-): { classify: ClassifyArtifact; artifactName?: string; artifactNamePrefix?: string } {
+): {
+  classify: ClassifyArtifact;
+  classifySidecar: ClassifySidecar;
+  artifactName?: string;
+  artifactNamePrefix?: string;
+} {
   const override = input.artifactName ?? releaseTarget.artifactName ?? undefined;
   if (releaseTarget.ecosystem === null) {
     return {
       classify: classifyBundleArtifact,
+      classifySidecar: (path) => classifyBundleSidecar(path),
       ...(override ? { artifactName: override } : {}),
     };
   }
@@ -219,6 +253,7 @@ function resolveBundleClassifier(
       const kind = adapter.classifyArtifact(path);
       return kind ? { ecosystem: adapter.ecosystem, kind } : null;
     },
+    classifySidecar: (path) => classifyBundleSidecar(path, [adapter]),
     ...(override
       ? { artifactName: override }
       : adapter.shardedArtifactNames
@@ -233,26 +268,60 @@ function resolveBundleClassifier(
 }
 
 /**
- * Parse every verified artifact once in the shared sandbox router, group the
- * parsed artifacts by their (possibly content-resolved) ecosystem, and let each
- * ecosystem's adapter split its slice into one prepared candidate per distinct
- * package.
+ * Group the parsed artifacts by their (possibly content-resolved) ecosystem and
+ * let each ecosystem's adapter split its slice into one prepared candidate per
+ * distinct package. An adapter whose sidecars are present (a PEP 694 stage
+ * reference) prepares through `prepareStagedReleaseCandidates` instead.
  */
-function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePackage[] {
+async function prepareBundlePackages(
+  scope: { env: Cloudflare.Env; db: AppDb; organizationId: string; gateId: string },
+  resolved: ParsedGateArtifact[],
+  sidecars: BundleSidecarFile[],
+  rereadReleaseFiles: (
+    ecosystem: string,
+    onFile: (file: ResolvedReleaseFile) => Promise<void>,
+  ) => Promise<void>,
+): Promise<PreparedGatePackage[]> {
   const byEcosystem = new Map<string, ParsedGateArtifact[]>();
   for (const artifact of resolved) {
     const slice = byEcosystem.get(artifact.ecosystem);
     if (slice) slice.push(artifact);
     else byEcosystem.set(artifact.ecosystem, [artifact]);
   }
+  const sidecarsByEcosystem = new Map<string, BundleSidecarFile[]>();
+  for (const sidecar of sidecars) {
+    const slice = sidecarsByEcosystem.get(sidecar.ecosystem);
+    if (slice) slice.push(sidecar);
+    else sidecarsByEcosystem.set(sidecar.ecosystem, [sidecar]);
+    if (!byEcosystem.has(sidecar.ecosystem)) byEcosystem.set(sidecar.ecosystem, []);
+  }
 
   const packages: PreparedGatePackage[] = [];
   for (const [ecosystem, artifacts] of byEcosystem) {
     const adapter = getWorkflowGateAdapter(ecosystem);
-    const candidates = adapter.prepareReleaseCandidates(artifacts);
+    const ecosystemSidecars = sidecarsByEcosystem.get(ecosystem) ?? [];
+    let candidates: PreparedReleaseCandidate[];
+    if (ecosystemSidecars.length > 0 && adapter.prepareStagedReleaseCandidates) {
+      candidates = await adapter.prepareStagedReleaseCandidates({
+        ...scope,
+        sidecars: ecosystemSidecars.map(({ path, bytes }) => ({ path, bytes })),
+        artifacts,
+        rereadReleaseFiles: (onFile) => rereadReleaseFiles(ecosystem, onFile),
+      });
+    } else if (artifacts.length > 0) {
+      candidates = adapter.prepareReleaseCandidates(artifacts);
+    } else {
+      continue;
+    }
     for (const candidate of candidates) {
       packages.push({ candidate, packageAdapter: adapter.packageAdapter });
     }
+  }
+  if (packages.length === 0) {
+    throw new WorkflowArtifactError(
+      "bundle_empty",
+      "artifact bundle contained no reviewable artifacts",
+    );
   }
   return packages;
 }

@@ -20,7 +20,12 @@ export {
   type ScanSource,
 } from "./enums";
 
-export { persistScan, type PersistedScanInput } from "./scan-persist";
+export {
+  getLinkedGateReviewScan,
+  persistLinkedGateScan,
+  persistScan,
+  type PersistedScanInput,
+} from "./scan-persist";
 
 export {
   backfillScanRegistryReleaseIdentity,

@@ -96,6 +96,8 @@ export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
           kind: artifact.kind,
           sha256: artifact.sha256,
         })),
+        // A PEP 694 stage review: the digests are of the bytes the index holds.
+        ...(d.stage ? { stage: d.stage } : {}),
       } satisfies ReleaseProvenance,
     };
   },

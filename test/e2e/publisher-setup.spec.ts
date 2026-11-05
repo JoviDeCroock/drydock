@@ -213,6 +213,8 @@ async function installSetupMocks(
       };
     } else if (path.endsWith("/environments")) json = { environments: [{ name: "drydock" }] };
     else if (path === "/api/v1/github-app/release-targets") json = { releaseTargets: [] };
+    else if (path === "/api/v1/pypi-project-tokens")
+      json = { tokens: [], indexes: ["https://pypi.org"] };
     else if (path === "/api/v1/slack") json = { configured: false, connection: null };
     else if (path.endsWith("/notification-recipients")) json = { recipients: [] };
     else if (path === "/api/v1/organizations/members") json = { members: [] };

@@ -1,6 +1,9 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { type AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
+import { isRecord } from "../platform/guards";
+import type { GateStageVerification } from "../workflow-gates/types";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -33,6 +36,8 @@ export interface WorkflowGateRecord {
   failureReason: string | null;
   requestedAt: Date;
   decidedAt: Date | null;
+  /** When GitHub accepted the decision callback. */
+  decisionDeliveredAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -153,6 +158,8 @@ export interface GatePackageScan {
   status: string;
   decision: string | null;
   releaseRisk: string | null;
+  /** Set on a gate that verified staged bytes against an earlier approved review. */
+  stageVerification: GateStageVerification | null;
 }
 
 /**
@@ -175,6 +182,7 @@ export async function listGatePackageScans(
       status: scans.status,
       decision: scans.decision,
       riskSummaryJson: scans.riskSummaryJson,
+      summaryJson: scans.summaryJson,
       createdAt: scans.createdAt,
     })
     .from(scans)
@@ -190,6 +198,7 @@ export async function listGatePackageScans(
       status: row.status,
       decision: row.decision,
       releaseRisk: readReleaseRisk(row.riskSummaryJson),
+      stageVerification: readStageVerification(row.summaryJson),
     }));
 }
 
@@ -199,6 +208,195 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
   }
   const value = (riskSummaryJson as { releaseRisk?: unknown }).releaseRisk;
   return typeof value === "string" ? value : null;
+}
+
+export function readStageVerification(summaryJson: unknown): GateStageVerification | null {
+  const value = isRecord(summaryJson) ? summaryJson.stageVerification : null;
+  if (
+    !isRecord(value) ||
+    value.protocol !== "pep694" ||
+    typeof value.index !== "string" ||
+    typeof value.reviewedGateId !== "string" ||
+    typeof value.reviewedScanId !== "string" ||
+    typeof value.verifiedAt !== "string" ||
+    !Array.isArray(value.files)
+  ) {
+    return null;
+  }
+  const files = value.files.filter(
+    (file): file is { filename: string; sha256: string } =>
+      isRecord(file) && typeof file.filename === "string" && typeof file.sha256 === "string",
+  );
+  return {
+    protocol: "pep694",
+    index: value.index,
+    reviewedGateId: value.reviewedGateId,
+    reviewedScanId: value.reviewedScanId,
+    files: files.map(({ filename, sha256 }) => ({ filename, sha256 })),
+    verifiedAt: value.verifiedAt,
+  };
+}
+
+/** A completed, human-approved package review from another gate of the same run. */
+export interface ApprovedRunReview {
+  gateId: string;
+  scanId: string;
+  packageName: string | null;
+  stagedVersion: string | null;
+  summaryJson: unknown;
+}
+
+const laterAttempt = alias(githubWorkflowGates, "later_attempt");
+
+/**
+ * Approved package reviews from the other gates of `gate`'s workflow run,
+ * newest decision first: what a later gate in the run (PyPI PEP 694 staging)
+ * may link to instead of reviewing again.
+ *
+ * Trust boundary: the link is derived only from GitHub-signed webhook fields
+ * already on the gate rows (organization via the installation, repository id,
+ * run id), never from anything the workflow uploads. Another organization's
+ * or repository's gates are unreachable, a gate never links to itself or to a
+ * gate of its own environment (a re-run of the review gate is not its own
+ * approval), both the gate and the package must carry a human approval, and
+ * a later rejected attempt of the same review gate in the run overrides it.
+ */
+export async function listApprovedRunReviews(
+  db: AppDb,
+  gate: Pick<
+    WorkflowGateRecord,
+    "id" | "organizationId" | "repositoryId" | "runId" | "environment"
+  >,
+): Promise<ApprovedRunReview[]> {
+  return db
+    .select({
+      gateId: githubWorkflowGates.id,
+      scanId: scans.id,
+      packageName: scans.packageName,
+      stagedVersion: scans.stagedVersion,
+      summaryJson: scans.summaryJson,
+    })
+    .from(githubWorkflowGates)
+    .innerJoin(
+      scans,
+      and(
+        eq(scans.gateId, githubWorkflowGates.id),
+        eq(scans.organizationId, githubWorkflowGates.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(githubWorkflowGates.organizationId, gate.organizationId),
+        eq(githubWorkflowGates.repositoryId, gate.repositoryId),
+        eq(githubWorkflowGates.runId, gate.runId),
+        ne(githubWorkflowGates.id, gate.id),
+        ne(githubWorkflowGates.environment, gate.environment),
+        eq(githubWorkflowGates.status, "approved"),
+        eq(githubWorkflowGates.decision, "approved"),
+        eq(scans.source, "workflow_gate"),
+        eq(scans.status, "complete"),
+        eq(scans.decision, "publish"),
+        // A re-run attempt of that review gate rejected after this approval
+        // is the newer human verdict for the run: the approval no longer links.
+        notExists(
+          db
+            .select({ id: laterAttempt.id })
+            .from(laterAttempt)
+            .where(
+              and(
+                eq(laterAttempt.organizationId, githubWorkflowGates.organizationId),
+                eq(laterAttempt.repositoryId, githubWorkflowGates.repositoryId),
+                eq(laterAttempt.runId, githubWorkflowGates.runId),
+                eq(laterAttempt.environment, githubWorkflowGates.environment),
+                ne(laterAttempt.id, githubWorkflowGates.id),
+                eq(laterAttempt.status, "rejected"),
+                gt(laterAttempt.decidedAt, githubWorkflowGates.decidedAt),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(desc(githubWorkflowGates.decidedAt), desc(scans.createdAt));
+}
+
+/**
+ * Take the gate's staging lease (PEP 694 mode B staging runs during review
+ * preparation, before `claimGateReviewStart`). Granted only to one holder at a
+ * time, only while the gate is pending and its review has not started, and
+ * an expired lease can be taken over. A refusal says when the current lease
+ * lapses, or that the review began or the gate closed. The holder keeps the
+ * lease after staging succeeds, until the review claim clears it (or it
+ * lapses), so no other delivery restages in between.
+ */
+export async function acquireGateStagingLease(
+  db: AppDb,
+  input: { gateId: string; organizationId: string; leaseId: string; ttlMs: number },
+): Promise<
+  | { acquired: true }
+  /** `reviewOwned`: the review began or the gate closed; nothing is left to retry. */
+  | { acquired: false; leaseUntil: Date | null; reviewOwned: boolean }
+> {
+  const now = new Date();
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      stagingLeaseId: input.leaseId,
+      stagingLeaseUntil: new Date(now.getTime() + input.ttlMs),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "pending"),
+        isNull(githubWorkflowGates.scanId),
+        isNull(githubWorkflowGates.reviewStartedAt),
+        or(
+          isNull(githubWorkflowGates.stagingLeaseUntil),
+          lt(githubWorkflowGates.stagingLeaseUntil, now),
+        ),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  if (updated.length > 0) return { acquired: true };
+  const [current] = await db
+    .select({
+      status: githubWorkflowGates.status,
+      scanId: githubWorkflowGates.scanId,
+      reviewStartedAt: githubWorkflowGates.reviewStartedAt,
+      stagingLeaseUntil: githubWorkflowGates.stagingLeaseUntil,
+    })
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1);
+  const leaseOnly =
+    current?.status === "pending" && current.scanId === null && current.reviewStartedAt === null;
+  return {
+    acquired: false,
+    leaseUntil: leaseOnly && current.stagingLeaseUntil ? new Date(current.stagingLeaseUntil) : null,
+    reviewOwned: !leaseOnly,
+  };
+}
+
+/** Release the staging lease after a failed staging, only if this holder still has it. */
+export async function releaseGateStagingLease(
+  db: AppDb,
+  input: { gateId: string; leaseId: string },
+): Promise<void> {
+  await db
+    .update(githubWorkflowGates)
+    .set({ stagingLeaseId: null, stagingLeaseUntil: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.stagingLeaseId, input.leaseId),
+      ),
+    );
 }
 
 /**
@@ -213,7 +411,16 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
   const now = new Date();
   const updated = await db
     .update(githubWorkflowGates)
-    .set({ reviewStartedAt: now, updatedAt: now })
+    // Preparation succeeded: an earlier delivery's retryable fault no longer
+    // describes this gate, and the staging lease has done its job (a retried
+    // review after a failed batch must not wait for it to lapse).
+    .set({
+      reviewStartedAt: now,
+      failureReason: null,
+      stagingLeaseId: null,
+      stagingLeaseUntil: null,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(githubWorkflowGates.id, gateId),
@@ -268,13 +475,28 @@ export async function resetGateReviewForRetry(
         eq(githubWorkflowGates.id, input.gateId),
         eq(githubWorkflowGates.organizationId, input.organizationId),
         eq(githubWorkflowGates.status, "pending"),
-        sql`exists (
-          select 1
-          from ${scans}
-          where ${scans.gateId} = ${input.gateId}
-            and ${scans.organizationId} = ${input.organizationId}
-            and ${scans.status} = 'failed'
-        )`,
+        // A failed package scan, or a preparation that failed before any scan
+        // existed (a staging fault whose queue retries ran out).
+        or(
+          sql`exists (
+            select 1
+            from ${scans}
+            where ${scans.gateId} = ${input.gateId}
+              and ${scans.organizationId} = ${input.organizationId}
+              and ${scans.status} = 'failed'
+          )`,
+          and(
+            isNotNull(githubWorkflowGates.failureReason),
+            isNull(githubWorkflowGates.scanId),
+            isNull(githubWorkflowGates.reviewStartedAt),
+            sql`not exists (
+              select 1
+              from ${scans}
+              where ${scans.gateId} = ${input.gateId}
+                and ${scans.organizationId} = ${input.organizationId}
+            )`,
+          ),
+        ),
         sql`not exists (
           select 1
           from ${scans}
@@ -418,6 +640,116 @@ export async function markGateDecidedForPackageAggregate(
   return row ? readGateRow(row) : null;
 }
 
+/** Records that GitHub accepted the gate's stored decision (`decision`). */
+export async function markGateDecisionDelivered(
+  db: AppDb,
+  gate: Pick<WorkflowGateRecord, "id" | "decision">,
+): Promise<void> {
+  if (!gate.decision) return;
+  // Scoped to the decision that was posted: a gate the cron re-decided since
+  // keeps its own delivery state.
+  await db
+    .update(githubWorkflowGates)
+    .set({ decisionDeliveredAt: new Date() })
+    .where(
+      and(eq(githubWorkflowGates.id, gate.id), eq(githubWorkflowGates.decision, gate.decision)),
+    );
+}
+
+/**
+ * Turn a recorded approval into a fail-closed rejection, before the decision
+ * is delivered to GitHub. Used when a release Drydock holds for the gate (PyPI
+ * PEP 694 mode B) could not be published after the approval won the gate CAS.
+ */
+export async function markGateApprovalFailed(
+  db: AppDb,
+  input: { gateId: string; organizationId: string; comment: string },
+): Promise<WorkflowGateRecord | null> {
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      status: "rejected",
+      decision: "rejected",
+      decisionComment: input.comment,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "approved"),
+        // An approval GitHub already acknowledged stays approved: rejecting it
+        // here would only make Drydock's record disagree with GitHub's.
+        isNull(githubWorkflowGates.decisionDeliveredAt),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  if (updated.length === 0) return null;
+  const [row] = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(eq(githubWorkflowGates.id, input.gateId))
+    .limit(1);
+  return row ? readGateRow(row) : null;
+}
+
+/**
+ * Fail-closed cleanup of a gate whose staging never reached a review: rejects
+ * it only while it is still pending with no scans at all (not even a failed
+ * batch's), no review started, and no live staging lease, so it can never
+ * overturn a reviewed or approved gate.
+ */
+export async function markGateStagingAbandoned(
+  db: AppDb,
+  input: {
+    gateId: string;
+    organizationId: string;
+    comment: string;
+    /** The `updatedAt` it was selected at: any write since (a retry, a lease) wins. */
+    observedUpdatedAt: Date;
+    /** The cron tick's clock, also used to judge the staging lease. */
+    now: Date;
+  },
+): Promise<WorkflowGateRecord | null> {
+  const now = input.now;
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({
+      status: "rejected",
+      decision: "rejected",
+      decisionComment: input.comment,
+      decidedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "pending"),
+        eq(githubWorkflowGates.updatedAt, input.observedUpdatedAt),
+        isNull(githubWorkflowGates.scanId),
+        isNull(githubWorkflowGates.reviewStartedAt),
+        sql`not exists (
+          select 1 from ${scans}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+        )`,
+        or(
+          isNull(githubWorkflowGates.stagingLeaseUntil),
+          lt(githubWorkflowGates.stagingLeaseUntil, now),
+        ),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  if (updated.length === 0) return null;
+  const [row] = await db
+    .select()
+    .from(githubWorkflowGates)
+    .where(eq(githubWorkflowGates.id, input.gateId))
+    .limit(1);
+  return row ? readGateRow(row) : null;
+}
+
 export async function markGateErrored(
   db: AppDb,
   gateId: string,
@@ -461,6 +793,7 @@ function readGateRow(row: typeof githubWorkflowGates.$inferSelect): WorkflowGate
     failureReason: row.failureReason,
     requestedAt: new Date(row.requestedAt),
     decidedAt: row.decidedAt ? new Date(row.decidedAt) : null,
+    decisionDeliveredAt: row.decisionDeliveredAt ? new Date(row.decisionDeliveredAt) : null,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };

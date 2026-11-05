@@ -40,10 +40,29 @@ export interface ReleaseProvenanceArtifact {
   sha256: string;
 }
 
+/**
+ * The reviewed bytes were staged on the registry for this gate (PyPI PEP 694
+ * mode B, a draft spec). Only the index origin is recorded: session and stage
+ * URLs are capabilities and are never persisted. A two-gate stage
+ * verification (mode A) records a `GateStageVerification` on its scan instead.
+ */
+export interface ReleaseStageBinding {
+  protocol: "pep694";
+  index: string;
+  /** The staged bytes are the gate artifact's own distributions. */
+  artifactBound: boolean;
+  /**
+   * Mode B: Drydock staged the reviewed bytes in a session it holds and
+   * publishes or cancels it on the human decision.
+   */
+  managed?: boolean;
+}
+
 export interface ReleaseProvenance {
   ecosystem: EcosystemId;
   mode: "workflow_gate";
   artifacts: ReleaseProvenanceArtifact[];
+  stage?: ReleaseStageBinding;
 }
 
 type BaselineSelectionSource =

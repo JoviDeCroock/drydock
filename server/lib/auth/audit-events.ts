@@ -32,6 +32,18 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
   return pkg ?? version;
 }
 
+function summarizePyPiProject(m: Record<string, unknown>): string | null {
+  const project = str(m.projectName);
+  const index = str(m.index);
+  return project && index ? `${project} on ${index.replace(/^https:\/\//, "")}` : project;
+}
+
+function summarizePyPiSession(m: Record<string, unknown>): string | null {
+  const project = str(m.projectName);
+  const version = str(m.version);
+  return project && version ? `${project} ${version}` : project;
+}
+
 const REGISTRY: Record<string, AuditEventDef> = {
   "npm_package.management_confirmed": {
     category: "organization",
@@ -248,6 +260,92 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "npm connection removed",
     severity: "notice",
     summarize: (m) => str(m.label) ?? str(m.registryUrl),
+  },
+  // PyPI PEP 694 mode B (preview): project-scoped upload tokens and the
+  // sessions Drydock holds with them. Metadata is project/index/version only.
+  "pypi_token.added": {
+    category: "security",
+    label: "PyPI project token added",
+    severity: "security",
+    summarize: summarizePyPiProject,
+  },
+  "pypi_token.rotated": {
+    category: "security",
+    label: "PyPI project token rotated",
+    severity: "security",
+    summarize: summarizePyPiProject,
+  },
+  "pypi_token.validated": {
+    category: "integration",
+    label: "PyPI project token checked",
+    severity: "info",
+    summarize: summarizePyPiProject,
+  },
+  "pypi_token.deleted": {
+    category: "security",
+    label: "PyPI project token removed",
+    severity: "security",
+    summarize: summarizePyPiProject,
+  },
+  "pypi_session.held": {
+    category: "release_decision",
+    label: "PyPI staged release held",
+    severity: "info",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.upload_failed": {
+    category: "release_decision",
+    label: "PyPI staged upload failed",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.published": {
+    category: "release_decision",
+    label: "PyPI staged release published",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.canceled": {
+    category: "release_decision",
+    label: "PyPI staged release canceled",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.stale": {
+    category: "security",
+    label: "PyPI staged release changed after review",
+    severity: "security",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.error": {
+    category: "release_decision",
+    label: "PyPI staged release failed to publish",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.expired": {
+    category: "release_decision",
+    label: "PyPI staged release expired",
+    severity: "info",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.externally_published": {
+    category: "security",
+    label: "PyPI staged release published outside Drydock",
+    severity: "security",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.token_removed": {
+    category: "release_decision",
+    label: "PyPI staged release dropped: token removed",
+    severity: "notice",
+    summarize: summarizePyPiSession,
+  },
+  "pypi_session.externally_canceled": {
+    category: "release_decision",
+    label: "PyPI staged release canceled outside Drydock",
+    severity: "notice",
+    summarize: summarizePyPiSession,
   },
   "github_app_installation.linked": {
     category: "integration",

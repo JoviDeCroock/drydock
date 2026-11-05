@@ -18,6 +18,7 @@ import {
   StagedPublishesFetchError,
 } from "./lib/ecosystems/npm/staged-publishes-discovery";
 import { mapWithConcurrency } from "./lib/platform/concurrency";
+import { runHeldReleaseUpkeep } from "./lib/workflow-gate-job";
 import {
   describeOperationalError,
   durationMsSince,
@@ -175,6 +176,19 @@ async function runPublicationMonitorCron(env: Cloudflare.Env) {
   }
 }
 
+// Upkeep for registry-side releases a gate holds (PyPI PEP 694 mode B): extend,
+// observe, retry cancels a maintainer already asked for, and settle approvals
+// whose request was interrupted. Never publishes.
+async function runHeldReleaseCron(env: Cloudflare.Env, ctx: ExecutionContext) {
+  try {
+    await runHeldReleaseUpkeep(env, ctx, createDb(env.DB));
+  } catch (err) {
+    emitOperationalEvent("error", "workflow_gate.held_release_cron_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 // Flat-window retention for the organization audit log. Runs each tick; a
 // bounded DELETE keeps the sweep cheap. Never let pruning failures abort the
 // discovery cron.
@@ -229,7 +243,7 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
 
 /**
  * The cron handler `server/index.ts` exports: the discovery sweep, public
- * publication monitoring, then retention.
+ * publication monitoring, held-release upkeep, then retention.
  */
 export async function scheduled(
   _event: ScheduledController,
@@ -248,6 +262,7 @@ export async function scheduled(
     });
   }
   await runPublicationMonitorCron(env);
+  await runHeldReleaseCron(env, ctx);
   try {
     await prunePublisherSetupJobs(createDb(env.DB), env.ARTIFACTS);
   } catch {

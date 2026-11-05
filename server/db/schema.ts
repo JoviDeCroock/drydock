@@ -4,6 +4,7 @@ import type {
   GithubAppInstallationStatus,
   InvitationStatus,
   NpmConnectionValidationStatus,
+  PyPiStageSessionState,
   ScanDecision,
   ScanSource,
   ScanStatus,
@@ -590,6 +591,15 @@ export const githubWorkflowGates = sqliteTable(
     failureReason: text("failure_reason"),
     requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    // When GitHub's callback last accepted the stored decision. Lets the
+    // held-release upkeep (PEP 694 mode B) tell an approval GitHub never
+    // received, which it may still settle, from one it must leave alone.
+    decisionDeliveredAt: integer("decision_delivered_at", { mode: "timestamp_ms" }),
+    // Per-gate lease for registry-side staging (PEP 694 mode B), which runs
+    // before the review claim: two deliveries of one gate must not delete each
+    // other's uploads. Expires so a crashed job cannot hold it forever.
+    stagingLeaseId: text("staging_lease_id"),
+    stagingLeaseUntil: integer("staging_lease_until", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -603,6 +613,94 @@ export const githubWorkflowGates = sqliteTable(
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
     scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
+  }),
+);
+
+// PEP 694 mode B (preview): a PyPI API token an organization stores so Drydock
+// can hold, publish, and cancel upload sessions for exactly one project on one
+// index. Encrypted at rest (secret-box purpose `pypi-project-token`); only the
+// fingerprint and last four characters are ever shown.
+export const pypiProjectTokens = sqliteTable(
+  "pypi_project_tokens",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // PEP 503-normalized project name the token is bound to.
+    projectName: text("project_name").notNull(),
+    // The one GitHub repository whose gates may stage with this token, chosen
+    // when the token is added. A gate from any other repository of the
+    // organization is refused, so it cannot take over this project's session.
+    repositoryId: integer("repository_id").notNull(),
+    repositoryFullName: text("repository_full_name").notNull(),
+    // Index origin (`https://pypi.org` / `https://test.pypi.org`).
+    indexOrigin: text("index_origin").notNull(),
+    tokenCiphertext: text("token_ciphertext").notNull(),
+    tokenNonce: text("token_nonce").notNull(),
+    tokenFingerprint: text("token_fingerprint").notNull(),
+    tokenLast4: text("token_last4"),
+    validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    orgProjectUniqueIdx: uniqueIndex("pypi_project_tokens_org_project_unique_idx").on(
+      table.organizationId,
+      table.indexOrigin,
+      table.projectName,
+    ),
+  }),
+);
+
+// A PEP 694 session Drydock holds for a workflow gate (mode B). The session's
+// links (and the stage URL, a read capability) are sealed together under
+// secret-box purpose `pypi-session-links`; `session_fingerprint` is a
+// truncated SHA-256 of the session URL for correlation only.
+export const pypiStageSessions = sqliteTable(
+  "pypi_stage_sessions",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    gateId: text("gate_id")
+      .notNull()
+      .references(() => githubWorkflowGates.id, { onDelete: "cascade" }),
+    tokenId: text("token_id").references(() => pypiProjectTokens.id, { onDelete: "set null" }),
+    projectName: text("project_name").notNull(),
+    version: text("version").notNull(),
+    indexOrigin: text("index_origin").notNull(),
+    linksCiphertext: text("links_ciphertext").notNull(),
+    linksNonce: text("links_nonce").notNull(),
+    sessionFingerprint: text("session_fingerprint").notNull(),
+    // [{ filename, sha256 }] of the staged files Drydock reviewed.
+    reviewedFilesJson: text("reviewed_files_json", { mode: "json" }).notNull(),
+    state: text("state").$type<PyPiStageSessionState>().notNull().default("held"),
+    stateDetail: text("state_detail"),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    lastExtendedAt: integer("last_extended_at", { mode: "timestamp_ms" }),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
+    // Set when an approval claims the session for publishing (held → publishing).
+    // A session never claimed cannot have let the approval reach GitHub, which
+    // is what makes the interrupted-approval recovery safe.
+    publishClaimedAt: integer("publish_claimed_at", { mode: "timestamp_ms" }),
+    // The maintainer whose approval started the publish, so a publish the cron
+    // resolves later is still attributed to them.
+    approvedByUserId: text("approved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    gateProjectUniqueIdx: uniqueIndex("pypi_stage_sessions_gate_project_unique_idx").on(
+      table.gateId,
+      table.projectName,
+    ),
+    stateIdx: index("pypi_stage_sessions_state_idx").on(table.state, table.lastCheckedAt),
   }),
 );
 

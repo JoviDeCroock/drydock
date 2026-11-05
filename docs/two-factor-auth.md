@@ -134,7 +134,9 @@ the signed-in user has `twoFactorEnabled`.
 This is scoped to the approval gate. The **staged-publish** decision (`POST
 /api/v1/scans/:id/decision`, and its batch form `POST /api/v1/scans/batch-approval`
 for low-risk reviews) is an audit record only — it never publishes or cancels a
-release on npm — and intentionally does **not** require a step-up. The decision dialog can open npm's staged-packages page in a new tab with
+release on npm — and intentionally does **not** require a step-up. Neither route
+accepts a workflow-gate package scan (409), so it cannot decide a gate package around
+the step-up. The decision dialog can open npm's staged-packages page in a new tab with
 `filterPackage` set to the reviewed package; the maintainer still approves or declines
 in npm with npm's own 2FA. That checkbox is sticky per browser
 (`drydock:open-npm-after-decision` in localStorage, `src/models/publish-preferences.ts`)

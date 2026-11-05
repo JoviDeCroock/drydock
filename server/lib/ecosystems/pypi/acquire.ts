@@ -76,6 +76,7 @@ export function acquireStagedPyPi(input: PyPiAdapterInput): {
       manifest: input.manifest,
       artifacts: preparedArtifacts.map((artifact) => artifact.summary),
       preparedArtifacts,
+      ...(input.stage ? { stage: input.stage } : {}),
     } satisfies PyPiAdapterDetails,
   };
 }

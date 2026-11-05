@@ -41,6 +41,7 @@ function workflowGate(overrides: Partial<PublicWorkflowGate> = {}): PublicWorkfl
     failureReason: null,
     organizationRequiresTwoFactor: false,
     packages: [],
+    heldReleases: [],
     requestedAt: "2026-06-09T00:00:00.000Z",
     decidedAt: null,
     createdAt: "2026-06-09T00:00:00.000Z",

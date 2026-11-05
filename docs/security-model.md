@@ -21,7 +21,7 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 
 ## Non-negotiable boundaries
 
-- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
+- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval. The one exception is opt-in and runs only inside a human decision: PEP 694 mode B (preview). There, a maintainer's approval of a PyPI gate makes Drydock publish the PEP 694 session it reviewed and re-verified, and a maintainer's rejection makes it cancel the session. Drydock never publishes on its own; its only unprompted cancel is the fail-closed cleanup of staging that never reached a review (see [PyPI project tokens](#pypi-project-tokens-pep-694-mode-b-preview)).
 - **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
 - **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
@@ -49,6 +49,87 @@ Implementation requirements:
 
 Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
 
+### PyPI project tokens (PEP 694 mode B, preview)
+
+This is a second, opt-in credential class, and unlike the npm token it can
+publish. An owner or admin may store a PyPI API token for **one** project on
+`https://pypi.org` or `https://test.pypi.org` (`pypi_project_tokens`). Drydock
+checks the token's macaroon caveats offline and refuses account-wide tokens,
+tokens for several or other projects, and tokens whose scope it cannot confirm.
+Storage follows the npm token rules: the token is sealed with a per-purpose
+HKDF key under `NPM_CONNECTIONS_ENCRYPTION_KEY` and never returned. Responses
+show only project, index, bound repository, last four characters, and
+fingerprint. Add, rotate,
+check, and remove are audit events, and every route needs a session, is scoped
+to the organization, and needs the integration-management role.
+
+Egress rule: only `PyPiSessionGateway`, which runs in the parent Worker, may
+attach the token. The token never enters the sandbox. The gateway attaches the
+token only to:
+
+- `POST` on the index's Upload 2.0 root itself, to create the session;
+- requests strictly under an allowlisted Upload 2.0 root (origin and path
+  prefix) on the origin of the session Drydock created: the session (GET,
+  DELETE), `links.publish`, `links.extend`, `links.upload`, each file's
+  `file-upload-session` and `complete` links, and the `http-post-bytes`
+  `file_url`.
+
+Every link comes from the index's own answers, never from the workflow, and
+must be https with no credentials, port, query, fragment, or encoded path
+separator. A redirect is an error and is never followed with the token.
+`pypi-stage.json` cannot name a session (`session-url` is refused): Drydock
+creates the session, uploads only bytes whose sha256 equals the reviewed
+digest, and holds the session only after the index's answer and the stage page
+bind it to exactly the reviewed files. The workflow holds no PyPI credential in
+mode B. PEP 694 has no stage-only credential, so mode A (two gates) leaves
+publish authority with the workflow's trusted publisher. Its stage job mints a
+publish-capable token only after a human approved gate 1's review, and gate 2
+links to that approval only through signed webhook fields (same organization,
+repository, and run). See the mode A residual risk in `pypi-workflow-gate.md`.
+
+Publish runs only after the maintainer approval that completes the gate has
+been recorded and the gate has left `pending` in a compare-and-set. No
+concurrent human rejection or automatic block can then land while the
+irreversible request is in flight. Each project's session and staged digests
+are re-verified right before its own claim, and a definite failure turns the
+approval into a fail-closed rejection. An approval GitHub has not acknowledged
+30 minutes later is delivered by the cron only once every held session is
+published, and otherwise becomes the same fail-closed rejection; the cron never
+publishes on its own, and sessions are claimed only while the gate is still
+approved. Cancel runs after a maintainer rejection, and in one fail-closed
+cleanup: the cron rejects a pending gate whose staging never reached a review
+(no scan, idle for 24 hours) and cancels its sessions, so unreviewed bytes do
+not stay on the index. Each token is bound to the one repository an admin
+chose when adding it; a gate of any other repository cannot stage with it, and
+staging never supersedes another repository's session. The session's URLs are
+capabilities, sealed at rest under their own purpose key. Only a fingerprint
+appears in plaintext.
+
+Residual risks:
+
+- A stored project token can upload and publish any release of its project. A
+  compromise of Drydock would expose every stored token, which is why the mode
+  is per project, project-scoped, opt-in, and removable.
+- Tokens are organization-wide, not bound to a repository. Any gated
+  repository of the organization can opt a project into Drydock-held staging
+  and, on a human approval, have its reviewed artifact published under that
+  project's token. Repository binding is a follow-up.
+- PEP 694 publish is not digest-pinned, so a file replaced in the session
+  between Drydock's last stage read and the publish request would be
+  published. The window is inherent to the draft protocol.
+- Sealed secrets (PyPI tokens, session links, like the Slack secrets) use
+  per-purpose HKDF keys with AES-GCM but no associated data binding them to
+  their row. A database writer could swap two sealed values of the same
+  purpose between rows; it could not read or forge them.
+- Workers traces are persisted at 100% sampling (`wrangler.jsonc`), and
+  automatic fetch spans record full URLs. Stage, staged-file, session, and
+  upload URLs are therefore stored in Cloudflare's trace storage (the token is a
+  header, not part of the URL). This is the same exposure as public-report
+  share tokens under the trace sampling decision and is tracked with it.
+
+See
+[`pypi-workflow-gate.md`](./pypi-workflow-gate.md#mode-b-drydock-creates-stages-and-holds-the-session-opt-in-per-project).
+
 ## Artifact handling and retention
 
 Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
@@ -74,6 +155,8 @@ The sandbox parses untrusted bytes under archive/file/expanded-size caps and ret
 
 - `NpmStageGateway` for npm staged tarballs, metadata, and previous-version tarballs;
 - PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
+- PEP 694 stage reads (preview) from the parent Worker, credential-free: index pages only on `https://pypi.org` / `https://test.pypi.org`, staged files only on that index's own origins, every redirect hop re-checked against the same allowlist, within a release-wide byte budget and a body deadline. Stage and staged-file URLs are capabilities: never sent into the sandbox, logged, or displayed, and in D1 only sealed (mode B). Workers traces still record them in fetch-span URLs (see the residual risks above). See `pypi-workflow-gate.md`;
+- `PyPiSessionGateway` for PEP 694 mode B session control (create, upload, status, publish, extend, cancel), the only holder of a PyPI project token (see above);
 - GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
 
 The sandbox must remain small and boring. Genuine parser bugs and malformed archives fail closed — the scan errors rather than returning partial evidence. Size is the one deliberate exception: tar and zip archives are parsed as streams (VSIX zips are the sub-exception — their yazl-packed entries carry sizes in data descriptors, so they buffer under the wire cap and are read via the central directory exactly as VS Code does), and a regular-file body larger than the per-file inspection limit, or one that no longer fits the archive's cumulative retention budget, is recorded as a `content-skipped` finding (path, declared size, a sha256 hashed over the bytes as they are discarded, and a native-format flag magic-byte sniffed from the first 64 discarded bytes — no text) so oversized prepackaged binaries can be reviewed without buffering them, and an extensionless Linux/macOS binary raises the same `file.native-artifact` finding as a Windows `.exe`. File counts degrade the same way: bodies past the `SANDBOX_MAX_FILES` full-inspection tier are recorded hash-only (manifests keep their bounded retention headroom regardless of position), and only the `SANDBOX_MAX_ENTRIES` hard walk cap fails the parse. The streamed hash lets the diff prove whether a skipped body is byte-identical to the published baseline; its contents are still never inspected, so a body over the per-file limit is surfaced as a medium finding, while bulk demotions (budget spent or tier filled) are surfaced as one aggregate `retention-tier` finding per cause — info when every hash-only body is byte-identical to the baseline, medium when any hash-only file was added or modified. The reviewed side's record decides (a file the baseline stored hash-only but this release inspected is not a gap), and a hash-only body that would carry no text sample even if retained does not escalate the notice: a sniffed native binary (`file.native-artifact` reports the change) or a source map / minified bundle the parser never samples, unless a manifest entrypoint names it or shipped code refers to it by file name, because then it is the code that runs. Changed-but-uninspected bytes must be verified out of band. Path-based filtering (skipping vendored/test/doc trees) is deliberately NOT used to stay under the caps: those are exactly the trees real supply-chain payloads hide in (xz's backdoor lived in build scripts and test fixtures), so coverage degrades to hash-only, never to unseen. The root npm manifest is always retained (or the scan fails closed); other manifests draw on bounded extra retention headroom. An oversized baseline (previous-version) archive degrades to a no-baseline scan rather than failing the staged review. On the anonymous public diff, a PyPI artifact that exceeds a sandbox cap is dropped from both sides of the pair (never one) and disclosed as a response notice; transient download failures stay fatal.

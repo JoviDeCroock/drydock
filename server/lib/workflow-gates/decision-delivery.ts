@@ -2,7 +2,7 @@ import type { AppDb } from "../../db/client";
 import type { GithubAppConfig } from "../github-app/config";
 import { getInstallationExternalId } from "../github-app/persistence";
 import { postDeploymentProtectionDecision } from "../github-app/webhook";
-import type { WorkflowGateRecord } from "../github-app/webhook-gates";
+import { type WorkflowGateRecord, markGateDecisionDelivered } from "../github-app/webhook-gates";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 
 /**
@@ -33,6 +33,14 @@ export async function deliverGateDecision(
     environment: gate.environment,
     state: gate.decision,
     comment: gate.decisionComment ?? "",
+  });
+  // GitHub has the decision; failing to record that must not trigger a retry.
+  await markGateDecisionDelivered(db, gate).catch((err: unknown) => {
+    emitOperationalEvent("warn", "github_workflow_gate.delivery_mark_failed", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      error: describeOperationalError(err),
+    });
   });
 }
 

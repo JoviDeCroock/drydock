@@ -313,11 +313,20 @@ function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
   const ecosystem = ecosystemLabel(provenance.ecosystem);
   return (
     <div class="flex flex-col gap-3">
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
-        SHA-256 digests recomputed from the reviewed {ecosystem} release bytes. The publish job
-        re-verifies these against the immutable artifact before upload, so the bytes reviewed are
-        the bytes published.
-      </p>
+      {provenance.stage ? (
+        <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+          SHA-256 digests recomputed from the reviewed workflow artifact. Drydock uploaded exactly
+          these bytes to a PEP 694 stage on {provenance.stage.index.replace(/^https:\/\//, "")} and
+          checked what the stage serves against them. PEP 694 is a draft standard, so this is a
+          preview.
+        </p>
+      ) : (
+        <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+          SHA-256 digests recomputed from the reviewed {ecosystem} release bytes. The publish job
+          re-verifies these against the immutable artifact before upload, so the bytes reviewed are
+          the bytes published.
+        </p>
+      )}
       <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
         {provenance.artifacts.map((artifact) => (
           <div key={artifact.path} class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">

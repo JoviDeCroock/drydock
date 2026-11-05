@@ -220,3 +220,93 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   }
   return { persisted: true as const };
 }
+
+/** The approved review-gate scan a later gate of the same run reuses. */
+export async function getLinkedGateReviewScan(
+  db: AppDb,
+  input: { organizationId: string; gateId: string; scanId: string },
+) {
+  const [row] = await db
+    .select()
+    .from(scans)
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.gateId, input.gateId),
+        eq(scans.source, "workflow_gate"),
+        eq(scans.status, "complete"),
+        eq(scans.decision, "publish"),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+type LinkedReviewSource = NonNullable<Awaited<ReturnType<typeof getLinkedGateReviewScan>>>;
+
+/**
+ * Complete a gate's queued package scan with a copy of an approved review
+ * (`source`) instead of a pipeline run: the same report, risk, and AI review,
+ * copied artifacts, and the caller's summary (the source summary plus this
+ * gate's verification record). The decision columns stay empty, because this
+ * gate needs its own human decision. Like `persistScan`, only a non-terminal
+ * row is completed.
+ */
+export async function persistLinkedGateScan(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    source: LinkedReviewSource;
+    summaryJson: unknown;
+    artifacts: ScanArtifactMetadata;
+  },
+): Promise<{ persisted: boolean }> {
+  const { source } = input;
+  const now = new Date();
+  const badgeRow = {
+    source: "workflow_gate",
+    packageName: source.packageName,
+    registryPackageName: null,
+    registryUrl: null,
+    summaryJson: input.summaryJson,
+  };
+  const updated = await db
+    .update(scans)
+    .set({
+      packageName: source.packageName,
+      stagedVersion: source.stagedVersion,
+      previousVersion: source.previousVersion,
+      risk: source.risk,
+      status: "complete",
+      summaryJson: input.summaryJson,
+      badgePackageKey: badgeReleaseLineKey(badgeRow),
+      badgePublic: isDefaultBadgePublic(badgeRow),
+      aiJson: source.aiJson,
+      errorJson: null,
+      changedFileCount: source.changedFileCount,
+      findingCount: source.findingCount,
+      riskSummaryJson: source.riskSummaryJson,
+      reportVersion: source.reportVersion,
+      reportDigest: source.reportDigest,
+      artifactStorageVersion: input.artifacts.artifactStorageVersion,
+      artifactManifestKey: input.artifacts.artifactManifestKey,
+      artifactManifestDigest: input.artifacts.artifactManifestDigest,
+      artifactManifestSize: input.artifacts.artifactManifestSize,
+      reportArtifactKey: input.artifacts.reportArtifactKey,
+      fileSamplesArtifactKey: input.artifacts.fileSamplesArtifactKey,
+      diffArtifactKey: input.artifacts.diffArtifactKey,
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    )
+    .returning({ id: scans.id });
+  return { persisted: updated.length > 0 };
+}

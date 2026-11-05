@@ -2,6 +2,8 @@ export { SCAN_FILE_SAMPLE_LIMIT, type ScanArtifactMetadata } from "./types";
 
 export { writeScanArtifactsWithRetry } from "./write";
 
+export { copyScanArtifacts } from "./copy";
+
 export {
   loadScanArtifactFile,
   loadScanArtifactMetadata,

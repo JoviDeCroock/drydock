@@ -29,6 +29,7 @@ import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
+import { PyPiProjectTokensSection } from "./PyPiProjectTokensSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { AuditLogSection } from "./AuditLogSection";
 import { SettingsNav } from "./SettingsNav";
@@ -204,6 +205,13 @@ export default function SettingsPage() {
                 </div>
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
+                </div>
+                <div id={SETTINGS_SECTION.pypiProjectTokens} class={SECTION_ANCHOR_CLASS}>
+                  {/* Loads its own data on mount; keyed so an organization switch reloads it. */}
+                  <PyPiProjectTokensSection
+                    key={organizations.active.value?.id}
+                    canManage={canManageIntegrations(organizations)}
+                  />
                 </div>
               </>
             ) : null}
