@@ -28,7 +28,7 @@ export function PublisherSetup() {
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
           Review the build in Drydock before GitHub Actions publishes it.
         </h2>
-        <ol class="m-0 pl-5 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
+        <ol class="m-0 pl-5 list-decimal text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
           <li>A build job builds and packs the release once and uploads the files.</li>
           <li>
             A GitHub Environment holds the publish job while you review those files in Drydock.

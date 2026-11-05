@@ -2,60 +2,69 @@ import { describe, expect, test } from "vitest";
 import type { PublisherSetupStatus } from "../server/lib/github-app/setup-types";
 import { setupStatusAgentSummary } from "../src/features/publisher-setup/agent-summary";
 
-function status(checks: PublisherSetupStatus["checks"]): PublisherSetupStatus {
+const checks: PublisherSetupStatus["checks"] = [
+  { label: "Release target", status: "passed", detail: "Mapped." },
+  { label: "Administrator bypass", status: "passed", detail: "Disabled." },
+  { label: "First release review", status: "pending", detail: "Run a real release." },
+];
+
+function status(overrides: Partial<PublisherSetupStatus> = {}): PublisherSetupStatus {
   return {
     repositoryFullName: "example/package",
     environment: "production",
     targetMapped: true,
     environmentExists: true,
     protectionEnabled: true,
-    administratorsCanBypass: null,
-    firstReview: {
-      gateId: "gate-secret-id",
-      scanId: "scan-secret-id",
-      status: "pending",
-      scanStatus: "pending",
-      requestedAt: "2026-11-05T00:00:00.000Z",
-      completedAt: null,
-    },
+    administratorsCanBypass: false,
+    firstReview: null,
     checks,
+    ...overrides,
   };
 }
 
-describe("setup status agent summary", () => {
-  test("lists every check and keeps an unfinished setup pending", () => {
-    const summary = setupStatusAgentSummary(
-      status([
-        { label: "Release target", status: "passed", detail: "Mapped." },
-        { label: "Administrator bypass", status: "unknown", detail: "Not reported." },
-        { label: "First release review", status: "pending", detail: "Run a real release." },
-      ]),
-    );
+const completedReview: PublisherSetupStatus["firstReview"] = {
+  gateId: "gate-secret-id",
+  scanId: "scan-secret-id",
+  status: "rejected",
+  scanStatus: "complete",
+  requestedAt: "2026-11-05T00:00:00.000Z",
+  completedAt: "2026-11-05T00:01:00.000Z",
+};
 
-    expect(summary).toBe(
+describe("setup status agent summary", () => {
+  test("lists every check and reports a configured setup as pending its first release", () => {
+    expect(setupStatusAgentSummary(status())).toBe(
       [
         "Drydock setup checks for example/package, environment production",
-        "1 of 3 passed.",
+        "2 of 3 passed.",
         "",
         "- Release target: passed. Mapped.",
-        "- Administrator bypass: unknown. Not reported.",
+        "- Administrator bypass: passed. Disabled.",
         "- First release review: pending. Run a real release.",
         "",
-        "Setup is not complete. Report it as ready, pending first release, until every check passes.",
+        "Configuration checks pass. Setup is ready, pending first release, until a real release completes review.",
       ].join("\n"),
     );
   });
 
-  test("reports completion only when every check passed and omits internal ids", () => {
-    const summary = setupStatusAgentSummary(
-      status([
-        { label: "Release target", status: "passed", detail: "Mapped." },
-        { label: "First release review", status: "passed", detail: "Reviewed." },
-      ]),
-    );
+  test.each([
+    ["no release target", { targetMapped: false }],
+    ["no environment", { environmentExists: false }],
+    ["no protection rule", { protectionEnabled: false }],
+    ["administrators can bypass", { administratorsCanBypass: true }],
+    ["bypass unknown", { administratorsCanBypass: null }],
+  ] as const)("is not ready with %s, even after a completed review", (_name, overrides) => {
+    const summary = setupStatusAgentSummary(status({ ...overrides, firstReview: completedReview }));
 
-    expect(summary).toContain("2 of 2 passed.");
-    expect(summary).toContain("Setup is complete");
+    expect(summary).toContain("Not ready");
+    expect(summary).not.toContain("ready, pending first release");
+  });
+
+  test("a completed review asks for confirmation instead of declaring setup complete", () => {
+    const summary = setupStatusAgentSummary(status({ firstReview: completedReview }));
+
+    expect(summary).toContain("Confirm it was a real release, not a test run");
+    expect(summary).not.toMatch(/setup is complete/i);
     expect(summary).not.toContain("secret-id");
   });
 });

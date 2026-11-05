@@ -55,8 +55,8 @@ in `src/features/agent-quickstart/ProjectInstruction.tsx`. The existing Docs cod
 block now lives in `src/components/CodeBlock.tsx`, with unchanged folding/copy
 behavior and fold arithmetic in `src/components/code-fold.ts`.
 
-Edit the source instruction and copy it to `public/agents/package-review.md`
-when its contract changes. Vite cannot import raw text from its public directory;
+Edit a source prompt or instruction in `src/features/agent-quickstart/` and copy
+it to the same name under `public/agents/` when its contract changes. Vite cannot import raw text from its public directory;
 keeping the import under `src/features/` also avoids the Worker-owned `/public`
 route in the local harness.
 

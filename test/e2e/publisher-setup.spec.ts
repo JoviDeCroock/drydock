@@ -431,6 +431,15 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
     ),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Open pre-publish review" })).toHaveCount(0);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy for your agent", exact: true }).click();
+  await expect(page.getByText("Copied.", { exact: true })).toBeVisible();
+  const agentSummary = await page.evaluate(() => navigator.clipboard.readText());
+  expect(agentSummary).toContain("Drydock setup checks for drydock/example, environment drydock");
+  expect(agentSummary).toContain(
+    "- First pre-publish review: pending. Run a release workflow to verify it.",
+  );
+  expect(agentSummary).toContain("ready, pending first release");
   observations.complete = true;
   await page.getByRole("button", { name: "Check setup status", exact: true }).click();
   await expect(

@@ -1,6 +1,6 @@
 # Guided publisher setup
 
-Organization owners and admins can open **Settings → Integrations → GitHub App → Set up a release workflow** to inspect an installed repository and prepare a draft pull request. One explicit action authorizes repository inspection, proposed workflow/script edits, independent review, and automatic draft PR creation. Maintainers review the resulting diff in GitHub before merging.
+Organization owners and admins can open **Settings → Integrations → GitHub App → Prepare a release workflow** to inspect an installed repository and prepare a draft pull request. One explicit action authorizes repository inspection, proposed workflow/script edits, independent review, and automatic draft PR creation. Maintainers review the resulting diff in GitHub before merging.
 
 ## Repository agents
 
@@ -51,7 +51,7 @@ The setup branch is created at the pinned base and then moved to the setup commi
 
 ## Finish setup
 
-Configure the selected GitHub Environment and Drydock custom deployment-protection rule, bind registry trusted publishing to that environment, and map the repository/environment/ecosystem/artifact as a release target. Existing conflicting mappings must be removed explicitly. Run a real release and refresh setup checks. A requested workflow gate, an observed Environment rule, and a completed pre-publication review are separate states; an already-published package review does not finish publisher setup. **Copy for your agent** on the checks copies them as plain text (repository, environment, each check's label, status and detail; no gate or scan IDs) so a maintainer can hand them to a coding agent following the `/agents` setup prompts. Drydock exposes no agent-callable setup API; the checks stay behind the owner/admin session.
+Configure the selected GitHub Environment and Drydock custom deployment-protection rule, bind registry trusted publishing to that environment, and map the repository/environment/ecosystem/artifact as a release target. Existing conflicting mappings must be removed explicitly. Run a real release and refresh setup checks. A requested workflow gate, an observed Environment rule, and a completed pre-publication review are separate states; an already-published package review does not finish publisher setup. **Copy for your agent** on the checks copies them as plain text (repository, environment, each check's label, status and detail; no gate or scan IDs), also shown under **Text for your agent**, so a maintainer can hand them to a coding agent following the `/agents` setup prompts. Its closing line says "not ready" until the target, Environment, protection rule and disabled admin bypass all pass. Because a completed first review does not show whether that run was a real, approved release, it asks the agent to confirm that rather than declaring setup complete. Drydock exposes no agent-callable setup API; the checks stay behind the owner/admin session.
 
 ## HTTP contract
 
