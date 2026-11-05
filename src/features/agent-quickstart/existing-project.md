@@ -1,34 +1,56 @@
-# Retrofit Drydock into an existing release process
+# Add Drydock to an existing project
 
-Act as my publishing engineer. Audit this repository and implement the smallest review-before-publish change that preserves its real release semantics. Deliver a verified local diff or, if authorized, a draft PR—not merely a plan. Do not publish to prove setup without separate explicit authorization.
+Act as my publishing engineer. We will add Drydock review to this repository's release process together, one checkpoint at a time. Stop at each checkpoint and wait for my answer. Do not publish, change remote settings, or open a pull request unless I authorize that step.
 
-## Establish the contract
+Read current documentation instead of relying on memory:
 
-Read repository instructions and trace the release call graph: workflows, reusable workflows/actions, scripts, manifests, lifecycle hooks, registry configuration, versioning and package selection. Preserve triggers, Changesets/custom tooling, monorepo dependency order, independent versions, access, dist-tags/prerelease channels, signing/provenance, and Git tags/releases. Explain necessary deviations before editing; do not replace the process with a generic template.
+- Drydock: [guide](https://drydock.org/docs), [workflow gates](https://github.com/JoviDeCroock/drydock/blob/main/docs/workflow-gates.md), [guided publisher setup](https://github.com/JoviDeCroock/drydock/blob/main/docs/publisher-setup.md), npm [staging](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-staged-publishing.md) and [trusted publishing](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md).
+- Registries and GitHub: npm [staged publishing](https://docs.npmjs.com/staged-publishing/) and [trusted publishers](https://docs.npmjs.com/trusted-publishers/), [PyPI trusted publishers](https://docs.pypi.org/trusted-publishers/), [VS Code publishing](https://code.visualstudio.com/api/working-with-extensions/publishing-extension), [GitHub environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 
-Read current authoritative documentation, not remembered commands:
+Drydock has no CLI or MCP server for setup. If a link is unreachable or contradicts this prompt, tell me instead of guessing.
 
-- [Drydock guide](https://drydock.org/docs) and current-main [workflow gates](https://github.com/JoviDeCroock/drydock/blob/main/docs/workflow-gates.md), [publisher setup](https://github.com/JoviDeCroock/drydock/blob/main/docs/publisher-setup.md).
-- For npm, [staging](https://docs.npmjs.com/staged-publishing/), [trusted publishing](https://docs.npmjs.com/trusted-publishers/), and Drydock's [staging](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-staged-publishing.md) / [publisher pins](https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md).
-- For PyPI, [trusted publishers](https://docs.pypi.org/trusted-publishers/); for VS Code, [publishing extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension).
-- [GitHub deployment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+## 1. Explain how this project releases today
 
-Follow relevant links for current prerequisites, plan/repository eligibility and tool versions. If inaccessible or contradictory, report the blocker; do not invent a Drydock CLI/MCP or use features from unmerged PRs.
+Trace the real release path: workflows and reusable actions, scripts, manifests, lifecycle hooks, registry configuration, versioning (Changesets or custom tooling), package selection, dist-tags or channels, provenance, and Git tags. List every way a release can reach the registry: CI jobs, manual runs, local `npm publish` or `twine upload`, tokens, and trusted publishers. Record owners and scopes, never secret values. Mark what you could not inspect.
 
-Inventory ALL publishing authority and bypasses: registry owners/publishers, tokens and trusted publishers, CI secrets and permissions, every release workflow/manual path, GitHub/Drydock admins, App installations, environment bypasses, workflow/ruleset editors and account recovery. Record scope and owners, never secret values. Distinguish inspected evidence from inaccessible settings.
+Summarize this for me in plain language, then stop.
 
-Recommend Workflow Gate for enforced holds on configured npm/PyPI/VS Code jobs; npm Stage Watchtower is advisory, not a required npm approval. Gated staging combines both. npm staging requires an existing package; never bootstrap one silently. Document interactive npm password/2FA/OTP publication and admins' ability to remove controls. Drydock never publishes or guarantees package safety; AI review is advisory.
+## 2. Choose the Drydock mode with me
 
-## Implement with approval
+Explain the options that fit this project and recommend one:
 
-Confirm maintainer authorization for security/publishing settings, GitHub writes (including branches/PRs/App grants), external services/costs and release execution. Carry existing authorization forward. Default to local edits; never silently change rules, revoke credentials or publish. Keep secrets out of chat, files and logs; use approved secret-entry/storage surfaces.
+- **Workflow Gate (GitHub Actions), enforced.** A GitHub Environment holds the protected publish job until I approve the build artifacts in Drydock. Works for npm, PyPI, and VS Code.
+- **Stage Watchtower, advisory, npm only.** Drydock reviews packages after `npm stage publish`. I still approve in npm, and npm does not require Drydock's decision.
+- **Gated staging, npm.** The gated job runs `npm stage publish`, so Drydock reviews before npm holds the package.
 
-Split trusted source build/pack from protected publication. Build each selected artifact once; upload immutable current-run candidates and SHA-256 checksums before review. Map repository/environment/ecosystem/artifact to a Drydock release target. The protected job downloads into a dedicated directory, verifies every intended artifact against checksums and Drydock provenance digests, and publishes only those files—no rebuild, repack or package lifecycle execution after review. Preserve multi-package selection and channels explicitly.
+npm cannot stage a package's first version. A gate covers only the configured job; repository admins can bypass or remove it, and other publishing paths from step 1 stay open until I close them. Drydock never publishes, and its AI review is advisory.
 
-Keep publishing credentials/OIDC in the protected job with least privilege. With approval, configure the App/environment rule, disable administrator bypass, restrict deployment refs, protect workflow edits, and pin trusted publishers to the exact repository/workflow/environment. For npm, consider disallowing tokens and stage-only grants; for VS Code, scope Marketplace credentials appropriately. Never execute untrusted candidate contents, install their dependencies, import them or render active content while reviewing.
+Wait for my choice.
 
-## Verify and hand off
+## 3. Prepare the change
 
-Review the full diff and release semantics independently; run safe static/native checks. With authorization, demonstrate a rejected/pending gate cannot reach publication and checksum drift fails closed using a non-publishing test. Watchtower-only has no gate: mark that check inapplicable, not passed. Read back authorized remote changes.
+If the Drydock GitHub App is installed and I am an owner or admin of the Drydock organization, Drydock can draft this change itself: Settings → Integrations → GitHub App → Set up a release workflow. Offer that first. It opens a draft PR checked against Drydock's validation rules. Then review that PR with me against step 1 instead of writing a second version.
 
-Return the diff/PR, evidence and documentation consulted, authority/bypass inventory, and unresolved manual settings with owners. Only after explicit release authorization, collect the first real pre-publication review, decision, run, artifact digests and registry outcome. A PR, configured rule or post-publication scan alone is not completed onboarding; absent real-release evidence, label it pending.
+Otherwise, edit locally. Keep the existing triggers, versioning, package selection, channels, and provenance. Split the workflow into:
+
+- a build job that builds and packs each artifact once, then uploads the files and `SHA256SUMS`;
+- a protected publish job that targets the GitHub Environment, downloads only those files into a dedicated directory, verifies the checksums, and publishes exactly those files without rebuilding, repacking, or running lifecycle scripts.
+
+Keep registry credentials and `id-token: write` in the protected job only, and hold that job to the protected-job rules in the guided setup document: allowed actions, commands, permissions, and credentials. Explain any change to release behavior before making it. Show me the diff, then stop.
+
+## 4. Hand me the settings only I can change
+
+Give me a checklist with the exact values from this repository:
+
+- install the Drydock GitHub App on this repository;
+- create the GitHub Environment, add Drydock as its protection rule, turn off administrator bypass, and limit which branches or tags can deploy;
+- in Drydock settings, map the repository and environment to a release target;
+- pin the registry's trusted publisher to this repository, workflow, and environment, then remove or restrict the other publishing paths from step 1.
+
+Never ask me to paste secrets into this conversation, a file, or a log.
+
+## 5. Verify, then wait for the first release
+
+Review the full diff again and run the project's static checks. If I authorize a test run, show that a pending or rejected gate stops the publish job and that a changed artifact fails the checksum check. Do not publish to test this. With Watchtower only, say that there is no enforcing gate.
+
+Report setup as "ready, pending first release" until a real release has gone through a Drydock review before publication. A merged PR, an enabled rule, or a scan of a package that is already published does not complete setup.

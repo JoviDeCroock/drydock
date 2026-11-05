@@ -8,14 +8,14 @@ const setupPrompts = [
     id: "existing-project",
     title: "Add Drydock to an existing project",
     description:
-      "Map the release flow you already use, then prepare the smallest change that puts artifact review in the right place. Preserve package selection, prereleases, and release tooling.",
+      "Your agent maps the release flow you already have, helps you choose a mode, then reviews the draft PR from Drydock's guided setup or prepares the change locally.",
     prompt: existingProject,
   },
   {
     id: "new-project",
     title: "Set up publishing for a new project",
     description:
-      "Design a release flow around one build, exact artifact review, and a protected publish job. Leave account configuration and the first real release for explicit maintainer approval.",
+      "Your agent scaffolds the package and a two-job release workflow, then hands you the registry, GitHub, and Drydock settings that only you can change.",
     prompt: newProject,
   },
 ];
@@ -26,28 +26,26 @@ export function PublisherSetup() {
       <div class="flex flex-col gap-3">
         <SectionLabel as="p">Publisher setup</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-          Start with your project, not another workflow template.
+          Review the build in Drydock before GitHub Actions publishes it.
         </h2>
-        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          Copy the prompt that fits your repository into your coding agent. Work through its
-          findings together before changing release authority. These are setup instructions, not an
-          API or permission to publish.
-        </p>
         <ol class="m-0 pl-5 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          <li>Build and pack the release once.</li>
-          <li>Upload those candidate artifacts for Drydock to review.</li>
+          <li>A build job builds and packs the release once and uploads the files.</li>
           <li>
-            Keep the configured GitHub publish job held while a maintainer reviews in Drydock.
+            A GitHub Environment holds the publish job while you review those files in Drydock.
           </li>
           <li>
-            After approval, publish the same downloaded, digest-verified files without rebuilding.
+            After you approve, the publish job verifies the checksums and publishes the same files.
           </li>
         </ol>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-          Prefer a <a href="/docs#workflow-gating">Workflow Gate — enforced</a> for the configured
-          protected job. <a href="/docs#staged-publishing">Stage Watchtower — advisory</a> reviews
-          npm staging but cannot block npm approval. Neither removes every alternate publishing
-          path.
+          That is the <a href="/docs#workflow-gating">Workflow Gate — enforced</a>, Drydock's GitHub
+          Actions integration for npm, PyPI, and VS Code. For npm,{" "}
+          <a href="/docs#staged-publishing">Stage Watchtower — advisory</a> reviews packages you
+          stage instead, but npm approval does not wait for Drydock.
+        </p>
+        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
+          Copy the prompt that fits your repository into your coding agent. It walks you through the
+          setup in checkpoints and stops before anything that needs your approval.
         </p>
       </div>
       {setupPrompts.map(({ id, title, description, prompt }) => (

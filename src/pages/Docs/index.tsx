@@ -304,7 +304,7 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Choose a release path</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Choose npm staging or a GitHub workflow gate.
+                Choose npm staging or a GitHub Actions workflow gate.
               </h2>
               <Prose>
                 Both paths produce the same kind of report. npm holds a private staged package;
@@ -330,7 +330,7 @@ export default function DocsPage() {
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
+                  bestFor="Releases from GitHub Actions: PyPI, npm, VS Code, and monorepos."
                   heldBy="A GitHub Environment holds the publish job."
                   decision="You approve or reject the job from Drydock."
                 />
@@ -842,31 +842,35 @@ export default function DocsPage() {
             </Callout>
           </section>
 
-          <section id="agent-package-review" class="flex flex-col gap-4 scroll-mt-6">
-            <SectionLabel as="p">Coding agents</SectionLabel>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              Set up your release flow with an agent.
-            </h2>
-            <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">
-              Start with one of two maintainer-and-agent prompts: audit and adapt an existing
-              publishing workflow, or design secure publishing for a new project. Both distinguish
-              workflow enforcement from advisory review and leave release authority with you.
-            </p>
-            <div class="flex flex-wrap gap-3">
-              <LinkButton href="/agents#existing-project" variant="secondary" size="sm">
-                Existing project prompt
-              </LinkButton>
-              <LinkButton href="/agents#new-project" variant="secondary" size="sm">
-                New project prompt
-              </LinkButton>
+          <section id="agent-package-review" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Coding agents</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                Work through setup with your coding agent.
+              </h2>
+              <Prose>
+                Copy a prompt into your agent and it walks you through the setup in checkpoints: map
+                how the project releases, choose a path, prepare the workflow change, then hand you
+                the settings only you can change. For an existing workflow, it can review the draft
+                PR from Drydock's guided setup instead of writing its own.
+              </Prose>
             </div>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              Ask your agent to read the published upgrade.
-            </h2>
-            <ProjectInstruction />
-            <LinkButton href="/agents" variant="secondary" size="sm" class="self-start">
-              Read the agent quickstart
-            </LinkButton>
+            <Subsection title="Set up publishing">
+              <div class="flex flex-wrap gap-3">
+                <LinkButton href="/agents#existing-project" variant="secondary" size="sm">
+                  Existing project prompt
+                </LinkButton>
+                <LinkButton href="/agents#new-project" variant="secondary" size="sm">
+                  New project prompt
+                </LinkButton>
+              </div>
+            </Subsection>
+            <Subsection title="Review dependency upgrades">
+              <ProjectInstruction />
+              <LinkButton href="/agents" variant="secondary" size="sm" class="self-start">
+                Read the agent quickstart
+              </LinkButton>
+            </Subsection>
           </section>
 
           <section class="border-t border-border pt-10">

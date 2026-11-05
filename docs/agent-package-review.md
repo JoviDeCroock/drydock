@@ -1,11 +1,22 @@
 # Agent package-review quickstart
 
 The public `/agents` guide has two publisher setup prompts—one for an existing
-project and one for a new project—and a dependency-review instruction. The setup
-prompts guide a maintainer and coding agent through repository discovery,
-release-path selection, a reviewable workflow change, and explicit checks before
-claiming enforcement. They grant no permission to change credentials or settings,
-open a PR, or publish a release. A draft workflow is not a completed setup.
+project and one for a new project—and a dependency-review instruction. Each setup
+prompt is a walkthrough with five checkpoints where the agent stops for the
+maintainer: explain the current or intended release contract, choose a mode
+(Workflow Gate, Stage Watchtower, or gated staging), prepare the workflow change,
+hand over the settings only the maintainer can change, and verify without
+publishing. They grant no permission to change credentials or settings, open a
+PR, or publish a release. Setup stays "ready, pending first release" until a
+real release gets a pre-publication review.
+
+Agents and the in-product guided setup ([`publisher-setup.md`](./publisher-setup.md))
+should reach the same result. The existing-project prompt offers the guided
+setup's draft PR first and has the agent review it rather than write a second
+version. Local edits by either prompt hold the protected publish job to that document's
+protected-job rules.
+Drydock has no setup CLI or MCP server, so the App installation, Environment
+rule, release-target mapping and setup checks remain maintainer steps in the UI.
 
 The dependency-review recipe compares exact published npm/PyPI dependency upgrades
 through the existing anonymous package-diff API. This guide adds no backend

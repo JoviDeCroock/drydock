@@ -7,8 +7,8 @@
 ## Coding agents
 
 - [Agent quickstart](https://drydock.org/agents): Choose a publisher setup prompt for an existing or new project, or review dependency upgrades.
-- [Existing project setup prompt](https://drydock.org/agents/existing-project.md): Audit the actual release flow and prepare the smallest Drydock integration, with maintainer-approved authority changes and verification evidence.
-- [New project setup prompt](https://drydock.org/agents/new-project.md): Design build-once publishing with exact-artifact review, a configured workflow gate, and explicit human approval boundaries.
+- [Existing project setup prompt](https://drydock.org/agents/existing-project.md): Walk a maintainer through adding a Drydock review to the current release workflow, starting from the guided setup's draft PR when the GitHub App is installed.
+- [New project setup prompt](https://drydock.org/agents/new-project.md): Walk a maintainer through a build-once GitHub Actions release whose publish job waits for approval in Drydock.
 - [Project instruction](https://drydock.org/agents/package-review.md): Copyable AGENTS.md instruction, query parameters, response fields, limits, and handling for missing or untrusted evidence.
 - [Package diff](https://drydock.org/diff): Human-readable comparisons of public npm, PyPI, and atpm releases, without an account.
 
@@ -25,5 +25,5 @@ organization APIs and unlisted report links have separate access boundaries.
 
 Publisher setup is different: it requires maintainer-owned GitHub/registry
 configuration and appropriate account access. Setup prompts grant no authority.
-Workflow Gates hold only the configured protected job; npm Stage Watchtower
+Workflow Gates (the GitHub Actions integration) hold only the configured protected job; npm Stage Watchtower
 is advisory and cannot block npm approval or every alternate publish path.
