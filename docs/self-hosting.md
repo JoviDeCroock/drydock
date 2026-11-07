@@ -170,7 +170,7 @@ Keep the `*/15 * * * *` cron trigger: it runs staged-publish discovery, the publ
 
 ### Workflow gates
 
-Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
+Needs a GitHub App with deployment-protection webhooks, the **Actions: read** and **Deployments: read and write** repository permissions, and the GitHub App secrets and vars above; map repositories and environments in Settings. Each installation token Drydock mints asks for one repository and only the permission its call needs, so an App missing one of these fails that call rather than falling back to a broader token. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
 
 ### Dependency review
 

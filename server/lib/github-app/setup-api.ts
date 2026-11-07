@@ -1,3 +1,4 @@
+import { revokeInstallationAccessToken } from "./api";
 import { githubHeaders } from "./client";
 import type { GithubAppConfig } from "./config";
 import { generateGithubAppJwt } from "./jwt";
@@ -198,17 +199,7 @@ export async function createSetupClient(
     path,
     /** Best-effort early expiry of this installation token; it otherwise lives for an hour. */
     async revokeToken(): Promise<void> {
-      try {
-        const response = await reliableFetch("https://api.github.com/installation/token", {
-          method: "DELETE",
-          redirect: "manual",
-          headers: githubHeaders(token),
-          attempts: 1,
-        });
-        await response.body?.cancel();
-      } catch {
-        /* The token still expires on GitHub's schedule. */
-      }
+      await revokeInstallationAccessToken(token);
     },
     async request(suffix: string, init: RequestInit = {}, allowMissing = false): Promise<unknown> {
       const response = await reliableFetch(`https://api.github.com${path}${suffix}`, {

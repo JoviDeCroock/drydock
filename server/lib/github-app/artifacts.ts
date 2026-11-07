@@ -2,7 +2,7 @@ import { readStreamBounded } from "../tar-parser.js";
 import { parseContentLength } from "../platform/bounded-body";
 import { sha1Hex, sha256Hex } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
-import { getInstallationAccessToken } from "./api";
+import { withInstallationToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { GITHUB_USER_AGENT, githubHeaders, paginate } from "./client";
 import { extractOuterZipEntries } from "./artifacts-zip";
@@ -12,6 +12,8 @@ import { extractOuterZipEntries } from "./artifacts-zip";
 export interface WorkflowArtifactSource {
   installationExternalId: string;
   repositoryFullName: string;
+  /** GitHub's id for the repository; scopes the token so a rename cannot break it. */
+  repositoryId?: number;
   runId: number;
   /** Exact GitHub Actions artifact name selected by a release-target override. */
   artifactName?: string;
@@ -340,8 +342,18 @@ export async function processReleaseBundleForGate<TArtifact>(
   classifyArtifact: ClassifyArtifact,
   processArtifact: (artifact: ResolvedReleaseFile) => Promise<TArtifact>,
 ): Promise<ResolvedReleaseBundle<TArtifact>> {
-  const token = await getInstallationAccessToken(config, source.installationExternalId);
-  return processReleaseBundleWithToken(token, source, classifyArtifact, processArtifact);
+  const repositoryName = source.repositoryFullName.split("/")[1] ?? "";
+  return withInstallationToken(
+    config,
+    source.installationExternalId,
+    {
+      ...(source.repositoryId
+        ? { repositoryIds: [source.repositoryId] }
+        : { repositories: [repositoryName] }),
+      permissions: { actions: "read" },
+    },
+    (token) => processReleaseBundleWithToken(token, source, classifyArtifact, processArtifact),
+  );
 }
 
 // ── GitHub API: list + download ──────────────────────────────────────────────

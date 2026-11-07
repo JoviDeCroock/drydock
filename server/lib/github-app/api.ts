@@ -55,23 +55,54 @@ export async function fetchInstallationMetadata(
   };
 }
 
-export async function getInstallationAccessToken(
+type InstallationTokenPermission =
+  | "actions"
+  | "checks"
+  | "contents"
+  | "deployments"
+  | "metadata"
+  | "pull_requests";
+
+/**
+ * What one installation token may reach. GitHub otherwise mints a token for
+ * every repository and every permission the installation holds, so a read-only
+ * lookup would carry the App's full write grants for an hour. Scope is required
+ * so no caller can mint that by omission.
+ */
+export interface InstallationTokenScope {
+  /** Rename-proof; prefer over `repositories` whenever the stored id is known. */
+  repositoryIds?: number[];
+  /** Repository names (no owner) in the installation's account. */
+  repositories?: string[];
+  /** Omit repositories only for installation-wide listings. */
+  permissions: Partial<Record<InstallationTokenPermission, "read" | "write">>;
+}
+
+async function getInstallationAccessToken(
   config: GithubAppConfig,
   installationId: string,
+  scope: InstallationTokenScope,
 ): Promise<string> {
   const jwt = await generateGithubAppJwt(config);
+  const body: Record<string, unknown> = { permissions: scope.permissions };
+  if (scope.repositoryIds?.length) body.repository_ids = scope.repositoryIds;
+  else if (scope.repositories?.length) body.repositories = scope.repositories;
   const response = await reliableFetch(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
       method: "POST",
-      headers: githubHeaders(jwt),
+      headers: githubHeaders(jwt, { "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
       retryMethods: ["POST"],
     },
   );
   if (!response.ok) {
     const text = await response.text().catch(() => "");
+    // GitHub answers 422 when the installation lacks a requested repository or
+    // permission. Unscoped, the same gap surfaced later as a 404 from the
+    // repository itself, so it keeps that error code.
     throw new GithubAppValidationError(
-      "installation_inactive",
+      response.status === 422 ? "repository_not_accessible" : "installation_inactive",
       `installation access token request failed (${response.status}): ${text.slice(0, 200)}`,
     );
   }
@@ -83,6 +114,36 @@ export async function getInstallationAccessToken(
     );
   }
   return data.token;
+}
+
+/** Best-effort early expiry; an unrevoked token still dies on GitHub's one-hour schedule. */
+export async function revokeInstallationAccessToken(token: string): Promise<void> {
+  try {
+    const response = await reliableFetch("https://api.github.com/installation/token", {
+      method: "DELETE",
+      redirect: "manual",
+      headers: githubHeaders(token),
+      attempts: 1,
+    });
+    await response.body?.cancel();
+  } catch {
+    /* Expiry still bounds the token. */
+  }
+}
+
+/** Mint a scoped token, hand it to `use`, and revoke it once `use` settles. */
+export async function withInstallationToken<T>(
+  config: GithubAppConfig,
+  installationId: string,
+  scope: InstallationTokenScope,
+  use: (token: string) => Promise<T>,
+): Promise<T> {
+  const token = await getInstallationAccessToken(config, installationId, scope);
+  try {
+    return await use(token);
+  } finally {
+    await revokeInstallationAccessToken(token);
+  }
 }
 
 export interface GithubRepositoryRef {
@@ -103,29 +164,35 @@ export async function fetchRepository(
       "repositoryFullName must be in owner/repo form",
     );
   }
-  const token = await getInstallationAccessToken(config, installationId);
   const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
-  const response = await reliableFetch(`https://api.github.com/repos/${repositoryPath}`, {
-    headers: githubHeaders(token),
-  });
-  if (response.status === 404) {
-    throw new GithubAppValidationError(
-      "repository_not_accessible",
-      `repository ${fullName} is not accessible to installation ${installationId}`,
-    );
-  }
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new GithubAppValidationError(
-      "repository_not_accessible",
-      `repository ${fullName} lookup failed (${response.status}): ${text.slice(0, 200)}`,
-    );
-  }
-  const data = (await response.json()) as {
-    id?: number;
-    full_name?: string;
-    default_branch?: string;
-  };
+  const data = await withInstallationToken(
+    config,
+    installationId,
+    { repositories: [repository.name], permissions: { metadata: "read" } },
+    async (token) => {
+      const response = await reliableFetch(`https://api.github.com/repos/${repositoryPath}`, {
+        headers: githubHeaders(token),
+      });
+      if (response.status === 404) {
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `repository ${fullName} is not accessible to installation ${installationId}`,
+        );
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `repository ${fullName} lookup failed (${response.status}): ${text.slice(0, 200)}`,
+        );
+      }
+      return (await response.json()) as {
+        id?: number;
+        full_name?: string;
+        default_branch?: string;
+      };
+    },
+  );
   if (typeof data.id !== "number" || typeof data.full_name !== "string") {
     throw new GithubAppValidationError(
       "repository_not_accessible",
@@ -139,38 +206,45 @@ export async function listInstallationRepositories(
   config: GithubAppConfig,
   installationId: string,
 ): Promise<GithubRepositoryRef[]> {
-  const token = await getInstallationAccessToken(config, installationId);
   const repositories: GithubRepositoryRef[] = [];
   // 50 pages × 100 = 5,000 repositories. An installation is one account, and a
   // picker listing more than that is unusable anyway; the cap exists so a
   // pathological account cannot pin a Worker invocation on pagination.
-  const { complete } = await paginate(
-    "https://api.github.com/installation/repositories?per_page=100",
-    { headers: githubHeaders(token), maxPages: 50 },
-    async (response) => {
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new GithubAppValidationError(
-          "repository_not_accessible",
-          `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
-        );
-      }
-      const data = (await response.json()) as {
-        repositories?: {
-          id?: number;
-          full_name?: string;
-          default_branch?: string;
-        }[];
-      };
-      for (const repo of data.repositories ?? []) {
-        if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
-        repositories.push({
-          id: repo.id,
-          fullName: repo.full_name,
-          defaultBranch: typeof repo.default_branch === "string" ? repo.default_branch : undefined,
-        });
-      }
-    },
+  // Listing needs no repository scope, only the always-granted metadata read.
+  const { complete } = await withInstallationToken(
+    config,
+    installationId,
+    { permissions: { metadata: "read" } },
+    (token) =>
+      paginate(
+        "https://api.github.com/installation/repositories?per_page=100",
+        { headers: githubHeaders(token), maxPages: 50 },
+        async (response) => {
+          if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            throw new GithubAppValidationError(
+              "repository_not_accessible",
+              `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
+            );
+          }
+          const data = (await response.json()) as {
+            repositories?: {
+              id?: number;
+              full_name?: string;
+              default_branch?: string;
+            }[];
+          };
+          for (const repo of data.repositories ?? []) {
+            if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
+            repositories.push({
+              id: repo.id,
+              fullName: repo.full_name,
+              defaultBranch:
+                typeof repo.default_branch === "string" ? repo.default_branch : undefined,
+            });
+          }
+        },
+      ),
   );
 
   if (!complete) {
@@ -201,35 +275,41 @@ export async function listRepositoryEnvironments(
       "repositoryFullName must be in owner/repo form",
     );
   }
-  const token = await getInstallationAccessToken(config, installationId);
   const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
   const environments: GithubEnvironmentRef[] = [];
-  await paginate(
-    `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`,
-    { headers: githubHeaders(token), maxPages: 10 },
-    async (response) => {
-      if (response.status === 404) {
-        throw new GithubAppValidationError(
-          "repository_not_accessible",
-          `repository ${fullName} is not accessible to installation ${installationId}`,
-        );
-      }
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new GithubAppValidationError(
-          "repository_not_accessible",
-          `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
-        );
-      }
-      const data = (await response.json()) as {
-        environments?: { name?: string }[];
-      };
-      for (const environment of data.environments ?? []) {
-        if (typeof environment.name === "string" && environment.name) {
-          environments.push({ name: environment.name });
-        }
-      }
-    },
+  // GitHub files "List environments" under the Actions permission.
+  await withInstallationToken(
+    config,
+    installationId,
+    { repositories: [repository.name], permissions: { actions: "read" } },
+    (token) =>
+      paginate(
+        `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`,
+        { headers: githubHeaders(token), maxPages: 10 },
+        async (response) => {
+          if (response.status === 404) {
+            throw new GithubAppValidationError(
+              "repository_not_accessible",
+              `repository ${fullName} is not accessible to installation ${installationId}`,
+            );
+          }
+          if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            throw new GithubAppValidationError(
+              "repository_not_accessible",
+              `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
+            );
+          }
+          const data = (await response.json()) as {
+            environments?: { name?: string }[];
+          };
+          for (const environment of data.environments ?? []) {
+            if (typeof environment.name === "string" && environment.name) {
+              environments.push({ name: environment.name });
+            }
+          }
+        },
+      ),
   );
 
   return environments;

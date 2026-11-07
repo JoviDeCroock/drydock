@@ -131,7 +131,7 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 |---|---|---|---|---|
 |npm staged tarball/metadata/baseline|Organization's npm registry, allowlisted staged/metadata/tarball endpoints|Org npm token, attached only by `NpmStageGateway`|Runtime default|`server/lib/sandbox.ts`|
 |PyPI artifacts|`https://files.pythonhosted.org` only|None|—|[PyPI workflow gate](./pypi-workflow-gate.md)|
-|GitHub artifacts|Scoped to the workflow-gate installation and run under review|Installation token, attached only to `api.github.com` (`server/lib/github-app/artifacts.ts`)|302 to a signed artifact-storage URL with the token dropped; other hosts blocked (`evaluateGithubArtifactEgress`)|[workflow gates](./workflow-gates.md)|
+|GitHub artifacts|The gate's repository and run|Repository-scoped Actions-read installation token, revoked after; only to `api.github.com` (`server/lib/github-app/artifacts.ts`)|302 to a signed artifact-storage URL with the token dropped; other hosts blocked (`evaluateGithubArtifactEgress`)|[workflow gates](./workflow-gates.md)|
 |Public diff npm / pkg.pr.new|Public npm registry; `https://pkg.pr.new`|None|—|[public diff](./public-diff.md)|
 |atpm identity, records, blobs|Hosts named by the publisher's handle, DID, and PDS|None|Manual; ≤3 hops, each re-checked; pinned blob same-origin only|[atpm](./atpm.md)|
 |Publication monitor|Fixed public npm origin (loopback fake registry only with the local override)|None; never reads a connection token|`redirect: "manual"`; a 3xx is unavailable evidence|[publication monitor](./publication-monitor.md)|

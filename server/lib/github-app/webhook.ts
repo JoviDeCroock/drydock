@@ -1,6 +1,6 @@
 import { hexDecode, hmacSha256, timingSafeEqual } from "../platform/crypto-utils";
 import { type AppDb } from "../../db/client";
-import { getInstallationAccessToken } from "./api";
+import { withInstallationToken } from "./api";
 import { githubHeaders } from "./client";
 import type { GithubAppConfig } from "./config";
 import { reliableFetch } from "../platform/reliable-fetch";
@@ -315,6 +315,8 @@ export interface DeploymentProtectionDecisionInput {
   config: GithubAppConfig;
   installationExternalId: string;
   callbackUrl: string;
+  /** The gate's stored repository id; the callback path's name is the fallback. */
+  repositoryId?: number;
   environment: string;
   state: "approved" | "rejected";
   comment: string;
@@ -331,22 +333,35 @@ export async function postDeploymentProtectionDecision(
   if (!isAllowedCallbackUrl(input.callbackUrl)) {
     throw new Error("refusing to POST decision to a non-GitHub callback URL");
   }
-  const token = await getInstallationAccessToken(input.config, input.installationExternalId);
+  // Repository names are [A-Za-z0-9._-], so the validated path segment needs no decoding.
+  const repositoryName = new URL(input.callbackUrl).pathname.split("/")[3] ?? "";
   const comment = input.comment.slice(0, 140);
-  const response = await reliableFetch(input.callbackUrl, {
-    method: "POST",
-    headers: githubHeaders(token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      state: input.state,
-      environment_name: input.environment,
-      comment,
-    }),
-    retryMethods: ["POST"],
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(
-      `GitHub deployment protection decision failed (${response.status}): ${text.slice(0, 200)}`,
-    );
-  }
+  await withInstallationToken(
+    input.config,
+    input.installationExternalId,
+    {
+      ...(input.repositoryId
+        ? { repositoryIds: [input.repositoryId] }
+        : { repositories: [repositoryName] }),
+      permissions: { deployments: "write" },
+    },
+    async (token) => {
+      const response = await reliableFetch(input.callbackUrl, {
+        method: "POST",
+        headers: githubHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          state: input.state,
+          environment_name: input.environment,
+          comment,
+        }),
+        retryMethods: ["POST"],
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `GitHub deployment protection decision failed (${response.status}): ${text.slice(0, 200)}`,
+        );
+      }
+    },
+  );
 }

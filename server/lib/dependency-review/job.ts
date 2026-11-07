@@ -22,7 +22,7 @@ import type { DependencyReviewStatus } from "../../db/enums";
 import { recordScanEvent } from "../../db/events";
 import { recordProductEvent } from "../analytics";
 import { getPublicDiffAdapter } from "../ecosystems";
-import { getInstallationAccessToken } from "../github-app/api";
+import { type InstallationTokenScope, withInstallationToken } from "../github-app/api";
 import { readGithubAppConfig } from "../github-app/config";
 import { getInstallationExternalId } from "../github-app/persistence";
 import { parseRepositoryFullName } from "../github-app/validation";
@@ -201,18 +201,42 @@ export async function executeDependencyReviewJob(
     return;
   }
   const appConfig = readGithubAppConfig(env);
-  const token = await getInstallationAccessToken(appConfig, installationId);
-  const context: ReviewContext = {
-    env,
-    ctx,
-    db,
-    review,
-    repo,
-    token,
-    appId: appConfig.appId,
-    detailsUrl: dependencyReviewUrl(env, review.id, review.organizationId),
-  };
+  await withInstallationToken(
+    appConfig,
+    installationId,
+    dependencyReviewTokenScope(review.repositoryId),
+    (token) =>
+      runDependencyReviewWithToken(
+        {
+          env,
+          ctx,
+          db,
+          review,
+          repo,
+          token,
+          appId: appConfig.appId,
+          detailsUrl: dependencyReviewUrl(env, review.id, review.organizationId),
+        },
+        input,
+        options,
+      ),
+  );
+}
 
+/** Every GitHub call a review, an approval, or a skip makes, on that one repository. */
+function dependencyReviewTokenScope(repositoryId: number): InstallationTokenScope {
+  return {
+    repositoryIds: [repositoryId],
+    permissions: { checks: "write", contents: "read", pull_requests: "read", metadata: "read" },
+  };
+}
+
+async function runDependencyReviewWithToken(
+  context: ReviewContext,
+  input: DependencyReviewJobInput,
+  options: { finalAttempt: boolean },
+): Promise<void> {
+  const { db, review } = context;
   if (input.approver) {
     await applyApproval(context, input.approver);
     return;
@@ -925,7 +949,21 @@ async function postSkippedCheck(
     organizationId,
   );
   if (!installationId) return;
-  const token = await getInstallationAccessToken(readGithubAppConfig(env), installationId);
+  await withInstallationToken(
+    readGithubAppConfig(env),
+    installationId,
+    dependencyReviewTokenScope(skip.repositoryId),
+    (token) => postSkipRun(env, token, repo, skip, reviewOfHead),
+  );
+}
+
+async function postSkipRun(
+  env: Cloudflare.Env,
+  token: string,
+  repo: RepositoryRef,
+  skip: NonNullable<DependencyReviewJobInput["skip"]>,
+  reviewOfHead: () => ReturnType<typeof getDependencyReviewForHead>,
+): Promise<void> {
   // Posted in progress, which doesn't pass, and completed only once no review
   // has appeared: a skip that dies part way never leaves a passing run.
   const skipRunId = await createCheckRun(

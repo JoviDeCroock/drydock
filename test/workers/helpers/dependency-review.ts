@@ -284,6 +284,9 @@ export function stubGithubApi(pr: FakePullRequest) {
     if (/^\/app\/installations\/\d+\/access_tokens$/.test(path) && request.method === "POST") {
       return Response.json({ token: INSTALLATION_TOKEN, expires_at: "2099-01-01T00:00:00Z" });
     }
+    if (path === "/installation/token" && request.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
     if (path === `${repoPrefix}/pulls/${pr.number}`) {
       if (pr.redirectTo) {
         return new Response(null, { status: 301, headers: { Location: pr.redirectTo } });

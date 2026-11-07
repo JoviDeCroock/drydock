@@ -57,8 +57,9 @@ make it required.
    check's source to the Drydock App, so another App can't post a passing run
    under the same name.
 3. The route enqueues `{ kind: "dependency_review" }` on `SCAN_QUEUE`. The
-   consumer (`server/lib/dependency-review/job.ts`) mints an installation token,
-   creates the check run in progress, and confirms the PR is still open at that
+   consumer (`server/lib/dependency-review/job.ts`) mints an installation token
+   for that one repository (Checks write; Contents, Pull requests, Metadata
+   read), revoked when the job ends, creates the check run in progress, and confirms the PR is still open at that
    head. The claim is compare-and-set: a queued, failed, or superseded review,
    a completed one only for Re-run, and a running one only past its lease. A
    redelivery during a running claim sends a fresh delayed message before
