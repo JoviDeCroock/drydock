@@ -19,7 +19,7 @@ import type {
 } from "./lib/review";
 
 export type { PackageJsonDiff, PackageJsonDiffEntry } from "./lib/review";
-export type { IntentEnvelope, IntentEnvelopeTier } from "./lib/intent-envelope";
+export type { IntentEnvelope } from "./lib/intent-envelope";
 
 export type Bindings = Cloudflare.Env;
 

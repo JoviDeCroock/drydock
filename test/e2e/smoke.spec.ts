@@ -114,10 +114,19 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("Deployment gate")).toBeVisible();
   await expect(page.getByText("awaiting decision").first()).toBeVisible();
   await expect(page.getByText("drydock/example").first()).toBeVisible();
-  await expect(page.getByText("Release packages")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Release packages", exact: true })).toBeVisible();
   await expect(page.getByText("@drydock/sidecar@0.4.0")).toBeVisible();
 
-  const evidence = page.locator("#risk-signals").getByText(longFindingEvidence, { exact: true });
+  // Both findings sit on changed files, so the diff states them and the review
+  // notes list them; the risk index does not repeat them as cards.
+  await expect(page.locator("#risk-signals")).toHaveCount(0);
+  await page
+    .getByRole("complementary")
+    .getByRole("button", { name: /qrb\.it\.darwin-arm64\.node/ })
+    .click();
+  const evidence = page
+    .locator('[data-finding-id="finding-smoke-2"]')
+    .getByText(longFindingEvidence, { exact: true });
   await expect(evidence).toHaveCSS("overflow-wrap", "break-word");
   const evidenceSize = await evidence.evaluate((element) => ({
     clientHeight: element.clientHeight,
@@ -128,7 +137,7 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   expect(evidenceSize.clientHeight).toBeGreaterThan(evidenceSize.lineHeight);
   expect(evidenceSize.scrollWidth).toBeLessThanOrEqual(evidenceSize.clientWidth);
 
-  const findingCard = evidence.locator("xpath=ancestor::li[1]");
+  const findingCard = page.locator('[data-finding-id="finding-smoke-2"]');
   const cardWidth = await findingCard.evaluate(({ clientWidth, scrollWidth }) => ({
     clientWidth,
     scrollWidth,
@@ -284,7 +293,8 @@ test("review notes group evidence and keep AI advice subordinate to findings", a
   await notes.getByRole("button", { name: "View manifest changes", exact: true }).click();
   await expect(page.locator("#manifest-changes")).toBeFocused();
   await notes.getByRole("button", { name: "Inspect deterministic findings", exact: true }).click();
-  await expect(page.locator("#risk-signals")).toBeFocused();
+  // Every finding here is in the diff, so there is no index to move to.
+  await expect(page.locator("#release-workbench")).toBeFocused();
   await expect(page.locator("body")).toHaveJSProperty(
     "scrollWidth",
     await page.locator("body").evaluate((element) => element.clientWidth),
@@ -317,14 +327,15 @@ test("the release tree waits for a picked version instead of showing the baselin
   await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
 
   await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
-  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
+  // The line beside the picker is the one place the wait is reported; the
+  // tree and the diff panel only show that they are waiting.
+  await expect(page.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(1);
   await expect(tree.getByText("__init__.py")).toHaveCount(0);
-  // The tree's notice is the one place the wait is reported.
-  await expect(page.getByText("Fetching 1.2.0-rc.1 via sandbox")).toHaveCount(0);
+  await expect(page.getByText("No file selected.")).toHaveCount(0);
   await expect(page.getByText("Loading comparison")).toHaveCount(0);
 
   release();
-  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
+  await expect(page.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
   await expect(tree.getByText("0 / 2")).toBeVisible();
 });
 
@@ -349,7 +360,7 @@ test("the reader can return to the baseline while a picked version still loads",
     request.url().includes("/compare?version=1.2.0-rc.1"),
   );
   await picker.selectOption("1.2.0-rc.1");
-  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
+  await expect(page.getByText("Comparing against 1.2.0-rc.1")).toBeVisible();
   await rcRequested;
   await expect(picker).toBeEnabled();
   await picker.selectOption("1.1.0");
@@ -358,10 +369,12 @@ test("the reader can return to the baseline while a picked version still loads",
   release();
   await expect(picker).toHaveValue("1.1.0");
   await expect(tree.getByText("__init__.py")).toBeVisible();
-  await expect(tree.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
+  await expect(page.getByText("Comparing against 1.2.0-rc.1")).toHaveCount(0);
 });
 
-test("a picked version that cannot be compared says why, once, in the tree", async ({ page }) => {
+test("a picked version that cannot be compared says why, once, beside the picker", async ({
+  page,
+}) => {
   await installWorkflowGateMocks(page, false, {
     version: "1.2.0-rc.1",
     distTags: ["rc"],
@@ -374,13 +387,14 @@ test("a picked version that cannot be compared says why, once, in the tree", asy
   await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
 
   await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
-  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toBeVisible();
-  await expect(tree.getByText("Too many comparison requests")).toBeVisible();
+  const failure = page.getByRole("alert").filter({ hasText: "1.2.0-rc.1 could not be compared." });
+  await expect(failure).toBeVisible();
+  await expect(failure.getByText("Too many comparison requests")).toBeVisible();
   await expect(page.getByText("Too many comparison requests")).toHaveCount(1);
   await expect(tree.getByText("__init__.py")).toHaveCount(0);
   await expect(page.getByText("Select a file from the tree to diff.")).toHaveCount(0);
 
-  await expect(tree.getByRole("button", { name: "Try again" })).toBeVisible();
+  await expect(failure.getByRole("button", { name: "Try again" })).toBeVisible();
 
   // Back on the baseline, the rc's failure is not reported against it.
   await page.getByLabel("Compare against").selectOption("1.1.0");
@@ -388,7 +402,7 @@ test("a picked version that cannot be compared says why, once, in the tree", asy
   await expect(page.getByText("Too many comparison requests")).toHaveCount(0);
 });
 
-test("a failed comparison can be retried from the tree", async ({ page }) => {
+test("a failed comparison can be retried beside the picker", async ({ page }) => {
   await installWorkflowGateMocks(page, false, {
     version: "1.2.0-rc.1",
     distTags: ["rc"],
@@ -403,22 +417,25 @@ test("a failed comparison can be retried from the tree", async ({ page }) => {
   await expect(tree.getByText("__init__.py")).toBeVisible({ timeout: 30_000 });
 
   await page.getByLabel("Compare against").selectOption("1.2.0-rc.1");
-  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toBeVisible();
-  await tree.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("1.2.0-rc.1 could not be compared.")).toBeVisible();
+  await page.getByRole("button", { name: "Try again" }).click();
 
-  await expect(tree.getByText("1.2.0-rc.1 could not be compared.")).toHaveCount(0);
+  await expect(page.getByText("1.2.0-rc.1 could not be compared.")).toHaveCount(0);
   // The rc shipped `__init__.py` byte for byte, so only the binary changed.
   await expect(tree.getByText("1 / 2")).toBeVisible();
 });
 
-test("a failed baseline comparison can be retried beside the picker", async ({ page }) => {
+test("a failed baseline comparison is reported the same way, beside the picker", async ({
+  page,
+}) => {
   await installWorkflowGateMocks(page, false, undefined, {
     failure: { status: 429, error: "Too many comparison requests", times: 1 },
   });
 
   await page.goto(`/dashboard/scans/${scanId}`);
-  const failure = page.getByText("1.1.0 could not be compared: Too many comparison requests");
+  const failure = page.getByRole("alert").filter({ hasText: "1.1.0 could not be compared." });
   await expect(failure).toBeVisible({ timeout: 30_000 });
+  await expect(failure.getByText("Too many comparison requests")).toBeVisible();
   const retried = page.waitForResponse(
     (response) => response.url().includes("/compare?version=1.1.0") && response.ok(),
   );
@@ -458,9 +475,10 @@ test("a shared public report opens on the diff", async ({ page }) => {
   await expect(page.getByText("code.network-credential-exfil").first()).toBeVisible();
 
   // A binary body was never captured, so the panel says so instead of spinning
-  // on a request that would only 404.
+  // on a request that would only 404, and keeps the file's own evidence.
   await page.getByText("qrb.it.darwin-arm64.node").first().click();
-  await expect(page.getByText("No text sample was retained for this file.")).toBeVisible();
+  await expect(page.getByText("Binary file. No text diff available.")).toBeVisible();
+  await expect(page.getByText(`sha256 (staged (1.2.0)): ${"c".repeat(64)}`)).toBeVisible();
   expect(fileRequests).toEqual(["src/gate_demo/__init__.py"]);
 });
 
@@ -494,7 +512,10 @@ test("a route chunk that fails to load shows the recovery card", async ({ page }
   await page.route(privacyChunk, (route) => route.abort());
   await page.getByRole("link", { name: "Privacy", exact: true }).click();
 
-  await expect(page.getByRole("heading", { name: "Something went wrong" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "This page didn't finish loading" }),
+  ).toBeVisible();
+  await page.getByText("Error details", { exact: true }).click();
   await expect(page.getByText(/^Page: \/privacy$/m)).toBeVisible();
   await expect(page.getByRole("link", { name: "Email bug report" })).toHaveAttribute(
     "href",

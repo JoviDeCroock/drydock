@@ -27,12 +27,6 @@ export function formatDateTimeExact(value: string | number | Date): string {
   });
 }
 
-export function formatTimestamp(value: string | number | Date | null | undefined): string {
-  if (value === null || value === undefined) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
-}
-
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;

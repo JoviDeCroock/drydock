@@ -66,7 +66,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         undone. If you own an organization with other members, hand it off or delete it first.
       </Muted>
       <div>
-        <Button variant="danger" size="sm" onClick={open}>
+        <Button variant="danger" onClick={open}>
           Delete account
         </Button>
       </div>

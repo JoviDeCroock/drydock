@@ -1,17 +1,27 @@
+import { findingSentence } from "../../../lib/findings";
 import type { ComponentChildren } from "preact";
 import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
-import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
+import {
+  getReleaseRecommendation,
+  type GateOutcome,
+  type ReleaseRecommendationCopy,
+} from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import { aiVerdictRiskCap } from "../../../../server/lib/review/risk";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
+import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
+import { DETERMINISTIC_RULE_IDS } from "../../../../server/lib/review/rules/rule-ids";
 import { Badge, severityTone } from "../../../components/Badge";
 import { SeverityBar } from "../../../components/SeverityBar";
 import { MonoDetail, SectionLabel } from "../../../components/Typography";
+import { registryStatusVariant } from "../../../features/registry-status";
 import { verdictTextClass } from "../../../features/review/verdict";
 import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
 import type { PersistedSummary } from "./types";
+
+const FIRST_RELEASE_BASELINE_REASONS = new Set(["none", "no-published-baseline"]);
 
 export interface ReleaseVerdict {
   recommendation: ReleaseRecommendationCopy;
@@ -22,6 +32,13 @@ export interface ReleaseVerdict {
   releaseChanges: string[];
   severityCounts: Record<string, number>;
   findingTotal: number;
+  /** Some counted findings are package context rather than release changes. */
+  severityIncludesContext: boolean;
+  /**
+   * Reasons the reviewed artifact may not be the release being decided. They
+   * qualify every verdict, so they stay beside it whatever file is open.
+   */
+  validity: ArtifactValidityCaveat[];
   // Whether the evidence says anything beyond "nothing changed and nothing
   // fired". Drives whether the review notes open by default.
   hasSignals: boolean;
@@ -35,6 +52,8 @@ export function buildReleaseVerdict({
   usePersistedRiskSummary,
   isWorkflowGate,
   ai = null,
+  comparedVersion = null,
+  gateStatus = null,
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
@@ -43,6 +62,10 @@ export function buildReleaseVerdict({
   usePersistedRiskSummary: boolean;
   isWorkflowGate: boolean;
   ai?: DisplayedAiResult | null;
+  /** The version the release delta was computed against. */
+  comparedVersion?: string | null;
+  /** The workflow gate's own state, when this review belongs to one. */
+  gateStatus?: string | null;
 }): ReleaseVerdict {
   const changedFindings = findingsWithDiffStatus
     .filter((item) => item.releaseDelta)
@@ -57,13 +80,28 @@ export function buildReleaseVerdict({
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
   const baselineComparisonSkipped = summary.baseline?.comparisonSkipped === "baseline-too-large";
-  const recommendation = getReleaseRecommendation(
-    artifactRisk,
-    releaseRisk,
-    releaseFindingCount,
-    isWorkflowGate ? "gate" : "npm",
+  // Only the acquirers' "nothing published before" reasons mean a first
+  // release; a registry error also leaves no baseline version, and calling
+  // that "every file is new" would misstate what the comparison missed.
+  const firstRelease =
+    !baselineComparisonSkipped &&
+    !detail.scan.previousVersion &&
+    !summary.baseline?.version &&
+    FIRST_RELEASE_BASELINE_REASONS.has(summary.baseline?.reason ?? "");
+  const recommendation = getReleaseRecommendation(artifactRisk, releaseRisk, releaseFindingCount, {
+    target: isWorkflowGate ? "gate" : "npm",
     baselineComparisonSkipped,
-  );
+    firstRelease,
+    // Same reading as the decision dialog, so the verdict and the dialog it
+    // opens agree on whether the release is already out.
+    published:
+      !isWorkflowGate &&
+      (detail.postRelease != null ||
+        detail.scan.source === "published" ||
+        registryStatusVariant(detail.scan) === "published"),
+    baselineVersion: comparedVersion,
+    gateOutcome: isWorkflowGate ? gateOutcomeFor(gateStatus, detail.scan.decision) : null,
+  });
   // `detail.findings` and `changedFindings` already include the AI reviewer's
   // findings (persisted as `source: "ai"` rows), so they are counted and shown
   // as evidence from that single source — concatenating `ai.findings` from the
@@ -74,6 +112,7 @@ export function buildReleaseVerdict({
     diffCount,
     changedFindings,
     baselineComparisonSkipped,
+    firstRelease,
     recommendation.label === "likely safe",
   );
   // An AI finding above what the reviewer's own verdict lets it add is shown,
@@ -83,6 +122,7 @@ export function buildReleaseVerdict({
     detail.findings.filter((finding) => !heldByVerdict(finding, ai)),
   );
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
+  const releaseFindingIds = new Set(changedFindings.map((finding) => finding.id));
   const manifest = summary.packageJsonDiff;
 
   return {
@@ -91,16 +131,82 @@ export function buildReleaseVerdict({
     releaseRisk,
     evidence,
     findingGroups: groupReleaseFindings(changedFindings, ai),
-    releaseChanges: buildReleaseChanges(summary),
+    releaseChanges: buildReleaseChanges(summary, firstRelease),
     severityCounts,
     findingTotal,
+    severityIncludesContext: detail.findings.some((finding) => !releaseFindingIds.has(finding.id)),
+    validity: artifactValidityCaveats(detail, summary),
     hasSignals:
       baselineComparisonSkipped ||
+      // Nothing to compare against is itself the thing to read about.
+      firstRelease ||
       releaseFindingCount > 0 ||
       Boolean(manifest?.scripts.length) ||
       Boolean(manifest?.dependencies.length) ||
-      Boolean(manifest?.entrypointsChanged),
+      (!firstRelease && Boolean(manifest?.entrypointsChanged)),
   };
+}
+
+interface ArtifactValidityCaveat {
+  key: "digest-mismatch" | "metadata-mismatch";
+  text: string;
+  /** Labelled claimed-versus-inspected identities, when the record has them. */
+  identities?: Array<{ label: string; value: string }>;
+}
+
+function gateOutcomeFor(
+  gateStatus: string | null,
+  decision: string | null | undefined,
+): GateOutcome | null {
+  if (gateStatus === "approved") return "approved";
+  if (gateStatus === "rejected") return decision === "no_publish" ? "rejected" : "rejected-other";
+  if (decision === "publish") return "package-approved";
+  if (decision === "no_publish") return "package-rejected";
+  return null;
+}
+
+function artifactValidityCaveats(
+  detail: PersistedScanDetail,
+  summary: PersistedSummary,
+): ArtifactValidityCaveat[] {
+  const caveats: ArtifactValidityCaveat[] = [];
+  const integrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
+  const findingRules = new Set(detail.findings.map((finding) => finding.ruleId));
+  if (
+    integrity?.status === "mismatch" ||
+    findingRules.has(DETERMINISTIC_RULE_IDS.stageTarballDigestMismatch)
+  ) {
+    caveats.push({
+      key: "digest-mismatch",
+      text: "The downloaded artifact does not match npm's stage record, so this review describes different bytes.",
+    });
+  }
+  if (findingRules.has(DETERMINISTIC_RULE_IDS.stageMetadataMismatch)) {
+    // npm's stage record is the claim; the scan row's name and version were
+    // replaced with the inspected tarball manifest after the review.
+    const claimed = packageIdentity(
+      summary.stagedPublish?.packageName,
+      summary.stagedPublish?.version,
+    );
+    const inspected = packageIdentity(detail.scan.packageName, detail.scan.stagedVersion);
+    caveats.push({
+      key: "metadata-mismatch",
+      text: "npm's stage record and the inspected tarball name different releases.",
+      identities:
+        claimed && inspected
+          ? [
+              { label: "npm stage claims", value: claimed },
+              { label: "tarball inspected", value: inspected },
+            ]
+          : undefined,
+    });
+  }
+  return caveats;
+}
+
+function packageIdentity(name: unknown, version: unknown): string | null {
+  if (typeof name !== "string" || !name) return null;
+  return typeof version === "string" && version ? `${name}@${version}` : name;
 }
 
 /**
@@ -118,39 +224,75 @@ export function ReleaseVerdictStrip({
   verdict,
   ai,
   decision,
+  onShowVerification,
 }: {
   verdict: ReleaseVerdict;
   ai: DisplayedAiResult | null;
   decision?: ComponentChildren;
+  /** Moves the reader to the section holding the authoritative digests. */
+  onShowVerification?: () => void;
 }) {
-  const { recommendation, artifactRisk, releaseRisk } = verdict;
+  const { recommendation, artifactRisk, releaseRisk, validity } = verdict;
   const assistant = ai?.model != null ? ai : null;
   return (
-    <section class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
-        <h2
-          class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
-        >
-          {capitalize(recommendation.label)}
-        </h2>
-        <MonoDetail
-          parts={[
-            `release risk ${releaseRisk}`,
-            artifactRisk !== releaseRisk ? `artifact risk ${artifactRisk}` : null,
-            // The model reports the assessment and the manual-review flag
-            // independently, so a suspicious assessment without the flag must
-            // still surface here; only the clean reading stays quiet.
-            assistant?.kind === "complete" && assistant.releaseAssessment !== "nothing_unusual"
-              ? `assistant: ${assistant.releaseAssessment.replaceAll("_", " ")}`
-              : null,
-            assistant?.kind === "unavailable" ? "assistant unavailable" : null,
-          ]}
-        />
-        {assistant?.kind === "complete" && assistant.requiresManualReview ? (
-          <Badge tone="medium" class="self-center">
-            manual review
-          </Badge>
+    <section class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      {/* The caveats share the verdict's column so no control sits between a
+          label and the line that qualifies it, on any width. */}
+      <div class="flex flex-col gap-1.5 min-w-0">
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
+          <h2
+            class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
+          >
+            {capitalize(recommendation.label)}
+          </h2>
+          <MonoDetail
+            parts={[
+              `release risk ${releaseRisk}`,
+              artifactRisk !== releaseRisk ? `artifact risk ${artifactRisk}` : null,
+              // The model reports the assessment and the manual-review flag
+              // independently, so a suspicious assessment without the flag must
+              // still surface here; only the clean reading stays quiet.
+              assistant?.kind === "complete" && assistant.releaseAssessment !== "nothing_unusual"
+                ? `assistant: ${assistant.releaseAssessment.replaceAll("_", " ")}`
+                : null,
+              assistant?.kind === "unavailable" ? "assistant unavailable" : null,
+            ]}
+          />
+          {assistant?.kind === "complete" && assistant.requiresManualReview ? (
+            <Badge tone="medium" class="self-center">
+              manual review
+            </Badge>
+          ) : null}
+        </div>
+        {recommendation.caveat ? (
+          <p
+            class={`m-0 text-[13px] leading-[1.55] ${verdictTextClass(recommendation.caveat.tone)}`}
+          >
+            {recommendation.caveat.text}
+          </p>
         ) : null}
+        {validity.map((caveat) => (
+          <div key={caveat.key} class="flex flex-col gap-1 text-[13px] leading-[1.55] min-w-0">
+            <p class="m-0 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <span class="text-danger-text">{caveat.text}</span>
+              {caveat.key === "digest-mismatch" && onShowVerification ? (
+                <button type="button" onClick={onShowVerification} class={TEXT_ACTION}>
+                  View artifact verification
+                </button>
+              ) : null}
+            </p>
+            {caveat.identities ? (
+              <dl class="m-0 flex flex-wrap gap-x-5 gap-y-1 font-mono text-[11px] text-ink-subtle">
+                {caveat.identities.map((identity) => (
+                  <div key={identity.label} class="flex flex-wrap gap-x-2 min-w-0">
+                    <dt>{identity.label}</dt>
+                    <dd class="m-0 text-ink-muted break-all">{identity.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </div>
+        ))}
       </div>
       {decision}
     </section>
@@ -220,7 +362,15 @@ export function ReleaseVerdictEvidence({
       {/* A lone finding is already stated by its inline annotation and its
           row above; a one-segment bar plus its legend and total would state
           it three more times. */}
-      {findingTotal > 1 ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
+      {findingTotal > 1 ? (
+        <SeverityBar
+          counts={severityCounts}
+          // The rows above list release changes only; the bar also counts
+          // package context, so it must not read as the release's total.
+          label={verdict.severityIncludesContext ? "all package findings by severity" : undefined}
+          class="max-w-[520px]"
+        />
+      ) : null}
       {consistencyNote ? <div class="max-w-[680px]">{consistencyNote}</div> : null}
     </section>
   );
@@ -317,6 +467,13 @@ function ReleaseFindingGroupRow({
             </span>
             {first.source === "ai" ? <Badge tone="neutral">AI · advisory</Badge> : null}
           </span>
+          {/* Inside the summary so the explanation stays under its title
+              whether the locations are folded or not. */}
+          {sharedReason ? (
+            <span class="block mt-2 max-w-[680px] leading-[1.55] text-ink-muted">
+              {findingSentence(first.reason)}
+            </span>
+          ) : null}
         </summary>
         <div class="pt-3 pl-4 flex flex-col gap-3">
           {first.ruleId ? (
@@ -345,22 +502,17 @@ function ReleaseFindingGroupRow({
                 )}
                 {!sharedReason ? (
                   <p class="m-0 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
-                    {finding.reason}
+                    {findingSentence(finding.reason)}
                   </p>
                 ) : null}
-                <p class="m-0 max-w-[680px] text-[12px] leading-[1.55] text-ink-muted break-words">
+                <code class="block max-w-[680px] text-[12px] leading-[1.55] text-ink-muted break-all whitespace-pre-wrap">
                   {finding.evidence}
-                </p>
+                </code>
               </li>
             ))}
           </ul>
         </div>
       </details>
-      {sharedReason ? (
-        <p class="m-0 mt-2 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
-          {first.reason}
-        </p>
-      ) : null}
       {group.heldBy ? (
         <p class="m-0 mt-1 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
           {group.heldBy.cap === "low"
@@ -411,6 +563,7 @@ function buildRecommendationEvidence(
   diffCount: number,
   changedFindings: ReviewFinding[],
   baselineComparisonSkipped: boolean,
+  firstRelease: boolean,
   verdictSaysClean: boolean,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
@@ -430,6 +583,15 @@ function buildRecommendationEvidence(
       diffCount ||
       summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
       detail.files.filter((file) => file.status !== "unchanged").length;
+    if (firstRelease) {
+      // The verdict copy already says there is nothing to compare against;
+      // the count is the only new fact.
+      evidence.push({
+        label: "evidence",
+        value: `${changed} ${pluralize("file", changed)}, all new.`,
+      });
+      return evidence;
+    }
     const files = `${changed} changed ${pluralize("file", changed)}`;
     const packageNote = detail.findings.length ? " Package findings remain below." : "";
     evidence.push({
@@ -445,7 +607,7 @@ function buildRecommendationEvidence(
   return evidence;
 }
 
-function buildReleaseChanges(summary: PersistedSummary): string[] {
+function buildReleaseChanges(summary: PersistedSummary, firstRelease: boolean): string[] {
   const changes: string[] = [];
   const manifest = summary.packageJsonDiff;
   if (manifest?.scripts.length)
@@ -456,6 +618,7 @@ function buildReleaseChanges(summary: PersistedSummary): string[] {
     changes.push(
       `${manifest.dependencies.length} dependency ${pluralize("change", manifest.dependencies.length)}`,
     );
-  if (manifest?.entrypointsChanged) changes.push("Package entrypoints changed");
+  // With no earlier manifest every entrypoint is "changed", which says nothing.
+  if (manifest?.entrypointsChanged && !firstRelease) changes.push("Package entrypoints changed");
   return changes;
 }

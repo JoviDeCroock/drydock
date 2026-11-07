@@ -9,7 +9,7 @@ export function ProjectInstruction() {
         equivalent agent rules. It gives the agent a repeatable review step for public npm and PyPI
         dependency upgrades. Check that your project permits external review requests first.
       </p>
-      <CodeBlock title="AGENTS.md · package review" lang="markdown">
+      <CodeBlock title="AGENTS.md · package review" lang="markdown" copyLabel="Copy instruction">
         {projectInstruction}
       </CodeBlock>
       <a href="/agents/package-review.md" class="text-[13px] self-start">

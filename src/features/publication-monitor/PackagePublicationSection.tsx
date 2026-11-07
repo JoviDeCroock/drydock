@@ -59,9 +59,16 @@ export function PackagePublicationSection({
   onManagementRequired: () => void;
 }) {
   const model = useModel(() => new PackagePublicationModel(packageName));
+  // An empty aside would still take the gap after the rule, so the label only
+  // gets one when there is something to say.
+  const hasAside = useComputed(() => {
+    const publication = model.publication.value;
+    const watch = publication?.watch;
+    return Boolean(watch && (watch.unresolvedAlertCount > 0 || !inactive(publication)));
+  });
   return (
     <section class="flex flex-col gap-3" aria-label="Publication monitor">
-      <SectionLabel as="h2" aside={<MonitorAside model={model} />}>
+      <SectionLabel as="h2" aside={hasAside.value ? <MonitorAside model={model} /> : undefined}>
         publication monitor
       </SectionLabel>
       <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
@@ -159,6 +166,9 @@ function inactive(publication: PackagePublication): boolean {
   );
 }
 
+// Only unacknowledged alerts ask something of the reader, so only they take a
+// Badge; "watching" is a plain fact, and an unwatched package's body already
+// opens with "Not watched".
 function MonitorAside({ model }: { model: Model }) {
   return (
     <Show<PackagePublication | null> when={model.publication}>
@@ -168,11 +178,9 @@ function MonitorAside({ model }: { model: Model }) {
             {publication.watch.unresolvedAlertCount} unacknowledged{" "}
             {pluralize("alert", publication.watch.unresolvedAlertCount)}
           </Badge>
-        ) : inactive(publication) ? null : publication.watch ? (
-          <Badge tone="ok">watching</Badge>
-        ) : (
-          <Badge tone="neutral">not watched</Badge>
-        )
+        ) : publication.watch && !inactive(publication) ? (
+          <span class="normal-case tracking-normal">watching</span>
+        ) : null
       }
     </Show>
   );

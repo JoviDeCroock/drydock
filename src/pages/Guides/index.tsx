@@ -14,6 +14,8 @@ import { useAuthedSession } from "../useAuthedSession";
 
 interface GuideContent {
   relatedTitle: string;
+  /** Peers worth reading next. Curated, not the full set: eight equal cards after a focused article read as a second directory. */
+  related: [DiscoveryGuidePath, DiscoveryGuidePath, DiscoveryGuidePath];
   heading: string;
   lead: string;
   details: string[];
@@ -36,6 +38,7 @@ interface GuideContent {
 const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   "/npm-staged-publishing": {
     relatedTitle: "Stage Watchtower — advisory",
+    related: ["/github-actions-package-gate", "/npm-trusted-publishing", "/security"],
     heading: "Review an npm package before it becomes public.",
     lead: "Stage Watchtower reviews npm's private staged tarball before publication and records your decision. You approve or reject the stage through npm; account holders can still publish manually.",
     details: ["private candidate", "read-only npm access", "maintainer approves with 2FA"],
@@ -72,6 +75,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/github-actions-package-gate": {
     relatedTitle: "Workflow Gate — enforced",
+    related: ["/npm-staged-publishing", "/pypi-release-security", "/vscode-extension-security"],
     heading: "Review built packages before the publish job runs.",
     lead: "Workflow Gate pauses the configured protected GitHub job after CI uploads the release artifacts. Review those files in Drydock, then accept or reject the job. Other publication paths remain outside the gate.",
     details: ["GitHub Environment", "exact uploaded artifacts", "npm, PyPI, and VS Code"],
@@ -102,6 +106,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/npm-trusted-publishing": {
     relatedTitle: "npm trusted publishing",
+    related: ["/github-actions-package-gate", "/npm-staged-publishing", "/package-tarball-diff"],
     heading: "Require review before your CI job gets npm publish credentials.",
     lead: "Pin npm trusted publishing to the GitHub Environment protected by Workflow Gate, then disallow token publication. The configured job receives its OIDC publish credential after you accept the review. npm still permits account holders to publish interactively with 2FA.",
     details: ["OIDC publish credentials", "protected environment", "token publishing disabled"],
@@ -136,6 +141,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/pypi-release-security": {
     relatedTitle: "PyPI release security",
+    related: ["/github-actions-package-gate", "/package-tarball-diff", "/security"],
     heading: "Review wheels and source distributions before uploading to PyPI.",
     lead: "CI uploads your built wheels and source distributions, then Workflow Gate pauses the configured protected publish job for your review. PyPI has no private staged release; the job waits in GitHub before uploading to the registry.",
     details: ["wheel and sdist review", "GitHub workflow gate", "trusted publishing stays in CI"],
@@ -166,6 +172,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/vscode-extension-security": {
     relatedTitle: "VS Code extension security",
+    related: ["/github-actions-package-gate", "/package-tarball-diff", "/security"],
     heading: "Review your packaged VS Code extension before publishing.",
     lead: "A VS Code extension can access the editor and developer workstation. Workflow Gate pauses the configured protected marketplace publish job so you can review the packaged VSIX before that job runs.",
     details: ["VSIX artifact review", "activation and entrypoint checks", "human release gate"],
@@ -196,6 +203,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/package-tarball-diff": {
     relatedTitle: "Public package diff",
+    related: ["/npm-staged-publishing", "/github-actions-package-gate", "/security"],
     heading: "Read what changed between two package releases.",
     lead: "Compare published npm, PyPI, or atpm releases file by file. Drydock runs deterministic checks on the package archives and links findings to the inspected evidence. You can read the diff without an account or installing the package.",
     details: ["no account", "no installation", "npm, PyPI, and atpm"],
@@ -226,6 +234,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/security": {
     relatedTitle: "Drydock security model",
+    related: ["/open-source", "/package-tarball-diff", "/github-actions-package-gate"],
     heading: "Inspect package code without running it.",
     lead: "Drydock parses package archives in a sandbox with limits on what it can inspect. Publish credentials stay outside that sandbox. You review the evidence and keep the final decision.",
     details: ["package code never executes", "publish credentials stay outside", "human decision"],
@@ -247,8 +256,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
     ],
     close: {
-      heading: "Inspect the security model.",
-      body: "The repository includes the sandbox implementation, credential gateways, and tests for rejected inputs. Read a public package diff to see the report this inspection produces.",
+      heading: "See the report this inspection produces.",
+      body: "Read a public package diff to see the evidence a review shows. The repository includes the sandbox implementation, credential gateways, and tests for rejected inputs.",
       action: { href: "/diff", label: "Diff a package" },
     },
     primary: { href: "/docs#safety-model", label: "Read the safety guide" },
@@ -259,6 +268,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/open-source": {
     relatedTitle: "Open-source package review",
+    related: ["/security", "/maintainer-pledge", "/package-tarball-diff"],
     heading: "Inspect the detection rules or host your own Drydock.",
     lead: "Drydock's Apache-2.0 source includes its detection rules, sandbox, report model, and deployment configuration. Use the hosted service or deploy the review system in your own Cloudflare account.",
     details: ["Apache-2.0", "public detection rules", "Cloudflare self-hosting"],
@@ -295,8 +305,9 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/maintainer-pledge": {
     relatedTitle: "The maintainer pledge",
+    related: ["/open-source", "/security", "/package-tarball-diff"],
     heading: "Review your own public package releases for free.",
-    lead: "Drydock is free for open-source maintainers reviewing packages they publish to a public registry. We plan to keep it that way. This pledge covers release review; it does not guarantee hosted availability or free access to every future feature.",
+    lead: "Drydock is free for open-source maintainers reviewing packages they publish to a public registry. We plan to keep it that way.",
     details: ["free for public packages", "Apache-2.0 source", "sponsor-funded"],
     sections: [
       {
@@ -328,15 +339,13 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
 };
 
-const GUIDE_PATHS = Object.keys(GUIDES) as DiscoveryGuidePath[];
-
 export default function DiscoveryGuidePage() {
   const authed = useAuthedSession();
   const path = useLocation().path.replace(/\/$/, "") as DiscoveryGuidePath;
   const guide = GUIDES[path] ?? GUIDES["/package-tarball-diff"];
   const metadata =
     discoveryGuideSeoByPath[path] ?? discoveryGuideSeoByPath["/package-tarball-diff"];
-  const relatedGuides = GUIDE_PATHS.filter((guidePath) => guidePath !== path).map((guidePath) => ({
+  const relatedGuides = guide.related.map((guidePath) => ({
     href: guidePath,
     title: GUIDES[guidePath].relatedTitle,
     description: discoveryGuideSeoByPath[guidePath].description,

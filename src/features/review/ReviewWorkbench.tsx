@@ -1,22 +1,19 @@
 import type { ComponentChildren } from "preact";
 import { useComputed, type ReadonlySignal, type Signal } from "@preact/signals";
 import type { DiffEntry } from "../../../server/lib/review";
-import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
-import { cn } from "../../components/cn";
 import { FileTree } from "../../components/FileTree";
 import { Input } from "../../components/Input";
 import { IndeterminateBar } from "../../components/Loading";
-import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
+import { EmptyLine, SectionLabel } from "../../components/Typography";
 import { filterDiffEntries, type FindingCount } from "./diff-entries";
 
-/** Stands in for the tree while its entries are not the comparison on screen. */
-export interface TreeNotice {
-  tone: "loading" | "unavailable";
-  text: string;
-  detail?: string;
-  retry?: () => void;
-}
+/**
+ * Stands in for the tree while its entries are not the comparison on screen.
+ * Only the state: the surface names the version, the reason, and the retry
+ * once, beside its version picker.
+ */
+export type TreeNotice = "loading" | "unavailable";
 
 /**
  * The release tree and the file diff, side by side — the pair every review
@@ -46,9 +43,7 @@ export function ReviewWorkbench({
   selectedPath: ReadonlySignal<string | null>;
   findingCounts: ReadonlySignal<Map<string, FindingCount>>;
   // Replaces the tree (and its count) when the surface has no entries for the
-  // comparison it shows yet, rather than rendering an empty or stale tree. The
-  // surface reports that state here only, not again beside the picker or in
-  // the diff panel.
+  // comparison it shows yet, rather than rendering an empty or stale tree.
   treeNotice?: ReadonlySignal<TreeNotice | null>;
   onSelect: (path: string) => void;
   // The diff panel for the selected file. Owned by the surface, because what a
@@ -69,7 +64,9 @@ export function ReviewWorkbench({
   // is unconstrained (`DiffView` caps its own scroll region at 560px). The grid
   // stretches both to the taller of the two, so a two-line diff now sits in a
   // two-line card instead of 720px of empty space — which matters more now that
-  // the workbench is the first thing on the page.
+  // the workbench is the first thing on the page. Stacked below `lg`, the tree
+  // caps lower and scrolls inside itself, so a large release's tree does not
+  // push the diff thousands of pixels down a phone screen.
   return (
     <section
       id={id}
@@ -79,13 +76,14 @@ export function ReviewWorkbench({
       <Card
         as="aside"
         padding="compact"
-        class="flex flex-col gap-3 lg:max-h-[720px] overflow-hidden"
+        class="flex flex-col gap-3 max-h-[360px] lg:max-h-[720px] overflow-hidden"
       >
         <SectionLabel as="h2">Release tree</SectionLabel>
         <Input
           type="search"
           value={fileFilter.value}
           placeholder="Filter files"
+          aria-label="Filter files"
           onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
           autoComplete="off"
           spellcheck={false}
@@ -106,34 +104,10 @@ export function ReviewWorkbench({
           )}
         </div>
         <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
-          {notice ? (
-            // One live region across loading and failed, so a retry that fails
-            // again is announced, not only the first load.
-            <div
-              class={cn("flex flex-col py-1", notice.tone === "loading" ? "gap-2" : "gap-1")}
-              aria-live="polite"
-            >
-              {notice.tone === "loading" ? (
-                <>
-                  <LoadingLine size="inline">{notice.text}</LoadingLine>
-                  <IndeterminateBar />
-                </>
-              ) : (
-                <>
-                  <EmptyLine>{notice.text}</EmptyLine>
-                  {notice.detail ? (
-                    <p class="m-0 font-mono text-[11px] text-ink-subtle break-words">
-                      {notice.detail}
-                    </p>
-                  ) : null}
-                  {notice.retry ? (
-                    <Button variant="secondary" size="sm" class="self-start" onClick={notice.retry}>
-                      Try again
-                    </Button>
-                  ) : null}
-                </>
-              )}
-            </div>
+          {notice === "loading" ? (
+            <IndeterminateBar class="my-1" />
+          ) : notice === "unavailable" ? (
+            <EmptyLine class="my-1">No files to list.</EmptyLine>
           ) : (
             <FileTree
               entries={visibleEntries.value}

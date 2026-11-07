@@ -71,6 +71,13 @@ export default function GithubAppCallbackPage() {
         ? "Installation could not be linked"
         : "Finishing GitHub App install",
   );
+  const lead = useComputed(() =>
+    phase.value === "success"
+      ? "The installation is now stored against your active organization."
+      : phase.value === "error"
+        ? null
+        : "We're confirming the install with GitHub and storing the installation against your active organization.",
+  );
   const linkedInstallation = useComputed(() =>
     phase.value === "success" ? githubApp.lastLinked.value : null,
   );
@@ -79,10 +86,11 @@ export default function GithubAppCallbackPage() {
     <PageShell headerActions={signedIn ? <AppHeaderActions current="settings" /> : undefined}>
       <header class="flex flex-col gap-2 max-w-[640px]">
         <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">{heading}</h1>
-        <Muted class="text-[14px] leading-[1.55] m-0">
-          We're confirming the install with GitHub and storing the installation against your active
-          organization.
-        </Muted>
+        {/* The lead follows the phase: after a failure, "we're confirming"
+            would contradict the heading above it. */}
+        <Show when={lead}>
+          {(text) => <Muted class="text-[14px] leading-[1.55] m-0">{text}</Muted>}
+        </Show>
       </header>
 
       <Show when={() => phase.value === "checking-session" || phase.value === "verifying"}>

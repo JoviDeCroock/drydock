@@ -202,9 +202,46 @@ describe("buildReleaseTimeline", () => {
   });
 
   test("ties keep pipeline order so a same-millisecond start and completion stay readable", () => {
-    const at = T0 + minutes(1);
+    const at = T0 + minutes(2);
     const events = buildReleaseTimeline(scan({ completedAt: at, startedAt: at }), {});
     expect(events.map((event) => event.key)).toEqual(["queued", "started", "completed"]);
+  });
+
+  test("a review that queued, started, and finished within a second is one row", () => {
+    const queued = T0 + minutes(1);
+    const events = buildReleaseTimeline(
+      scan({
+        stagedCreatedAt: T0,
+        startedAt: queued + 200,
+        completedAt: queued + 900,
+        registryVersionStatus: "published",
+        registryVersionStatusAt: T0 + minutes(3),
+      }),
+      {},
+    );
+    expect(events.map((event) => [event.key, event.label])).toEqual([
+      ["staged", "Staged on npm"],
+      ["reviewed", "Reviewed"],
+      ["registry_status", "npm status observed"],
+    ]);
+    expect(events[1]?.at).toBe(queued);
+    expect(
+      buildReleaseTimeline(scan({ status: "failed", completedAt: T0 + minutes(1) }), {})[0]?.label,
+    ).toBe("Review failed");
+  });
+
+  test("a review that took measurable time keeps its separate rows", () => {
+    const events = buildReleaseTimeline(
+      scan({ startedAt: T0 + minutes(1), completedAt: T0 + minutes(1) + 1000 }),
+      {},
+    );
+    expect(events.map((event) => event.key)).toEqual(["queued", "started", "completed"]);
+  });
+
+  test("a queued or running review is never folded into a finished row", () => {
+    expect(
+      buildReleaseTimeline(scan({ startedAt: T0 + minutes(1) }), {}).map((event) => event.key),
+    ).toEqual(["queued", "started"]);
   });
 });
 

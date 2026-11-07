@@ -102,7 +102,7 @@ export function SeverityBar({
             key={segment.key}
             class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle flex items-center gap-1.5"
           >
-            <span class={cn("inline-block w-2 h-2 rounded-sm", segment.swatchClass)} aria-hidden />
+            <span class={cn("inline-block w-2 h-2 shrink-0", segment.swatchClass)} aria-hidden />
             <span>
               {segment.label} · {segment.count}
             </span>

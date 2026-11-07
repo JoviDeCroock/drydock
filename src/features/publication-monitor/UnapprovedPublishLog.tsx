@@ -1,4 +1,4 @@
-import { useModel, useSignalEffect, type ReadonlySignal } from "@preact/signals";
+import { useComputed, useModel, useSignalEffect, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -20,23 +20,29 @@ export function UnapprovedPublishLog({ refreshKey }: { refreshKey: ReadonlySigna
     void log.refresh();
   });
 
+  // The card's description already says what an unapproved publish is, so an
+  // empty log is one line: the heading and its state.
+  const empty = useComputed(
+    () => log.loaded.value && !log.error.value && log.alerts.value.length === 0,
+  );
   return (
     <div class="border-t border-border px-5 py-3.5 flex flex-col gap-3">
-      <div class="flex flex-col gap-0.5">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <h3 class="m-0 text-[13px] font-medium text-ink">Unapproved publishes</h3>
-        <p class="m-0 text-[13px] text-ink-muted">
-          Releases of watched packages that npm published without an approval in this organization.
-          Scan one from its release list to decide it after the fact.
-        </p>
+        <Show when={empty}>
+          <EmptyLine>None so far.</EmptyLine>
+        </Show>
+        <Show when={() => !log.loaded.value}>
+          <LoadingLine size="inline">Loading</LoadingLine>
+        </Show>
       </div>
+      <Show when={() => log.alerts.value.length > 0}>
+        <p class="m-0 text-[13px] text-ink-muted">
+          Review one from its package’s release list to decide it after the fact.
+        </p>
+      </Show>
       <Show when={log.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
-      <Show when={() => !log.loaded.value}>
-        <LoadingLine>Loading unapproved publishes</LoadingLine>
-      </Show>
-      <Show when={() => log.loaded.value && !log.error.value && log.alerts.value.length === 0}>
-        <EmptyLine>No watched package has been published without an approval.</EmptyLine>
-      </Show>
-      <ul class="list-none m-0 p-0 flex flex-col gap-2">
+      <ul class="list-none m-0 p-0 flex flex-col gap-2 empty:hidden">
         {log.alerts.value.map((entry) => (
           <li
             key={`${entry.packageName}@${entry.version}`}

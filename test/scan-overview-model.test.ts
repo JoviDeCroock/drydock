@@ -174,7 +174,7 @@ describe("overviewTiles", () => {
     expect(tones({ publishedWithoutDecision: { count: 1 } })).toEqual([
       ["waiting", null],
       ["validating", null],
-      ["published", "warn"],
+      ["published", "danger"],
       ["decided", null],
     ]);
     expect(tones({ publishedWithoutDecision: { count: 0 } })).toEqual([

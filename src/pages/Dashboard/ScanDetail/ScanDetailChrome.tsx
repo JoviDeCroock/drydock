@@ -76,12 +76,26 @@ export function ScanDetailHeader({
         <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
           ← {dashboardReturnLabel(dashboardHref)}
         </a>
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          {detail?.scan.packageName || "Release review"}
-        </h1>
+        {/* Without a readable package name the stage id is the only handle the
+            dashboard row and this page share, so it stands in as the title. */}
+        {detail && !detail.scan.packageName ? (
+          <h1 class="font-mono text-xl font-semibold tracking-[-0.01em] m-0 break-all">
+            {detail.scan.stageId}
+          </h1>
+        ) : (
+          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0 break-words">
+            {detail?.scan.packageName || "Release review"}
+          </h1>
+        )}
         {detail ? (
           <MonoDetail
             parts={[
+              // A queued review simply has not read the manifest yet.
+              detail.scan.packageName ||
+              detail.scan.status === "pending" ||
+              detail.scan.status === "running" ? null : (
+                <span key="identity">package identity unavailable</span>
+              ),
               detail.scan.stagedVersion ? (
                 <span key="version">staged {detail.scan.stagedVersion}</span>
               ) : null,

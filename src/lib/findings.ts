@@ -42,6 +42,19 @@ export function highestFindingRisk(findings: Array<{ severity?: string }>): stri
   return "low";
 }
 
+// Rule reasons are lower-case clauses (server rule metadata composes them into
+// longer copy); standing alone in the UI they read as sentences. A lead that is
+// an identifier or a lower-case tool name keeps its spelling.
+const LOWERCASE_LEADS = new Set(["npm", "npx", "pnpm", "yarn", "pip", "uv", "git", "eval"]);
+
+export function findingSentence(text: string): string {
+  const trimmed = text.trim();
+  const lead = /^[a-z]+(?=[\s,;:]|$)/.exec(trimmed)?.[0];
+  const cased =
+    lead && !LOWERCASE_LEADS.has(lead) ? trimmed[0].toUpperCase() + trimmed.slice(1) : trimmed;
+  return /[\p{L}\p{N}]$/u.test(cased) ? `${cased}.` : cased;
+}
+
 export interface FindingGroupKeySource {
   ruleId?: string | null;
   severity?: string;

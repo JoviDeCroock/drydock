@@ -1,39 +1,49 @@
-import type { ComponentChildren, VNode } from "preact";
+import type { VNode } from "preact";
 import { describe, expect, test } from "vitest";
-import { FindingRow } from "../src/components/FindingCard";
+import { FindingDetails } from "../src/components/FindingCard";
+import { findingSentence } from "../src/lib/findings";
 
-interface FindingValueProps {
-  children: ComponentChildren;
-  class: string;
-  tabIndex?: number;
-  title?: string;
+function parts(details: VNode): VNode[] {
+  return (details.props.children as Array<VNode | null>).filter(Boolean) as VNode[];
 }
 
-function valueProps(row: VNode): FindingValueProps {
-  const children = row.props.children as VNode[];
-  return children[1].props as FindingValueProps;
-}
-
-describe("FindingRow", () => {
-  test("wraps long evidence without discarding its full value", () => {
+describe("FindingDetails", () => {
+  test("wraps long evidence in mono without discarding its full value", () => {
     const evidence = `4825200 byte binary; sha256 ${"a".repeat(64)}`;
-    const value = valueProps(FindingRow({ label: "evidence", value: evidence }));
+    const [, value] = parts(FindingDetails({ reason: "large binary", evidence }));
+    const props = value.props as { class: string; children: unknown; title?: string };
 
-    expect(value.class).toContain("break-words");
-    expect(value.class).not.toContain("truncate");
-    expect(value.class).not.toContain("hover:");
-    expect(value.class).not.toContain("focus:");
-    expect(value.tabIndex).toBeUndefined();
-    expect(value.title).toBeUndefined();
-    expect(value.children).toBe(evidence);
+    expect(value.type).toBe("code");
+    expect(props.class).toContain("font-mono");
+    expect(props.class).toContain("wrap-anywhere");
+    expect(props.class).not.toContain("truncate");
+    expect(props.title).toBeUndefined();
+    expect(props.children).toBe(evidence);
   });
 
-  test("wraps explanatory rows without truncating them", () => {
-    const reason = "large binary should be reviewed manually";
-    const value = valueProps(FindingRow({ label: "reason", value: reason }));
+  test("states the reason as a sentence and omits absent evidence", () => {
+    const rendered = parts(
+      FindingDetails({ reason: "large binary should be reviewed manually", evidence: "" }),
+    );
 
-    expect(value.class).toContain("break-words");
-    expect(value.class).not.toContain("truncate");
-    expect(value.children).toBe(reason);
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0].props.children).toBe("Large binary should be reviewed manually.");
+  });
+});
+
+describe("findingSentence", () => {
+  test("capitalizes a lower-case clause and ends it", () => {
+    expect(findingSentence("the staged tarball does not match")).toBe(
+      "The staged tarball does not match.",
+    );
+  });
+
+  test("leaves identifiers, tool names, and finished sentences alone", () => {
+    expect(findingSentence("package.json could not be parsed")).toBe(
+      "package.json could not be parsed.",
+    );
+    expect(findingSentence("npm runs this hook on install")).toBe("npm runs this hook on install.");
+    expect(findingSentence("Already a sentence.")).toBe("Already a sentence.");
+    expect(findingSentence("reads `process.env`")).toBe("Reads `process.env`");
   });
 });

@@ -28,6 +28,12 @@ interface DialogProps {
   footer?: ComponentChildren;
   size?: DialogSize;
   class?: string;
+  /**
+   * False while the dialog must not be dismissed (e.g. backup codes not yet
+   * saved): the ✕ is hidden rather than shown as a control that does nothing.
+   * `onClose` still guards the Escape key and backdrop.
+   */
+  dismissible?: boolean;
 }
 
 export function Dialog({
@@ -39,6 +45,7 @@ export function Dialog({
   footer,
   size = "sm",
   class: className,
+  dismissible = true,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement | null>(null);
   const titleId = useId();
@@ -105,7 +112,13 @@ export function Dialog({
         {/* Rendered last (absolutely positioned top-right) so showModal()'s
             native initial focus lands on the first real control instead of
             the ✕; call-site `autofocus` still takes precedence natively. */}
-        <CloseButton onClick={onClose} variant="icon" class="absolute top-3 right-3 text-[14px]" />
+        {dismissible ? (
+          <CloseButton
+            onClick={onClose}
+            variant="icon"
+            class="absolute top-3 right-3 text-[14px]"
+          />
+        ) : null}
       </div>
     </dialog>
   );

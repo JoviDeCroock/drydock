@@ -17,9 +17,10 @@ import {
 } from "../../models/package-diff";
 import { errorMessage } from "../../models/api";
 import { AikidoPartnerStrip } from "../../components/AikidoPartner";
-import { Alert } from "../../components/Alert";
+import { Alert, type AlertTone } from "../../components/Alert";
 import { Button, LinkButton } from "../../components/Button";
 import { type DiffFinding, DiffView } from "../../components/DiffView";
+import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
@@ -125,7 +126,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
         )}
       />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
-        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 [overflow-wrap:anywhere]">
           {spec.packageName}
         </h1>
         <MonoDetail parts={["public package diff"]} />
@@ -138,7 +139,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
             />
           }
         >
-          {(message) => <Alert tone="critical">{message}</Alert>}
+          {(message) => <DiffFailureNotice message={message} />}
         </Show>
       </section>
     </PageShell>
@@ -174,7 +175,7 @@ function DiffPackageResolver({
           so it has to describe this package rather than the diff tool. */}
       <PageSeo metadata={packageDiffIndexSeo(ecosystem, packageName)} />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
-        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 [overflow-wrap:anywhere]">
           {packageName}
         </h1>
         <MonoDetail parts={["public package diff"]} />
@@ -187,7 +188,7 @@ function DiffPackageResolver({
             />
           }
         >
-          {(message) => <Alert tone="critical">{message}</Alert>}
+          {(message) => <DiffFailureNotice message={message} />}
         </Show>
       </section>
     </PageShell>
@@ -291,9 +292,9 @@ function DiffLanding() {
   };
 
   return (
-    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
+    <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={packageDiffSeo()} />
-      <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
+      <section class="pt-8 pb-2 md:pt-12 border-t border-border flex flex-col gap-5">
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Compare npm, PyPI, or atpm releases.
         </h1>
@@ -303,46 +304,54 @@ function DiffLanding() {
           pull-request preview build. No account needed.
         </p>
         <form
-          class="flex flex-wrap gap-3 items-center max-w-[620px]"
+          class="flex flex-wrap gap-3 items-end max-w-[620px]"
           onSubmit={(event) => {
             event.preventDefault();
             void open(packageName.peek().trim());
           }}
         >
-          <div class="w-auto min-w-[100px]">
-            <Select
-              aria-label="Package ecosystem"
-              value={ecosystem}
-              onChange={(value) => (ecosystem.value = isDiffEcosystem(value) ? value : "npm")}
-            >
-              {Object.keys(NAME_FIELD).map((id) => (
-                <option key={id} value={id}>
-                  {ecosystemLabel(id)}
-                </option>
-              ))}
-            </Select>
+          <div class="min-w-[100px]">
+            <Field label="Ecosystem" for="diff-ecosystem">
+              <Select
+                id="diff-ecosystem"
+                value={ecosystem}
+                onChange={(value) => (ecosystem.value = isDiffEcosystem(value) ? value : "npm")}
+              >
+                {Object.keys(NAME_FIELD).map((id) => (
+                  <option key={id} value={id}>
+                    {ecosystemLabel(id)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
-          <Input
-            type="text"
-            value={packageName}
-            placeholder={namePlaceholder}
-            aria-label={nameLabel}
-            autoComplete="off"
-            spellcheck={false}
-            class="flex-1 min-w-[240px]"
-            onInput={(event) => (packageName.value = (event.target as HTMLInputElement).value)}
-          />
+          {/* The visible label stays generic so it can be the accessible name;
+              the ecosystem-specific hint (pkg.pr.new URL, project name, DID)
+              lives in the placeholder and description. */}
+          <Field label="Package" for="diff-package-name" class="flex-1 min-w-[240px]">
+            <Input
+              id="diff-package-name"
+              type="text"
+              value={packageName}
+              placeholder={namePlaceholder}
+              aria-description={nameLabel}
+              autoComplete="off"
+              spellcheck={false}
+              class="w-full"
+              onInput={(event) => (packageName.value = (event.target as HTMLInputElement).value)}
+            />
+          </Field>
           <Button type="submit" disabled={busy}>
             <Show when={busy} fallback="Diff latest versions">
               Loading versions…
             </Show>
           </Button>
         </form>
-        <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+        <Show when={error}>{(message) => <DiffFailureAlert message={message} />}</Show>
       </section>
 
       <section class="flex flex-col gap-3" aria-label="Notable supply-chain diffs">
-        <SectionLabel as="h2">See a real incident</SectionLabel>
+        <SectionLabel as="h2">Explore example diffs</SectionLabel>
         <IncidentDiffCards />
       </section>
 
@@ -384,7 +393,13 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const diffEntries = useComputed<DiffEntry[]>(() => model.diff.value?.diff ?? []);
   const findingItems = useComputed<FindingWithDiffStatus[]>(() => adaptFindings(model.diff.value));
   const findingCounts = useComputed(() => findingCountsByPath(findingItems.value));
-  const severityCounts = useComputed(() => countSeverities(model.diff.value?.findings ?? []));
+  // The bar counts only findings on the release change, so it agrees with the
+  // release risk beside it; package-context findings are counted in the
+  // metadata line, as the scan-detail verdict separates release from artifact.
+  const releaseFindings = useComputed(() =>
+    (model.diff.value?.findings ?? []).filter((finding) => finding.releaseDelta === true),
+  );
+  const severityCounts = useComputed(() => countSeverities(releaseFindings.value));
   const selected = useSelectedDiffFile(diffEntries, model.selectedPath, findingItems);
 
   const diff = model.diff.value;
@@ -397,6 +412,8 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const shownName = diff?.displayName ?? versions?.displayName ?? packageName;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);
+  const releaseFindingCount = releaseFindings.value.length;
+  const contextFindingCount = (diff?.findings.length ?? 0) - releaseFindingCount;
   // Preview sides (pkg.pr.new URLs) get short labels; registry versions pass
   // through unchanged.
   const fromLabel = diffRefLabel(fromVersion);
@@ -428,7 +445,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
       <section class="flex flex-col gap-3 border-t border-border pt-6">
         <div class="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div class="flex flex-col gap-3 min-w-0">
-            <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+            <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 [overflow-wrap:anywhere]">
               {shownName}
             </h1>
             <MonoDetail
@@ -448,7 +465,19 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                       <span key="files">{diff.diff.length} files</span>,
                       <span key="changed">{changedCount} changed</span>,
                       <span key="risk">release risk {diff.risk.releaseRisk}</span>,
+                      diff.risk.artifactRisk !== diff.risk.releaseRisk ? (
+                        <span key="artifact-risk">artifact risk {diff.risk.artifactRisk}</span>
+                      ) : null,
                       hasFindings ? null : <span key="findings">no findings</span>,
+                      releaseFindingCount === 1 ? (
+                        <span key="release-findings">1 release finding</span>
+                      ) : null,
+                      contextFindingCount ? (
+                        <span key="context-findings">
+                          {contextFindingCount} package-context{" "}
+                          {contextFindingCount === 1 ? "finding" : "findings"}
+                        </span>
+                      ) : null,
                     ]
                   : []),
               ]}
@@ -464,11 +493,20 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             </Show>
           )}
         </div>
-        {hasFindings ? <SeverityBar counts={severityCounts.value} class="max-w-[420px]" /> : null}
-        <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
-          Deterministic findings only: package code is never executed and AI review does not run on
-          this public surface, so the same version pair always produces the same report.
-        </Muted>
+        {/* One segment would only restate the single finding the line names. */}
+        {releaseFindingCount > 1 ? (
+          <SeverityBar
+            counts={severityCounts.value}
+            label="release findings by severity"
+            class="max-w-[420px]"
+          />
+        ) : null}
+        {error ? null : (
+          <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
+            Deterministic findings only: package code is never executed and AI review does not run
+            on this public surface, so the same version pair always produces the same report.
+          </Muted>
+        )}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}
@@ -481,7 +519,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         ) : null}
       </section>
 
-      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {error ? <DiffFailureNotice message={error} onRetry={() => void model.load()} /> : null}
       {loading ? (
         <LoadingState
           title="Comparing releases"
@@ -545,11 +583,6 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             <RiskSignalsSection
               findings={findingItems.value}
               onSelect={(file) => void model.selectPath(file)}
-              description={
-                `Deterministic rules scan the full ${toLabel} artifact. Changed-file signals ` +
-                "are pinned to their line in the diff above; unchanged signals stay here as " +
-                "package context."
-              }
             />
           ) : null}
 
@@ -663,4 +696,100 @@ function adaptFindings(diff: PublicDiffResponse | null): FindingWithDiffStatus[]
     releaseDelta: finding.releaseDelta,
     releaseDeltaKind: finding.releaseDeltaKind,
   }));
+}
+
+interface DiffFailure {
+  title: string;
+  body: string;
+  tone: AlertTone;
+  retry: boolean;
+}
+
+// The server reports failures as short lowercase reasons ("package not found",
+// "rate limit exceeded"). Map the ones a reader can act on to a named failure
+// and a next step; the raw reason stays underneath as the mono detail line.
+function describeDiffFailure(message: string): DiffFailure {
+  const reason = message.toLowerCase();
+  if (reason.includes("rate limit")) {
+    return {
+      title: "Too many comparisons",
+      body: "The public diff limits how often one visitor can compare releases. Wait a minute, then try again.",
+      tone: "warn",
+      retry: true,
+    };
+  }
+  if (reason.includes("preview not found")) {
+    return {
+      title: "Preview build not found",
+      body: "pkg.pr.new has no preview at this URL. Check the link, or compare published versions instead.",
+      tone: "warn",
+      retry: false,
+    };
+  }
+  if (reason.includes("not found") || reason.includes("does not exist")) {
+    return {
+      title: "Package not found",
+      body: "The registry has no package or release under this name. Check the spelling, or choose another package.",
+      tone: "warn",
+      retry: false,
+    };
+  }
+  if (
+    reason.includes("too large") ||
+    reason.includes("too many files") ||
+    reason.includes("size limit")
+  ) {
+    return {
+      title: "Release too large to diff",
+      body: "This release exceeds the public diff size limits, so Drydock did not compare it.",
+      tone: "warn",
+      retry: false,
+    };
+  }
+  if (reason.includes("at least two published versions") || reason.includes("no published")) {
+    return {
+      title: "Nothing to compare yet",
+      body: "This package needs an earlier published release to compare against.",
+      tone: "warn",
+      retry: false,
+    };
+  }
+  return {
+    title: "Diff unavailable",
+    body: "Drydock could not compare these releases. Try again, or choose another package.",
+    tone: "critical",
+    retry: true,
+  };
+}
+
+function DiffFailureAlert({ message }: { message: string }) {
+  const failure = describeDiffFailure(message);
+  return (
+    <Alert tone={failure.tone}>
+      <h2 class="m-0 text-[13px] font-medium">{failure.title}</h2>
+      <p class="m-0 text-ink-muted leading-[1.55]">{failure.body}</p>
+      <p class="m-0 mt-1 font-mono text-[12px] text-ink-subtle [overflow-wrap:anywhere]">
+        {message}
+      </p>
+    </Alert>
+  );
+}
+
+/**
+ * A failed diff page: what failed, then a way forward. Without the actions the
+ * page is a dead end, since the header holds no form to try another package.
+ */
+function DiffFailureNotice({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const canRetry = Boolean(onRetry) && describeDiffFailure(message).retry;
+  return (
+    <section class="flex flex-col gap-3">
+      <DiffFailureAlert message={message} />
+      <div class="flex flex-wrap gap-3">
+        {canRetry ? <Button onClick={onRetry}>Try again</Button> : null}
+        <LinkButton href="/diff" variant={canRetry ? "secondary" : "primary"}>
+          Choose another package
+        </LinkButton>
+      </div>
+    </section>
+  );
 }

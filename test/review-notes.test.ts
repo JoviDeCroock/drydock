@@ -12,6 +12,7 @@ import { deterministicAssessmentNote } from "../src/pages/Dashboard/ScanDetail/R
 import {
   repositoryLinkHref,
   sourceBindingSignals,
+  tierDescription,
 } from "../src/pages/Dashboard/ScanDetail/IntentEnvelopeSection";
 
 function finding(id: string, overrides: Partial<ReviewFinding> = {}): ReviewFinding {
@@ -259,7 +260,12 @@ describe("empty release delta", () => {
 
   test("manifest-only changes do not clear existing critical package findings", () => {
     const verdict = buildReleaseVerdict(input);
-    expect(verdict.recommendation.label).toBe("package context only");
+    expect(verdict.recommendation.label).toBe("low release-change risk");
+    expect(verdict.recommendation.tone).toBe("neutral");
+    expect(verdict.recommendation.caveat?.text).toBe(
+      "Existing critical-risk package findings remain",
+    );
+    expect(verdict.severityIncludesContext).toBe(true);
     expect(verdict.evidence[0].value).toBe(
       "1 changed file; no findings in this release delta. Package findings remain below.",
     );
@@ -317,5 +323,221 @@ describe("empty release delta", () => {
         value: "Published 1.0.0 exceeded the download budget, so no file was compared against it.",
       },
     ]);
+  });
+});
+
+describe("first release", () => {
+  test("reads as a neutral first release, not a green all-clear, and drops the entrypoint change", () => {
+    const detail = {
+      scan: {
+        id: "scan",
+        stageId: "stage",
+        packageName: "example",
+        stagedVersion: "1.0.0",
+        previousVersion: null,
+        risk: "low",
+        status: "complete",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      files: [],
+      findings: [],
+      events: [],
+    } as unknown as PersistedScanDetail;
+    const verdict = buildReleaseVerdict({
+      detail,
+      summary: {
+        packageJsonDiff: {
+          name: "example",
+          hasPreviousManifest: false,
+          previousVersion: null,
+          stagedVersion: "1.0.0",
+          scripts: [],
+          dependencies: [],
+          bin: [],
+          entrypointsChanged: true,
+        },
+        baseline: { version: null, reason: "none" },
+      } as PersistedSummary,
+      diffCount: 3,
+      findingsWithDiffStatus: [],
+      usePersistedRiskSummary: false,
+      isWorkflowGate: false,
+    });
+    expect(verdict.recommendation).toMatchObject({ label: "first release", tone: "neutral" });
+    expect(verdict.evidence).toEqual([{ label: "evidence", value: "3 files, all new." }]);
+    expect(verdict.releaseChanges).toEqual([]);
+    expect(verdict.hasSignals).toBe(true);
+  });
+
+  test("a registry error that left no baseline is not called a first release", () => {
+    const detail = {
+      scan: {
+        id: "scan",
+        stageId: "stage",
+        packageName: "example",
+        stagedVersion: "1.0.1",
+        previousVersion: null,
+        risk: "low",
+        status: "complete",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      files: [],
+      findings: [],
+      events: [],
+    } as unknown as PersistedScanDetail;
+    const verdict = buildReleaseVerdict({
+      detail,
+      summary: { baseline: { version: null, reason: "metadata-unavailable" } } as PersistedSummary,
+      diffCount: 3,
+      findingsWithDiffStatus: [],
+      usePersistedRiskSummary: false,
+      isWorkflowGate: false,
+    });
+    expect(verdict.recommendation.label).not.toBe("first release");
+    expect(verdict.evidence).not.toContainEqual({ label: "evidence", value: "3 files, all new." });
+  });
+
+  test("an npm-published release no longer asks to hold back the staged approval", () => {
+    const detail = {
+      scan: {
+        id: "scan",
+        stageId: "stage",
+        packageName: "example",
+        stagedVersion: "1.0.1",
+        previousVersion: "1.0.0",
+        risk: "high",
+        status: "complete",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      riskSummary: {
+        artifactRisk: "high",
+        releaseRisk: "high",
+        contextRisk: "low",
+        releaseFindingCount: 1,
+        contextFindingCount: 0,
+        unknownFindingCount: 0,
+      },
+      files: [],
+      findings: [],
+      events: [],
+    } as unknown as PersistedScanDetail;
+    const verdictFor = (registryVersionStatus: string | null, isWorkflowGate = false) =>
+      buildReleaseVerdict({
+        detail: { ...detail, scan: { ...detail.scan, registryVersionStatus } },
+        summary: {},
+        diffCount: 1,
+        findingsWithDiffStatus: [],
+        usePersistedRiskSummary: true,
+        isWorkflowGate,
+      }).recommendation.label;
+    expect(verdictFor("staged")).toBe("block manual approval");
+    expect(verdictFor("published")).toBe("investigate published release");
+    expect(verdictFor(null, true)).toBe("block this release");
+  });
+});
+
+describe("verdict scope and artifact validity", () => {
+  const base = {
+    scan: {
+      id: "scan",
+      stageId: "stage",
+      packageName: "@acme/actual",
+      stagedVersion: "1.0.1",
+      previousVersion: "1.0.0",
+      risk: "critical",
+      status: "complete",
+      decision: null,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    files: [],
+    findings: [],
+    events: [],
+  } as unknown as PersistedScanDetail;
+  const verdictFor = (
+    detail: PersistedScanDetail,
+    summary: PersistedSummary = {},
+    extra: Partial<Parameters<typeof buildReleaseVerdict>[0]> = {},
+  ) =>
+    buildReleaseVerdict({
+      detail,
+      summary,
+      diffCount: 1,
+      findingsWithDiffStatus: detail.findings.map((item) => ({
+        finding: item,
+        diffStatus: "modified" as const,
+        releaseDelta: true,
+      })),
+      usePersistedRiskSummary: false,
+      isWorkflowGate: false,
+      ...extra,
+    });
+
+  test("a digest mismatch qualifies the verdict whatever the findings say", () => {
+    const verdict = verdictFor(base, {
+      stagedPublish: {
+        artifactIntegrity: {
+          status: "mismatch",
+          algorithm: "sha1",
+          declared: "0".repeat(40),
+          computed: "e".repeat(40),
+        },
+      },
+    });
+    expect(verdict.validity.map((caveat) => caveat.key)).toEqual(["digest-mismatch"]);
+  });
+
+  test("a metadata mismatch labels the claimed and inspected identities", () => {
+    const mismatch = {
+      ...finding("meta", {
+        ruleId: "stage.metadata-mismatch",
+        file: "package.json",
+      }),
+      scanId: "scan",
+    };
+    const verdict = verdictFor(
+      { ...base, findings: [mismatch] },
+      { stagedPublish: { packageName: "@acme/claimed", version: "9.9.9" } },
+    );
+    expect(verdict.validity).toEqual([
+      expect.objectContaining({
+        key: "metadata-mismatch",
+        identities: [
+          { label: "npm stage claims", value: "@acme/claimed@9.9.9" },
+          { label: "tarball inspected", value: "@acme/actual@1.0.1" },
+        ],
+      }),
+    ]);
+    expect(verdictFor(base).validity).toEqual([]);
+  });
+
+  test("names the compared baseline and follows a rejected gate", () => {
+    const context = { ...finding("ctx", { severity: "high" }), scanId: "scan" };
+    const scoped = buildReleaseVerdict({
+      detail: { ...base, scan: { ...base.scan, risk: "high" }, findings: [context] },
+      summary: {},
+      diffCount: 1,
+      findingsWithDiffStatus: [{ finding: context, diffStatus: "unchanged", releaseDelta: false }],
+      usePersistedRiskSummary: false,
+      isWorkflowGate: true,
+      comparedVersion: "1.2.0-rc.1",
+    });
+    expect(scoped.recommendation.label).toBe("low release-change risk against 1.2.0-rc.1");
+
+    const release = { ...finding("rel", { severity: "high" }), scanId: "scan" };
+    const rejected = verdictFor(
+      { ...base, scan: { ...base.scan, decision: "no_publish" }, findings: [release] },
+      {},
+      { isWorkflowGate: true, gateStatus: "rejected" },
+    );
+    expect(rejected.recommendation.copy).not.toMatch(/Rejecting blocks/);
+    expect(rejected.recommendation.copy).toMatch(/^This package was rejected/);
+  });
+
+  test("states a declared repository once, without the tier chip's restatement", () => {
+    expect(tierDescription({ tier: "declared" })).toBe("Repository declared · unverified");
   });
 });

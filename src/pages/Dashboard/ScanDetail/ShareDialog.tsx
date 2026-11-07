@@ -1,3 +1,6 @@
+import { useSignal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
+import { useId } from "preact/hooks";
 import { DEFAULT_BADGE_TAG, type PublicEcosystem } from "../../../../server/lib/public-feed";
 import { shareBadgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
@@ -9,7 +12,8 @@ import { CopyButton } from "../../../components/CopyButton";
 import { Dialog } from "../../../components/Dialog";
 import { Input } from "../../../components/Input";
 import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
-import { EmptyLine, MonoDetail, MonoLabel } from "../../../components/Typography";
+import { Field } from "../../../components/Field";
+import { EmptyLine, MonoDetail } from "../../../components/Typography";
 
 export function ShareDialog({
   open,
@@ -62,6 +66,9 @@ export function ShareDialog({
   const error = readSignalProp(errorProp);
   const attestationAvailable = readSignalProp(attestationAvailableProp);
   const saving = readSignalProp(status) === "saving";
+  const confirmingRevoke = useSignal(false);
+  const linkId = useId();
+  const badgeId = useId();
 
   const badge = shareBadgeMarkdown({
     origin: location.origin,
@@ -78,37 +85,72 @@ export function ShareDialog({
   // badge, so it reads as `latest` rather than as nothing.
   const badgeLine = badgeTag ?? DEFAULT_BADGE_TAG;
 
+  const close = () => {
+    confirmingRevoke.value = false;
+    onClose();
+  };
+  const create = () => {
+    confirmingRevoke.value = false;
+    onEnable();
+  };
+
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={close}
+      size="md"
       title="Share report"
       description={
         share && !share.includesFiles
-          ? "This existing link shares findings and the changed-file list only. Include the diff to let readers open the same redacted staged samples you are reading here."
-          : "A public link serves this review to anyone who has it: risk, findings, manifest changes, and the file diff itself — the same redacted staged samples you are reading here, with findings pinned to their lines. The previous version is never fetched for a public reader, so shared files show the staged side only. Revoking the link takes all of it back immediately."
+          ? "This link shares findings and the changed-file list only. Include the diff to share the redacted staged samples you are reading here."
+          : "Anyone with the link can read this review: risk, findings, manifest changes, and the redacted staged side of the file diff."
       }
       footer={
         share ? (
-          <>
-            <Button variant="danger" size="sm" onClick={onRevoke} disabled={saving}>
-              {saving ? "Revoking…" : "Revoke link"}
-            </Button>
-            {!share.includesFiles ? (
-              <Button size="sm" onClick={onEnable} disabled={saving}>
-                {saving ? "Updating…" : "Include diff"}
+          <Show
+            when={confirmingRevoke}
+            fallback={
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="mr-auto"
+                  onClick={() => (confirmingRevoke.value = true)}
+                  disabled={saving}
+                >
+                  Revoke link…
+                </Button>
+                {!share.includesFiles ? (
+                  <Button size="sm" onClick={onEnable} disabled={saving}>
+                    {saving ? "Updating…" : "Include diff"}
+                  </Button>
+                ) : null}
+                <Button variant="secondary" size="sm" onClick={close}>
+                  Done
+                </Button>
+              </>
+            }
+          >
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => (confirmingRevoke.value = false)}
+                disabled={saving}
+              >
+                Keep link
               </Button>
-            ) : null}
-            <Button variant="secondary" size="sm" onClick={onClose}>
-              Close
-            </Button>
-          </>
+              <Button variant="danger" size="sm" onClick={onRevoke} disabled={saving}>
+                {saving ? "Revoking…" : "Revoke link"}
+              </Button>
+            </>
+          </Show>
         ) : (
           <>
-            <Button variant="secondary" size="sm" onClick={onClose}>
+            <Button variant="secondary" size="sm" onClick={close}>
               Cancel
             </Button>
-            <Button size="sm" onClick={onEnable} disabled={saving}>
+            <Button size="sm" onClick={create} disabled={saving}>
               {saving ? "Creating…" : "Create public link"}
             </Button>
           </>
@@ -118,12 +160,28 @@ export function ShareDialog({
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {share ? (
         <>
-          <div class="flex items-center gap-2">
-            {/* The inputs stay read-only rather than disabled so the text is
-                selectable when CopyButton reports the clipboard unavailable. */}
-            <Input value={share.url} readOnly mono class="flex-1" />
-            <CopyButton text={share.url} />
-          </div>
+          <Field label="Report link" for={linkId}>
+            <div class="flex items-center gap-2">
+              {/* The inputs stay read-only rather than disabled so the text is
+                  selectable when CopyButton reports the clipboard unavailable. */}
+              <Input id={linkId} value={share.url} readOnly mono class="flex-1 min-w-0" />
+              {/* Initial focus on Copy, not the field: a focused field scrolls
+                  to the token's tail and hides which link this is. */}
+              <CopyButton
+                text={share.url}
+                label="Copy link"
+                variant={share.includesFiles ? "primary" : "secondary"}
+                autofocus
+              />
+            </div>
+          </Field>
+          {share.awaitingPublication ? (
+            <Alert tone="info">
+              {rejected
+                ? "This link answers as not found until you list the rejection publicly or the release is published."
+                : "This link and its listing go live once this release is published; until then they answer as not found."}
+            </Alert>
+          ) : null}
           <MonoDetail
             parts={[
               <span key="shared">shared {formatDateTime(share.sharedAt)}</span>,
@@ -142,14 +200,7 @@ export function ShareDialog({
           {attestationAvailable === false ? (
             <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
           ) : null}
-          <EmptyLine>
-            {!share.awaitingPublication
-              ? "Anyone with the link can read the report; revoking invalidates it immediately."
-              : rejected
-                ? "This link answers as not found until you list the rejection publicly or the release is published."
-                : "This link and its listing go live once this release is published; until then they answer as not found."}
-          </EmptyLine>
-          <label class="flex items-start gap-2 text-[13px] text-ink-muted cursor-pointer">
+          <label class="flex items-start gap-2 cursor-pointer">
             <input
               type="checkbox"
               class="mt-0.5"
@@ -157,35 +208,45 @@ export function ShareDialog({
               disabled={saving}
               onChange={(e) => onSetFeedListing((e.target as HTMLInputElement).checked)}
             />
-            <span>
-              List publicly — the report appears in the discoverable{" "}
-              <a
-                href="/public/threat-feed.json"
-                target="_blank"
-                rel="noreferrer"
-                class="text-ink-muted underline hover:text-ink"
-              >
-                threat-feed.json
-              </a>{" "}
-              index that security partners consume, not just behind this link.
+            <span class="flex flex-col gap-0.5">
+              <span class="text-[13px] text-ink">List in public threat feed</span>
+              <span class="text-[12px] leading-[1.5] text-ink-muted">
+                Adds the report to{" "}
+                <a
+                  href="/public/threat-feed.json"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-ink-muted underline hover:text-ink"
+                >
+                  threat-feed.json
+                </a>
+                , the discoverable index security partners consume.
+              </span>
             </span>
           </label>
+          <Show when={confirmingRevoke}>
+            <Alert tone="warn">
+              Revoke this link? Anyone holding it gets not found from now on, and a listed report
+              leaves the threat feed.
+            </Alert>
+          </Show>
         </>
       ) : (
         <EmptyLine>
-          This review is currently visible to organization members only. Requires an owner or admin
-          role.
+          Only organization members can see this review until you create a link. Creating one
+          requires an owner or admin role.
         </EmptyLine>
       )}
 
       {npmBadgeNote ? <EmptyLine>{npmBadgeNote}</EmptyLine> : null}
       {badge ? (
         <div class="flex flex-col gap-1.5">
-          <MonoLabel as="span">README badge</MonoLabel>
-          <div class="flex items-center gap-2">
-            <Input value={badge} readOnly mono class="flex-1" />
-            <CopyButton text={badge} />
-          </div>
+          <Field label="README badge" for={badgeId}>
+            <div class="flex items-center gap-2">
+              <Input id={badgeId} value={badge} readOnly mono class="flex-1 min-w-0" />
+              <CopyButton text={badge} />
+            </div>
+          </Field>
           {badgePublic ? (
             <EmptyLine>
               Paste into the package&apos;s README. It follows your approvals on the{" "}

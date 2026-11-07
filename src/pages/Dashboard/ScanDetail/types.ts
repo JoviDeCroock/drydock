@@ -15,13 +15,16 @@ export interface PersistedSummary {
   // Baseline selection recorded by the pipeline. The UI only reads
   // `comparisonSkipped`, which says a published predecessor existed but was
   // never downloaded, so the diff is not a release delta.
-  baseline?: { version?: string | null; comparisonSkipped?: string };
+  baseline?: { version?: string | null; comparisonSkipped?: string; reason?: string | null };
   // Adapter-shaped staged details persisted by summarizeDetails. The UI only
-  // reads the byte-continuity blocks and the stage timestamp; the rest stays
-  // opaque.
+  // reads the byte-continuity blocks, the claimed identity, and the stage
+  // timestamp; the rest stays opaque.
   stagedPublish?: {
     provenance?: ReleaseProvenance;
     artifactIntegrity?: unknown;
+    /** npm's claimed identity for the stage, before the tarball was inspected. */
+    packageName?: unknown;
+    version?: unknown;
     /** npm's own creation time for the stage, as the registry reported it. */
     createdAt?: string | null;
     /** Named directly by a published-pair review, which has no gate provenance. */

@@ -26,16 +26,16 @@ export function ContentArticleHero({
   heading: string;
   lead: string;
   details?: string[];
-  actions: ComponentChildren;
+  actions?: ComponentChildren;
 }) {
   return (
     <header class="pt-8 pb-2 md:pt-12 border-t border-border flex flex-col gap-5">
-      <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
+      <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0 text-balance">
         {heading}
       </h1>
       <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">{lead}</p>
       {details ? <MonoDetail parts={details} /> : null}
-      <div class="flex flex-wrap gap-3 mt-1">{actions}</div>
+      {actions ? <div class="flex flex-wrap gap-3 mt-1">{actions}</div> : null}
     </header>
   );
 }

@@ -13,6 +13,9 @@ import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
+import { registryStatusVariant } from "../../../features/registry-status";
+import { verdictTextClass } from "../../../features/review/verdict";
+import type { ReleaseRecommendationCopy } from "../recommendation";
 
 export function DecisionDialog({
   open,
@@ -25,6 +28,7 @@ export function DecisionDialog({
   npmStagedPackagesUrl,
   scan,
   postRelease = null,
+  verdict = null,
   onSubmit,
 }: {
   // Signals are read here rather than by the page: opening the dialog and the
@@ -48,7 +52,16 @@ export function DecisionDialog({
     | "registryUrl"
     | "registryVersionStatus"
     | "registryStatusSupersededAt"
+    | "decision"
   >;
+  /**
+   * Drydock's verdict on this release. It decides which outcome the dialog
+   * offers as its primary action, so a blocked verdict never opens on a
+   * filled "Record approval".
+   */
+  verdict?: SignalOrValue<{
+    recommendation: Pick<ReleaseRecommendationCopy, "label" | "tone">;
+  } | null>;
   /**
    * Set when this review answers a publication alert: the release is already
    * public, so the decision is about it after release, and there is no stage
@@ -100,6 +113,25 @@ export function DecisionDialog({
     }
   };
 
+  const recommendation = readSignalProp(verdict)?.recommendation ?? null;
+  const advisesRejection = recommendation?.tone === "critical" || recommendation?.tone === "high";
+  // A published-pair review and a stage npm has since published both judge a
+  // release that is already public.
+  const alreadyPublished =
+    !postRelease && (scan.source === "published" || registryStatusVariant(scan) === "published");
+  const subject =
+    scan.packageName && scan.stagedVersion ? `${scan.packageName}@${scan.stagedVersion}` : null;
+  const approveLabel = saving
+    ? "Saving…"
+    : postRelease || alreadyPublished
+      ? "Approve after release"
+      : "Record approval";
+  const rejectLabel = saving
+    ? "Saving…"
+    : postRelease || alreadyPublished
+      ? "Decline after release"
+      : "Record rejection";
+
   const handleClose = () => {
     if (saving) return;
     onClose();
@@ -109,18 +141,30 @@ export function DecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title={postRelease ? "Decision after release" : "Review decision"}
+      title={postRelease || alreadyPublished ? "Decision after release" : "Review decision"}
       description={
         postRelease
           ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert when the reviewed bytes match the published ones, declining keeps the alert open with next steps. If this organization is a registry-verified publisher of the package and the reviewed bytes match the published ones, the public badge shows it as approved or rejected. Nothing changes on npm.`
-          : `Record an advisory review decision.${
-              // Published-pair reviews are not release records the monitor reads.
-              scan.source === "manual" || scan.source === "auto_discovery"
-                ? " Confirm the staged-release decision separately in npm with 2FA. Record approval here before publication so the publication monitor can compare released bytes with your earlier decision."
-                : ""
-            }`
+          : alreadyPublished
+            ? "This version is already published. Record whether this organization approves it; nothing changes on the registry."
+            : `Record an advisory review decision.${
+                // Published-pair reviews are not release records the monitor reads.
+                scan.source === "manual" || scan.source === "auto_discovery"
+                  ? " Confirm it separately in npm with 2FA. Approving here before publication lets the publication monitor match the released bytes to your decision."
+                  : ""
+              }`
       }
     >
+      {subject || recommendation ? (
+        <p class="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px]">
+          {subject ? <span class="font-mono text-ink break-all">{subject}</span> : null}
+          {recommendation ? (
+            <span class={verdictTextClass(recommendation.tone)}>
+              Drydock: {recommendation.label}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
       {decision ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
@@ -169,12 +213,30 @@ export function DecisionDialog({
         </label>
       ) : null}
 
-      <div class="flex flex-wrap gap-2">
-        <Button onClick={() => submit("publish")} disabled={saving}>
-          {saving ? "Saving…" : postRelease ? "Approve after release" : "Record approval"}
-        </Button>
-        <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
-          {saving ? "Saving…" : postRelease ? "Decline after release" : "Record rejection"}
+      {/* One filled action, chosen by the verdict: the outcome Drydock
+          advises leads, the other stays available as a secondary button. */}
+      <div class="flex flex-wrap items-center gap-2">
+        {advisesRejection ? (
+          <>
+            <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
+              {rejectLabel}
+            </Button>
+            <Button variant="secondary" onClick={() => submit("publish")} disabled={saving}>
+              {approveLabel}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={() => submit("publish")} disabled={saving}>
+              {approveLabel}
+            </Button>
+            <Button variant="secondary" onClick={() => submit("no_publish")} disabled={saving}>
+              {rejectLabel}
+            </Button>
+          </>
+        )}
+        <Button variant="ghost" class="ml-auto" onClick={handleClose} disabled={saving}>
+          Cancel
         </Button>
       </div>
       {message ? <Alert tone="critical">{message}</Alert> : null}

@@ -12,7 +12,7 @@ const projects = [
     logo: keyvLogo,
     width: 1420,
     height: 540,
-    size: "h-10",
+    size: "h-7 md:h-10",
   },
   {
     name: "Cacheable",
@@ -20,7 +20,7 @@ const projects = [
     logo: cacheableLogo,
     width: 1330,
     height: 730,
-    size: "h-14",
+    size: "h-10 md:h-14",
   },
   {
     name: "Preact",
@@ -28,7 +28,7 @@ const projects = [
     logo: preactLogo,
     width: 1800,
     height: 512,
-    size: "h-10",
+    size: "h-7 md:h-10",
   },
   {
     name: "Apollo",
@@ -36,7 +36,7 @@ const projects = [
     logo: apolloLogo,
     width: 475,
     height: 475,
-    size: "h-14",
+    size: "h-10 md:h-14",
   },
   {
     name: "PostCSS",
@@ -44,7 +44,7 @@ const projects = [
     logo: postcssLogo,
     width: 246,
     height: 78,
-    size: "h-14",
+    size: "h-10 md:h-14",
   },
 ];
 
@@ -52,7 +52,7 @@ export function UsedBy() {
   return (
     <section aria-label="Projects using Drydock" class="flex flex-col gap-4">
       <SectionLabel as="p">Used by</SectionLabel>
-      <ul class="list-none m-0 p-0 self-center flex flex-wrap items-center justify-center gap-8 md:gap-12">
+      <ul class="list-none m-0 p-0 self-center flex flex-wrap items-center justify-center gap-x-6 gap-y-4 md:gap-12">
         {projects.map((project) => (
           <li key={project.name}>
             <a

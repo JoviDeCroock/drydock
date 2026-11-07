@@ -6,6 +6,8 @@ export interface DiffFinding {
   ruleId?: string | null;
   reason: string;
   evidence?: string | null;
+  /** Present before this release too: package context, not a release change. */
+  packageContext?: boolean;
 }
 
 export type SeverityGroup = "danger" | "warn" | "info" | "ok";

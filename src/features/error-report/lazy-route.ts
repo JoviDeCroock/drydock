@@ -14,11 +14,21 @@ export function lazyRoute<T>(load: () => Promise<RouteModule<T>>): T {
   return lazy(surfaceLoadFailure(load));
 }
 
+// Load failures are recorded by identity rather than recognised by message:
+// each browser words a failed dynamic import differently.
+const routeLoadFailures = new WeakSet<object>();
+
+/** Whether `error` is a route chunk that failed to load, as opposed to a page that threw. */
+export function isRouteLoadFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && routeLoadFailures.has(error);
+}
+
 export function surfaceLoadFailure<T>(
   load: () => Promise<RouteModule<T>>,
 ): () => Promise<RouteModule<T>> {
   return () =>
     load().catch((error: unknown) => {
+      if (typeof error === "object" && error !== null) routeLoadFailures.add(error);
       const rethrow = () => {
         throw error;
       };

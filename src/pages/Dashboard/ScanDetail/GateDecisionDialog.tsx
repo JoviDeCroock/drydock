@@ -16,6 +16,8 @@ import { readSignalProp, type SignalOrValue } from "../../../components/signal-p
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { LoadingLine, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
+import { verdictTextClass } from "../../../features/review/verdict";
+import type { ReleaseRecommendationCopy } from "../recommendation";
 
 function gateStatusTone(status: PublicWorkflowGate["status"]) {
   switch (status) {
@@ -71,8 +73,9 @@ function packageLabel(pkg: GatePackageScan): string {
  * out into one scan per package and the held deployment only releases once all
  * of them are approved — so this panel makes the sibling packages and their
  * per-package decision state visible from any one package's review page, with a
- * link to open each sibling's own review and an inline decide action on the row
- * for the package you're currently looking at.
+ * link to open each sibling's own review. The current package's row shows its
+ * state only: the verdict strip's Decide button is the one way to decide it.
+ * The all-packages rule is stated by the gate card and the decision dialog.
  *
  * Renders nothing for a single-package gate, where the roster would just echo
  * the page you're already on.
@@ -81,14 +84,11 @@ export function GatePackagesPanel({
   gate,
   currentScanId,
   organizationId,
-  onDecide,
 }: {
   gate: PublicWorkflowGate;
   currentScanId: string;
   /** A gate's package reviews all belong to the gate's organization. */
   organizationId?: string | null;
-  /** Opens the decision dialog for the current package; absent until its review resolves. */
-  onDecide?: () => void;
 }) {
   const packages = gate.packages;
   if (packages.length <= 1) return null;
@@ -105,10 +105,6 @@ export function GatePackagesPanel({
           {rejected ? ` · ${rejected} rejected` : ""}
         </span>
       </div>
-      <p class="m-0 max-w-[760px] text-[13px] leading-[1.55] text-ink-muted">
-        This release publishes {packages.length} packages. Every one must be approved before the
-        held deployment releases; rejecting any single package blocks the whole job.
-      </p>
       <ul class="m-0 p-0 list-none flex flex-col">
         {packages.map((pkg) => {
           const isCurrent = pkg.scanId === currentScanId;
@@ -134,17 +130,7 @@ export function GatePackagesPanel({
                     {packageDecisionLabel(pkg)}
                   </span>
                 )}
-                {isCurrent ? (
-                  onDecide && pending && !pkg.decision ? (
-                    <button
-                      type="button"
-                      onClick={onDecide}
-                      class="font-mono text-[11px] underline text-accent bg-transparent border-0 p-0 cursor-pointer"
-                    >
-                      decide →
-                    </button>
-                  ) : null
-                ) : (
+                {isCurrent ? null : (
                   <a
                     class="font-mono text-[11px] underline text-accent"
                     href={scanDetailPath(pkg.scanId, organizationId)}
@@ -161,9 +147,40 @@ export function GatePackagesPanel({
   );
 }
 
+/**
+ * What the held job is doing now, in one sentence beside the status label. Read
+ * from the gate state so a decided gate never still claims GitHub is holding
+ * the job, and worded so it does not repeat the label.
+ */
+export function gateJobSentence(
+  gate: Pick<PublicWorkflowGate, "status" | "failureReason" | "packages">,
+): string | null {
+  const count = gate.packages.length;
+  switch (gate.status) {
+    case "approved":
+      return "Drydock told GitHub Actions to continue the publish job.";
+    case "rejected":
+      return "Drydock told GitHub Actions not to run the protected publish job.";
+    case "errored":
+      // The failure Alert below names the reason and the consequence.
+      return gate.failureReason
+        ? null
+        : "Drydock could not prepare this gate review, so the publish job cannot continue.";
+    default:
+      return count > 1
+        ? `GitHub Actions is holding the publish job until all ${count} release packages are approved; rejecting any one blocks it.`
+        : "GitHub Actions is holding the publish job until this release is approved or rejected.";
+  }
+}
+
+// Waiting on a decision, or a gate that broke, asks something of the reader; a
+// decided gate is a record and reads as plain mono text.
+function gateStatusNeedsAttention(status: PublicWorkflowGate["status"]): boolean {
+  return status === "pending" || status === "errored";
+}
+
 export function GateContextPanel({
   gate,
-  packageName,
   canRetry,
   retryStatus,
   retryError,
@@ -172,7 +189,6 @@ export function GateContextPanel({
   onRetryLookup,
 }: {
   gate: PublicWorkflowGate | null;
-  packageName: string | null;
   canRetry?: boolean;
   retryStatus?: DecisionStatus;
   retryError?: string | null;
@@ -181,24 +197,22 @@ export function GateContextPanel({
   onRetryLookup?: () => void;
 }) {
   const retrying = retryStatus === "saving";
+  const sentence = gate ? gateJobSentence(gate) : null;
   return (
     <section class="flex flex-col gap-3 border border-border rounded-lg p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <SectionLabel as="h2">Deployment gate</SectionLabel>
         {gate ? (
-          <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
+          gateStatusNeedsAttention(gate.status) ? (
+            <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
+          ) : (
+            <span class="font-mono text-[11px] text-ink-muted">{gateStatusLabel(gate.status)}</span>
+          )
         ) : null}
       </div>
-      <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
-        GitHub Actions is holding the publish job
-        {packageName ? (
-          <>
-            {" "}
-            for <code>{packageName}</code>
-          </>
-        ) : null}
-        .
-      </p>
+      {sentence ? (
+        <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">{sentence}</p>
+      ) : null}
       {gate ? (
         <MonoDetail
           parts={[
@@ -245,6 +259,8 @@ export function GateDecisionDialog({
   onClose,
   gate,
   packageName,
+  stagedVersion = null,
+  verdict = null,
   packageDecision,
   status,
   error,
@@ -259,6 +275,14 @@ export function GateDecisionDialog({
   onClose: () => void;
   gate: PublicWorkflowGate;
   packageName: string | null;
+  stagedVersion?: string | null;
+  /**
+   * Drydock's verdict on this package. As in the npm decision dialog it picks
+   * the filled action, so a blocked verdict never opens on a filled approve.
+   */
+  verdict?: SignalOrValue<{
+    recommendation: Pick<ReleaseRecommendationCopy, "label" | "tone">;
+  } | null>;
   /** This package's recorded decision, if it has already been decided. */
   packageDecision: GatePackageDecision | null;
   status: SignalOrValue<DecisionStatus>;
@@ -316,6 +340,31 @@ export function GateDecisionDialog({
     onClose();
   };
 
+  const recommendation = readSignalProp(verdict)?.recommendation ?? null;
+  // An unreviewed package has no verdict to lean on, and a package that cannot
+  // be approved has only one way out; both lead with the rejection.
+  const leadWithReject =
+    !canApprove ||
+    reviewFailed ||
+    recommendation?.tone === "critical" ||
+    recommendation?.tone === "high";
+  const subject = packageName
+    ? stagedVersion
+      ? `${packageName}@${stagedVersion}`
+      : packageName
+    : null;
+  const approveLabel = saving
+    ? "Submitting…"
+    : reviewFailed
+      ? multi
+        ? "Approve package anyway"
+        : "Approve anyway & continue job"
+      : multi
+        ? "Approve package"
+        : "Approve & continue job";
+  const rejectLabel = saving ? "Submitting…" : "Reject & block job";
+  const actionDisabled = saving || blockedOnCode || mustEnroll;
+
   return (
     <Dialog
       open={open}
@@ -323,33 +372,37 @@ export function GateDecisionDialog({
       title={multi ? "Package decision" : "Release decision"}
       description={
         multi
-          ? "Decide this package. The configured protected GitHub Actions publish job continues only after every package is approved; rejecting any package blocks that job. Your workflow publishes with its own registry credentials."
-          : "Approve to continue the configured protected GitHub Actions publish job, or reject to block that job. Your workflow publishes with its own registry credentials."
+          ? `The protected GitHub Actions publish job continues only once all ${packages.length} packages are approved (${approvedCount} so far); rejecting this one blocks it. Your workflow publishes with its own registry credentials.`
+          : "Approving continues the protected GitHub Actions publish job; rejecting blocks it. Your workflow publishes with its own registry credentials."
       }
     >
-      <div class="flex flex-col gap-2 border border-border rounded-md p-3">
+      <div class="flex flex-col gap-1">
+        {subject || recommendation ? (
+          <p class="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px]">
+            {subject ? <span class="font-mono text-ink break-all">{subject}</span> : null}
+            {recommendation ? (
+              <span class={verdictTextClass(recommendation.tone)}>
+                Drydock: {recommendation.label}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         <MonoDetail
           parts={[
-            packageName ? <span key="pkg">{packageName}</span> : null,
             <span key="repo">{gate.repositoryFullName}</span>,
             <span key="env">env {gate.environment}</span>,
             <span key="run">run #{gate.runId}</span>,
           ]}
         />
-        {gateDecided ? (
-          <Badge tone={gateStatusTone(gate.status)}>{gateStatusLabel(gate.status)}</Badge>
-        ) : packageDecision ? (
-          <Badge tone={packageDecision === "publish" ? "ok" : "critical"}>
-            this package {packageDecision === "publish" ? "approved" : "rejected"}
-          </Badge>
-        ) : null}
       </div>
-
-      {multi && !gateDecided ? (
-        <Muted class="m-0 text-[13px]">
-          {approvedCount} of {packages.length} packages approved; all must be approved before the
-          protected publish job can continue.
-        </Muted>
+      {gateDecided ? (
+        <Badge tone={gateStatusTone(gate.status)} class="self-start">
+          {gateStatusLabel(gate.status)}
+        </Badge>
+      ) : packageDecision ? (
+        <Badge tone={packageDecision === "publish" ? "ok" : "critical"} class="self-start">
+          this package {packageDecision === "publish" ? "approved" : "rejected"}
+        </Badge>
       ) : null}
 
       {reviewFailed && !gateDecided && !packageAlreadyDecided ? (
@@ -414,29 +467,40 @@ export function GateDecisionDialog({
           remaining packages await decisions.
         </Muted>
       ) : (
-        <div class="flex flex-wrap gap-2">
-          {canApprove ? (
-            <Button
-              onClick={() => submit("approved")}
-              disabled={saving || blockedOnCode || mustEnroll}
-            >
-              {saving
-                ? "Submitting…"
-                : reviewFailed
-                  ? multi
-                    ? "Approve package anyway"
-                    : "Approve anyway & continue job"
-                  : multi
-                    ? "Approve package"
-                    : "Approve & continue job"}
-            </Button>
-          ) : null}
-          <Button
-            variant="danger"
-            onClick={() => submit("rejected")}
-            disabled={saving || blockedOnCode || mustEnroll}
-          >
-            {saving ? "Submitting…" : "Reject & block job"}
+        // One filled action, chosen like the npm decision dialog: the outcome
+        // Drydock advises leads, the other stays available as a secondary.
+        <div class="flex flex-wrap items-center gap-2">
+          {leadWithReject ? (
+            <>
+              <Button variant="danger" onClick={() => submit("rejected")} disabled={actionDisabled}>
+                {rejectLabel}
+              </Button>
+              {canApprove ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => submit("approved")}
+                  disabled={actionDisabled}
+                >
+                  {approveLabel}
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Button onClick={() => submit("approved")} disabled={actionDisabled}>
+                {approveLabel}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => submit("rejected")}
+                disabled={actionDisabled}
+              >
+                {rejectLabel}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" class="ml-auto" onClick={handleClose} disabled={saving}>
+            Cancel
           </Button>
         </div>
       )}

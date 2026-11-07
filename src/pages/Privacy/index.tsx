@@ -2,7 +2,10 @@ import type { ComponentChildren } from "preact";
 import { LinkButton } from "../../components/Button";
 import { PageShell } from "../../components/PageShell";
 import { Prose, SectionLabel } from "../../components/Typography";
+import { ContentArticleHero } from "../../features/public-content/ContentArticle";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
+import { MarketingHeaderActions } from "../MarketingHeaderActions";
+import { useAuthedSession } from "../useAuthedSession";
 
 const EFFECTIVE_DATE = "2026-07-28";
 
@@ -10,22 +13,19 @@ const PRIVACY_MAILTO =
   "mailto:privacy@drydock.org?subject=Drydock%20privacy%20request&body=Tell%20us%20what%20you%27d%20like%20us%20to%20do%20with%20your%20data%3A%0A%0A";
 
 export default function PrivacyPage() {
+  const authed = useAuthedSession();
   return (
-    <PageShell width="doc" class="gap-12">
+    <PageShell
+      width="doc"
+      class="gap-12"
+      headerActions={<MarketingHeaderActions authed={authed} />}
+    >
       <PageSeo metadata={privacyPageSeo} />
-      <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Privacy Policy
-        </h1>
-        <p class="m-0 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-          Effective {EFFECTIVE_DATE}
-        </p>
-        <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          This policy explains what Drydock collects when you use the service, how that information
-          is used, and the choices you have. We collect the minimum needed to review your releases
-          and run your account.
-        </p>
-      </header>
+      <ContentArticleHero
+        heading="Privacy Policy"
+        lead="This policy explains what Drydock collects when you use the service, how that information is used, and the choices you have. We collect the minimum needed to review your releases and run your account."
+        details={[`Effective ${EFFECTIVE_DATE}`]}
+      />
 
       <div class="flex flex-col gap-14">
         <Section id="information-we-collect" label="What we collect">

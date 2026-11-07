@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { diffHashLines, diffSizeLine, nativeBadge } from "../src/components/DiffView";
 import { buildRows } from "../src/components/diff-rows";
 import {
+  initialDiffScrollTop,
   initialScrollResetKey,
   isDiffScrollTarget,
   shouldSeekInitialDiffTarget,
@@ -247,6 +248,49 @@ describe("initial diff scroll targeting", () => {
     expect(isDiffScrollTarget("modified", "removed")).toBe(true);
     expect(isDiffScrollTarget("modified", "added")).toBe(true);
     expect(isDiffScrollTarget("unchanged", "added")).toBe(false);
+  });
+
+  test("opens on the first change when the first finding is already in view", () => {
+    expect(
+      initialDiffScrollTop({
+        viewport: 500,
+        firstChangeTop: 108,
+        finding: { sourceTop: 200, bottom: 300 },
+      }),
+    ).toBe(100);
+    expect(initialDiffScrollTop({ viewport: 500, firstChangeTop: null, finding: null })).toBe(0);
+  });
+
+  test("seeks a finding the first change would leave below the pane", () => {
+    // An added file targets its first row, which kept a line-42 finding off
+    // screen; the pane now opens with context above the finding's line.
+    expect(
+      initialDiffScrollTop({
+        viewport: 500,
+        firstChangeTop: 0,
+        finding: { sourceTop: 900, bottom: 1000 },
+      }),
+    ).toBe(836);
+  });
+
+  test("seeks a finding on an unchanged line above the first change", () => {
+    expect(
+      initialDiffScrollTop({
+        viewport: 500,
+        firstChangeTop: 2000,
+        finding: { sourceTop: 30, bottom: 120 },
+      }),
+    ).toBe(0);
+  });
+
+  test("seeks a finding in an unchanged file that opens at the top", () => {
+    expect(
+      initialDiffScrollTop({
+        viewport: 500,
+        firstChangeTop: null,
+        finding: { sourceTop: 1200, bottom: 1300 },
+      }),
+    ).toBe(1136);
   });
 
   test("reset key changes with file identity and content, never with findings", () => {

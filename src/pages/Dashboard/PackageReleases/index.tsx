@@ -226,13 +226,13 @@ function PackageReleasesView({
               </NpmPackageSections>
             ) : (
               <>
+                {releases}
                 {PUBLIC_ECOSYSTEMS.includes(ecosystem as PublicEcosystem) ? (
                   <PublicBadgeSection
                     packageName={packageName}
                     ecosystem={ecosystem as PublicEcosystem}
                   />
                 ) : null}
-                {releases}
               </>
             )}
           </>
@@ -302,9 +302,12 @@ function ChannelSection({
           channelLabel(tag)
         )}
       </SectionLabel>
+      {/* Below sm the table restyles into stacked rows rather than scrolling
+          sideways: version, risk, decision and npm's outcome stay visible
+          together, with the baseline and source as a caption line. */}
       <Card padding="none" class="overflow-x-auto">
-        <table class="w-full border-collapse text-[13px]">
-          <thead>
+        <table class="w-full border-collapse text-[13px] max-sm:block">
+          <thead class="max-sm:hidden">
             <tr class="border-b border-border bg-surface-2">
               <Th>Version</Th>
               <Th>Compared against</Th>
@@ -314,7 +317,7 @@ function ChannelSection({
               <Th>Source</Th>
             </tr>
           </thead>
-          <tbody>
+          <tbody class="max-sm:block">
             {releases.map((release) => (
               <ReleaseRow key={release.id} release={release} organizationId={organizationId} />
             ))}
@@ -340,9 +343,13 @@ function ReleaseRow({
     : "hover:bg-surface-2";
   const releaseRisk =
     release.status === "complete" ? (release.riskSummary?.releaseRisk ?? release.risk) : null;
+  const baseline = describeBaseline(release);
+  const comparedVersion = release.previousVersion ?? release.baseline?.version ?? null;
   return (
-    <tr class={`border-b border-border last:border-b-0 ${rowClass}`}>
-      <Td class="whitespace-nowrap">
+    <tr
+      class={`border-b border-border last:border-b-0 max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-1.5 max-sm:px-4 max-sm:py-3 ${rowClass}`}
+    >
+      <Td class="whitespace-nowrap max-sm:basis-full">
         <a href={scanDetailPath(release.id, organizationId)} class="font-mono text-[12px]">
           {release.stagedVersion || "—"}
         </a>
@@ -351,8 +358,11 @@ function ReleaseRow({
           {release.registryStatusSupersededAt != null ? " · superseded" : ""}
         </Caption>
       </Td>
-      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
-        {describeBaseline(release)}
+      <Td
+        class={`font-mono text-[12px] text-ink-muted whitespace-nowrap max-sm:order-last max-sm:text-[11px] max-sm:text-ink-subtle ${comparedVersion ? "" : "max-sm:hidden"}`}
+      >
+        {comparedVersion ? <span class="sm:hidden">from </span> : null}
+        {baseline}
       </Td>
       <Td>
         {releaseRisk ? (
@@ -376,7 +386,7 @@ function ReleaseRow({
       <Td>
         <RegistryCell release={release} />
       </Td>
-      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
+      <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap max-sm:order-last max-sm:text-[11px] max-sm:text-ink-subtle">
         {scanSourceLabel(release.source)}
       </Td>
     </tr>
@@ -424,7 +434,11 @@ function Th({ children }: { children: ComponentChildren }) {
 function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
   // Baseline, not top: a link, a Badge, and plain mono text have different
   // line boxes, and top alignment left their first lines visibly staggered.
-  return <td class={`px-4 py-2.5 align-baseline ${className || ""}`}>{children}</td>;
+  return (
+    <td class={`px-4 py-2.5 align-baseline max-sm:block max-sm:p-0 ${className || ""}`}>
+      {children}
+    </td>
+  );
 }
 
 /**
@@ -452,18 +466,11 @@ function NpmPackageSections({
     const pending = claim.pending.value;
     return loading || !management ? null : pending;
   });
-  // The management choice sits under the release list, beside the monitor it
-  // gates: it is housekeeping about the package, and the releases are what
-  // the page is for.
+  // The releases lead: they are what the page is for. The management choice
+  // follows, beside the monitor it gates, and the badge closes the page: it is
+  // configuration about the package rather than its history.
   return (
     <>
-      <RemountOn revision={revision}>
-        <PublicBadgeSection
-          packageName={packageName}
-          ecosystem="npm"
-          managementPending={claimPending}
-        />
-      </RemountOn>
       {children}
       <PackageManagement
         model={claim}
@@ -478,6 +485,13 @@ function NpmPackageSections({
           packageName={packageName}
           personalWorkspace={personalWorkspace}
           onManagementRequired={() => void claim.load()}
+        />
+      </RemountOn>
+      <RemountOn revision={revision}>
+        <PublicBadgeSection
+          packageName={packageName}
+          ecosystem="npm"
+          managementPending={claimPending}
         />
       </RemountOn>
     </>

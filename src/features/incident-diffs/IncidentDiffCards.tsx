@@ -59,24 +59,31 @@ export function IncidentDiffCards() {
             )}
             // Stretched over the card, so every highlighted pixel opens the
             // diff; the write-up link sits above it.
-            class="flex flex-col gap-2 no-underline text-inherit after:absolute after:inset-0 after:content-['']"
+            class="flex flex-1 flex-col gap-2 no-underline text-inherit after:absolute after:inset-0 after:content-['']"
           >
-            <h2 class="text-base font-medium tracking-[-0.005em] m-0 break-all">
+            <h3 class="text-base font-medium tracking-[-0.005em] m-0 break-all">
               {incident.packageName}
-            </h2>
+            </h3>
             <span class="font-mono text-[11px] text-ink-subtle">
               {incident.fromVersion} → {incident.toVersion}
             </span>
             <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{incident.note}</p>
           </a>
-          {incident.caseStudyPath ? (
-            <a
-              href={incident.caseStudyPath}
-              class="relative z-10 self-start text-[12px] text-ink-subtle underline hover:text-ink"
-            >
-              Read the write-up
-            </a>
-          ) : null}
+          {/* A shared bottom row keeps the cards even whether or not an
+              incident has a write-up, and says what the card itself opens. */}
+          <div class="flex items-baseline justify-between gap-3 pt-1 text-[12px]">
+            <span aria-hidden class="font-medium text-accent">
+              Open diff →
+            </span>
+            {incident.caseStudyPath ? (
+              <a
+                href={incident.caseStudyPath}
+                class="relative z-10 text-ink-subtle underline hover:text-ink"
+              >
+                Read the write-up
+              </a>
+            ) : null}
+          </div>
         </Card>
       ))}
     </div>

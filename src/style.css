@@ -27,13 +27,17 @@
   --color-accent-on: #ffffff;
 
   --color-danger: #dc2626;
-  --color-danger-text: #dc2626;
+  /* #dc2626 was 3.95:1 on --color-danger-soft, failing AA for 11px badge
+     labels; red-700 clears 5.3:1 there and 6.5:1 on white. */
+  --color-danger-text: #b91c1c;
   --color-danger-soft: #fee2e2;
+  --color-danger-on: #ffffff;
   --color-warn: #d97706;
   --color-warn-text: #b45309;
   --color-warn-soft: #fef3c7;
   --color-info: #2563eb;
-  --color-info-text: #2563eb;
+  /* #2563eb was 4.24:1 on --color-info-soft; blue-700 clears 5.5:1. */
+  --color-info-text: #1d4ed8;
   --color-info-soft: #dbeafe;
   --color-ok: #16a34a;
   --color-ok-text: #15803d;
@@ -84,6 +88,8 @@
     --color-danger: #f87171;
     --color-danger-text: #f87171;
     --color-danger-soft: rgba(239, 68, 68, 0.14);
+    /* White on #f87171 is 2.77:1; dark ink on it is 6.4:1. */
+    --color-danger-on: #18181b;
     --color-warn: #fbbf24;
     --color-warn-text: #fbbf24;
     --color-warn-soft: rgba(251, 191, 36, 0.14);

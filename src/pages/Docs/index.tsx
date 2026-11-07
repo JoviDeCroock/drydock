@@ -254,7 +254,6 @@ export default function DocsPage() {
                       @acme/cli · 4.2.0 → 4.3.0
                     </span>
                   </div>
-                  <Badge tone="critical">manual review required</Badge>
                 </div>
                 <div class="divide-y divide-border">
                   <ReportRow label="Recommendation" value="Do not approve yet" tone="critical">
@@ -1029,7 +1028,7 @@ npx drydock-cli scans start @acme/cli@2.1.0 --wait --fail-on high      # review 
             </Subsection>
           </section>
 
-          <section class="border-t border-border pt-10">
+          <section class="pt-4">
             <Card
               padding="roomy"
               class="flex flex-col md:flex-row md:items-center md:justify-between gap-5"

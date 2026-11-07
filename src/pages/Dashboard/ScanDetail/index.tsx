@@ -150,12 +150,6 @@ function ScanDetailView({ id, organizationId }: { id: string; organizationId: st
   );
 }
 
-// Changed-line signals are annotated in the diff and listed in the review
-// notes, so this page's index keeps only what neither can place on a line.
-const RISK_INDEX_DESCRIPTION =
-  "Signals on changed lines are pinned in the diff above and listed in the review notes; " +
-  "these have no changed line to sit on — package context, and release signals outside the diff.";
-
 type SectionProps = { model: ScanDetailModelInstance; view: ScanDetailView };
 
 function ScanHeader({ model, view }: SectionProps) {
@@ -206,7 +200,6 @@ function ScanNotices({ model, view }: SectionProps) {
       {isWorkflowGate && detail ? (
         <GateContextPanel
           gate={gate}
-          packageName={detail.scan.packageName}
           lookupStalled={model.gateLookupStalled.value}
           onRetryLookup={() => model.retryGateLookup()}
           canRetry={
@@ -222,7 +215,6 @@ function ScanNotices({ model, view }: SectionProps) {
           gate={gate}
           currentScanId={detail.scan.id}
           organizationId={detail.scan.organizationId}
-          onDecide={view.decideAction.value}
         />
       ) : null}
       {detail?.scan.status === "failed" ? (
@@ -256,6 +248,7 @@ function ScanReport({ model, view }: SectionProps) {
   const ai = view.ai.value;
   const envelope = view.intentEnvelope.value;
   const indexedFindings = view.indexedFindings.value;
+  const diffPaths = new Set(view.diffEntries.value.map((entry) => entry.path));
   const pollingStalled = model.pollingStalled.value;
   if (!detail) return null;
 
@@ -269,6 +262,7 @@ function ScanReport({ model, view }: SectionProps) {
           <ReleaseVerdictStrip
             verdict={verdict}
             ai={ai}
+            onShowVerification={() => focusReportSection("artifact-verification")}
             decision={
               hasDecisionControl(model, view) ? <VerdictDecision model={model} view={view} /> : null
             }
@@ -325,16 +319,24 @@ function ScanReport({ model, view }: SectionProps) {
           </CollapsibleCard>
 
           {indexedFindings.length ? (
+            // Release findings the diff shows are listed in the review notes,
+            // so the index counts them and keeps only what the notes do not.
             <RiskSignalsSection
               id="risk-signals"
-              findings={indexedFindings}
+              findings={view.findingsWithDiffStatus.value}
+              diffPaths={diffPaths}
+              releaseListedElsewhere
               onSelect={(file) => view.inspectFile(file)}
-              description={RISK_INDEX_DESCRIPTION}
               changedEmpty={null}
             />
           ) : null}
 
-          <PersistedReportSections summary={summary} />
+          <PersistedReportSections
+            summary={summary}
+            manifestUnreadable={detail.findings.some(
+              (finding) => finding.ruleId === MANIFEST_PARSE_FAILED_RULE,
+            )}
+          />
         </>
       ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
         // While stalled the pulsing line would falsely promise an
@@ -385,6 +387,7 @@ function VerdictComparison({ model, view }: SectionProps) {
       noneLabel={model.defaultPreviousVersion.value ? undefined : "no baseline (default)"}
       stagedVersion={versions.stagedVersion}
       onChange={(value) => model.selectVersion(value || null)}
+      status={<CompareProgress model={model} view={view} />}
     />
   ) : (
     <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
@@ -409,27 +412,30 @@ function VerdictDecision({ model, view }: SectionProps) {
   );
 }
 
-function CompareStatus({ model, view }: SectionProps) {
-  const notice = view.treeNotice.value;
+// Beside the picker, the one place the comparison's progress is reported: the
+// release tree and diff panel only show that they are waiting.
+function CompareProgress({ model, view }: SectionProps) {
+  const waiting = model.compareLoading.value || view.releaseTree.value.kind === "loading";
+  return waiting ? (
+    <LoadingLine size="inline">Comparing against {model.comparisonVersion.value}</LoadingLine>
+  ) : null;
+}
+
+// One treatment for a comparison that failed, whether it is the review's
+// baseline or a version the reader picked.
+function CompareStatus({ model }: SectionProps) {
   const version = model.comparisonVersion.value;
-  const compareLoading = model.compareLoading.value;
   const failure = model.compareFailure.value;
   const requestError = model.compareError.value;
-  // While the release tree stands in for a loading or failed comparison, its
-  // notice already names the version, the reason, and the retry; only another
-  // request's error is still reported here.
-  if (notice) return requestError ? <Alert tone="warn">{requestError}</Alert> : null;
   return (
     <>
-      {compareLoading ? (
-        <LoadingLine size="inline">Fetching {version} via sandbox</LoadingLine>
-      ) : null}
       {failure ? (
         <Alert tone="warn">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <span>
-              {version} could not be compared: {failure}
-            </span>
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div class="flex min-w-0 flex-col gap-1">
+              <span>{version} could not be compared.</span>
+              <span class="font-mono text-[12px] text-ink-muted break-words">{failure}</span>
+            </div>
             <Button variant="secondary" size="sm" onClick={() => model.retryComparison()}>
               Try again
             </Button>
@@ -443,6 +449,19 @@ function CompareStatus({ model, view }: SectionProps) {
 
 // Selecting a file swaps its body in here and nowhere else.
 function ScanDiffPanel({ model, view }: SectionProps) {
+  // A finding the baseline file already had is package context. The verdict
+  // above may be scoped to the release delta, so the annotation says which.
+  const contextIds = new Set(
+    view.findingsWithDiffStatus.value
+      .filter(
+        (item) =>
+          !item.releaseDelta && (item.diffStatus === "unchanged" || item.diffStatus === "modified"),
+      )
+      .map((item) => item.finding.id),
+  );
+  const findings = view.selectedFindings.value.map((finding) =>
+    contextIds.has(finding.id) ? { ...finding, packageContext: true } : finding,
+  );
   return (
     <DiffWorkbench
       tree={view.releaseTree.value.kind}
@@ -456,7 +475,7 @@ function ScanDiffPanel({ model, view }: SectionProps) {
       compareFailed={Boolean(model.compareFailure.value)}
       selectedVersion={model.comparisonVersion.value}
       stagedVersion={model.detail.value?.scan.stagedVersion ?? null}
-      findings={view.selectedFindings.value}
+      findings={findings}
       findingTarget={
         view.findingTarget.value?.file === model.selectedPath.value
           ? view.findingTarget.value
@@ -465,6 +484,8 @@ function ScanDiffPanel({ model, view }: SectionProps) {
     />
   );
 }
+
+const MANIFEST_PARSE_FAILED_RULE = "package-json.parse-failed";
 
 // The dialogs read their own open/status/error signals, so mounting them here
 // costs this section a subscription to `detail` and nothing more.
@@ -501,6 +522,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           npmStagedPackagesUrl={view.npmStagedPackagesUrl}
           scan={detail.scan}
           postRelease={detail.postRelease ?? null}
+          verdict={view.verdict}
           onSubmit={view.handleDecisionSubmit}
         />
       ) : null}
@@ -540,6 +562,8 @@ function ScanDialogs({ model, view }: SectionProps) {
           onClose={() => (view.gateDialogOpen.value = false)}
           gate={gate}
           packageName={detail.scan.packageName}
+          stagedVersion={detail.scan.stagedVersion}
+          verdict={view.verdict}
           status={model.gateDecisionStatus}
           error={model.gateDecisionError}
           requireTwoFactor={view.requireTwoFactor}

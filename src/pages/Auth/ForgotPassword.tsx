@@ -38,7 +38,11 @@ export default function ForgotPasswordPage() {
   return (
     <PageShell width="narrow">
       <Card class="flex flex-col gap-4">
-        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Reset your password</h1>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          <Show when={unavailable} fallback="Reset your password">
+            Password reset unavailable
+          </Show>
+        </h1>
 
         <Show
           when={unavailable}
@@ -85,10 +89,10 @@ export default function ForgotPasswordPage() {
             </Show>
           }
         >
-          <Alert tone="warn">
-            Password reset isn't available here because this deployment can't send email. Ask
-            whoever runs it to help you back in.
-          </Alert>
+          <Muted class="text-[13px] m-0">
+            This deployment can't send email, so it can't mail you a reset link. Ask whoever runs it
+            to help you back in.
+          </Muted>
         </Show>
 
         <p class="text-[13px] text-ink-muted m-0">

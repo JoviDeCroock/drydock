@@ -31,9 +31,16 @@ export function PackageJsonDiffView({
   );
   return (
     <div class={hasListChanges ? "flex flex-col gap-4" : "flex flex-col gap-2"}>
-      <div class="flex flex-wrap gap-x-6 gap-y-2 text-[13px]">
-        <InlineMeta label="entrypoints" value={diff.entrypointsChanged ? "changed" : "unchanged"} />
-      </div>
+      {/* A first release has no previous manifest, so "entrypoints changed"
+          would only restate that every file is new. */}
+      {diff.previousVersion ? (
+        <div class="flex flex-wrap gap-x-6 gap-y-2 text-[13px]">
+          <InlineMeta
+            label="entrypoints"
+            value={diff.entrypointsChanged ? "changed" : "unchanged"}
+          />
+        </div>
+      ) : null}
       {hasListChanges ? (
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <ChangeList title="scripts" noun="script" rows={diff.scripts} />

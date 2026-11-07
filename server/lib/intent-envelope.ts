@@ -24,7 +24,7 @@
 import type { FileRecord } from "./review";
 import { safeJson } from "./review/rules/helpers";
 
-export type IntentEnvelopeTier = "attested" | "declared" | "absent";
+type IntentEnvelopeTier = "attested" | "declared" | "absent";
 
 interface IntentEnvelopeSignal {
   kind: string;

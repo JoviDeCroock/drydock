@@ -126,18 +126,8 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     releaseTree.value.kind === "entries" ? releaseTree.value.entries : NO_ENTRIES,
   );
   const treeNotice = useComputed<TreeNotice | null>(() => {
-    const tree = releaseTree.value;
-    if (tree.kind === "loading")
-      return { tone: "loading", text: `Comparing against ${tree.version}` };
-    if (tree.kind === "failed") {
-      return {
-        tone: "unavailable",
-        text: `${tree.version} could not be compared.`,
-        detail: tree.message,
-        retry: () => model.retryComparison(),
-      };
-    }
-    return null;
+    const kind = releaseTree.value.kind;
+    return kind === "loading" ? "loading" : kind === "failed" ? "unavailable" : null;
   });
   // The verdict and finding annotations keep describing the persisted report
   // until another version's comparison has arrived to recompute them from.
@@ -174,6 +164,13 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
     const usePersistedRiskSummary = reportIsPersisted.value;
     const isWorkflowGate = model.isWorkflowGate.value;
     const aiResult = ai.value;
+    // The verdict describes the persisted report until another version's
+    // comparison arrives, so it names whichever baseline it was graded against.
+    const defaultPreviousVersion = model.defaultPreviousVersion.value;
+    const pickedVersion = model.comparisonVersion.value;
+    const gate = model.gate.value;
+    const comparedVersion = usePersistedRiskSummary ? defaultPreviousVersion : pickedVersion;
+    const gateStatus = isWorkflowGate ? (gate?.status ?? null) : null;
     if (!detail || detail.scan.status !== "complete") return null;
     return buildReleaseVerdict({
       detail,
@@ -183,6 +180,8 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
       usePersistedRiskSummary,
       isWorkflowGate,
       ai: aiResult,
+      comparedVersion,
+      gateStatus,
     });
   });
 

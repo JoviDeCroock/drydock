@@ -1,69 +1,132 @@
 import { compareSeverity, groupFindingsByRule } from "../../lib/findings";
+import { pluralize } from "../../lib/format";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../server/lib/release-fingerprint";
-import { FindingCard, FindingRow, GroupedFindingCard } from "../../components/FindingCard";
-import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
+import {
+  FindingCard,
+  FindingDetails,
+  FindingIndexRow,
+  GroupedFindingCard,
+} from "../../components/FindingCard";
+import { cn } from "../../components/cn";
+import { Muted, SectionLabel } from "../../components/Typography";
+import { groupIndexRows, isShownInDiff, riskSignalCounts } from "./risk-index";
 import type { FindingWithDiffStatus } from "./types";
 
-const DEFAULT_DESCRIPTION =
-  "Changed-file signals are pinned to their line in the diff above; the rest stay here as " +
-  "package context.";
+// Said only when no signal belongs to the release; a pre-existing signal the
+// diff shows is counted as pre-existing, so the two never contradict.
+const DEFAULT_CHANGED_EMPTY = "No deterministic risk signals point at this release delta.";
 // Said only when an assistant finding is on the page: explaining a badge the
 // reader cannot see is noise.
-const DEFAULT_CHANGED_EMPTY = "No deterministic risk signals point at this release delta.";
 const ASSISTANT_NOTE =
-  " Assistant-labeled signals are advisory additions from the AI reviewer and never replace " +
+  "Assistant-labeled signals are advisory additions from the AI reviewer and never replace " +
   "deterministic rules.";
 
+const signals = (count: number, noun = "signal") => `${count} ${pluralize(noun, count)}`;
+
+/**
+ * Every finding, said once. A finding the diff shows in full (its line, or the
+ * banner above a file with no line) gets a one-line pointer here instead of a
+ * second copy of its reason; only what the diff cannot show gets a card.
+ */
 export function RiskSignalsSection({
   findings,
   onSelect,
-  description = DEFAULT_DESCRIPTION,
   changedEmpty = DEFAULT_CHANGED_EMPTY,
+  diffPaths,
+  releaseListedElsewhere = false,
   id,
 }: {
   id?: string;
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
-  description?: string;
-  /**
-   * Said when no signal sits on a changed file; null says nothing, for a page
-   * that hands this section only what its diff could not pin.
-   */
+  /** Said when no signal belongs to the release; null says nothing. */
   changedEmpty?: string | null;
+  /** The comparison on screen, for a page whose baseline can change or is loading. */
+  diffPaths?: ReadonlySet<string>;
+  /**
+   * The page's review notes already list release findings, so one the diff
+   * shows is counted here rather than given a row.
+   */
+  releaseListedElsewhere?: boolean;
 }) {
-  const changedFindings = sortFindingItemsBySeverity(findings.filter((item) => item.releaseDelta));
-  const contextualFindings = sortFindingItemsBySeverity(
-    findings.filter((item) => !item.releaseDelta),
+  const shown = (item: FindingWithDiffStatus) => isShownInDiff(item, diffPaths);
+  const listedElsewhere = (item: FindingWithDiffStatus) =>
+    releaseListedElsewhere && item.releaseDelta && shown(item);
+  const rows = sortFindingItemsBySeverity(
+    findings.filter((item) => shown(item) && !listedElsewhere(item)),
   );
-  const counts = [
-    changedFindings.length ? `${changedFindings.length} on changed files` : null,
-    contextualFindings.length ? `${contextualFindings.length} package context` : null,
+  const elsewhereCount = findings.filter(listedElsewhere).length;
+  const releaseCards = sortFindingItemsBySeverity(
+    findings.filter((item) => item.releaseDelta && !shown(item)),
+  );
+  const contextCards = sortFindingItemsBySeverity(
+    findings.filter((item) => !item.releaseDelta && !shown(item)),
+  );
+  const releaseTotal = findings.filter((item) => item.releaseDelta).length;
+  const counts = riskSignalCounts(findings);
+
+  const rowsPreExisting = rows.every((item) => !item.releaseDelta);
+  const description = [
+    !releaseTotal ? changedEmpty : null,
+    elsewhereCount
+      ? `${signals(elsewhereCount, "release signal")} ${elsewhereCount === 1 ? "is" : "are"} ` +
+        "shown in the diff above and listed in the review notes."
+      : null,
+    rows.length
+      ? `${signals(rows.length, rowsPreExisting ? "pre-existing signal" : "signal")} ` +
+        `${rows.length === 1 ? "is" : "are"} shown in the diff above.`
+      : null,
+    releaseCards.length && (rows.length || elsewhereCount)
+      ? `${signals(releaseCards.length)} from this release ${releaseCards.length === 1 ? "has" : "have"} ` +
+        "no place in the diff."
+      : null,
+    findings.some((item) => item.finding.source === "ai") ? ASSISTANT_NOTE : null,
   ]
     .filter(Boolean)
-    .join(" · ");
-  const hasAssistantFindings = findings.some((item) => item.finding.source === "ai");
+    .join(" ");
+
+  // release.* findings carry the synthetic "<release-process>" label — there is
+  // no such file in the artifact, so the label must not become an
+  // open-in-the-diff button.
+  const selectFile = (file: string) =>
+    onSelect && file !== RELEASE_PROCESS_FINDING_FILE ? () => onSelect(file) : undefined;
 
   return (
     <section id={id} tabIndex={id ? -1 : undefined} class="flex flex-col gap-3">
       <SectionLabel as="h2" aside={counts || undefined}>
         Risk signals
       </SectionLabel>
-      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
-        {description}
-        {hasAssistantFindings ? ASSISTANT_NOTE : null}
-      </Muted>
-
-      {changedFindings.length ? (
-        <FindingGrid findings={changedFindings} onSelect={onSelect} />
-      ) : changedEmpty ? (
-        <EmptyLine>{changedEmpty}</EmptyLine>
+      {description ? (
+        <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">{description}</Muted>
       ) : null}
 
-      {contextualFindings.length ? (
+      {rows.length ? (
+        <ul class="list-none m-0 px-4 py-0.5 bg-surface border border-border rounded-lg flex flex-col divide-y divide-border">
+          {groupIndexRows(rows, [...releaseCards, ...contextCards]).map((group) => (
+            <FindingIndexRow
+              key={group.key}
+              severity={group.severity}
+              ruleId={group.ruleId}
+              note={group.note}
+              reason={group.reason}
+              locations={group.locations.map(({ item, note }) => ({
+                file: item.finding.file,
+                line: item.finding.line,
+                note,
+                onSelect: selectFile(item.finding.file),
+              }))}
+            />
+          ))}
+        </ul>
+      ) : null}
+
+      {releaseCards.length ? <FindingGrid findings={releaseCards} selectFile={selectFile} /> : null}
+
+      {contextCards.length ? (
         <div>
           <SectionLabel as="h3">Package context</SectionLabel>
           <div class="pt-3">
-            <FindingGrid findings={contextualFindings} onSelect={onSelect} />
+            <FindingGrid findings={contextCards} selectFile={selectFile} />
           </div>
         </div>
       ) : null}
@@ -73,10 +136,10 @@ export function RiskSignalsSection({
 
 function FindingGrid({
   findings,
-  onSelect,
+  selectFile,
 }: {
   findings: FindingWithDiffStatus[];
-  onSelect?: (file: string) => void;
+  selectFile: (file: string) => (() => void) | undefined;
 }) {
   // The section split already says whether a signal is on a changed file or is
   // package context, so a card names its file's diff status only where that
@@ -89,11 +152,6 @@ function FindingGrid({
       : item.releaseDeltaKind === "expanded"
         ? "expanded"
         : null;
-  // release.* findings carry the synthetic "<release-process>" label — there is
-  // no such file in the artifact, so the label must not become an
-  // open-in-the-diff button.
-  const selectFile = (file: string) =>
-    onSelect && file !== RELEASE_PROCESS_FINDING_FILE ? () => onSelect(file) : undefined;
   const groups = groupFindingsByRule(
     findings.map((item) => ({
       ruleId: item.finding.ruleId,
@@ -104,7 +162,11 @@ function FindingGrid({
     })),
   );
   return (
-    <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+    // A lone card takes the column: a third of it squeezed a digest into five
+    // wrapped lines.
+    <ul
+      class={cn("list-none p-0 m-0 grid grid-cols-1 gap-3", groups.length > 1 && "md:grid-cols-2")}
+    >
       {groups.map(({ key, items }) => {
         if (items.length === 1) {
           const { finding } = items[0].item;
@@ -112,7 +174,6 @@ function FindingGrid({
           // a diff entry (prefixed, truncated, or hallucinated), so they are not
           // wired to open the diff workbench — clicking would dead-end on an
           // empty state. Deterministic findings always cite a canonical path.
-          const canOpen = onSelect && finding.source !== "ai";
           return (
             <FindingCard
               key={finding.id}
@@ -122,10 +183,9 @@ function FindingGrid({
               diffStatus={statusNote(items[0].item)}
               ruleId={finding.ruleId}
               source={finding.source}
-              onSelect={canOpen ? selectFile(finding.file) : undefined}
+              onSelect={finding.source !== "ai" ? selectFile(finding.file) : undefined}
             >
-              <FindingRow label="evidence" value={finding.evidence} />
-              <FindingRow label="reason" value={finding.reason} />
+              <FindingDetails reason={finding.reason} evidence={finding.evidence} />
             </FindingCard>
           );
         }
@@ -142,8 +202,7 @@ function FindingGrid({
               onSelect: selectFile(item.finding.file),
             }))}
           >
-            <FindingRow label="evidence" value={first.evidence} />
-            <FindingRow label="reason" value={first.reason} />
+            <FindingDetails reason={first.reason} evidence={first.evidence} />
           </GroupedFindingCard>
         );
       })}

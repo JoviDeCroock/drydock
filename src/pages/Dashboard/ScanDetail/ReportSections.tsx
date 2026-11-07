@@ -12,7 +12,17 @@ import { manifestVersionRange, PackageJsonDiffView } from "../../../components/P
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
-export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
+export function PersistedReportSections({
+  summary,
+  manifestUnreadable = false,
+}: {
+  summary: PersistedSummary;
+  /**
+   * The staged package.json did not parse, so the saved manifest diff is
+   * empty for lack of input, not because nothing changed.
+   */
+  manifestUnreadable?: boolean;
+}) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
   // The manifest pair is the persisted default baseline, which can differ from
   // the version the picker above currently compares against, so it stays.
@@ -26,14 +36,18 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
         title="Manifest changes"
         id="manifest-changes"
         aside={
-          manifestRange ? (
+          manifestRange && !manifestUnreadable ? (
             <>
               version <span class="normal-case">{manifestRange}</span>
             </>
           ) : null
         }
       >
-        {summary.packageJsonDiff ? (
+        {manifestUnreadable ? (
+          <EmptyLine>
+            Manifest changes unavailable: the staged package.json could not be parsed.
+          </EmptyLine>
+        ) : summary.packageJsonDiff ? (
           <PackageJsonDiffView
             diff={summary.packageJsonDiff}
             // PyPI dependencies are not npm packages, so the public npm diff
@@ -63,7 +77,7 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
           question the page opens with, not a footnote to it. */}
 
       {artifactIntegrity ? (
-        <ReportSection title="Artifact verification">
+        <ReportSection title="Artifact verification" id="artifact-verification">
           <ArtifactIntegrityView integrity={artifactIntegrity} />
         </ReportSection>
       ) : null}

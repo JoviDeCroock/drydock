@@ -1,5 +1,6 @@
+import type { ComponentChildren } from "preact";
 import { useModel } from "@preact/signals";
-import { formatTimestamp } from "../../../lib/format";
+import { formatDateTimeExact } from "../../../lib/format";
 import {
   GithubAppModel,
   type InstallationStatus,
@@ -15,9 +16,11 @@ import {
   SettingsCardHeader,
   SettingsCardListItem,
 } from "../../../components/Card";
+import { cn } from "../../../components/cn";
 import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
 import { PublisherSetup } from "../../../features/publisher-setup/PublisherSetup";
+import { OPERATOR_SETUP_DOCS } from "./settings-links";
 
 export function GithubAppSection({
   githubApp,
@@ -40,6 +43,13 @@ export function GithubAppSection({
     (row: PublicGithubAppInstallation) => row.status === "active",
   );
 
+  // Nothing below the intro can work until the operator configures the App, so
+  // an instance without it shows one unavailable state instead of disabled
+  // scaffolding. Installations linked before a config change still list.
+  // Only a loaded config that says "not configured" proves that; a failed or
+  // pending config fetch must not hide installations as unavailable.
+  const unavailable = githubApp.config.value?.configured === false && installations.length === 0;
+
   const onInstall = () => {
     void githubApp.startInstall();
   };
@@ -58,28 +68,35 @@ export function GithubAppSection({
             or reject it here. Your workflow keeps its publishing credentials and publishes the
             package.
           </Muted>
-          <Button
-            variant={installations.length ? "secondary" : "primary"}
-            onClick={onInstall}
-            disabled={!configured || busy}
-            class="shrink-0 self-start"
-          >
-            {status === "starting"
-              ? "Redirecting…"
-              : installations.length
-                ? "Modify installation"
-                : "Install GitHub App"}
-          </Button>
+          {unavailable ? null : (
+            <Button
+              variant={installations.length ? "secondary" : "primary"}
+              onClick={onInstall}
+              disabled={!configured || busy}
+              class="shrink-0 self-start"
+            >
+              {status === "starting"
+                ? "Redirecting…"
+                : installations.length
+                  ? "Modify installation"
+                  : "Install GitHub App"}
+            </Button>
+          )}
         </div>
 
-        {!configured ? (
-          <Alert tone="warn">
-            The GitHub App is not configured; ask your Drydock operator to add the GitHub App
-            secrets (<code class="font-mono text-[12px]">GITHUB_APP_ID</code>,{" "}
-            <code class="font-mono text-[12px]">GITHUB_APP_SLUG</code>,{" "}
-            <code class="font-mono text-[12px]">GITHUB_APP_PRIVATE_KEY</code>, and the OAuth client
-            and webhook secrets) on the Drydock Worker.
-          </Alert>
+        {unavailable ? (
+          <p class="m-0 text-[13px] leading-[1.55] text-ink">
+            The GitHub App is not set up on this Drydock instance. Your Drydock operator can enable
+            it.{" "}
+            <a
+              class="underline underline-offset-2 hover:text-accent"
+              href={OPERATOR_SETUP_DOCS.githubApp}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Operator setup guide
+            </a>
+          </p>
         ) : null}
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
@@ -92,57 +109,88 @@ export function GithubAppSection({
         ) : null}
       </SettingsCardBody>
 
-      <div>
-        <SettingsCardHeader
-          title="Linked installations"
-          aside={installations.length ? <MonoLabel>{installations.length} linked</MonoLabel> : null}
-        />
-        {installations.length ? (
-          <InstallationList installations={installations} />
-        ) : (
-          <SettingsCardBody inset="belowHeader" gap="none">
-            <Muted class="text-[13px] m-0">
-              No GitHub App installations are linked to this organization.
-            </Muted>
-          </SettingsCardBody>
-        )}
-      </div>
+      {unavailable ? null : (
+        <>
+          <div>
+            <SettingsCardHeader
+              title="Linked installations"
+              aside={
+                installations.length ? <MonoLabel>{installations.length} linked</MonoLabel> : null
+              }
+            />
+            {installations.length ? (
+              <InstallationList installations={installations} />
+            ) : (
+              <SettingsCardBody inset="belowHeader" gap="none">
+                <Muted class="text-[13px] m-0">
+                  No GitHub App installations are linked to this organization.
+                </Muted>
+              </SettingsCardBody>
+            )}
+          </div>
 
-      {activeInstallations.length ? (
-        <PublisherSetup installations={activeInstallations} targets={targets} />
-      ) : null}
+          {activeInstallations.length ? (
+            <PublisherSetup installations={activeInstallations} targets={targets} />
+          ) : null}
 
-      <div>
-        <SettingsCardHeader
-          title="Release targets"
-          aside={
-            releaseTargets.length ? <MonoLabel>{releaseTargets.length} mapped</MonoLabel> : null
-          }
-        />
-        {activeInstallations.length ? (
-          <ReleaseTargetForm targets={targets} activeInstallations={activeInstallations} />
-        ) : (
-          <SettingsCardBody inset="belowHeader" gap="none">
-            <Muted class="text-[13px] m-0">
-              Release targets require an active GitHub App installation with access to the
-              repository.
-            </Muted>
-          </SettingsCardBody>
-        )}
-        {releaseTargetsError ? (
-          <SettingsCardBody inset="belowHeader" gap="none">
-            <Alert tone="critical">{releaseTargetsError}</Alert>
-          </SettingsCardBody>
-        ) : null}
-        {releaseTargets.length ? (
-          <ReleaseTargetList
-            releaseTargets={releaseTargets}
-            installations={installations}
-            onDelete={(id) => void targets.deleteReleaseTarget(id)}
-          />
-        ) : null}
-      </div>
+          <div>
+            <SettingsCardHeader
+              title="Release targets"
+              aside={
+                releaseTargets.length ? <MonoLabel>{releaseTargets.length} mapped</MonoLabel> : null
+              }
+            />
+            {releaseTargetsError ? (
+              <SettingsCardBody inset="belowHeader" gap="none">
+                <Alert tone="critical">{releaseTargetsError}</Alert>
+              </SettingsCardBody>
+            ) : null}
+            {releaseTargets.length ? (
+              <ReleaseTargetList
+                releaseTargets={releaseTargets}
+                installations={installations}
+                onDelete={(id) => void targets.deleteReleaseTarget(id)}
+              />
+            ) : null}
+            {activeInstallations.length ? (
+              <ManualTargetDisclosure separated={releaseTargets.length > 0}>
+                <ReleaseTargetForm targets={targets} activeInstallations={activeInstallations} />
+              </ManualTargetDisclosure>
+            ) : (
+              <SettingsCardBody inset="belowHeader" gap="none">
+                <Muted class="text-[13px] m-0">
+                  Release targets require an active GitHub App installation with access to the
+                  repository.
+                </Muted>
+              </SettingsCardBody>
+            )}
+          </div>
+        </>
+      )}
     </CollapsibleCard>
+  );
+}
+
+// The guided setup above maps its own target; the manual form is for a
+// workflow that already uses a protected environment, so it stays folded.
+function ManualTargetDisclosure({
+  separated,
+  children,
+}: {
+  separated: boolean;
+  children: ComponentChildren;
+}) {
+  return (
+    <details class={cn("group/manual", separated && "border-t border-border")}>
+      <summary class="cursor-pointer list-none px-5 py-4 text-[13px] font-medium text-ink-muted hover:text-ink">
+        <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
+          <span class="group-open/manual:hidden">▸</span>
+          <span class="hidden group-open/manual:inline">▾</span>
+        </span>
+        Map a release target manually
+      </summary>
+      {children}
+    </details>
   );
 }
 
@@ -197,6 +245,14 @@ const INACTIVE_INSTALLATION: Record<
   uninstalled: { tone: "critical", hint: "reinstall to reconnect" },
 };
 
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function InstallationList({ installations }: { installations: PublicGithubAppInstallation[] }) {
   return (
     <ul class="m-0 p-0 list-none">
@@ -204,22 +260,27 @@ function InstallationList({ installations }: { installations: PublicGithubAppIns
         const inactive =
           installation.status === "active" ? null : INACTIVE_INSTALLATION[installation.status];
         return (
-          <SettingsCardListItem key={installation.id}>
-            <div class="flex flex-col gap-1.5 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
-                {inactive ? <Badge tone={inactive.tone}>{installation.status}</Badge> : null}
-              </div>
-              <MonoDetail
-                parts={[
-                  <span key="installation">installation {installation.installationId}</span>,
-                  <span key="target">{installation.targetType.toLowerCase()}</span>,
-                  <span key="linked">linked {formatTimestamp(installation.installedAt)}</span>,
-                  inactive ? <span key="hint">{inactive.hint}</span> : null,
-                ]}
-              />
-            </div>
-          </SettingsCardListItem>
+          <li
+            key={installation.id}
+            class="border-b border-border last:border-b-0 px-5 py-3 flex flex-wrap items-baseline gap-x-3 gap-y-1"
+          >
+            <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
+            {inactive ? <Badge tone={inactive.tone}>{installation.status}</Badge> : null}
+            <MonoDetail
+              parts={[
+                <span key="target">{installation.targetType.toLowerCase()}</span>,
+                <span key="installation">installation {installation.installationId}</span>,
+                <time
+                  key="linked"
+                  dateTime={installation.installedAt}
+                  title={formatDateTimeExact(installation.installedAt)}
+                >
+                  linked {formatDate(installation.installedAt)}
+                </time>,
+                inactive ? <span key="hint">{inactive.hint}</span> : null,
+              ]}
+            />
+          </li>
         );
       })}
     </ul>

@@ -58,7 +58,7 @@ Never reintroduce the Google Fonts CDN `@import`: fonts are self-hosted same-ori
 
 1. Text below 11px is never a label the user reads.
 2. `--fg-subtle` is AA at all sizes (6.2:1 on `--bg`); never pair sub-11px text with anything lower contrast.
-3. White on `--accent` (Button primary) needs 13px / 500 minimum (`--accent` is 4.97:1). Smaller controls (view-switcher pills) use `bg-accent-soft` + `text-accent` + accent border, never white-on-accent below 13px.
+3. White on `--accent` (Button primary) needs 13px / 500 minimum (`--accent` is 4.97:1). Smaller controls (view-switcher pills) use `bg-accent-soft` + `text-accent` + accent border, never white-on-accent below 13px. Danger buttons use `--danger-on` (white in light, dark ink in dark mode, where white on `#f87171` is 2.8:1).
 4. Severity as text uses `-text` variants (`text-warn-text`, `text-ok-text`); saturated tokens are for shapes (chart segments, borders, alert discs).
 5. Machine-checked in `src/`: `design-local/no-off-system-color` and `design-local/no-sub-floor-text`. `text-xs` is 10.5px on the 14px root, so use `text-[12px]` or `text-[11px]`. Whether a 10px string is a glyph or a label stays a review call.
 
@@ -115,11 +115,11 @@ Saturated tokens are for shapes (chart bars, badge fills, alert discs, borders);
 | Token | Light | Dark | Soft (light / dark) | Usage |
 | --- | --- | --- | --- | --- |
 | `--danger` | `#dc2626` | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)` | Critical/High shapes |
-| `--danger-text` | `#dc2626` (5.4:1 AA) | `#f87171` | — | Critical/High text |
+| `--danger-text` | `#b91c1c` (5.3:1 on soft) | `#f87171` | — | Critical/High text |
 | `--warn` | `#d97706` | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium shapes |
 | `--warn-text` | `#b45309` (4.9:1 AA) | `#fbbf24` | — | Medium text (AA on white, `--warn-soft`) |
 | `--info` | `#2563eb` | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low/Info shapes |
-| `--info-text` | `#2563eb` (5.8:1 AA) | `#60a5fa` | — | Low/Info text |
+| `--info-text` | `#1d4ed8` (5.5:1 on soft) | `#60a5fa` | — | Low/Info text |
 | `--ok` | `#16a34a` | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed shapes |
 | `--ok-text` | `#15803d` (4.5:1 AA) | `#4ade80` | — | Passed text (AA on white, `--ok-soft`) |
 
@@ -361,17 +361,18 @@ Split view inside an 8px-radius border shell (`src/components/DiffView.tsx`).
 | Part | Rule |
 | --- | --- |
 | Header strip | `bg-surface-2`, mono `10px / 0.1em uppercase / ink-subtle`; before left, after right. |
-| Body | Mono `12px / 1.55`; two `44px` gutters (right-aligned `ink-subtle` numbers, right divider); `20px` sign column. |
-| Wrapping | `whitespace-pre-wrap break-words`. |
+| Body | Mono `12px / 1.55`; two `44px` gutters (right-aligned `ink-subtle` numbers, right divider), wider only for more digits; `20px` sign column. |
+| Wrapping | Fixed table layout with explicit column widths; text wraps with `whitespace-pre-wrap` and `overflow-wrap: anywhere`, so an unbreakable token wraps inside the pane instead of clipping on a phone. |
 | Rows | Added `--ok-soft`, removed `--danger-soft`, unchanged transparent; soft tokens only. |
 | Scroll | Body max `560px`; shorter diffs size to content; header outside the scroll region. |
 | Single-sided | Added-only, removed-only, unchanged-only: one labeled `<pre>` with header styling and matching soft fill. |
+| Display options | `Reformat`, `Word differences`, `Ignore whitespace` are `aria-pressed` toggles; pressed is `--accent` border, `--accent-soft` fill, `--ink` text. |
 | Binary / missing | Muted `text-[13px]` explainer, never a graphic; truncation and binary flags as neutral Badges. |
 
 1. **Highlighting:** only bundled grammars (`EXT_TO_LANG` in `src/components/highlight.ts` is canonical: JS/TS incl. `.mjs/.cjs/.mts/.cts`, Python, JSON, TOML, YAML, Markdown, HTML, CSS/SCSS, shell, Dockerfile, Vue, Svelte); everything else plain mono. Keywords/constants/functions `--ink`, identifiers/params `--ink-muted`, punctuation/comments `--ink-subtle`, one muted teal for strings; palette is `--sh-*` in `src/style.css` (light/dark aware). Severity hues and the accent are never token colors. Lazy, best-effort, plain-text fallback.
-2. **Scroll pane:** keyboard-reachable `role="region"` (`tabIndex=0`, labeled with the path) with an inset `--accent-soft` focus ring (an outer halo clips against `overflow-hidden`), `overscroll-behavior: contain`, `overflow-anchor: none` so gap expansion behaves the same in every browser.
+2. **Scroll pane:** keyboard-reachable `role="region"` (`tabIndex=0`, labeled with the path) with an inset `--accent-soft` focus ring (an outer halo clips against `overflow-hidden`), `overscroll-behavior: contain`, `overflow-anchor: none` so gap expansion behaves the same in every browser. A newly opened file starts at its first change, unless the first pinned finding would then sit outside the pane; then the pane's own `scrollTop` (never the page) opens a few rows above it.
 3. **Collapsed gaps:** full-width expander (`bg-surface-2`, mono 11px, left-aligned `⋯ N unchanged lines · show more`) revealing from both edges; a right-aligned `show all` (`border-l` divider) appears only while the gap hides ≤ 5,000 rows, so a bulk reveal never rebuilds a megabyte-scale render. Rows with changes or pinned findings never collapse.
-4. **Overview strip:** a 6px `aria-hidden`, non-interactive rail at the pane's right edge showing change/finding density; hidden when the pane has nothing to scroll. It maps scroll space, not file lines: a collapsed gap counts as its one expander row and markers reflow as gaps expand (wrapped lines and callouts count as one index). A `bg-ink/15` thumb tracks the viewport. Finding markers: saturated tokens with `ring-surface`; change markers: ok/danger at reduced opacity.
+4. **Overview strip:** a 6px `aria-hidden`, non-interactive rail overlaid inside the pane's right edge (row fills run edge to edge; the text cell and gap button carry the padding that keeps text clear) showing change/finding density; hidden when the pane has nothing to scroll. It maps scroll space, not file lines: a collapsed gap counts as its one expander row and markers reflow as gaps expand (wrapped lines and callouts count as one index). A `bg-ink/15` thumb tracks the viewport. Finding markers: saturated tokens with `ring-surface`; change markers: ok/danger at reduced opacity.
 5. **Inline findings:** deterministic findings pin to the staged line they reference as a full-width row beneath it (the diff is the headline; no separate list). Callout: `border-l-2`, severity `Badge`, mono `11px / 0.1em uppercase` `ruleId · line N`, reason `13px / --ink`, optional mono evidence. Fill: soft token at ~60% opacity; bar: saturated token. Groups: critical/high → `danger`, medium → `warn`, low/info → `info`, ok → `ok`.
 6. Findings with no line, or a line past a truncated sample, show in a banner between header and scroll region, so a clipped sample never hides a signal. The same callout body serves the binary / no-sample fallback and mirrors the landing preview.
 
@@ -402,7 +403,8 @@ The canonical labeled-control-with-metadata row; reuse it for any control with a
 | Prefix | Mono `11px / 0.1em uppercase / ink-subtle` ("Compare against"). |
 | Control | Native `<select>`, never a custom combobox; border + 6px radius, mono `13px`, `min-w 200px`, `8px 12px`. |
 | Focus | Standard 3px `--accent-soft` halo + accent border (matches `Input`). |
-| Caption | Mono `11px / ink-muted`, `→ staged X.Y.Z`. |
+| Caption | Mono `11px / ink-muted`, `→ staged X.Y.Z`; in a from/to pair the `→` wraps with the "to" control. |
+| Status | Loading line in the same row after the caption; a failure is one `Alert tone="warn"` under the row. |
 | Dist-tags | In the option text (`1.0.0 [latest] (default)`), never a trailing chip. |
 | Disabled | `opacity-60 cursor-not-allowed`, no fades. |
 

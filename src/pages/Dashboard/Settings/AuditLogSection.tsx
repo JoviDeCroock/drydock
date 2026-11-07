@@ -1,5 +1,5 @@
 import { useModel } from "@preact/signals";
-import { formatTimestamp } from "../../../lib/format";
+import { formatDateTimeExact } from "../../../lib/format";
 import { scanDetailPath } from "../../../lib/scan-detail-path";
 import {
   AuditLogModel,
@@ -8,9 +8,10 @@ import {
   type AuditEvent,
 } from "../../../models/audit-log";
 import { Alert } from "../../../components/Alert";
+import { cn } from "../../../components/cn";
 import { LoadMoreButton } from "../../../components/Button";
-import { CollapsibleCard, SettingsCardBody, SettingsCardListItem } from "../../../components/Card";
-import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
+import { Card, SettingsCardBody, SettingsCardListItem } from "../../../components/Card";
+import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
 
 const CATEGORY_LABELS: Record<AuditCategory, string> = {
   release_decision: "Release",
@@ -40,20 +41,26 @@ export function AuditLogSection({
   const hasMore = audit.hasMore.value;
 
   return (
-    <CollapsibleCard
-      title="Audit log"
-      defaultOpen
-      aside={
-        events.length ? (
-          <MonoLabel>
-            {events.length}
-            {hasMore ? "+" : ""} {events.length === 1 ? "event" : "events"}
-          </MonoLabel>
-        ) : null
-      }
-    >
+    // The only section on its tab, so it is a plain card: collapsing it would
+    // leave the tab empty.
+    <Card as="section" padding="none">
+      <div class="px-5 py-4">
+        <SectionLabel
+          as="h2"
+          aside={
+            events.length ? (
+              <MonoLabel>
+                {events.length}
+                {hasMore ? "+" : ""} {events.length === 1 ? "event" : "events"}
+              </MonoLabel>
+            ) : undefined
+          }
+        >
+          Audit log
+        </SectionLabel>
+      </div>
       <SettingsCardBody>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
+        <Muted class="text-[13px] m-0 max-w-[680px]">
           Release decisions, member changes, security policy, and integration changes for this
           organization. Events are retained for 90 days and visible to owners and admins.
         </Muted>
@@ -74,42 +81,49 @@ export function AuditLogSection({
 
       {events.length ? (
         <ul class="list-none m-0 p-0">
-          {events.map((event: AuditEvent) => (
-            <SettingsCardListItem key={event.id}>
-              <div class="flex flex-col gap-1 min-w-0 flex-1">
-                {/* The timestamp shares the title's baseline so a long detail line
-                    never pulls it off the row it dates. */}
-                <div class="flex items-baseline justify-between gap-3">
-                  <div class="flex items-baseline gap-2 flex-wrap min-w-0">
-                    <MonoLabel>{CATEGORY_LABELS[event.category]}</MonoLabel>
-                    <span class="text-[13px] font-medium text-ink">{event.label}</span>
+          {events.map((event: AuditEvent) => {
+            // The subject (usually name@version) is the link into its review;
+            // an event with a review but no subject still gets a way in.
+            const subject = event.detail || (event.scanId ? "Open review" : null);
+            return (
+              <SettingsCardListItem key={event.id}>
+                <div class="flex flex-col gap-1 min-w-0 flex-1">
+                  {/* The timestamp shares the title's baseline so a long subject
+                      never pulls it off the row it dates. */}
+                  <div class="flex items-baseline justify-between gap-3">
+                    <div class="flex items-baseline gap-2 flex-wrap min-w-0">
+                      <MonoLabel>{CATEGORY_LABELS[event.category]}</MonoLabel>
+                      <span class="text-[13px] font-medium text-ink">{event.label}</span>
+                    </div>
+                    <time
+                      class="font-mono text-[11px] text-ink-subtle shrink-0"
+                      dateTime={new Date(event.createdAt).toISOString()}
+                    >
+                      {formatDateTimeExact(event.createdAt)}
+                    </time>
                   </div>
-                  <span class="font-mono text-[11px] text-ink-subtle shrink-0">
-                    {formatTimestamp(event.createdAt)}
-                  </span>
+                  <p class="m-0 text-[13px] leading-[1.55] text-ink-muted flex flex-wrap gap-x-2">
+                    {subject ? (
+                      event.scanId ? (
+                        <a
+                          class={cn(
+                            "text-ink hover:text-accent underline decoration-border underline-offset-2 break-all",
+                            event.detail && "font-mono text-[12px]",
+                          )}
+                          href={scanDetailPath(event.scanId, organizationId)}
+                        >
+                          {subject}
+                        </a>
+                      ) : (
+                        <span class="font-mono text-[12px] text-ink break-all">{subject}</span>
+                      )
+                    ) : null}
+                    <span>by {actorLabel(event.actor)}</span>
+                  </p>
                 </div>
-                <MonoDetail
-                  parts={[
-                    event.detail ? (
-                      <span key="detail" class="break-words">
-                        {event.detail}
-                      </span>
-                    ) : null,
-                    <span key="actor">{actorLabel(event.actor)}</span>,
-                    event.scanId ? (
-                      <a
-                        key="scan"
-                        class="text-accent hover:underline"
-                        href={scanDetailPath(event.scanId, organizationId)}
-                      >
-                        view scan
-                      </a>
-                    ) : null,
-                  ]}
-                />
-              </div>
-            </SettingsCardListItem>
-          ))}
+              </SettingsCardListItem>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -123,6 +137,6 @@ export function AuditLogSection({
           />
         </SettingsCardBody>
       ) : null}
-    </CollapsibleCard>
+    </Card>
   );
 }

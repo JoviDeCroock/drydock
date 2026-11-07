@@ -48,7 +48,7 @@ test("enrolls in TOTP 2FA and signs in through the challenge", async ({ browser,
     await dialog.getByLabel("I've saved these codes").check();
     await dialog.getByRole("button", { name: "Done" }).click();
 
-    await expect(page.getByText("enabled", { exact: true })).toBeVisible();
+    await expect(page.getByText("Two-factor is on.")).toBeVisible();
 
     // Sign out via the account menu.
     await page.getByRole("button", { name: /Account menu/ }).click();

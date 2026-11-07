@@ -37,7 +37,7 @@ export function NotificationRecipientsSection({
 
   return (
     <CollapsibleCard
-      title="notification recipients"
+      title="Notification recipients"
       defaultOpen={defaultOpen}
       aside={
         list.length ? (
@@ -48,14 +48,13 @@ export function NotificationRecipientsSection({
       }
     >
       <SettingsCardBody>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
+        <Muted class="text-[13px] m-0 max-w-[680px]">
           Choose who gets emailed when an auto-discovered scan finishes or a release gate needs a
-          review decision. Add a shared inbox or teammates. When this list is empty, Drydock emails
-          the organization owner.
+          review decision. Add a shared inbox or teammates.
         </Muted>
 
         {!loaded ? (
-          <LoadingLine>loading recipients</LoadingLine>
+          <LoadingLine size="inline">Loading recipients</LoadingLine>
         ) : list.length > 0 ? (
           <ul class="flex flex-col gap-2 m-0 p-0 list-none">
             {list.map((recipient: NotificationRecipient) => (
@@ -78,10 +77,19 @@ export function NotificationRecipientsSection({
             ))}
           </ul>
         ) : (
-          <Muted class="text-[13px] m-0">
-            No recipients configured. Notifications go to{" "}
-            {fallbackEmail ?? "the organization owner"}.
-          </Muted>
+          // The only place the owner fallback is stated, so it reads as the
+          // current recipient rather than a rule repeated in the description.
+          <p class="text-[13px] m-0 text-ink-muted">
+            No recipients added. Drydock emails{" "}
+            {fallbackEmail ? (
+              <>
+                <code class="font-mono text-[12px] text-ink break-all">{fallbackEmail}</code>, the
+                organization owner.
+              </>
+            ) : (
+              "the organization owner."
+            )}
+          </p>
         )}
 
         {canManage ? (

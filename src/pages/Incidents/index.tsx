@@ -2,6 +2,7 @@ import { useLocation } from "preact-iso";
 import { LinkButton } from "../../components/Button";
 import { PageShell } from "../../components/PageShell";
 import {
+  ContentArticleCta,
   ContentArticleEvidence,
   ContentArticleHero,
   ContentArticleLinks,
@@ -149,6 +150,15 @@ export default function IncidentCasePage() {
       />
 
       <ContentArticleSections sections={incident.sections} />
+
+      {/* The reader who finished the analysis is the one most ready to check
+          it; sending them back up to the hero for the diff loses them. */}
+      <ContentArticleCta
+        label="Check the evidence"
+        heading={`Read the ${incident.packageName} ${incident.toVersion} diff yourself.`}
+        body={`The live diff compares ${incident.fromVersion} with ${incident.toVersion} file by file, with each deterministic finding pinned to its line. No account or installation needed.`}
+        actions={<LinkButton href={diffPath}>Open the live artifact diff</LinkButton>}
+      />
 
       <ContentArticleLinks label="Keep reading diffs" links={relatedLinks} />
     </PageShell>

@@ -245,7 +245,10 @@ export function Menu({
 type MenuItemProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "class" | "onClick"> & {
   onSelect?: () => void;
   tone?: "default" | "accent" | "danger";
-  active?: boolean;
+  // Set on every item of a single-choice group (the org switcher): the item
+  // becomes a `menuitemradio` and the chosen one keeps an accent cue, so the
+  // current choice stays visible without hover or focus.
+  checked?: boolean;
   class?: string;
   children: ComponentChildren;
 };
@@ -259,7 +262,7 @@ const menuItemToneClass: Record<NonNullable<MenuItemProps["tone"]>, string> = {
 export function MenuItem({
   onSelect,
   tone = "default",
-  active = false,
+  checked,
   class: className,
   children,
   type = "button",
@@ -270,14 +273,14 @@ export function MenuItem({
     <button
       type={type}
       data-menu-item
-      role="menuitem"
+      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      aria-checked={checked}
       onClick={onSelect}
       disabled={disabled}
       class={cn(
         "w-full text-left text-[13px] px-3 py-1.5 cursor-pointer",
         "hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
-        menuItemToneClass[tone],
-        active ? "font-medium" : "",
+        checked ? "text-accent font-medium" : menuItemToneClass[tone],
         className,
       )}
       {...props}

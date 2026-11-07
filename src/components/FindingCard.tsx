@@ -1,4 +1,5 @@
 import { Fragment, type ComponentChildren } from "preact";
+import { findingSentence } from "../lib/findings";
 import { Badge, severityTone } from "./Badge";
 import { cn } from "./cn";
 
@@ -69,9 +70,7 @@ export function FindingCard({
     >
       <div class="flex flex-col gap-1 min-w-0">
         <div class="flex items-center gap-2.5 min-w-0">
-          <Badge tone={severityTone(severity)} dot>
-            {severity}
-          </Badge>
+          <Badge tone={severityTone(severity)}>{severity}</Badge>
           {source === "ai" ? (
             <Badge tone="neutral" class="shrink-0">
               assistant
@@ -165,9 +164,7 @@ export function GroupedFindingCard({
     >
       <div class="flex flex-col gap-1 min-w-0">
         <div class="flex items-center gap-2.5 min-w-0">
-          <Badge tone={severityTone(severity)} dot>
-            {severity}
-          </Badge>
+          <Badge tone={severityTone(severity)}>{severity}</Badge>
           <span class="font-mono text-[13px] text-ink-muted truncate">{files.length} files</span>
         </div>
         {ruleId ? (
@@ -198,11 +195,129 @@ export function GroupedFindingCard({
   );
 }
 
-export function FindingRow({ label, value }: { label: string; value: ComponentChildren }) {
+/**
+ * A finding's body: the reason as a sentence, then the evidence as the machine
+ * value it is. Evidence is mono and may break anywhere, so a 64-character digest
+ * wraps inside the card instead of setting its minimum width.
+ */
+export function FindingDetails({ reason, evidence }: { reason: string; evidence?: string | null }) {
   return (
-    <div class="grid grid-cols-[108px_minmax(0,1fr)] gap-2.5 items-baseline">
-      <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.1em]">{label}</span>
-      <span class="min-w-0 break-words">{value}</span>
-    </div>
+    <>
+      <p class="m-0 text-ink max-w-[760px]">{findingSentence(reason)}</p>
+      {evidence ? (
+        <code class="block font-mono text-[12px] leading-[1.5] text-ink-muted wrap-anywhere whitespace-pre-wrap max-w-[760px]">
+          {evidence}
+        </code>
+      ) : null}
+    </>
+  );
+}
+
+export interface FindingIndexLocation {
+  file: string;
+  line?: number | null;
+  note?: string | null;
+  onSelect?: () => void;
+}
+
+/**
+ * One entry for findings the diff already shows in full: severity, the rule,
+ * and the locations it opens. A rule that fired with the same reason in
+ * several files reads once, above one compact action per location.
+ */
+export function FindingIndexRow({
+  severity,
+  ruleId,
+  note,
+  reason,
+  locations,
+}: {
+  severity: string;
+  ruleId?: string | null;
+  note?: string | null;
+  /**
+   * The diff shows one file at a time, so the row keeps the reason: without it,
+   * findings on every other file would have no explanation on the page until
+   * opened. Null only when another element on the page states it.
+   */
+  reason?: string | null;
+  locations: FindingIndexLocation[];
+}) {
+  const [only] = locations;
+  const grouped = locations.length > 1;
+  return (
+    <li class="flex items-start gap-2.5 min-w-0 py-2">
+      <Badge tone={severityTone(severity)} class="shrink-0">
+        {severity}
+      </Badge>
+      {/* Stacks on narrow screens so the path keeps its width. */}
+      <div class="min-w-0 flex-1 flex flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2.5">
+        {grouped ? (
+          <span class="font-mono text-[13px] text-ink-muted shrink-0">
+            {locations.length} locations
+          </span>
+        ) : (
+          <FileRef
+            file={only.file}
+            onSelect={only.onSelect}
+            class="min-w-0 max-w-full sm:max-w-[60%]"
+          />
+        )}
+        <FindingMeta
+          parts={[
+            !grouped && only.line ? (
+              <span key="line" class="shrink-0">
+                L{only.line}
+              </span>
+            ) : null,
+            ruleId ? (
+              <span
+                key="rule"
+                class="truncate uppercase tracking-[0.05em]"
+                title={`Rule ${ruleId}`}
+              >
+                {ruleId}
+              </span>
+            ) : null,
+            (note ?? (!grouped ? only.note : null)) ? (
+              <span key="note" class="shrink-0">
+                {note ?? only.note}
+              </span>
+            ) : null,
+          ]}
+        />
+        {reason ? (
+          <p class="m-0 text-[13px] leading-[1.5] text-ink-muted sm:basis-full">
+            {findingSentence(reason)}
+          </p>
+        ) : null}
+        {grouped ? (
+          <ul class="list-none p-0 m-0 mt-0.5 flex flex-wrap gap-x-4 gap-y-1 min-w-0 sm:basis-full">
+            {locations.map((location) => (
+              <li
+                key={`${location.file}:${location.line ?? ""}`}
+                class="flex items-center gap-1.5 min-w-0 max-w-full"
+              >
+                <FileRef file={location.file} onSelect={location.onSelect} class="min-w-0" />
+                <FindingMeta
+                  parts={[
+                    location.line ? (
+                      <span key="line" class="shrink-0">
+                        L{location.line}
+                      </span>
+                    ) : null,
+                    location.note ? (
+                      <span key="note" class="shrink-0">
+                        {location.note}
+                      </span>
+                    ) : null,
+                  ]}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </li>
   );
 }

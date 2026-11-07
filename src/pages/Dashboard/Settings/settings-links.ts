@@ -53,3 +53,15 @@ export function scrollToSettingsSection(hash: string, root: HashTargetRoot): boo
   target.scrollIntoView({ block: "start" });
   return true;
 }
+
+const SELF_HOSTING_DOC = "https://github.com/JoviDeCroock/drydock/blob/main/docs/self-hosting.md";
+
+/**
+ * Operator setup for integrations this instance has not configured. Maintainers
+ * cannot fix these themselves, so settings links the operator guide instead of
+ * naming Worker secrets.
+ */
+export const OPERATOR_SETUP_DOCS = {
+  githubApp: `${SELF_HOSTING_DOC}#github-workflow-gates`,
+  slack: `${SELF_HOSTING_DOC}#slack-notifications`,
+} as const;

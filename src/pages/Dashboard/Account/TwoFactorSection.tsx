@@ -4,11 +4,12 @@ import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { TwoFactorModel } from "../../../models/two-factor";
 import { Alert } from "../../../components/Alert";
 import { Button, LinkButton } from "../../../components/Button";
+import { CopyButton } from "../../../components/CopyButton";
 import { SettingsCard } from "../../../components/Card";
 import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
+import { Muted, SectionLabel } from "../../../components/Typography";
 import { SetPasswordPrompt } from "./SetPasswordPrompt";
 
 type DialogMode = "none" | "enroll" | "regenerate" | "disable";
@@ -23,15 +24,17 @@ function BackupCodes({ codes }: { codes: string[] }) {
           <span key={value}>{value}</span>
         ))}
       </div>
-      <LinkButton
-        variant="secondary"
-        size="sm"
-        class="self-start"
-        href={downloadHref}
-        download="drydock-backup-codes.txt"
-      >
-        Download codes
-      </LinkButton>
+      <div class="flex flex-wrap gap-2">
+        <CopyButton text={codes.join("\n")} label="Copy codes" />
+        <LinkButton
+          variant="secondary"
+          size="sm"
+          href={downloadHref}
+          download="drydock-backup-codes.txt"
+        >
+          Download codes
+        </LinkButton>
+      </div>
     </div>
   );
 }
@@ -102,7 +105,7 @@ export function TwoFactorSection() {
 
   if (dialog.value === "enroll" && enrollStep.value === "password") {
     dialogTitle = "Enable two-factor";
-    dialogDescription = "Confirm your password to begin setup.";
+    dialogDescription = "Step 1 of 3. Confirm your password to begin setup.";
     dialogBody = (
       <form class="flex flex-col gap-4" onSubmit={onBeginEnroll}>
         <Field label="Current password" for="tf-enroll-password">
@@ -123,7 +126,8 @@ export function TwoFactorSection() {
     );
   } else if (dialog.value === "enroll" && enrollStep.value === "verify") {
     dialogTitle = "Scan the QR code";
-    dialogDescription = "Scan with your authenticator app, then enter the 6-digit code to confirm.";
+    dialogDescription =
+      "Step 2 of 3. Scan with your authenticator app, then enter the 6-digit code to confirm.";
     dialogBody = (
       <form class="flex flex-col gap-4" onSubmit={onConfirmEnroll}>
         {tf.qrDataUrl.value ? (
@@ -138,9 +142,12 @@ export function TwoFactorSection() {
         {tf.secret.value ? (
           <div class="flex flex-col gap-1">
             <Muted class="text-[12px] m-0">Can't scan? Enter this key manually:</Muted>
-            <code class="font-mono text-[12px] text-ink break-all rounded-md border border-border bg-surface-2 px-2 py-1.5">
-              {tf.secret.value}
-            </code>
+            <div class="flex items-center gap-2">
+              <code class="flex-1 min-w-0 font-mono text-[12px] text-ink break-all rounded-md border border-border bg-surface-2 px-2 py-1.5">
+                {tf.secret.value}
+              </code>
+              <CopyButton text={tf.secret.value} label="Copy key" />
+            </div>
           </div>
         ) : null}
         <Field label="Authentication code" for="tf-verify-code">
@@ -163,7 +170,7 @@ export function TwoFactorSection() {
   } else if (dialog.value === "enroll" && enrollStep.value === "backup") {
     dialogTitle = "Save your backup codes";
     dialogDescription =
-      "Each code works once. Store them somewhere safe; you won't see them again.";
+      "Step 3 of 3. Each code works once. Store them somewhere safe; you won't see them again.";
     dialogBody = (
       <div class="flex flex-col gap-4">
         {codes ? <BackupCodes codes={codes} /> : null}
@@ -175,9 +182,16 @@ export function TwoFactorSection() {
           />
           I've saved these codes
         </label>
-        <Button class="self-end" disabled={!savedConfirmed.value} onClick={close}>
-          Done
-        </Button>
+        {/* The dialog cannot be dismissed until the codes are saved, so the
+            requirement is stated beside the action it blocks. */}
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <Show when={() => !savedConfirmed.value}>
+            <Muted class="m-0 text-[12px]">Confirm you saved the codes to finish.</Muted>
+          </Show>
+          <Button disabled={!savedConfirmed.value} onClick={close}>
+            Done
+          </Button>
+        </div>
       </div>
     );
   } else if (dialog.value === "regenerate") {
@@ -235,45 +249,51 @@ export function TwoFactorSection() {
 
   return (
     <SettingsCard as="section" class="flex flex-col gap-5">
-      <SectionLabel
-        as="h2"
-        aside={
-          <Show when={enabled} fallback={<MonoLabel>not enabled</MonoLabel>}>
-            <MonoLabel>enabled</MonoLabel>
-          </Show>
-        }
-      >
-        Two-factor authentication
-      </SectionLabel>
-      <Muted class="text-[13px] m-0 max-w-[760px]">
-        Protect your account with a time-based code from an authenticator app. Once enabled, you'll
-        enter a code each time you sign in.
+      <SectionLabel as="h2">Two-factor authentication</SectionLabel>
+      <Muted class="text-[13px] m-0 max-w-[680px]">
+        <Show
+          when={enabled}
+          fallback="Protect your account with a time-based code from an authenticator app. Once enabled, you'll enter a code each time you sign in."
+        >
+          You enter a code from your authenticator app each time you sign in.
+        </Show>
       </Muted>
 
-      <Show
-        when={enabled}
-        fallback={
-          <Show when={signInMethodsModel.hasPassword} fallback={<SetPasswordPrompt />}>
-            <div>
-              <Button onClick={() => open("enroll")}>Enable two-factor</Button>
-            </div>
+      {/* The current state reads directly above the controls that change it. */}
+      <div class="flex flex-col gap-3">
+        <p class="m-0 text-[13px] font-medium text-ink">
+          <Show when={enabled} fallback="Two-factor is off.">
+            Two-factor is on.
           </Show>
-        }
-      >
-        <div class="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => open("regenerate")}>
-            Regenerate backup codes
-          </Button>
-          {/* Opening the dialog is not yet destructive; its confirm button is danger. */}
-          <Button variant="secondary" onClick={() => open("disable")}>
-            Disable two-factor
-          </Button>
-        </div>
-      </Show>
+        </p>
+        <Show
+          when={enabled}
+          fallback={
+            <Show when={signInMethodsModel.hasPassword} fallback={<SetPasswordPrompt />}>
+              <div>
+                <Button onClick={() => open("enroll")}>Enable two-factor</Button>
+              </div>
+            </Show>
+          }
+        >
+          <div class="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => open("regenerate")}>
+              Regenerate backup codes
+            </Button>
+            {/* Opening the dialog is not yet destructive; its confirm button is danger. */}
+            <Button variant="secondary" onClick={() => open("disable")}>
+              Disable two-factor
+            </Button>
+          </div>
+        </Show>
+      </div>
 
       <Dialog
         open={dialog.value !== "none"}
         onClose={onDialogClose}
+        dismissible={
+          !(dialog.value === "enroll" && enrollStep.value === "backup" && !savedConfirmed.value)
+        }
         title={dialogTitle}
         description={dialogDescription}
       >

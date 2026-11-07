@@ -132,9 +132,8 @@ export function PublicationMonitor({
             Publication monitor
           </SectionLabel>
           <p class="m-0 text-[13px] text-ink-muted">
-            Alerts you when a watched public npm package gets a new release that this organization
-            did not approve, such as a publish that skipped review. Only releases after you start
-            watching count, and it never blocks a release.
+            Alerts you when npm publishes a release of a watched package that this organization did
+            not approve. It counts releases from when you start watching and never blocks one.
           </p>
         </div>
         <form
@@ -166,7 +165,14 @@ export function PublicationMonitor({
             required
             disabled={model.busy}
           />
-          <Button type="submit" size="sm" class="whitespace-nowrap" disabled={model.busy}>
+          {/* Secondary: Review it above is the page's one primary action. */}
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            class="whitespace-nowrap"
+            disabled={model.busy}
+          >
             Watch package
           </Button>
         </form>
@@ -243,10 +249,7 @@ export function PublicationMonitor({
         </Show>
         <Show when={() => model.loaded.value && model.watches.value.length === 0}>
           <div class="p-5">
-            <EmptyLine>
-              No packages watched yet. Enter a public npm package name to be alerted when a release
-              reaches npm without an approval here.
-            </EmptyLine>
+            <EmptyLine>No packages watched.</EmptyLine>
           </div>
         </Show>
         <ul ref={listRef} class="list-none p-0 m-0">

@@ -1,20 +1,21 @@
-import type { IntentEnvelope, IntentEnvelopeTier } from "../../../../server/types";
-import { Badge, type BadgeTone } from "../../../components/Badge";
+import type { IntentEnvelope } from "../../../../server/types";
 import { SectionLabel } from "../../../components/Typography";
 
 // Advisory source-binding row rendered under the recommendation. The envelope
-// never changes risk, so tier tones stay informational (ok / info / neutral)
-// rather than borrowing severity colors. Scans persisted before the envelope
-// existed render nothing (the parent passes null).
+// never changes risk and asks nothing of the reader, so the tier is stated once
+// in plain text beside the repository rather than as a chip that repeats it.
+// Scans persisted before the envelope existed render nothing (the parent
+// passes null).
 export function IntentEnvelopeSection({ envelope }: { envelope: IntentEnvelope }) {
   const signals = sourceBindingSignals(envelope);
   return (
     <section class="flex flex-col gap-3 min-w-0">
       <SectionLabel as="h3">Source binding</SectionLabel>
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Badge tone={tierTone(envelope.tier)}>{envelope.tier}</Badge>
-        <span class="text-[13px] leading-[1.55] text-ink min-w-0">{tierDescription(envelope)}</span>
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         {envelope.repository ? <RepositoryLink repository={envelope.repository} /> : null}
+        <span class="text-[13px] leading-[1.55] text-ink-muted min-w-0">
+          {tierDescription(envelope)}
+        </span>
       </div>
       {signals.length ? (
         <ul class="list-none p-0 m-0 flex flex-col gap-2">
@@ -35,13 +36,7 @@ export function IntentEnvelopeSection({ envelope }: { envelope: IntentEnvelope }
   );
 }
 
-function tierTone(tier: IntentEnvelopeTier): BadgeTone {
-  if (tier === "attested") return "ok";
-  if (tier === "declared") return "info";
-  return "neutral";
-}
-
-function tierDescription(envelope: IntentEnvelope): string {
+export function tierDescription(envelope: Pick<IntentEnvelope, "tier">): string {
   if (envelope.tier === "attested") {
     return "Built and held by a GitHub workflow gate.";
   }

@@ -10,11 +10,13 @@ import {
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
+import { cn } from "../../../components/cn";
 import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
 import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { pushToast } from "../../../components/Toast";
 import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
+import { OPERATOR_SETUP_DOCS } from "./settings-links";
 
 export function SlackConnectionSection({
   slack,
@@ -27,8 +29,12 @@ export function SlackConnectionSection({
 }) {
   const canManageSignal = useLiveSignal(canManage);
   const loadingConnection = useComputed(() => !slack.loaded.value);
+  const unavailable = useComputed(() => slack.loaded.value && !slack.configured.value);
+  const disconnectedLabel = useComputed(() =>
+    unavailable.value ? "unavailable" : "not connected",
+  );
   const aside = (
-    <Show when={slack.connection} fallback={<MonoLabel>not connected</MonoLabel>}>
+    <Show when={slack.connection} fallback={<MonoLabel>{disconnectedLabel}</MonoLabel>}>
       <MonoLabel>connected</MonoLabel>
     </Show>
   );
@@ -62,13 +68,16 @@ export function SlackConnectionSection({
   });
 
   return (
-    <CollapsibleCard title="slack" defaultOpen={defaultOpen} aside={aside}>
+    <CollapsibleCard title="Slack" defaultOpen={defaultOpen} aside={aside}>
       <SettingsCardBody>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
-          Connect a Slack workspace and choose one public channel for Drydock to post scan
-          completions and release-gate reviews. The bot token is encrypted at rest and only ever
-          posts to the channel you pick.
-        </Muted>
+        {/* An instance without Slack shows only the unavailable state below:
+            describing how to connect would offer something no one here can do. */}
+        <Show when={() => !unavailable.value}>
+          <Muted class="text-[13px] m-0 max-w-[680px]">
+            Drydock posts scan completions and release-gate reviews to one public Slack channel. The
+            bot token is encrypted at rest and posts only to that channel.
+          </Muted>
+        </Show>
 
         <Show<SlackTestResult | null> when={slack.callbackNotice}>
           {(notice) => <Alert tone={notice.ok ? "ok" : "critical"}>{notice.message}</Alert>}
@@ -80,9 +89,17 @@ export function SlackConnectionSection({
             <Show
               when={slack.configured}
               fallback={
-                <Muted class="text-[13px] m-0">
-                  Slack is not configured on this Drydock instance. Ask the operator to add the
-                  Slack app credentials.
+                <Muted class="text-[13px] m-0 max-w-[680px]">
+                  Slack is not set up on this Drydock instance. Your operator can enable it with the{" "}
+                  <a
+                    class="text-ink underline decoration-border underline-offset-2 hover:text-accent"
+                    href={OPERATOR_SETUP_DOCS.slack}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    operator setup guide
+                  </a>
+                  .
                 </Muted>
               }
             >
@@ -102,7 +119,7 @@ export function SlackConnectionSection({
             </Show>
           }
         >
-          <LoadingLine>loading Slack connection</LoadingLine>
+          <LoadingLine size="inline">Loading Slack connection</LoadingLine>
         </Show>
 
         <Show<string | null> when={slack.error}>
@@ -216,7 +233,8 @@ function ConnectedSlackState({
         {/* The picker (or the read-only "Posting to" line) already shows the saved
             channel, so this row marks only its absence, or names it while the
             manual-ID field is showing a draft instead. */}
-        <div class="flex items-center gap-2 min-w-0">
+        <div class="flex items-center gap-x-3 gap-y-1 flex-wrap min-w-0">
+          <span class={cn(slackFieldLabelClass, "w-[76px] shrink-0")}>Workspace</span>
           <span class="text-[13px] text-ink break-all">
             {connection.teamName ?? "Slack workspace"}
           </span>
@@ -346,8 +364,15 @@ function ConnectedSlackState({
             >
               {saveChannelLabel}
             </Button>
+            <Show
+              when={() => effectiveSelectionMode.value === "picker" && channelPickerLoading.value}
+            >
+              <LoadingLine size="inline" class="col-start-2 sm:col-end-4">
+                Loading channels
+              </LoadingLine>
+            </Show>
             <Show when={() => effectiveSelectionMode.value === "manual"}>
-              <Muted class="col-start-2 sm:col-span-2 text-[12px] m-0">
+              <Muted class="col-start-2 sm:col-end-4 text-[12px] m-0">
                 Use this when the channel is not listed or list permission is unavailable.
               </Muted>
             </Show>

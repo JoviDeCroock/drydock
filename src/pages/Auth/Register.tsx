@@ -6,6 +6,7 @@ import { normalizeAuthReturnTo } from "../../lib/auth-return";
 import { authPageHref } from "./auth-links";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "../../models/password-reset";
 import { Alert } from "../../components/Alert";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -158,10 +159,15 @@ export default function RegisterPage() {
               type="password"
               value={password}
               autocomplete="new-password"
-              minlength={12}
+              minlength={PASSWORD_MIN_LENGTH}
+              maxlength={PASSWORD_MAX_LENGTH}
+              aria-describedby="register-password-hint"
               required
               onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
             />
+            <p id="register-password-hint" class="m-0 mt-1.5 text-[12px] text-ink-muted">
+              At least {PASSWORD_MIN_LENGTH} characters.
+            </p>
           </Field>
 
           <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>

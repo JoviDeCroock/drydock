@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
-import { useComputed, useModel, useSignal } from "@preact/signals";
+import { type ReadonlySignal, useComputed, useModel, useSignal } from "@preact/signals";
 import { useEffect, useId, useRef } from "preact/hooks";
 import { PackageClaimModel } from "../../models/package-claim";
 import { packageReleasesPath } from "../../lib/package-releases-path";
@@ -9,7 +9,7 @@ import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Dialog } from "../../components/Dialog";
 import { Select } from "../../components/Select";
-import { EmptyLine, LoadingLine } from "../../components/Typography";
+import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
 
 type ClaimModel = InstanceType<typeof PackageClaimModel>;
 type ChoiceResult = "kept" | "moved";
@@ -105,35 +105,40 @@ function ChoiceForm({
   // Beside a page's own content (a review, a release list) the choice is
   // housekeeping: secondary and natural width, never the page's primary
   // action. Stacked, it is what the dialog or the opened move panel is for.
+  // Medium either way: the choice can be permanent, so it gets full-size
+  // targets rather than the compact row controls.
   const controls = (
     <div class="flex flex-wrap items-center gap-2">
       {/* With no shared organization to move into, keeping is the only choice
           and the button alone says so. */}
       <Show when={hasDestinations}>
         {() => (
-          <Select
-            aria-label="Managing organization"
-            size={lead ? "sm" : "md"}
-            value={model.selectedOrganizationId}
-            disabled={model.busy}
-            onChange={(id) => {
-              model.selectedOrganizationId.value = id;
-            }}
-          >
-            {includeKeep ? (
-              <option value={model.organization.value?.id ?? ""}>Keep in personal workspace</option>
-            ) : null}
-            {destinations.value.map((org) => (
-              <option key={org.id} value={org.id}>
-                {org.name}
-              </option>
-            ))}
-          </Select>
+          // Select fills its container; a bounded box keeps the button beside it.
+          <span class="w-full sm:w-60">
+            <Select
+              aria-label="Managing organization"
+              value={model.selectedOrganizationId}
+              disabled={model.busy}
+              onChange={(id) => {
+                model.selectedOrganizationId.value = id;
+              }}
+            >
+              {includeKeep ? (
+                <option value={model.organization.value?.id ?? ""}>
+                  Keep in personal workspace
+                </option>
+              ) : null}
+              {destinations.value.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}
+                </option>
+              ))}
+            </Select>
+          </span>
         )}
       </Show>
       <Button
         variant={lead ? "secondary" : "primary"}
-        size={lead ? "sm" : "md"}
         disabled={disabled}
         onClick={async () => {
           const result = await model.choose();
@@ -276,6 +281,36 @@ export function PackageManagement({
   });
   // A read failure has nothing to choose from; LoadFailure reports it instead.
   const choiceError = useComputed(() => (model.management.value ? model.error.value : null));
+  const failed = useComputed(
+    () => !model.loading.value && !model.management.value && model.error.value !== null,
+  );
+  const visible = useComputed(
+    () => view.value !== null || failed.value || choiceError.value !== null,
+  );
+  // A labelled section, so on a review or a release list it reads as the
+  // package's housekeeping rather than a stray card under the evidence.
+  return (
+    <Show when={visible}>
+      <section class="flex flex-col gap-3">
+        <SectionLabel as="h2">Package management</SectionLabel>
+        <ManagementBody model={model} view={view} packageName={packageName} onChanged={onChanged} />
+        <Show when={choiceError}>{(error) => <Alert tone="critical">{error}</Alert>}</Show>
+      </section>
+    </Show>
+  );
+}
+
+function ManagementBody({
+  model,
+  view,
+  packageName,
+  onChanged,
+}: {
+  model: ClaimModel;
+  view: ReadonlySignal<"moved" | "pending" | "managed" | null>;
+  packageName: string;
+  onChanged: () => void;
+}) {
   return (
     <>
       <LoadFailure model={model} />
@@ -288,7 +323,6 @@ export function PackageManagement({
       <Show when={() => view.value === "managed"}>
         {() => <ManagedCard model={model} onChanged={onChanged} />}
       </Show>
-      <Show when={choiceError}>{(error) => <Alert tone="critical">{error}</Alert>}</Show>
     </>
   );
 }

@@ -264,3 +264,50 @@ describe("ReviewerSummary deterministic assessments", () => {
     expect(textOf(view)).not.toContain("AI notes on deterministic findings");
   });
 });
+
+describe("ReviewerSummary ordering", () => {
+  const clean: Extract<DisplayedAiResult, { kind: "complete" }> = {
+    kind: "complete",
+    model: "@cf/moonshotai/kimi-k2.7-code",
+    summary: "Routine patch release.",
+    risk: "low",
+    releaseAssessment: "nothing_unusual",
+    findings: [],
+    requiresManualReview: false,
+    deterministicAssessments: [],
+  };
+  const rule = (severity: string): ReviewFinding => ({
+    id: severity,
+    severity,
+    file: "package/index.js",
+    evidence: "e",
+    reason: "r",
+    source: "rule",
+    ruleId: "code.network-exfil",
+  });
+
+  test("a high deterministic finding outranks a reassuring AI headline", () => {
+    const view = ReviewerSummary({ ai: clean, findings: [rule("high")] });
+    const text = textOf(view);
+    expect(text.indexOf("does not clear the deterministic findings")).toBeLessThan(
+      text.indexOf("AI reports nothing unusual"),
+    );
+    const headline = hostNodes(view).find(
+      (node) => node.type === "p" && textOf(node).startsWith("AI reports nothing unusual"),
+    );
+    expect(headline?.props.class).not.toContain("font-medium");
+  });
+
+  test("without a high finding the AI headline leads", () => {
+    const text = textOf(ReviewerSummary({ ai: clean, findings: [rule("medium")] }));
+    expect(text.indexOf("AI reports nothing unusual")).toBeLessThan(
+      text.indexOf("does not clear the deterministic findings"),
+    );
+  });
+
+  test("the quoting caveat rides the disclosure it describes", () => {
+    const nodes = hostNodes(ReviewerSummary({ ai: clean, findings: [] }));
+    const summary = nodes.find((node) => node.type === "summary");
+    expect(textOf(summary)).toBe("Read full AI assessment · may quote package text");
+  });
+});

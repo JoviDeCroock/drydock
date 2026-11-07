@@ -26,7 +26,7 @@ test("personal npm setup requires an explicit workspace and switches before acce
   const writes: unknown[] = [];
   await installSettingsMocks(page, true, writes);
   await page.goto("/dashboard/settings?tab=integrations");
-  await expect(page.getByLabel("npm connection organization")).toHaveValue("org-team");
+  await expect(page.getByLabel("Review workspace", { exact: true })).toHaveValue("org-team");
   await expect(page.getByLabel("npm token", { exact: true })).toHaveCount(0);
   expect(writes).toEqual([]);
   await page.screenshot({
@@ -46,7 +46,7 @@ test("keeping npm access personal sends explicit automatic scanning consent", as
   await installSettingsMocks(page, true, writes);
   await page.goto("/dashboard/settings?tab=integrations");
   await page
-    .getByLabel("npm connection organization")
+    .getByLabel("Review workspace", { exact: true })
     .selectOption({ label: "Keep in personal workspace" });
   await expect(page.getByLabel("npm token", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Continue in personal workspace" }).click();
@@ -88,12 +88,12 @@ test("an existing personal connection stays rotatable while its workspace choice
   ).toBeVisible();
   await expect(page.getByLabel("New npm token", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Disconnect npm" })).toBeVisible();
-  await expect(page.getByLabel("npm connection organization")).toHaveValue("org-team");
+  await expect(page.getByLabel("Review workspace", { exact: true })).toHaveValue("org-team");
   await page
-    .getByLabel("npm connection organization")
+    .getByLabel("Review workspace", { exact: true })
     .selectOption({ label: "Keep in personal workspace" });
   await page.getByRole("button", { name: "Enable automatic scans in personal workspace" }).click();
-  await expect(page.getByLabel("npm connection organization")).toHaveCount(0);
+  await expect(page.getByLabel("Review workspace", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("New npm token", { exact: true })).toBeVisible();
   expect(writes).toEqual(["personal-confirmation"]);
 });
@@ -104,7 +104,7 @@ test("a personal-only workspace confirms automatic scans with one button and no 
   const writes: unknown[] = [];
   await installSettingsMocks(page, true, writes, null, false);
   await page.goto("/dashboard/settings?tab=integrations");
-  await expect(page.getByLabel("npm connection organization")).toHaveCount(0);
+  await expect(page.getByLabel("Review workspace", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("npm token", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Continue in personal workspace" }).click();
   await page.getByLabel("npm token", { exact: true }).fill("npm_fake_read_only");
@@ -134,8 +134,12 @@ test("a valid personal connection awaiting its workspace choice does not read as
   });
   await page.goto("/dashboard/settings?tab=integrations");
   await expect(page.getByText("automatic scans off", { exact: true })).toBeVisible();
+  const newToken = page.getByLabel("New npm token", { exact: true });
+  await expect(newToken).toBeHidden();
+  await page.locator("summary", { hasText: "Rotate token" }).click();
+  await expect(newToken).toBeVisible();
   await page
-    .getByLabel("npm connection organization")
+    .getByLabel("Review workspace", { exact: true })
     .selectOption({ label: "Keep in personal workspace" });
   await page.getByRole("button", { name: "Enable automatic scans in personal workspace" }).click();
   await expect(page.getByText("automatic scans off", { exact: true })).toHaveCount(0);
@@ -507,7 +511,7 @@ test("the package page watches directly with the personal flag and turns a pendi
     });
   });
   await page.goto("/dashboard/packages/example?org=org-guide");
-  await expect(page.getByText("public endpoint says")).toBeVisible();
+  await expect(page.getByText("README badge shows")).toBeVisible();
   // Until the claim is read, the badge cannot tell its manager from a bystander.
   await expect(page.getByText(/Only the organization that manages this package/)).toHaveCount(0);
   releaseClaim();

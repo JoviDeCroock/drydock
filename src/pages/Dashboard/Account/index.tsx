@@ -26,7 +26,7 @@ export default function AccountPage() {
 
   if (!ready.value) {
     return (
-      <PageShell width="doc" headerActions={<AppHeaderActions />}>
+      <PageShell headerActions={<AppHeaderActions />}>
         <AccountHeader />
         <LoadingState title="Opening account" detail="confirming session" />
       </PageShell>
@@ -36,10 +36,12 @@ export default function AccountPage() {
   const user = sessionModel.user.value;
 
   return (
-    <PageShell width="doc" headerActions={<AppHeaderActions />}>
+    <PageShell headerActions={<AppHeaderActions />}>
       <AccountHeader />
 
-      <div class="flex flex-col gap-6">
+      {/* The shell matches Settings so the header does not jump between the
+          two pages; the column keeps the forms at a readable width. */}
+      <div class="flex flex-col gap-6 max-w-[840px]">
         <SettingsCard class="flex flex-col gap-1.5">
           <SectionLabel as="h2">Profile</SectionLabel>
           {user?.name ? <span class="text-[14px] font-medium text-ink">{user.name}</span> : null}

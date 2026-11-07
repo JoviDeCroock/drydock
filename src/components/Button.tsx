@@ -31,7 +31,7 @@ const variantStyles: Record<ButtonVariant, string> = {
   // section: the accent text the settings sidebar uses for its active tab.
   ghost:
     "bg-transparent text-ink-muted hover:bg-surface-2 hover:text-ink aria-[current=page]:text-accent aria-[current=page]:hover:text-accent",
-  danger: "bg-danger text-white hover:brightness-95",
+  danger: "bg-danger text-danger-on hover:brightness-95",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {

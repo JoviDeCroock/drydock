@@ -2,7 +2,10 @@ import { isValidElement, type ComponentChildren, type VNode } from "preact";
 import { describe, expect, test, vi } from "vitest";
 import { Button } from "../src/components/Button";
 import { LoadingLine } from "../src/components/Typography";
-import { GateContextPanel } from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
+import {
+  GateContextPanel,
+  gateJobSentence,
+} from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
 
 function elements(
   node: ComponentChildren,
@@ -18,7 +21,6 @@ describe("GateContextPanel lookup state", () => {
     const tree = elements(
       GateContextPanel({
         gate: null,
-        packageName: "left-pad",
         lookupStalled: true,
         onRetryLookup: retry,
       }),
@@ -37,8 +39,42 @@ describe("GateContextPanel lookup state", () => {
   });
 
   test("keeps the loading indicator while lookup is still active", () => {
-    const tree = elements(GateContextPanel({ gate: null, packageName: "left-pad" }));
+    const tree = elements(GateContextPanel({ gate: null }));
     expect(tree.some((node) => node.type === LoadingLine)).toBe(true);
     expect(tree.some((node) => node.type === Button)).toBe(false);
+  });
+});
+
+describe("gate job sentence", () => {
+  const one = [{}] as Parameters<typeof gateJobSentence>[0]["packages"];
+  const two = [{}, {}] as Parameters<typeof gateJobSentence>[0]["packages"];
+
+  test("a decided gate never claims GitHub is still holding the job", () => {
+    for (const status of ["approved", "rejected"] as const) {
+      expect(gateJobSentence({ status, failureReason: null, packages: two })).not.toMatch(
+        /holding/,
+      );
+    }
+    expect(gateJobSentence({ status: "rejected", failureReason: null, packages: one })).toMatch(
+      /not to run the protected publish job/,
+    );
+  });
+
+  test("a pending gate states the all-packages rule only when there are several", () => {
+    expect(gateJobSentence({ status: "pending", failureReason: null, packages: two })).toMatch(
+      /all 2 release packages are approved; rejecting any one blocks it/,
+    );
+    expect(gateJobSentence({ status: "pending", failureReason: null, packages: one })).not.toMatch(
+      /packages/,
+    );
+  });
+
+  test("an errored gate leaves the reason to its failure alert", () => {
+    expect(
+      gateJobSentence({ status: "errored", failureReason: "artifact missing", packages: one }),
+    ).toBeNull();
+    expect(gateJobSentence({ status: "errored", failureReason: null, packages: one })).toMatch(
+      /cannot continue/,
+    );
   });
 });

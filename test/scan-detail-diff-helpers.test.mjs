@@ -4,6 +4,7 @@ import {
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
   selectReleaseTree,
+  stagedSideLabel,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers";
 import { hasNoLoadableBody } from "../src/features/review/diff-entries";
 
@@ -91,17 +92,18 @@ describe("selectDiffWorkbenchState", () => {
     expect(state.title).toBe("Loading comparison");
   });
 
-  test("stops waiting on a previous version whose compare failed", () => {
-    const state = selectDiffWorkbenchState({
+  test("shows the staged side once a previous version's compare failed", () => {
+    const failed = {
       ...base,
       compareReady: false,
       compareFailed: true,
       hasPreviousMeta: false,
       hasPreviousContent: false,
-    });
-    expect(state).toEqual({
+    };
+    expect(selectDiffWorkbenchState(failed)).toEqual({ kind: "diff" });
+    expect(selectDiffWorkbenchState({ ...failed, entryStatus: "removed" })).toEqual({
       kind: "empty",
-      message: "The previous version could not be loaded, so this file cannot be diffed.",
+      message: "The previous version could not be loaded, so this removed file cannot be shown.",
     });
   });
 
@@ -271,5 +273,26 @@ describe("annotatePersistedFindings", () => {
 
     expect(out[0].diffStatus).toBe("unchanged");
     expect(out[0].releaseDelta).toBe(false);
+  });
+});
+
+describe("stagedSideLabel", () => {
+  const base = { stagedVersion: "1.2.0", compareFailed: true, hasPrevious: false };
+
+  test("labels staged-only content after a failed baseline, added entries included", () => {
+    for (const status of ["added", "modified", "unchanged"]) {
+      expect(stagedSideLabel({ ...base, status })).toBe(
+        "staged contents (1.2.0) · baseline unavailable",
+      );
+    }
+  });
+
+  test("keeps the plain label once the baseline side exists or nothing failed", () => {
+    expect(stagedSideLabel({ ...base, status: "added", compareFailed: false })).toBe(
+      "staged (1.2.0)",
+    );
+    expect(stagedSideLabel({ ...base, status: "modified", hasPrevious: true })).toBe(
+      "staged (1.2.0)",
+    );
   });
 });

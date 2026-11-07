@@ -8,6 +8,7 @@ type ReleaseTimelineEventKey =
   | "started"
   | "completed"
   | "published"
+  | "reviewed"
   | "registry_status"
   | "decided"
   | "superseded";
@@ -121,7 +122,7 @@ export function buildReleaseTimeline(
     },
   ];
 
-  return candidates
+  const events = candidates
     .map((event, order) => ({ event, order }))
     .filter(
       (item): item is { event: typeof item.event & { at: number }; order: number } =>
@@ -134,6 +135,40 @@ export function buildReleaseTimeline(
       detail: event.detail,
       at: event.at,
     }));
+  return mergeInstantReview(events, scan.status === "failed");
+}
+
+/** Below this, queued → started → finished is one moment, not three. */
+const INSTANT_REVIEW_MS = 1000;
+
+/**
+ * Most reviews queue, start, and finish within the same second, which read as
+ * three rows with `+0s` between them. Fold that run into one "Reviewed" row
+ * stamped at the queue time; a review that took measurable time keeps its
+ * separate rows so the latency stays visible.
+ */
+function mergeInstantReview(
+  events: ReleaseTimelineEvent[],
+  failed: boolean,
+): ReleaseTimelineEvent[] {
+  const queued = events.findIndex((event) => event.key === "queued");
+  const completed = events.findIndex((event) => event.key === "completed");
+  if (queued < 0 || completed < queued) return events;
+  const run = events.slice(queued, completed + 1);
+  const onlyPipeline = run.every(
+    (event) => event.key === "queued" || event.key === "started" || event.key === "completed",
+  );
+  if (!onlyPipeline || events[completed].at - events[queued].at >= INSTANT_REVIEW_MS) return events;
+  return [
+    ...events.slice(0, queued),
+    {
+      key: "reviewed",
+      label: failed ? "Review failed" : "Reviewed",
+      detail: null,
+      at: events[queued].at,
+    },
+    ...events.slice(completed + 1),
+  ];
 }
 
 /**

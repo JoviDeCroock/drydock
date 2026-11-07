@@ -1,16 +1,15 @@
-import { useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel, useSignal } from "@preact/signals";
 import type { OrganizationRole } from "../../../../server/lib/auth/roles";
-import { formatTimestamp } from "../../../lib/format";
+import { formatDateTime } from "../../../lib/format";
 import {
   MembersModel,
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../../../models/organization-members";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import {
-  CollapsibleCard,
+  Card,
   SettingsCardBody,
   SettingsCardHeader,
   SettingsCardListItem,
@@ -18,7 +17,7 @@ import {
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
-import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
+import { MonoDetail, MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
 
 export function OrganizationMembersSection({
   members,
@@ -32,6 +31,11 @@ export function OrganizationMembersSection({
   const canManage = currentUserRole === "owner" || currentUserRole === "admin";
   const inviteEmail = useSignal("");
   const inviteRole = useSignal<OrganizationRole>("member");
+  const roleHint = useComputed(() =>
+    inviteRole.value === "admin"
+      ? "Admins also manage members and integrations."
+      : "Owners and admins manage members and integrations.",
+  );
   const memberList: OrganizationMember[] = members.members.value;
   const invitations: OrganizationInvitation[] = members.invitations.value;
   const status = members.status.value;
@@ -50,20 +54,24 @@ export function OrganizationMembersSection({
   };
 
   return (
-    <CollapsibleCard
-      title="Members"
-      defaultOpen
-      aside={
-        <MonoLabel>
-          {memberList.length} {memberList.length === 1 ? "member" : "members"}
-        </MonoLabel>
-      }
-    >
+    // The only section on its tab, so it is a plain card: collapsing it would
+    // leave the tab empty.
+    <Card as="section" padding="none">
+      <div class="px-5 py-4">
+        <SectionLabel
+          as="h2"
+          aside={
+            <MonoLabel>
+              {memberList.length} {memberList.length === 1 ? "member" : "members"}
+            </MonoLabel>
+          }
+        >
+          Members
+        </SectionLabel>
+      </div>
       <SettingsCardBody>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
-          Invite teammates to collaborate on this organization's release targets, integrations, and
-          gate reviews. Owners and admins manage membership; members get read access to org-scoped
-          scans and can act on releases.
+        <Muted class="text-[13px] m-0 max-w-[680px]">
+          Members see this organization's reviews and record release decisions.
         </Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
@@ -95,11 +103,16 @@ export function OrganizationMembersSection({
                 <option value="admin">admin</option>
               </Select>
             </Field>
+            {/* The role explanation sits under the Role select on wide screens and
+                before the submit on narrow ones. */}
+            <Muted class="m-0 -mt-1.5 text-[12px] leading-[1.5] lg:row-start-2 lg:col-start-2">
+              {roleHint}
+            </Muted>
             {/* h-[38px] matches the Input control height (13px × 1.55 line-height + padding + border); Button's leading-none makes it shorter otherwise. */}
             <Button
               type="submit"
               disabled={busy || !inviteEmail.value.trim()}
-              class="shrink-0 h-[38px]"
+              class="shrink-0 h-[38px] lg:row-start-1 lg:col-start-3"
             >
               {status === "inviting" ? "Sending…" : "Send invite"}
             </Button>
@@ -136,7 +149,7 @@ export function OrganizationMembersSection({
           )}
         </div>
       ) : null}
-    </CollapsibleCard>
+    </Card>
   );
 }
 
@@ -164,12 +177,12 @@ function MemberList({
                 <span class="text-[14px] font-medium text-ink truncate">
                   {member.name || member.email || member.userId}
                 </span>
-                <Badge tone="neutral">{member.role}</Badge>
               </div>
               <MonoDetail
                 parts={[
+                  <span key="role">{member.role}</span>,
                   <span key="email">{member.email ?? "no email on record"}</span>,
-                  <span key="joined">joined {formatTimestamp(member.joinedAt)}</span>,
+                  <span key="joined">joined {formatDateTime(member.joinedAt)}</span>,
                 ]}
               />
             </div>
@@ -207,15 +220,15 @@ function InvitationList({
           <div class="flex flex-col gap-1.5 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-[14px] font-medium text-ink truncate">{invitation.email}</span>
-              <Badge tone="neutral">{invitation.role}</Badge>
             </div>
             <MonoDetail
               parts={[
-                <span key="expires">
+                <span key="role">{invitation.role}</span>,
+                <span key="expires" class={invitation.expired ? "text-warn-text" : undefined}>
                   {invitation.expired ? "expired" : "expires"}{" "}
-                  {formatTimestamp(invitation.expiresAt)}
+                  {formatDateTime(invitation.expiresAt)}
                 </span>,
-                <span key="created">invited {formatTimestamp(invitation.createdAt)}</span>,
+                <span key="created">invited {formatDateTime(invitation.createdAt)}</span>,
               ]}
             />
           </div>

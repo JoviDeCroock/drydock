@@ -7,7 +7,7 @@ import { Button } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
+import { Muted, SectionLabel } from "../../../components/Typography";
 
 /**
  * Owner-only control for the org-wide policy that forces a fresh two-factor
@@ -52,75 +52,76 @@ export function ReleaseSecuritySection({
 
   return (
     <SettingsCard class="flex flex-col gap-5">
-      <SectionLabel
-        as="h2"
-        aside={active ? <MonoLabel>{enabled ? "required" : "not required"}</MonoLabel> : null}
-      >
-        Release security
-      </SectionLabel>
+      <SectionLabel as="h2">Release security</SectionLabel>
 
-      <Muted class="text-[13px] m-0 max-w-[760px]">
+      <Muted class="text-[13px] m-0 max-w-[680px]">
         Require a fresh authenticator code for every release-gate decision. Members must enable
         two-factor authentication before they can approve or reject a gate. Approval lets the
         configured protected GitHub Actions job continue with its own publishing credentials; the
         gate decision is final.
       </Muted>
 
+      {/* The current policy reads directly above the control that changes it. */}
       {active ? (
-        isOwner ? (
-          !enrolled ? (
-            <Alert tone="warn">
-              Turn on two-factor authentication for your own account in{" "}
-              <a class="underline text-accent" href="/dashboard/account">
-                Account
-              </a>{" "}
-              before you can require it for releases.
-            </Alert>
-          ) : enabled ? (
-            // Relaxing the policy weakens a security control, so confirm with a
-            // fresh authenticator code before submitting — same step-up the gate
-            // decision asks for.
-            <div class="flex flex-col gap-1.5">
-              <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,240px)_auto] gap-3 items-end">
-                <Field label="Authentication code" for="releaseTotp">
-                  <Input
-                    id="releaseTotp"
-                    type="text"
-                    value={codeDraft.value}
-                    placeholder="6-digit code"
-                    inputmode="numeric"
-                    autocomplete="one-time-code"
-                    maxLength={8}
-                    spellcheck={false}
-                    disabled={saving}
-                    onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
-                  />
-                </Field>
-                {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
-                <Button
-                  variant="secondary"
-                  onClick={disable}
-                  disabled={saving || blockedOnCode}
-                  class="justify-self-start h-[38px]"
-                >
-                  {saving ? "Saving…" : "Stop requiring two-factor"}
-                </Button>
+        <div class="flex flex-col gap-3">
+          <p class="m-0 text-[13px] font-medium text-ink">
+            {enabled
+              ? "Two-factor is required for release decisions."
+              : "Two-factor is not required for release decisions."}
+          </p>
+          {isOwner ? (
+            !enrolled ? (
+              <Alert tone="warn">
+                Turn on two-factor authentication for your own account in{" "}
+                <a class="underline text-accent" href="/dashboard/account">
+                  Account
+                </a>{" "}
+                before you can require it for releases.
+              </Alert>
+            ) : enabled ? (
+              // Relaxing the policy weakens a security control, so confirm with a
+              // fresh authenticator code before submitting — same step-up the gate
+              // decision asks for.
+              <div class="flex flex-col gap-1.5">
+                <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,240px)_auto] gap-3 items-end">
+                  <Field label="Authentication code" for="releaseTotp">
+                    <Input
+                      id="releaseTotp"
+                      type="text"
+                      value={codeDraft.value}
+                      placeholder="6-digit code"
+                      inputmode="numeric"
+                      autocomplete="one-time-code"
+                      maxLength={8}
+                      spellcheck={false}
+                      disabled={saving}
+                      onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
+                    />
+                  </Field>
+                  {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
+                  <Button
+                    variant="secondary"
+                    onClick={disable}
+                    disabled={saving || blockedOnCode}
+                    class="justify-self-start h-[38px]"
+                  >
+                    {saving ? "Saving…" : "Stop requiring two-factor"}
+                  </Button>
+                </div>
+                <Muted class="m-0 text-[12px]">
+                  Enter the code from your authenticator app to stop requiring two-factor for
+                  releases.
+                </Muted>
               </div>
-              <Muted class="m-0 text-[12px]">
-                Enter the code from your authenticator app to stop requiring two-factor for
-                releases.
-              </Muted>
-            </div>
+            ) : (
+              <Button onClick={enable} disabled={saving} class="self-start">
+                {saving ? "Saving…" : "Require two-factor for releases"}
+              </Button>
+            )
           ) : (
-            <Button onClick={enable} disabled={saving} class="self-start">
-              {saving ? "Saving…" : "Require two-factor for releases"}
-            </Button>
-          )
-        ) : (
-          <Muted class="text-[13px] m-0">
-            Only the organization owner can change the release two-factor policy.
-          </Muted>
-        )
+            <Muted class="text-[13px] m-0">Only the organization owner can change this.</Muted>
+          )}
+        </div>
       ) : (
         <Muted class="text-[13px] m-0">No organization selected.</Muted>
       )}

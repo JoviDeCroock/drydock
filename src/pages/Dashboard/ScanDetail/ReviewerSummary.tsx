@@ -9,6 +9,8 @@ import { pluralize } from "../../../lib/format";
 import type { ReviewFinding } from "../../../features/review/types";
 
 const REVIEWER_ASIDE = "advisory";
+// Model prose can repeat text from the package under review.
+const QUOTE_CAVEAT = "may quote package text";
 
 export function reviewerSummaryVisible(ai: DisplayedAiResult | null): boolean {
   return Boolean(ai && ai.model != null);
@@ -34,13 +36,15 @@ const ASSESSMENT_LABELS = {
   blocked: "AI recommends blocking this release",
 };
 
+function highestRuleFinding(findings: ReviewFinding[]): ReviewFinding | undefined {
+  return sortFindingsBySeverity(findings.filter((finding) => finding.source === "rule"))[0];
+}
+
 export function deterministicAssessmentNote(
   ai: DisplayedAiResult,
   findings: ReviewFinding[],
 ): string | null {
-  const highest = sortFindingsBySeverity(
-    findings.filter((finding) => finding.source === "rule"),
-  )[0];
+  const highest = highestRuleFinding(findings);
   if (!highest) return null;
   const disagrees =
     ai.kind === "complete" &&
@@ -79,8 +83,11 @@ export function matchedDeterministicAssessments(
 // file path.
 function DeterministicAssessmentNotes({
   assessments,
+  quoteCaveat,
 }: {
   assessments: AiDeterministicAssessment[];
+  /** Set when no full-assessment disclosure carries the caveat instead. */
+  quoteCaveat: boolean;
 }) {
   if (assessments.length === 0) return null;
   return (
@@ -88,6 +95,7 @@ function DeterministicAssessmentNotes({
       <MonoLabel as="p">AI notes on deterministic findings</MonoLabel>
       <p class="m-0 text-[12px] leading-[1.5] text-ink-muted">
         These notes do not change any finding or the release risk.
+        {quoteCaveat ? ` They ${QUOTE_CAVEAT}.` : null}
       </p>
       <ul class="list-none p-0 m-0 flex flex-col gap-3">
         {assessments.map((assessment, index) => (
@@ -123,55 +131,73 @@ export function ReviewerSummary({
 }) {
   if (!reviewerSummaryVisible(ai) || !ai) return null;
   const deterministicNote = deterministicAssessmentNote(ai, findings);
+  const highest = highestRuleFinding(findings);
+  // A high or critical deterministic finding is the verdict. The model's
+  // reading then follows the boundary sentence as body text, so a reassuring
+  // "nothing unusual" never sits above it as the louder line.
+  const findingsLead =
+    deterministicNote != null && (highest?.severity === "critical" || highest?.severity === "high");
+  const headline =
+    ai.kind === "complete" ? ASSESSMENT_LABELS[ai.releaseAssessment] : "AI assessment unavailable";
+  const detail =
+    ai.kind === "complete"
+      ? `AI risk: ${ai.risk} · ${ai.findings.length} AI ${pluralize("finding", ai.findings.length)}`
+      : "The AI review did not complete. Inspect the release evidence before deciding.";
+  const manualReview =
+    ai.kind === "complete" && ai.requiresManualReview ? (
+      <Badge tone="medium">manual review requested</Badge>
+    ) : null;
+  const boundary = deterministicNote ? (
+    <div class="border-l-2 border-border-strong pl-3 max-w-[680px]">
+      <p class="m-0 text-[13px] leading-[1.55] text-ink">{deterministicNote}</p>
+      {onInspectFindings ? (
+        <button
+          type="button"
+          onClick={onInspectFindings}
+          class="mt-1 p-0 border-0 bg-transparent text-[13px] text-accent hover:underline cursor-pointer"
+        >
+          Inspect deterministic findings
+        </button>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <section class="flex flex-col gap-3" aria-label="AI assessment">
       <SectionLabel as="h3" aside={REVIEWER_ASIDE}>
         AI assessment
       </SectionLabel>
-      <p class="m-0 text-[12px] text-ink-muted">May quote package text.</p>
-      <div class="flex flex-wrap items-center gap-2">
-        <p class="m-0 text-[14px] font-medium text-ink">
-          {ai.kind === "complete"
-            ? ASSESSMENT_LABELS[ai.releaseAssessment]
-            : "AI assessment unavailable"}
-        </p>
-        {ai.kind === "complete" && ai.requiresManualReview ? (
-          <Badge tone="medium">manual review requested</Badge>
-        ) : null}
-      </div>
-      {ai.kind === "complete" ? (
-        <p class="m-0 text-[13px] text-ink-muted">
-          AI risk: {ai.risk} · {ai.findings.length} AI {pluralize("finding", ai.findings.length)}
-        </p>
+      {findingsLead ? (
+        <>
+          {boundary}
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="m-0 text-[13px] text-ink-muted">
+              <span>{headline}</span> · {detail}
+            </p>
+            {manualReview}
+          </div>
+        </>
       ) : (
-        <p class="m-0 text-[13px] text-ink-muted">
-          The AI review did not complete. Inspect the release evidence before deciding.
-        </p>
+        <>
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="m-0 text-[14px] font-medium text-ink">{headline}</p>
+            {manualReview}
+          </div>
+          <p class="m-0 text-[13px] text-ink-muted">{detail}</p>
+          {boundary}
+        </>
       )}
-      {deterministicNote ? (
-        <div class="border-l-2 border-border-strong pl-3 max-w-[680px]">
-          <p class="m-0 text-[13px] leading-[1.55] text-ink">{deterministicNote}</p>
-          {onInspectFindings ? (
-            <button
-              type="button"
-              onClick={onInspectFindings}
-              class="mt-1 p-0 border-0 bg-transparent text-[13px] text-accent hover:underline cursor-pointer"
-            >
-              Inspect deterministic findings
-            </button>
-          ) : null}
-        </div>
-      ) : null}
       {ai.kind === "complete" ? (
         <DeterministicAssessmentNotes
           assessments={matchedDeterministicAssessments(ai.deterministicAssessments, findings)}
+          quoteCaveat={!ai.summary}
         />
       ) : null}
       {ai.summary ? (
         <details>
           <summary class="cursor-pointer text-[13px] text-ink-muted hover:text-ink">
             Read full AI assessment
+            <span class="text-ink-subtle"> · {QUOTE_CAVEAT}</span>
           </summary>
           {/* Model prose can quote hostile package text; it stays inert and is
               never parsed into a product verdict or a false-positive claim. */}

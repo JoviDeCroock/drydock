@@ -1,4 +1,4 @@
-import { formatDateTimeExact, pluralize } from "../../../lib/format";
+import { formatDateTime, formatDateTimeExact, pluralize } from "../../../lib/format";
 import { SectionLabel } from "../../../components/Typography";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { buildReleaseTimeline, formatDelta } from "./release-timeline";
@@ -41,9 +41,15 @@ export function ReleaseTimeline({
                   {event.label}
                   {event.detail ? <span class="text-ink-muted"> — {event.detail}</span> : null}
                 </span>
-                <span class="font-mono text-[11px] text-ink-subtle">
-                  {formatDateTimeExact(event.at)}
-                </span>
+                {/* The app's one stamp format; the gap column carries the
+                    sub-minute precision, and the exact stamp stays on hover. */}
+                <time
+                  dateTime={new Date(event.at).toISOString()}
+                  title={formatDateTimeExact(event.at)}
+                  class="font-mono text-[11px] text-ink-subtle"
+                >
+                  {formatDateTime(event.at)}
+                </time>
               </div>
               <span class="font-mono text-[11px] text-ink-subtle tabular-nums">
                 {previous ? formatDelta(event.at - previous.at) : "start"}

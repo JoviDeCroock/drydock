@@ -17,11 +17,14 @@ export function CopyButton({
   label = "Copy",
   size = "sm",
   variant = "secondary",
+  autofocus,
 }: {
   text: string;
   label?: string;
   size?: "sm" | "md";
-  variant?: "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost";
+  /** Takes a dialog's initial focus, so Enter copies. */
+  autofocus?: boolean;
 }) {
   const copyState = useSignal<"copied" | "failed" | null>(null);
   // Success is self-evident once the paste lands, so the confirmation clears
@@ -43,7 +46,7 @@ export function CopyButton({
 
   return (
     <span class="inline-flex flex-wrap items-center gap-2">
-      <Button variant={variant} size={size} onClick={() => void copy()}>
+      <Button variant={variant} size={size} onClick={() => void copy()} autofocus={autofocus}>
         {label}
       </Button>
       <span class="text-[12px] text-ink-subtle" aria-live="polite">

@@ -15,15 +15,10 @@ import {
 } from "../../../models/package-badge";
 import type { PublicEcosystem } from "../../../../server/lib/public-feed";
 import { Alert } from "../../../components/Alert";
-import { Badge, type BadgeTone } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { Input } from "../../../components/Input";
 import { EmptyLine, MonoLabel, SectionLabel } from "../../../components/Typography";
-
-function switchedOff(state: PackageBadgeState): boolean {
-  return state.switchedOffByYou || state.switchedOffElsewhere;
-}
 
 function describeBadge(
   state: PackageBadgeState,
@@ -56,21 +51,16 @@ function describeBadge(
   return "Allowed, but nothing of yours answers it yet: approve a release npm publishes, or list a review.";
 }
 
-// shields.io colour names, onto the system's severity tones.
-const PREVIEW_TONES: Record<string, BadgeTone> = {
-  brightgreen: "ok",
-  green: "ok",
-  yellow: "medium",
-  orange: "high",
-  red: "critical",
-};
-
+// What a README badge shows right now, as text: the shields.io colour is the
+// badge's own styling, and re-rendering it as a Badge here would make a plain
+// fact ("not reviewed") look like an attention state on this page.
 function EndpointPreview({ preview }: { preview: BadgePreview }) {
   return (
-    <span class="flex flex-wrap items-center gap-2">
-      <MonoLabel>public endpoint says</MonoLabel>
-      <span class="font-mono text-[12px] text-ink-muted">{preview.label}</span>
-      <Badge tone={PREVIEW_TONES[preview.color] ?? "neutral"}>{preview.message}</Badge>
+    <span class="flex flex-wrap items-baseline gap-2">
+      <MonoLabel>README badge shows</MonoLabel>
+      <span class="font-mono text-[12px] text-ink">
+        {preview.label}: {preview.message}
+      </span>
     </span>
   );
 }
@@ -136,16 +126,11 @@ export function PublicBadgeSection({
           <Card padding="compact" class="flex flex-col gap-3">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div class="flex flex-col gap-1.5 min-w-0">
-                <span class="flex flex-wrap items-center gap-2">
-                  {/* Only a publisher is told the switch state; to anyone else it
-                      would disclose another organization's choice. */}
-                  {state.eligible ? (
-                    <Badge tone="neutral">{switchedOff(state) ? "switched off" : "allowed"}</Badge>
-                  ) : null}
-                  <Show when={model.preview}>
-                    {(preview) => <EndpointPreview preview={preview} />}
-                  </Show>
-                </span>
+                {/* The switch state is the description's first word, and is
+                    told only to a publisher (describeBadge). */}
+                <Show when={model.preview}>
+                  {(preview) => <EndpointPreview preview={preview} />}
+                </Show>
                 <Show when={() => describeBadge(state, ecosystem, managementPending?.value)}>
                   {(description) => <EmptyLine>{description}</EmptyLine>}
                 </Show>

@@ -2,7 +2,6 @@ import { useModel, useSignal } from "@preact/signals";
 import type { OrganizationRole } from "../../../../server/lib/auth/roles";
 import { OrganizationModel } from "../../../models/organization";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { ConfirmDialog } from "../../../components/Dialog";
@@ -28,14 +27,16 @@ export function GeneralSection({
 
       {active ? (
         <div class="flex flex-col gap-1.5">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-[14px] font-medium text-ink">{active.name}</span>
-            {currentUserRole ? <Badge tone="neutral">{currentUserRole}</Badge> : null}
-          </div>
+          <span class="text-[14px] font-medium text-ink">{active.name}</span>
+          {/* The role is a fact about the reader, not an attention state, and the
+              internal id is reference detail, so both stay in the mono line. */}
           <MonoDetail
             parts={[
-              <span key="id">{active.id}</span>,
-              isPersonal ? <span key="personal">personal workspace</span> : null,
+              <span key="kind">{isPersonal ? "personal workspace" : "organization"}</span>,
+              currentUserRole ? <span key="role">you are {currentUserRole}</span> : null,
+              <span key="id" class="break-all">
+                id {active.id}
+              </span>,
             ]}
           />
         </div>
@@ -98,7 +99,7 @@ export function OrganizationDangerZone({
         notification recipients, and scan history. This cannot be undone.
       </Muted>
       <div>
-        <Button variant="danger" size="sm" onClick={openConfirm}>
+        <Button variant="danger" onClick={openConfirm}>
           Delete organization
         </Button>
       </div>

@@ -34,10 +34,10 @@ export function UserMenu({ email, name, onSignOut }: UserMenuProps) {
         "bg-surface border border-border text-ink hover:border-border-strong transition-colors duration-150",
       )}
       trigger={() => initials}
-      panelClass="min-w-[220px]"
+      panelClass="min-w-[220px] max-w-[300px]"
     >
       <MenuLabel>signed in</MenuLabel>
-      <div class="px-3 pb-1.5 text-[13px] text-ink font-mono break-all">{label}</div>
+      <div class="px-3 pb-1.5 text-[13px] text-ink font-mono [overflow-wrap:anywhere]">{label}</div>
       <MenuSeparator />
       <MenuLink href="/dashboard/account">Account settings</MenuLink>
       <MenuItem onSelect={onSignOut}>Sign out</MenuItem>

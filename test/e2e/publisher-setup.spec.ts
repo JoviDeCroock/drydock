@@ -391,12 +391,7 @@ async function draftSetup(page: Page, progressPath?: string) {
   await expect(
     page.getByRole("heading", { name: "Independent review", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText(
-      "No changes requested by the independent reviewer; your review is still required.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("advisory · no changes requested", { exact: true })).toBeVisible();
 }
 
 test("publisher setup automatically prepares a draft PR after its checks and observes the first real gate", async ({
@@ -448,9 +443,7 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
   ).toContainText(`node ${helperPath} prepare`);
   await page.getByRole("button", { name: "Check setup status", exact: true }).click();
   await expect(
-    page.getByText(
-      "A completed pre-publish review has not been observed for this repository and environment.",
-    ),
+    page.getByText("Run a release workflow to verify it.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Open pre-publish review" })).toHaveCount(0);
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -473,6 +466,20 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
     "href",
     "/dashboard/scans/scan-setup?org=org-setup",
   );
+  await expect(primaryActions(page)).toHaveText("Open pre-publish review");
+  await expect(
+    page.getByText(
+      "Setup verified. GitHub holds jobs that use the drydock environment in drydock/example until you approve or reject them in Drydock.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/add the Drydock deployment protection rule/)).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open GitHub environments" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "pull request #42 on GitHub" })).toHaveAttribute(
+    "href",
+    "https://github.com/drydock/example/pull/42",
+  );
+  await expect(page.getByRole("button", { name: "Check setup status", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -483,6 +490,8 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
 test("changing repository hides the previous job link from the new selection", async ({ page }) => {
   const observations = await installSetupMocks(page);
   await draftSetup(page);
+  await expect(page.locator("#publisherSetupRepository")).toHaveCount(0);
+  await page.getByRole("button", { name: "Change", exact: true }).click();
   await page.locator("#publisherSetupRepository").selectOption("drydock/other");
   await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
@@ -499,6 +508,9 @@ test("missing GitHub write permission reports the automatic job failure and reco
   const observations = await installSetupMocks(page, true);
   await beginPreparation(page);
   await expect(page.getByText(/Opening a draft PR requires Contents/)).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Review installation permissions on GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/organizations/drydock/settings/installations/123");
   await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toHaveCount(
     0,
@@ -586,12 +598,11 @@ test("a pending preparation locks the release choice until it is cancelled", asy
   await expect(
     page.getByText("Running an independent review of the change…", { exact: true }),
   ).toBeVisible();
-  for (const id of [
-    "#publisherSetupRepository",
-    "#publisherSetupEnvironment",
-    "#publisherSetupWorkflow",
-  ])
-    await expect(page.locator(id)).toBeDisabled();
+  // The settled release choice folds to a summary whose edit control stays
+  // locked with the workflow select until the job ends.
+  await expect(page.locator("#publisherSetupRepository")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Change", exact: true })).toBeDisabled();
+  await expect(page.locator("#publisherSetupWorkflow")).toBeDisabled();
   await page.getByRole("button", { name: "Cancel preparation", exact: true }).click();
   await expect(page.getByRole("button", { name: "Cancel preparation" })).toHaveCount(0);
   await expect(page.locator("#publisherSetupRepository")).toBeEnabled();
@@ -731,7 +742,7 @@ test("switching organizations preserves a resumed draft while the new installati
     );
   }, requestScope);
   await page.getByRole("button", { name: "Switch organization" }).click();
-  await page.getByRole("menuitem", { name: "Other release team", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Other release team", exact: true }).click();
   await expect(page.getByRole("button", { name: "Switch organization" })).toContainText(
     "Other release team",
   );
@@ -746,9 +757,7 @@ test("switching organizations preserves a resumed draft while the new installati
 
   complete = true;
   finishInstallations!();
-  await expect(page.getByLabel("Repository", { exact: true }).first()).toHaveValue(
-    "team-b/package",
-  );
+  await expect(page.getByText("team-b/package", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Review pull request #84 on GitHub" }),
@@ -788,7 +797,7 @@ async function restoreSavedJob(page: Page, id: string) {
   await page.reload();
 }
 
-test("a restored draft that is no longer available explains it in the workflow step", async ({
+test("a restored draft that is no longer available explains it and leads with inspection", async ({
   page,
 }) => {
   await installSetupMocks(page);
@@ -798,18 +807,21 @@ test("a restored draft that is no longer available explains it in the workflow s
       exact: true,
     }),
   ).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "no longer available" })).toHaveClass(
+    /bg-warn/,
+  );
   await expect(primaryActions(page)).toHaveCount(1);
-  await expect(primaryActions(page)).toHaveText("Check setup status");
+  await expect(primaryActions(page)).toHaveText("Inspect workflows");
 });
 
-test("a restored failed job keeps its review and leads with verification", async ({ page }) => {
+test("a restored failed job keeps its review and leads with inspection", async ({ page }) => {
   await installSetupMocks(page, false, true);
   await restoreSavedJob(page, "job-setup");
   await expect(
     page.getByText("Publish the exact reviewed tarball.", { exact: true }),
   ).toBeVisible();
   await expect(primaryActions(page)).toHaveCount(1);
-  await expect(primaryActions(page)).toHaveText("Check setup status");
+  await expect(primaryActions(page)).toHaveText("Inspect workflows");
 });
 
 test("a repository without workflows offers only verification as the primary action", async ({
@@ -839,6 +851,31 @@ test("a repository without workflows offers only verification as the primary act
   ).toHaveCount(0);
   await expect(primaryActions(page)).toHaveCount(1);
   await expect(primaryActions(page)).toHaveText("Check setup status");
+  await expect(
+    page.getByRole("link", { name: "Add a workflow in .github/workflows" }),
+  ).toHaveAttribute("href", "https://github.com/drydock/example/new/main/.github/workflows");
+  await expect(page.getByRole("link", { name: "Publishing workflow examples" })).toHaveAttribute(
+    "href",
+    "/docs#gate-workflow",
+  );
+});
+
+test("unreachable steps show only their labels and manual mapping stays folded", async ({
+  page,
+}) => {
+  await installSetupMocks(page);
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  await expect(
+    page.getByRole("heading", { name: "Protect the environment and verify" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Skip this step if your workflow already does/)).toHaveCount(0);
+  await expect(page.getByText(/add the Drydock deployment protection rule/)).toHaveCount(0);
+  const manualMapping = page.getByRole("button", { name: "Map release target", exact: true });
+  await expect(manualMapping).toBeHidden();
+  await page.locator("summary", { hasText: "Map a release target manually" }).click();
+  await expect(manualMapping).toBeVisible();
+  await page.locator("#publisherSetupRepository").selectOption("drydock/example");
+  await expect(page.getByText(/add the Drydock deployment protection rule/)).toBeVisible();
 });
 
 test("release fields stay editable and focused while a repository is inspected", async ({

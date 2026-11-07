@@ -55,8 +55,8 @@ Scan detail, `/diff`, and the public report render one review from `src/features
 | --- | --- |
 | `types.ts` | `ReviewFinding` (only rendered fields) and `FindingWithDiffStatus`; narrower than a persisted finding so `/diff`, which persists nothing, invents no `scanId`/`ruleVersion`. |
 | `diff-entries.ts` | `filterDiffEntries`, `findingCountsByPath`; `hasNoLoadableBody` is the one place that decides a binary or content-skipped file has nothing to fetch. |
-| `RiskSignalsSection.tsx` | Changed-file vs package-context findings split. |
-| `risk-index.ts` | `unpinnedFindings`: signals the diff cannot pin to a changed line. |
+| `RiskSignalsSection.tsx` | Risk index: each finding stated once (rules below). |
+| `risk-index.ts` | Index grouping and the description built from what it holds. |
 | `useSelectedDiffFile.ts` | Entry and findings for the open path. |
 | `ReviewWorkbench.tsx` | Tree + diff pair (rules below). |
 | `initial-path.ts` | `findingFirstPath`: open on the changed file with the most severe finding; fallback is first change (scan detail, report) or the ecosystem manifest then status order (`/diff`). |
@@ -65,8 +65,9 @@ Scan detail, `/diff`, and the public report render one review from `src/features
 
 1. Filter state arrives as signals read inside the component, so a keystroke re-renders the tree, not the page body (which on scan detail also renders the risk index).
 2. The diff panel is the caller's `children`, because "previous side" differs per surface; a surface-wide caveat about that side goes in `diffAside` (the File diff label's trailing slot), not above every file.
-3. A surface whose entries are not yet the comparison on screen passes `treeNotice` (loading or unavailable, failure reason as `detail`, optional `retry` shown as "Try again") instead of a stale or empty tree.
-4. That notice is the only report of the state, in one live region: the diff panel only says no file is selected, the status line beside the picker shows only another request's error while the notice is up, and a version's compare failure is reported only while that version is the comparison shown.
+3. A surface whose entries are not yet the comparison on screen passes `treeNotice` (`loading` or `unavailable`) instead of a stale or empty tree.
+4. The notice is state only: the surface reports version, progress, failure reason, and "Try again" once, beside its picker (scan detail: a loading line in the picker row, one warn `Alert` under it for any failed comparison, baseline or picked); the diff panel only says it is waiting or has no comparison loaded. A version's compare failure is reported only while that version is the comparison shown.
+5. Below `lg` the tree card caps at 360px and scrolls inside itself, so a large tree does not push the diff down a phone screen.
 
 Surface-specific code stays with its page: `src/pages/Dashboard/ScanDetail/diff-helpers.ts` holds `scanFilesToFileRecords`, `annotatePersistedFindings`, `selectReleaseTree`, and the `DiffWorkbench` state machine.
 
@@ -84,21 +85,23 @@ Surface-specific code stays with its page: `src/pages/Dashboard/ScanDetail/diff-
 | Surface | Order |
 | --- | --- |
 | Scan detail | Identity header → verdict strip → dependency readiness notice (when applicable) → version picker → workbench → review notes (`CollapsibleCard`) → risk index → manifest sections → pending package-management row → `ReleaseTimeline`. |
-| Public report | Identity header → verdict card (risk grade, not the approver recommendation) → workbench → full risk index. |
+| Public report | Identity header → verdict card (risk grade, not the approver recommendation) → workbench → full risk index → closing block. |
 
 Scan detail rules:
 
 1. Header is identity only: package, a plain-text metadata line (staged version, npm state with observation time, other releases) with no Badges, and Share / Export JSON. Risk and comparison are not repeated there.
 2. Verdict strip: recommendation with risk grade and any assistant note in one mono caption; a `manual review` Badge only when the assistant asks; the recorded decision beside its button. On a completed review the decision lives in the strip; otherwise (e.g. a failed gate review, which has no strip) in the header.
 3. Review notes cover why the verdict reads that way, release memory, release changes, the advisory AI assessment, source binding. They open themselves only when something has something to say (findings, manifest changes, diverged release memory, an assistant reading that flags the release); source binding, matching memory, and "nothing unusual" never open them. The disclosure header does not repeat nested section names.
-4. The risk index holds only `unpinnedFindings` and is hidden when empty.
-5. The package-management choice, when pending, is a compact row at the end; it gates monitoring and the badge, not this review.
+4. The risk index states each finding once: a release finding the diff shows is counted, not repeated (the notes list it); a pre-existing finding the diff shows gets a one-line row keeping its reason; only what the diff cannot show (AI findings, release-process signals, files outside the comparison, package context) gets a card.
+5. The package-management choice, when pending, is a compact row under a `Package management` SectionLabel at the end; it gates monitoring and the badge, not this review.
 6. Quiet terminal npm states (published, removed) get no separate notice row.
 7. A failed staged or published-pair review offers `Review again` (fresh `POST /api/v1/scans`), except when a restart can only fail: npm already published, blocked, or deleted the candidate, or the npm connection is missing or unvalidated (the alert points to settings). A published-pair restart names the original baseline and the start route re-confirms it with the registry.
 8. Findings in notes are grouped by rule, severity, source; file/line actions clear a conflicting tree filter and focus the annotation; unavailable lines keep the unpinned banner. Synthetic release-process and AI paths are not file actions. Script, dependency, and entrypoint changes are a separate summary linking to manifest details.
 9. AI assessment leads with its structured assessment and risk and reminds that deterministic findings keep their severity. Model prose stays inert under **Read full AI assessment**, labeled advisory and potentially quoting package text. The severity bar renders only for two or more findings. Declared source binding shows one unverified repository link; only an exact duplicate manifest declaration is omitted.
 
 Public report rules: header is a `public release review` MonoDetail lead, package, compared pair, review time, changed-file count, and decision as plain `DecisionState` text. Its diff is single-sided: a share token buys the staged artifact's redacted samples (`GET /public/reports/:token/file`), never a baseline (that would spend the organization's npm credentials). `singleSidedTone` in `DiffView` keeps a one-sided `modified` file neutral.
+
+The public report's closing block states only where the reviewed bytes came from (`reviewedFromLine`), never that the release was held or awaits a decision, and offers pre-publish review for the reader's next release. An evidence-only (pre-sample) link puts its recovery beside the notice: **Open reviews** when signed in, **Diff this package** when the report names its ecosystem.
 
 ### Dependency readiness
 
@@ -125,7 +128,7 @@ Public report rules: header is a `public release review` MonoDetail lead, packag
 | --- | --- | --- |
 | Waiting on you | Completed npm reviews, no decision, npm status unknown/`staged`/`validating`; detail: oldest age | its `?filter=` |
 | npm still scanning | `validating`; detail: how many have a finished Drydock review | its `?filter=` |
-| Published, no decision · 30d | `published_without_decision`, scans created in the last 30 days; `warn` when above 0 | its `?filter=` |
+| Published, no decision · 30d | `published_without_decision`, scans created in the last 30 days; `danger` text when above 0 (`warn-text` read as a brand link) | its `?filter=` |
 | Decided · 30d | Approved vs rejected, median completion-to-decision time | `decided` (same window) |
 
 1. The first three count only npm staged sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans carry no npm stage.
@@ -137,6 +140,8 @@ Public report rules: header is a `public release review` MonoDetail lead, packag
 1. One leading chip: release risk, or lifecycle status while there is none. A second chip only when `registryStatusBadge` (`src/features/registry-status.ts`) returns a tone (blocked; awaiting approval after an approval here; published with no decision or a rejection here). Quieter npm states end the mono meta line as text.
 2. No "undecided" chip: the Decide button says it; gate or superseded rows without a button say `undecided` / `superseded` in text. A decision renders as `DecisionState` text beside Update. Row buttons are `secondary`.
 3. The package name opens the package release view once the review has an outcome; while queued or running it opens the review (`scanRowPackageLink`, `src/pages/Dashboard/scan-row-link.ts`).
+4. Name and version are styled apart, not one `name@version`: name in ink (accent on hover), then the mono accent version that always opens the review. The row menu names both (`Open review`, `Release history`).
+5. The meta line names the origin only when not the default (`started in Drydock` is omitted). A failed review says `attempted` and offers a secondary `Open review`, where the failure and any `Review again` live; the list projection lacks the failure code.
 
 ### Batch approval
 
@@ -170,10 +175,10 @@ While a review is queued or running, both pages poll on the running-scan cadence
 
 `/dashboard/packages/:name+` (`src/pages/Dashboard/PackageReleases/`) over `GET /api/v1/packages/:name/releases`.
 
-1. One package's reviews for the active organization, grouped by channel (dist-tag), newest first.
+1. One package's reviews for the active organization, grouped by channel (dist-tag), newest first. Release history leads; for npm the package-management choice and publication monitor follow; Public badge closes the page.
 2. Scoped names keep a literal slash (`/dashboard/packages/@scope/name`, like `/diff`): the asset layer redirects an encoded slash. Both routes take a rest parameter; `src/lib/package-releases-path.ts` builds URLs. `?ecosystem=` only when not npm.
 3. `?org=` stays in the address and is pinned (`usePinnedOrganization`), so every request carries it strictly through `apiFetch`; a non-member sees an explicit error. A link without `?org=` is rewritten to the remembered organization before any read. Every link to the page includes it (dashboard rows, scan header, publication monitor, alert emails).
-4. Row: version (links to its review, captioned with created date), baseline via `describeBaseline` ("2.0.0-beta.1 (beta)" / "(previous version)" / "(highest published)" / "no baseline"; rules in [diff-baseline.md](./diff-baseline.md)), release risk, `DecisionState` with who decided, npm state + observation time (Badge only when `registryStatusBadge` tones it), `scanSourceLabel`.
+4. Row: version (links to its review, captioned with created date), baseline via `describeBaseline` ("2.0.0-beta.1 (beta)" / "(previous version)" / "(highest published)" / "no baseline"; rules in [diff-baseline.md](./diff-baseline.md)), release risk, `DecisionState` with who decided, npm state + observation time (Badge only when `registryStatusBadge` tones it), `scanSourceLabel`. Below `sm` rows stack (no sideways scroll): version and date; risk, decision and npm outcome; baseline (`from …`) and source as a caption.
 5. `releaseAttention` marks npm-published-undecided (warn fill) and npm-published-but-rejected-here (danger fill). Header mono line: ecosystem, review and channel counts, last release; non-zero disagreements show as one Alert (`describeAttentionCounts`): critical once anything published with a rejection, else warn.
 6. The scan header's `all releases →` opens it; its back link returns to the originating list (`getDashboardReturnUrl`).
 7. npm, PyPI, VS Code: **Public badge** section (`src/pages/Dashboard/PackageReleases/PublicBadgeSection.tsx`, `GET|PUT /api/v1/packages/:name/badge`): current public answer, which switch has it off, this organization's candidate, README snippet, owner/admin switch for a registry-verified publisher ([public-badge.md](./public-badge.md)).
@@ -181,11 +186,11 @@ While a review is queued or running, both pages poll on the running-scan cadence
 
 ## Release timeline
 
-`src/pages/Dashboard/ScanDetail/ReleaseTimeline.tsx` closes scan detail for every status: `SectionLabel` (event count in `aside`) over a left-ruled `<ol>`; rows show label, optional muted detail, mono 11px timestamp with year and seconds (`formatDateTimeExact`), and a mono `+delta`. Rows use `divide-y` (no second rule under the label). Renders nothing when no event has a timestamp. Pure logic: `src/pages/Dashboard/ScanDetail/release-timeline.ts`; wording: [registry-version-status.md](./registry-version-status.md).
+`src/pages/Dashboard/ScanDetail/ReleaseTimeline.tsx` closes scan detail for every status: `SectionLabel` (event count in `aside`) over a left-ruled `<ol>`; rows show label, optional muted detail, mono 11px `formatDateTime` stamp (`formatDateTimeExact` on hover), and a mono `+delta`. Rows use `divide-y` (no second rule under the label). Renders nothing when no event has a timestamp. Pure logic: `src/pages/Dashboard/ScanDetail/release-timeline.ts`; wording: [registry-version-status.md](./registry-version-status.md).
 
 ## npm access settings
 
-Token form and a short generic permissions guide stay visible; saved metadata sits in the collapsed "Connection details" disclosure; validation failures stay above the form; link to npm's token instructions.
+Without a valid connection, the token form and a short generic permissions guide stay visible, with validation failures above the form. A valid connection folds them into a collapsed "Rotate token" disclosure so a pending workspace choice is the only open task. Saved metadata sits in the collapsed "Connection details" disclosure; link to npm's token instructions.
 
 ## Large diffs
 

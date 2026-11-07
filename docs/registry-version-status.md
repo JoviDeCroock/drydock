@@ -125,7 +125,8 @@ Scan detail lists every dated event oldest first, with the gap to the previous r
 
 - `staged_created_at` is captured from the stage record when the review row is created (and carried by the status poll), so queued and failed reviews show it too.
 - Report views are analytics ([report views](./product-analytics.md#report-views)) and are not listed.
-- A null or undocumented status renders no row. Stamps carry year and seconds: rows are often seconds apart and a stage can straddle a year.
+- A null or undocumented status renders no row. A review that queued, started, and finished within one second is one "Reviewed" row.
+- Stamps use `formatDateTime`; the `+delta` column carries sub-minute gaps and a year straddle, and the exact stamp is on hover.
 
 ### Storage
 

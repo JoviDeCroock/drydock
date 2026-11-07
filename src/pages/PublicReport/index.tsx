@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
@@ -11,13 +12,12 @@ import {
   verdictSummary,
   type PublicReport,
 } from "../../models/public-report";
-import { Alert } from "../../components/Alert";
 import { Badge, statusTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
 import { FindingCard } from "../../components/FindingCard";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
-import { LinkButton } from "../../components/Button";
+import { Button, LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
 import { DecisionState } from "../../features/review/DecisionState";
 import { hasNoLoadableBody } from "../../features/review/diff-entries";
@@ -41,6 +41,25 @@ const MAX_LISTED_CHANGES = 200;
  */
 export function hasShareToken(token: string | null | undefined): boolean {
   return typeof token === "string" && token.trim() !== "";
+}
+
+/**
+ * The one closing fact a public report can establish about its release: where
+ * the reviewed bytes came from. Whether anyone held the release, read the
+ * report, or published it afterwards is not in the export, so it is not said.
+ */
+export function reviewedFromLine(source: string): string {
+  switch (source) {
+    case "manual":
+    case "auto_discovery":
+      return "Drydock reviewed this release from its npm stage, the private copy npm keeps before a version goes public.";
+    case "workflow_gate":
+      return "Drydock reviewed the artifacts this release's GitHub workflow uploaded to its gate.";
+    case "published":
+      return "Drydock reviewed this release from the files the registry serves.";
+    default:
+      return "Drydock reviewed the files in this release.";
+  }
 }
 
 export default function PublicReportPage() {
@@ -120,59 +139,55 @@ export default function PublicReportPage() {
       );
     }
     return (
-      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
-        <header class="flex flex-col gap-2">
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">This page needs a link</h1>
-          <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-            A Drydock public report is a single release review that the package's owner chose to
-            share: the same canonical report export Drydock produced for them — risk, findings, and
-            the diff the release actually shipped — served read-only at its own link.
-          </Muted>
-        </header>
-
-        <Card class="flex flex-col gap-3">
-          <SectionLabel as="h2">Why there is no index</SectionLabel>
-          <EmptyLine>
-            The link is the permission. Each report has its own unguessable address, reports are
-            never listed or searchable, and the owner can revoke a link at any time — so{" "}
-            <code class="font-mono text-[12px] text-ink">/reports</code> on its own has nothing to
-            show. If someone sent you a report, open their full link: chat clients and mail readers
-            sometimes cut the token off the end.
-          </EmptyLine>
-        </Card>
-
-        <section class="flex flex-col gap-3">
-          <SectionLabel as="h2">Where to go next</SectionLabel>
-          <EmptyLine>
-            You can diff any published npm, PyPI, or atpm package against its previous version
-            without an account, or read how staged reviews, sharing, and signed attestations work.
-          </EmptyLine>
-          <div class="flex flex-wrap gap-2">
+      <ReportUnavailable
+        authed={authed}
+        heading="This page needs a link"
+        body="Each public report lives at its own unguessable link that the package owner chose to share. Reports are never listed, so this page has nothing to show on its own."
+        hint="If someone sent you a report, open their full link. Chat and mail apps sometimes cut the token off the end."
+        actions={
+          <>
             <LinkButton href="/diff">Diff a package</LinkButton>
             <LinkButton href="/docs" variant="secondary">
               Read the docs
             </LinkButton>
-          </div>
-        </section>
-      </PageShell>
+          </>
+        }
+      />
     );
   }
 
+  // Invalid, revoked, and not-yet-published links return the same response by
+  // design, so the page names all three instead of guessing which applies.
   if (model.errorState.value === "not_found") {
     return (
-      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
-        <Alert tone="critical">
-          This report link is invalid, revoked by the publisher, or waiting for its release to be
-          published.
-        </Alert>
-      </PageShell>
+      <ReportUnavailable
+        authed={authed}
+        heading="Report unavailable"
+        body="This link is incomplete, was revoked by the package owner, or belongs to a release that has not been published yet."
+        hint="Ask whoever shared it for the full, current link. You can still diff any published package without an account."
+        actions={
+          <LinkButton href="/diff" variant="secondary">
+            Diff a package
+          </LinkButton>
+        }
+      />
     );
   }
   if (model.errorState.value === "failed") {
     return (
-      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
-        <Alert tone="critical">The report could not be loaded. Try again in a minute.</Alert>
-      </PageShell>
+      <ReportUnavailable
+        authed={authed}
+        heading="Report could not load"
+        body="Drydock could not load this report. Try again in a minute."
+        actions={
+          <>
+            <Button onClick={() => void model.load(token)}>Try again</Button>
+            <LinkButton href="/diff" variant="secondary">
+              Diff a package
+            </LinkButton>
+          </>
+        }
+      />
     );
   }
 
@@ -191,6 +206,8 @@ export default function PublicReportPage() {
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
   const packageDiff = reportDiffHref(data);
   const packageDiffLabel = packageDiff.specific ? "Diff this package" : "Diff a package";
+  // An evidence-only report puts this package's diff beside its notice.
+  const legacyDiffShown = !model.includesFiles.value && packageDiff.specific;
   const changedCount = model.diffEntries.value.filter(
     (entry) => entry.status !== "unchanged",
   ).length;
@@ -247,7 +264,16 @@ export default function PublicReportPage() {
         <EmptyLine>{verdictSummary(data.riskSummary)}</EmptyLine>
       </Card>
 
-      <Show when={model.includesFiles} fallback={<EvidenceOnlyReport data={data} />}>
+      <Show
+        when={model.includesFiles}
+        fallback={
+          <EvidenceOnlyReport
+            data={data}
+            authed={authed.value}
+            packageDiff={packageDiff.specific ? packageDiff.href : null}
+          />
+        }
+      >
         {() => (
           <>
             <ReviewWorkbench
@@ -274,10 +300,6 @@ export default function PublicReportPage() {
             <RiskSignalsSection
               findings={model.findingItems.value}
               onSelect={(file) => model.selectPath(file)}
-              description={
-                "Deterministic rules scanned the full staged artifact. Changed-file signals are pinned " +
-                "to their line in the diff above; unchanged signals stay here as package context."
-              }
             />
           </>
         )}
@@ -320,41 +342,52 @@ export default function PublicReportPage() {
         </div>
       </section>
 
+      {/* The report retains the review, not the release's history: it cannot
+          show that anyone held the release, read this page, or is still
+          deciding. So the close states where the reviewed bytes came from and
+          offers pre-publish review for the reader's own next release. */}
       <section class="flex flex-col gap-3 pt-3">
-        <SectionLabel as="p">Before it ships</SectionLabel>
+        <SectionLabel as="p">Your next release</SectionLabel>
         <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          This release was reviewed while it could still be stopped.
+          Read the diff before it ships.
         </h2>
         <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-          The publisher held this release — an npm staged publish or a GitHub-gated job —{" "}
-          {decision === "publish"
-            ? "and read this report before letting it ship."
-            : decision
-              ? "read this report, and recorded a rejection."
-              : "and is reading this report before deciding whether it ships."}{" "}
-          Drydock runs the same review on every version you publish; the maintainer keeps the final
-          decision. You can also diff any published npm, PyPI, or atpm package without an account.
+          {reviewedFromLine(data.scan.source)} To review your own releases before they reach the
+          registry, stage them on npm or put a GitHub workflow gate in front of the publish job; you
+          keep the decision. You can also diff any published npm, PyPI, or atpm package without an
+          account.
         </Muted>
+        {/* Sign-up returns to the dashboard, never here: the share token is a
+            capability and must not be copied into an auth URL. A signed-in
+            reader is usually the owner, who has no in-page way back to the
+            review they shared — the token does not say which scan it is. An
+            evidence-only report offers both beside its notice instead. */}
         <div class="flex flex-wrap gap-3 mt-1">
-          {/* Sign-up returns to the dashboard, never here: the share token is a
-              capability and must not be copied into an auth URL. A signed-in
-              reader is usually the owner, who has no in-page way back to the
-              review they shared — the token does not say which scan it is. */}
           <Show
             when={authed}
             fallback={
               <>
                 <LinkButton href="/register">Review my next release</LinkButton>
-                <LinkButton href={packageDiff.href} variant="secondary">
-                  {packageDiffLabel}
-                </LinkButton>
+                {legacyDiffShown ? null : (
+                  <LinkButton href={packageDiff.href} variant="secondary">
+                    {packageDiffLabel}
+                  </LinkButton>
+                )}
               </>
             }
           >
-            <LinkButton href={packageDiff.href}>{packageDiffLabel}</LinkButton>
-            <LinkButton href="/dashboard" variant="ghost">
-              Back to reviews
-            </LinkButton>
+            {model.includesFiles.value ? (
+              <>
+                <LinkButton href={packageDiff.href}>{packageDiffLabel}</LinkButton>
+                <LinkButton href="/dashboard" variant="ghost">
+                  Back to reviews
+                </LinkButton>
+              </>
+            ) : legacyDiffShown ? null : (
+              <LinkButton href={packageDiff.href} variant="secondary">
+                {packageDiffLabel}
+              </LinkButton>
+            )}
           </Show>
         </div>
       </section>
@@ -362,16 +395,47 @@ export default function PublicReportPage() {
   );
 }
 
-function EvidenceOnlyReport({ data }: { data: PublicReport }) {
+export function EvidenceOnlyReport({
+  data,
+  authed,
+  packageDiff,
+}: {
+  data: PublicReport;
+  authed: boolean;
+  /** The package's own diff page; `null` when the report does not name one. */
+  packageDiff: string | null;
+}) {
   const findings = sortFindingsBySeverity(data.findings);
   const changes = data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [];
 
+  // The recovery sits beside the notice, not in the page close: a reader who
+  // came for the diff learns here that it is missing and where to get one.
+  // The share token never names its scan, so a signed-in owner goes to the
+  // review list rather than a guessed scan link.
   return (
     <>
-      <Muted class="m-0 text-[13px] leading-[1.6] max-w-[760px]">
-        This link was created before shared file diffs were available. The maintainer can open this
-        review in Drydock and re-share it to include the diff.
-      </Muted>
+      <div class="flex flex-col gap-3">
+        <Muted class="m-0 text-[13px] leading-[1.6] max-w-[760px]">
+          This link was created before shared file diffs were available.{" "}
+          {authed
+            ? "Open the review in Drydock and share it again to include the diff."
+            : "The maintainer can open this review in Drydock and share it again to include the diff."}
+        </Muted>
+        {authed || packageDiff ? (
+          <div class="flex flex-wrap gap-2">
+            {authed ? (
+              <LinkButton href="/dashboard" size="sm">
+                Open reviews
+              </LinkButton>
+            ) : null}
+            {packageDiff ? (
+              <LinkButton href={packageDiff} variant="secondary" size="sm">
+                Diff this package
+              </LinkButton>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {findings.length ? (
         <section class="flex flex-col gap-3">
@@ -426,5 +490,32 @@ function EvidenceOnlyReport({ data }: { data: PublicReport }) {
         </section>
       ) : null}
     </>
+  );
+}
+
+function ReportUnavailable({
+  authed,
+  heading,
+  body,
+  hint,
+  actions,
+}: {
+  authed: ReturnType<typeof useAuthedSession>;
+  heading: string;
+  body: string;
+  hint?: string;
+  actions: ComponentChildren;
+}) {
+  return (
+    <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
+      <header class="flex flex-col gap-3 border-t border-border pt-6">
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">{heading}</h1>
+        <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">{body}</p>
+        {hint ? (
+          <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[680px]">{hint}</p>
+        ) : null}
+        <div class="flex flex-wrap gap-3 mt-1">{actions}</div>
+      </header>
+    </PageShell>
   );
 }

@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useId } from "preact/hooks";
 import { Select } from "./Select";
 
@@ -85,6 +86,7 @@ export function VersionPicker({
   stagedVersion,
   onChange,
   disabled,
+  status,
 }: {
   options: VersionOption[];
   selected: string | null;
@@ -93,6 +95,8 @@ export function VersionPicker({
   stagedVersion: string | null;
   onChange: (version: string) => void;
   disabled?: boolean;
+  /** The chosen comparison's transient state, kept beside the control it follows. */
+  status?: ComponentChildren;
 }) {
   const selectId = useId();
 
@@ -118,6 +122,7 @@ export function VersionPicker({
       {/* The selected option's text already names its dist-tags; a chip after
           this caption read as tagging the staged version instead. */}
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
+      {status}
     </div>
   );
 }
@@ -147,18 +152,22 @@ export function VersionPairPicker({
           onChange={(version) => onChange(version, toVersion)}
         />
       </div>
-      <span class="font-mono text-[11px] text-ink-muted" aria-hidden>
-        →
-      </span>
-      <div class="inline-block w-auto min-w-[160px]">
-        <VersionSelect
-          ariaLabel="To version"
-          size="sm"
-          options={versions}
-          selected={toVersion}
-          disabledVersion={fromVersion}
-          onChange={(version) => onChange(fromVersion, version)}
-        />
+      {/* The arrow travels with the "to" side so a wrap never strands it
+          alone on a line. */}
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-[11px] text-ink-muted" aria-hidden>
+          →
+        </span>
+        <div class="inline-block w-auto min-w-[160px]">
+          <VersionSelect
+            ariaLabel="To version"
+            size="sm"
+            options={versions}
+            selected={toVersion}
+            disabledVersion={fromVersion}
+            onChange={(version) => onChange(fromVersion, version)}
+          />
+        </div>
       </div>
     </div>
   );

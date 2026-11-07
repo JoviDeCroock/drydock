@@ -9,6 +9,7 @@ import { Show } from "@preact/signals/utils";
 import { useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { formatDateTime, formatRelativeTime, pluralize } from "../../lib/format";
+import { packageReleasesPath } from "../../lib/package-releases-path";
 import { scanDetailPath } from "../../lib/scan-detail-path";
 import { useNow } from "../../lib/use-now";
 import { activeOrganizationId } from "../../models/active-organization";
@@ -700,25 +701,9 @@ function ScanRows({
               <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 min-w-0">
                 <ScanRiskChip scan={scan} />
                 {scan.packageName ? (
-                  <span class="flex min-w-0 items-baseline">
-                    <ScanPackageName scan={scan} packageName={scan.packageName} />
-                    {scan.stagedVersion ? (
-                      <a
-                        href={scanDetailPath(scan.id, scan.organizationId)}
-                        class="shrink-0 font-mono text-[13px] font-medium"
-                      >
-                        @{scan.stagedVersion}
-                      </a>
-                    ) : null}
-                  </span>
-                ) : (
-                  <a
-                    href={scanDetailPath(scan.id, scan.organizationId)}
-                    class="min-w-0 truncate text-[14px] font-medium"
-                  >
-                    {scan.stageId}
-                  </a>
-                )}
+                  <ScanPackageName scan={scan} packageName={scan.packageName} />
+                ) : null}
+                {scan.packageName && !scan.stagedVersion ? null : <ScanReviewLink scan={scan} />}
                 {scan.previousVersion ? (
                   <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap">
                     from {scan.previousVersion}
@@ -737,6 +722,18 @@ function ScanRows({
                 <p class="m-0 font-mono text-[11px] text-ink-subtle whitespace-nowrap">
                   {scan.registryStatusSupersededAt != null ? "superseded" : "undecided"}
                 </p>
+              ) : null}
+              {scan.status === "failed" ? (
+                // A failed row has no decision to record; the review page says
+                // why it failed and offers Review again when a fresh start can
+                // get past the failure, which the list projection cannot tell.
+                <LinkButton
+                  variant="secondary"
+                  size="sm"
+                  href={scanDetailPath(scan.id, scan.organizationId)}
+                >
+                  Open review
+                </LinkButton>
               ) : null}
               {canQuickDecide(scan) ? (
                 // Secondary on every row: one action repeated down a list is
@@ -765,7 +762,22 @@ function ScanRows({
                   </span>
                 )}
               >
-                <MenuLink href={scanDetailPath(scan.id, scan.organizationId)}>Open review</MenuLink>
+                {scan.status === "failed" ? null : (
+                  <MenuLink href={scanDetailPath(scan.id, scan.organizationId)}>
+                    Open review
+                  </MenuLink>
+                )}
+                {scan.packageName ? (
+                  <MenuLink
+                    href={packageReleasesPath(
+                      scan.packageName,
+                      scan.ecosystem,
+                      scan.organizationId,
+                    )}
+                  >
+                    Release history
+                  </MenuLink>
+                ) : null}
                 {scan.status === "failed" ? (
                   <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
                     Delete review
@@ -780,11 +792,32 @@ function ScanRows({
   );
 }
 
+// The name and the version are two links with two destinations (the package's
+// release history, and this review), so they are styled apart rather than
+// glued into one `name@version` that reads as a single target: the name in
+// ink, the version as the accent link that opens the review.
 function ScanPackageName({ scan, packageName }: { scan: ScanListItem; packageName: string }) {
   const link = scanRowPackageLink({ ...scan, packageName });
   return (
-    <a href={link.href} class="min-w-0 truncate text-[14px] font-medium" title={link.title}>
+    <a
+      href={link.href}
+      class="min-w-0 truncate text-[14px] font-medium text-ink hover:text-accent hover:underline underline-offset-2"
+      title={link.title}
+    >
       {packageName}
+    </a>
+  );
+}
+
+function ScanReviewLink({ scan }: { scan: ScanListItem }) {
+  const label = (scan.packageName && scan.stagedVersion) || scan.stageId;
+  return (
+    <a
+      href={scanDetailPath(scan.id, scan.organizationId)}
+      class="min-w-0 truncate font-mono text-[13px] font-medium hover:underline underline-offset-2"
+      aria-label={scan.packageName ? `Open the review of ${scan.packageName}@${label}` : undefined}
+    >
+      {label}
     </a>
   );
 }
@@ -794,9 +827,13 @@ function ScanPackageName({ scan, packageName }: { scan: ScanListItem; packageNam
 // state that asks nothing of the reader ends the line as plain text instead of
 // taking a chip on the lead line.
 function scanMetaLine(scan: ScanListItem): string {
-  const parts = [scanSourceLabel(scan.source)];
-  if (scan.completedAt) parts.push(`reviewed ${formatDateTime(scan.completedAt)}`);
-  else parts.push(`queued ${formatDateTime(scan.createdAt)}`);
+  // A review started here is the default; only an exception names its origin.
+  const parts =
+    scan.source == null || scan.source === "manual" ? [] : [scanSourceLabel(scan.source)];
+  if (scan.completedAt) {
+    const verb = scan.status === "failed" ? "attempted" : "reviewed";
+    parts.push(`${verb} ${formatDateTime(scan.completedAt)}`);
+  } else parts.push(`queued ${formatDateTime(scan.createdAt)}`);
   const registry = registryStatusBadge(scan);
   if (registry && registry.tone === null) parts.push(registry.label);
   return parts.join(" · ");

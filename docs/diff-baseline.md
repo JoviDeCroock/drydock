@@ -69,7 +69,7 @@ A beta or maintenance tag follows its own channel. A first release on a new chan
 1. Alternate comparison: Rebuild tree from selected version's compare payload; show loading/failure until ready; verdict still describes persisted report.
 1. Concurrent picks: Payload/failure cache is per version; late responses never replace the displayed comparison.
 1. Picker settling: Fetch only after `COMPARE_PICK_SETTLE_MS` in `src/models/scan-detail-model.ts`.
-1. Retry: `Try again` in alternate tree or beside picker for recorded baseline.
+1. Failure: One warn alert beside the picker, picked or recorded baseline, with the reason on a mono line and `Try again`; every non-removed file still shows its staged side, labeled `staged contents (<version>) · baseline unavailable`.
 1. URL state: Only explicit user picks enter `?version=`.
 1. Running scan: Prefetch recorded baseline so previous side is ready; payload lacks finding annotations and uses `no-store`.
 1. Completion with different/no baseline: Drop mid-run payload for old baseline; later selection refetches with annotations.

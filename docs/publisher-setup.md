@@ -28,6 +28,19 @@ Publisher setup inspects an installed repository and prepares an independently r
 | Verify | Run a real release; refresh setup checks. Requested gate, observed Environment rule and completed pre-publication review are separate states. |
 | Completion | Already-published review does not finish setup; a draft PR does not establish release protection. |
 
+### Settings UI states
+
+| State | UI |
+| --- | --- |
+| Unreachable / current step | Unreachable shows only its label; instructions only while current; controls once reachable; errors inside the failing step. |
+| No supported workflow | Warning plus secondary links to GitHub's `.github/workflows` editor and the workflow examples. |
+| Job running or PR exists | Step 1 folds to a mono summary with `Change` (locked while running); `Cancel preparation` stops the job. |
+| Draft ready | GitHub review link leads, then the advisory second review; changes under `View workflow changes`; `Prepare another draft` folded. |
+| Primary action | `Prepare draft pull request` while there is a workflow to draft; then `Check setup status`; restored failed/gone job: `Inspect workflows`; after checks: `Map this release target` until mapped, then `Open pre-publish review` once a review completed. |
+| Verified | Step 3 states the verified environment and repository; step 2 keeps only the PR link; recheck is secondary. |
+| Failures | Gone job is `warn`, others `critical`, stated once; missing permission links to the installation's GitHub permissions. |
+| Manual mapping | Native `Map a release target manually` disclosure under mapped targets; secondary submit. Installations are one line each. |
+
 ### Agent handoff
 
 | Surface / condition | Contract |

@@ -23,92 +23,191 @@ const INCIDENTS = [
 
 type BenchmarkCase = (typeof report.cases)[number];
 
-function CaseEvidence({ testCase }: { testCase: BenchmarkCase }) {
-  const result =
-    testCase.verdict === "malicious"
-      ? testCase.caught
-        ? "Caught: high release risk and required rule evidence"
-        : "Missed: release risk or required rule evidence is below the benchmark threshold"
-      : testCase.falsePositive
-        ? "False positive: release risk reaches medium or above"
-        : "Control passes: release risk remains below medium";
+function caseOutcome(testCase: BenchmarkCase) {
+  if (testCase.verdict === "malicious") {
+    return testCase.caught
+      ? { short: "Caught", detail: "Caught: high release risk and required rule evidence" }
+      : {
+          short: "Missed",
+          detail: "Missed: release risk or required rule evidence is below the benchmark threshold",
+        };
+  }
+  return testCase.falsePositive
+    ? { short: "False positive", detail: "False positive: release risk reaches medium or above" }
+    : { short: "Control passes", detail: "Control passes: release risk remains below medium" };
+}
 
+function caseAnchor(testCase: BenchmarkCase) {
+  return `case-${testCase.id}`;
+}
+
+/* Artifact risk is whole-package context the benchmark does not score, so it
+   stays plain text; only release risk, the measured value, gets a severity
+   Badge. A red HIGH on a passing control otherwise reads as a failure. */
+function ArtifactRisk({ risk }: { risk: string }) {
+  return <span class="font-mono text-[12px] uppercase text-ink-muted">{risk}</span>;
+}
+
+function CaseSummary() {
   return (
-    <Card as="article" padding="none" class="flex flex-col">
-      <div class="px-5 py-4 flex flex-col gap-3">
-        <MonoDetail
-          parts={[testCase.verdict === "malicious" ? "Malicious model" : "Benign control"]}
-        />
-        <h3 class="m-0 text-base font-medium tracking-[-0.005em]">{testCase.title}</h3>
-        <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
-          {testCase.provenance}
-        </p>
-        <p class="m-0 text-[13px] text-ink-muted">{result}</p>
-        <dl class="m-0 flex flex-wrap gap-x-6 gap-y-3 text-[13px]">
-          <div class="flex items-center gap-2">
-            <dt class="text-ink-muted">Release risk</dt>
-            <dd class="m-0">
-              <Badge tone={severityTone(testCase.releaseRisk)}>{testCase.releaseRisk}</Badge>
-            </dd>
-          </div>
-          <div class="flex items-center gap-2">
-            <dt class="text-ink-muted">Artifact risk</dt>
-            <dd class="m-0">
-              <Badge tone={severityTone(testCase.artifactRisk)}>{testCase.artifactRisk}</Badge>
-            </dd>
-          </div>
-        </dl>
-      </div>
-      <div class="px-5 py-4 flex flex-col gap-3">
-        <SectionLabel as="p" aside={`${testCase.findings.length} findings`}>
-          Rule evidence
+    <Card as="section" padding="none" class="flex flex-col">
+      <div class="px-5 py-4">
+        <SectionLabel as="h2" aside={`${report.cases.length} cases`}>
+          Cases at a glance
         </SectionLabel>
-        {testCase.requiredRuleIds.length ? (
-          <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
-            Required on the release change:{" "}
-            {testCase.requiredRuleIds.map((ruleId, index) => (
-              <span key={ruleId}>
-                {index ? ", " : ""}
-                <code class="text-[12px] break-all">{ruleId}</code>
-              </span>
-            ))}
-            .
-          </p>
-        ) : null}
-        {testCase.findings.length ? (
-          <ul class="m-0 p-0 list-none flex flex-col gap-4">
-            {testCase.findings.map((finding, index) => (
-              <li
-                key={`${finding.ruleId}-${finding.filePath}-${index}`}
-                class="flex flex-col gap-2"
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
-                  <code class="text-[12px] break-all">{finding.ruleId}</code>
-                </div>
-                <p class="m-0 font-mono text-[11px] text-ink-subtle break-all">
-                  {finding.filePath ?? "Package metadata"} ·{" "}
-                  {finding.releaseDelta ? "release change" : "package context"}
-                </p>
-                <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
-                  {finding.message}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p class="m-0 text-[13px] text-ink-muted">No deterministic findings.</p>
-        )}
       </div>
-      <div class="border-t border-border px-5 py-4 flex flex-col gap-2">
-        <a href={`${REPOSITORY_URL}/blob/main/${testCase.fixturePath}`} class="text-[13px]">
-          Inspect the fixture →
-        </a>
-        <p class="m-0 font-mono text-[11px] text-ink-subtle break-all">
-          Fixture SHA-256: {testCase.fixtureSha256}
-        </p>
+      {/* Four columns squeeze case titles into one-word stacks on a phone, so
+          narrow screens get the same facts as one stacked entry per case. */}
+      <ul class="m-0 flex list-none flex-col p-0 sm:hidden">
+        {report.cases.map((testCase) => (
+          <li key={testCase.id} class="flex flex-col gap-1.5 border-t border-border px-5 py-3">
+            <a href={`#${caseAnchor(testCase)}`} class="text-[14px] text-ink">
+              {testCase.title}
+            </a>
+            <span class="font-mono text-[11px] text-ink-subtle">
+              {testCase.verdict === "malicious" ? "Malicious model" : "Benign control"} ·{" "}
+              <span class="text-ink">{caseOutcome(testCase).short}</span>
+            </span>
+            <span class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-ink-subtle">
+              <span>release risk</span>
+              <Badge tone={severityTone(testCase.releaseRisk)}>{testCase.releaseRisk}</Badge>
+              <span aria-hidden>·</span>
+              <span>artifact risk</span>
+              <ArtifactRisk risk={testCase.artifactRisk} />
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div class="hidden overflow-x-auto sm:block">
+        <table class="w-full border-collapse text-left text-[13px]">
+          <thead>
+            <tr class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+              <th scope="col" class="px-5 pb-2 font-normal">
+                Case
+              </th>
+              <th scope="col" class="px-3 pb-2 font-normal whitespace-nowrap">
+                Release risk
+              </th>
+              <th scope="col" class="px-3 pb-2 font-normal whitespace-nowrap">
+                Artifact risk
+              </th>
+              <th scope="col" class="px-5 pb-2 font-normal">
+                Outcome
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.cases.map((testCase) => (
+              <tr key={testCase.id} class="border-t border-border align-top">
+                <th scope="row" class="px-5 py-3 font-normal">
+                  <a href={`#${caseAnchor(testCase)}`} class="text-ink">
+                    {testCase.title}
+                  </a>
+                  <span class="block font-mono text-[11px] text-ink-subtle">
+                    {testCase.verdict === "malicious" ? "Malicious model" : "Benign control"}
+                  </span>
+                </th>
+                <td class="px-3 py-3">
+                  <Badge tone={severityTone(testCase.releaseRisk)}>{testCase.releaseRisk}</Badge>
+                </td>
+                <td class="px-3 py-3">
+                  <ArtifactRisk risk={testCase.artifactRisk} />
+                </td>
+                <td class="px-5 py-3 text-ink">{caseOutcome(testCase).short}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Card>
+  );
+}
+
+function CaseEvidence({ testCase }: { testCase: BenchmarkCase }) {
+  const result = caseOutcome(testCase).detail;
+  const findingCount = testCase.findings.length;
+
+  return (
+    <div id={caseAnchor(testCase)} class="scroll-mt-6">
+      <Card as="article" padding="none" class="flex flex-col">
+        <div class="px-5 py-4 flex flex-col gap-3">
+          <MonoDetail
+            parts={[testCase.verdict === "malicious" ? "Malicious model" : "Benign control"]}
+          />
+          <h3 class="m-0 text-base font-medium tracking-[-0.005em]">{testCase.title}</h3>
+          <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
+            {testCase.provenance}
+          </p>
+          <p class="m-0 text-[13px] text-ink-muted">{result}</p>
+          <dl class="m-0 flex flex-wrap gap-x-6 gap-y-3 text-[13px]">
+            <div class="flex items-center gap-2">
+              <dt class="text-ink-muted">Release risk</dt>
+              <dd class="m-0">
+                <Badge tone={severityTone(testCase.releaseRisk)}>{testCase.releaseRisk}</Badge>
+              </dd>
+            </div>
+            <div class="flex items-center gap-2">
+              <dt class="text-ink-muted">Artifact risk</dt>
+              <dd class="m-0">
+                <ArtifactRisk risk={testCase.artifactRisk} />
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div class="px-5 py-4 flex flex-col gap-3">
+          <SectionLabel
+            as="p"
+            aside={`${findingCount} ${findingCount === 1 ? "finding" : "findings"}`}
+          >
+            Rule evidence
+          </SectionLabel>
+          {testCase.requiredRuleIds.length ? (
+            <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
+              Required on the release change:{" "}
+              {testCase.requiredRuleIds.map((ruleId, index) => (
+                <span key={ruleId}>
+                  {index ? ", " : ""}
+                  <code class="text-[12px] break-all">{ruleId}</code>
+                </span>
+              ))}
+              .
+            </p>
+          ) : null}
+          {testCase.findings.length ? (
+            <ul class="m-0 p-0 list-none flex flex-col gap-4">
+              {testCase.findings.map((finding, index) => (
+                <li
+                  key={`${finding.ruleId}-${finding.filePath}-${index}`}
+                  class="flex flex-col gap-2"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+                    <code class="text-[12px] break-all">{finding.ruleId}</code>
+                  </div>
+                  <p class="m-0 font-mono text-[11px] text-ink-subtle break-all">
+                    {finding.filePath ?? "Package metadata"} ·{" "}
+                    {finding.releaseDelta ? "release change" : "package context"}
+                  </p>
+                  <p class="m-0 max-w-[680px] text-[13px] text-ink-muted leading-[1.55]">
+                    {finding.message}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="m-0 text-[13px] text-ink-muted">No deterministic findings.</p>
+          )}
+        </div>
+        <div class="border-t border-border px-5 py-4 flex flex-col gap-2">
+          <a href={`${REPOSITORY_URL}/blob/main/${testCase.fixturePath}`} class="text-[13px]">
+            Inspect the fixture →
+          </a>
+          <p class="m-0 font-mono text-[11px] text-ink-subtle break-all">
+            Fixture SHA-256: {testCase.fixtureSha256}
+          </p>
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -162,6 +261,7 @@ export default function IncidentBenchmarkPage() {
           { label: "Reviewer", value: "Deterministic rules only; no AI review" },
         ]}
       />
+      <CaseSummary />
       <ContentArticleSections
         sections={[
           {
@@ -202,7 +302,7 @@ export default function IncidentBenchmarkPage() {
       </section>
       <section class="flex flex-col gap-4">
         <SectionLabel as="h2">Limits of this result</SectionLabel>
-        <ul class="m-0 pl-5 max-w-[680px] flex flex-col gap-3 text-[14px] text-ink-muted leading-[1.65]">
+        <ul class="m-0 pl-5 max-w-[680px] flex flex-col gap-3 text-[14px] text-ink-muted leading-[1.65] list-disc marker:text-ink-subtle">
           {report.limitations.map((limitation) => (
             <li key={limitation}>{limitation}</li>
           ))}

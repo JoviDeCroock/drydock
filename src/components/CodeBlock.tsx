@@ -10,12 +10,15 @@ export function CodeBlock({
   title,
   lang,
   defaultOpen = false,
+  copyLabel,
   children,
 }: {
   name?: string;
   title?: string;
   lang?: string;
   defaultOpen?: boolean;
+  /** Names what Copy takes when the block is the page's main deliverable. */
+  copyLabel?: string;
   children: string;
 }) {
   useEffect(() => {
@@ -44,9 +47,7 @@ export function CodeBlock({
         {title ? (
           <span class="text-[13px] font-medium text-ink min-w-0 truncate">{title}</span>
         ) : (
-          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle min-w-0 truncate">
-            {name}
-          </span>
+          <span class="font-mono text-[12px] text-ink-muted min-w-0 truncate">{name}</span>
         )}
       </span>
       {/* The copy button lives inside the <summary> of a foldable block, where
@@ -57,7 +58,7 @@ export function CodeBlock({
           event.stopPropagation();
         }}
       >
-        <CopyButton text={children} />
+        <CopyButton text={children} label={copyLabel} />
       </span>
     </div>
   );

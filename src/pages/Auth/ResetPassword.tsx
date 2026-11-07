@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import {
@@ -8,6 +8,7 @@ import {
   PasswordResetModel,
   readResetToken,
 } from "../../models/password-reset";
+import { authConfigModel } from "../../models/auth";
 import { Alert } from "../../components/Alert";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -29,6 +30,13 @@ export default function ResetPasswordPage() {
   const token = useSignal("");
   const password = useSignal("");
   const confirmation = useSignal("");
+  const resetUnavailable = useComputed(
+    () => authConfigModel.loaded.value && !authConfigModel.passwordReset.value,
+  );
+
+  useEffect(() => {
+    void authConfigModel.load();
+  }, []);
 
   useEffect(() => {
     const fromLink = readResetToken(window.location.hash);
@@ -60,12 +68,28 @@ export default function ResetPasswordPage() {
       <PageShell width="narrow">
         <Card class="flex flex-col gap-4">
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Set a new password</h1>
-          <Alert tone="critical">
-            This page needs the link from your reset email. Open it again, or request a new one.
-          </Alert>
-          <LinkButton href={requestLinkHref} class="self-start">
-            Request a new link
-          </LinkButton>
+          {/* Offering a new link only makes sense where the deployment can mail
+              one; while the config loads, the offer stays, as on the request page. */}
+          <Show
+            when={resetUnavailable}
+            fallback={
+              <>
+                <Muted class="text-[13px] m-0">
+                  This page needs the link from your reset email. Open that link again, or request a
+                  new one.
+                </Muted>
+                <LinkButton href={requestLinkHref}>Request a new link</LinkButton>
+              </>
+            }
+          >
+            <Muted class="text-[13px] m-0">
+              This page needs the link from a reset email, and this deployment can't send email. Ask
+              whoever runs it to help you back in.
+            </Muted>
+          </Show>
+          <p class="text-[13px] text-ink-muted m-0">
+            <a href={signInHref}>Back to sign in</a>
+          </p>
         </Card>
       </PageShell>
     );
@@ -129,10 +153,10 @@ export default function ResetPasswordPage() {
           }
         >
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Password set</h1>
-          <Alert tone="ok">Your new password is saved and every device was signed out.</Alert>
-          <LinkButton href={signInHref} class="self-start">
-            Go to sign in
-          </LinkButton>
+          <Muted class="text-[13px] m-0">
+            Your new password is saved, and every device was signed out.
+          </Muted>
+          <LinkButton href={signInHref}>Go to sign in</LinkButton>
         </Show>
       </Card>
     </PageShell>

@@ -1,6 +1,12 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef } from "preact/hooks";
-import { useComputed, useModel, useSignalEffect } from "@preact/signals";
+import {
+  type ReadonlySignal,
+  useComputed,
+  useModel,
+  useSignal,
+  useSignalEffect,
+} from "@preact/signals";
 import { Show, useLiveSignal } from "@preact/signals/utils";
 import type { PublisherSetupJobStage } from "../../../server/lib/github-app/setup-types";
 import { activeOrganizationId } from "../../models/active-organization";
@@ -9,6 +15,7 @@ import { PublisherSetupModel, type SetupOperation } from "../../models/publisher
 import { ReleaseTargetsModel } from "../../models/release-targets";
 import { scanDetailPath } from "../../lib/scan-detail-path";
 import { setupStatusAgentSummary } from "./agent-summary";
+import { installationSettingsUrl, newWorkflowUrl, PUBLISHING_GUIDE_HREF } from "./links";
 import { Alert } from "../../components/Alert";
 import { Button, LinkButton } from "../../components/Button";
 import { SettingsCardBody, SettingsCardHeader } from "../../components/Card";
@@ -18,10 +25,14 @@ import { DiffView } from "../../components/DiffView";
 import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { Select } from "../../components/Select";
-import { LoadingLine, MonoLabel, Muted } from "../../components/Typography";
+import { LoadingLine, MonoDetail, MonoLabel, Muted } from "../../components/Typography";
 
 type SetupModel = InstanceType<typeof PublisherSetupModel>;
 type StepState = "done" | "active" | "upcoming";
+// The one action that carries the primary treatment across all three steps.
+type LeadAction = "inspect" | "draft" | "check" | "map" | "review" | null;
+
+const ECOSYSTEM_LABELS = { npm: "npm", pypi: "PyPI", vscode: "VS Code extensions" } as const;
 
 export function PublisherSetup({
   installations,
@@ -52,34 +63,64 @@ export function PublisherSetup({
     }
   });
 
+  const draftFailed = useComputed(
+    () =>
+      Boolean(model.error.value) &&
+      (model.failedOperation.value === "drafting" || model.failedOperation.value === "cancelling"),
+  );
+  // A failed or vanished job restored after a reload has no inspection, so the
+  // next step is reading the repository again, not verification.
+  const needsInspection = useComputed(
+    () => draftFailed.value && !model.inspection.value && Boolean(model.repositoryFullName.value),
+  );
+  const releaseState = useComputed<StepState>(() =>
+    model.inspection.value || model.pullRequest.value || model.draftPending.value
+      ? "done"
+      : "active",
+  );
   // Drafting is optional (a workflow may already use the environment), so the
-  // verify step opens as soon as a repository is chosen; it only takes the
-  // primary action once the workflow step is finished or skipped past.
-  // A draft job restored after a reload has no inspection, but its progress,
-  // result, and failure (including a job that is no longer available) still
-  // belong to this step.
+  // verify step opens as soon as a repository is chosen. A draft job restored
+  // after a reload has no inspection, but its progress, result, and failure
+  // (including a job that is no longer available) still belong to step 2.
   const workflowState = useComputed<StepState>(() => {
     if (model.pullRequest.value) return "done";
-    const failed =
-      Boolean(model.error.value) &&
-      (model.failedOperation.value === "drafting" || model.failedOperation.value === "cancelling");
-    const started = model.inspection.value || model.draftJobId.value || model.draft.value || failed;
+    const started =
+      model.inspection.value || model.draftJobId.value || model.draft.value || draftFailed.value;
     return started ? "active" : "upcoming";
   });
-  const verifyState = useComputed<StepState>(() => {
+  const setupVerified = useComputed(() => {
     const status = model.setupStatus.value;
-    const repository = model.repositoryFullName.value;
-    if (status && status.checks.every((check) => check.status === "passed")) return "done";
-    return repository ? "active" : "upcoming";
+    return Boolean(status && status.checks.every((check) => check.status === "passed"));
   });
-  // Exactly one primary action: `Prepare draft pull request` renders only for
-  // an inspection with workflows, so verification leads whenever it is absent
-  // (including a restored job, which has no inspection) or a PR exists.
-  const verifyLeads = useComputed(() => {
+  const verifyState = useComputed<StepState>(() => {
+    if (setupVerified.value) return "done";
+    return model.repositoryFullName.value ? "active" : "upcoming";
+  });
+  const lead = useComputed<LeadAction>(() => {
+    const status = model.setupStatus.value;
+    const pullRequest = model.pullRequest.value;
     const inspection = model.inspection.value;
-    const draftable = Boolean(inspection && inspection.workflows.length > 0);
-    return Boolean(model.pullRequest.value) || !draftable;
+    if (needsInspection.value) return "inspect";
+    if (status && !status.targetMapped) return "map";
+    if (status?.firstReview?.scanStatus === "complete" && status.firstReview.scanId)
+      return "review";
+    if (pullRequest) return "check";
+    if (!inspection) return null;
+    return inspection.workflows.length > 0 ? "draft" : "check";
   });
+  const installation = useComputed(
+    () =>
+      availableInstallations.value.find((row) => row.id === model.installationRowId.value) ?? null,
+  );
+  // Once a draft is running or open, the selection is settled; it folds to one
+  // line and reopens on request.
+  const editingRelease = useSignal(false);
+  useSignalEffect(() => {
+    if (model.draftPending.value) editingRelease.value = false;
+  });
+  const releaseCollapsed = useComputed(
+    () => Boolean(model.pullRequest.value || model.draftPending.value) && !editingRelease.value,
+  );
 
   return (
     <div>
@@ -93,10 +134,23 @@ export function PublisherSetup({
           <SetupStep
             index={1}
             title="Choose the release"
-            state={model.inspection.value ? "done" : "active"}
+            state={releaseState.value}
+            // The environment explanation belongs to the open form, not its summary.
+            describeWhenDone={!releaseCollapsed.value}
             description="The GitHub environment named here holds the publish job until you approve or reject it in Drydock."
           >
-            <ReleaseFields model={model} installations={availableInstallations.value} />
+            <Show
+              when={releaseCollapsed}
+              fallback={
+                <ReleaseFieldsForm
+                  model={model}
+                  installations={availableInstallations.value}
+                  offerInspect={!needsInspection.value}
+                />
+              }
+            >
+              <ReleaseSummary model={model} onEdit={() => (editingRelease.value = true)} />
+            </Show>
           </SetupStep>
           <SetupStep
             index={2}
@@ -112,7 +166,14 @@ export function PublisherSetup({
               </>
             }
           >
-            <WorkflowDraft model={model} />
+            <WorkflowDraft
+              model={model}
+              lead={lead}
+              failed={draftFailed.value}
+              needsInspection={needsInspection.value}
+              installation={installation.value}
+              setupVerified={setupVerified.value}
+            />
           </SetupStep>
           <SetupStep
             index={3}
@@ -121,7 +182,12 @@ export function PublisherSetup({
             last
             description="In GitHub, add the Drydock deployment protection rule to the environment, then run your publishing workflow. GitHub holds only the job that uses that environment."
           >
-            <SetupChecks model={model} targets={targets} primary={verifyLeads.value} />
+            <SetupChecks
+              model={model}
+              targets={targets}
+              lead={lead}
+              verified={setupVerified.value}
+            />
           </SetupStep>
         </ol>
       </SettingsCardBody>
@@ -134,6 +200,7 @@ function SetupStep({
   title,
   state,
   description,
+  describeWhenDone = false,
   last = false,
   children,
 }: {
@@ -141,9 +208,13 @@ function SetupStep({
   title: string;
   state: StepState;
   description: ComponentChildren;
+  describeWhenDone?: boolean;
   last?: boolean;
   children: ComponentChildren;
 }) {
+  // An unreachable step is only a label, and a completed one is stated by its
+  // outcome; instructions belong to the step being worked on.
+  const describe = state === "active" || (state === "done" && describeWhenDone);
   return (
     <li class="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3">
       <div class="flex flex-col items-center">
@@ -169,7 +240,9 @@ function SetupStep({
             {title}
             {state === "done" ? <span class="sr-only"> (done)</span> : null}
           </h4>
-          <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">{description}</Muted>
+          {describe ? (
+            <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">{description}</Muted>
+          ) : null}
         </div>
         {state === "upcoming" ? null : children}
       </div>
@@ -191,12 +264,14 @@ function StepError({ model, operations }: { model: SetupModel; operations: Setup
   );
 }
 
-function ReleaseFields({
+function ReleaseFieldsForm({
   model,
   installations,
+  offerInspect,
 }: {
   model: SetupModel;
   installations: PublicGithubAppInstallation[];
+  offerInspect: boolean;
 }) {
   // A single installation is already named in the list above; picking it again
   // is a no-op control.
@@ -285,7 +360,9 @@ function ReleaseFields({
       </Show>
       <Show
         when={() =>
-          Boolean(model.repositoryFullName.value) && model.operation.value !== "inspecting"
+          Boolean(model.repositoryFullName.value) &&
+          model.operation.value !== "inspecting" &&
+          (offerInspect || Boolean(model.inspection.value))
         }
       >
         <div class="flex flex-wrap items-center gap-3">
@@ -298,13 +375,34 @@ function ReleaseFields({
               </Muted>
             )}
           </Show>
-          <Button variant="ghost" size="sm" disabled={model.inputsLocked} onClick={inspect}>
-            <Show when={model.inspection} fallback="Inspect workflows">
-              Inspect again
-            </Show>
-          </Button>
+          {offerInspect ? (
+            <Button variant="ghost" size="sm" disabled={model.inputsLocked} onClick={inspect}>
+              <Show when={model.inspection} fallback="Inspect workflows">
+                Inspect again
+              </Show>
+            </Button>
+          ) : null}
         </div>
       </Show>
+    </div>
+  );
+}
+
+function ReleaseSummary({ model, onEdit }: { model: SetupModel; onEdit: () => void }) {
+  const inspection = model.inspection.value;
+  return (
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <MonoDetail
+        parts={[
+          model.repositoryFullName.value,
+          ECOSYSTEM_LABELS[model.ecosystem.value],
+          `environment ${model.environment.value.trim()}`,
+          inspection ? `${inspection.defaultBranch} · ${inspection.baseSha.slice(0, 7)}` : null,
+        ]}
+      />
+      <Button variant="ghost" size="sm" disabled={model.inputsLocked} onClick={onEdit}>
+        Change
+      </Button>
     </div>
   );
 }
@@ -352,29 +450,148 @@ function RepositoryField({
   );
 }
 
-function WorkflowDraft({ model }: { model: SetupModel }) {
+function WorkflowDraft({
+  model,
+  lead,
+  failed,
+  needsInspection,
+  installation,
+  setupVerified,
+}: {
+  model: SetupModel;
+  lead: ReadonlySignal<LeadAction>;
+  failed: boolean;
+  needsInspection: boolean;
+  installation: PublicGithubAppInstallation | null;
+  setupVerified: boolean;
+}) {
+  const request = (
+    <Show when={model.inspection}>
+      {(inspection) => <DraftRequest model={model} inspection={inspection} lead={lead} />}
+    </Show>
+  );
+  const failure = (
+    <DraftFailure
+      model={model}
+      lead={lead}
+      needsInspection={needsInspection}
+      installation={installation}
+    />
+  );
+  const progress = (
+    <Show when={model.draftJobId}>
+      <DraftProgress model={model} />
+    </Show>
+  );
+  const prepared = (
+    <Show when={model.pullRequest}>
+      {(pullRequest) => (
+        <PreparedPullRequest
+          model={model}
+          pullRequest={pullRequest}
+          setupVerified={setupVerified}
+        />
+      )}
+    </Show>
+  );
+  // An outcome (the open pull request, or the failure and the review that
+  // caused it) leads the step; the request form follows as the way to retry.
+  // With a pull request open, drafting again is rare, so that form folds away.
+  const hasPullRequest = Boolean(model.pullRequest.value);
   return (
     <div class="flex flex-col gap-4">
-      <Show when={model.inspection}>
-        {(inspection) => <DraftRequest model={model} inspection={inspection} />}
-      </Show>
-      <StepError model={model} operations={["drafting", "cancelling"]} />
-      <Show when={model.draftJobId}>
-        <DraftProgress model={model} />
-      </Show>
-      <Show when={model.pullRequest}>
-        {(pullRequest) => <PreparedPullRequest model={model} pullRequest={pullRequest} />}
-      </Show>
+      {hasPullRequest ? (
+        <>
+          {prepared}
+          {progress}
+          <Show when={model.draft}>
+            <ProposalDetails model={model} />
+          </Show>
+          <Show when={model.inspection}>
+            <Disclosure label="Prepare another draft">{request}</Disclosure>
+          </Show>
+        </>
+      ) : failed ? (
+        <>
+          {failure}
+          {progress}
+          {request}
+        </>
+      ) : (
+        <>
+          {request}
+          {failure}
+          {progress}
+        </>
+      )}
     </div>
+  );
+}
+
+function DraftFailure({
+  model,
+  lead,
+  needsInspection,
+  installation,
+}: {
+  model: SetupModel;
+  lead: ReadonlySignal<LeadAction>;
+  needsInspection: boolean;
+  installation: PublicGithubAppInstallation | null;
+}) {
+  const permissionDenied =
+    model.draftJob.value?.failure?.code === "setup_permissions_required" && installation;
+  // Without an inspection or a job, the draft is simply gone (expired, or
+  // replaced elsewhere); the page still works and inspecting again recovers.
+  const tone = needsInspection && !model.draftJobId.value ? "warn" : "critical";
+  return (
+    <Show
+      when={() =>
+        model.failedOperation.value === "drafting" || model.failedOperation.value === "cancelling"
+          ? model.error.value
+          : null
+      }
+    >
+      {(message) => (
+        <div class="flex flex-col gap-3">
+          <Alert tone={tone}>{message}</Alert>
+          {permissionDenied ? (
+            <div>
+              <LinkButton
+                href={installationSettingsUrl(installation)}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="secondary"
+              >
+                Review installation permissions on GitHub
+              </LinkButton>
+            </div>
+          ) : null}
+          {needsInspection ? (
+            <div>
+              <Button
+                variant={lead.value === "inspect" ? "primary" : "secondary"}
+                disabled={model.inputsLocked}
+                onClick={() => void model.inspect()}
+              >
+                Inspect workflows
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </Show>
   );
 }
 
 function DraftRequest({
   model,
   inspection,
+  lead,
 }: {
   model: SetupModel;
   inspection: NonNullable<SetupModel["inspection"]["value"]>;
+  lead: ReadonlySignal<LeadAction>;
 }) {
   const disabled = useComputed(() => !model.canDraft.value);
   const warnings = inspection.warnings.map((warning) => (
@@ -386,10 +603,25 @@ function DraftRequest({
   if (inspection.workflows.length === 0)
     return (
       <div class="flex flex-col gap-4">
-        <Alert tone="warn">
-          No supported workflow files were found; add a publishing workflow before preparing a
-          change.
-        </Alert>
+        <div class="flex flex-col gap-3">
+          <Alert tone="warn">
+            No supported workflow files were found; add a publishing workflow before preparing a
+            change.
+          </Alert>
+          <div class="flex flex-wrap items-center gap-3">
+            <LinkButton
+              href={newWorkflowUrl(inspection.repositoryFullName, inspection.defaultBranch)}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="secondary"
+            >
+              Add a workflow in .github/workflows
+            </LinkButton>
+            <LinkButton href={PUBLISHING_GUIDE_HREF} variant="ghost">
+              Publishing workflow examples
+            </LinkButton>
+          </div>
+        </div>
         {warnings}
       </div>
     );
@@ -415,7 +647,7 @@ function DraftRequest({
       <div class="flex flex-col gap-2">
         <div>
           <Button
-            variant={model.pullRequest.value ? "secondary" : "primary"}
+            variant={lead.value === "draft" ? "primary" : "secondary"}
             disabled={disabled}
             onClick={() => void model.preparePullRequest()}
           >
@@ -437,29 +669,32 @@ function DraftRequest({
   );
 }
 
-const DRAFT_STAGE_LABELS: Record<PublisherSetupJobStage, string> = {
+const DRAFT_STAGE_LABELS: Record<Exclude<PublisherSetupJobStage, "ready">, string> = {
   queued: "Waiting for the draft to start…",
   fetch_source: "Reading the pinned workflow…",
   draft: "Drafting the workflow change…",
   validate: "Checking the proposed workflow structure…",
   judge: "Running an independent review of the change…",
   create_pr: "Opening the draft pull request in GitHub…",
-  ready: "Draft pull request ready for review in GitHub.",
 };
 
 function DraftProgress({ model }: { model: SetupModel }) {
   const job = model.draftJob.value;
   const judge = job?.judge;
+  // A finished job's outcome is stated once: by the failure alert or by the
+  // pull request block. Only a running job reports its stage here.
   const progress = useComputed(() => {
     const current = model.draftJob.value;
     if (!current) return "Restoring draft status…";
-    if (current.status === "failed") return "Draft pull request preparation did not complete.";
+    if (current.status === "failed" || current.stage === "ready") return null;
     return DRAFT_STAGE_LABELS[current.stage];
   });
   return (
     <div class="flex flex-col gap-3">
       <div aria-live="polite">
-        <Muted class="m-0 font-mono text-[12px]">{progress}</Muted>
+        <Show when={progress}>
+          {(label) => <Muted class="m-0 font-mono text-[12px]">{label}</Muted>}
+        </Show>
       </div>
       <Show when={model.draftPending}>
         <Muted class="m-0 text-[12px] leading-[1.55] max-w-[680px]">
@@ -486,8 +721,13 @@ function DraftProgress({ model }: { model: SetupModel }) {
         </section>
       ) : null}
       {judge ? (
-        <div class="flex flex-col gap-2">
-          <h5 class="m-0 text-[14px] font-medium">Independent review</h5>
+        <section class="flex flex-col gap-2" aria-label="Independent review">
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h5 class="m-0 text-[14px] font-medium">Independent review</h5>
+            <MonoLabel>
+              advisory · {judge.verdict === "pass" ? "no changes requested" : "changes requested"}
+            </MonoLabel>
+          </div>
           <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">{judge.summary}</Muted>
           {judge.issues.length ? (
             <ul class="m-0 pl-5 list-disc marker:text-ink-subtle flex flex-col gap-1.5 text-[13px] leading-[1.55] max-w-[680px]">
@@ -496,12 +736,7 @@ function DraftProgress({ model }: { model: SetupModel }) {
               ))}
             </ul>
           ) : null}
-          <Muted class="m-0 text-[12px]">
-            {judge.verdict === "pass"
-              ? "No changes requested by the independent reviewer; your review is still required."
-              : "Changes requested; this attempt cannot create a pull request."}
-          </Muted>
-        </div>
+        </section>
       ) : null}
       <Show when={() => model.draftPending.value && model.draftJob.value?.stage !== "create_pr"}>
         <div>
@@ -522,35 +757,56 @@ function DraftProgress({ model }: { model: SetupModel }) {
 function PreparedPullRequest({
   model,
   pullRequest,
+  setupVerified,
 }: {
   model: SetupModel;
   pullRequest: NonNullable<SetupModel["pullRequest"]["value"]>;
+  setupVerified: boolean;
 }) {
   const proposal = model.draft.value?.proposal;
+  // The draft's own checklist goes stale once setup checks have run; those
+  // checks are the authoritative list of what remains.
+  const manualSteps = model.setupStatus.value || setupVerified ? [] : (proposal?.manualSteps ?? []);
   return (
-    <div class="flex flex-col gap-4 pt-4 border-t border-border">
-      <div class="flex flex-col gap-1">
-        <h5 class="m-0 text-[14px] font-medium">Draft pull request ready</h5>
-        <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">
-          Review the generated workflow in GitHub, then merge it and complete the environment setup.
-          The pull request stays a draft until you mark it ready for review.
-        </Muted>
-      </div>
-      <div>
-        <LinkButton
-          href={pullRequest.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          variant="secondary"
-        >
-          Review pull request #{pullRequest.number} on GitHub
-        </LinkButton>
-      </div>
-      {proposal?.manualSteps.length ? (
+    <div class="flex flex-col gap-4">
+      {setupVerified ? (
+        // Passing checks settle what the draft asked for; only its address remains.
+        <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
+          Workflow change in{" "}
+          <a
+            class="underline underline-offset-2 text-ink hover:text-accent"
+            href={pullRequest.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            pull request #{pullRequest.number} on GitHub
+          </a>
+        </p>
+      ) : (
+        <>
+          <div class="flex flex-col gap-1">
+            <h5 class="m-0 text-[14px] font-medium">Draft pull request ready</h5>
+            <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">
+              Read the change in GitHub, then mark the pull request ready for review and merge it.
+            </Muted>
+          </div>
+          <div>
+            <LinkButton
+              href={pullRequest.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="secondary"
+            >
+              Review pull request #{pullRequest.number} on GitHub
+            </LinkButton>
+          </div>
+        </>
+      )}
+      {manualSteps.length ? (
         <div class="flex flex-col gap-2">
           <MonoLabel>Remaining steps</MonoLabel>
           <ol class="m-0 pl-5 list-decimal marker:text-ink-subtle marker:font-mono marker:text-[12px] flex flex-col gap-1.5 text-[13px] leading-[1.55] max-w-[680px]">
-            {proposal.manualSteps.map((step) => (
+            {manualSteps.map((step) => (
               <li key={step} class="pl-1">
                 {step}
               </li>
@@ -558,10 +814,24 @@ function PreparedPullRequest({
           </ol>
         </div>
       ) : null}
-      <Show when={model.draft}>
-        <ProposalDetails model={model} />
-      </Show>
     </div>
+  );
+}
+
+// Named group: these disclosures sit inside the settings card's own <details>,
+// and an unnamed `group-open` would follow whichever ancestor is open.
+function Disclosure({ label, children }: { label: string; children: ComponentChildren }) {
+  return (
+    <details class="group/disclosure">
+      <summary class="cursor-pointer list-none text-[13px] font-medium text-ink-muted hover:text-ink">
+        <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
+          <span class="group-open/disclosure:hidden">▸</span>
+          <span class="hidden group-open/disclosure:inline">▾</span>
+        </span>
+        {label}
+      </summary>
+      <div class="mt-4">{children}</div>
+    </details>
   );
 }
 
@@ -571,15 +841,8 @@ function ProposalDetails({ model }: { model: SetupModel }) {
     (workflow) => workflow.path === draft.proposal.workflowPath,
   );
   return (
-    <details class="group">
-      <summary class="cursor-pointer list-none text-[13px] font-medium text-ink-muted hover:text-ink">
-        <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
-          <span class="group-open:hidden">▸</span>
-          <span class="hidden group-open:inline">▾</span>
-        </span>
-        View workflow changes
-      </summary>
-      <div class="flex flex-col gap-4 mt-4">
+    <Disclosure label="View workflow changes">
+      <div class="flex flex-col gap-4">
         <Muted class="m-0 text-[13px] leading-[1.55] max-w-[680px]">{draft.proposal.summary}</Muted>
         <DiffView
           path={draft.proposal.workflowPath}
@@ -612,18 +875,20 @@ function ProposalDetails({ model }: { model: SetupModel }) {
           </section>
         ))}
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
 function SetupChecks({
   model,
   targets,
-  primary,
+  lead,
+  verified,
 }: {
   model: SetupModel;
   targets: InstanceType<typeof ReleaseTargetsModel>;
-  primary: boolean;
+  lead: ReadonlySignal<LeadAction>;
+  verified: boolean;
 }) {
   const disabled = useComputed(() => !model.canCheck.value);
   const settingsUrl = useComputed(
@@ -635,41 +900,71 @@ function SetupChecks({
       await model.checkStatus();
     }
   };
+  const check = (
+    <Button
+      disabled={disabled}
+      variant={lead.value === "check" ? "primary" : "secondary"}
+      onClick={() => void model.checkStatus()}
+    >
+      <Show when={() => model.operation.value === "checking"} fallback="Check setup status">
+        Checking setup…
+      </Show>
+    </Button>
+  );
   return (
     <div class="flex flex-col gap-4">
-      <div class="flex flex-wrap items-center gap-3">
-        <LinkButton
-          href={settingsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          variant="secondary"
-        >
-          Open GitHub environments
-        </LinkButton>
-        <Button
-          disabled={disabled}
-          variant={primary ? "primary" : "secondary"}
-          onClick={() => void model.checkStatus()}
-        >
-          <Show when={() => model.operation.value === "checking"} fallback="Check setup status">
-            Checking setup…
-          </Show>
-        </Button>
-      </div>
+      {verified ? (
+        <VerifiedSummary model={model} />
+      ) : (
+        <div class="flex flex-wrap items-center gap-3">
+          <LinkButton
+            href={settingsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="secondary"
+          >
+            Open GitHub environments
+          </LinkButton>
+          {check}
+        </div>
+      )}
       <StepError model={model} operations={["checking", "mapping"]} />
       <Show when={model.setupStatus}>
-        <StatusResult model={model} onMapTarget={mapTarget} />
+        <StatusResult
+          model={model}
+          lead={lead}
+          onMapTarget={mapTarget}
+          recheck={verified ? check : null}
+        />
       </Show>
     </div>
   );
 }
 
+// Passing checks replace the step's instructions: what is now configured,
+// stated from the checked status rather than the editable form.
+function VerifiedSummary({ model }: { model: SetupModel }) {
+  const status = model.setupStatus.value!;
+  return (
+    <p class="m-0 text-[13px] leading-[1.55] text-ink max-w-[680px]">
+      Setup verified. GitHub holds jobs that use the{" "}
+      <span class="font-mono text-[12px]">{status.environment}</span> environment in{" "}
+      <span class="font-mono text-[12px]">{status.repositoryFullName}</span> until you approve or
+      reject them in Drydock.
+    </p>
+  );
+}
+
 function StatusResult({
   model,
+  lead,
   onMapTarget,
+  recheck,
 }: {
   model: SetupModel;
+  lead: ReadonlySignal<LeadAction>;
   onMapTarget: () => Promise<void>;
+  recheck: ComponentChildren;
 }) {
   const status = model.setupStatus.value!;
   const scanId = useComputed(() => model.setupStatus.value?.firstReview?.scanId ?? null);
@@ -705,7 +1000,11 @@ function StatusResult({
       </div>
       <Show when={() => !model.setupStatus.value!.targetMapped}>
         <div>
-          <Button disabled={model.busy} variant="secondary" onClick={() => void onMapTarget()}>
+          <Button
+            disabled={model.busy}
+            variant={lead.value === "map" ? "primary" : "secondary"}
+            onClick={() => void onMapTarget()}
+          >
             <Show
               when={() => model.operation.value === "mapping"}
               fallback="Map this release target"
@@ -715,30 +1014,29 @@ function StatusResult({
           </Button>
         </div>
       </Show>
-      <Show
-        when={() => model.setupStatus.value!.firstReview?.scanStatus === "complete"}
-        fallback={
-          <Muted class="m-0 text-[13px]">
-            A completed pre-publish review has not been observed for this repository and
-            environment.
-          </Muted>
-        }
-      >
-        <Alert tone="ok">
-          The first pre-publish review completed; open the report to make the release decision.
-        </Alert>
-      </Show>
       <Show when={scanId}>
         {(scanId) => (
-          <div>
-            <LinkButton
-              href={scanDetailPath(scanId, activeOrganizationId.value)}
-              variant="secondary"
-            >
-              Open pre-publish review
-            </LinkButton>
+          <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <LinkButton
+                href={scanDetailPath(scanId, activeOrganizationId.value)}
+                variant={lead.value === "review" ? "primary" : "secondary"}
+              >
+                Open pre-publish review
+              </LinkButton>
+              {recheck}
+            </div>
+            <Show when={() => model.setupStatus.value?.firstReview?.scanStatus === "complete"}>
+              <Muted class="m-0 text-[13px]">
+                The first pre-publish review completed; open the report to make the release
+                decision.
+              </Muted>
+            </Show>
           </div>
         )}
+      </Show>
+      <Show when={() => Boolean(recheck) && !scanId.value}>
+        <div>{recheck}</div>
       </Show>
     </div>
   );

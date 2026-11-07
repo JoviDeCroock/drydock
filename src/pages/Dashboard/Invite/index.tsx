@@ -27,6 +27,8 @@ export default function InvitePage() {
           if (isCancelled()) return;
           error.value = "This invitation link is missing its token.";
           state.value = "error";
+          // Only to pick the way out: a signed-out invitee has no reviews to go to.
+          void sessionModel.load();
           return;
         }
         const session = await sessionModel.load();
@@ -69,9 +71,19 @@ export default function InvitePage() {
           <Muted class="text-[13px] m-0">
             Ask the person who invited you to send a fresh invitation, then open the new link.
           </Muted>
-          <LinkButton href="/dashboard" class="self-start">
-            Go to reviews
-          </LinkButton>
+          {/* Secondary: the real next step (a fresh invite) happens outside Drydock. */}
+          <Show
+            when={sessionModel.authenticated}
+            fallback={
+              <LinkButton href="/login" variant="secondary" class="self-start">
+                Sign in
+              </LinkButton>
+            }
+          >
+            <LinkButton href="/dashboard" variant="secondary" class="self-start">
+              Go to reviews
+            </LinkButton>
+          </Show>
         </Card>
       </PageShell>
     );
@@ -79,10 +91,10 @@ export default function InvitePage() {
 
   return (
     <PageShell width="narrow">
-      <LoadingState
-        title="Joining organization"
-        detail={state.value === "accepting" ? "accepting invitation" : "confirming session"}
-      />
+      {/* One statement for the whole wait: the session check and the accept
+          call are a single step to the invitee. The token does not name the
+          organization before it is accepted. */}
+      <LoadingState title="Joining organization" />
     </PageShell>
   );
 }

@@ -305,8 +305,8 @@ function SettingsHeader() {
     <header class="flex flex-col gap-2 max-w-[640px]">
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Organization settings</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
-        Manage members, notifications, and the npm or GitHub connections Drydock uses to hold
-        releases for review.
+        Manage members, notifications, and the npm and GitHub connections Drydock uses to review
+        your releases.
       </Muted>
     </header>
   );

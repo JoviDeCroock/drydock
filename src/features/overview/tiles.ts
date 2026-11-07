@@ -17,7 +17,7 @@ export interface OverviewTile {
    */
   detail: string | null;
   /** Tints the value only (docs/design.md "Count tiles"); null reads as plain ink. */
-  tone: "warn" | null;
+  tone: "danger" | null;
   filter: ScanDecisionFilter;
 }
 
@@ -53,8 +53,9 @@ export function overviewTiles(overview: ScanOverview, now: number): OverviewTile
       value: String(publishedWithoutDecision.count),
       detail: null,
       // The one tile that counts something already past the gate: a release
-      // went live with no decision recorded here.
-      tone: publishedWithoutDecision.count > 0 ? "warn" : null,
+      // went live with no decision recorded here. Danger, not warn: warn-text
+      // sits a shade from the accent and read as a brand-orange link.
+      tone: publishedWithoutDecision.count > 0 ? "danger" : null,
       filter: "published_without_decision",
     },
     {

@@ -170,39 +170,43 @@ const FOOTER_GROUPS = [
 function SiteFooter({ maxWidth }: { maxWidth: string }) {
   return (
     <footer class="border-t border-border">
-      <div
-        class={cn(
-          "mx-auto flex w-full flex-col gap-10 px-6 py-10 md:flex-row md:justify-between md:gap-12",
-          maxWidth,
-        )}
-      >
-        <div class="flex flex-col items-start gap-3">
-          <BrandMark href="/" size="sm" />
-          <p class="m-0 font-mono text-[11px] leading-[1.6] text-ink-subtle">
-            Pre-publish review for npm, PyPI, and VS Code
-            <br />© 2026 Drydock
-          </p>
-          <AikidoFootnote />
+      {/* Container queries, not viewport breakpoints: the footer matches the
+          page's width, so a doc or narrow page at desktop viewport still needs
+          the stacked layout or the four link columns wrap 3+1. Pixel sizes
+          because the root font is 14px, which would shift rem-based steps. */}
+      <div class={cn("@container mx-auto w-full px-6 py-10", maxWidth)}>
+        <div class="flex flex-col gap-10 @min-[960px]:flex-row @min-[960px]:justify-between @min-[960px]:gap-12">
+          <div class="flex flex-col items-start gap-3">
+            <BrandMark href="/" size="sm" />
+            <p class="m-0 font-mono text-[11px] leading-[1.6] text-ink-subtle">
+              Pre-publish review for npm, PyPI, and VS{"\u00a0"}Code
+              <br />© 2026 Drydock
+            </p>
+            <AikidoFootnote />
+          </div>
+          <nav
+            class="grid grid-cols-2 gap-x-12 gap-y-8 text-[13px] @min-[480px]:grid-cols-[repeat(4,max-content)]"
+            aria-label="Footer"
+          >
+            {FOOTER_GROUPS.map((group) => (
+              <FooterGroup key={group.id} id={group.id} title={group.title}>
+                {group.links.map((link) =>
+                  "mark" in link ? (
+                    <li key={link.href}>
+                      <GithubRepoLink label={link.label} href={link.href} />
+                    </li>
+                  ) : (
+                    <li key={link.href}>
+                      <a href={link.href} class={FOOTER_LINK_CLASS}>
+                        {link.label}
+                      </a>
+                    </li>
+                  ),
+                )}
+              </FooterGroup>
+            ))}
+          </nav>
         </div>
-        <nav class="flex flex-wrap gap-x-12 gap-y-8 text-[13px]" aria-label="Footer">
-          {FOOTER_GROUPS.map((group) => (
-            <FooterGroup key={group.id} id={group.id} title={group.title}>
-              {group.links.map((link) =>
-                "mark" in link ? (
-                  <li key={link.href}>
-                    <GithubRepoLink label={link.label} href={link.href} />
-                  </li>
-                ) : (
-                  <li key={link.href}>
-                    <a href={link.href} class={FOOTER_LINK_CLASS}>
-                      {link.label}
-                    </a>
-                  </li>
-                ),
-              )}
-            </FooterGroup>
-          ))}
-        </nav>
       </div>
     </footer>
   );

@@ -165,12 +165,9 @@ export function ScanPreview() {
               <span key="status">complete</span>,
             ]}
           />
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <p class="m-0 text-lg font-semibold tracking-[-0.01em] text-danger-text">
-              Manual review required
-            </p>
-            <Badge tone="critical">release critical</Badge>
-          </div>
+          <p class="m-0 text-lg font-semibold tracking-[-0.01em] text-danger-text">
+            Manual review required
+          </p>
           <SeverityBar counts={{ critical: 2, medium: 1 }} class="max-w-[420px]" />
         </header>
 

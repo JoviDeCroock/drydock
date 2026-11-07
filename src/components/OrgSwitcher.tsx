@@ -73,7 +73,7 @@ export function OrgSwitcher({
             <span class="text-ink-subtle text-[10px] leading-none ml-1">▾</span>
           </>
         )}
-        panelClass="min-w-[240px]"
+        panelClass="min-w-[240px] max-w-[320px]"
       >
         {organizations.length === 0 ? (
           <MenuLabel>no organizations</MenuLabel>
@@ -81,18 +81,18 @@ export function OrgSwitcher({
           organizations.map((org) => (
             <MenuItem
               key={org.id}
-              active={org.id === activeOrganizationId}
+              checked={org.id === activeOrganizationId}
               onSelect={() => {
                 if (org.id !== activeOrganizationId) void onActivate(org.id);
               }}
             >
-              <span>{org.name}</span>
-              {org.isPersonal ? <span class="text-ink-subtle"> (personal)</span> : null}
+              <span class="break-words">{org.name}</span>
+              {org.isPersonal ? <span class="text-ink-subtle font-normal"> (personal)</span> : null}
             </MenuItem>
           ))
         )}
         <MenuSeparator />
-        <MenuItem tone="accent" onSelect={openCreate} disabled={busy}>
+        <MenuItem onSelect={openCreate} disabled={busy}>
           + New organization
         </MenuItem>
       </Menu>

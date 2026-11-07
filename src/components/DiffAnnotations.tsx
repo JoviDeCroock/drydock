@@ -1,3 +1,4 @@
+import { findingSentence } from "../lib/findings";
 import { Badge, severityTone } from "./Badge";
 import {
   annotationLabel,
@@ -42,8 +43,15 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
             {label}
           </span>
         ) : null}
+        {/* The severity stays as graded; this only says the release did not
+            introduce it, so a scoped verdict above is not read as contradicted. */}
+        {finding.packageContext ? (
+          <span class="font-mono text-[11px] text-ink-muted">existing package context</span>
+        ) : null}
       </div>
-      <p class="m-0 text-[13px] leading-[1.55] text-ink whitespace-normal">{finding.reason}</p>
+      <p class="m-0 text-[13px] leading-[1.55] text-ink whitespace-normal">
+        {findingSentence(finding.reason)}
+      </p>
       {finding.evidence ? (
         <code class="font-mono text-[11px] leading-[1.5] text-ink-muted break-words whitespace-pre-wrap">
           {finding.evidence}

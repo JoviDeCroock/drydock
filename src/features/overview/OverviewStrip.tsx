@@ -77,7 +77,7 @@ function OverviewTileLink({ tile }: { tile: OverviewTile }) {
       <span
         class={cn(
           "font-mono text-[18px] font-medium leading-none tracking-[-0.01em] tabular-nums",
-          tile.tone === "warn" && "text-warn-text",
+          tile.tone === "danger" && "text-danger-text",
         )}
       >
         {tile.value}

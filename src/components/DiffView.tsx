@@ -127,13 +127,15 @@ function DiffScrollViewport({
     // scrolling the page underneath.
     // max-h rather than a fixed height: a two-line diff should be two lines
     // tall, not 560px of empty pane. Long files still cap and scroll.
+    // No right padding here: the row fills run to the pane edge and the code
+    // cell keeps its text clear of the overview rail instead.
     <div
       ref={ref}
       onScroll={syncScrollState}
       tabIndex={0}
       role="region"
       aria-label={label}
-      class="overflow-auto max-h-[560px] pr-5 [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
+      class="overflow-auto max-h-[560px] [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
     >
       {children}
     </div>
@@ -419,7 +421,7 @@ function DiffControls({
   reformat: ReformatControl | null;
 }) {
   return (
-    <div class="flex flex-wrap items-center gap-1.5" aria-label="Diff display options">
+    <div role="group" class="flex flex-wrap items-center gap-1.5" aria-label="Diff display options">
       {reformat ? (
         <DiffOptionToggle
           label="Reformat"
@@ -460,21 +462,15 @@ function DiffOptionToggle({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <label class="cursor-pointer">
-      <input
-        type="checkbox"
-        class="sr-only peer"
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-        aria-label={description}
-      />
-      <span
-        title={description}
-        class="inline-flex items-center rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] leading-none text-ink-muted transition-colors peer-checked:border-accent peer-checked:bg-accent-soft peer-checked:text-ink peer-focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)]"
-      >
-        {label}
-      </span>
-    </label>
+    <button
+      type="button"
+      aria-pressed={checked}
+      title={description}
+      onClick={() => onChange(!checked)}
+      class="cursor-pointer inline-flex items-center rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px] leading-none text-ink-muted transition-colors hover:text-ink aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-ink outline-none focus-visible:shadow-[0_0_0_3px_var(--color-accent-soft)]"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -832,42 +828,84 @@ function PairedTwoSidedView({
           scrollState={scrollState}
           label={`Diff of ${path}`}
         >
-          <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-            <tbody>
-              {segments.map((segment) => {
-                if (segment.kind === "gap") {
-                  return (
-                    <GapRow
-                      key={segment.key}
-                      hiddenCount={segment.hiddenCount}
-                      noun="unchanged lines"
-                      colSpan={4}
-                      step={GAP_EXPAND_STEP}
-                      onExpand={(count) => expandGap(segment.key, count)}
-                    />
-                  );
-                }
-                const row = rows[segment.index];
-                const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
+          <DiffTable gutters={2} lineCount={rows.length}>
+            {segments.map((segment) => {
+              if (segment.kind === "gap") {
                 return (
-                  <Fragment key={segment.index}>
-                    <DiffRow row={row} status={status} />
-                    {pins ? (
-                      <AnnotationRows
-                        findings={pins}
-                        colSpan={4}
-                        scrollTarget={shouldSeekInitialDiffTarget(status)}
-                      />
-                    ) : null}
-                  </Fragment>
+                  <GapRow
+                    key={segment.key}
+                    hiddenCount={segment.hiddenCount}
+                    noun="unchanged lines"
+                    colSpan={4}
+                    step={GAP_EXPAND_STEP}
+                    onExpand={(count) => expandGap(segment.key, count)}
+                  />
                 );
-              })}
-            </tbody>
-          </table>
+              }
+              const row = rows[segment.index];
+              const pins = row.afterLine !== null ? pinned.get(row.afterLine) : undefined;
+              return (
+                <Fragment key={segment.index}>
+                  <DiffRow row={row} status={status} />
+                  {pins ? (
+                    <AnnotationRows
+                      findings={pins}
+                      colSpan={4}
+                      scrollTarget={shouldSeekInitialDiffTarget(status)}
+                    />
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </DiffTable>
         </DiffScrollViewport>
         <DiffOverview markers={markers} scrollState={scrollState} />
       </div>
     </div>
+  );
+}
+
+// Classes shared by every row's cells. The code cell's right padding keeps
+// text clear of the overview rail, which overlays the pane's right edge, so the
+// row fill itself can run edge to edge.
+const GUTTER_CELL_CLASS =
+  "px-2 py-[2px] text-ink-subtle select-none text-right border-r border-border align-top";
+const CODE_CELL_CLASS = "pl-2 pr-4 py-[2px] whitespace-pre-wrap [overflow-wrap:anywhere] align-top";
+
+/**
+ * Fixed table layout with explicit column widths, so the code column takes
+ * exactly the space left and wraps inside it. Under automatic layout an
+ * unbreakable token (a URL, a minified expression) widens the table past the
+ * pane and the end of the line — often the evidence — is clipped on a phone.
+ * Gutters grow with the line-number width so a 5-digit line is never cut.
+ */
+function DiffTable({
+  gutters,
+  lineCount,
+  children,
+}: {
+  gutters: 1 | 2;
+  lineCount: number;
+  children: ComponentChildren;
+}) {
+  const digits = String(Math.max(1, lineCount)).length;
+  return (
+    <table
+      class="w-full table-fixed border-collapse font-mono text-[12px] leading-[1.55]"
+      style={{ "--diff-gutter": `${digits}ch` }}
+    >
+      <colgroup>
+        <col class="w-[max(44px,calc(var(--diff-gutter)+16px))]" />
+        {gutters === 2 ? (
+          <>
+            <col class="w-[max(44px,calc(var(--diff-gutter)+16px))]" />
+            <col class="w-[20px]" />
+          </>
+        ) : null}
+        <col />
+      </colgroup>
+      <tbody>{children}</tbody>
+    </table>
   );
 }
 
@@ -876,8 +914,10 @@ function PairedTwoSidedView({
 // below the gap; gaps up to GAP_SHOW_ALL_MAX also offer a one-click
 // "show all" (larger gaps only step, so a bulk reveal can never rebuild the
 // megabyte-scale render the collapse exists to avoid).
+// No horizontal padding here: the trailing button reserves room for the
+// overview rail on its right, the leading one does not need to.
 const GAP_BUTTON_CLASS =
-  "cursor-pointer border-y border-border bg-surface-2 px-3 py-1 font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink";
+  "cursor-pointer border-y border-border bg-surface-2 py-1 font-mono text-[11px] text-ink-subtle transition-colors hover:bg-accent-soft hover:text-ink";
 
 function GapRow({
   hiddenCount,
@@ -900,7 +940,7 @@ function GapRow({
             type="button"
             onClick={() => onExpand(step)}
             aria-label={`Show more of ${hiddenCount} hidden ${noun}`}
-            class={cn(GAP_BUTTON_CLASS, "grow text-left")}
+            class={cn(GAP_BUTTON_CLASS, "grow px-3 text-left")}
           >
             ⋯ {hiddenCount.toLocaleString()} {noun} · show more
           </button>
@@ -915,7 +955,7 @@ function GapRow({
                 onExpand(hiddenCount);
               }}
               aria-label={`Show all ${hiddenCount} hidden ${noun}`}
-              class={cn(GAP_BUTTON_CLASS, "border-l")}
+              class={cn(GAP_BUTTON_CLASS, "border-l pl-3 pr-5")}
             >
               show all
             </button>
@@ -934,14 +974,10 @@ function DiffRow({ row, status }: { row: Row; status: string }) {
       class={cn(bg)}
       data-diff-scroll-target={isDiffScrollTarget(status, row.tone) ? "true" : undefined}
     >
-      <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-        {row.beforeLine ?? ""}
-      </td>
-      <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-        {row.afterLine ?? ""}
-      </td>
-      <td class="px-2 py-[2px] select-none w-[20px] text-ink-subtle align-top">{sign}</td>
-      <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
+      <td class={GUTTER_CELL_CLASS}>{row.beforeLine ?? ""}</td>
+      <td class={GUTTER_CELL_CLASS}>{row.afterLine ?? ""}</td>
+      <td class="px-1 py-[2px] select-none text-center text-ink-subtle align-top">{sign}</td>
+      <td class={CODE_CELL_CLASS}>
         <LineContent text={row.text} tokens={row.tokens} wordParts={row.wordParts} />
       </td>
     </tr>
@@ -1026,49 +1062,41 @@ function SingleSidedView({
           scrollState={scrollState}
           label={`Contents of ${path} (${label})`}
         >
-          <table class="w-full border-collapse font-mono text-[12px] leading-[1.55]">
-            <tbody>
-              {visibleLines.map((line, index) => {
-                const pins = pinned.get(index + 1);
-                return (
-                  <Fragment key={index}>
-                    <tr
-                      class={cn(rowBg)}
-                      data-diff-scroll-target={seekFirstChange ? "true" : undefined}
-                    >
-                      <td class="px-2 py-[2px] text-ink-subtle select-none w-[44px] text-right border-r border-border align-top">
-                        {index + 1}
-                      </td>
-                      <td class="px-2 py-[2px] whitespace-pre-wrap break-words align-top">
-                        <LineContent
-                          text={line}
-                          tokens={tokens?.[index] ?? null}
-                          wordParts={null}
-                        />
-                      </td>
-                    </tr>
-                    {pins ? (
-                      <AnnotationRows findings={pins} colSpan={2} scrollTarget={seekFirstChange} />
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-              {visibleCount < lines.length ? (
-                <GapRow
-                  hiddenCount={lines.length - visibleCount}
-                  noun="more lines"
-                  colSpan={2}
-                  step={SINGLE_SIDED_LINE_STEP}
-                  onExpand={(count) =>
-                    (visibleStore.value = {
-                      key: resetKey,
-                      count: visibleCount + count,
-                    })
-                  }
-                />
-              ) : null}
-            </tbody>
-          </table>
+          <DiffTable gutters={1} lineCount={lines.length}>
+            {visibleLines.map((line, index) => {
+              const pins = pinned.get(index + 1);
+              return (
+                <Fragment key={index}>
+                  <tr
+                    class={cn(rowBg)}
+                    data-diff-scroll-target={seekFirstChange ? "true" : undefined}
+                  >
+                    <td class={GUTTER_CELL_CLASS}>{index + 1}</td>
+                    <td class={CODE_CELL_CLASS}>
+                      <LineContent text={line} tokens={tokens?.[index] ?? null} wordParts={null} />
+                    </td>
+                  </tr>
+                  {pins ? (
+                    <AnnotationRows findings={pins} colSpan={2} scrollTarget={seekFirstChange} />
+                  ) : null}
+                </Fragment>
+              );
+            })}
+            {visibleCount < lines.length ? (
+              <GapRow
+                hiddenCount={lines.length - visibleCount}
+                noun="more lines"
+                colSpan={2}
+                step={SINGLE_SIDED_LINE_STEP}
+                onExpand={(count) =>
+                  (visibleStore.value = {
+                    key: resetKey,
+                    count: visibleCount + count,
+                  })
+                }
+              />
+            ) : null}
+          </DiffTable>
         </DiffScrollViewport>
         <DiffOverview markers={markers} scrollState={scrollState} />
       </div>

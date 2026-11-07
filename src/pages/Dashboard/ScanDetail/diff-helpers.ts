@@ -73,16 +73,19 @@ export function selectDiffWorkbenchState(input: {
   // Previous version still being fetched via the sandbox. Keyed off
   // compareLoading too (not just compareReady) so a stale cache entry from a
   // prior version can't flash a wrong diff while the new fetch is in flight.
-  // A failed fetch ends the wait: without the previous side, DiffView would
-  // render a modified file as all added.
+  // A failed fetch ends the wait. A removed file then has nothing left to
+  // show; any other file still has its staged side, which the diff panel shows
+  // alone under a label saying the baseline is unavailable (DiffView tones a
+  // one-sided modified file neutral rather than all added).
   const awaitsPrevious = needsPrevious && input.entryStatus !== "unchanged";
-  if (awaitsPrevious && !input.compareLoading && !input.compareReady && input.compareFailed) {
+  const previousFailed = !input.compareLoading && !input.compareReady && input.compareFailed;
+  if (awaitsPrevious && previousFailed && !needsStaged) {
     return {
       kind: "empty",
-      message: "The previous version could not be loaded, so this file cannot be diffed.",
+      message: "The previous version could not be loaded, so this removed file cannot be shown.",
     };
   }
-  if (awaitsPrevious && (input.compareLoading || !input.compareReady)) {
+  if (awaitsPrevious && !previousFailed && (input.compareLoading || !input.compareReady)) {
     return {
       kind: "processing",
       title: "Loading comparison",
@@ -122,6 +125,22 @@ export function selectDiffWorkbenchState(input: {
   }
 
   return { kind: "diff" };
+}
+
+// Staged text shown while the baseline failed to load says so on the pane,
+// whatever the entry status, so a reader does not take the staged side for a
+// completed comparison. An "added" file is included: without the baseline the
+// pane cannot show that it lacks the file.
+export function stagedSideLabel(input: {
+  status: DiffEntry["status"];
+  stagedVersion: string | null | undefined;
+  compareFailed: boolean;
+  hasPrevious: boolean;
+}): string {
+  const version = input.stagedVersion ?? "current";
+  return input.compareFailed && !input.hasPrevious && input.status !== "removed"
+    ? `staged contents (${version}) · baseline unavailable`
+    : `staged (${version})`;
 }
 
 export function scanFilesToFileRecords(files: PersistedScanDetail["files"]): FileRecord[] {

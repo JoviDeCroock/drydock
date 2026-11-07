@@ -47,24 +47,21 @@ export function ReportDiffPanel({
     );
   }
 
-  if (!file) {
-    if (missing || hasNoLoadableBody(entry.flags)) {
-      return <PanelMessage>No text sample was retained for this file.</PanelMessage>;
-    }
-    if (loading) {
-      return (
-        <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center min-h-0">
-          <LoadingLine>Loading file</LoadingLine>
-          <IndeterminateBar class="w-48 max-w-full" />
-          <p class="font-mono text-[11px] tracking-[0.02em] text-ink-subtle m-0">
-            fetching the reviewed sample
-          </p>
-        </div>
-      );
-    }
-    return <PanelMessage>No text sample was retained for this file.</PanelMessage>;
+  if (!file && loading && !missing && !hasNoLoadableBody(entry.flags)) {
+    return (
+      <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center min-h-0">
+        <LoadingLine>Loading file</LoadingLine>
+        <IndeterminateBar class="w-48 max-w-full" />
+        <p class="font-mono text-[11px] tracking-[0.02em] text-ink-subtle m-0">
+          fetching the reviewed sample
+        </p>
+      </div>
+    );
   }
 
+  // A file with no sample still goes through DiffView: its binary / no-sample
+  // fallback keeps the path, the format badges, the size and digest, and this
+  // file's findings, which are all the evidence there is.
   return (
     <DiffView
       path={entry.path}
@@ -72,14 +69,18 @@ export function ReportDiffPanel({
       beforeLabel="previous"
       afterLabel={`staged (${stagedVersion ?? "current"})`}
       before={null}
-      after={{
-        textSample: file.textSample,
-        size: file.size,
-        sha256: file.sha256,
-        flags: Array.isArray(file.flagsJson)
-          ? file.flagsJson.filter((flag): flag is string => typeof flag === "string")
-          : [],
-      }}
+      after={
+        file
+          ? {
+              textSample: file.textSample,
+              size: file.size,
+              sha256: file.sha256,
+              flags: Array.isArray(file.flagsJson)
+                ? file.flagsJson.filter((flag): flag is string => typeof flag === "string")
+                : [],
+            }
+          : { size: entry.stagedSize, sha256: entry.stagedSha256, flags: entry.flags }
+      }
       findings={findings}
     />
   );

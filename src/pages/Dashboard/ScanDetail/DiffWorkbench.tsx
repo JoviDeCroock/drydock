@@ -5,7 +5,7 @@ import { type DiffFinding, DiffView } from "../../../components/DiffView";
 import { IndeterminateBar } from "../../../components/Loading";
 import { EmptyLine, LoadingLine } from "../../../components/Typography";
 import { hasNoLoadableBody } from "../../../features/review/diff-entries";
-import { selectDiffWorkbenchState } from "./diff-helpers";
+import { selectDiffWorkbenchState, stagedSideLabel } from "./diff-helpers";
 
 export function DiffWorkbench({
   tree,
@@ -36,9 +36,11 @@ export function DiffWorkbench({
   findings: DiffFinding[];
   findingTarget?: DiffFinding | null;
 }) {
-  // Until the chosen version's comparison arrives there is no file to pick,
-  // and the release tree's notice already says what is loading or failed.
-  if (tree !== "entries") return <DiffPanelMessage>No file selected.</DiffPanelMessage>;
+  // Until the chosen version's comparison arrives there is no file to pick.
+  // The line beside the version picker names the version and the progress or
+  // failure; this panel only says it has nothing of its own yet.
+  if (tree === "loading") return <DiffPanelMessage>Waiting for the comparison.</DiffPanelMessage>;
+  if (tree === "failed") return <DiffPanelMessage>No comparison loaded.</DiffPanelMessage>;
 
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
@@ -71,7 +73,12 @@ export function DiffWorkbench({
       path={entry.path}
       status={entry.status}
       beforeLabel={selectedVersion ? `previous (${selectedVersion})` : "previous"}
-      afterLabel={`staged (${stagedVersion ?? "current"})`}
+      afterLabel={stagedSideLabel({
+        status: entry.status,
+        stagedVersion,
+        compareFailed,
+        hasPrevious: Boolean(previousContent || previousMeta),
+      })}
       before={
         previousContent
           ? toDiffSide(previousContent)

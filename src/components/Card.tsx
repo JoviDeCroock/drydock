@@ -172,7 +172,9 @@ export function CollapsibleCard({
 }) {
   return (
     <Card as="section" padding="none" class={cn("overflow-hidden", className)}>
-      <details open={defaultOpen} class="group">
+      {/* Named so disclosures nested in the card body can use their own
+          unnamed `group-open` without following this one. */}
+      <details open={defaultOpen} class="group/card">
         <summary class="list-none cursor-pointer px-5 py-4 transition-colors hover:bg-surface-2">
           <SectionLabel
             as="h2"
@@ -180,7 +182,7 @@ export function CollapsibleCard({
           >
             <span
               aria-hidden
-              class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open:rotate-90"
+              class="text-ink-subtle text-[10px] inline-block transition-transform duration-150 ease-out group-open/card:rotate-90"
             >
               ▸
             </span>

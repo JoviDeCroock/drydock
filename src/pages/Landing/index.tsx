@@ -21,7 +21,7 @@ export default function LandingPage() {
     <PageShell class="gap-12" headerActions={<MarketingHeaderActions authed={authed} />}>
       <PageSeo metadata={homePageSeo} />
       <StructuredData />
-      <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
+      <section class="pt-8 pb-2 md:pt-12 border-t border-border flex flex-col gap-5">
         <h1
           id="landing-hero-title"
           class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0"
@@ -76,7 +76,7 @@ export default function LandingPage() {
           Drydock's checks on the published artifacts; the preview above uses example data.
         </p>
         <IncidentDiffCards />
-        <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
+        <LinkButton href="/diff" variant="ghost" size="sm" class="self-start -ml-2.5">
           Diff a package →
         </LinkButton>
       </section>
@@ -106,7 +106,12 @@ export default function LandingPage() {
           available provenance evidence alongside the package diff. A compromised build dependency
           can still produce an attested release, so reviewers need to inspect the contents too.
         </p>
-        <LinkButton href="/npm-trusted-publishing" variant="ghost" size="sm" class="self-start">
+        <LinkButton
+          href="/npm-trusted-publishing"
+          variant="ghost"
+          size="sm"
+          class="self-start -ml-2.5"
+        >
           Pin publishing to a reviewed workflow →
         </LinkButton>
       </section>
@@ -140,8 +145,7 @@ export default function LandingPage() {
               body: (
                 <>
                   Approve or reject the protected GitHub job in Drydock. For npm staging, record
-                  your review here and approve or reject separately in npm with 2FA. Publish
-                  credentials stay in your release process.
+                  your review here and approve or reject separately in npm with 2FA.
                 </>
               ),
             },
@@ -165,7 +169,7 @@ export default function LandingPage() {
             publication outside staging.
           </RegistryCard>
         </div>
-        <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
+        <LinkButton href="/docs" variant="ghost" size="sm" class="self-start -ml-2.5">
           Read the docs →
         </LinkButton>
       </section>
