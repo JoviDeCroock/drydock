@@ -2,11 +2,11 @@
 
 Review public dependency upgrades without an account, or read an organization's Drydock reviews, report exports, and release receipts from scripts and CI, and start new reviews with a key that has scan access. On your own machine, `drydock approve` shows the review of a staged npm publish, records your decision, and runs your `npm stage approve`. Deciding a workflow gate stays with signed-in maintainers in Drydock.
 
-The CLI has no dependencies and runs on Node 22.14 or later. It is not published to npm yet, so run it from a checkout of this repository (`pnpm run drydock …` or `node cli/bin/drydock.mjs …`). Scripts and `--json` consumers should call `node cli/bin/drydock.mjs` directly, since `pnpm run` prints its own banner to stdout. Compare the exact published versions in a dependency update:
+The CLI has no dependencies and runs on Node 22.14 or later. Run it with `npx drydock-cli …`, or `npm install -g drydock-cli` for a `drydock` command. In a checkout of this repository, `node cli/bin/drydock.mjs …` runs the working copy. Compare the exact published versions in a dependency update:
 
 ```sh
-node cli/bin/drydock.mjs diff react 18.2.0 18.3.1 --ecosystem npm --json
-node cli/bin/drydock.mjs file react 18.2.0 18.3.1 index.js --ecosystem npm --json
+npx drydock-cli diff react 18.2.0 18.3.1 --ecosystem npm --json
+npx drydock-cli file react 18.2.0 18.3.1 index.js --ecosystem npm --json
 ```
 
 `diff` and `file` use the anonymous public API and never send an API key, even when one is configured. They support npm (the default), PyPI, and atpm. Use an exact path from `diff` when requesting file evidence; inspect a small set of relevant files. For PyPI, pass `--ecosystem pypi`.
@@ -79,29 +79,24 @@ Exit codes: `0` success, `1` request or review failed (`approve` also exits `1` 
 
 ## In CI
 
-The CLI comes from a checkout of the Drydock repository:
+Pin the version, since a CI job gates on its exit codes:
 
 ```yaml
-- uses: actions/checkout@v4
-  with:
-    repository: JoviDeCroock/drydock
-    ref: <commit-sha> # pin a commit you have reviewed
-    path: drydock
 - name: Check the Drydock review
   env:
     DRYDOCK_API_KEY: ${{ secrets.DRYDOCK_API_KEY }}
   run: |
-    node drydock/cli/bin/drydock.mjs scans wait "$REVIEW_ID" --fail-on high
-    node drydock/cli/bin/drydock.mjs receipt "$REVIEW_ID" --output release-receipt.json
+    npx -y drydock-cli@0.1.0 scans wait "$REVIEW_ID" --fail-on high
+    npx -y drydock-cli@0.1.0 receipt "$REVIEW_ID" --output release-receipt.json
 ```
 
-After `npm stage publish`, a key with scan access can review the stage without waiting for the 15-minute discovery cron. Gate on the stage id `npm stage publish` printed (with the same Drydock checkout as above):
+After `npm stage publish`, a key with scan access can review the stage without waiting for the 15-minute discovery cron. Gate on the stage id `npm stage publish` printed:
 
 ```yaml
 - name: Review the staged publish
   env:
     DRYDOCK_API_KEY: ${{ secrets.DRYDOCK_SCAN_KEY }}
-  run: node drydock/cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high
+  run: npx -y drydock-cli@0.1.0 scans start --stage "$STAGE_ID" --wait --fail-on high
 ```
 
 `scans start --stage` always starts a review of that stage, so the step gates on it even if discovery reviewed it first. `check-npm --wait` waits only for reviews it started itself: if the cron already picked the stage up, it starts nothing and exits `0`, so it is not a gate.
