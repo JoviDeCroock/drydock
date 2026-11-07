@@ -15,7 +15,8 @@ Agents and the in-product guided setup
 existing-project prompt offers the guided setup's draft PR first and has the
 agent review it rather than write a second version. Local edits by either prompt
 hold the protected publish job to that document's protected-job rules. Drydock
-has no setup CLI or MCP server, so the App installation, Environment rule,
+has no setup CLI, and its MCP endpoint only reads public package evidence, so
+the App installation, Environment rule,
 release-target mapping and setup checks remain maintainer steps in the UI. To
 verify, the prompts read GitHub's side back with the maintainer's own `gh` login
 (Environment admin bypass, branch policy, and the Drydock custom protection
@@ -26,11 +27,14 @@ the maintainer pastes **Copy for your agent** from the setup checks
 `/docs#release-walkthrough` is the human counterpart: one-time setup and
 per-release steps for the workflow gate, with a pointer to the agent prompts.
 
-The dependency-review recipe compares exact published npm/PyPI dependency upgrades
-through the existing anonymous package-diff API. This guide adds no backend
-capability, MCP server, account authentication, or package execution. atpm remains
-available in the API and `/diff`; the dependency recipe deliberately covers the
-npm/PyPI manifest and lockfile workflow.
+The dependency-review recipe compares exact published npm/PyPI dependency
+upgrades through the existing anonymous package-diff API, either over HTTPS or
+through the anonymous, read-only MCP endpoint described below. Neither needs
+account authentication or executes package code. atpm remains available in the
+API, MCP tools, and `/diff`; the dependency recipe deliberately covers the
+npm/PyPI manifest and lockfile workflow. The CLI's anonymous `diff`/`file`
+commands read the same evidence; their contract lives in
+[`cli/README.md`](../cli/README.md).
 
 ## Entry points and ownership
 
@@ -46,9 +50,10 @@ npm/PyPI manifest and lockfile workflow.
   a project's `AGENTS.md` or equivalent rules. The `ProjectInstruction` component
   imports the source instruction in `src/features/agent-quickstart/package-review.md`.
   A parity test keeps that source and the public download byte-identical.
+- `/agents#mcp`: the MCP connection, with the same evidence rules.
 - `/llms.txt`: concise machine-readable navigation to the guide, instruction,
-  public diff, setup docs, and trust boundaries. It is a discovery file, not an
-  API or authorization mechanism.
+  MCP endpoint, public diff, setup docs, and trust boundaries. It is a discovery
+  file, not an API or authorization mechanism.
 
 `src/pages/Agents/index.tsx` owns the guide. Shared instruction presentation lives
 in `src/features/agent-quickstart/ProjectInstruction.tsx`. The existing Docs code
@@ -83,13 +88,100 @@ package and version pair to Drydock, so the project must permit external review
 requests. Private package names are outside the recipe. Custom-registry
 self-hosted deployments disable the anonymous diff API as before.
 
+## MCP endpoint
+
+Connect a remote MCP client using Streamable HTTP to
+`https://drydock.org/api/public/v1/mcp`. The endpoint is anonymous: no account,
+API key, OAuth flow, or npm installation is needed. Change the origin for a
+self-hosted deployment. Clients with an MCP server map can configure:
+
+```json
+{
+  "mcpServers": {
+    "drydock": {
+      "type": "http",
+      "url": "https://drydock.org/api/public/v1/mcp"
+    }
+  }
+}
+```
+
+Client configuration syntax varies; the contract is the URL and Streamable
+HTTP transport. The official MCP SDK handles current protocol requests and
+stateless compatibility for the 2025-03-26, 2025-06-18, and 2025-11-25 clients.
+There are no persistent sessions, resumable streams, or server-initiated calls.
+Browser-based MCP clients cannot connect: the endpoint rejects any `Origin`
+other than the canonical app origin and sends no CORS headers.
+
+The server advertises two tools, each with `readOnlyHint: true`,
+`destructiveHint: false`, and `openWorldHint: true`:
+
+| Tool                       | Inputs                                                                                        | Output                                                                                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compare_package_versions` | `ecosystem` (registry enum, defaults to `npm`), `package`, `from`, `to`, `changedFilesOffset` | `risk`, `findings`, `notices`, `textSamplesOmitted`, and `reviewUrl` first; then a page of changed files with counts, changed manifest fields, provenance |
+| `get_changed_file`         | The same pair plus an exact `path` from `changedFiles`                                        | Complete bounded file response, including null sides and coverage flags                                                                                   |
+
+`from` and `to` are exact versions, never ranges or tags. The `ecosystem` enum
+comes from `supportedPublicDiffEcosystems()`, so a registry entry is the only
+way to add one. A compare result lists 100 changed files per page, never
+unchanged ones, and states `unchangedFileCount`, `moreChangedFiles`, and the
+`nextChangedFilesOffset` to request next. It omits the full `package.json`
+objects; `packageJsonDiff` already carries the changed fields. Evidence leads
+so a client that truncates tool output loses the tail of the file list, not
+the findings.
+
+Only the existing ecosystem registry decides which public packages and
+versions are valid. Tools accept no credentials, organization selectors, or
+arbitrary fetch targets. On npm, explicit versions can also be supported
+`pkg.pr.new` preview URLs under the public API's existing rules.
+
+## MCP request and evidence boundaries
+
+`server/routes/public-mcp.ts` mounts before session/API-key authentication.
+It dispatches in process to `publicDiffRoutes` with a fresh request on the
+canonical app origin (so `reviewUrl` matches the site) that carries only the
+caller's IP, for rate-limit accounting, and a constant `x-drydock-client: mcp`
+analytics tag. It forwards no cookies, Authorization, or Origin headers and
+never makes an HTTP request back to the Worker. Each compare page is a full
+pair request, so paging a large release spends the 10/minute pair budget.
+
+The endpoint is disabled with a custom `NPM_REGISTRY`, accepts no browser
+Origin except the canonical app origin, limits protocol requests to 120/minute
+per IP, and bounds message bodies to 16 KiB. Analysis additionally consumes the
+existing public diff/file budgets, including the shared cold-computation
+budget. Native rate-limit bindings avoid D1; missing native tiers use the
+existing D1 rate-limit fallback. There is no review persistence, organization
+access, AI review, or new credentialed egress.
+
+A compare result's `structuredContent` holds the page above; its text block is
+a bounded human summary (risk, coverage, up to 25 findings and 25 changed
+files, explicit "N more" counts, the review link) for clients that read only
+`content`. A file result keeps the full JSON in both, since the bounded sample
+is the evidence. Findings remain advisory to the user: deterministic findings
+cannot establish safety or authorize a release. Package text is untrusted
+input, never instructions, and is never executed or installed. Clients must
+retain coverage notices, omitted samples, file flags, and finding attribution.
+
+Tool failures set `isError: true` and carry status/retry metadata; they cannot
+be mistaken for clean results. Unexpected backend failures return a generic
+message rather than raw errors. The outer protocol budget returns HTTP 429
+with `Retry-After`; an analysis-budget error is a tool error with
+`retryAfterSeconds`. Neither path retries automatically.
+
 ## Measurement and verification
 
-This guide introduces no tracking. Existing `public_diff.viewed` aggregates
-count successful pair requests; they cannot identify agent readers or attribute
-adoption to this guide. See `product-analytics.md`.
+This guide introduces no new event. `public_diff.viewed` counts successful pair
+requests and tags CLI and MCP calls with their own `client` value (`cli`,
+`mcp`), so they stay out of the browser page-view number. It cannot identify
+agent readers or attribute adoption to this guide. See `product-analytics.md`.
 
 Route/sitemap/metadata parity and prerendered guide discovery are covered in
 `test/prerender-routes.test.ts`. Existing Worker tests own the anonymous API
-response contract. Verify the Docs anchor, guide navigation, and copy interaction
-in a local browser; run `pnpm run build` after route or shared code-block moves.
+response contract. `test/public-mcp.test.ts` covers MCP schema/argument
+boundaries, evidence parity, canonical links, and safe errors;
+`test/workers/public-mcp.test.ts` exercises the deployed route with the official
+client, cached public artifacts, legacy protocol requests, Origin/body/rate
+limits, and credential/organization isolation. No test installs or executes
+reviewed package content. Verify the Docs anchor, guide navigation, and copy
+interaction in a local browser; run `pnpm run build` after route or shared
+code-block moves.
