@@ -170,7 +170,7 @@ export async function applyCheckSuiteEvent(
     event.repositoryId,
     event.headSha,
   );
-  // Never synthesize reviews from suite events: a human PR's skip and an
+  // Never synthesize reviews from suite events: an out-of-scope skip or an
   // unrelated App check must not opt a repository into dependency review.
   if (!review) return { kind: "ignored", reason: "no dependency review for this check suite" };
   return { kind: "dependency_review_rerequested", review };
@@ -203,15 +203,17 @@ export type DependencyReviewWebhookOutcome =
 
 /**
  * Record a dependency-update PR's review. Only an installation mapped to an
- * organization that turned dependency review on, only PRs a dependency bot
- * opened, and only from a branch in the same repository: a fork's head is
- * someone else's commit, and the check would run against it. Anyone else's PR
- * gets a passing `skipped` check so a required check doesn't block it.
+ * organization that turned dependency review on and a branch in the same
+ * repository. Known dependency bots are trusted automation; other authors and
+ * senders must have repository write access before they can claim the review
+ * for a commit. Otherwise a reader could open a PR from a bot's branch against
+ * another base and register a passing review of the wrong dependency delta.
  */
 export async function applyPullRequestEvent(
   db: AppDb,
   event: ParsedPullRequestEvent,
   available: (organizationId: string) => Promise<boolean>,
+  authorizePullRequest?: (event: ParsedPullRequestEvent) => Promise<boolean>,
 ): Promise<DependencyReviewWebhookOutcome> {
   const installation = await getInstallationByExternalId(db, event.installationId);
   if (!installation || installation.status !== "active") {
@@ -224,7 +226,17 @@ export async function applyPullRequestEvent(
   if (!(await available(installation.organizationId))) {
     return { kind: "ignored", reason: "dependency review is not available" };
   }
-  if (!isDependencyBot(event.authorLogin, event.authorType, settings.extraBotLogins)) {
+  const dependencyBot = isDependencyBot(
+    event.authorLogin,
+    event.authorType,
+    settings.extraBotLogins,
+  );
+  const authorizedHuman =
+    !dependencyBot &&
+    event.headRepositoryId === event.repositoryId &&
+    Boolean(event.authorLogin && event.senderLogin) &&
+    (await authorizePullRequest?.(event)) === true;
+  if (!dependencyBot && !authorizedHuman) {
     return {
       kind: "dependency_review_skipped",
       organizationId: installation.organizationId,

@@ -881,18 +881,21 @@ export default function DocsPage() {
             <Subsection id="dependency-review-check" title="Required check">
               <Prose>
                 With the GitHub App installed, Drydock can decide instead of comment. Turn on
-                dependency review in Settings and each Dependabot or Renovate PR gets a{" "}
-                <InlineCode>Drydock dependency review</InlineCode> check. Updates that add no
-                capability pass, so auto-merge can take them the same day. An update that adds or
-                changes an install script, adds a native binary, a dependency, or a{" "}
-                <InlineCode>bin</InlineCode> command, reaches the release-risk threshold, or changes
-                files Drydock could not read is held until someone with write access to the
+                dependency review in Settings and each PR from a branch in the installed repository
+                gets a <InlineCode>Drydock dependency review</InlineCode> check. Updates that add no
+                capability pass, so auto-merge can take them the same day. PRs with no dependency
+                additions or version changes pass once the supported dependency inputs are read. An
+                update that adds or changes an install script, adds a native binary, a dependency,
+                or a <InlineCode>bin</InlineCode> command, reaches the release-risk threshold, or
+                changes files Drydock could not read is held until someone with write access to the
                 repository approves it on the check. Transitive updates count too.
               </Prose>
               <Prose>
                 Make the check required in your branch rules, with the Drydock App as its source, to
                 enforce it. An approval covers that exact version change in that repository, so a
-                rebase keeps it. PRs people open get a skipped check, which passes. Packages your
+                rebase keeps it. Human authors and event senders need repository write access;
+                Dependabot, Renovate, and trusted automation logins configured in Settings are
+                recognized separately. Fork PRs are outside the review scope. Packages your
                 repository sends to another registry are never diffed and hold unless you turn off
                 holding unreviewed updates. The App needs the Checks (write), Pull requests (read),
                 and Contents (read) permissions, with Pull request, Check run, and Check suite

@@ -36,11 +36,14 @@ export function DependencyReviewSection({
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <div class="flex flex-col gap-2 max-w-[600px]">
             <Muted class="text-[13px] m-0">
-              Drydock reviews Dependabot and Renovate pull requests and posts a{" "}
+              Drydock reviews pull requests from branches in your repositories and posts a{" "}
               <span class="font-medium text-ink">Drydock dependency review</span> check. Clean
-              version bumps pass; a bump that adds a capability is held until someone with write
-              access to the repository approves it on the check. An approval covers that exact
-              version change in that repository, including after a rebase.
+              version bumps pass. PRs with no dependency additions or updates pass once the
+              supported dependency inputs are read. A bump that adds a capability is held until
+              someone with write access to the repository approves it on the check. An approval
+              covers that exact version change in that repository, including after a rebase. Human
+              authors and event senders need repository write access. Fork PRs are outside the
+              review scope.
             </Muted>
             <Muted class="text-[12px] m-0">
               The GitHub App needs Checks (write), Pull requests (read), and Contents (read)
@@ -156,7 +159,8 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
         </Field>
         <Muted class="text-[12px] m-0">
           dependabot[bot] and renovate[bot] are recognized already. List any other GitHub logins
-          that open dependency update pull requests, separated by commas, up to 10.
+          used by trusted dependency automation without repository collaborator permission,
+          separated by commas, up to 10. Repository writers need no entry.
         </Muted>
 
         {saveError ? <Alert tone="critical">{saveError}</Alert> : null}

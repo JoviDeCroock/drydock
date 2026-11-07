@@ -4,10 +4,12 @@ Release-age cooldowns (pnpm `minimumReleaseAge`, Renovate `minimumReleaseAge`,
 uv `exclude-newer`) delay every dependency update by the same number of days
 and hope someone else notices a bad release first. Dependency review replaces
 the timer with the diff: the Drydock GitHub App posts a **Drydock dependency
-review** check on each Dependabot or Renovate PR. A version change that adds
-no capability passes and can auto-merge the same day. A change that adds one
-is held until someone with write access to the repository reads the diff and
-approves it.
+review** check on pull requests from branches in the installed repository,
+including PRs opened by people. A complete review with no npm or PyPI dependency
+additions or version changes passes with **No dependency additions or updates**.
+A version change that adds no capability passes and can auto-merge the same day. A change
+that adds one is held until someone with write access to the repository reads
+the diff and approves it.
 
 The free PR comment workflow (`dependency-pr-diff-links.md`) shows the same
 diffs without the App. It informs; this check decides, because a repository can
@@ -18,16 +20,20 @@ make it required.
 1. GitHub sends `pull_request` (`opened`, `synchronize`, `reopened`) to
    `POST /webhooks/github`. `server/lib/dependency-review/webhook.ts` records a
    review only when the installation is active and mapped to an organization,
-   the organization turned dependency review on, the PR's author is
-   `dependabot[bot]` or `renovate[bot]` with account type `Bot` (or a login
-   the organization listed, for self-hosted Renovate), and the head branch is in
-   the same repository. A fork's head is someone else's commit. Each
+   the organization turned dependency review on, and the head branch is in
+   the same repository. For a human-authored PR, the author and event sender
+   (the pusher on `synchronize`) must both have repository write access before
+   a review row is created. Trusted dependency automation is recognized by
+   `dependabot[bot]` or `renovate[bot]` with account type `Bot`, or a login
+   the organization listed for self-hosted automation. Each
    (installation, repository, head sha) gets one `dependency_reviews` row. A
    redelivered event enqueues a row again when it is `queued` or `failed` (the
    first enqueue may have been lost), `superseded` (the PR was reopened), or
    `running` past its 15-minute claim lease (its worker died). A completed row
-   is left alone. A PR anyone else opened gets a `skipped` check, which GitHub
-   counts as passing, so a required check doesn't block people's own PRs.
+   is left alone. Fork PRs are outside the review scope: trusted bot fork PRs
+   are ignored, and other fork PRs use the guarded skip path below. A same-repo
+   PR whose author or sender lacks write access also uses that path, without
+   claiming a review row for another person's branch.
 2. **Newest run wins.** Check runs belong to a commit, and GitHub reads the
    newest run of a name. Anyone can open a PR from a fork at a bot PR's head
    commit, so a skip is never posted on a commit that has a review. A skip is
@@ -89,10 +95,23 @@ make it required.
    `workspaces` globs, a uv source path). A requirements file covers only its own
    pip-tools input (`X.in` for `X.txt`), or a manifest its `pip-compile` or
    `uv pip compile` header line names. Otherwise its new versions were never
-   resolved where Drydock can see them. A requirements file whose unpinned lines
+   resolved where Drydock can see them. There is one exception: up to 20
+   uncovered `package.json` files are compared at the merge base and head.
+   Changes limited to known package metadata, such as name, version, description,
+   scripts, or exports, need no changed lockfile when all dependency and resolver
+   inputs remain equal. Formatting and object-key order do not count as changes.
+   A newly added or renamed metadata-only manifest is compared with an empty
+   object: moving dependency declarations can change their workspace or registry
+   resolution even when their strings are unchanged. Changed
+   dependency declarations, overrides, workspaces, package-manager settings, or
+   unknown fields remain unread without lockfile coverage. Malformed, missing,
+   over-8-MiB, or over-cap manifest data remains unread too; Python manifests
+   retain the lockfile requirement. The comparison parses data only and never
+   executes scripts (`server/lib/dependency-review/manifests.ts`).
+   A requirements file whose unpinned lines
    (ranges such as `foo>=1.3`, URLs, VCS lines, `-r` includes) changed is unread
-   too. pip follows `-r`/`-c` into files of any name, so any other `.txt` a bot
-   changed is read as requirements: one that isn't holds on its text change.
+   too. pip follows `-r`/`-c` into files of any name, so any other changed `.txt`
+   is read as requirements: one that isn't holds on its text change.
 5. **Private names stay home.** An npm name the repository's committed
    `.npmrc` or `.yarnrc.yml` routes to a non-public registry (a scope or the
    default) is never diffed, the same rule as the PR comment workflow. Neither is
@@ -147,8 +166,11 @@ make it required.
    action. Its summary lists held bumps with their reasons, release risk, file
    counts, and the top findings, then unreviewed bumps, new packages, and clear
    bumps, each linked to its public `/diff` page (private-source bumps get no
-   link). The title says "clear" only when every bump's diff was read and held
-   nothing. `details_url` opens the review in the dashboard.
+   link). A complete review with no added packages or version changes succeeds
+   with **No dependency additions or updates**. Unread files or an incomplete
+   listing never receive that title, even when policy lets them pass. The title
+   says "clear" only when every bump's diff was read and held nothing.
+   `details_url` opens the review in the dashboard.
 
 ## Approval
 
@@ -194,7 +216,7 @@ Dependencies link and the settings section (`GET /api/v1/organizations` carries
 before anything is posted, not even a skipped check. A failed flag lookup reads
 as off. Check-run actions on reviews posted earlier still work, so turning the
 flag off leaves existing holds approvable; a repository that made the check
-required stops getting it on new bot PRs. A deployment without a `FLAGS` binding
+required stops getting it on new PRs. A deployment without a `FLAGS` binding
 (self-hosting) offers it to every organization, which still has to turn it on in
 settings.
 
@@ -205,6 +227,11 @@ Members read it, and owners and admins (`roleCanManageIntegrations`) change it.
 Each change writes `dependency_review.settings_updated`. The policy is stored as
 JSON and parsed field by field with defaults, so a missing or invalid field
 holds more, never less, and a new field needs no migration.
+
+Extra bot logins identify trusted dependency automation, such as self-hosted
+Renovate, whose account may not have repository collaborator permission. Human
+repository writers need no allowlist entry. List only trusted automation: these
+logins bypass the human author and sender permission checks.
 
 The GitHub App needs **Checks: read and write**, **Pull requests: read**, and
 **Contents: read**, and must subscribe to the **Pull request**, **Check run**, and **Check suite**
@@ -252,16 +279,16 @@ bumps and waits on held ones.
 - Lockfiles other than `package-lock.json`/`npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, and requirements files
   (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other
-  `.txt` a bot changes). The npm
+  changed `.txt`). The npm
   and PyPI ones (`bun.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`) are
   named as unread and hold. Other ecosystems' PRs (GitHub Actions, Docker, Go)
-  change no lockfile Drydock reads and pass as "No reviewable package updates".
+  change no lockfile Drydock reads and pass as **No dependency additions or
+  updates**; that result covers only the supported npm and PyPI inputs.
 - Renovate branch automerge (`automergeType: branch`) opens no PR, so no
   review runs and the required check doesn't pass on the branch, unless
-  someone with write access opens a PR from it, which skips the check like any
-  person's PR.
-- PRs opened by people. Only dependency bots' PRs are reviewed; the rest get a
-  `skipped` check. A person's commit pushed onto a bot's PR is reviewed, because
-  the PR's author is still the bot.
+  someone with write access opens a PR from it, which runs dependency review.
+- Fork contributions. Dependency review currently covers branches in the
+  installed repository only. A nonwriter's PR from someone else's branch
+  cannot create a review row or earn a passing skip on that branch's commit.
 - New packages have no diff. They are listed, and hold only under
   `holdOnNewPackages`.

@@ -246,7 +246,7 @@ function ReviewReport({
 
       {settled && bumps.length === 0 && !partial ? (
         <Card>
-          <EmptyLine>This pull request changes no package version Drydock can review.</EmptyLine>
+          <EmptyLine>No package version changes were collected for this review.</EmptyLine>
         </Card>
       ) : null}
 
@@ -333,8 +333,8 @@ function ReviewHeadline({
   }
   return (
     <Muted class="text-[14px] m-0">
-      {review.bumpCount === 0
-        ? "No reviewable package updates."
+      {review.bumpCount === 0 && allClear
+        ? "No dependency additions or updates."
         : allClear
           ? `${review.bumpCount === 1 ? "The update is" : `All ${review.bumpCount} updates are`} clear.`
           : "No updates are held. Some updates were not reviewed."}

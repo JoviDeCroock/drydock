@@ -52,6 +52,7 @@ import {
   parseLockfile,
   unpinnedRequirementsChanged,
 } from "./lockfiles";
+import { npmManifestHasOnlyMetadataChanges } from "./manifests";
 import {
   concludeDependencyReview,
   evaluateBumpEvidence,
@@ -90,18 +91,19 @@ import type {
 const MAX_REVIEWED_BUMPS = 40;
 const DIFF_CONCURRENCY = 4;
 const MAX_LOCKFILES = 20;
+const MAX_MANIFESTS = 20;
 // npm and PyPI lockfiles Drydock can't parse. A PR that changes one is not
 // "nothing to review": it is unread, and holds like any unreviewed bump.
 const UNPARSED_LOCKFILE =
   /(?:^|\/)(?:bun\.lockb?|poetry\.lock|Pipfile\.lock|pdm\.lock|pylock(?:\.[^/]+)?\.toml)$/;
-// Manifests a dependency bot edits. One changed with no parsed lockfile of its
+// A manifest changed with no parsed lockfile of its
 // ecosystem at or above its directory (a library without a lockfile, or a
 // Python project in a PR that only touched npm's) names versions nothing here
 // resolved.
 const NPM_MANIFEST = /(?:^|\/)package\.json$/;
 const PYPI_MANIFEST = /(?:^|\/)(?:pyproject\.toml|setup\.cfg|setup\.py|Pipfile|[^/]+\.in)$/;
-// pip follows `-r`/`-c` into files of any name, and a bot edits those too. A
-// `.txt` a dependency bot changed is read as requirements: anything in it that
+// pip follows `-r`/`-c` into files of any name. A changed
+// `.txt` is read as requirements: anything in it that
 // isn't a pin is compared as text, so a file that isn't one holds, not passes.
 const OTHER_REQUIREMENTS = /\.txt$/;
 // Under the queue consumer's wall-clock limit with room to post the result.
@@ -125,7 +127,7 @@ export interface DependencyReviewJobInput {
   rerun?: boolean;
   // `checkRunId` is the run clicked; a Re-run since then made it history.
   approver?: { login: string; githubId: number; checkRunId?: number };
-  // A PR no dependency bot opened, in an organization that enabled the check.
+  // A PR outside the review scope, or a legacy queued skip.
   skip?: {
     installationRowId: string;
     repositoryId: number;
@@ -433,12 +435,15 @@ async function collectBumps(
     manifest: null,
     fallback: !lockfileKindForPath(file.filename),
   }));
+  let mergeBasePromise: Promise<string> | undefined;
+  const mergeBaseRef = () =>
+    (mergeBasePromise ??= fetchMergeBase(token, repo, baseSha, review.headSha));
   if (lockfiles.length === 0) {
-    unreadLockfiles.push(...uncoveredManifests(changed, heads));
+    unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
     return { bumps: [], unreadLockfiles, listingComplete: complete };
   }
 
-  const mergeBase = await fetchMergeBase(token, repo, baseSha, review.headSha);
+  const mergeBase = await mergeBaseRef();
   const registries = new Map<string, Promise<CustomRegistries>>();
   const byChange = new Map<string, DependencyBump>();
   for (const { file, kind } of lockfiles.slice(0, MAX_LOCKFILES)) {
@@ -485,7 +490,7 @@ async function collectBumps(
       else byChange.set(key, { ...bump });
     }
   }
-  unreadLockfiles.push(...uncoveredManifests(changed, heads));
+  unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
   // Direct bumps first: when the per-review cap bites, it bites transitive churn.
   const bumps = [...byChange.values()].sort(
     (a, b) => Number(b.direct) - Number(a.direct) || a.name.localeCompare(b.name),
@@ -534,8 +539,46 @@ interface HeadLockfile {
   // Null when the lockfile went unread, which already holds the review.
   text: string | null;
   manifest: string | null;
-  // A `.txt` read as requirements only because a bot changed it.
+  // A `.txt` read as requirements without a recognized requirements filename.
   fallback: boolean;
+}
+
+async function unreadManifests(
+  context: ReviewContext,
+  changed: readonly PullRequestFile[],
+  heads: readonly HeadLockfile[],
+  mergeBaseRef: () => Promise<string>,
+): Promise<string[]> {
+  const unread: string[] = [];
+  let inspected = 0;
+  for (const path of uncoveredManifests(changed, heads)) {
+    // Bound API reads independently of the lockfile cap. Unread manifests
+    // still hold; a large PR cannot turn a capped comparison into a pass.
+    if (!NPM_MANIFEST.test(path) || inspected >= MAX_MANIFESTS) {
+      unread.push(path);
+      continue;
+    }
+    inspected += 1;
+    const file = changed.find((entry) => entry.filename === path)!;
+    const [before, after] = await Promise.all([
+      // Moving a manifest can change workspace or registry resolution even
+      // when its dependency strings match the old directory's manifest.
+      file.status === "added" || file.status === "renamed"
+        ? "{}"
+        : readRepositoryFile(context.token, context.repo, path, await mergeBaseRef()),
+      readRepositoryFile(context.token, context.repo, path, context.review.headSha),
+    ]);
+    if (
+      before === null ||
+      after === null ||
+      before === "too-large" ||
+      after === "too-large" ||
+      !npmManifestHasOnlyMetadataChanges(before, after)
+    ) {
+      unread.push(path);
+    }
+  }
+  return unread;
 }
 
 /**
@@ -856,8 +899,8 @@ function renderInput(
 }
 
 /**
- * A PR no dependency bot opened gets a `skipped` run, which GitHub counts as
- * passing, so making the check required doesn't block people's own PRs.
+ * A PR outside the review scope gets a `skipped` run, which GitHub counts as
+ * passing. Legacy skip jobs can also arrive after the scope has changed.
  *
  * Check runs belong to a commit, not a PR, and GitHub reads the newest run of
  * a name. Anyone can open a PR from a fork at a bot PR's head commit, so a
@@ -897,8 +940,8 @@ async function postSkippedCheck(
     {
       status: "in_progress",
       output: {
-        title: "Checking the PR's author",
-        summary: "Drydock reviews dependency bots' PRs.",
+        title: "Checking dependency review scope",
+        summary: "Drydock reviews pull requests from branches in this repository.",
       },
     },
   );
@@ -919,7 +962,7 @@ async function postSkippedCheck(
         output: {
           title: "Commit is a branch in this repository",
           summary:
-            "This PR's head commit is the tip of a branch here, which may be a dependency bot's, and its author can't push to this repository. Push a new commit to the PR to get past this.",
+            "This PR shares its head commit with a branch in this repository, but its author or event sender lacks repository write access. Drydock cannot post a passing skip on a commit another PR may need reviewed.",
         },
       },
       null,
@@ -935,8 +978,9 @@ async function postSkippedCheck(
         status: "completed",
         conclusion: "skipped",
         output: {
-          title: "Not a dependency-update PR",
-          summary: "Drydock reviews PRs opened by dependency bots. This PR's author is not one.",
+          title: "Outside dependency review scope",
+          summary:
+            "Drydock reviews pull requests from branches in this repository opened by repository writers or trusted dependency bots. Fork pull requests are not reviewed.",
         },
       },
       null,
@@ -961,7 +1005,7 @@ async function postSkippedCheck(
       conclusion: "cancelled",
       output: {
         title: "Replaced by the dependency review",
-        summary: "A dependency bot's PR has this commit as its head, so Drydock reviews it.",
+        summary: "A pull request under dependency review has this commit as its head.",
       },
     },
     null,

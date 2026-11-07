@@ -1,6 +1,6 @@
 /**
- * The organization's recent dependency reviews: one row per Dependabot or
- * Renovate pull request the GitHub App checked, newest first.
+ * The organization's recent dependency reviews: one row per pull request
+ * commit the GitHub App checked, newest first.
  */
 import type { ComponentChildren } from "preact";
 import { useModel } from "@preact/signals";
@@ -62,8 +62,8 @@ export default function DependencyReviewsPage() {
             <Badge>Beta</Badge>
           </div>
           <Muted class="text-[14px] leading-[1.55] m-0">
-            Dependabot and Renovate pull requests the Drydock GitHub App checked. Held updates wait
-            for an approval on the pull request's Drydock dependency review check.
+            Pull requests from branches in your repositories that the Drydock GitHub App checked.
+            Held updates wait for an approval on the pull request's Drydock dependency review check.
           </Muted>
         </div>
         <LinkButton href={SETTINGS_HREF} variant="secondary" class="shrink-0 self-start">
@@ -95,7 +95,7 @@ export default function DependencyReviewsPage() {
         <Card>
           <EmptyLine>
             {enabled
-              ? "No dependency update pull requests have been reviewed in this organization yet."
+              ? "No pull requests have been reviewed in this organization yet."
               : "Dependency review is off for this organization."}
           </EmptyLine>
         </Card>

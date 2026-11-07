@@ -248,6 +248,20 @@ test("a fully reviewed update can be described as clear", async ({ page }) => {
   await expect(page.getByText("The update is clear.", { exact: true })).toBeVisible();
 });
 
+test("complete coverage with no bumps reports no dependency additions or updates", async ({
+  page,
+}) => {
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 0 }),
+    bumps: () => [],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+  await expect(
+    page.getByText("No dependency additions or updates.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("All 0 updates are clear.")).toHaveCount(0);
+});
+
 test("unread-only holds name the files without claiming zero updates are held", async ({
   page,
 }) => {
