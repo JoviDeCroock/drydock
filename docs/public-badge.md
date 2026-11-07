@@ -22,6 +22,7 @@ Disclosure and feed identities belong to [public-reports.md](./public-reports.md
 | Method | Path | Auth / role | Result |
 | --- | --- | --- | --- |
 | GET | `/public/badge/:ecosystem/:package[?tag=]` | Anonymous | Shields endpoint payload; owner `server/routes/public-reports.ts` |
+| GET | `/public/badge-verdict/:ecosystem/:package` | Anonymous | Default-tag badge's answer as data for the `/diff` page the badge links to; see [Badge verdict](#badge-verdict) |
 | GET | `/api/v1/packages/:name/badge[?ecosystem=]` | Session, any org member | Own badge state and eligibility; owner `server/routes/packages.ts` |
 | PUT | `/api/v1/packages/:name/badge[?ecosystem=]` | Session, org owner/admin | `{"enabled":false}` disables; `true` removes own opt-out; owner `server/routes/packages.ts` |
 
@@ -171,6 +172,20 @@ The [publication monitor](./publication-monitor.md) can **Scan** an alerted rele
 | Other tag, stable pick | Newer stable within same major (maintenance line) |
 | Other tag, prerelease pick | Newer prerelease with same leading channel identifier, stripping trailing digits |
 | Outside inference | Version-shape rules do not detect it unless recorded tag supplies evidence |
+
+### Badge verdict
+
+An npm badge links to `/diff/<name>`, which resolves to the latest published pair. `GET /public/badge-verdict/:ecosystem/:package` hands that page the default-tag badge's answer, computed by the badge's own read (`resolveBadge` in `server/routes/public-reports.ts`: same candidate queries, switch, pick, and supersession probe), so it can never say more than the badge.
+
+| Badge would say | Verdict response |
+| --- | --- |
+| approved / rejected / published without approval | `{ verdict: { version, outcome, decidedAfterPublish } }`, `outcome` one of `approved`, `rejected`, `published_without_approval` |
+| `not reviewed`, undecided `reviewed · <risk>`, superseded `not reviewed`, any `unverified` pick | `{ verdict: null }` (byte-identical for unscanned and unqualified packages: no enumeration oracle) |
+
+1. The `/diff` page renders the verdict only when `version` equals the diff's `to` version; an older pair, or a newer release the badge has not caught up with, carries no claim. The claim is worded as the publisher's own, beside the page's own risk grade.
+2. Approval copy states no timing beyond `decidedAfterPublish`: a staged review ran before release, but its decision may have come after npm published.
+3. Same ecosystems, names, and per-IP rate-limit bucket as the badge; colo-cached 300 s under its own key and purged with the badge on revoke/unlist/switch, so both age together.
+4. `/api/public/v1/package-diff` stays D1-free: the page fetches this route separately.
 
 ### Caching and embeds
 

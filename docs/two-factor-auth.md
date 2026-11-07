@@ -88,7 +88,7 @@ Approving a gate releases the held Actions job and publishing proceeds over Trus
 3. A failed or missing step-up never mutates the gate (it stays `pending`) and never posts to GitHub.
 4. Limits: `github-app:gate-decision-2fa:<userId>` 10 per 15 min on top of `github-app:gate-decision:<orgId>` 60/min.
 5. The gate's public shape carries `organizationRequiresTwoFactor`; `GateDecisionDialog` shows the code field (or the "enable 2FA in Settings" blocker) to match what the route enforces.
-6. A session staged-publish decision (`POST /api/v1/scans/:id/decision`, batch `POST /api/v1/scans/batch-approval`) is an advisory audit record; it never publishes or cancels on npm and has no step-up.
+6. A session staged-publish decision (`POST /api/v1/scans/:id/decision`, batch `POST /api/v1/scans/batch-approval`) is an advisory audit record; it never publishes or cancels on npm and has no step-up. Neither form accepts a workflow-gate package: the route answers `409` ("decide a gated release on its workflow gate"), so gate package verdicts come only from the gate route with its step-up.
 7. A `decide_staged` key records that same staged decision for `drydock approve`, but needs fresh creator TOTP on every decision; only an enrolled member creates one. Every workflow-gate package is refused (`server/routes/scans/decisions.ts`; [API keys](./api-keys.md#recording-staged-decisions)).
 
 Staged-publish decision UI (no step-up bearing):

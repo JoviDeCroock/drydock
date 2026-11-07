@@ -97,11 +97,28 @@ function badgeCacheKey(origin: string, packageKey: string, tag: string): Request
   );
 }
 
+// The verdict answers only the default tag, so one entry per package. It is
+// purged with the badge so the two surfaces cannot disagree past a decision.
+function badgeVerdictCacheKey(origin: string, packageKey: string): Request {
+  return new Request(`${origin}/public/badge-verdict-key/${encodeURIComponent(packageKey)}`);
+}
+
 function threatFeedCacheKey(origin: string): Request {
   return new Request(`${origin}/public/threat-feed.json`);
 }
 
 export function publicFeedCacheKey(origin: string, routePath: string, search = ""): Request {
+  const verdict = /^\/badge-verdict\/([^/]+)\/(.+)$/.exec(routePath);
+  if (verdict) {
+    const ecosystem = verdict[1] as PublicEcosystem;
+    if (PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+      let name = verdict[2];
+      try {
+        name = decodeURIComponent(name);
+      } catch {}
+      return badgeVerdictCacheKey(origin, publicPackageLookupKey(ecosystem, name));
+    }
+  }
   const badge = /^\/badge\/([^/]+)\/(.+)$/.exec(routePath);
   if (badge) {
     const ecosystem = badge[1] as PublicEcosystem;
@@ -139,6 +156,7 @@ export function purgePublicFeedCache(
       executionCtx,
       badgeCacheKey(origin, publicPackageKey, badgeTag ?? DEFAULT_BADGE_TAG),
     );
+    coloCacheDelete(executionCtx, badgeVerdictCacheKey(origin, publicPackageKey));
   }
 }
 
@@ -714,4 +732,58 @@ export function buildBadgePayload(
           : (RISK_BADGE_COLOR[risk] ?? "lightgrey"),
     cacheSeconds: BADGE_CACHE_SECONDS,
   };
+}
+
+type BadgeVerdictOutcome = "approved" | "rejected" | "published_without_approval";
+
+/**
+ * The badge's answer as structured data, for the `/diff` page a badge click
+ * lands on. It is derived from the same pick and supersession the badge
+ * renders, so it can only ever say less than the badge: every claim that is
+ * not the registry-verified publisher's own decision on an npm version comes
+ * back `null`, because the page words it as "its publisher".
+ */
+export interface BadgeVerdict {
+  /** npm's version string, never the manifest's. */
+  version: string;
+  outcome: BadgeVerdictOutcome;
+  /** The publisher decided after npm had already published the release. */
+  decidedAfterPublish: boolean;
+}
+
+export function buildBadgeVerdict(
+  row: SharedScanRow | null,
+  superseded: BadgeSupersession | null,
+): BadgeVerdict | null {
+  // `unverified` badges, undecided `reviewed · <risk>` badges, and `not
+  // reviewed` all stay off the page: the first does not speak for the
+  // publisher, the second would put a second risk grade beside the diff's own.
+  if (!row || scanIdentity(row) !== "registry-verified") return null;
+  if (superseded) {
+    // `blocked` covers both a guarded post-release decline and npm publishing
+    // over an earlier rejection, so it carries no timing either way.
+    if (superseded.blocked) {
+      return {
+        version: badgeVersion(superseded.version),
+        outcome: "rejected",
+        decidedAfterPublish: false,
+      };
+    }
+    if (superseded.unapproved) {
+      return {
+        version: badgeVersion(superseded.version),
+        outcome: "published_without_approval",
+        decidedAfterPublish: false,
+      };
+    }
+    return null;
+  }
+  // Only npm's own version: a manifest version is package bytes, and the page
+  // matches this string against the version it is showing.
+  if (!row.registryVersion) return null;
+  const version = badgeVersion(row.registryVersion);
+  const decidedAfterPublish = Boolean(row.postRelease);
+  if (row.decision === "publish") return { version, outcome: "approved", decidedAfterPublish };
+  if (row.decision === "no_publish") return { version, outcome: "rejected", decidedAfterPublish };
+  return null;
 }

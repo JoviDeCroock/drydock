@@ -47,7 +47,7 @@ Hono registration order makes mounts above the session guard anonymous (`server/
 |`route /api/public/v1/package-diff`|`GET /`, `/versions`, `/file`, `/atpm-stage`|Public release data only|Per-IP limits before validation or fetch; shared cold-computation budget|`server/routes/public-diff.ts`|
 |`route /api/public/v1/mcp`|`GET`, `POST`, `DELETE /`|Tools over public package diff only; no organization selector or arbitrary fetch target|Per-IP 120/minute; 16 KiB body cap; canonical Origin only when present|`server/routes/public-mcp.ts`|
 |`route /og`|`GET /og/diff/**/card.png`|Reads public-diff result cache only|Per-IP limit charged only on a cold render|`server/routes/og.ts`|
-|`route /public`|`GET /public/reports/:token` (+ `/file`, `/attestation`), `GET /public/attestation-key`, `GET /public/threat-feed.json`, `GET /public/badge/:ecosystem/*`|Share token (256-bit) or publication rules below|One per-IP bucket for reports/feed; separate per-IP badge bucket|`server/routes/public-reports.ts`|
+|`route /public`|`GET /public/reports/:token` (+ `/file`, `/attestation`), `GET /public/attestation-key`, `GET /public/threat-feed.json`, `GET /public/badge/:ecosystem/*`, `GET /public/badge-verdict/:ecosystem/*` ([subset of the badge](./public-badge.md#badge-verdict))|Share token (256-bit) or publication rules below|One per-IP bucket for reports/feed; separate per-IP badge bucket|`server/routes/public-reports.ts`|
 |`use /api/*` (x2)|Better Auth init (`503` if unconfigured), CSRF origin check|Middleware only|—|`server/middleware/csrf-origin.ts`|
 |`use /api/auth/*`|Per-IP auth buckets|Middleware only|See [rate limiting](#rate-limiting)|`server/middleware/auth-rate-limit.ts`|
 |`get /api/auth/config`|`{ githubSignIn, emailVerification, passwordReset }` booleans|Env presence only; no bindings, D1, KV, or caller data|None needed; it cannot be made to do work|`server/index.ts`|
@@ -65,7 +65,7 @@ Hono registration order makes mounts above the session guard anonymous (`server/
 6. A share card never triggers analysis: on a cache miss it renders name and version with no numbers. Names and versions are XML-escaped, stripped of control characters and bidi overrides, and width-fitted.
 7. `pkg.pr.new` egress goes through the strict parser in `src/lib/pkg-pr-new.ts`: only `https://pkg.pr.new` (exact host, no port, credentials, query, or fragment) with a canonical `owner/repo/name@ref` path. `fetchPkgPrNewTarballStream` accepts no token option. Preview bytes never enter the shared colo tarball cache; results with a preview side are cached at most 15 minutes.
 8. `/api/public/v1/package-diff/atpm-stage` redirects browsers and returns JSON to API callers; it persists no staged record or link-resolution event and creates no session. Requiring a session would gate a diff of public bytes at the one moment it matters, before publication.
-9. Public pages are not instrumented: no referrer classification, campaign parameters, or page-view event. The only analytics is `public_diff.viewed`, written when a diff is computed, carrying the package name and nothing about the visitor ([product analytics](./product-analytics.md)).
+9. Public pages carry no visitor analytics; the only event is `public_diff.viewed` with the package name ([product analytics](./product-analytics.md)).
 
 |Registry provenance|Endpoint|Bounds / owner|
 |---|---|---|
@@ -123,7 +123,7 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 5. No enumeration oracle: a badge carries no package name, org identity, or share token, and unlisted-but-scanned, never-scanned, and switched-off packages return byte-identical bodies. A throttled badge says `unavailable`, never `not reviewed`.
 6. A default-on badge carries a verdict only, never an undecided or rejected review, report link, findings, or feed entry.
 7. For an already-answering package, a newer unlisted release on its line, or same-org monitor evidence short of approved match (discrepancy/digest mismatch), displays `<version> not reviewed`. `unknown` evidence and other-org watches never count. Version comes from npm's `registry_version`, never the tarball manifest.
-8. Badge and feed are colo-cached for 300 s; revoke/unlist purges only the serving colo (best effort), so other colos and badge proxies serve the old body until TTL. Treat them as eventually consistent; the report route is the authority.
+8. Badge, badge verdict, and feed are colo-cached for 300 s; revoke/unlist purges only the serving colo (best effort), so other colos and badge proxies serve the old body until TTL. Treat them as eventually consistent; the report route is the authority.
 
 ## Egress
 
