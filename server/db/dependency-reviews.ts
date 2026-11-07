@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, exists, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -544,4 +545,78 @@ export async function supersedeDependencyReview(
     .update(dependencyReviews)
     .set({ status: "superseded", updatedAt: new Date() })
     .where(and(eq(dependencyReviews.id, reviewId), eq(dependencyReviews.checkRunId, checkRunId)));
+}
+
+// Approvals are their own rows keyed on the change, so deleting a review never
+// revokes one (`review_id` is set null). A row with a newer review on the same
+// PR is only reachable from that old commit's check run; past the short window
+// nobody is clicking it, and it holds a full `bumps_json` per rebase. "Newer"
+// is by creation, not the PR's live head, which only GitHub knows: a branch
+// force-pushed back to an already-reviewed commit reuses the older row. Every
+// row goes after the flat window, including an open PR's idle head: a push or
+// reopen opens a new review.
+export const DEPENDENCY_REVIEW_RETENTION_DAYS = 90;
+export const REPLACED_DEPENDENCY_REVIEW_RETENTION_DAYS = 14;
+const PRUNE_BATCH_SIZE = 500;
+// Caps one tick's work; a backlog drains over later ticks.
+const PRUNE_MAX_BATCHES = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface PrunedDependencyReviewCounts {
+  replaced: number;
+  expired: number;
+}
+
+export async function pruneDependencyReviews(
+  db: AppDb,
+  now: Date = new Date(),
+): Promise<PrunedDependencyReviewCounts> {
+  const newer = alias(dependencyReviews, "newer_review");
+  const replacedCutoff = new Date(
+    now.getTime() - REPLACED_DEPENDENCY_REVIEW_RETENTION_DAYS * DAY_MS,
+  );
+  const expiredCutoff = new Date(now.getTime() - DEPENDENCY_REVIEW_RETENTION_DAYS * DAY_MS);
+  const replaced = await deleteInBatches(
+    db,
+    and(
+      lt(dependencyReviews.updatedAt, replacedCutoff),
+      exists(
+        db
+          .select({ id: newer.id })
+          .from(newer)
+          .where(
+            and(
+              eq(newer.installationRowId, dependencyReviews.installationRowId),
+              eq(newer.repositoryId, dependencyReviews.repositoryId),
+              eq(newer.pullNumber, dependencyReviews.pullNumber),
+              gt(newer.createdAt, dependencyReviews.createdAt),
+            ),
+          ),
+      ),
+    ),
+  );
+  const expired = await deleteInBatches(db, lt(dependencyReviews.updatedAt, expiredCutoff));
+  return { replaced, expired };
+}
+
+async function deleteInBatches(db: AppDb, condition: ReturnType<typeof and>): Promise<number> {
+  let deleted = 0;
+  for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch += 1) {
+    const rows = await db
+      .delete(dependencyReviews)
+      .where(
+        inArray(
+          dependencyReviews.id,
+          db
+            .select({ id: dependencyReviews.id })
+            .from(dependencyReviews)
+            .where(condition)
+            .limit(PRUNE_BATCH_SIZE),
+        ),
+      )
+      .returning({ id: dependencyReviews.id });
+    deleted += rows.length;
+    if (rows.length < PRUNE_BATCH_SIZE) break;
+  }
+  return deleted;
 }

@@ -1,0 +1,2 @@
+CREATE INDEX `dependency_review_approvals_review_idx` ON `dependency_review_approvals` (`review_id`);--> statement-breakpoint
+CREATE INDEX `dependency_reviews_updated_idx` ON `dependency_reviews` (`updated_at`);
