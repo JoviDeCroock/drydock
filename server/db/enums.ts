@@ -20,6 +20,8 @@ export const SCAN_DECISION_FILTERS = [
 ] as const;
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
+export type ReportViewSurface = "web" | "notification";
+
 /**
  * What an organization API key may do, each level including the one before it.
  * `read` reaches only `API_KEY_ROUTES`; `scan` also starts reviews

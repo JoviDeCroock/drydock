@@ -62,6 +62,8 @@ export {
 
 export { hasLiveReleaseTarget, loadGateReviewHistory } from "./scan-gate-continuity";
 
+export { recordScanReportView } from "./scan-views";
+
 export {
   compareBadgeCandidates,
   enablePublicShare,
