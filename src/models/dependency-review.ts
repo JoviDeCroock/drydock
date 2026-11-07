@@ -6,7 +6,10 @@
  * open, on the same cadence as a running scan.
  */
 import { computed, createModel, effect, signal } from "@preact/signals";
-import type { DependencyReviewRecord } from "../../server/db/dependency-reviews";
+import type {
+  DependencyReviewCoverage,
+  DependencyReviewRecord,
+} from "../../server/db/dependency-reviews";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
   type DependencyReviewPolicy,
@@ -16,7 +19,7 @@ import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import { startBackgroundPoll } from "./background-poll";
 
-export type { DependencyReviewPolicy, ReviewedBump };
+export type { DependencyReviewCoverage, DependencyReviewPolicy, ReviewedBump };
 
 // Dates arrive as JSON strings.
 type Wire<T> = {
@@ -235,6 +238,10 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
   const notFound = signal(false);
   const review = signal<DependencyReview | null>(null);
   const bumps = signal<ReviewedBump[]>([]);
+  const coverage = signal<DependencyReviewCoverage>({
+    unreadLockfiles: [],
+    listingComplete: true,
+  });
   const pollingStalled = signal(false);
   let requestId = 0;
 
@@ -247,12 +254,15 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
   // it, as on a running scan.
   async function read(id: number): Promise<boolean> {
     try {
-      const data = await apiFetch<{ review: DependencyReview; bumps: ReviewedBump[] }>(
-        `${BASE}/${encodeURIComponent(reviewId)}`,
-      );
+      const data = await apiFetch<{
+        review: DependencyReview;
+        bumps: ReviewedBump[];
+        coverage: DependencyReviewCoverage;
+      }>(`${BASE}/${encodeURIComponent(reviewId)}`);
       if (id !== requestId) return true;
       review.value = data.review;
       bumps.value = data.bumps;
+      coverage.value = data.coverage;
       error.value = null;
       notFound.value = false;
       return true;
@@ -282,6 +292,7 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
     notFound,
     review,
     bumps,
+    coverage,
     inFlight,
     pollingStalled,
 

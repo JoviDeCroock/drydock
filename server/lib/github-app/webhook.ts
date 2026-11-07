@@ -8,12 +8,15 @@ import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./per
 import { recordGateRequest, type WorkflowGateRecord } from "./webhook-gates";
 import {
   applyCheckRunEvent,
+  applyCheckSuiteEvent,
   applyPullRequestEvent,
   parseCheckRunEvent,
+  parseCheckSuiteEvent,
   parsePullRequestEvent,
   type DependencyReviewParseError,
   type DependencyReviewWebhookOutcome,
   type ParsedCheckRunEvent,
+  type ParsedCheckSuiteEvent,
   type ParsedPullRequestEvent,
 } from "../dependency-review/webhook";
 
@@ -77,7 +80,8 @@ export type ParsedGithubEvent =
   | ParsedDeploymentProtectionEvent
   | ParsedInstallationLifecycleEvent
   | ParsedPullRequestEvent
-  | ParsedCheckRunEvent;
+  | ParsedCheckRunEvent
+  | ParsedCheckSuiteEvent;
 
 /**
  * Parse a raw webhook body for the events we care about. Returns a discriminated
@@ -110,6 +114,9 @@ export function parseGithubWebhookEvent(
   }
   if (eventName === "check_run") {
     return parseCheckRunEvent(payload as Record<string, unknown>);
+  }
+  if (eventName === "check_suite") {
+    return parseCheckSuiteEvent(payload as Record<string, unknown>);
   }
   return { error: "unsupported_event" };
 }
@@ -297,6 +304,7 @@ export async function applyGithubWebhookEvent(
     );
   }
   if (event.kind === "check_run") return applyCheckRunEvent(db, event, deps.appId);
+  if (event.kind === "check_suite") return applyCheckSuiteEvent(db, event, deps.appId);
 
   return { kind: "ignored", reason: "unhandled event kind" };
 }

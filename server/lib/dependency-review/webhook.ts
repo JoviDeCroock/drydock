@@ -43,12 +43,22 @@ export interface ParsedCheckRunEvent {
   senderId: number;
 }
 
+export interface ParsedCheckSuiteEvent {
+  kind: "check_suite";
+  action: "rerequested";
+  installationId: string;
+  repositoryId: number;
+  appId: string;
+  headSha: string;
+}
+
 export type DependencyReviewParseError =
   | "unsupported_action"
   | "missing_installation"
   | "missing_repository"
   | "missing_pull_request"
-  | "missing_check_run";
+  | "missing_check_run"
+  | "missing_check_suite";
 
 export function parsePullRequestEvent(
   body: Record<string, unknown>,
@@ -118,6 +128,52 @@ export function parseCheckRunEvent(
     senderLogin: typeof sender?.login === "string" ? sender.login : "",
     senderId: idNumber(sender?.id),
   };
+}
+
+export function parseCheckSuiteEvent(
+  body: Record<string, unknown>,
+): ParsedCheckSuiteEvent | { error: DependencyReviewParseError } {
+  if (body.action !== "rerequested") return { error: "unsupported_action" };
+  const installationId = idString(isRecord(body.installation) ? body.installation.id : null);
+  if (!installationId) return { error: "missing_installation" };
+  const repositoryId = idNumber(isRecord(body.repository) ? body.repository.id : null);
+  if (!repositoryId) return { error: "missing_repository" };
+  const suite = isRecord(body.check_suite) ? body.check_suite : null;
+  const appId = idString(isRecord(suite?.app) ? suite.app.id : null);
+  const headSha = typeof suite?.head_sha === "string" ? suite.head_sha : "";
+  if (!appId || !SHA.test(headSha)) return { error: "missing_check_suite" };
+  return {
+    kind: "check_suite",
+    action: "rerequested",
+    installationId,
+    repositoryId,
+    appId,
+    headSha,
+  };
+}
+
+/** A suite re-run names a commit, not an individual run's external id. */
+export async function applyCheckSuiteEvent(
+  db: AppDb,
+  event: ParsedCheckSuiteEvent,
+  appId: string,
+): Promise<DependencyReviewWebhookOutcome> {
+  if (event.appId !== appId)
+    return { kind: "ignored", reason: "check suite belongs to another app" };
+  const installation = await getInstallationByExternalId(db, event.installationId);
+  if (!installation || installation.status !== "active") {
+    return { kind: "ignored", reason: "installation not active" };
+  }
+  const review = await getDependencyReviewForHead(
+    db,
+    installation.id,
+    event.repositoryId,
+    event.headSha,
+  );
+  // Never synthesize reviews from suite events: an out-of-scope skip or an
+  // unrelated App check must not opt a repository into dependency review.
+  if (!review) return { kind: "ignored", reason: "no dependency review for this check suite" };
+  return { kind: "dependency_review_rerequested", review };
 }
 
 export type DependencyReviewWebhookOutcome =

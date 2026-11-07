@@ -174,7 +174,7 @@ Needs a GitHub App with deployment-protection webhooks and the GitHub App secret
 
 ### Dependency review
 
-Uses the same GitHub App. Add the **Checks: read and write**, **Pull requests: read**, and **Contents: read** repository permissions and subscribe to the **Pull request** and **Check run** events. GitHub asks each installation's owner to accept the new permissions; until they do, reviews in that installation fail to create their check run. With `FLAGS` wired, roll it out per organization with the `dependency-review` flag; each organization then turns it on in Settings → Integrations ([dependency-review.md](./dependency-review.md)).
+Uses the same GitHub App. Add the **Checks: read and write**, **Pull requests: read**, and **Contents: read** repository permissions and subscribe to the **Pull request**, **Check run**, and **Check suite** events. Check suite events deliver GitHub's **Re-run all checks** action. GitHub asks each installation's owner to accept the new permissions; until they do, reviews in that installation fail to create their check run. With `FLAGS` wired, roll it out per organization with the `dependency-review` flag; each organization then turns it on in Settings → Integrations ([dependency-review.md](./dependency-review.md)).
 
 ### Publisher setup assistant
 

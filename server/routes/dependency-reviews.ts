@@ -5,7 +5,7 @@ import {
   listDependencyReviews,
   MAX_EXTRA_BOT_LOGINS,
   parseExtraBotLogins,
-  readDependencyReviewBumps,
+  readDependencyReviewResult,
   saveDependencyReviewSettings,
 } from "../db/dependency-reviews";
 import { recordScanEvent } from "../db/events";
@@ -100,5 +100,5 @@ dependencyReviewRoutes.get("/:id", async (c) => {
   const { organizationId } = await requireActiveOrganizationContext(c, db);
   const review = await getDependencyReview(db, organizationId, c.req.param("id"));
   if (!review) return c.json({ error: "Dependency review not found." }, 404);
-  return c.json({ review, bumps: await readDependencyReviewBumps(db, review.id) });
+  return c.json({ review, ...(await readDependencyReviewResult(db, review.id)) });
 });

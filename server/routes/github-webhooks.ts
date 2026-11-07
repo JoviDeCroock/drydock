@@ -69,6 +69,7 @@ const WEBHOOK_RATE_LIMITS: Record<ParsedGithubEvent["kind"], number> = {
   installation: 60,
   pull_request: 240,
   check_run: 120,
+  check_suite: 120,
 };
 
 githubWebhookRoutes.post("/github", async (c) => {

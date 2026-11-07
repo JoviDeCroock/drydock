@@ -3,7 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { claimDependencyReview, createDependencyReview } from "../../server/db/dependency-reviews";
-import { executeDependencyReviewJob } from "../../server/lib/dependency-review/job";
+import {
+  DependencyReviewLeaseError,
+  executeDependencyReviewJob,
+} from "../../server/lib/dependency-review/job";
 import * as schema from "../../server/db/schema";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
@@ -494,12 +497,12 @@ describe("dependency review job", () => {
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
   });
 
-  test("a second message for a review already running exits without a second check run", async () => {
+  test("a second message for a leased review waits without creating a second check run", async () => {
     const { name, api, review, input } = await scenario();
     await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
     expect(await claimDependencyReview(createDb(env.DB), review.id)).toBe(true);
 
-    await runDependencyReviewJob(input);
+    await expect(runDependencyReviewJob(input)).rejects.toBeInstanceOf(DependencyReviewLeaseError);
 
     expect(api.checkRunCreates).toEqual([]);
     // Past the lease, a run whose worker died is taken over.
@@ -518,6 +521,154 @@ describe("dependency review job", () => {
     await waitOnExecutionContext(ctx);
 
     expect((await readReview(review.id)).status).toBe("queued");
+  });
+
+  test.each(["head", "closed"])(
+    "a PR whose %s changes during the diff cancels its old review",
+    async (change) => {
+      const { pr, api, review, input } = await scenario();
+      const realFetch = globalThis.fetch;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+          const url = request instanceof Request ? request.url : String(request);
+          if (url.startsWith("https://registry.npmjs.org/")) {
+            if (change === "head") pr.headSha = sha("d");
+            else pr.state = "closed";
+          }
+          return realFetch(request, init);
+        }),
+      );
+
+      await runDependencyReviewJob(input);
+
+      expect((await readReview(review.id)).status).toBe("superseded");
+      expect(api.lastCheckRunState()).toMatchObject({
+        status: "completed",
+        conclusion: "cancelled",
+      });
+      expect(api.checkRunUpdates.some((run) => run.body.conclusion === "success")).toBe(false);
+      expectTokenStaysOnGithub(api);
+    },
+  );
+
+  test("an old worker's cancellation cannot supersede a newer attempt's row", async () => {
+    const { pr, api, review, input } = await scenario();
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = request instanceof Request ? request.url : String(request);
+        if (url.startsWith("https://registry.npmjs.org/")) {
+          pr.headSha = sha("d");
+          await createDb(env.DB)
+            .update(schema.dependencyReviews)
+            .set({ checkRunId: 1e9 })
+            .where(eq(schema.dependencyReviews.id, review.id));
+        }
+        return realFetch(request, init);
+      }),
+    );
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({ status: "running", checkRunId: 1e9 });
+    expect(api.checkRunUpdates.at(-1)).toMatchObject({
+      id: api.checkRunCreates[0].id,
+      body: { status: "completed", conclusion: "cancelled" },
+    });
+  });
+
+  test.each(["finishes", "fails", "retries"])(
+    "a lease takeover keeps its distinct result when the expired worker %s",
+    async (outcome) => {
+      const { api, review, input } = await scenario();
+      let reachedDiff!: () => void;
+      const diffReached = new Promise<void>((resolve) => {
+        reachedDiff = resolve;
+      });
+      let resumeDiff!: () => void;
+      const diffPaused = new Promise<void>((resolve) => {
+        resumeDiff = resolve;
+      });
+      let paused = false;
+      let originalResuming = false;
+      const realFetch = globalThis.fetch;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+          const url = request instanceof Request ? request.url : String(request);
+          if (url.startsWith("https://registry.npmjs.org/") && !paused) {
+            paused = true;
+            reachedDiff();
+            await diffPaused;
+          }
+          if (originalResuming && url.endsWith("/pulls/42") && outcome !== "finishes") {
+            return new Response("{}", { status: outcome === "fails" ? 422 : 503 });
+          }
+          return realFetch(request, init);
+        }),
+      );
+      const ctx = createExecutionContext();
+      const original = executeDependencyReviewJob(dependencyReviewJobEnv(), ctx, input, {
+        finalAttempt: outcome !== "retries",
+      }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      await diffReached;
+      const previousRun = api.checkRunCreates[0].id;
+      await createDb(env.DB)
+        .update(schema.dependencyReviews)
+        .set({ updatedAt: new Date(Date.now() - 16 * 60 * 1000) })
+        .where(eq(schema.dependencyReviews.id, review.id));
+
+      await runDependencyReviewJob(input);
+
+      const replacement = await readReview(review.id);
+      expect(replacement).toMatchObject({ status: "completed", conclusion: "held" });
+      expect(replacement.checkRunId).not.toBe(previousRun);
+      expect(api.checkRunUpdates.find((run) => run.id === previousRun)?.body.conclusion).toBe(
+        "cancelled",
+      );
+      originalResuming = true;
+      resumeDiff();
+      const error = await original;
+      await waitOnExecutionContext(ctx);
+
+      if (outcome === "retries") expect(error).toBeInstanceOf(Error);
+      else expect(error).toBeNull();
+      expect(await readReview(review.id)).toMatchObject({
+        status: "completed",
+        conclusion: "held",
+        checkRunId: replacement.checkRunId,
+      });
+      expectTokenStaysOnGithub(api);
+    },
+  );
+
+  test("a takeover during result publication prevents the previous worker completing its row", async () => {
+    const { name, api, review, input } = await scenario();
+    await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = request instanceof Request ? request.url : String(request);
+        if (url.includes("/check-runs/") && init?.method === "PATCH") {
+          await createDb(env.DB)
+            .update(schema.dependencyReviews)
+            .set({ checkRunId: 1e9 })
+            .where(eq(schema.dependencyReviews.id, review.id));
+        }
+        return realFetch(request, init);
+      }),
+    );
+
+    await runDependencyReviewJob(input);
+
+    expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
+    expect(await readReview(review.id)).toMatchObject({ status: "running", checkRunId: 1e9 });
   });
 
   test("a PR changing pyproject.toml and only an npm lockfile holds on the manifest", async () => {
@@ -914,6 +1065,84 @@ describe("dependency review job", () => {
     expect(message.retry).not.toHaveBeenCalled();
     expect((await readReview(review.id)).conclusion).toBe("clear");
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
+  });
+
+  test.each([1, 3, 4])(
+    "queue attempt %s defers a terminated worker's lease and can recover it after expiry",
+    async (attempts) => {
+      const { name, api, review, input } = await scenario();
+      await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+      await claimDependencyReview(createDb(env.DB), review.id);
+      const message = {
+        id: "leased",
+        timestamp: new Date(),
+        attempts,
+        body: { kind: "dependency_review", ...input, rerun: true } satisfies QueueMessage,
+        ack: vi.fn(),
+        retry: vi.fn(),
+      };
+      const batch = { queue: "scan", messages: [message], ackAll: vi.fn(), retryAll: vi.fn() };
+      const ctx = createExecutionContext();
+      const send = vi.fn().mockResolvedValue(undefined);
+      const jobEnv = dependencyReviewJobEnv({
+        SCAN_QUEUE: { send } as unknown as Queue<QueueMessage>,
+      });
+
+      await queue(batch as never, jobEnv, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(send).toHaveBeenCalledWith(message.body, { delaySeconds: expect.any(Number) });
+      expect(send.mock.calls[0][1].delaySeconds).toBeGreaterThan(890);
+      expect(message.retry).not.toHaveBeenCalled();
+      expect(message.ack).toHaveBeenCalledOnce();
+      expect(api.checkRunCreates).toEqual([]);
+      await createDb(env.DB)
+        .update(schema.dependencyReviews)
+        .set({ updatedAt: new Date(Date.now() - 16 * 60 * 1000) })
+        .where(eq(schema.dependencyReviews.id, review.id));
+      send.mockClear();
+
+      const recoveredCtx = createExecutionContext();
+      await queue(batch as never, jobEnv, recoveredCtx);
+      await waitOnExecutionContext(recoveredCtx);
+
+      expect(message.retry).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(await readReview(review.id)).toMatchObject({
+        status: "completed",
+        conclusion: "clear",
+      });
+      expect(api.checkRunCreates).toHaveLength(1);
+    },
+  );
+
+  test("a failed lease handoff never acknowledges the original message", async () => {
+    const { review, input } = await scenario();
+    await claimDependencyReview(createDb(env.DB), review.id);
+    const message = {
+      id: "lease-handoff-failure",
+      timestamp: new Date(),
+      attempts: 4,
+      body: { kind: "dependency_review", ...input } satisfies QueueMessage,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const send = vi.fn().mockRejectedValue(new Error("queue unavailable"));
+    const ctx = createExecutionContext();
+
+    await expect(
+      queue(
+        { queue: "scan", messages: [message], ackAll: vi.fn(), retryAll: vi.fn() } as never,
+        dependencyReviewJobEnv({ SCAN_QUEUE: { send } as unknown as Queue<QueueMessage> }),
+        ctx,
+      ),
+    ).rejects.toThrow("queue unavailable");
+    await waitOnExecutionContext(ctx);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect((await readReview(review.id)).status).toBe("running");
   });
 });
 

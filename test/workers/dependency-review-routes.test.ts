@@ -132,7 +132,11 @@ describe("dependency review routes", () => {
       headSha: sha("3"),
       authorLogin: "dependabot[bot]",
     });
-    await supersedeDependencyReview(createDb(env.DB), queued.id);
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ checkRunId: 7 })
+      .where(eq(schema.dependencyReviews.id, queued.id));
+    await supersedeDependencyReview(createDb(env.DB), queued.id, 7);
 
     const res = await call(buildTestApp(mount, seeded), "GET", BASE);
 
@@ -252,9 +256,33 @@ describe("dependency review routes", () => {
     const body = (await res.json()) as {
       review: { id: string; conclusion: string };
       bumps: Array<{ bump: { name: string } }>;
+      coverage: { unreadLockfiles: string[]; listingComplete: boolean };
     };
     expect(body.review).toMatchObject({ id: review.id, conclusion: "clear" });
     expect(body.bumps.map((b) => b.bump.name)).toEqual(["left-pad"]);
+    expect(body.coverage).toEqual({ unreadLockfiles: [], listingComplete: true });
+  });
+
+  test("a member can read why a review with no recognized bumps was held", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const review = await seedCompletedReview(seeded);
+    await completeDependencyReview(createDb(env.DB), review.id, {
+      conclusion: "held",
+      bumps: [],
+      coverage: { unreadLockfiles: ["nested/package.json"], listingComplete: false },
+    });
+    const member = await seedTeammate(seeded, "member");
+
+    const res = await call(buildTestApp(mount, member), "GET", `${BASE}/${review.id}`, {
+      activeOrganizationId: seeded.organizationId,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      review: { id: review.id, conclusion: "held", bumpCount: 0 },
+      bumps: [],
+      coverage: { unreadLockfiles: ["nested/package.json"], listingComplete: false },
+    });
   });
 
   test("another organization's review id is not found", async () => {

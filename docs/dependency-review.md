@@ -61,12 +61,19 @@ make it required.
    creates the check run in progress, and confirms the PR is still open at that
    head. The claim is compare-and-set: a queued, failed, or superseded review,
    a completed one only for Re-run, and a running one only past its lease. A
-   duplicate message therefore exits instead of posting a second run, and a
-   retryable failure gives the claim back before the queue retries. Webhook
+   redelivery during a running claim sends a fresh delayed message before
+   acknowledging the delivery, so waiting for the lease does not exhaust the
+   queue's retry budget. A completed duplicate exits
+   without posting a second run, and a retryable failure gives the claim back
+   before the queue retries. Webhook
    deliveries can arrive out of order, so only the head comparison
-   decides which commit is stale. A commit that is no longer the open PR's head
+   decides which commit is stale. The job rechecks the head after diffing the
+   changes. A commit that is no longer the open PR's head
    is superseded and its check ends `cancelled`, not `neutral`, which GitHub
    counts as passing. Reopening the PR or pressing Re-run reviews it again.
+   Taking over an expired claim creates a fresh check run and cancels its
+   predecessor. Completion, cancellation, release, and failure writes name the
+   owning run, so a late old attempt cannot overwrite its replacement.
 4. **Collect.** It lists the PR's files, reads each supported lockfile at the
    merge base and at the head through the contents API, and diffs the two
    snapshots (`server/lib/dependency-review/lockfiles/`). Direct and transitive
@@ -191,8 +198,11 @@ or a new commit that merges the same change keeps the approval without another
 click. A different version is a different change. Each approval writes the
 `dependency_review.approved` audit event together with the stored approvals,
 before the check is updated. A retried approval whose check update failed
-republishes it. The event carries the GitHub login, not a Drydock user. The check's **Re-run** button (`check_run` `rerequested`) runs
-the review again against the current policy and approvals.
+republishes it. The event carries the GitHub login, not a Drydock user.
+Re-running an individual check (`check_run.rerequested`) or using GitHub's
+**Re-run all checks** (`check_suite.rerequested`) reviews the recorded head
+again against the current policy and approvals. A suite re-run must name this
+App and a recorded review in the same installation, repository, and head.
 
 ## Configuration
 
@@ -224,7 +234,7 @@ repository writers need no allowlist entry. List only trusted automation: these
 logins bypass the human author and sender permission checks.
 
 The GitHub App needs **Checks: read and write**, **Pull requests: read**, and
-**Contents: read**, and must subscribe to the **Pull request** and **Check run**
+**Contents: read**, and must subscribe to the **Pull request**, **Check run**, and **Check suite**
 events (`self-hosting.md`). Adding permissions to an existing App makes GitHub
 ask every installation's owner to accept them. Until they do, check runs can't
 be created and reviews fail with the check-create error in the logs.
@@ -237,6 +247,12 @@ bumps and waits on held ones.
 
 ## Data and limits
 
+- Review detail responses include `coverage.unreadLockfiles` and
+  `coverage.listingComplete`. The dashboard names unread files and incomplete
+  listings even when the review recognizes no version changes. Only complete
+  coverage with every update diffed and clear is described as clear; updates
+  allowed by policy remain labeled unreviewed or new packages. Private sources
+  have no public diff link.
 - `dependency_review_settings`: one row per organization. `dependency_reviews`:
   one per (installation, repository, head sha), with a bounded `bumps_json`
   (500 entries, holds first) of names, versions, verdicts, and redacted
