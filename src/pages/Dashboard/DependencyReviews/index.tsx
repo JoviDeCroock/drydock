@@ -12,6 +12,7 @@ import { OrganizationModel } from "../../../models/organization";
 import { ReviewStateMark } from "../../../features/dependency-review/ReviewStateMark";
 import { dependencyReviewPath } from "../../../features/dependency-review/wording";
 import { Alert } from "../../../components/Alert";
+import { Badge } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
@@ -56,7 +57,10 @@ export default function DependencyReviewsPage() {
     <PageShell headerActions={headerActions}>
       <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div class="flex flex-col gap-2 max-w-[640px]">
-          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Dependency reviews</h1>
+          <div class="flex flex-wrap items-center gap-3">
+            <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Dependency reviews</h1>
+            <Badge>Beta</Badge>
+          </div>
           <Muted class="text-[14px] leading-[1.55] m-0">
             Dependabot and Renovate pull requests the Drydock GitHub App checked. Held updates wait
             for an approval on the pull request's Drydock dependency review check.

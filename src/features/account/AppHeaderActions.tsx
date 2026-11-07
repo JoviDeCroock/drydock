@@ -1,5 +1,7 @@
+import type { ComponentChildren } from "preact";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
+import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { HeaderFeedback } from "../../components/PageShell";
 import { OrgSwitcher } from "../../components/OrgSwitcher";
@@ -47,6 +49,7 @@ export function AppHeaderActions({
         <Show when={organizations?.dependencyReviewAvailable ?? (() => current === "dependencies")}>
           <SectionLink href="/dashboard/dependency-reviews" current={current === "dependencies"}>
             Dependencies
+            <Badge>Beta</Badge>
           </SectionLink>
         </Show>
         <SectionLink href="/dashboard/settings" current={current === "settings"}>
@@ -76,7 +79,7 @@ function SectionLink({
 }: {
   href: string;
   current: boolean;
-  children: string;
+  children: ComponentChildren;
 }) {
   return (
     <LinkButton href={href} variant="ghost" size="sm" aria-current={current ? "page" : undefined}>
