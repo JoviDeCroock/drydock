@@ -7,10 +7,10 @@ const POLICY = {
   holdOnInstallScripts: true,
   holdOnNativeBinaries: true,
   holdOnNewDependencies: true,
-  holdOnNewBinCommands: true,
+  holdOnNewBinCommands: false,
   holdAtReleaseRisk: "high",
-  holdOnUninspectedFiles: true,
-  holdOnUnreviewed: true,
+  holdOnUninspectedFiles: false,
+  holdOnUnreviewed: false,
   holdOnNewPackages: false,
 };
 
@@ -32,6 +32,11 @@ const REVIEW = {
   approvedAt: null,
   createdAt: "2026-10-24T09:00:00.000Z",
   completedAt: "2026-10-24T09:01:00.000Z",
+};
+
+type ReviewWire = Omit<typeof REVIEW, "conclusion" | "completedAt"> & {
+  conclusion: string | null;
+  completedAt: string | null;
 };
 
 const EVIDENCE = {
@@ -177,6 +182,33 @@ test("dependency review list links each review with its organization", async ({ 
   expect(errors).toEqual([]);
 });
 
+test("a running dependency review refreshes itself into its result", async ({ page }) => {
+  const errors = watchErrors(page);
+  let review: ReviewWire = {
+    ...REVIEW,
+    status: "running",
+    conclusion: null,
+    heldCount: 0,
+    completedAt: null,
+  };
+  await page.clock.install();
+  await installMocks(page, [], { review: () => review });
+
+  await page.goto("/dashboard/dependency-reviews");
+  await expect(page.getByText("reviewing…")).toBeVisible();
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+  await expect(page.getByText("Reviewing pull request")).toBeVisible();
+  await expect(page.getByText("auto-refreshes when the review is ready")).toBeVisible();
+  await expect(page.getByText(/Showing the first/)).toHaveCount(0);
+  await page.screenshot({ path: `${SCREENSHOTS}/detail-running.png`, fullPage: true });
+
+  review = REVIEW;
+  await page.clock.runFor(10_000);
+  await expect(page.getByText("1 of 3 updates are held.")).toBeVisible();
+  await expect(page.getByText("Reviewing pull request")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("an organization outside the rollout flag sees no dependency review", async ({ page }) => {
   const errors = watchErrors(page);
   const requested: string[] = [];
@@ -202,7 +234,7 @@ function watchErrors(page: Page): string[] {
 async function installMocks(
   page: Page,
   writes: unknown[],
-  { dependencyReview = true, requested = [] as string[] } = {},
+  { dependencyReview = true, requested = [] as string[], review = (): ReviewWire => REVIEW } = {},
 ) {
   let settings = { enabled: false, policy: POLICY, extraBotLogins: [] as string[] };
   await page.route("**/api/**", async (route) => {
@@ -252,7 +284,7 @@ async function installMocks(
       await fulfillJson(route, {
         settings,
         githubAppInstalled: true,
-        reviews: [REVIEW],
+        reviews: [review()],
         viewer: { canManage: true },
       });
       return;
@@ -265,7 +297,11 @@ async function installMocks(
       return;
     }
     if (path === "/api/v1/dependency-reviews/dr_1") {
-      await fulfillJson(route, { review: REVIEW, bumps: BUMPS });
+      const current = review();
+      await fulfillJson(route, {
+        review: current,
+        bumps: current.status === "completed" ? BUMPS : [],
+      });
       return;
     }
     await fulfillJson(route, { error: `unexpected request: ${path}` }, 404);

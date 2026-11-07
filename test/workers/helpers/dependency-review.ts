@@ -29,6 +29,15 @@ import {
 import type { GithubAppInstallationStatus } from "../../../server/db/enums";
 import { seedUser } from "./seed";
 
+// Most job tests exercise the hold paths, several of which are off by
+// default; seed them on so each test opts out of a hold rather than in.
+const EVERY_HOLD_ON: DependencyReviewPolicy = {
+  ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
+  holdOnNewBinCommands: true,
+  holdOnUninspectedFiles: true,
+  holdOnUnreviewed: true,
+};
+
 const GITHUB_APP_ID = "12345";
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 const INSTALLATION_TOKEN = "ghs_dependency_review_install_token";
@@ -95,7 +104,7 @@ export async function seedDependencyReviewOrg(options: SeedDependencyReviewOrgOp
       owner.organizationId,
       {
         enabled: options.enabled ?? true,
-        policy: { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, ...options.policy },
+        policy: { ...EVERY_HOLD_ON, ...options.policy },
         extraBotLogins: options.extraBotLogins ?? [],
       },
       owner.userId,

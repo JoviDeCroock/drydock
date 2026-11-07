@@ -30,6 +30,7 @@ import { batch, computed, createModel, effect, signal } from "@preact/signals";
 import type { FileRecord } from "../../server/lib/review";
 import { findingFirstPath } from "../features/review/initial-path";
 import { ApiError, errorMessage } from "./api";
+import { startBackgroundPoll } from "./background-poll";
 import {
   decideWorkflowGate,
   getWorkflowGateByScan,
@@ -38,14 +39,13 @@ import {
   type WorkflowGateDecision,
 } from "./github-app";
 
-// Polling cadence for scans still in pending/running. The base delay doubles
-// per consecutive poll failure (so an unreachable API isn't hammered at a
-// fixed rate) up to the max, and resets on success. A scan that never reaches
-// a terminal status stops polling entirely after the stall window; the UI
-// offers a manual resume via `resumePolling()`.
-export const SCAN_POLL_BASE_DELAY_MS = 10_000;
-export const SCAN_POLL_MAX_DELAY_MS = 30_000;
-export const SCAN_POLL_STALL_AFTER_MS = 10 * 60_000;
+// Scans still pending/running follow the shared background-poll cadence; a
+// stalled chain is resumed by hand via `resumePolling()`.
+export {
+  POLL_BASE_DELAY_MS as SCAN_POLL_BASE_DELAY_MS,
+  POLL_MAX_DELAY_MS as SCAN_POLL_MAX_DELAY_MS,
+  POLL_STALL_AFTER_MS as SCAN_POLL_STALL_AFTER_MS,
+} from "./background-poll";
 const GATE_LOOKUP_MAX_ATTEMPTS = 6;
 const GATE_LOOKUP_BASE_DELAY_MS = 2_500;
 const GATE_LOOKUP_MAX_DELAY_MS = 30_000;
@@ -152,38 +152,15 @@ export const ScanDetailModel = createModel((id: string) => {
     return v ? (failures[v] ?? null) : null;
   });
 
-  // Background polling while the scan is still running. A self-scheduling
-  // timeout chain (not setInterval) lets the cadence adapt: consecutive
-  // failures back off exponentially, and a scan stuck non-terminal past the
-  // stall window latches `pollingStalled` instead of polling forever. Both
-  // signals are read unconditionally so the effect tracks them on every run.
+  // Background polling while the scan is still running. Both signals are
+  // read unconditionally so the effect tracks them on every run.
   effect(() => {
     const polling = isPolling.value;
     const stalled = pollingStalled.value;
     if (!polling || stalled) return;
-
-    let disposed = false;
-    let delay = SCAN_POLL_BASE_DELAY_MS;
-    const startedAt = Date.now();
-
-    const tick = async () => {
-      if (Date.now() - startedAt >= SCAN_POLL_STALL_AFTER_MS) {
-        pollingStalled.value = true;
-        return;
-      }
-      const ok = await pollDetail();
-      // The poll itself can flip isPolling (terminal status) and re-run the
-      // effect; the disposed flag keeps the stale chain from rescheduling.
-      if (disposed) return;
-      delay = ok ? SCAN_POLL_BASE_DELAY_MS : Math.min(delay * 2, SCAN_POLL_MAX_DELAY_MS);
-      timer = setTimeout(() => void tick(), delay);
-    };
-
-    let timer = setTimeout(() => void tick(), delay);
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
+    return startBackgroundPoll(pollDetail, () => {
+      pollingStalled.value = true;
+    });
   });
 
   // The scan can finish before its gate link is readable. Retry that gap for

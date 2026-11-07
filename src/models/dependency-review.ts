@@ -2,8 +2,10 @@
  * Dependency review: the GitHub App's check on pull requests from branches
  * in the installed repository. One model owns the organization's settings
  * and recent reviews (one endpoint returns both); a second reads one review's bumps.
+ * Both follow a queued or running review to its result while the page is
+ * open, on the same cadence as a running scan.
  */
-import { computed, createModel, signal } from "@preact/signals";
+import { computed, createModel, effect, signal } from "@preact/signals";
 import type { DependencyReviewRecord } from "../../server/db/dependency-reviews";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
@@ -12,6 +14,7 @@ import {
 } from "../../server/lib/dependency-review/types";
 import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
+import { startBackgroundPoll } from "./background-poll";
 
 export type { DependencyReviewPolicy, ReviewedBump };
 
@@ -37,6 +40,11 @@ interface OverviewResponse {
 
 const BASE = "/api/v1/dependency-reviews";
 
+/** Whether the review is still waiting for a result. */
+function isReviewInFlight(review: Pick<DependencyReview, "status">): boolean {
+  return review.status === "queued" || review.status === "running";
+}
+
 /** Bot logins typed as one comma- or whitespace-separated line. */
 export function parseBotLoginsInput(text: string): string[] {
   return text
@@ -53,7 +61,12 @@ function sameSettings(a: DependencyReviewSettings, b: DependencyReviewSettings):
   );
 }
 
-export const DependencyReviewsModel = createModel(() => {
+/**
+ * `followReviews` polls while a listed review is in flight. Only the review
+ * list opts in: the settings page shares this model and must not spend reads
+ * on rows it never shows.
+ */
+export const DependencyReviewsModel = createModel((options: { followReviews?: boolean } = {}) => {
   const loaded = signal(false);
   const error = signal<string | null>(null);
   const saved = signal<DependencyReviewSettings | null>(null);
@@ -67,10 +80,41 @@ export const DependencyReviewsModel = createModel(() => {
   const saving = signal(false);
   const saveError = signal<string | null>(null);
   const justSaved = signal(false);
+  const pollingStalled = signal(false);
 
   // An organization switch mid-flight must not land the previous
   // organization's settings or reviews in the new one's view.
   let requestId = 0;
+
+  const anyInFlight = computed(() => reviews.value.some(isReviewInFlight));
+
+  // A poll refreshes the rows only. The settings it also returns would
+  // overwrite a draft the reader is editing.
+  async function pollReviews(): Promise<boolean> {
+    const id = requestId;
+    const organizationId = activeOrganizationId.peek();
+    try {
+      const data = await apiFetch<OverviewResponse>(BASE);
+      if (id !== requestId || organizationId !== activeOrganizationId.peek()) return true;
+      reviews.value = data.reviews;
+      error.value = null;
+      return true;
+    } catch (err) {
+      if (id === requestId) error.value = errorMessage(err);
+      return false;
+    }
+  }
+
+  if (options.followReviews) {
+    effect(() => {
+      const following = anyInFlight.value;
+      const stalled = pollingStalled.value;
+      if (!following || stalled) return;
+      return startBackgroundPoll(pollReviews, () => {
+        pollingStalled.value = true;
+      });
+    });
+  }
 
   const draft = computed<DependencyReviewSettings>(() => ({
     enabled: draftEnabled.value,
@@ -103,10 +147,13 @@ export const DependencyReviewsModel = createModel(() => {
     saveError,
     justSaved,
     dirty,
+    anyInFlight,
+    pollingStalled,
 
     async load(): Promise<void> {
       const id = ++requestId;
       const organizationId = activeOrganizationId.peek();
+      pollingStalled.value = false;
       try {
         const data = await apiFetch<OverviewResponse>(BASE);
         if (id !== requestId || organizationId !== activeOrganizationId.peek()) return;
@@ -127,6 +174,12 @@ export const DependencyReviewsModel = createModel(() => {
       } finally {
         if (id === requestId) loaded.value = true;
       }
+    },
+
+    /** Manual recovery from the stalled state: read now and restart the chain. */
+    resumePolling(): void {
+      pollingStalled.value = false;
+      void pollReviews();
     },
 
     setPolicy<K extends keyof DependencyReviewPolicy>(key: K, value: DependencyReviewPolicy[K]) {
@@ -182,7 +235,46 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
   const notFound = signal(false);
   const review = signal<DependencyReview | null>(null);
   const bumps = signal<ReviewedBump[]>([]);
+  const pollingStalled = signal(false);
   let requestId = 0;
+
+  const inFlight = computed(() => {
+    const current = review.value;
+    return current !== null && isReviewInFlight(current);
+  });
+
+  // A failed read keeps the review already on screen; the error shows above
+  // it, as on a running scan.
+  async function read(id: number): Promise<boolean> {
+    try {
+      const data = await apiFetch<{ review: DependencyReview; bumps: ReviewedBump[] }>(
+        `${BASE}/${encodeURIComponent(reviewId)}`,
+      );
+      if (id !== requestId) return true;
+      review.value = data.review;
+      bumps.value = data.bumps;
+      error.value = null;
+      notFound.value = false;
+      return true;
+    } catch (err) {
+      if (id !== requestId) return false;
+      if (err instanceof ApiError && err.status === 404) notFound.value = true;
+      else error.value = errorMessage(err);
+      return false;
+    }
+  }
+
+  effect(() => {
+    const following = inFlight.value;
+    const stalled = pollingStalled.value;
+    if (!following || stalled) return;
+    return startBackgroundPoll(
+      () => read(requestId),
+      () => {
+        pollingStalled.value = true;
+      },
+    );
+  });
 
   return {
     loaded,
@@ -190,25 +282,20 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
     notFound,
     review,
     bumps,
+    inFlight,
+    pollingStalled,
 
     async load(): Promise<void> {
       const id = ++requestId;
-      try {
-        const data = await apiFetch<{ review: DependencyReview; bumps: ReviewedBump[] }>(
-          `${BASE}/${encodeURIComponent(reviewId)}`,
-        );
-        if (id !== requestId) return;
-        review.value = data.review;
-        bumps.value = data.bumps;
-        error.value = null;
-        notFound.value = false;
-      } catch (err) {
-        if (id !== requestId) return;
-        if (err instanceof ApiError && err.status === 404) notFound.value = true;
-        else error.value = errorMessage(err);
-      } finally {
-        if (id === requestId) loaded.value = true;
-      }
+      pollingStalled.value = false;
+      await read(id);
+      if (id === requestId) loaded.value = true;
+    },
+
+    /** Manual recovery from the stalled state: read now and restart the chain. */
+    resumePolling(): void {
+      pollingStalled.value = false;
+      void read(requestId);
     },
   };
 });

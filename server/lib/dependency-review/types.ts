@@ -49,10 +49,10 @@ export const DEFAULT_DEPENDENCY_REVIEW_POLICY: DependencyReviewPolicy = {
   holdOnInstallScripts: true,
   holdOnNativeBinaries: true,
   holdOnNewDependencies: true,
-  holdOnNewBinCommands: true,
+  holdOnNewBinCommands: false,
   holdAtReleaseRisk: "high",
-  holdOnUninspectedFiles: true,
-  holdOnUnreviewed: true,
+  holdOnUninspectedFiles: false,
+  holdOnUnreviewed: false,
   holdOnNewPackages: false,
 };
 
