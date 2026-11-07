@@ -733,6 +733,8 @@ export const dependencyReviews = sqliteTable(
       table.repositoryId,
       table.pullNumber,
     ),
+    // The retention sweep selects by bare updated_at every cron tick.
+    updatedIdx: index("dependency_reviews_updated_idx").on(table.updatedAt),
   }),
 );
 
@@ -769,6 +771,9 @@ export const dependencyReviewApprovals = sqliteTable(
       table.toVersion,
       table.source,
     ),
+    // Deleting a review nulls review_id here; without this each deleted
+    // review scans the whole approvals table.
+    reviewIdx: index("dependency_review_approvals_review_idx").on(table.reviewId),
   }),
 );
 

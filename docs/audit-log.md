@@ -100,8 +100,9 @@ Neither review event changes the observation's verdict. Alert deduplication pers
 | --- | --- | --- |
 | `scan_events` | Flat 90 days (`AUDIT_LOG_RETENTION_DAYS`), single age sweep across all rows | `audit_events.prune_failed` |
 | Better Auth `session`, `verification` | Deleted once `expires_at` is more than `AUTH_ROW_RETENTION_GRACE_MS` (one day) past | `auth_rows.prune_failed` |
+| `dependency_reviews` | See [dependency review](./dependency-review.md#data-and-limits) (`pruneDependencyReviews`) | `dependency_reviews.prune_failed` |
 
-Scheduled tick order (`server/scheduled.ts`): discovery sweep, publication monitor, publisher setup job cleanup, audit prune, auth-row prune, rate-limit bucket prune. Each prune is wrapped so a failure is logged and never aborts the cron.
+Scheduled tick order (`server/scheduled.ts`): discovery sweep, publication monitor, publisher setup job cleanup, audit prune, auth-row prune, rate-limit bucket prune, dependency-review prune. Each prune is wrapped so a failure is logged and never aborts the cron.
 
 ## Invariants
 

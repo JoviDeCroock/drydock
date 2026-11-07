@@ -3,6 +3,7 @@ import { personalOrganizationId } from "./lib/auth/ownership";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
+import { pruneDependencyReviews } from "./db/dependency-reviews";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { pruneExpiredRateLimitBuckets } from "./db/rate-limits";
@@ -227,6 +228,24 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
   }
 }
 
+// Each push to a reviewed PR stores a new row with its own bumps_json, and
+// nothing else deletes them; same failure terms as the sweeps above.
+async function pruneStaleDependencyReviews(env: Cloudflare.Env) {
+  try {
+    const pruned = await pruneDependencyReviews(createDb(env.DB));
+    if (pruned.replaced > 0 || pruned.expired > 0) {
+      emitOperationalEvent("info", "dependency_reviews.pruned", {
+        replaced: pruned.replaced,
+        expired: pruned.expired,
+      });
+    }
+  } catch (err) {
+    emitOperationalEvent("error", "dependency_reviews.prune_failed", {
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 /**
  * The cron handler `server/index.ts` exports: the discovery sweep, public
  * publication monitoring, then retention.
@@ -258,4 +277,5 @@ export async function scheduled(
   await pruneStaleAuditEvents(env);
   await pruneStaleAuthRows(env);
   await pruneStaleRateLimitBuckets(env);
+  await pruneStaleDependencyReviews(env);
 }

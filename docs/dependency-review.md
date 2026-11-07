@@ -259,6 +259,14 @@ bumps and waits on held ones.
   evidence. Check-run events find their review by the run's `external_id`
   (the review id) within the installation and repository.
   `dependency_review_approvals`: one per approved change per repository.
+- Retention (`pruneDependencyReviews`, scheduled tick, indexed on
+  `updated_at`): a review with a newer review on the same PR is deleted 14
+  days after its last update; every review 90 days after. Approvals are kept
+  (their `review_id` is nulled), so a deleted review never revokes one. Once
+  deleted, the check's Approve and Re-run are ignored and its Details link
+  404s until a push or reopen opens a new review. This hits an open PR idle
+  past 90 days, or one force-pushed back to an already-reviewed commit (that
+  older row counts as replaced).
 - The check summary is capped below GitHub's 65,535-character field limit, at
   100 entries per section. Every package name, version, path, rule id, and
   reason renders inside a code span with control, bidi, and zero-width
