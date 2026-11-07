@@ -162,7 +162,9 @@ Public report rules: header is a `public release review` MonoDetail lead, packag
 
 ## Dependency reviews
 
-`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads `?org=` like scan detail because the check run's details link carries it. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
+`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads `?org=` like scan detail because the check run's details link carries it.
+
+While a review is queued or running, both pages poll on the running-scan cadence (`src/models/background-poll.ts`) and offer Resume refresh once it stalls; the settings page does not poll. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
 
 ## Package release view
 
