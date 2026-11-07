@@ -9,7 +9,9 @@ including PRs opened by people. A complete review with no npm or PyPI dependency
 additions or version changes passes with **No dependency additions or updates**.
 A version change that adds no capability passes and can auto-merge the same day. A change
 that adds one is held until someone with write access to the repository reads
-the diff and approves it.
+the diff and approves it. Public target versions, including new packages, also
+get a malware check. Known malware and an unavailable malware index hold the
+check regardless of policy and cannot be approved.
 
 The free PR comment workflow (`dependency-pr-diff-links.md`) shows the same
 diffs without the App. It informs; this check decides, because a repository can
@@ -125,17 +127,30 @@ make it required.
    through a mirror therefore holds every bump while `holdOnUnreviewed` is
    on. Config set outside the repository (environment, user-level files,
    Dependabot `registries:`) is invisible here.
-6. **Diff.** Each bump runs through `loadPublicPackageDiff`, the same pipeline,
+6. **Check malware, then diff.** Every public target version is checked against
+   the [Aikido Intel feeds used by Safe Chain](https://github.com/AikidoSec/safe-chain/tree/main/packages/safe-chain/src/scanning),
+   including new packages, transitive dependencies, and bumps beyond the diff
+   cap. The job downloads one fresh index per ecosystem; package names and
+   versions are matched locally and are never sent to Aikido. Only `MALWARE`
+   entries block (exact versions or `*`); npm names match exactly, and PyPI
+   uses normalized names and equivalent PEP 440 versions. A match holds with
+   `known-malware`. An unavailable, malformed, oversized, or timed-out index
+   holds public bumps with `malware-index-unavailable`. Both holds are mandatory
+   and cannot be approved or waived by an earlier capability approval. Replace
+   a flagged version, or use Re-run to retry an unavailable index. Private
+   sources skip the index entirely.
+
+   Remaining bumps run through `loadPublicPackageDiff`, the same pipeline,
    rules, and versioned KV cache as `/diff`. Direct bumps go first. At most 40
    bumps are diffed per review, four at a time, inside an eight-minute budget.
    The rest are _unreviewed_ (`over-cap`, `timed-out`), as are bumps the public
    diff can't serve (`not-found`, `unsupported`, `failed`). A deployment with a
-   custom `NPM_REGISTRY` diffs nothing (`publicDiffEgressAllowed`, the same
+   custom `NPM_REGISTRY` fetches no malware index and diffs nothing (`publicDiffEgressAllowed`, the same
    killswitch as the anonymous `/diff` surface), so every bump is unreviewed.
 7. **Decide.** `server/lib/dependency-review/policy.ts` reads the release delta
    only. Context findings describe code the previous version already shipped,
    and this bump does not introduce them. The organization's policy decides
-   which facts hold:
+   which additional facts hold after the mandatory malware check:
 
    | Policy field             | Default | Holds when the new version…                                                         |
    | ------------------------ | ------- | ----------------------------------------------------------------------------------- |
@@ -149,7 +164,8 @@ make it required.
    | `holdOnNewPackages`      | off     | is a package with no previous version in the lockfile                               |
 
    Only the three capability holds default on, so a new organization's checks
-   hold for what a worm needs and little else. `holdOnUninspectedFiles` and
+   hold for what a worm needs and little else, alongside the mandatory malware
+   and index-availability holds. `holdOnUninspectedFiles` and
    `holdOnUnreviewed` are off by default, so "we didn't look" passes: a
    `success` is what auto-merge acts on, and GitHub treats a `neutral` check
    as passing. Turn them on to hold instead. Images, fonts, and
@@ -162,8 +178,9 @@ make it required.
    other platforms holds under `holdOnUninspectedFiles`.
 
 8. **Publish.** The check completes `success` (nothing held, or every hold
-   already approved) or `action_required` with an **Approve held updates**
-   action. Its summary lists held bumps with their reasons, release risk, file
+   already approved) or `action_required`. Ordinary holds offer an **Approve held
+   updates** action when all are shown and no malware or index-unavailable hold
+   remains. Its summary lists held bumps with their reasons, release risk, file
    counts, and the top findings, then unreviewed bumps, new packages, and clear
    bumps, each linked to its public `/diff` page (private-source bumps get no
    link). A complete review with no added packages or version changes succeeds
@@ -173,6 +190,11 @@ make it required.
    `details_url` opens the review in the dashboard.
 
 ## Approval
+
+Known-malware and malware-index-unavailable holds cannot be approved. They
+withhold the Approve action and are never waived by a stored approval for the
+same version change. Replace a flagged version, or re-run to retry an unavailable
+index. The approval flow below applies only when neither mandatory hold remains.
 
 The Approve button sends `check_run` `requested_action` to the App. GitHub
 signs the webhook and names who clicked (`sender`). The app id on the run must
@@ -215,7 +237,8 @@ Dependencies link and the settings section (`GET /api/v1/organizations` carries
 `dependencyReview` per organization), and a `pull_request` delivery is ignored
 before anything is posted, not even a skipped check. A failed flag lookup reads
 as off. Check-run actions on reviews posted earlier still work, so turning the
-flag off leaves existing holds approvable; a repository that made the check
+flag off leaves existing ordinary holds approvable, while mandatory malware
+holds remain non-approvable; a repository that made the check
 required stops getting it on new PRs. A deployment without a `FLAGS` binding
 (self-hosting) offers it to every organization, which still has to turn it on in
 settings.
@@ -267,6 +290,10 @@ bumps and waits on held ones.
   the public registries the diff already reads. The shared result cache means a
   public pair one organization diffed is cached for `/diff` visitors, the same
   as a browser visit to that pair.
+- Aikido receives only a request for its ecosystem-wide public index, without
+  credentials or package selectors. Each review fetches fresh data, bounded
+  to 16 MiB for npm and 2 MiB for PyPI with a 15-second deadline per index;
+  redirects and stale fallback are refused.
 - The installation token only goes to `api.github.com`. Listing pagination
   refuses a `Link` to any other host, and no request follows a redirect: a 3xx
   (a renamed or transferred repository) fails the review without a retry.
@@ -290,5 +317,5 @@ bumps and waits on held ones.
 - Fork contributions. Dependency review currently covers branches in the
   installed repository only. A nonwriter's PR from someone else's branch
   cannot create a review row or earn a passing skip on that branch's commit.
-- New packages have no diff. They are listed, and hold only under
-  `holdOnNewPackages`.
+- New packages have no diff. They still get the malware check; otherwise they
+  are listed, and hold only under `holdOnNewPackages`.

@@ -57,9 +57,11 @@ import {
   concludeDependencyReview,
   evaluateBumpEvidence,
   extractBumpEvidence,
+  hasMalwareHold,
   newPackageVerdict,
   unreviewedVerdict,
 } from "./policy";
+import { loadMalwareIndex } from "./malware-index";
 import {
   collectCustomRegistries,
   emptyCustomRegistries,
@@ -269,7 +271,10 @@ async function runReview(
     return {
       bump,
       verdict,
-      approved: verdict.status === "hold" && isChangeApproved(approvedChanges, bump),
+      approved:
+        verdict.status === "hold" &&
+        !hasMalwareHold(verdict) &&
+        isChangeApproved(approvedChanges, bump),
     };
   });
 
@@ -724,6 +729,29 @@ async function reviewBumps(
   startedAtMs: number,
 ): Promise<BumpVerdict[]> {
   const deadline = startedAtMs + DIFF_BUDGET_MS;
+  const indexes = new Map<
+    DependencyEcosystem,
+    Awaited<ReturnType<typeof loadMalwareIndex>> | null
+  >();
+  if (publicDiffEgressAllowed(context.env)) {
+    const ecosystems = [
+      ...new Set(bumps.filter((bump) => !bump.privateSource).map((bump) => bump.ecosystem)),
+    ];
+    await Promise.all(
+      ecosystems.map(async (ecosystem) => {
+        try {
+          indexes.set(ecosystem, await loadMalwareIndex(ecosystem));
+        } catch {
+          indexes.set(ecosystem, null);
+          emitOperationalEvent("warn", "dependency_review.malware_index_unavailable", {
+            organizationId: context.review.organizationId,
+            reviewId: context.review.id,
+            ecosystem,
+          });
+        }
+      }),
+    );
+  }
   let diffed = 0;
   const plan = bumps.map((bump) => {
     if (bump.fromVersion === null || bump.privateSource) return { bump, review: false as const };
@@ -732,6 +760,16 @@ async function reviewBumps(
   });
   return mapWithConcurrency(plan, DIFF_CONCURRENCY, async ({ bump, review }) => {
     if (bump.privateSource) return unreviewedVerdict("private-source", policy);
+    if (indexes.has(bump.ecosystem)) {
+      const index = indexes.get(bump.ecosystem);
+      if (!index || index.isMalware(bump.name, bump.toVersion)) {
+        return {
+          status: "hold",
+          reasons: [index ? "known-malware" : "malware-index-unavailable"],
+          evidence: null,
+        };
+      }
+    }
     if (bump.fromVersion === null) return newPackageVerdict(policy);
     if (!review) return unreviewedVerdict("over-cap", policy);
     if (Date.now() > deadline) return unreviewedVerdict("timed-out", policy);
@@ -1063,6 +1101,10 @@ async function applyApproval(
   }
   const { bumps, coverage } = await readDependencyReviewResult(db, review.id);
   const held = bumps.filter(isOpenHold);
+  if (held.some((bump) => hasMalwareHold(bump.verdict))) {
+    log("malware_hold");
+    return;
+  }
   // The run offered no Approve, so this click is forged or stale.
   if (!listsEveryHold(renderInput(context, bumps, "held", coverage, null))) {
     log("too_many_holds");

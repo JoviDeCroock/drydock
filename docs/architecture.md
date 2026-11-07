@@ -37,7 +37,7 @@ Route handlers stay thin and call shared pipeline/library code, so HTTP routes, 
 | --- | --- | --- | --- |
 | Stage Watchtower — advisory | `staged` | `PackageAdapter` (`package-adapter.ts`) | The registry holds a private candidate Drydock reviews and records; npm controls approval. |
 | Workflow Gate — enforced | `gate` | `WorkflowGateAdapter` | A configured protected GitHub publish job is held for Drydock's approve/reject decision. |
-| Public diff | `publicDiff` | `PublicDiffAdapter` | Two published versions diff anonymously on `/diff`, credential-free. |
+| Public diff | `publicDiff` | `PublicDiffAdapter` | Two published versions diff anonymously on `/diff`, credential-free. Identity normalization and optional `versionsEquivalent` also support dependency-review malware matching. |
 | Published-pair review | `published` | `PublishedPairAdapter` | An organization runs the full authenticated pipeline over two published versions. |
 
 | Ecosystem | `staged` | `gate` | `publicDiff` | `published` | Why not |

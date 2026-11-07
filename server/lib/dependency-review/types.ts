@@ -57,6 +57,8 @@ export const DEFAULT_DEPENDENCY_REVIEW_POLICY: DependencyReviewPolicy = {
 };
 
 export type HoldReason =
+  | "known-malware"
+  | "malware-index-unavailable"
   | "install-script-added"
   | "install-script-changed"
   | "native-binary-added"
