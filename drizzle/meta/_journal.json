@@ -292,8 +292,36 @@
     {
       "idx": 41,
       "version": "6",
-      "when": 1793523277608,
-      "tag": "0041_early_thing",
+      "when": 1793523363068,
+      "tag": "0041_young_proteus",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1793523738115,
+      "tag": "0042_tan_gwen_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1793524125086,
+      "tag": "0043_short_norrin_radd",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1794034953613,
+      "tag": "0044_eager_tombstone",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1794035801593,
+      "tag": "0045_stormy_black_knight",
       "breakpoints": true
     }
   ]

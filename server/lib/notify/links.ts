@@ -29,7 +29,12 @@ export function scanUrl(
   scanId: string,
   organizationId?: string,
 ): string | null {
-  return appUrl(env, `/dashboard/scans/${encodeURIComponent(scanId)}`, { org: organizationId });
+  // `via` lets the first report load say it came from a notification
+  // (docs/product-analytics.md). It is a counting hint, never authority.
+  return appUrl(env, `/dashboard/scans/${encodeURIComponent(scanId)}`, {
+    org: organizationId,
+    via: "notification",
+  });
 }
 
 /** One package's page (review history and publication monitoring) in one organization. */

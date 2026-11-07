@@ -392,7 +392,13 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
         ).toBe(false);
         return;
       }
-      expect(created.status, scenario.name).toBe(202);
+      // The smoke test's Check npm may already have started a review of this
+      // stage, and a repeated start answers with that review, not a second one.
+      if (created.status === 200) {
+        expect(created.body?.existing, `${scenario.name}: existing review`).toBe(true);
+      } else {
+        expect(created.status, scenario.name).toBe(202);
+      }
       const scanId = created.body?.scan?.id;
       expect(scanId, `${scenario.name}: scan id present`).toBeTruthy();
 
@@ -1225,9 +1231,13 @@ test("registry journal limits credential forwarding", async () => {
   // unlike the packument branch, which takes the un-escaped `@scope/name`.
   // Whether that lookup fires within a run is background-timing dependent, so
   // it is asserted for shape here and for exact URL in test/npm-version-status.
+  // Dependency readiness reads any dependency's packument with the credential
+  // (a private dependency must stay visible), so the last branch admits a bare
+  // packument path, the shape NpmStageGateway's metadata policy admits; tarball
+  // reads stay limited to the reviewed scope.
   for (const entry of journal.filter((item) => item.authorization === "present")) {
     expect(entry.path).toMatch(
-      /^\/(?:-\/(?:whoami|stage(?:\?|\/)|package\/[^/]+\/version\/[^/]+\/status)|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/))/i,
+      /^\/(?:-\/(?:whoami|stage(?:\?|\/)|package\/[^/]+\/version\/[^/]+\/status)|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/)|(?:@[^/]+%2F[^/]+|[^/@-][^/]*)$)/i,
     );
   }
 });
@@ -1445,6 +1455,7 @@ async function openAuthenticatedPage(
 interface CreateScanBody {
   scan?: { id?: string };
   queued?: boolean;
+  existing?: boolean;
 }
 
 async function createScan(

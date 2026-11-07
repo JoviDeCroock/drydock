@@ -23,7 +23,10 @@ export const TOC: Array<{
   {
     id: "choose-path",
     label: "Choose a release path",
-    children: [{ id: "path-comparison", label: "Compare the paths" }],
+    children: [
+      { id: "path-comparison", label: "Compare the paths" },
+      { id: "release-walkthrough", label: "Start to finish" },
+    ],
   },
   {
     id: "staged-publishing",
@@ -57,6 +60,14 @@ export const TOC: Array<{
     id: "agent-package-review",
     label: "Coding agents",
     children: [],
+  },
+  {
+    id: "automation",
+    label: "Automate",
+    children: [
+      { id: "api-keys", label: "API keys" },
+      { id: "cli", label: "The drydock CLI" },
+    ],
   },
 ];
 

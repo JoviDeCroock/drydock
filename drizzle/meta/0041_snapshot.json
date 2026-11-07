@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "43941065-15d7-40d0-8c14-215ea735e0a8",
+  "id": "6673d9e8-d031-4704-aea6-a564cf06b260",
   "prevId": "f11dd94a-bae8-42a8-9450-3256ce58b62a",
   "tables": {
     "account": {
@@ -115,454 +115,6 @@
           "tableTo": "user",
           "columnsFrom": [
             "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "dependency_review_approvals": {
-      "name": "dependency_review_approvals",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "repository_id": {
-          "name": "repository_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "ecosystem": {
-          "name": "ecosystem",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "package_name": {
-          "name": "package_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "from_version": {
-          "name": "from_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_version": {
-          "name": "to_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'public'"
-        },
-        "approved_by_login": {
-          "name": "approved_by_login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "approved_by_github_id": {
-          "name": "approved_by_github_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "review_id": {
-          "name": "review_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "approved_at": {
-          "name": "approved_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "dependency_review_approvals_change_unique_idx": {
-          "name": "dependency_review_approvals_change_unique_idx",
-          "columns": [
-            "organization_id",
-            "repository_id",
-            "ecosystem",
-            "package_name",
-            "from_version",
-            "to_version",
-            "source"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "dependency_review_approvals_organization_id_organizations_id_fk": {
-          "name": "dependency_review_approvals_organization_id_organizations_id_fk",
-          "tableFrom": "dependency_review_approvals",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "dependency_review_approvals_review_id_dependency_reviews_id_fk": {
-          "name": "dependency_review_approvals_review_id_dependency_reviews_id_fk",
-          "tableFrom": "dependency_review_approvals",
-          "tableTo": "dependency_reviews",
-          "columnsFrom": [
-            "review_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "dependency_review_settings": {
-      "name": "dependency_review_settings",
-      "columns": {
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "policy_json": {
-          "name": "policy_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'{}'"
-        },
-        "extra_bot_logins_json": {
-          "name": "extra_bot_logins_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "updated_by_user_id": {
-          "name": "updated_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "dependency_review_settings_organization_id_organizations_id_fk": {
-          "name": "dependency_review_settings_organization_id_organizations_id_fk",
-          "tableFrom": "dependency_review_settings",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "dependency_review_settings_updated_by_user_id_user_id_fk": {
-          "name": "dependency_review_settings_updated_by_user_id_user_id_fk",
-          "tableFrom": "dependency_review_settings",
-          "tableTo": "user",
-          "columnsFrom": [
-            "updated_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "dependency_reviews": {
-      "name": "dependency_reviews",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "installation_row_id": {
-          "name": "installation_row_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "repository_id": {
-          "name": "repository_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "repository_full_name": {
-          "name": "repository_full_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "pull_number": {
-          "name": "pull_number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "head_sha": {
-          "name": "head_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "author_login": {
-          "name": "author_login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "check_run_id": {
-          "name": "check_run_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'queued'"
-        },
-        "conclusion": {
-          "name": "conclusion",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bump_count": {
-          "name": "bump_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "held_count": {
-          "name": "held_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "bumps_json": {
-          "name": "bumps_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "unread_lockfiles_json": {
-          "name": "unread_lockfiles_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "listing_complete": {
-          "name": "listing_complete",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "failure_reason": {
-          "name": "failure_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "approved_by_login": {
-          "name": "approved_by_login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "approved_at": {
-          "name": "approved_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "dependency_reviews_repo_head_unique_idx": {
-          "name": "dependency_reviews_repo_head_unique_idx",
-          "columns": [
-            "installation_row_id",
-            "repository_id",
-            "head_sha"
-          ],
-          "isUnique": true
-        },
-        "dependency_reviews_org_created_idx": {
-          "name": "dependency_reviews_org_created_idx",
-          "columns": [
-            "organization_id",
-            "created_at"
-          ],
-          "isUnique": false
-        },
-        "dependency_reviews_repo_pull_idx": {
-          "name": "dependency_reviews_repo_pull_idx",
-          "columns": [
-            "installation_row_id",
-            "repository_id",
-            "pull_number"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "dependency_reviews_organization_id_organizations_id_fk": {
-          "name": "dependency_reviews_organization_id_organizations_id_fk",
-          "tableFrom": "dependency_reviews",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "dependency_reviews_installation_row_id_github_app_installations_id_fk": {
-          "name": "dependency_reviews_installation_row_id_github_app_installations_id_fk",
-          "tableFrom": "dependency_reviews",
-          "tableTo": "github_app_installations",
-          "columnsFrom": [
-            "installation_row_id"
           ],
           "columnsTo": [
             "id"
@@ -1371,6 +923,122 @@
           "name": "npm_package_claims_registry_url_ecosystem_package_name_pk"
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "organization_api_keys": {
+      "name": "organization_api_keys",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "prefix": {
+          "name": "prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key_hash": {
+          "name": "key_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "organization_api_keys_key_hash_unique_idx": {
+          "name": "organization_api_keys_key_hash_unique_idx",
+          "columns": [
+            "key_hash"
+          ],
+          "isUnique": true
+        },
+        "organization_api_keys_creator_idx": {
+          "name": "organization_api_keys_creator_idx",
+          "columns": [
+            "organization_id",
+            "created_by_user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "organization_api_keys_organization_id_organizations_id_fk": {
+          "name": "organization_api_keys_organization_id_organizations_id_fk",
+          "tableFrom": "organization_api_keys",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "organization_api_keys_created_by_user_id_user_id_fk": {
+          "name": "organization_api_keys_created_by_user_id_user_id_fk",
+          "tableFrom": "organization_api_keys",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

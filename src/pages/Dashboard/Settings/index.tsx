@@ -4,6 +4,7 @@ import { useLocation } from "preact-iso";
 import { buildQueryUrl, useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { ApiKeysModel } from "../../../models/api-keys";
 import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
@@ -32,6 +33,7 @@ import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
+import { ApiKeysSection } from "./ApiKeysSection";
 import { AuditLogSection } from "./AuditLogSection";
 import { SettingsNav } from "./SettingsNav";
 import {
@@ -53,6 +55,7 @@ export default function SettingsPage() {
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
   const dependencyReviews = useModel(DependencyReviewsModel);
+  const apiKeys = useModel(ApiKeysModel);
   const activeTab = useSignal<SettingsTab>("general");
 
   useQuerySignal(activeTab, {
@@ -84,6 +87,7 @@ export default function SettingsPage() {
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
         dependencyReviews.load(),
+        apiKeys.load(),
       ]);
     },
   });
@@ -97,6 +101,7 @@ export default function SettingsPage() {
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
     loaders.push(dependencyReviews.load());
+    loaders.push(apiKeys.load());
     await Promise.all(loaders);
   };
 
@@ -213,6 +218,7 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.dependencyReview} class={SECTION_ANCHOR_CLASS}>
                   <DependencyReviewSection model={dependencyReviews} defaultOpen />
                 </div>
+                <ApiKeysSection apiKeys={apiKeys} defaultOpen />
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? (

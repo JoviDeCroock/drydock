@@ -34,6 +34,8 @@ export interface PackumentExtract {
   name: string | null;
   versions: Map<string, PackumentVersion | null>;
   versionsIsObject: boolean;
+  /** The document has a top-level `versions` key, whatever its value. */
+  versionsPresent: boolean;
   /** A version key too long to capture was present; its entry was skipped. */
   oversizedVersionKey: boolean;
   /** Entries with a string value; a too-long key or value leaves the entry out. */
@@ -148,9 +150,27 @@ function nextNumberState(state: number, c: number): number | null {
 }
 
 export function createPackumentExtractor(
-  limits: { maxVersions?: number; maxDistTags?: number; maxCapturedBytes?: number } = {},
+  limits: {
+    maxVersions?: number;
+    maxDistTags?: number;
+    maxCapturedBytes?: number;
+    /**
+     * Record each version key (with a null entry) and skip its object and the
+     * `time` map, for a reader that needs only which versions exist and the
+     * dist-tags: memory then scales with the version count, never with the
+     * per-version fields a publisher controls.
+     */
+    versionKeysOnly?: boolean;
+    /**
+     * Total length of the version keys kept; a document past it sets
+     * `versionLimitExceeded`, like one past `maxVersions`.
+     */
+    maxVersionKeyChars?: number;
+  } = {},
 ): { write(chunk: Uint8Array): void; end(): PackumentExtract } {
   const maxVersions = limits.maxVersions ?? 10_001;
+  const versionKeysOnly = limits.versionKeysOnly ?? false;
+  const maxVersionKeyChars = limits.maxVersionKeyChars ?? Infinity;
   const maxDistTags = limits.maxDistTags ?? 1_000;
   const maxCaptured = limits.maxCapturedBytes ?? 4_096;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -159,6 +179,7 @@ export function createPackumentExtractor(
     name: null,
     versions: new Map(),
     versionsIsObject: false,
+    versionsPresent: false,
     oversizedVersionKey: false,
     time: new Map(),
     distTags: new Map(),
@@ -169,6 +190,7 @@ export function createPackumentExtractor(
   let state = S_VALUE;
   let slot = SLOT_ROOT;
   let pendingKey = "";
+  let versionKeyChars = 0;
   let entry: PackumentVersion | null = null;
   let failed: PackumentStreamError | null = null;
 
@@ -192,8 +214,16 @@ export function createPackumentExtractor(
     state = frames.length === 0 ? S_DONE : S_OBJECT_NEXT;
   }
 
+  // Every caller records `pendingKey` when this returns true.
   function versionAllowed(): boolean {
-    if (out.versions.has(pendingKey) || out.versions.size < maxVersions) return true;
+    if (out.versions.has(pendingKey)) return true;
+    if (
+      out.versions.size < maxVersions &&
+      versionKeyChars + pendingKey.length <= maxVersionKeyChars
+    ) {
+      versionKeyChars += pendingKey.length;
+      return true;
+    }
     out.versionLimitExceeded = true;
     return false;
   }
@@ -211,6 +241,7 @@ export function createPackumentExtractor(
         break;
       case SLOT_VERSIONS:
         out.versions = new Map();
+        versionKeyChars = 0;
         out.versionsIsObject = false;
         out.oversizedVersionKey = false;
         out.versionLimitExceeded = false;
@@ -297,12 +328,16 @@ export function createPackumentExtractor(
         return VERSIONS;
       case SLOT_TIME:
         applyNonString();
-        return TIME;
+        return versionKeysOnly ? null : TIME;
       case SLOT_TAGS:
         applyNonString();
         return TAGS;
       case SLOT_VERSION:
         if (!versionAllowed()) return null;
+        if (versionKeysOnly) {
+          out.versions.set(pendingKey, null);
+          return null;
+        }
         entry = { name: null, version: null, tarball: null, shasum: null };
         out.versions.set(pendingKey, entry);
         return ENTRY;
@@ -401,6 +436,7 @@ export function createPackumentExtractor(
       // A field name too long to capture cannot be one of these short names.
       const names = top === ROOT ? ROOT_KEYS : top === ENTRY ? ENTRY_KEYS : DIST_KEYS;
       slot = text !== null && Object.hasOwn(names, text) ? names[text]! : SLOT_SKIP;
+      if (slot === SLOT_VERSIONS) out.versionsPresent = true;
     }
     state = S_COLON;
   }

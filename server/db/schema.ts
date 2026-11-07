@@ -1,11 +1,13 @@
 import { sql } from "drizzle-orm";
 import type { OrganizationRole } from "../lib/auth/roles";
 import type {
+  ApiKeyAccess,
   DependencyReviewConclusionValue,
   DependencyReviewStatus,
   GithubAppInstallationStatus,
   InvitationStatus,
   NpmConnectionValidationStatus,
+  ReportViewSurface,
   ScanDecision,
   ScanSource,
   ScanStatus,
@@ -155,6 +157,43 @@ export const organizationNotificationRecipients = sqliteTable(
     orgEmailUniqueIdx: uniqueIndex("organization_notification_recipients_org_email_unique_idx").on(
       table.organizationId,
       table.email,
+    ),
+  }),
+);
+
+// Organization API keys (docs/api-keys.md). Only the SHA-256 of the
+// secret is stored; `prefix` is the non-secret head shown in settings. A key
+// authenticates only while its creator is a member of its organization
+// (`findApiKeyByHash` joins the membership); removing the member or deleting
+// the account also deletes the rows.
+export const organizationApiKeys = sqliteTable(
+  "organization_api_keys",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    access: text("access").$type<ApiKeyAccess>().notNull().default("read"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    // The creator's step-up on a key decision (docs/api-keys.md): wrong codes in
+    // a row, which revoke the key at the limit, and the last TOTP time step
+    // accepted, so no code is accepted twice.
+    failedTotpAttempts: integer("failed_totp_attempts").notNull().default(0),
+    lastTotpStep: integer("last_totp_step"),
+  },
+  (table) => ({
+    keyHashUniqueIdx: uniqueIndex("organization_api_keys_key_hash_unique_idx").on(table.keyHash),
+    creatorIdx: index("organization_api_keys_creator_idx").on(
+      table.organizationId,
+      table.createdByUserId,
     ),
   }),
 );
@@ -310,6 +349,25 @@ export const scans = sqliteTable(
     registryApprovableNotifiedAt: integer("registry_approvable_notified_at", {
       mode: "timestamp_ms",
     }),
+    // npm's own publication time for this registry package version (the
+    // packument's `time[version]`), stamped when this organization's
+    // publication monitor observes the release. The version status above only
+    // bounds publication ("published by the time we asked"); this is the exact
+    // moment, and null whenever no watch saw the release.
+    registryPublishedAt: integer("registry_published_at", { mode: "timestamp_ms" }),
+    // Authenticated report loads by organization members (`GET /api/v1/scans/:id`
+    // on a completed scan). Per scan, never per user: the question is whether
+    // anyone opened the report, not who. A load is not a review.
+    reportFirstViewedAt: integer("report_first_viewed_at", { mode: "timestamp_ms" }),
+    reportLastViewedAt: integer("report_last_viewed_at", { mode: "timestamp_ms" }),
+    // Null on rows created before view tracking existed, whose earlier loads
+    // were never recorded; `createScanJob` writes 0. A null count therefore
+    // means "the first recorded view may not be the first view", which keeps
+    // "not opened" from being claimed for a review nobody was counting.
+    reportViewCount: integer("report_view_count"),
+    // How the first recorded load arrived: `web`, or `notification` for a
+    // landing from an email or Slack link.
+    reportFirstViewSurface: text("report_first_view_surface").$type<ReportViewSurface>(),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

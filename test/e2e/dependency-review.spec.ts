@@ -200,6 +200,7 @@ async function installMocks(page: Page, writes: unknown[]) {
       "/api/v1/organizations/members": { members: [] },
       "/api/v1/organizations/invitations": { invitations: [] },
       "/api/v1/audit-events": { events: [], nextCursor: null },
+      "/api/v1/api-keys": { keys: [], limit: 10, expiryDays: [30, 90, 365] },
       "/api/auth/config": { githubSignIn: false, emailVerification: false, passwordReset: false },
     };
     if (path === "/api/auth/get-session") {
