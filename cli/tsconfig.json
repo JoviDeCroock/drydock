@@ -1,0 +1,17 @@
+{
+  // Typechecks the dependency-free CLI from its JSDoc. Run by `pnpm run typecheck`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "typeRoots": ["../node_modules/@types"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["bin/**/*.mjs", "src/**/*.mjs"]
+}

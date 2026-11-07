@@ -61,6 +61,10 @@ export const ScanDetailModel = createModel((id: string) => {
   const selectedPath = signal<string | null>(null);
   const error = signal<string | null>(null);
   const pollingStalled = signal(false);
+  // A notification landing on a review still running is first counted when the
+  // report exists, so the hint rides along until a load returns a completed
+  // scan. Not rendered, so not a signal.
+  let landingVia: "notification" | undefined;
   const versions = signal<ScanVersionsResponse | null>(null);
   // The version the reader picked. Null follows the default comparison, so a
   // choice the page made on its own never pins a version into the URL.
@@ -307,7 +311,8 @@ export const ScanDetailModel = createModel((id: string) => {
               events: [],
             };
       } else {
-        detail.value = await getScan(id, { poll: true });
+        detail.value = await getScan(id, { poll: true, via: landingVia });
+        landingVia = undefined;
       }
       error.value = null;
       const updated = detail.peek();
@@ -406,10 +411,12 @@ export const ScanDetailModel = createModel((id: string) => {
     compare,
     compareFailure,
 
-    async load(): Promise<void> {
+    async load(options: { via?: "notification" } = {}): Promise<void> {
       const id = this.scanId.peek();
+      if (options.via) landingVia = options.via;
       try {
-        const data = await getScan(id);
+        const data = await getScan(id, { via: landingVia });
+        if (data.scan.status === "complete") landingVia = undefined;
         batch(() => {
           this.detail.value = data;
           this.share.value = data.scan.publicShareToken

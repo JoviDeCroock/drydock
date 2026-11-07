@@ -1,0 +1,1 @@
+ALTER TABLE `organization_api_keys` ADD `access` text DEFAULT 'read' NOT NULL;

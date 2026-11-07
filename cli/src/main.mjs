@@ -1,0 +1,600 @@
+// @ts-check
+import { parseArguments } from "./args.mjs";
+import { approve } from "./approve.mjs";
+import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } from "./client.mjs";
+import {
+  terminalSafeJson,
+  terminalSafeJsonText,
+  terminalSafeLine,
+  formatDiscovery,
+  formatDiff,
+  formatFile,
+  formatGate,
+  formatReleases,
+  formatScan,
+  formatScanList,
+  formatScanStatus,
+  formatStartedScan,
+  formatWhoami,
+} from "./format.mjs";
+import { CLI_VERSION } from "./version.mjs";
+import { waitForReview } from "./wait.mjs";
+
+const USAGE = `Usage: drydock <command> [options]
+
+Review public dependency upgrades without an account, or read an organization's
+Drydock reviews from scripts and CI, and start new ones with a key that has scan
+access. "approve" records your own decision on a staged publish, with your
+Drydock authenticator code, then runs your npm.
+
+Commands:
+  whoami                          The API key's organization, expiry, and access
+  scans list                      Reviews, newest first
+      [--filter undecided|published_without_decision|decided|publish|no_publish|all]
+      [--limit N] [--cursor C]
+  scans get <review-id>           One review and its findings
+  scans wait <review-id>          Poll until the review completes
+      [--timeout SECONDS] [--interval SECONDS] [--fail-on RISK]
+  scans start <package>@<version> Review a published version (scan access)
+      [--ecosystem npm|pypi|vscode|atpm] [--baseline VERSION]
+      [--wait [--timeout S] [--interval S] [--fail-on RISK]]
+  scans start --stage <stage-id>  Review an npm staged publish (scan access)
+      [--wait [--timeout S] [--interval S] [--fail-on RISK]]
+  check-npm                       Discover new npm staged publishes and start
+                                  their reviews, like "Check npm" (scan access)
+      [--wait [--timeout S] [--interval S]]
+  report <review-id>              The canonical report export (drydock.report.v2)
+      [--output FILE]
+  receipt <review-id>             The Release Receipt, checked against its digest
+      [--output FILE]
+  releases <package>              One package's reviews in the organization
+      [--ecosystem npm|pypi|vscode|atpm] [--limit N] [--cursor C]
+  gate <review-id>                The GitHub workflow gate a review belongs to
+  diff <package> <from> <to>      Diff two published releases (no API key needed)
+      [--ecosystem npm|pypi|atpm] [--fail-on RISK]
+  file <package> <from> <to> <path>  Inspect bounded before/after file samples (no key)
+      [--ecosystem npm|pypi|atpm]
+  approve <stage-id | package@version>
+                                  Show the review of a staged npm publish, record
+                                  your publish or reject decision in Drydock
+                                  (asks for your authenticator code), then run
+                                  "npm stage approve" or offer "npm stage reject"
+                                  (decide_staged access)
+      [--timeout S] [--interval S] [--otp CODE, only when stdin is not a terminal]
+
+Options:
+  --url URL        Drydock origin (default: $DRYDOCK_URL or https://drydock.org)
+  --json           Print the API response as JSON
+  -h, --help       Show this help
+  -v, --version    Print the CLI version
+
+Environment:
+  DRYDOCK_API_KEY  Organization API key (ddk_…), read only from the environment
+                   so it stays out of shell history and process listings
+  DRYDOCK_URL      Drydock origin
+
+--fail-on RISK (low, medium, high, or critical) gates on release risk: the
+findings the release introduces, as the workflow gate does. Every wait retries
+rate limits, server errors, and network errors until --timeout.
+
+Exit codes: 0 success, 1 request or review failed (or approve recorded no
+decision), 2 usage error, 3 release risk at or above --fail-on, 4 a wait timed
+out before the review finished (or before its status could be read), 5 approve
+recorded the decision in Drydock but npm did not complete it.
+`;
+
+const RISK_ORDER = ["low", "medium", "high", "critical"];
+const SCAN_FILTERS = [
+  "undecided",
+  "published_without_decision",
+  "decided",
+  "publish",
+  "no_publish",
+  "all",
+];
+const ECOSYSTEMS = ["npm", "pypi", "vscode", "atpm"];
+const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
+
+/**
+ * @typedef {object} CliIo
+ * @property {Record<string, string | undefined>} env
+ * @property {typeof fetch} fetch
+ * @property {(text: string) => void} stdout
+ * @property {(text: string) => void} stderr
+ * @property {(path: string, data: string) => Promise<void>} writeFile
+ * @property {(ms: number) => Promise<void>} sleep
+ * @property {() => number} now
+ * @property {boolean} [stdinIsTerminal] `approve` asks for the authenticator code on a terminal, and reads `--otp` otherwise
+ * @property {(question: string) => Promise<string | null>} [prompt] one line from the user; null when input ends
+ * @property {(args: string[]) => Promise<import("./approve.mjs").NpmResult>} [runNpm]
+ *   runs `npm` on the user's own terminal (inherited stdio) and reports how it exited
+ */
+
+/**
+ * Runs one command and returns its exit code. All process access goes through
+ * `io` so tests can drive the CLI against a real Worker.
+ * @param {string[]} argv
+ * @param {CliIo} io
+ * @returns {Promise<number>}
+ */
+export async function main(argv, io) {
+  let parsed;
+  try {
+    parsed = parseArguments(argv, {
+      url: { type: "string" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
+      filter: { type: "string" },
+      limit: { type: "string" },
+      cursor: { type: "string" },
+      ecosystem: { type: "string" },
+      output: { type: "string", short: "o" },
+      timeout: { type: "string" },
+      otp: { type: "string" },
+      interval: { type: "string" },
+      "fail-on": { type: "string" },
+      stage: { type: "string" },
+      baseline: { type: "string" },
+      wait: { type: "boolean" },
+    });
+  } catch (err) {
+    io.stderr(`drydock: ${terminalSafeLine(err instanceof Error ? err.message : err)}\n\n${USAGE}`);
+    return 2;
+  }
+  const { values, positionals } = parsed;
+  if (values.version) {
+    io.stdout(`${CLI_VERSION}\n`);
+    return 0;
+  }
+  if (values.help || positionals.length === 0) {
+    io.stdout(USAGE);
+    return values.help ? 0 : 2;
+  }
+
+  try {
+    const command = resolveCommand(positionals);
+    rejectForeignOptions(command, values);
+    const baseUrl = resolveBaseUrl(
+      typeof values.url === "string" ? values.url : io.env.DRYDOCK_URL,
+    );
+    const client = createClient({
+      baseUrl,
+      apiKey: command.anonymous ? null : requireApiKey(io.env.DRYDOCK_API_KEY),
+      fetch: io.fetch,
+    });
+    return await command.run({ client, io, values, positionals, baseUrl });
+  } catch (err) {
+    // Error text can quote the server, which can quote a package under review.
+    if (err instanceof CliError) {
+      io.stderr(`drydock: ${terminalSafeLine(err.message)}\n`);
+      return err.exitCode;
+    }
+    io.stderr(
+      `drydock: unexpected error: ${terminalSafeLine(err instanceof Error ? err.message : err)}\n`,
+    );
+    return 1;
+  }
+}
+
+/**
+ * `options` lists the command's own flags. Any other flag is a usage error, so
+ * a gate flag such as `--fail-on` can never be silently ignored.
+ * @typedef {{
+ *   run: (ctx: CommandContext) => Promise<number>;
+ *   options: readonly string[];
+ *   anonymous?: boolean;
+ * }} Command
+ */
+
+const GLOBAL_OPTIONS = ["url", "json", "help", "version"];
+
+/**
+ * @param {string[]} positionals
+ * @returns {Command & { name: string }}
+ */
+function resolveCommand(positionals) {
+  const [first, second] = positionals;
+  /** @type {Record<string, Command>} */
+  const commands = {
+    whoami: { run: whoami, options: [] },
+    "scans list": { run: scansList, options: ["filter", "limit", "cursor"] },
+    "scans get": { run: scansGet, options: [] },
+    "scans wait": { run: scansWait, options: ["timeout", "interval", "fail-on"] },
+    "scans start": {
+      run: scansStart,
+      options: ["stage", "ecosystem", "baseline", "wait", "timeout", "interval", "fail-on"],
+    },
+    "check-npm": { run: checkNpm, options: ["wait", "timeout", "interval", "fail-on"] },
+    report: { run: (ctx) => download(ctx, "report.json"), options: ["output"] },
+    receipt: { run: (ctx) => download(ctx, "release-receipt.json"), options: ["output"] },
+    releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
+    gate: { run: gate, options: [] },
+    diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
+    file: { run: file, options: ["ecosystem"], anonymous: true },
+    approve: {
+      run: (ctx) => approve(ctx, () => waitSettings(ctx)),
+      options: ["timeout", "interval", "otp"],
+    },
+  };
+  const name = first === "scans" ? `scans ${second ?? ""}`.trim() : first;
+  const command = commands[name];
+  if (!command) {
+    throw new CliError(
+      `unknown command: ${positionals.slice(0, 2).join(" ")} (see drydock --help)`,
+      2,
+    );
+  }
+  return { ...command, name };
+}
+
+/**
+ * @param {Command & { name: string }} command
+ * @param {Record<string, string | boolean | undefined>} values
+ */
+function rejectForeignOptions(command, values) {
+  for (const flag of Object.keys(values)) {
+    if (!GLOBAL_OPTIONS.includes(flag) && !command.options.includes(flag)) {
+      throw new CliError(`--${flag} does not apply to ${command.name}`, 2);
+    }
+  }
+}
+
+/**
+ * @typedef {object} CommandContext
+ * @property {ReturnType<typeof createClient>} client
+ * @property {CliIo} io
+ * @property {Record<string, string | boolean | undefined>} values
+ * @property {string[]} positionals
+ * @property {string} baseUrl the Drydock origin requests go to
+ */
+
+/**
+ * @param {CommandContext} ctx
+ * @param {number} count positional arguments after the command words
+ * @param {number} offset command words
+ * @param {string} usage
+ */
+function args(ctx, count, offset, usage) {
+  const rest = ctx.positionals.slice(offset);
+  if (rest.length !== count) throw new CliError(`usage: drydock ${usage}`, 2);
+  return rest;
+}
+
+/**
+ * @param {CommandContext} ctx
+ * @param {unknown} body
+ * @param {(body: any) => string} format
+ */
+function print(ctx, body, format) {
+  ctx.io.stdout(`${ctx.values.json ? terminalSafeJson(body) : format(body)}\n`);
+}
+
+/**
+ * @param {Record<string, string | boolean | undefined>} values
+ * @param {string[]} names
+ */
+function query(values, names) {
+  const params = new URLSearchParams();
+  for (const name of names) {
+    const value = values[name];
+    if (typeof value === "string" && value) params.set(name, value);
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+/**
+ * @param {unknown} value
+ * @param {readonly string[]} allowed
+ * @param {string} flag
+ */
+function oneOf(value, allowed, flag) {
+  if (value === undefined) return;
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new CliError(`${flag} must be one of: ${allowed.join(", ")}`, 2);
+  }
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} flag
+ * @param {number} fallback
+ */
+function positiveNumber(value, flag, fallback) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0)
+    throw new CliError(`${flag} must be a positive number`, 2);
+  return parsed;
+}
+
+/** @param {Record<string, string | boolean | undefined>} values */
+function failOnThreshold(values) {
+  oneOf(values["fail-on"], RISK_ORDER, "--fail-on");
+  const value = values["fail-on"];
+  return typeof value === "string" ? RISK_ORDER.indexOf(value) : null;
+}
+
+/**
+ * @param {number | null} threshold
+ * @param {unknown} risk
+ */
+function meetsThreshold(threshold, risk) {
+  if (threshold === null) return false;
+  const level = typeof risk === "string" ? RISK_ORDER.indexOf(risk) : -1;
+  // A risk the CLI does not recognize fails the gate rather than passing it.
+  return level === -1 || level >= threshold;
+}
+
+/** @param {CommandContext} ctx */
+async function whoami(ctx) {
+  args(ctx, 0, 1, "whoami");
+  print(ctx, await ctx.client.json("/api/v1/api-keys/current"), formatWhoami);
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function scansList(ctx) {
+  args(ctx, 0, 2, "scans list [--filter F] [--limit N] [--cursor C]");
+  oneOf(ctx.values.filter, SCAN_FILTERS, "--filter");
+  const body = await ctx.client.json(
+    `/api/v1/scans${query(ctx.values, ["filter", "limit", "cursor"])}`,
+  );
+  print(ctx, body, formatScanList);
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function scansGet(ctx) {
+  const [id] = args(ctx, 1, 2, "scans get <review-id>");
+  print(ctx, await ctx.client.json(`/api/v1/scans/${pathSegment(id, "review id")}`), formatScan);
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function scansWait(ctx) {
+  const [id] = args(
+    ctx,
+    1,
+    2,
+    "scans wait <review-id> [--timeout S] [--interval S] [--fail-on RISK]",
+  );
+  const waiting = waitSettings(ctx);
+  const status = await waitForReview(ctx, id, waiting);
+  print(ctx, status, formatScanStatus);
+  return reviewExitCode([status], waiting.threshold);
+}
+
+/**
+ * @param {CommandContext} ctx
+ * @returns {{ threshold: number | null; intervalMs: number; deadline: number }}
+ */
+function waitSettings(ctx) {
+  const threshold = failOnThreshold(ctx.values);
+  const timeoutMs = positiveNumber(ctx.values.timeout, "--timeout", 600) * 1000;
+  const intervalMs = positiveNumber(ctx.values.interval, "--interval", 5) * 1000;
+  return { threshold, intervalMs, deadline: ctx.io.now() + timeoutMs };
+}
+
+/**
+ * `--wait` settings for a command that starts reviews, or null without
+ * `--wait`, where a waiting flag would otherwise be silently ignored.
+ * @param {CommandContext} ctx
+ */
+function optionalWaitSettings(ctx) {
+  if (ctx.values.wait) return waitSettings(ctx);
+  for (const flag of ["fail-on", "timeout", "interval"]) {
+    if (ctx.values[flag] !== undefined) throw new CliError(`--${flag} needs --wait`, 2);
+  }
+  return null;
+}
+
+/**
+ * 3 when any review reaches the threshold, else 1 when any failed, else 0. A
+ * review at the threshold is the decisive signal for a release gate; a failed
+ * one only says that review has no verdict. Gates on release risk; without a
+ * breakdown (no baseline compared, or an older review) it falls back to the
+ * overall risk, which is never lower.
+ * @param {any[]} statuses final `GET /scans/:id/status` bodies
+ * @param {number | null} threshold
+ */
+function reviewExitCode(statuses, threshold) {
+  const reachesThreshold = (/** @type {any} */ body) =>
+    body?.scan?.status !== "failed" &&
+    meetsThreshold(threshold, body?.riskSummary?.releaseRisk ?? body?.scan?.risk);
+  if (statuses.some(reachesThreshold)) return 3;
+  return statuses.some((body) => body?.scan?.status === "failed") ? 1 : 0;
+}
+
+/**
+ * Waits for each started review in turn under one deadline and prints their
+ * final statuses: one JSON object with `--json`, a status line each otherwise.
+ * @param {CommandContext} ctx
+ * @param {string[]} ids
+ * @param {ReturnType<typeof waitSettings>} waiting
+ * @param {unknown} started the start response, carried into `--json` output
+ */
+async function waitAndReport(ctx, ids, waiting, started) {
+  const results = [];
+  for (const id of ids) results.push(await waitForReview(ctx, id, waiting));
+  if (ctx.values.json) {
+    ctx.io.stdout(`${terminalSafeJson({ .../** @type {object} */ (started), results })}\n`);
+  } else {
+    for (const status of results) ctx.io.stdout(`${formatScanStatus(status)}\n`);
+  }
+  return reviewExitCode(results, waiting.threshold);
+}
+
+/**
+ * `<name>@<version>`, splitting at the last `@` so a scoped npm name keeps its
+ * leading one (`@scope/name@1.2.3`).
+ * @param {string} spec
+ */
+function parsePackageSpec(spec) {
+  const at = spec.lastIndexOf("@");
+  const packageName = at > 0 ? spec.slice(0, at).trim() : "";
+  const version = at > 0 ? spec.slice(at + 1).trim() : "";
+  if (!packageName || !version) {
+    throw new CliError(`expected <package>@<version>, got: ${spec}`, 2);
+  }
+  return { packageName, version };
+}
+
+const START_USAGE =
+  "scans start <package>@<version> [--ecosystem E] [--baseline V] | scans start --stage <stage-id> [--wait] [--fail-on RISK]";
+
+/** @param {CommandContext} ctx */
+async function scansStart(ctx) {
+  const { stage, ecosystem, baseline } = ctx.values;
+  /** @type {Record<string, string>} */
+  let body;
+  if (stage !== undefined) {
+    args(ctx, 0, 2, START_USAGE);
+    if (ecosystem !== undefined || baseline !== undefined) {
+      throw new CliError("--stage names an npm staged publish; drop --ecosystem and --baseline", 2);
+    }
+    if (typeof stage !== "string" || !stage.trim()) throw new CliError("--stage needs a value", 2);
+    body = { stageId: stage.trim() };
+  } else {
+    const [spec] = args(ctx, 1, 2, START_USAGE);
+    oneOf(ecosystem, ECOSYSTEMS, "--ecosystem");
+    const { packageName, version } = parsePackageSpec(spec);
+    body = { ecosystem: typeof ecosystem === "string" ? ecosystem : "npm", packageName, version };
+    if (typeof baseline === "string" && baseline.trim()) body.baselineVersion = baseline.trim();
+  }
+  const waiting = optionalWaitSettings(ctx);
+
+  const started = await ctx.client.json("/api/v1/scans", { method: "POST", body });
+  const id = started?.scan?.id;
+  if (typeof id !== "string" || !id) throw new CliError("Drydock did not return a review id");
+  if (!waiting) {
+    print(ctx, started, formatStartedScan);
+    return 0;
+  }
+  if (!ctx.values.json) ctx.io.stderr(`${formatStartedScan(started)}\n`);
+  return waitAndReport(ctx, [id], waiting, started);
+}
+
+/** @param {CommandContext} ctx */
+async function checkNpm(ctx) {
+  args(ctx, 0, 1, "check-npm [--wait [--timeout S] [--interval S]]");
+  // Discovery starts reviews only for stages nobody reviewed yet, so a stage the
+  // cron already picked up would pass any threshold: check-npm is not a gate.
+  if (ctx.values["fail-on"] !== undefined) {
+    throw new CliError(
+      'check-npm is not a gate; use "scans start --stage <stage-id> --wait --fail-on RISK"',
+      2,
+    );
+  }
+  const waiting = optionalWaitSettings(ctx);
+  const result = await ctx.client.json("/api/v1/staged-publishes/scan", { method: "POST" });
+  if (!waiting) {
+    print(ctx, result, formatDiscovery);
+    return 0;
+  }
+  if (!ctx.values.json) ctx.io.stderr(`${formatDiscovery(result)}\n`);
+  const ids = (Array.isArray(result?.scans) ? result.scans : [])
+    .map((/** @type {any} */ scan) => scan?.id)
+    .filter((/** @type {unknown} */ id) => typeof id === "string" && id);
+  return waitAndReport(ctx, ids, waiting, result);
+}
+
+/**
+ * Writes the export's exact bytes, which are byte-stable on the server, to
+ * `--output`. On stdout the text is escaped for the terminal instead: still
+ * the same JSON value, but not the bytes a receipt digest covers. A receipt is
+ * checked against the digest the server sent with it before either.
+ * @param {CommandContext} ctx
+ * @param {"report.json" | "release-receipt.json"} file
+ */
+async function download(ctx, file) {
+  const label = file === "report.json" ? "report" : "receipt";
+  const [id] = args(ctx, 1, 1, `${label} <review-id> [--output FILE]`);
+  const res = await ctx.client.request(`/api/v1/scans/${pathSegment(id, "review id")}/${file}`);
+  if (file === "release-receipt.json") {
+    const declared = res.headers.get("x-drydock-receipt-sha256");
+    const actual = await sha256Hex(res.text);
+    if (declared !== actual) {
+      throw new CliError("the receipt does not match the digest Drydock sent with it");
+    }
+  }
+  const output = ctx.values.output;
+  if (typeof output === "string" && output) {
+    await ctx.io.writeFile(output, res.text);
+    ctx.io.stderr(`wrote ${output}\n`);
+  } else {
+    const text = terminalSafeJsonText(res.text);
+    ctx.io.stdout(text.endsWith("\n") ? text : `${text}\n`);
+  }
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function releases(ctx) {
+  const [name] = args(ctx, 1, 1, "releases <package> [--ecosystem E] [--limit N] [--cursor C]");
+  oneOf(ctx.values.ecosystem, ECOSYSTEMS, "--ecosystem");
+  // Scoped npm names keep their slash (`/packages/@scope/name/releases`).
+  const encoded = name
+    .split("/")
+    .map((segment) => pathSegment(segment, "package name"))
+    .join("/");
+  const body = await ctx.client.json(
+    `/api/v1/packages/${encoded}/releases${query(ctx.values, ["ecosystem", "limit", "cursor"])}`,
+  );
+  print(ctx, body, formatReleases);
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function gate(ctx) {
+  const [id] = args(ctx, 1, 1, "gate <review-id>");
+  const body = await ctx.client.json(
+    `/api/v1/github-app/workflow-gates/by-scan/${pathSegment(id, "review id")}`,
+  );
+  print(ctx, body, formatGate);
+  return 0;
+}
+
+/** @param {CommandContext} ctx */
+async function diff(ctx) {
+  const [name, from, to] = args(
+    ctx,
+    3,
+    1,
+    "diff <package> <from> <to> [--ecosystem E] [--fail-on RISK]",
+  );
+  oneOf(ctx.values.ecosystem, PUBLIC_DIFF_ECOSYSTEMS, "--ecosystem");
+  const threshold = failOnThreshold(ctx.values);
+  const params = new URLSearchParams({ package: name, from, to });
+  if (typeof ctx.values.ecosystem === "string") params.set("ecosystem", ctx.values.ecosystem);
+  const body = await ctx.client.json(`/api/public/v1/package-diff?${params}`, {
+    authenticated: false,
+  });
+  print(ctx, body, formatDiff);
+  return meetsThreshold(threshold, body?.risk?.releaseRisk) ? 3 : 0;
+}
+
+/** @param {CommandContext} ctx */
+async function file(ctx) {
+  const [name, from, to, path] = args(
+    ctx,
+    4,
+    1,
+    "file <package> <from> <to> <path> [--ecosystem E]",
+  );
+  oneOf(ctx.values.ecosystem, PUBLIC_DIFF_ECOSYSTEMS, "--ecosystem");
+  const params = new URLSearchParams({ package: name, from, to, path });
+  if (typeof ctx.values.ecosystem === "string") params.set("ecosystem", ctx.values.ecosystem);
+  const body = await ctx.client.json(`/api/public/v1/package-diff/file?${params}`, {
+    authenticated: false,
+  });
+  print(ctx, body, formatFile);
+  return 0;
+}
+
+/** @param {string} text */
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}

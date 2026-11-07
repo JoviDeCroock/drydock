@@ -5,6 +5,8 @@ import {
   parseManifest,
   parseReportArtifactMetadata,
   parseReportFindings,
+  parseReportManifest,
+  type ReportManifestDetail,
 } from "./parse";
 import {
   SCAN_ARTIFACT_STORAGE_VERSION,
@@ -111,6 +113,28 @@ export async function loadScanArtifactMetadata(
       emitArtifactFallback("artifact_payload_invalid", scan);
       return null;
     }
+    return detail;
+  } catch (err) {
+    emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
+    return null;
+  }
+}
+
+/** The report's manifest view, digest-verified like every other report read. */
+export async function loadScanReportManifest(
+  bucket: R2Bucket | undefined,
+  scan: ScanArtifactScanRow,
+): Promise<ReportManifestDetail | null> {
+  if (!bucket || !hasReportArtifactMetadata(scan)) return null;
+  try {
+    const reportText = await readDigestVerifiedJsonText(bucket, {
+      key: scan.reportArtifactKey,
+      digest: scan.reportDigest,
+      scanId: scan.id,
+      kind: "report",
+    });
+    const detail = parseReportManifest(reportText);
+    if (!detail) emitArtifactFallback("artifact_payload_invalid", scan);
     return detail;
   } catch (err) {
     emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });

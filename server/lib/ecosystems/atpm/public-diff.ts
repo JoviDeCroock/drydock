@@ -177,7 +177,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       });
     }
 
-    const { displayName } = canonicalNames(ref, identity);
+    const { packageName: canonicalPackageName, displayName } = canonicalNames(ref, identity);
     const pageNotices = reviewNotices({
       identity,
       withoutBaseline: from === null,
@@ -192,6 +192,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       attestation: describeAttestation(to, publisher.value, toArchive.archiveSha512 ?? null),
       ...(pageNotices.length ? { notices: pageNotices } : {}),
       ...(displayName ? { displayName } : {}),
+      canonicalPackageName,
       cacheExpiresAt: earliestAtpmExpiry(cacheExpiresAt, publisher.expiresAt),
       buildFindings: (fileDiff, manifestDiff) => [
         // The artifact is an npm tarball, so it gets the npm rule set verbatim.
