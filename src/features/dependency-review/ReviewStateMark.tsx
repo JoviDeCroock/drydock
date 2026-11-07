@@ -1,4 +1,5 @@
 import { Badge } from "../../components/Badge";
+import { LoadingLine } from "../../components/Typography";
 import type { DependencyReview } from "../../models/dependency-review";
 import { reviewState } from "./wording";
 
@@ -18,9 +19,16 @@ export function ReviewStateMark({
     );
   }
   if (state === "failed") return <Badge tone="critical">failed</Badge>;
+  if (state === "reviewing") {
+    return (
+      <LoadingLine size="inline" class="whitespace-nowrap">
+        reviewing
+      </LoadingLine>
+    );
+  }
   return (
     <span class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
-      {state === "reviewing" ? "reviewing…" : state}
+      {state === "superseded" ? "not reviewed" : state}
     </span>
   );
 }

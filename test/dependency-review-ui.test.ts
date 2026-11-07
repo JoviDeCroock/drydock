@@ -27,6 +27,7 @@ describe("dependency review state", () => {
     expect(reviewState({ status: "queued", conclusion: null })).toBe("reviewing");
     expect(reviewState({ status: "running", conclusion: null })).toBe("reviewing");
     expect(reviewState({ status: "failed", conclusion: null })).toBe("failed");
+    expect(reviewState({ status: "superseded", conclusion: null })).toBe("superseded");
     expect(reviewState({ status: "completed", conclusion: "held" })).toBe("held");
     expect(reviewState({ status: "completed", conclusion: "approved" })).toBe("approved");
   });

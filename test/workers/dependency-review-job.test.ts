@@ -5,7 +5,10 @@ import { createDb } from "../../server/db/client";
 import { claimDependencyReview, createDependencyReview } from "../../server/db/dependency-reviews";
 import { executeDependencyReviewJob } from "../../server/lib/dependency-review/job";
 import * as schema from "../../server/db/schema";
-import type { ReviewedBump } from "../../server/lib/dependency-review/types";
+import {
+  DEFAULT_DEPENDENCY_REVIEW_POLICY,
+  type ReviewedBump,
+} from "../../server/lib/dependency-review/types";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { queue } from "../../server/queue";
 import {
@@ -1072,9 +1075,9 @@ describe("lockfiles the review could not read", () => {
     expect(checkOutput(api).summary).toContain("GitHub listed only part of this PR's files");
   });
 
-  test("with holdOnUnreviewed off, an unread lockfile is named but does not block", async () => {
+  test("under the default policy, an unread lockfile is named but does not block", async () => {
     const { api, review, input } = await scenario({
-      policy: { holdOnUnreviewed: false },
+      policy: DEFAULT_DEPENDENCY_REVIEW_POLICY,
       pr: { files: [{ filename: "bun.lock", status: "modified" }] },
     });
 

@@ -96,8 +96,8 @@ make it required.
    `link:`, `workspace:`, paths) are left out. All of these stay in the review as _unreviewed_
    (`private-source`) and hold under `holdOnUnreviewed`, because dropping them
    would let their change pass unseen. A repository that proxies every package
-   through a mirror therefore holds every bump until it turns `holdOnUnreviewed`
-   off. Config set outside the repository (environment, user-level files,
+   through a mirror therefore holds every bump while `holdOnUnreviewed` is
+   on. Config set outside the repository (environment, user-level files,
    Dependabot `registries:`) is invisible here.
 6. **Check malware, then diff.** Every public target version is checked against
    the [Aikido Intel feeds used by Safe Chain](https://github.com/AikidoSec/safe-chain/tree/main/packages/safe-chain/src/scanning),
@@ -129,15 +129,17 @@ make it required.
    | `holdOnInstallScripts`   | on      | adds or changes `preinstall` / `install` / `postinstall`                            |
    | `holdOnNativeBinaries`   | on      | adds a native binary (magic-byte sniffed, or a native extension)                    |
    | `holdOnNewDependencies`  | on      | declares a dependency no section declared before                                    |
-   | `holdOnNewBinCommands`   | on      | adds a `bin` command                                                                |
+   | `holdOnNewBinCommands`   | off     | adds a `bin` command                                                                |
    | `holdAtReleaseRisk`      | `high`  | has release risk at or above the threshold (`null` turns it off)                    |
-   | `holdOnUninspectedFiles` | on      | adds or changes files no rule read: minified JS, oversized bodies, unknown binaries |
-   | `holdOnUnreviewed`       | on      | could not be diffed at all                                                          |
+   | `holdOnUninspectedFiles` | off     | adds or changes files no rule read: minified JS, oversized bodies, unknown binaries |
+   | `holdOnUnreviewed`       | off     | could not be diffed at all                                                          |
    | `holdOnNewPackages`      | off     | is a package with no previous version in the lockfile                               |
 
-   `holdOnUninspectedFiles` and `holdOnUnreviewed` default on because a
-   `success` is what auto-merge acts on. GitHub treats a `neutral` check as
-   passing, so "we didn't look" must hold, not pass quietly. Images, fonts, and
+   Only the three capability holds default on, so a new organization's checks
+   hold for what a worm needs and little else. `holdOnUninspectedFiles` and
+   `holdOnUnreviewed` are off by default, so "we didn't look" passes: a
+   `success` is what auto-merge acts on, and GitHub treats a `neutral` check
+   as passing. Turn them on to hold instead. Images, fonts, and
    media are binary but inert and are not counted. Source maps aren't either.
    A file listing GitHub cut short (over 3,000 files, or fewer listed than the
    PR's `changed_files`) holds the review under `holdOnUnreviewed`, because a
