@@ -1,133 +1,61 @@
-# npm trusted publishing: narrowing publication to the configured workflow path
+# npm trusted publishing
 
-The [npm workflow gate](./workflow-gates.md#npm-workflow-gate-notes) pauses a
-publish while Drydock reviews the exact bytes. On its own it is a checkpoint on
-one path: nothing stops a maintainer — or an attacker holding a token — from
-publishing around it. npm's **trusted publishing** (OIDC) narrows automated publishing. Pin the
-package's publish path to one repository, one workflow file, and one GitHub
-Environment, make Drydock that environment's deployment-protection rule, and
-disallow tokens. The configured workflow obtains its OIDC publish credential only
-after the review passes. npm still permits an account holder to publish
-interactively with password, 2FA, and an OTP; there is no trusted-publisher-only
-mode.
+Pins a package's automated publish path to one repository, workflow file, and GitHub Environment whose deployment-protection rule is Drydock, and disallows tokens, so the configured workflow gets its OIDC publish credential only after the review passes. **Authority:** enforced for the configured workflow job (GitHub holds it; npm refuses OIDC outside the pinned environment); npm's interactive password + 2FA + OTP publish path is not stopped. **Owner:** npm and GitHub settings; Drydock side is the [workflow gate](./workflow-gates.md).
 
-For npm specifically there is a second, advisory review shape: pin the
-trusted publisher to `npm stage publish` and let npm hold the candidate instead
-of GitHub holding the job. See
-[`npm-staged-publishing.md`](./npm-staged-publishing.md) for that recipe and a
-comparison of **Workflow Gate — enforced** with **Stage Watchtower — advisory**.
-The two compose: a stage-only publisher pinned to the gate environment, with
-the protected job running `npm stage publish`, gives an enforced review before
-npm holds the bytes and a staged review that is bound back to the gate
-([gated staging](./npm-staged-publishing.md#gated-staging-compose-both)).
+Prerequisite: a working npm workflow gate ([workflow-gates.md](./workflow-gates.md)): Drydock GitHub App installed, release target configured, publish workflow uploading packed tarballs plus `SHA256SUMS`.
 
-This page is the recipe, followed by an honest accounting of what it does and
-does not stop. Prerequisite: a working npm workflow gate as described in
-[`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes) — Drydock
-GitHub App installed, release target configured, publish workflow uploading the
-packed tarballs plus `SHA256SUMS`.
+Alternative for npm only: a stage-only trusted publisher where npm holds the candidate instead of GitHub holding the job, **Stage Watchtower — advisory** ([npm-staged-publishing.md](./npm-staged-publishing.md), which also compares it with **Workflow Gate — enforced**). The two compose: a stage-only publisher pinned to the gate environment gives an enforced review before npm holds the bytes and a staged review bound back to the gate ([gated staging](./npm-staged-publishing.md#gated-staging-compose-both)).
 
-## The recipe
+## Settings checklist
 
-On npmjs.com, in the package's settings:
+| # | Where | Setting | Value |
+| --- | --- | --- | --- |
+| 1 | npmjs.com package settings | Trusted publisher | GitHub Actions; owning organization/user; repository; workflow filename (e.g. `publish.yml`); **environment** = the gated environment (`production`) |
+| 2 | npmjs.com package settings | Publishing access | "Require two-factor authentication and disallow tokens" |
+| 3 | GitHub repository → Environments → `production` | Deployment protection | Drydock as custom deployment-protection rule |
+| 4 | same | "Allow administrators to bypass configured protection rules" | **unchecked** (on by default) |
+| 5 | same | Deployment branches/tags | restricted to the release branch or tag pattern |
+| 6 | GitHub repository rulesets / branch protection | Workflow file | protect the publishing branch; `CODEOWNERS` review on `.github/workflows/` |
 
-1. **Configure a trusted publisher**: GitHub Actions, with the owning
-   organization/user, the repository, the workflow filename (for example
-   `publish.yml`), and — the load-bearing step — the **environment** set to the
-   gated environment (`production` below). With the environment pinned, npm
-   refuses the OIDC exchange for any job outside that environment, and a job
-   inside it cannot start until the environment's protection rules have passed.
-2. **Set publishing access to "Require two-factor authentication and disallow
-   tokens"**. This removes every token path: legacy tokens, automation tokens,
-   and granular access tokens all stop working for publish.
+- Step 1 is load-bearing: with the environment pinned, npm refuses the OIDC exchange for any job outside it, and a job inside it cannot start until the environment's protection rules pass.
+- Step 2 removes every token path: legacy, automation, and granular access tokens all stop working for publish.
+- Step 6: the trusted publisher pins the workflow _path_, not its contents, so changes to it need the same review bar as a release.
 
-On GitHub, in the repository:
+## Workflow
 
-3. **Harden the `production` environment**: Drydock is its custom
-   deployment-protection rule; **uncheck "Allow administrators to bypass
-   configured protection rules"** (it is on by default); restrict deployment
-   branches/tags to the release branch or tag pattern.
-4. **Protect the workflow file**: a ruleset or branch protection on the branch
-   the workflow publishes from, with `CODEOWNERS` review on
-   `.github/workflows/`. The trusted publisher pins the workflow _path_, not
-   its contents — review on changes to it belongs to the same bar as a release.
-5. **Publish via OIDC, not a token**. The publish job runs in the environment,
-   requests an id-token, verifies the reviewed digests, and publishes with npm
-   CLI ≥ 11.5.1 and no `NODE_AUTH_TOKEN` anywhere in the workflow:
+The canonical [npm-workflow-gate.yml](./examples/npm-workflow-gate.yml) already is the trusted-publishing shape. The lines these settings depend on:
 
-```yaml
-jobs:
-  pack:
-    steps:
-      - run: npm ci
-      - run: npm pack --json > pack.json
-      - run: sha256sum *.tgz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-release-candidates
-          path: |
-            *.tgz
-            SHA256SUMS
-  publish:
-    needs: pack
-    environment: production # must match the trusted publisher's pinned environment
-    permissions:
-      id-token: write # OIDC; no npm token exists in this workflow
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-release-candidates
-      # Fail closed if the downloaded bytes drifted from what was reviewed.
-      - run: sha256sum --check --strict SHA256SUMS
-      - run: npm publish *.tgz
-```
-
-This is the same shape as the recommended gate workflow in
-[`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes); the deltas
-are the `id-token: write` permission and the absence of any token secret.
+| Workflow line | Why it matters |
+| --- | --- |
+| `environment: production` on the `publish` job | must equal the trusted publisher's pinned environment; GitHub holds the job for Drydock |
+| `permissions: { id-token: write, contents: read }` | OIDC credential; no `NODE_AUTH_TOKEN` or token secret anywhere in the workflow |
+| `npm install -g npm@^11.5.1` | trusted publishing needs npm CLI ≥ 11.5.1 |
+| `sha256sum --check --strict SHA256SUMS` | fails closed if downloaded bytes drifted from what was reviewed |
+| `npm publish dist/*.tgz --access public --provenance` | publishes exactly the reviewed tarballs |
 
 ## Why each pin matters
 
-| Publish attempt                                                | Stopped by                                                                                                                                              |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm publish` with any token — laptop, CI secret, stolen token | Publishing access disallows tokens                                                                                                                      |
-| OIDC publish from another repository, workflow file, or a fork | Trusted publisher claim mismatch; npm refuses the exchange                                                                                              |
-| Editing the workflow to drop `environment: production`         | Environment is pinned in the trusted publisher config; the OIDC exchange fails                                                                          |
-| Running the publish job without (or against) a gate decision   | GitHub's deployment-protection rule holds the job; GitHub fails the run on a Drydock rejection                                                          |
-| Rebuilding or swapping the tarball after approval              | The recommended publish job rejects changed bytes with `sha256sum --check --strict`; this assumes the publish job and its checksum check remain trusted |
-| A repo admin approving the deployment past the rule in the UI  | Admin bypass unchecked on the environment                                                                                                               |
+| Publish attempt | Stopped by |
+| --- | --- |
+| `npm publish` with any token (laptop, CI secret, stolen token) | Publishing access disallows tokens |
+| OIDC publish from another repository, workflow file, or fork | Trusted publisher claim mismatch; npm refuses the exchange |
+| Editing the workflow to drop `environment: production` | Environment pinned in the trusted publisher; the OIDC exchange fails |
+| Running the publish job without (or against) a gate decision | GitHub's deployment-protection rule holds the job; GitHub fails the run on a Drydock rejection |
+| Rebuilding or swapping the tarball after approval | `sha256sum --check --strict` rejects changed bytes, assuming the publish job and its check remain trusted |
+| A repo admin approving the deployment past the rule in the UI | Admin bypass unchecked on the environment |
 
-Two properties compound on top of the table. Because the publish is OIDC-based,
-npm attaches provenance attestations (for public repositories) binding the
-published version to the repository and workflow run — so a version that _did_
-ship around this path can carry different provenance evidence. Provenance is
-not proof of Drydock approval. Pinning controls which job can obtain the publish
-credential; Drydock reviews the uploaded bytes. If that job is subsequently
-allowed to publish different bytes or skip its checksum check, the registry does
-not bind the credential to Drydock's reviewed digest. The optional
-[publication monitor](./publication-monitor.md) compares actual public npm bytes
-with prior reviews after publication, including releases that bypass staging.
+## Invariants
 
-Gate scans arriving through this path carry the `attested` source-binding tier
-(see [`intent-envelope.md`](./intent-envelope.md)): the signed
-`deployment_protection_rule` webhook binds repository, run, and environment,
-and the reviewed bytes were downloaded from that exact run.
+1. Pinning controls which job can obtain the publish credential; Drydock reviews the uploaded bytes. The registry does not bind the credential to Drydock's reviewed digest, so a job later allowed to publish different bytes or skip its checksum check defeats the binding.
+2. OIDC publishes from public repositories get npm provenance binding the version to the repository and workflow run, so a version shipped around this path can carry different provenance. Provenance is not proof of Drydock approval, and missing provenance alone does not prove a bypass.
+3. Gate scans arriving through this path carry the `attested` source-binding tier ([intent-envelope.md](./intent-envelope.md)): the signed `deployment_protection_rule` webhook binds repository, run, and environment, and the reviewed bytes were downloaded from that exact run.
+4. The [publication monitor](./publication-monitor.md) compares actual public npm bytes with prior reviews after publication, including releases that bypass this path; that observation happens after the package is public.
 
 ## What this does not stop
 
-- **Interactive publish by the npm account itself.** "Disallow tokens" still
-  permits a human with the account password, 2FA, and an OTP to `npm publish`
-  from a laptop. npm has no "trusted publisher only" enforcement today; this is
-  the residual gap only the registry can close. Enrolled packages can be
-  monitored for publication without prior artifact approval, but that observation
-  happens after the package is public. Missing provenance alone does not prove
-  a bypass.
-- **npm account takeover, including 2FA.** Whoever controls the account can
-  edit or remove the trusted publisher configuration and re-enable tokens.
-  Every registry-side control roots in account security.
-- **GitHub administrators.** Repo admins can edit the environment's protection
-  rules and org admins can uninstall the App. Keep the admin set small; both
-  actions land in GitHub's audit log.
-- **Drydock unavailability.** The gate stays blocked and GitHub eventually
-  fails the waiting run at its own timeout. That configured workflow cannot
-  continue unreviewed; npm's separate interactive 2FA publish path still exists.
+| Gap | Detail |
+| --- | --- |
+| Interactive publish by the npm account | "Disallow tokens" still permits password + 2FA + OTP `npm publish` from a laptop; npm has no trusted-publisher-only enforcement. Only the registry can close this. |
+| npm account takeover, including 2FA | The account can edit or remove the trusted publisher and re-enable tokens. Every registry-side control roots in account security. |
+| GitHub administrators | Repo admins can edit protection rules; org admins can uninstall the App. Keep the admin set small; both actions land in GitHub's audit log. |
+| Drydock unavailability | The gate stays blocked and GitHub fails the waiting run at its own timeout. The configured workflow cannot continue unreviewed; npm's interactive 2FA path still exists. |

@@ -1,37 +1,32 @@
 # Incident content playbook
 
-What to publish when a public supply-chain compromise breaks, and — more importantly — what not to.
+This playbook governs posts about confirmed public supply-chain compromises and their readable package diffs. **Authority:** internal. **Owner:** `scripts/incident-post.mjs`.
 
-The reach window for this content is roughly 24–48 hours. That is not enough time to decide policy under pressure, so the decisions are made here in advance: the hard rules below, the templates in [`../scripts/incident-post.mjs`](../scripts/incident-post.mjs), and a link check that runs before anything goes out.
+## At a glance
 
-## Hard rules
+| Thing | Owner file | Who may call / trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Post templates and version check | `scripts/incident-post.mjs` | Operator responding to a confirmed public incident | `test/incident-post.test.mjs` |
+| Diff URL shape | `src/lib/package-diff-path.ts` | Script and public diff links | `test/incident-post.test.mjs` |
+| Measurement | `server/routes/public-diff.ts` | Successful version-pair API requests | `test/workers/public-diff-routes.test.ts` |
 
-These are not style preferences. Breaking one of them costs more trust than any single post can earn.
+## Contract
 
-1. **Confirmed public incidents only.** A named package, a disclosed compromise, a public advisory or maintainer statement. Never a live maintainer's release on suspicion, and never "this looks sketchy" about someone's package. The first viral moment must not be a maintainer being publicly accused by a tool that reviews maintainers' work.
-2. **Describe the diff, not the intent.** The diff proves that bytes changed. It does not prove who changed them or why. Write "the release added X"; do not write "the attacker deliberately Y". Attribution belongs to the people running the actual investigation.
-3. **Name the package, never a person.** A compromised maintainer is the victim of the incident, not its cause. No usernames, no "they should have used 2FA".
-4. **Verify the link resolves first.** npm unpublishes malicious versions, often within hours. `scripts/incident-post.mjs` refuses to print a post when either version is gone. A post whose link 404s reads as opportunistic and cannot be quietly fixed after sharing.
-5. **Never claim we found it first** unless we did, with a scan timestamp to back it. "Here is the diff" is the claim. "We caught this" is a different claim and usually a false one.
-6. **No payload amplification.** Link the diff; do not paste the deobfuscated payload, the exfil endpoint, or anything that shortens the path to reuse. The diff view is enough to make the point.
-7. **No AI output in incident content.** The public diff runs deterministic rules only, on purpose — determinism _is_ the message. Quoting a model's opinion about a live incident undercuts that and invites an argument about the model instead of the bytes.
-8. **Correct in public, do not delete.** The correction template exists because the moment you need it is the moment you are least able to write it well.
+### Response timeline
 
-## The loop
+| When | Action |
+| --- | --- |
+| T+0 | Confirm named package, disclosed compromise and public advisory, maintainer statement or registry action; never post on rumor |
+| T+10 | Open drydock.org diff and read it; skip the incident if the change is not legible |
+| T+15 | Run `pnpm incident:post` to check both versions and fill copy |
+| T+20 | Screenshot one actual diff hunk showing the changed lines |
+| T+30 | Post `breaking` then `whatToDo` in one thread on Bluesky and X |
+| T+24–48h | LinkedIn `analysis`: change, reviewability and limits of provenance; product mentioned once at end |
+| T+1 week | Check `public_diff.viewed` for the package across the post window |
 
-| When     | Do                                                                                                                         |
-| -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| T+0      | Confirm it is real: advisory, maintainer statement, or registry action. Nothing goes out on a rumor.                       |
-| T+10     | Open the diff on drydock.org. Read it yourself. If the change is not legible in the diff, this is not our story — skip it. |
-| T+15     | Run `pnpm incident:post` to verify both versions resolve and fill the copy.                                                |
-| T+20     | Screenshot the diff hunk that shows the change. The image is the ad; the link is the proof.                                |
-| T+30     | Post to Bluesky and X — `breaking` then `whatToDo` in one thread.                                                          |
-| T+24–48h | LinkedIn `analysis` post: what changed, why it was reviewable, what provenance does and does not answer.                   |
-| T+1 week | Check `public_diff.viewed` for the package across the post window.                                                         |
+The useful response window is roughly 24–48 hours. Frequency is reactive: two or three confirmed incidents a quarter is healthy; a month with no eligible incident needs no post.
 
-The order matters. Bluesky and X are where the incident thread is alive on day one; LinkedIn rewards the considered write-up two days later, when the news cycle has moved and the analysis is the only thing left worth reading.
-
-## Using the script
+### Script
 
 ```bash
 pnpm incident:post \
@@ -40,38 +35,60 @@ pnpm incident:post \
   --consequence "Anything the build host could reach should be treated as exposed."
 ```
 
-It checks the registry, prints the diff URL, and emits per-channel copy with a character count against each channel's limit. Add `--ecosystem pypi` for PyPI, `--template provenance` when the compromised release passed provenance or 2FA, and `--template correction --claim … --correction …` when we get something wrong.
+| Option / output | Contract |
+| --- | --- |
+| Default | npm registry check, diff URL, per-channel copy and character counts against limits |
+| `--ecosystem pypi` | PyPI registry/version check and diff URL |
+| `--template provenance` | Valid provenance, signed pipeline or 2FA accompanied the compromised release |
+| `--template correction --claim … --correction …` | Public correction of an incorrect claim |
+| Pulled version | Exit without posts; list recent surviving versions and rebuild around a resolvable pair, usually last clean → remediation |
+| Registry request failure | Prints `UNVERIFIED` copy with warning; operator must check the link by hand before publishing |
+| `--no-verify` | Offline drafting only; never use for real posts |
+| Channel limits | `CHANNEL_LIMITS` in `scripts/incident-post.mjs`; overflows reported, never silently truncated |
 
-If a version has been pulled, the script exits without printing and lists the surviving versions, so the post can be rebuilt around a pair that still resolves — usually the last clean version against the maintainer's remediation release.
+### Templates
 
-## Templates and when they apply
+| Template | Channel | Use |
+| --- | --- | --- |
+| `breaking` | Bluesky, X | First post: release change and diff link |
+| `whatToDo` | Bluesky, X | Second post: lockfile users' concrete action, such as pinning and rotating exposed credentials |
+| `provenance` | Any | Explain what provenance attests about a pipeline and what it cannot establish about bytes |
+| `analysis` | LinkedIn | T+24–48h considered analysis |
+| `unpublished` | Any | Explain the pulled version and link a pair that still resolves |
+| `correction` | Any | State the wrong claim and correction; leave original up |
 
-| Template      | Channel    | Use when                                                                                                                                                 |
-| ------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `breaking`    | Bluesky, X | First post. States what the release added and links the diff.                                                                                            |
-| `whatToDo`    | Bluesky, X | Second post in the thread. What a reader with this package in a lockfile should do now.                                                                  |
-| `provenance`  | any        | The compromised release had valid provenance, a signed pipeline, or 2FA. The strongest argument we have: provenance attests the pipeline, not the bytes. |
-| `analysis`    | LinkedIn   | T+24–48h long form. Analysis first, product mentioned once at the end.                                                                                   |
-| `unpublished` | any        | The registry already pulled the malicious version. Talk about the gap, link a pair that still resolves.                                                  |
-| `correction`  | any        | We got something wrong.                                                                                                                                  |
+### Measurement
 
-## What makes a good incident post
+| Question | Evidence / limit |
+| --- | --- |
+| Did readers request the diff? | `public_diff.viewed`, by day/package on post day and following day; cache hits also count |
+| Did post-window activity rise? | A package-specific spike is a useful signal, not proof of attribution |
+| Was it CI or a reader? | Separate `client: dependency-pr` from `other`; dependency-PR enrichment also requests diffs |
+| Which platform sent traffic? | Not answerable: no page-view/referrer attribution; see [analytics](./product-analytics.md) |
+| Did an unfurl alone count? | No version-pair API request means no event; a link preview alone emits none |
 
-The differentiator is the artifact, not the take. Every other account posting about a compromise is summarizing an advisory; the diff is a thing only we can show, so the post should be mostly diff and barely commentary.
+## Invariants
 
-Concretely:
+1. Only confirmed public incidents qualify; never accuse a live maintainer's release on suspicion (operator rule; `scripts/incident-post.mjs` templates do not verify incident truth).
+2. Describe changed bytes without asserting intent or attribution; investigators own attribution (operator rule; `TEMPLATES` in `scripts/incident-post.mjs`).
+3. Name the package, never a person or username; never blame a compromised maintainer or suggest they should have used 2FA (operator rule).
+4. Verify the actual diff link resolves before publishing; the script checks registry version presence, not successful tarball retrieval or diff computation (`scripts/incident-post.mjs`, `test/incident-post.test.mjs`).
+5. Never claim first discovery without a supporting scan timestamp (operator rule).
+6. Never paste payloads, deobfuscations or exfiltration endpoints; link the diff without shortening the path to reuse (operator rule).
+7. No AI output in incident content; public diff uses deterministic rules only (`server/lib/public-diff/index.ts`).
+8. Correct publicly; never delete the original to conceal an error (`correction` template in `scripts/incident-post.mjs`).
 
-- Lead with the change, not with the product. "`chalk` 5.6.1 added a postinstall script that is not in 5.6.0" is the story. "Drydock detected…" is not.
-- One screenshot of the actual hunk. Not a dashboard, not a findings list — the lines that changed.
-- Say what a reader should do. A post that only alarms is noise; a post that ends in "pin back to X and rotate Y" is useful.
-- Mention "no account required" once so readers know the public diff opens immediately.
+## Failure modes
 
-## Frequency
+| Symptom/condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Missing version | Registry pulled one side | Script exits without copy and lists surviving versions | Choose a resolvable pair; use `unpublished` template |
+| `UNVERIFIED` output | Registry check unavailable or skipped | Copy exists without verification | Open and verify actual diff before posting |
+| Illegible diff | Change cannot be demonstrated in visible lines | No useful artifact for this story | Skip incident content |
+| Incorrect public claim | Human error | Trust requires visible correction | Use correction template and keep original |
 
-The incident engine is reactive and cannot be scheduled — real compromises are the only input, and manufacturing urgency between them is exactly how this becomes noise. Two or three genuine incidents a quarter is a healthy rate for this channel. If a month passes with nothing, that is the correct output.
+## Change checklist
 
-## Measuring it
-
-The `public_diff.viewed` Analytics Engine event is the measurement: diffs actually computed, by day and by package, on the day of the post and the day after. A spike on the package the post was about is the signal that the post worked.
-
-Channel attribution no longer exists — page views and referrer buckets were removed from analytics, so which platform sent the traffic is not answerable from this data. That is deliberate: the counter tracks diffs read, not visits, and a diff read is the thing the post was trying to cause. Note that the event fires on the version-pair request, so a link that unfurls but is never opened produces nothing at all.
+- If posting → lead with the changed release bytes, show one hunk screenshot, give a concrete reader action and mention “no account required” once.
+- If templates/link generation change → update `scripts/incident-post.mjs` and run `pnpm exec vitest run --project node test/incident-post.test.mjs`.
+- If measurement changes → check emitter semantics and [analytics](./product-analytics.md); never infer channel attribution from aggregate package activity.

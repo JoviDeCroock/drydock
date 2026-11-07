@@ -1,66 +1,120 @@
 # Registry provenance continuity
 
-A valid build attestation says _who built_ a release, not _what is in it_. ChainDrop (keyv/cacheable, npm) shipped with valid provenance from the real repository, and LiteLLM 1.107.0 was built by BerriAI's real release workflow from a lookalike source repository. Presence of provenance is therefore not a safety signal. A **change** in provenance between two releases of the same package is one: a stolen-token publish from a laptop drops provenance the package always had, and a build attested from an attacker-controlled repository names a different repository.
+Compares registry-reported build provenance across published releases to flag a drop or changed publisher identity. **Authority:** enforced deterministic findings (presence alone is not a safety signal). **Owner:** `server/lib/provenance-continuity.ts`.
 
-Two deterministic rules compare the registry's provenance record for a published baseline with the candidate's. They live in the `release.*` family, so they carry the `<release-process>` file label, land on the release delta, and feed release risk like [`release.source-drift`](./release-fingerprint.md).
+## At a glance
 
-| Rule                                   | Severity | Fires when                                                                                                                                                            |
-| -------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `release.provenance-dropped`           | medium   | the registry lists build provenance for the baseline and the two releases before it, and affirmatively lists none for the candidate                                   |
-| `release.provenance-dropped`           | low      | the same drop with fewer than three attested releases in a row; or a stable without provenance after an attested prerelease when no earlier stable carries provenance |
-| `release.provenance-publisher-changed` | medium   | both releases are attested and the candidate names a repository the baseline did not (a different repository id when both have one)                                   |
-| `release.provenance-publisher-changed` | low      | a repository change under the same owner when no repository id is recorded on both sides, or the same repository with a workflow the baseline was not built by        |
+| Thing | Owner | Trigger / caller | Pinned by |
+| --- | --- | --- | --- |
+| Rules + `provenanceLineage` | `server/lib/provenance-continuity.ts` | Published npm/PyPI pairs | `test/provenance-continuity.test.ts` |
+| npm reader + lineage | `server/lib/ecosystems/npm/provenance.ts` | Ecosystem `publicDiff.acquire` | `test/public-diff-npm-provenance.test.ts` |
+| PyPI reader + lineage | `server/lib/ecosystems/pypi/provenance.ts` | Ecosystem `publicDiff.acquire` | `test/provenance-continuity.test.ts` |
+| Registry-record corpus | `test/helpers/provenance-security-corpus.mjs` | Golden + eval fixtures | `test/security-corpus-provenance.test.mjs`; [`security-detection-corpus.md`](./security-detection-corpus.md#registry-provenance-corpus) |
+| Public cache | `server/lib/public-diff/index.ts` | Anonymous `/diff` | `test/workers/public-diff-routes.test.ts` |
 
-The pure rule and baseline selection (`provenanceLineage`) are `server/lib/provenance-continuity.ts`; the registry readers are `server/lib/ecosystems/npm/provenance.ts` and `server/lib/ecosystems/pypi/provenance.ts`. Unit tests: `test/provenance-continuity.test.ts`; golden and eval cases: the registry provenance section of [`security-detection-corpus.md`](./security-detection-corpus.md).
+## Contract
 
-## Surfaces
+### Findings
 
-The readers run inside the ecosystem's `publicDiff.acquire`, so every review of two **published** releases gets them:
+Both rules use the `release.*` family, `<release-process>` file label, release-delta attribution and release risk, like [`release.source-drift`](./release-fingerprint.md).
 
-- anonymous `/diff` for npm and PyPI;
-- authenticated published-pair reviews (`server/lib/ecosystems/published-pair.ts`), including the post-release review started from a [publication monitor](./publication-monitor.md) alert.
+| Rule | Severity | Fires when |
+| --- | --- | --- |
+| `release.provenance-dropped` | medium | Baseline and the two releases before it in the candidate's channel are attested; candidate affirmatively has none (`ESTABLISHED_PROVENANCE_RELEASES` in `server/lib/provenance-continuity.ts`). |
+| `release.provenance-dropped` | low | Same drop with fewer than three consecutive attested releases; or an unattested stable after an attested prerelease when no earlier stable carries provenance. |
+| `release.provenance-publisher-changed` | medium | Both sides attested; candidate names a new repository, or a different repository id when both sides carry one (even under the same name). |
+| `release.provenance-publisher-changed` | low | Same-owner repository change without ids on both sides; or a new workflow in the same repository. |
 
-Continuity reads forward: a pair whose `to` version is not newer than its `from` (by semver on npm, PEP 440 on PyPI; unparseable versions included) is not evaluated, so picking an older release as the `to` side on `/diff` cannot report it as having dropped its successor's provenance.
+### Surfaces and baseline
 
-The provenance baseline is chosen within the candidate's channel, separately from the diff baseline. A stable candidate is compared with earlier stable releases only, so a stable published by hand is not compared with its own CI-built prerelease (the `/diff` suggestion and the published-pair default baseline are the semver predecessor, which is often that prerelease). A prerelease candidate may follow a release of either channel. A release published after the candidate is skipped too: a maintenance line that adopted provenance after the next major shipped (4.x.y published after 5.0.0) is not something 5.0.0 dropped. When the requested baseline fails either test, the highest qualifying release stands in and the evidence names it. A prerelease set aside for its channel still speaks when no earlier stable carries provenance (none exists, or it was published without): a stable published without provenance after attested prereleases is a low drop, so a project that adopted provenance during its betas does not go silent at its first stable, while projects that attest only prereleases get context rather than release risk. Publish times come from the packument's `time` (npm) and each release's earliest file upload (PyPI).
+| Surface / condition | Behavior |
+| --- | --- |
+| Anonymous `/diff` | npm + PyPI published pairs. |
+| Authenticated published-pair review | Same readers through `server/lib/ecosystems/published-pair.ts`, including post-release review started from a [publication monitor](./publication-monitor.md) alert. |
+| Staged npm / workflow gates | Not evaluated: candidate has no published registry provenance yet. |
+| pkg.pr.new preview / VS Code | Not evaluated. |
+| atpm | Uses its own verified-provenance rules, including `atpm.trusted-publishing-lost`; [`atpm.md`](./atpm.md). |
+| Publication monitor observation | Hashes bytes only; does not itself read provenance. |
+| Forward order | Candidate must be newer than requested baseline: semver (npm), PEP 440 (PyPI). Reverse, equal and unparseable pairs are not evaluated. |
+| Stable candidate | Compare earlier stable releases only; provenance baseline is separate from the diff baseline, whose suggested/default semver predecessor can be the candidate's CI-built prerelease. |
+| Prerelease candidate | May follow stable or prerelease releases. |
+| Publication order | Skip releases published after the candidate (e.g. a 4.x maintenance release adopting provenance after 5.0.0); known equal publish times do not qualify either. |
+| Baseline substitution | If requested baseline fails channel or publication-order tests, use the highest qualifying release and name it in evidence. |
+| Set-aside prerelease | An unattested stable after an attested requested prerelease is low when the earlier stable is absent or none exists; adoption during betas remains visible while prerelease-only attestation stays context. |
+| Publish time | npm packument `time`; PyPI release's earliest file upload (later interpreter wheels do not change it). |
+| Unknown | No finding from an unknown baseline/candidate; unreadable identity prevents identity comparison. Unknown prior history prevents a medium drop but a confirmed drop can still be low. |
 
-Not covered: staged npm reviews and workflow-gate reviews (the candidate is not published, so the registry has no provenance record for it yet), pkg.pr.new preview sides, atpm (its own verified-provenance rules, `atpm.trusted-publishing-lost` among them, see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md)), and VS Code. The publication monitor's own observation does not read provenance; it only hashes bytes.
+### Registry sources
 
-## Sources and what is trusted
+| Registry | Presence | Identity / response |
+| --- | --- | --- |
+| npm | Registry-written `versions[v].dist.attestations.provenance`, projected as `hasProvenance` by `projectRegistryMetadata` in `server/lib/ecosystems/npm/registry.ts`; publisher cannot write it. Packuments cached before projection read unknown. | `GET https://registry.npmjs.org/-/npm/v1/attestations/<name>@<version>` → `{ attestations: [{ predicateType, bundle }] }`; Sigstore `bundle.dsseEnvelope.payload` is a base64 in-toto statement. |
+| npm statement selection | Packument decides presence even when identity cannot be read. | `https://slsa.dev/provenance/*` predicate whose statement subject is `pkg:npm/<name>@<version>` (scoped `@` encoded as `%40`). |
+| PyPI | [PEP 740](https://peps.python.org/pep-0740/), [integrity API](https://docs.pypi.org/api/integrity/): checks the diff's selected sdist + wheel. | `GET https://pypi.org/integrity/<project>/<version>/<filename>/provenance`, `Accept: application/vnd.pypi.integrity.v1+json` → `{ version: 1, attestation_bundles: [{ publisher, attestations }] }`. |
+| PyPI GitHub publisher | Written by PyPI from the uploading Trusted Publisher. | `{ kind: "GitHub", repository: "owner/repo", workflow: "release.yml", environment }`. |
+| PyPI GitLab publisher | Written by PyPI from the uploading Trusted Publisher. | `{ kind: "GitLab", repository, workflow_filepath, environment }`. |
+| PyPI other publishers | Google and other service identities remain present. | Unreadable repository identity. |
+| PyPI file aggregation | Any attested checked file makes the release present; absent only when every checked file is affirmatively absent; otherwise unknown. | Other wheels may be attested while checked files are not; evidence explicitly says "none for the checked files". |
+| PyPI absence | Only HTTP 404 with JSON `{"message":"No provenance available for <filename>"}`. | HTML 404, HTTP 403 (integrity API administratively disabled), 406 and every other failure shape are unknown. A readable HTTP 200 with unrecognized document shape stays present with unreadable identity. |
 
-**npm.** Presence comes from the packument: `versions[v].dist.attestations.provenance` is written by the registry, never by the publisher, and is projected as `hasProvenance` by `projectRegistryMetadata`. A packument cached before that projection reads as unknown. Identity comes from `GET https://registry.npmjs.org/-/npm/v1/attestations/<name>@<version>`, which returns `{ attestations: [{ predicateType, bundle }] }` where `bundle` is a Sigstore bundle whose `dsseEnvelope.payload` is a base64 in-toto statement. The reader uses the `https://slsa.dev/provenance/*` entry whose statement subject is `pkg:npm/<name>@<version>`:
+| npm build type | Repository | Workflow | Stable id |
+| --- | --- | --- | --- |
+| SLSA v1: `https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1` (npm ≥ 9.6 on GitHub Actions) | `buildDefinition.externalParameters.workflow.repository` | `buildDefinition.externalParameters.workflow.path` | `buildDefinition.internalParameters.github.repository_id` |
+| SLSA v0.2 GitHub: `https://github.com/npm/cli/gha/v*` (early 2023 statements) | `invocation.configSource.uri`, `git+https://github.com/<repo>@<ref>` | `invocation.configSource.entryPoint` | `invocation.environment.GITHUB_REPOSITORY_ID` |
+| SLSA v0.2 GitLab: `https://github.com/npm/cli/gitlab/*` | `invocation.configSource.uri` | `invocation.parameters.CI_CONFIG_PATH` | `invocation.parameters.CI_PROJECT_ID` |
+| Other (e.g. `--provenance-file`) | Unreadable identity; present provenance retained. | — | — |
 
-- SLSA v1 (`buildType` `https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1`, npm ≥ 9.6 on GitHub Actions): `buildDefinition.externalParameters.workflow.{repository,path}` and `buildDefinition.internalParameters.github.repository_id`.
-- SLSA v0.2 GitHub (`https://github.com/npm/cli/gha/v*`, early 2023 releases): `invocation.configSource.uri` (`git+https://github.com/<repo>@<ref>`), `configSource.entryPoint`, `invocation.environment.GITHUB_REPOSITORY_ID`.
-- SLSA v0.2 GitLab (`https://github.com/npm/cli/gitlab/*`): `configSource.uri`, `invocation.parameters.CI_CONFIG_PATH`, `invocation.parameters.CI_PROJECT_ID`.
-- Any other build type (for example `--provenance-file` statements) is present with unreadable identity.
+### Read bounds and caching
 
-Real examples: `sigstore@3.0.0` (SLSA v1, repository id `495574555`) and `sigstore@1.3.0` (SLSA v0.2, same id); `left-pad@1.3.0` answers `404 {"error":"Not found"}` and has no `dist.attestations`.
+| Setting | Value / owner |
+| --- | --- |
+| Origins / credentials | Fixed registry origins over TLS; no credentials; `redirect: "manual"` in both readers. |
+| Request attempts / timeout | One attempt, 5 seconds (`FETCH_TIMEOUT_MS` in both provenance readers); no retry because every warm-cache diff pays the latency and a lost read only loses a comparison. |
+| JSON body | 256 KiB via `readBoundedJson` (`MAX_ATTESTATIONS_BYTES` in npm reader; `MAX_PROVENANCE_BYTES` in PyPI reader). |
+| Entries | At most 8 attestations / bundles (`MAX_ATTESTATIONS` / `MAX_BUNDLES` in the respective readers). |
+| DSSE payload | At most 128 KiB of base64 text (`MAX_PAYLOAD_BASE64_LENGTH` in npm reader), before decoding. |
+| Attested strings | At most 256 characters, no control, zero-width or bidi formatting before evidence/comparison (`MAX_ATTESTED_FIELD_LENGTH`, `attestedField` in `server/lib/provenance-continuity.ts`). Workflow names are attacker-influenced even in registry-served records. |
+| npm history | No extra fetches: projected `hasProvenance` for every packument version is already in memory. |
+| PyPI history | Read only for baseline-present/candidate-absent drops; one integrity request per prior release, representative sdist else first wheel by name (`representativeFilenames` in PyPI reader). |
+| Settled immutable `/diff` | 30 days (`CACHE_TTL_SECONDS` in `server/lib/public-diff/index.ts`). |
+| Undetermined side / history | 15 minutes (`UNSETTLED_READ_CACHE_TTL_SECONDS` in `server/lib/public-diff/index.ts`), so transient failures do not hide findings for a month. |
+| Authenticated published-pair review | Persisted result, no automatic rerun; rescan to reread registry provenance. |
 
-**PyPI** ([PEP 740](https://peps.python.org/pep-0740/), [integrity API](https://docs.pypi.org/api/integrity/)). `GET https://pypi.org/integrity/<project>/<version>/<filename>/provenance` with `Accept: application/vnd.pypi.integrity.v1+json` returns `{ version: 1, attestation_bundles: [{ publisher, attestations }] }`. `publisher` is written by PyPI from the Trusted Publisher that uploaded the file: `{ kind: "GitHub", repository: "owner/repo", workflow: "release.yml", environment }` or `{ kind: "GitLab", repository, workflow_filepath, environment }`. Google and other publishers name a service identity rather than a repository and read as present with unreadable identity. Each side checks the files the diff selected (one sdist, one wheel). A release is absent only when every checked file is; any attested file makes it present. A release whose other wheels are attested but whose checked files are not reads as absent, so the evidence says "none for the checked files".
+## Invariants
 
-PyPI's 404 means both "no provenance for this file" and "no such file". Only the JSON body `{"message": "No provenance available for <filename>"}` counts as absent; the HTML not-found page, `403` (integrity API administratively disabled), `406`, and every other shape are unknown. Real examples: `urllib3-2.5.0.tar.gz` (attested, `urllib3/urllib3` `publish.yml`) and `urllib3-1.26.20.tar.gz` (JSON 404).
+1. Unknown is never evidence of a dropped attestation or changed publisher; `provenanceContinuityFindings` only compares confirmed presence/absence or readable identities (`server/lib/provenance-continuity.ts`).
+2. Neither reader re-verifies Sigstore signatures: npm validates provenance against the publishing identity and package repository before accepting it; PyPI verifies against the Trusted Publisher at upload and writes `publisher` itself. Findings say what the registry reports, never "verified" (`server/lib/ecosystems/npm/provenance.ts`, `server/lib/ecosystems/pypi/provenance.ts`).
+3. atpm re-verifies publisher-writable bundles against a pinned root; its trust argument differs from registry-served npm/PyPI records (`server/lib/ecosystems/atpm/record.ts`; [`atpm.md`](./atpm.md)).
+4. Equal stable repository ids survive a rename or organization transfer silently; differing ids reveal deletion/re-registration even when the name is unchanged (`sameRepository` in `server/lib/provenance-continuity.ts`).
+5. Repository and workflow comparisons are case-insensitive. Without ids on both sides, owner is the first repository path segment (GitLab's top-level group includes its subgroups), which an outside attacker cannot create repositories under; same owner is low, changed owner medium (`sameOwnerWithoutIds` in `server/lib/provenance-continuity.ts`).
+6. Read failures degrade instead of failing a review. Operational events contain only status codes or status labels, never response bodies (`server/lib/ecosystems/npm/provenance.ts`, `server/lib/ecosystems/pypi/provenance.ts`).
 
-**No signature verification.** Neither reader re-verifies the Sigstore bundle. Both trust the registry's served record over TLS: npm validates provenance against the publishing identity (and the package's `repository`) before accepting a publish, and PyPI verifies attestations against the Trusted Publisher at upload and writes the `publisher` object itself. The findings and evidence say what the registry reports, never "verified". The atpm path is different because atpm stores bundles in publisher-writable records; it re-verifies them against a pinned root.
+## Failure modes
 
-## Unknown is never a finding
+| Condition | Cause | Result | Action |
+| --- | --- | --- | --- |
+| Custom `NPM_REGISTRY`, including fake registry | Another registry's attestation endpoint has no npm-validated meaning. | Reader returns unknown; continuity skips evaluation. | Use public npm for registry provenance comparisons. |
+| npm attestations fetch fails after present marker | Transient failure, unreadable document or unsupported build type. | Present with unreadable identity: a later drop can still fire; identity comparison stays quiet. | Rescan if identity matters. |
+| Registry read unavailable | Network / invalid response. | `public_diff.npm_provenance.unavailable` or `public_diff.pypi_provenance.unavailable`; status only, no body. | Retry after short public cache expiry or explicitly rescan persisted reviews. |
+| Confirmed drop on a legitimate release | Local hotfix, CI provider/setup without attestations, or project stops attesting. | Medium only after three consecutive attested releases; shorter history low (same history bar as `release.source-drift`). | Confirm publication method with maintainer. |
+| New repository / monorepo | Legitimate project move or attack. | Medium repository change, low same-owner rename without stable ids (PyPI carries no id). | Confirm repository identity. |
+| New workflow in the same repo | Routine rename or workflow split. | Low, context rather than release risk. | Confirm workflow intent. |
+| Real CI compromised / wrong source checkout | Provenance identifies the workflow repository, not what it checked out. | Unchanged presence/identity stays quiet. | Review package behavior and source separately. |
 
-Every read degrades instead of failing the review, and a `/diff` result built on an undetermined read on either side or in the history is cached for 15 minutes instead of the immutable pair's 30 days, so a transient registry failure does not hide a finding for a month (authenticated published-pair reviews persist their result and are not re-run on their own; rescan to re-read): the rule fires only when the baseline is affirmatively present and the candidate is affirmatively absent, or when both sides have a readable identity. A custom `NPM_REGISTRY` (including the local fake registry) reads as unknown: another registry's attestation endpoint carries no npm-validated meaning. A failed attestations fetch after the packument listed provenance leaves that side present with unreadable identity, so a drop on the other side still fires but nothing is compared.
+## Change checklist
 
-The records are attacker-influenced even when served by the registry (whoever ran the attested build chose the workflow file name), so reads are bounded: fixed origins, no credentials, redirects not followed (`redirect: "manual"`), one attempt with a 5-second timeout (a retry would add latency to every warm-cache diff, and a lost read is only a missed comparison), a 256 KiB body cap through `readBoundedJson`, at most 8 attestations or bundles per document, a 128 KiB cap on a DSSE payload, and each attested string at most 256 characters with no control, zero-width, or bidi formatting characters before it can reach evidence text or a comparison. Failures emit `public_diff.npm_provenance.unavailable` / `public_diff.pypi_provenance.unavailable` with a status code only, never a body.
+1. Change rule semantics → update version, inventory, behavior/history docs and exact synthetic registry-record corpus expectations; [`security-detection-corpus.md`](./security-detection-corpus.md).
+2. Change lineage → pin channel, forward-version and publication-order boundaries in `test/provenance-continuity.test.ts`.
+3. Change registry readers → preserve bounds, no credentials, manual redirects, unknown semantics and redacted status events; run `test/public-diff-npm-provenance.test.ts`, `test/provenance-continuity.test.ts` and `test/security-corpus-provenance.test.mjs`.
+4. Change undetermined-read caching → verify `test/workers/public-diff-routes.test.ts`; run `pnpm run eval` after detection changes.
 
-## False-positive posture
+## Why
 
-Medium, not high, for both repository-level rules, matching `atpm.trusted-publishing-lost`. Known legitimate triggers:
-
-- **Dropped:** a maintainer publishes a hotfix from their machine, CI moves to a provider or setup that does not attest, or a project simply stops attaching attestations. LiteLLM itself attached PEP 740 provenance to 1.83.0–1.83.14 (from `BerriAI/project-releaser`) and none from 1.84.0 onward, so 1.83.14 → 1.84.0 fires on a release that was not, as far as is known, compromised.
-- **Repository changed:** a package moves to a new repository or monorepo. A GitHub rename or organization transfer keeps the repository id, so npm (which attests the id) stays quiet. PyPI's publisher carries no id, so a rename is visible only by name; a change that keeps the owner (the first path segment, which an outside attacker cannot create repositories under; on GitLab that is the top-level group, so any subgroup counts as the same owner) is low, a change of owner stays medium. Comparison is case-insensitive.
-- **Workflow changed:** release workflows are renamed and split routinely, hence low.
-
-A drop is medium only after three attested releases in a row (the baseline and the two before it in the candidate's channel), matching `release.source-drift`'s three consistent prior releases; a shorter attested history is low. Projects adopting provenance commonly ship one or two attested releases and then publish from a laptop again while their CI settles. On npm the history is free: `projectRegistryMetadata` keeps `hasProvenance` for every version in the packument already in memory. On PyPI it costs one integrity request per prior release (one representative file: the sdist, else the first wheel by name), so it is read only when the baseline is present and the candidate absent.
-
-Replaying the rules over registry metadata for the release pairs of the npm false-positive sweep's package list (318 packages, the 10 most recent stable pairs each, 3,171 pairs) fired a medium drop on 7 pairs (0.2%), down from 15 before the channel, publish-order, and history rules; every removed one was a new major compared with a maintenance release published after it, or a short attested history. The remaining medium drops are releases published without provenance after an established attested history, the shape the rule exists for.
-
-## What this does not catch
-
-LiteLLM 1.107.0 would not have fired on PyPI. Its baseline had no PEP 740 provenance, and even with provenance the PyPI publisher and an npm SLSA statement name the repository that ran the workflow (`BerriAI/project-releaser`), not a repository that workflow checked out. The checked-out source is visible only in the build's own logs (`actions/checkout` prints `Syncing repository: <owner>/<repo>`) or in build-system provenance such as BuildKit's; neither registry records it. ChainDrop-style compromises that publish through the real CI pipeline keep both presence and identity unchanged.
+| Evidence / limitation | Detail |
+| --- | --- |
+| Presence is not safety | ChainDrop (keyv/cacheable, npm) retained valid provenance from the real repository; LiteLLM 1.107.0 used BerriAI's real release workflow with lookalike source. Continuity detects changes, not malicious contents. |
+| Source-checkout blind spot | LiteLLM 1.107.0 would not fire on PyPI: its baseline lacked PEP 740 provenance. Even if present, PyPI publisher/npm SLSA name workflow repository `BerriAI/project-releaser`, not the checkout. Only build logs (`actions/checkout`: `Syncing repository: <owner>/<repo>`) or build-system provenance such as BuildKit's expose that source; neither registry records it. |
+| Known legitimate drop | LiteLLM 1.83.0–1.83.14 had PEP 740 provenance from `BerriAI/project-releaser`; 1.84.0 onward had none, so 1.83.14 → 1.84.0 fires without a known compromise at that transition. Adoption often alternates one or two CI-attested releases with laptop publishes. |
+| npm examples | `sigstore@3.0.0`: SLSA v1, repository id `495574555`; `sigstore@1.3.0`: SLSA v0.2, same id. `left-pad@1.3.0`: `404 {"error":"Not found"}`, no `dist.attestations`. |
+| PyPI examples | `urllib3-2.5.0.tar.gz`: attested, `urllib3/urllib3`, `publish.yml`; `urllib3-1.26.20.tar.gz`: JSON 404 absence. |
+| FP replay | 318 npm sweep packages, ten most recent stable pairs each, 3,171 pairs: seven medium drops (0.2%), versus fifteen before channel/publication-order/history filters. Removed cases were newer majors compared with maintenance releases published afterward, or short attested histories; remaining drops had established attestation history. Medium is the ceiling for repository-level rules, matching `atpm.trusted-publishing-lost`. |

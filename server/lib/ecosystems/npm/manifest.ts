@@ -3,8 +3,8 @@
  *
  * Like the PyPI gate, the manifest is **synthesized server-side** from the
  * parsed `package.json` plus the SHA-256 the control plane recomputed from the
- * immutable GitHub Actions artifact bytes — maintainers do not upload a manifest
- * or checksum file (see the example workflow in `docs/npm-workflow-gate.md`).
+ * immutable GitHub Actions artifact bytes — no uploaded manifest or checksum
+ * file is required (see `docs/examples/npm-workflow-gate.yml` for CI checksums).
  * Integrity rests on GitHub artifact immutability: the bytes Drydock reviews are
  * the bytes the publish job downloads and runs `npm publish` on.
  *

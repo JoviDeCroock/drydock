@@ -18,6 +18,7 @@
     "docs/openapi.json",
     "node_modules/**",
     "pnpm-lock.yaml",
-    "**/*.d.ts"
+    "**/*.d.ts",
+    "docs/**/*.md"
   ]
 }

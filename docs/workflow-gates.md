@@ -1,154 +1,119 @@
-# Workflow Gate — enforced
+# Workflow Gate
 
-Workflow Gate is Drydock's **enforced** mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses the configured protected publish job while Drydock reviews the bytes. GitHub enforces the hold: Drydock's approve or reject answer tells GitHub whether that job continues. The hold covers only jobs that target the configured Environment, and only while the repository keeps the rule; a repository admin can remove it, and GitHub lets administrators bypass it unless "Allow administrators to bypass configured protection rules" is unchecked on the Environment (it is on by default). Drydock does not claim authority over publication paths outside the configured workflow.
+Workflow Gate pauses a configured GitHub Environment publish job while Drydock reviews its uploaded release bytes. **Authority:** enforced. **Owner:** `server/lib/workflow-gate-job.ts`.
 
-Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+## At a glance
 
-Settings → Integrations → GitHub App includes a guided setup flow that inspects an
-existing workflow and proposes changes in a draft pull request. A proposal still
-needs maintainer review, an enabled environment protection rule, and a matching
-release target. The setup checker reports those separately from the first real
-workflow-gate review; creating a PR alone does not establish a working gate. See
-[`publisher-setup.md`](./publisher-setup.md) for the setup and permission contract.
+| Thing | Owner file | Who may call / trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Signed delivery | `server/routes/github-webhooks.ts` | GitHub App | `test/workers/github-webhook.test.ts` |
+| Candidate derivation | `server/lib/workflow-gates/prepare.ts` | Gate worker | `test/workers/workflow-gate-prepare.test.ts` |
+| Deterministic/AI scan | `server/lib/scan/pipeline.ts` | Gate job | `test/workers/workflow-gate-job.test.ts` |
+| Package decisions | `server/routes/github-app/workflow-gates.ts` | Authenticated member of owning organization | `test/workers/workflow-gate-job.test.ts` |
+| Ecosystem registry | `server/lib/ecosystems/index.ts` | Internal adapters | `test/workers/workflow-gate-registry.test.ts` |
+| Workbench lookup | `src/models/scan-detail-model.ts` | Review page | `test/scan-detail-gate-polling-model.test.ts` |
 
-atpm has no gate. Its releases are reviewed through an anonymous link from atpm's own staged dashboard, and approving stays entirely on atpm's side; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
+## Contract
 
-## Core contract
+### Release flow
 
-1. A repository installs the Drydock GitHub App and configures a GitHub Environment with Drydock as a deployment-protection rule.
-2. The publish workflow builds release artifacts and uploads them before the protected publish job starts.
-3. GitHub sends a `deployment_protection_rule` webhook to `/webhooks/github`.
-4. Drydock resolves the installation, repository, run, environment, release target, and uploaded artifacts.
-5. The adapter derives one or more reviewable release candidates from those artifacts.
-6. A queue worker runs the shared scan pipeline for each candidate.
-7. A maintainer accepts or rejects the gate review in Drydock.
-8. Drydock posts the deployment-protection decision back to GitHub; the workflow either continues to publish or fails closed.
+| Step | Required action | Owner / reference |
+| --- | --- | --- |
+| 1 | Install GitHub App; map repository, Environment, ecosystem to release target | [Publisher setup](./publisher-setup.md) |
+| 2 | Enable Drydock as Environment custom deployment-protection rule | [Self-hosting](./self-hosting.md) |
+| 3 | Build and upload release artifacts before protected publish job starts | Ecosystem workflows below |
+| 4 | Send `deployment_protection_rule` to `/webhooks/github` | `server/routes/github-webhooks.ts` |
+| 5 | Resolve installation, repository, run, Environment, target, callback, and artifacts | `server/lib/workflow-gates/resolve.ts` |
+| 6 | Derive one candidate per package; queue shared scan pipeline | `server/lib/workflow-gates/prepare.ts` |
+| 7 | Accept or reject each package in workbench | Decision route below |
+| 8 | Deliver durable aggregate decision to GitHub | `server/lib/workflow-gates/decision-delivery.ts` |
 
-The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
+All gate API paths below have prefix `/api/v1/github-app`; their owner is `server/routes/github-app/workflow-gates.ts`.
 
-## Shared implementation
+| Method | Path | Auth / role |
+| --- | --- | --- |
+| GET | `/workflow-gates/by-scan/:scanId` | Session and owning active organization |
+| POST | `/workflow-gates/:gateId/decision` | Verified email, owning active organization, applicable TOTP step-up |
+| POST | `/workflow-gates/:gateId/retry` | Session and owning active organization |
 
-- `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
-- `server/routes/github-app/installations.ts` handles App install/callback setup.
-- `server/routes/github-app/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
-- `server/routes/github-app/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
-- `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
-- `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
+`POST /webhooks/github` requires the `GITHUB_APP_WEBHOOK_SECRET` signature outside Better Auth's session guard; see [anonymous surfaces](./security-model.md). Decision body: `{"scanId":"scan-id","decision":"approved","comment":"Reviewed uploaded bytes","totpCode":"123456"}`. Use `rejected` to block; [2FA policy](./two-factor-auth.md) governs step-up.
 
-Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
+| Condition | Gate outcome | Enforcement |
+| --- | --- | --- |
+| Any package undecided | Pending; GitHub job held | Aggregate every package |
+| All packages approved; batch review ready | Approved; callback releases job | Attached batch `scanId` required |
+| Any package rejected | Rejected; callback blocks job | Single rejection resolves aggregate |
+| Failed package scan | Human may reject or retry | No approval before batch readiness |
+| Pending failed batch without package decisions | Schedule retry (queue or inline); `202` | Retry route |
+| Already decided, wrong package, partial-batch approval, non-retryable batch | `409` | Decision/retry routes |
 
-## Release set derivation
+### Release set
 
-A release set is the boundary between CI and Drydock. Drydock never trusts a maintainer-declared manifest as authority over reviewed bytes; it recomputes identity and digest evidence from the uploaded artifacts themselves.
+| Evidence | Contract | Owner |
+| --- | --- | --- |
+| Identity/version | Read artifact metadata, never names or GitHub paths alone | Ecosystem `workflow-gate.ts` adapters |
+| Grouping | Separate package names produce separate reviews; same identity must share version | `server/lib/workflow-gates/group-candidates.ts` |
+| Digest | Recompute from downloaded immutable artifact bytes | `server/lib/github-app/artifacts.ts` |
+| Adapter input | Supply ecosystem/kind, normalized file list/hashes, candidate bytes, baseline when available, deterministic findings, display metadata | `server/lib/workflow-gates/types.ts` |
+| Manifest | Synthesized server-side; maintainer declaration is never authority over bytes | Ecosystem manifest builders |
+| Byte continuity | Upload once; publish exact reviewed bytes without rebuilding | Checksum workflows |
+| Provenance | Persist `{ ecosystem, mode, artifacts: [{ path, kind, sha256 }] }` in `summary.stagedPublish` | Adapter `summarizeDetails` |
+| Report | Workbench Provenance and `report.json` top-level `provenance.artifacts[]` expose revalidated digests | `server/lib/scan/report-export.ts` |
 
-Package identity and version come from each artifact's own metadata: wheel `METADATA`, sdist `PKG-INFO`, npm `package.json`, or VSIX `extension/package.json` (`publisher.name` + `version`). Every artifact must expose a package identity and version; files are grouped by normalized package name where the ecosystem has one, and artifacts that share a name must agree on the version. Distinct package names are separate releases, which is the expected monorepo shape.
+### PyPI workflow-gate notes
 
-For every candidate artifact set, adapters must provide:
+| Property | Contract / reference |
+| --- | --- |
+| Artifacts | Wheels `.whl`, sdists `.tar.gz` / `.tgz`; no uploaded `drydock-manifest.json` |
+| Identity | Wheel `METADATA` or sdist `PKG-INFO`; PEP 503 normalization `[-_.]+ -> -` |
+| Parsing | Wheel `METADATA`, `WHEEL`, `RECORD`; strip common sdist root |
+| Discovery | `pypi-release-candidate`; `pypi-release-candidate-*` shards for pinned targets only |
+| Memory/digests | Parse one bounded Actions artifact at a time; retain every distribution digest |
+| Baseline | PyPI `info.version`, then newest non-yanked upload; sequential credential-free downloads restricted to `https://files.pythonhosted.org` |
+| Findings | Metadata mismatches, missing `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, `.pyd` native extensions |
+| Workflow and bounds | [PyPI workflow gate](./pypi-workflow-gate.md) |
 
-- package/project/extension identity and version;
-- ecosystem and artifact kind;
-- normalized file list and hashes;
-- current candidate bytes;
-- previous-release baseline bytes when available;
-- deterministic findings specific to that ecosystem;
-- enough metadata to show the maintainer exactly what was reviewed.
+### npm workflow-gate notes
 
-If a workflow uploads artifacts for several packages, Drydock fans out into separate gate reviews. Accepting one package must not approve another package's release.
+| Property | Contract / reference |
+| --- | --- |
+| Use | Built CI tarballs, GitHub-enforced pause, or gate before `npm stage publish` |
+| Candidate | Uploaded npm pack tarball; detect archive `package.json`, validate identity/version |
+| Grouping | One tarball per package release; baseline/findings/diff/risk reuse staged adapter projection |
+| Dependency readiness | While the gate is pending, completed npm reviews check runtime dependencies are installable; matching packages in the same gated release satisfy each other's dependencies because the gate releases them together. [Dependency readiness](./npm-staged-publishing.md#dependency-readiness) is advisory. |
+| Workflow | [Canonical npm workflow](./examples/npm-workflow-gate.yml): `npm-release-candidates` upload; `production` Environment |
+| Integrity | Build writes `SHA256SUMS`; publish runs `sha256sum --check --strict SHA256SUMS` before `npm publish *.tgz` |
+| Checksum file | Adapter ignores bundle `SHA256SUMS` because it is not a tarball |
+| Automated publishing | [npm trusted publishing](./npm-trusted-publishing.md): pin OIDC to gate Environment, disallow tokens |
+| Interactive publishing | npm still permits account password, 2FA, and OTP publication |
+| Digest fallback | `summary.stagedPublish` has `sha1` beside SHA-256 `digest`; SHA-1 is absent from manifest and `provenance` |
+| Publication comparison | Monitor may compare npm `dist.shasum` when published bytes are too large/slow to hash; absent `sha1` means SHA-256 only |
 
-Dropping maintainer-declared manifests removes the explicit "ship exactly these
-N files, at these digests" declaration. Byte integrity between review and publish
-rests on GitHub artifact immutability plus the publish job never rebuilding. For
-ecosystems that can record publish-side checksums, the recommended workflow
-records a checksum file during build and verifies it immediately before upload.
-Those digests match the ones Drydock recomputes and surfaces in the report
-Provenance section and `report.json` (`provenance.artifacts[]`), so the build,
-review, and publish all hash the same bytes.
+#### Gated staging
 
-## PyPI workflow-gate notes
+| Property | Contract / owner |
+| --- | --- |
+| Protected command | `npm stage publish *.tgz`; stage-only trusted publisher pinned to gate Environment |
+| Authority | GitHub holds enforced gate; npm then holds reviewed bytes until maintainer 2FA approval |
+| Stage review | Drydock still discovers/scans stage; computes SHA-256 alongside npm SHA-1 |
+| Record | `summary.gateContinuity`: `matched`, `gate-not-approved`, `digest-mismatch`, `unverified`, `ungated`, `unknown` |
+| Evaluation / UI | `server/lib/scan/gate-continuity.ts`; `server/lib/scan/gate-continuity-record.ts` |
+| History | `loadGateReviewHistory`: organization-scoped `workflow_gate` scans for npm stage's package, constrained to staged adapter ecosystem |
+| Ecosystem proof | Gate provenance, or stage-id ecosystem segment for incomplete scans; same-name PyPI gate is never npm evidence |
+| `ungated` | Requires still-live target or any live target for same repository; npm/auto-detect on active installation |
+| Retirement | Deleted target or uninstalled App retires target evidence |
+| Recipe / status meanings | [Gated staging](./npm-staged-publishing.md#gated-staging-compose-both) |
 
-PyPI has no `drydock-manifest.json`. The release set is whatever wheels and sdists the workflow uploads, with identity parsed from wheel `METADATA` or sdist `PKG-INFO`.
+### VS Code workflow-gate notes
 
-The PyPI adapter (`server/lib/ecosystems/pypi/`):
-
-- normalizes project names with the PEP 503 `[-_.]+ -> -` convention;
-- accepts `.whl`, `.tar.gz`, and `.tgz` artifacts;
-- parses wheel `METADATA`, `WHEEL`, and `RECORD` from ZIP archives;
-- strips the common sdist root before reading `PKG-INFO`;
-- groups artifacts by normalized project name and requires a shared version inside each group;
-- discovers the conventional `pypi-release-candidate` upload plus
-  `pypi-release-candidate-*` shards (pinned release targets only), parsing one
-  bounded Actions artifact at a time and retaining every distribution digest;
-- selects the default baseline from PyPI `info.version`, falling back to newest non-yanked upload time;
-- downloads matching baseline wheels/sdists sequentially through a
-  credential-free broker restricted to `https://files.pythonhosted.org`;
-- records `comparisonSkipped: "baseline-too-large"` when the published release
-  exceeds the download budget, so findings stay `unknown` package context and the
-  report names the missing comparison instead of grading an uncompared release;
-- reports metadata mismatches, missing wheel `RECORD`, `.pth` startup hooks, custom `setup.py` install commands, and `.pyd` native extensions.
-
-## npm workflow-gate notes
-
-Use npm workflow gates when CI publishes from built artifacts, when the release must be paused by GitHub rather than npm registry staging, or in front of `npm stage publish` so the gate reviews the tarball before npm holds it (gated staging, below).
-
-The candidate is the uploaded npm pack artifact. Drydock detects npm candidates from `package.json` in the archive, normalizes package identity, and compares against the currently published baseline using the same npm adapter projection used by registry-staged scans.
-
-Recommended workflow shape:
-
-```yaml
-jobs:
-  pack:
-    steps:
-      - run: npm ci
-      - run: npm pack --json > pack.json
-      # Record the digests Drydock reviews and the publish job re-checks.
-      - run: sha256sum *.tgz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-release-candidates
-          path: |
-            *.tgz
-            SHA256SUMS
-  publish:
-    needs: pack
-    environment: production
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-release-candidates
-      # Fail closed if the downloaded bytes drifted from what was reviewed.
-      - run: sha256sum --check --strict SHA256SUMS
-      - run: npm publish *.tgz
-```
-
-Drydock should be the deployment-protection rule for the `production` environment. The publish job must consume the exact uploaded artifact reviewed by Drydock; rebuilding after approval breaks the review boundary. The `SHA256SUMS` record/check pair makes that checkable in CI: the digests match the ones Drydock recomputes and shows in the report Provenance section, and the publish job fails closed on any drift. The check runs in the repository's own job, so it holds only while the workflow keeps it. Drydock ignores `SHA256SUMS` in the bundle (it is not a `.tgz`).
-
-While a gate is pending, an npm package review checks that its runtime dependencies are installable; the other packages of the same gated release satisfy each other's dependencies, since the gate releases them together. See [dependency readiness](./npm-staged-publishing.md#dependency-readiness).
-
-To narrow npm's automated publish path to this gated workflow — trusted publishing pinned to the gate environment, tokens disallowed — see [`npm-trusted-publishing.md`](./npm-trusted-publishing.md). npm still permits interactive publication by an account holder using password, 2FA, and an OTP.
-
-### Gated staging
-
-The protected job can run `npm stage publish *.tgz` instead of `npm publish *.tgz`, with the trusted publisher granting stage-only permission pinned to the gate environment. The gate, held by GitHub, is then the enforced review and npm holds exactly the reviewed bytes until a maintainer approves with 2FA. Drydock still discovers and scans the resulting stage; because the staged parse computes the tarball's SHA-256 alongside npm's SHA-1, the staged review is bound back to this gate review as **gate continuity** (`matched` / `gate-not-approved` / `digest-mismatch` / `unverified` / `ungated` / `unknown`), persisted as `summary.gateContinuity` by `server/lib/scan/gate-continuity.ts` (record shape and evaluation in `gate-continuity-record.ts`, which the UI imports) and read through `loadGateReviewHistory` (organization-scoped `workflow_gate` scans of the package named by npm's stage record, restricted to the staged adapter's ecosystem by the gate scan's provenance, or by the stage id's ecosystem segment for a scan that never completed, so a PyPI gate of the same name is never npm evidence). `ungated` requires a release target that can still gate the package — present (or any live target for the same repository), npm or auto-detect, on an active installation — so deleting the target or uninstalling the app retires it. The full recipe and the meaning of each status live in [`npm-staged-publishing.md`](./npm-staged-publishing.md#gated-staging-compose-both).
-
-See [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) for the PyPI-specific
-workflow shape, including build-time `SHA256SUMS` generation and publish-time
-verification.
-
-## VS Code workflow-gate notes
-
-VS Code extension gates review uploaded `.vsix` artifacts before a workflow publishes them to the Marketplace. Identity is derived from `extension/package.json` inside the VSIX as `publisher.name` plus `version`.
-
-The VS Code adapter (`server/lib/ecosystems/vscode/`):
-
-- accepts `.vsix` artifacts and parses them through the shared ZIP sandbox;
-- strips the VSIX `extension/` payload prefix before deterministic review;
-- requires a constrained `engines.vscode` value and safe extension identity fields;
-- groups by extension id and requires a single VSIX per extension release;
-- resolves a best-effort baseline from the public VS Code Marketplace, then downloads only allowed Marketplace or `*.gallerycdn.vsassets.io` VSIX assets without credentials;
-- treats Marketplace baseline lookup as a diff aid only: metadata, download, parse, or identity failures degrade to a no-baseline review, and an unreadable version list is recorded as `metadata-unavailable` rather than as a first publish;
-- reports metadata mismatches, broad startup activation, startup remote-command loaders, startup WebAssembly loaders, undeclared configuration reads, and transitive extension installs.
-
-Recommended workflow shape:
+| Property | Contract / reference |
+| --- | --- |
+| Artifact | Uploaded `.vsix`, parsed through shared ZIP sandbox |
+| Identity | `extension/package.json`: `publisher.name` + `version`; safe identity fields, constrained `engines.vscode` required |
+| Review tree | Strip `extension/` prefix |
+| Grouping | One VSIX per extension release; case-only duplicates fail closed |
+| Baseline | Best-effort public Marketplace; credential-free downloads restricted to allowed Marketplace / `*.gallerycdn.vsassets.io` assets |
+| Findings | Metadata mismatches, broad startup activation, startup remote-command/WebAssembly loaders, undeclared configuration reads, transitive extension installs |
 
 ```yaml
 jobs:
@@ -171,67 +136,55 @@ jobs:
       - run: npx @vscode/vsce publish --packagePath dist/*.vsix
 ```
 
-The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+### Workbench
 
-## Observing publication
+| Surface / limit | Contract | Owner |
+| --- | --- | --- |
+| Review | Target, package/version, artifacts, status, findings, changed files, accept/reject | `src/models/scan-detail-model.ts` |
+| Lookup start | After gate scan completes or fails | Same model |
+| Retry cap | Six attempts; exponential delays capped at 30 seconds | `GATE_LOOKUP_MAX_ATTEMPTS`, `GATE_LOOKUP_MAX_DELAY_MS` in same model |
+| Lifecycle | One request at a time; pause hidden tab; stop on load/page close | `test/scan-detail-gate-polling-model.test.ts` |
+| Exhaustion | Explain lookup stopped; **Retry lookup** starts fresh bounded attempt | Same test |
 
-Gate approval authorizes the configured job; registries do not consume a
-Drydock artifact-digest constraint. The checksum recipes assume that job remains
-trusted to run the check and publish the checked file. For explicitly enrolled
-public npm packages, the [publication monitor](./publication-monitor.md) hashes
-published bytes and compares them with prior staged or gate approvals. This is
-post-publication evidence and does not expand gate authority or cover PyPI and
-VS Code publication outcomes.
+## Invariants
 
-## Trust and failure behavior
+1. **Enforced** covers only jobs targeting the configured Environment while its rule remains installed; repository admins may remove it (`server/lib/github-app/setup-status.ts`).
+2. Uncheck GitHub's default-on **Allow administrators to bypass configured protection rules** to prevent administrator bypass; see [publisher setup](./publisher-setup.md).
+3. Drydock never publishes; it only posts GitHub's deployment-protection decision (`server/lib/workflow-gates/decision-delivery.ts`).
+4. Gate state and decisions remain organization-scoped (`server/routes/github-app/workflow-gates.ts`).
+5. Callback resolves to original installation, repository, run, Environment, and callback URL (`server/lib/github-app/webhook.ts`, `server/lib/workflow-gates/resolve.ts`).
+6. Accepting one package never approves another (`server/routes/github-app/workflow-gates.ts`).
+7. Missing/invalid candidate evidence fails closed (`test/workers/workflow-gate-prepare.test.ts`).
+8. Rebuilding/repacking after approval breaks the review boundary; GitHub artifact immutability plus trusted publish job carry continuity (`server/lib/github-app/artifacts.ts`).
+9. Checksum enforcement holds only while the repository job keeps the check and publishes that file; registries consume no Drydock digest constraint ([canonical npm workflow](./examples/npm-workflow-gate.yml)).
+10. AI review is advisory; AI cannot downgrade deterministic findings (`server/lib/scan/pipeline.ts`).
+11. atpm has no Drydock gate, approval, or release watch; use its anonymous review link ([atpm](./atpm.md)).
+12. [Publication monitoring](./publication-monitor.md) supplies post-publication evidence only for explicitly enrolled public npm packages; it expands neither gate authority nor PyPI/VS Code outcome coverage.
 
-- The GitHub webhook signature is mandatory.
-- Gate decisions must resolve to the original installation, repository, workflow run, environment, and callback URL.
-- Artifact digests are recomputed by Drydock from downloaded bytes.
-- Package identity comes from artifact metadata, not GitHub paths or artifact names alone.
-- If artifact resolution, baseline acquisition, validation, scan, or callback fails, the gate remains blocked or is rejected; do not fail open.
-- Drydock never publishes. It only posts the GitHub deployment-protection decision.
+13. Validation errors remain actionable without exposing credentials or private package bytes (`server/lib/workflow-gates/prepare.ts`, `server/lib/platform/observability.ts`).
 
-## Maintainer workbench
+## Failure modes
 
-The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
+| Symptom / condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Invalid candidate evidence | Missing bundle, bad identity/version, duplicate package artifact | Reject; `github_workflow_gate.rejected_artifact_error` | Fix uploads, rerun workflow |
+| Processing/scan failure | Sandbox/parser or scan error | Held/rejected, never fail open; `github_workflow_gate.review_failed` | Inspect safe error; retry eligible batch |
+| npm baseline missing | Missing/invalid connection or registry error | Full-tree review; `baseline-unavailable` | Restore access or review whole artifact |
+| VS Code baseline missing | Metadata/download/parse/identity failure | No-baseline review; unreadable version list is `metadata-unavailable`, never first-publish evidence | Restore access or review whole artifact |
+| PyPI baseline over budget | Bounded download | `comparisonSkipped: "baseline-too-large"`; findings `unknown` package context; `manual_review` recommendation | Review with missing comparison disclosed |
+| PyPI baseline metadata absent / no comparable release | Supported empty comparison | No-baseline review | Inspect disclosed baseline reason |
+| PyPI acquisition throws | Unhandled download/parse failure | Review fails; no automatic approval | Inspect error, retry |
+| Callback fails | GitHub delivery error | Durable decision retained; `github_workflow_gate.redelivery_failed`; queue retries when bound; otherwise next human/cron touch; job held until delivery | Restore callback access; redeliver |
+| PR exists, gate inactive | Missing rule or matching target | Setup checker reports separate unmet conditions | Complete setup; verify first real review |
 
-Once a workflow-gate scan completes or fails, the page looks up its gate with
-exponential retry delays capped at 30 seconds and at most six attempts. Requests
-run one at a time, pause while the tab is hidden, and stop when the gate loads or
-the page is closed. After the retry budget is exhausted, the panel explains that
-lookup stopped and offers **Retry lookup** to start a fresh bounded attempt. A
-missing gate therefore cannot keep an idle tab querying the database indefinitely.
+## Change checklist
 
-## Adding a new ecosystem
+New ecosystem capabilities follow the [adapter skill](../.claude/skills/add-ecosystem/SKILL.md): derive candidates from bytes, acquire namespace-matched baselines, register adapters, add deterministic rules and Worker/adapter tests, and cover changed publish/review flows with fake-registry e2e tests.
 
-1. Add or extend a package adapter under `server/lib/ecosystems/<ecosystem>/`.
-2. Implement release-set derivation from uploaded artifact bytes.
-3. Define baseline acquisition and artifact namespace matching.
-4. Add deterministic findings for ecosystem-specific risky behavior.
-5. Register the adapter with workflow-gate resolution.
-6. Add Worker-route tests for webhook/gate lifecycle and adapter tests for archive/metadata/baseline behavior.
-7. Add fake-registry or fake-artifact e2e coverage when the publish workflow or browser-visible review flow changes.
-
-## Provenance surfacing
-
-Each gate adapter's `summarizeDetails` emits a `provenance` block — `{ ecosystem,
-mode, artifacts: [{ path, kind, sha256 }] }` — built from the digests the control
-plane recomputed from the immutable bundle bytes. It is persisted in
-`summary.stagedPublish`, rendered as the report **Provenance** section in the
-scan workbench, and re-validated into the `report.json` export as a top-level
-`provenance` field. A maintainer's CI can compare those digests against the
-checksum file it built and the bytes it is about to publish, closing the
-byte-continuity loop without trusting any single step.
-
-npm gate reviews also record `sha1` beside `digest` in `summary.stagedPublish`
-(not in `provenance` or the release manifest): the SHA-1 of the same reviewed
-tarball, in npm's `dist.shasum` encoding. It lets the
-[publication monitor](./publication-monitor.md) compare npm's own shasum with a
-gate review when the published tarball is too large or too slow to hash; gate
-reviews from before it was recorded carry SHA-256 only.
-
-## Remaining work
-
-- Expand gate-specific e2e coverage as more ecosystems are added.
-- Keep GitHub/PyPI/npm/VS Code validation failures user-actionable without leaking credentials or private package bytes.
+| If you change… | Also update… | Run… |
+| --- | --- | --- |
+| Delivery/decision/callback | [Security](./security-model.md), [publisher setup](./publisher-setup.md) | `pnpm test -- test/workers/github-webhook.test.ts test/workers/workflow-gate-job.test.ts --project workers` |
+| Identity/grouping/adapter | Ecosystem guide and [repository map](./repository-map.md) | `pnpm test -- test/workers/workflow-gate-prepare.test.ts --project workers` |
+| npm example | [Canonical YAML](./examples/npm-workflow-gate.yml), [trusted publishing](./npm-trusted-publishing.md), [staging](./npm-staged-publishing.md) | `pnpm test -- test/workers/workflow-gate-npm.test.ts --project workers` |
+| Lookup | Retry lifecycle/exhaustion UI | `pnpm test -- test/scan-detail-gate-polling-model.test.ts --project node` |
+| Deployment bindings | GitHub App credentials, webhook secret, installation access, queues, D1, R2, scan bindings in [self-hosting](./self-hosting.md) | Follow [release safety](./release-safety.md) |

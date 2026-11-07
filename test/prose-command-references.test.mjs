@@ -84,6 +84,7 @@ function repoFiles() {
       .filter(Boolean);
   return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])]
     .filter((file) => !FIXTURE_PREFIXES.some((prefix) => file.startsWith(prefix)))
+    .filter((file) => existsSync(path.join(repoRoot, file)))
     .sort();
 }
 

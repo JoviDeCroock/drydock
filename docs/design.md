@@ -1,487 +1,435 @@
-# Design System — Drydock
+# Design system
 
-Source of truth for visual decisions in this repo. Read this before changing fonts, colors, spacing, or aesthetics. Do not deviate without explicit approval.
+Source of truth for visual decisions: fonts, colors, spacing, glyphs, charts, states, and marketing constraints. **Authority:** internal (do not deviate without explicit approval). **Owner:** `src/style.css` (tokens) and `src/components/` (primitives).
 
-## Product Context
+Implementation map: [ui.md](./ui.md). Lint rules enforcing this file: [tooling.md](./tooling.md#lint-rules). Dated rationale: [design-decisions.md](./design-decisions.md).
 
-- **What this is:** A second pair of eyes before a release is published, with authority stated by mode. **Workflow Gate — enforced**: a GitHub deployment-protection rule holds the configured protected publish job until Drydock answers; GitHub enforces the hold, for that job only. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject and manual publication remains possible. Drydock never publishes.
-- **How releases reach it:** three paths, one review surface. **Stage Watchtower — advisory** reviews a private npm staged tarball; **atpm staging** reviews a public, content-addressed candidate with verified build provenance; **Workflow Gate — enforced** holds a configured GitHub Actions publish job behind a deployment-protection rule. All render the same report — ecosystem and release path change the evidence and authority, never the layout.
-- **Surfaces:** the authenticated scan workbench (dashboard, scan detail, settings), the public docs learning path, the marketing landing, and `/diff` — an anonymous, credential-free diff of two published npm, PyPI, or atpm versions that reuses the same review UI without an account.
-- **Who it's for:** Package authors, security-conscious maintainers, and reviewers at companies that publish to public registries.
-- **Space/industry:** Supply-chain security / developer tooling. Adjacent products: Socket, Snyk Advisor, Aikido, GitHub Advisory Database, vlt.sh.
-- **Project type:** Web app first (the scan workbench), with marketing and public-utility surfaces layered on the same system.
+## Product context
 
-## Aesthetic Direction
+- **What it is:** a second pair of eyes before a release is published, with authority stated by mode. Drydock never publishes.
+- **`Workflow Gate — enforced`:** a GitHub deployment-protection rule holds the configured protected publish job until Drydock answers; GitHub enforces the hold, for that job only.
+- **`Stage Watchtower — advisory`:** reviews and records npm staged artifacts; npm maintainers independently approve or reject and manual publication remains possible.
+- **atpm staging:** reviews a public, content-addressed candidate with verified build provenance.
+- **One review surface:** every path renders the same report; ecosystem and path change evidence and authority, never layout.
+- **Surfaces:** authenticated scan workbench (dashboard, scan detail, settings); public docs learning path; marketing landing; `/diff`, an anonymous diff of two published npm, PyPI, or atpm versions reusing the review UI.
+- **Audience:** package authors, security-conscious maintainers, reviewers at companies publishing to public registries. Category: supply-chain security / developer tooling (adjacent: Socket, Snyk Advisor, Aikido, GitHub Advisory Database, vlt.sh). Web app first.
 
-- **Direction:** Restrained dev-tool — confident sans typography, a single sharp accent color, severity carries the chromatic weight. Sits between an operations dashboard and a security advisory document.
-- **Decoration level:** Minimal. Type and a single mono detail line (scan ID · timestamp · file count) do the work. No gradients, no icon-in-circle motifs, no decorative chrome.
-- **Mood:** Sober, fast, trustworthy. Looks like a tool an engineer would keep open during a publish — not a marketing splash.
-- **Reference observation:** Peer security tools converge on violet gradients + dashboard grids. This system breaks from the pack by replacing violet with orange and by giving each scan its own focused report layout rather than a sprawling dashboard.
+## Aesthetic
+
+- Restrained dev-tool: confident sans type, one sharp accent, severity carries the chromatic weight; between an operations dashboard and a security advisory document.
+- Minimal decoration: type and one mono detail line (scan ID · timestamp · file count). No gradients, icon-in-circle motifs, or decorative chrome.
+- Sober, fast, trustworthy: a tool kept open during a publish, not a marketing splash.
+- Orange replaces the violet peer tools converge on; each scan gets a focused report, not a sprawling dashboard.
 
 ## Typography
 
-- **Display & Body:** Geist (weights 400, 500, 600). Self-hosted, served same-origin. Modern, neutral, developer-readable, no licensing concerns.
-- **Mono:** Geist Mono (weights 400, 500, 600). Used for file paths, severity labels, scan IDs, timestamps, code, and section labels — mono is a first-class typeface here, not just a code fallback.
-- **Loading:** Self-hosted via the `@fontsource-variable/geist` and `@fontsource-variable/geist-mono` packages, imported in `src/style.css` (CSS families `"Geist Variable"` / `"Geist Mono Variable"`). Bundled into our own assets — no request to a third-party font CDN, so no visitor IP is sent to Google at page load (a GDPR consideration for EU visitors). Do **not** reintroduce the Google Fonts CDN `@import`.
-- **Feature settings:** `font-feature-settings: "ss01", "cv11"` for Geist (humanist alts), `"ss01", "tnum"` for Geist Mono (tabular numbers — essential for data rows).
+| Item | Rule |
+| --- | --- |
+| Display & body | Geist 400/500/600; `font-feature-settings: "ss01", "cv11"`. |
+| Mono | Geist Mono 400/500/600, first-class; `"ss01", "tnum"` (tabular numbers). |
+| Mono is for | File paths, severity labels, scan IDs, timestamps, code, section labels. |
+| Loading | `@fontsource-variable/geist`, `@fontsource-variable/geist-mono` in `src/style.css`. |
+
+Never reintroduce the Google Fonts CDN `@import`: fonts are self-hosted same-origin (families `"Geist Variable"` / `"Geist Mono Variable"`) so no visitor IP reaches a third-party font CDN (GDPR).
 
 ### Scale
 
-| Role             | Size             | Weight  | Letter-spacing | Line-height |
-| ---------------- | ---------------- | ------- | -------------- | ----------- |
-| Display 1 (hero) | 44–56px          | 600     | -0.03em        | 1.05        |
-| Display 2        | 32px             | 600     | -0.02em        | 1.15        |
-| Heading 1        | 24px             | 600     | -0.015em       | 1.25        |
-| Heading 2        | 18px             | 500     | -0.01em        | 1.35        |
-| Body             | 14px             | 400     | 0              | 1.55        |
-| Body sm          | 13px             | 400     | 0              | 1.5         |
-| Mono code        | 13px             | 400/500 | 0              | 1.5         |
-| Mono label       | 11px (uppercase) | 500     | 0.1em          | 1.4         |
+| Role | Size | Weight | Letter-spacing | Line-height |
+| --- | --- | --- | --- | --- |
+| Display 1 (hero) | 44–56px | 600 | -0.03em | 1.05 |
+| Display 2 | 32px | 600 | -0.02em | 1.15 |
+| Heading 1 | 24px | 600 | -0.015em | 1.25 |
+| Heading 2 | 18px | 500 | -0.01em | 1.35 |
+| Body | 14px | 400 | 0 | 1.55 |
+| Body sm | 13px | 400 | 0 | 1.5 |
+| Mono code | 13px | 400/500 | 0 | 1.5 |
+| Mono label | 11px uppercase | 500 | 0.1em | 1.4 |
 
-### Minimum size + contrast rules
+### Minimum size and contrast
 
-The system has three small-text sizes (10/11/12px). They are not interchangeable — they map to specific roles, and the role determines whether `--fg-subtle` is allowed.
+| Size | Role | Colors |
+| --- | --- | --- |
+| 10px | Scanning only, never a label the user reads | `--fg-subtle` |
+| 11px | Floor for every read label | `--fg-subtle` (AA) or `--fg-muted` |
+| 12px | Compact helper copy and inline code where 13px overpowers controls | `--fg`, `--fg-muted`, `--fg-subtle` |
 
-| Size | Allowed roles                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Allowed colors                            |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| 10px | **Scanning-only:** DiffView header strip, SeverityBar legend, FileTree folder marker (`▸`), mockup structural metadata, and gutter line numbers. Never load-bearing labels the user reads as text.                                                                                                                                                                                                                                                                                 | `--fg-subtle`                             |
-| 11px | **Floor for read labels:** Badges, field labels, table column headers, metadata/definition rows (`InlineMeta`, `MetadataField`, `ChangeList` title), SummaryCard labels, finding captions and rule IDs, mono detail lines, StatusStrip labels, VersionPicker prefixes, Menu group headers, sponsor links, and OrgSwitcher annotations. If the user reads it as a label, it is an 11px-floor label — including page-local copies of these patterns, not just the shared primitives. | `--fg-subtle` (passes AA) or `--fg-muted` |
-| 12px | Compact helper copy and inline code where 13px body text would overpower adjacent controls.                                                                                                                                                                                                                                                                                                                                                                                        | `--fg`, `--fg-muted`, or `--fg-subtle`    |
+- **10px roles:** DiffView header strip, SeverityBar legend, FileTree folder marker (`▸`), mockup structural metadata, gutter line numbers.
+- **11px roles:** Badges, field labels, table headers, metadata rows (`InlineMeta`, `MetadataField`, `ChangeList` title), SummaryCard labels, finding captions and rule IDs, mono detail lines, StatusStrip labels, VersionPicker prefixes, Menu group headers, sponsor links, OrgSwitcher annotations, and page-local copies of these.
 
-**Hard rules:**
-
-- Text below 11px must not be a label the user reads — only scanning glyphs and structural metadata.
-- `--fg-subtle` is now AA-passing at all sizes (6.2:1 on `--bg`). Don't pair sub-11px text with anything lower contrast.
-- White text on `--accent` (Button primary) requires 13px / 500 minimum — `--accent` is 4.97:1, so 13px/500 clears AA. Smaller white-on-accent controls (the view-switcher pills) use the soft-accent active treatment instead — `bg-accent-soft` + `text-accent` + accent border — never white-on-accent below 13px.
-- Severity-as-text uses the `-text` variants (`text-warn-text`, `text-ok-text`). The saturated tokens (`text-warn`, `text-ok`) are reserved for shapes — chart segments, borders, alert discs.
-- Machine-checked in `src/`: `design-local/no-off-system-color` rejects Tailwind palette colors, raw hex/rgb values in classes or `style` props, and saturated severity tokens as text; `design-local/no-sub-floor-text` rejects any arbitrary text size under 11px other than exactly 10px (so `text-[9px]` and the between-roles `text-[10.5px]` / `text-[0.75rem]` both fail) and `text-xs`, which is 10.5px on the 14px root rather than the 12px it reads as — use `text-[12px]` or `text-[11px]`. Whether a 10px string is a glyph or a label stays a review call. Colors come from the `src/style.css` tokens only.
+1. Text below 11px is never a label the user reads.
+2. `--fg-subtle` is AA at all sizes (6.2:1 on `--bg`); never pair sub-11px text with anything lower contrast.
+3. White on `--accent` (Button primary) needs 13px / 500 minimum (`--accent` is 4.97:1). Smaller controls (view-switcher pills) use `bg-accent-soft` + `text-accent` + accent border, never white-on-accent below 13px.
+4. Severity as text uses `-text` variants (`text-warn-text`, `text-ok-text`); saturated tokens are for shapes (chart segments, borders, alert discs).
+5. Machine-checked in `src/`: `design-local/no-off-system-color` and `design-local/no-sub-floor-text`. `text-xs` is 10.5px on the 14px root, so use `text-[12px]` or `text-[11px]`. Whether a 10px string is a glyph or a label stays a review call.
 
 ## Color
 
-- **Approach:** Restrained. One brand accent for action, severity colors do the rest. Light and dark are both first-class — auto-follow `prefers-color-scheme` by default.
+Restrained: one brand accent for action; severity does the rest. Light and dark are both first-class and auto-follow `prefers-color-scheme`.
 
 ### Light mode (default surface)
 
-| Token             | Hex       | Contrast on `--bg` | Usage                                |
-| ----------------- | --------- | ------------------ | ------------------------------------ |
-| `--bg`            | `#fafafa` | —                  | Page background (neutral off-white)  |
-| `--bg-elev`       | `#ffffff` | —                  | Cards, inputs                        |
-| `--bg-elev-2`     | `#f4f4f5` | —                  | Secondary surfaces, button-secondary |
-| `--border`        | `#e4e4e7` | —                  | Default borders                      |
-| `--border-strong` | `#d4d4d8` | —                  | Hover borders, dividers              |
-| `--fg`            | `#18181b` | 16.5:1 (AAA)       | Primary text                         |
-| `--fg-muted`      | `#52525b` | 7.4:1 (AAA)        | Secondary text                       |
-| `--fg-subtle`     | `#5d5d65` | 6.2:1 (AA)         | Tertiary text, mono labels           |
+| Token | Hex | Contrast on `--bg` | Usage |
+| --- | --- | --- | --- |
+| `--bg` | `#fafafa` | — | Page background (neutral off-white) |
+| `--bg-elev` | `#ffffff` | — | Cards, inputs |
+| `--bg-elev-2` | `#f4f4f5` | — | Secondary surfaces, button-secondary |
+| `--border` | `#e4e4e7` | — | Default borders |
+| `--border-strong` | `#d4d4d8` | — | Hover borders, dividers |
+| `--fg` | `#18181b` | 16.5:1 (AAA) | Primary text |
+| `--fg-muted` | `#52525b` | 7.4:1 (AAA) | Secondary text |
+| `--fg-subtle` | `#5d5d65` | 6.2:1 (AA) | Tertiary text, mono labels |
 
 ### Dark mode
 
-| Token             | Hex       | Usage                                            |
-| ----------------- | --------- | ------------------------------------------------ |
-| `--bg`            | `#0a0a0a` | Page background                                  |
-| `--bg-elev`       | `#141414` | Cards                                            |
-| `--bg-elev-2`     | `#1c1c1c` | Secondary surfaces                               |
-| `--border`        | `#27272a` | Default borders                                  |
-| `--border-strong` | `#3f3f46` | Hover borders                                    |
-| `--fg`            | `#fafafa` | Primary text                                     |
-| `--fg-muted`      | `#a1a1aa` | Secondary text                                   |
-| `--fg-subtle`     | `#8b8b94` | Tertiary text, mono labels (AA on dark surfaces) |
+| Token | Hex | Usage |
+| --- | --- | --- |
+| `--bg` | `#0a0a0a` | Page background |
+| `--bg-elev` | `#141414` | Cards |
+| `--bg-elev-2` | `#1c1c1c` | Secondary surfaces |
+| `--border` | `#27272a` | Default borders |
+| `--border-strong` | `#3f3f46` | Hover borders |
+| `--fg` | `#fafafa` | Primary text |
+| `--fg-muted` | `#a1a1aa` | Secondary text |
+| `--fg-subtle` | `#8b8b94` | Tertiary text, mono labels |
 
-`--fg-subtle` in dark is `#8b8b94` — it clears WCAG AA (≥5:1) on `--bg`, `--surface`, _and_ `--surface-2` for the 11px mono labels and the mono detail line. The earlier `#71717a` was only 3.8:1 on cards (the dark-mode counterpart to the light-mode floor codified 2026-06-03). Don't lower it back toward `#71717a`.
-
-**Theme application (Tailwind v4):** the dark tokens are set on a plain `:root` inside `@media (prefers-color-scheme: dark)` in `src/style.css`, **never** inside a nested `@theme`. Tailwind v4 hoists every `@theme` block to one unconditional top-level `:root` and discards the surrounding `@media` — a nested dark `@theme` overrides light for everyone and strands the site in dark mode. Keep new dark overrides on the media-scoped `:root`.
+1. Dark `--fg-subtle` clears AA (≥5:1) on `--bg`, `--surface`, and `--surface-2`; never lower it toward `#71717a` (3.8:1 on cards).
+2. Dark tokens sit on a plain `:root` inside `@media (prefers-color-scheme: dark)` in `src/style.css`, **never** in a nested `@theme`: Tailwind v4 hoists every `@theme` to one unconditional `:root` and strands everyone in dark mode.
+3. Don't invert naively: surfaces darken (true neutrals, no warm tint); accent and severity lighten one tone and drop ~10% saturation; soft fills become low-opacity overlays of the same hue; borders stay visible, never pure black.
 
 ### Accent (brand action)
 
-| Token            | Light                  | Dark                       | Usage                                                             |
-| ---------------- | ---------------------- | -------------------------- | ----------------------------------------------------------------- |
-| `--accent`       | `#c2410c` (orange-700) | `#fb923c` (orange-400)     | Primary buttons, focus rings, active nav, brand mark, accent text |
-| `--accent-hover` | `#9a3412` (orange-800) | `#fdba74`                  | Hover state                                                       |
-| `--accent-soft`  | `#fff7ed`              | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills                                 |
-| `--accent-on`    | `#ffffff`              | `#18181b`                  | Text on accent background                                         |
+| Token | Light | Dark | Usage |
+| --- | --- | --- | --- |
+| `--accent` | `#c2410c` (orange-700) | `#fb923c` (orange-400) | Primary buttons, focus rings, active nav, brand mark, accent text |
+| `--accent-hover` | `#9a3412` (orange-800) | `#fdba74` | Hover |
+| `--accent-soft` | `#fff7ed` | `rgba(251, 146, 60, 0.12)` | Focus ring background, soft fills |
+| `--accent-on` | `#ffffff` | `#18181b` | Text on accent |
 
-**Why orange, not purple:** Every peer security tool (Socket, Snyk, Aikido) leans on violet. Orange differentiates without sacrificing the "caution / pre-flight" connotation. It is _not_ a severity color — severity stays red/amber/blue/green.
-
-**Why orange-700, not orange-600:** Orange-600 (`#ea580c`) only gave 3.58:1 contrast for white text on the accent button and 3.5:1 for `text-accent` on `--bg` — both failing WCAG AA. Orange-700 reaches 4.97:1 in both roles. A single accent token now covers both surface and text use without splitting roles. The brand still reads as confident orange.
+1. Orange, not violet: peers (Socket, Snyk, Aikido) lean violet; orange keeps a "caution / pre-flight" connotation. It is not a severity color.
+2. Orange-700, not orange-600: `#ea580c` gave 3.58:1 for white-on-accent and 3.5:1 for `text-accent`; orange-700 reaches 4.97:1 in both roles with one token.
 
 ### Severity (semantic)
 
-Severity has a **two-role split**: a saturated token for shapes (chart bars, badge fills, alert discs, borders) and a darker `*-text` variant for text-on-bg readability. In dark mode the variants are identical because the saturated colors already pass AAA on dark surfaces.
+Saturated tokens are for shapes (chart bars, badge fills, alert discs, borders); `*-text` tokens are for text. In dark mode the two are identical.
 
-| Token           | Light                | Dark      | Soft (light / dark)                    | Usage                                                                         |
-| --------------- | -------------------- | --------- | -------------------------------------- | ----------------------------------------------------------------------------- |
-| `--danger`      | `#dc2626`            | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)`  | Critical/High shapes — chart segments, alert disc, border                     |
-| `--danger-text` | `#dc2626` (5.4:1 AA) | `#f87171` | —                                      | Critical/High as text (Badge/Alert/SummaryCard tone, status text)             |
-| `--warn`        | `#d97706`            | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium shapes                                                                 |
-| `--warn-text`   | `#b45309` (4.9:1 AA) | `#fbbf24` | —                                      | Medium as text (darker amber so labels pass AA on white and on `--warn-soft`) |
-| `--info`        | `#2563eb`            | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low/Info shapes                                                               |
-| `--info-text`   | `#2563eb` (5.8:1 AA) | `#60a5fa` | —                                      | Low/Info as text                                                              |
-| `--ok`          | `#16a34a`            | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed/no-findings shapes                                                     |
-| `--ok-text`     | `#15803d` (4.5:1 AA) | `#4ade80` | —                                      | Passed as text (darker green so labels pass AA on white and on `--ok-soft`)   |
+| Token | Light | Dark | Soft (light / dark) | Usage |
+| --- | --- | --- | --- | --- |
+| `--danger` | `#dc2626` | `#f87171` | `#fee2e2` / `rgba(239, 68, 68, 0.14)` | Critical/High shapes |
+| `--danger-text` | `#dc2626` (5.4:1 AA) | `#f87171` | — | Critical/High text |
+| `--warn` | `#d97706` | `#fbbf24` | `#fef3c7` / `rgba(251, 191, 36, 0.14)` | Medium shapes |
+| `--warn-text` | `#b45309` (4.9:1 AA) | `#fbbf24` | — | Medium text (AA on white, `--warn-soft`) |
+| `--info` | `#2563eb` | `#60a5fa` | `#dbeafe` / `rgba(96, 165, 250, 0.14)` | Low/Info shapes |
+| `--info-text` | `#2563eb` (5.8:1 AA) | `#60a5fa` | — | Low/Info text |
+| `--ok` | `#16a34a` | `#4ade80` | `#dcfce7` / `rgba(74, 222, 128, 0.14)` | Passed shapes |
+| `--ok-text` | `#15803d` (4.5:1 AA) | `#4ade80` | — | Passed text (AA on white, `--ok-soft`) |
 
-**Rule:** Severity colors are reserved for severity meaning. Never use red for a decorative accent, never use the orange accent to flag a finding. Color = signal.
+1. Color = signal: severity colors only mean severity; never red as decoration, never the accent to flag a finding.
+2. Tailwind: `text-warn-text` not `text-warn`; `bg-warn-soft` not `bg-warn-soft-text`. Saturated amber and green fail AA as text on white (3.8:1, 3.0:1).
 
-**Role rule:** Use the saturated token (`--warn`, `--ok`, …) for **shapes** — chart segments, badge fills, alert discs, alert borders. Use the `-text` variant (`--warn-text`, `--ok-text`, …) for **text** — Badge/Alert/SummaryCard text, status glyphs, FileTree status names. Tailwind: `text-warn-text` not `text-warn`, `bg-warn-soft` not `bg-warn-soft-text`. The split exists because saturated amber and green fail WCAG AA as text on white (3.8:1 and 3.0:1); the `-text` variants pass.
+## Spacing and layout
 
-### Dark mode strategy
-
-Don't naively invert. Surfaces darken (true neutrals, no warm tint), accent + severity colors lighten by one tone and drop saturation ~10%, soft fills become low-opacity overlays of the same hue. Borders remain visible — never collapse to pure black.
-
-## Spacing
-
-- **Base unit:** 4px.
-- **Density:** Comfortable for forms and report sections; dense for diff rows and finding lists.
-- **Scale:** `2xs(2) xs(4) sm(8) md(12) lg(16) xl(24) 2xl(32) 3xl(48) 4xl(64) 5xl(96)`.
-
-## Layout
-
-- **Approach:** Grid-disciplined for app surfaces. Marketing pages get more whitespace and a deliberate single-column hero column.
-- **Grid:** 12-column, 24px gutters. App content max-width `1160px`. Public landing/docs pages share that outer shell so header/footer alignment stays stable; docs article bodies sit comfortably inside `~880px`. Marketing hero copy capped at `760px` so headings remain typographically scaled.
-- **Border radius:**
-  - `0` — Severity badges and document-style elements (squarish, terminal-adjacent — not pills).
-  - `3–4px` — Small chrome (inline mono pills, file-path tags).
-  - `6px` — Buttons, inputs.
-  - `8px` — Cards, alerts, larger surfaces.
-  - `10px` — Mockup/window shells.
-  - `999px` — Reserved for true circle elements (avatars, toggle handles). Avoid for badges.
+| Item | Rule |
+| --- | --- |
+| Base unit | 4px. Scale `2xs(2) xs(4) sm(8) md(12) lg(16) xl(24) 2xl(32) 3xl(48) 4xl(64) 5xl(96)`. |
+| Density | Comfortable for forms and report sections; dense for diff rows and finding lists. |
+| Grid | 12 columns, 24px gutters; app max `1160px` shared by public pages; docs article ~`880px`; hero copy `760px`. |
+| Radius `0` | Severity badges, document-style elements (not pills). |
+| Radius `3–4px` | Small chrome: inline mono pills, file-path tags. |
+| Radius `6px` | Buttons, inputs. |
+| Radius `8px` | Cards, alerts, larger surfaces. |
+| Radius `10px` | Mockup/window shells. |
+| Radius `999px` | True circles only (avatars, toggle handles); never badges. |
 
 ### Page structure (`PageShell`)
 
-Every page is a min-height flex column: header → content (`main`, grows) → site footer pinned to the bottom. The footer matches the page's content width. An identity block leads (brand mark, a mono `11px / --fg-subtle` two-line `Pre-publish review for npm, PyPI, and VS Code` / `© Drydock`, then the Aikido sponsor line, which sits outside the nav because it is not navigation). Links follow in four `MonoLabel`-headed columns — `Product` (`Package diff`, `Docs`) / `Trust` (`Security model`, `Benchmarks`, `Privacy`) / `Project` (`Open source`, GitHub repository) / `Contact` (`Feedback`, `Report security`) — each a `<ul aria-labelledby>` inside one `Footer` nav, so the destinations read as intents instead of one undifferentiated link run. This is the only trust/legal surface, so it stays on every route (marketing _and_ app). The GitHub repository uses the official high-contrast Invertocat mark next to a visible `GitHub` label (marks are `alt=""`, so the accessible name is the visible text). `Package diff` is the footer's only entry point to the public diff tool from app routes, whose headers carry dashboard actions instead of the marketing nav. `width="narrow"` pages (auth, 404, invite) are single short cards: they vertically center in the space between header and footer (via `my-auto`, which never clips over-tall content) rather than pinning to the top.
+1. Every page is a min-height flex column: header → `main` (grows) → site footer pinned to the bottom at the page's content width.
+2. Footer identity block: brand mark; mono `11px / --fg-subtle` lines `Pre-publish review for npm, PyPI, and VS Code` / `© Drydock`; the Aikido sponsor line (outside the nav: it is not navigation).
+3. Footer links: four `MonoLabel`-headed columns, each a `<ul aria-labelledby>` in one `Footer` nav: `Product` (`Package diff`, `Docs`), `Trust` (`Security model`, `Benchmarks`, `Privacy`), `Project` (`Open source`, GitHub repository), `Contact` (`Feedback`, `Report security`).
+4. The footer is the only trust/legal surface and appears on every route, marketing and app.
+5. GitHub uses the official high-contrast Invertocat mark beside a visible `GitHub` label (marks are `alt=""`, so the accessible name is the text).
+6. The footer's `Package diff` is the only entry to `/diff` from app routes.
+7. `width="narrow"` pages (auth, 404, invite) are single short cards, vertically centered with `my-auto` (never clips tall content).
 
 ## Marketing surfaces
 
-The marketing landing page sits on the same primitives as the app. The system _relaxes_ in a few specific places and _stays disciplined_ everywhere else.
+Same primitives as the app. It relaxes only here:
 
-### Where it relaxes
+| Relaxes | Rule |
+| --- | --- |
+| Hero headline | Display 1 (`44–56px / 600 / -0.03em / 1.05`), max `760px`. |
+| Hero subhead | `17px / leading 1.6 / --fg-muted`, max `620px`; the only body type above 14px. |
+| Section gap | `40–64px` (app: `24–32px`). |
+| Hero context | No tracked uppercase label above the title; use title, lead, breadcrumb, or `MonoDetail`. |
 
-- **Hero headline:** Display 1 scale (`44–56px / 600 / -0.03em / 1.05`). Max-width `760px`.
-- **Hero subhead:** body `17px / leading 1.6`, color `--fg-muted`. Max-width `620px`. This is the only place body type goes above 14px.
-- **Section gap:** marketing pages use `40–64px` between sections (vs. app surfaces' `24–32px`).
-- **Hero context:** do not add a tracked uppercase label above the page title. Put necessary category or release-path context in the title, lead, breadcrumb, or `MonoDetail` below it.
+It stays disciplined everywhere else:
 
-### Where it stays disciplined
+1. No gradients; the brand mark is the only saturated orange above the fold.
+2. No icon-in-circle feature grids. Feature rows: `Card padding="compact"`, `gap-2`, `h2: 16px / 500 / -0.005em`, body `13px / --fg-muted / 1.55`.
+3. No stock photo or illustrated hero: type + brand mark + Cards.
+4. No extra brand colors; the accent stays orange.
 
-- No gradients (hero or otherwise). The brand mark is the only saturated orange element above the fold.
-- No icon-in-colored-circle three-column feature grids. Marketing feature rows use the same `Card` primitive: `padding="compact"`, `gap-2`, `h2: 16px / 500 / -0.005em`, body `13px / --fg-muted / 1.55`.
-- No stock-photo or illustrated hero. The hero is type + brand mark + Cards.
-- The accent stays orange. No additional brand colors are added for marketing.
+### Landing blocks
 
-### The status strip (canonical headline-supporting unit)
+- **Status strip** (canonical headline-supporting unit, also on the dashboard): three Cards in a row, each with a mono `11px / 0.1em uppercase` label (`credentials`, `retention`, `approval`), a trailing `Badge` (`ok`, `info`, `neutral`), one sentence `13px / --fg-muted / 1.55`, and `min-height: 112px`.
+- **Dependency-PR block:** below "Open a live diff", compact `DependencyPrIntegrations` in one split Card: 24px heading, setup copy, secondary `Add to Renovate` / `Add the PR comment` links; a `--surface-2` PR excerpt naming the demo package above a two-column Change / Drydock table; `Read the diff` opens the public demo pair; a closing note says what the PR comment adds beyond Renovate's table. Stacks below `lg`; text on the ink scale. `/diff` keeps the full integration cards.
+- **Project logos:** after the hero, `Sponsored by` Aikido then `Used by` (Keyv, Cacheable, Preact, Apollo, PostCSS), each a `SectionLabel` over centered marks; locally bundled, linked, monochrome (inverted in dark).
+  - Preact's wordmark is from the [official site](https://preactjs.com/); orbit and nucleus are transparent cutouts.
+  - Apollo's PNG is uncropped and undistorted; its approval covers monochrome and the `Used by` listing only, with no sponsorship, partnership, or testimonial attribution.
+  - PostCSS approved its listing; its unmodified logo is from the [official brand repository](https://github.com/postcss/brand/blob/master/dist/postcss-logo-horizontal-black.svg), with CC BY 4.0 attribution and license in `src/assets/postcss-LICENSE.txt`.
+- **Review preview** ("What a review looks like"): a hand-authored condensed report after the logos; the first product demonstration.
+  - Changed-file tree rows are real `<button>`s (`aria-current` on the selection) that swap the diff and its pinned finding, mirroring the workbench; nothing is invented for marketing.
+  - Findings use DiffView's annotation (soft fill ~60%, saturated `border-l-2`); tree Badges carry counts; one selectable file has **no** finding.
+  - One `13px / --fg-muted` hint ("Select a file…") is the only affordance copy; no tooltips or pulsing highlights.
+- **Incident log** ("Why review a publish"): real named incidents (event-stream, ua-parser-js, node-ipc, chalk & debug) in `Card padding="none"` with `border-b` rows: mono `13px` name + `MonoDetail` (`year · vector`) left, one `13px / --fg-muted` sentence right (`220px / 1fr`, stacks on mobile). Ink scale only, **no severity colors**; closes with one `13px / --fg` takeaway. Never invent or embellish an incident.
+- **Closing CTA** (`Get started`): `SectionLabel`, `32px / 600 / -0.02em` heading (the only Display 2 outside the hero), one `14px / --fg-muted` sentence, `Create account` / `Read the docs` pair, `MonoDetail` trust line (`read-only tokens · you keep the final approval`). No banner, fill, or extra `border-t`. The hero trio is `Read a diff` (primary, no-account front door), `Create account` (secondary), `Sign in` (ghost): prove value before asking for signup.
 
-Three short Card panels in a row, each containing:
+### Short public content pages
 
-- A mono `11px / 0.1em uppercase` label (`credentials`, `retention`, `approval`).
-- A trailing `Badge` (`ok`, `info`, `neutral`) communicating the claim's state.
-- One sentence of body copy, `13px / --fg-muted / 1.55`.
-- `min-height: 112px` so the three cards align even when copy lengths differ.
+`/npm-staged-publishing`, `/security`, `/incidents/*`, `/benchmarks/shai-hulud-nx` and siblings are one document type, rendered by `src/features/public-content/ContentArticle.tsx`. Never re-declare the hero scale in a page directory.
 
-This pattern is used both on the dashboard (above the scan form) _and_ as the headline-supporting unit on marketing pages. Visitors landing on the dashboard feel oriented because the same primitive carries.
-
-### Dependency-PR block (landing)
-
-Below “Open a live diff”, the landing uses the compact variant of
-`DependencyPrIntegrations` in one split Card: a 24px heading, short setup copy, and
-secondary `Add to Renovate` / `Add the PR comment` links on one side; a restrained
-`--surface-2` PR excerpt on the other. The example names the demo package above a
-two-column Change / Drydock table so the practical link stays visible without a
-sparse, oversized table. Its `Read the diff` link opens the existing public demo
-version pair. The closing note says what the PR comment workflow adds beyond
-Renovate's table. The Card stacks below the large breakpoint; text and table
-headers stay on the ink scale.
-
-This block replaces the landing's lower full integration section. `/diff` keeps
-the full integration cards with preset and workflow details.
-
-### Project logos (landing)
-
-Between the hero and the review preview, the `Sponsored by` Aikido section is followed by a separate `Used by` section for Keyv, Cacheable, Preact, Apollo, and PostCSS. Both use a `SectionLabel` with centered marks below. The locally bundled logos link to each project's site and render monochrome (inverted in dark mode). Preact's wordmark comes from the [official site](https://preactjs.com/); its orbit and nucleus are transparent cutouts so the mark remains legible with the shared monochrome treatment. Apollo's supplied PNG is preserved without cropping or distortion; its approval permits the monochrome treatment and covers only the `Used by` listing, with no sponsorship, partnership, or testimonial attribution. PostCSS approved its `Used by` listing; its unmodified black horizontal logo comes from the [official brand repository](https://github.com/postcss/brand/blob/master/dist/postcss-logo-horizontal-black.svg), with CC BY 4.0 attribution and license bundled in `src/assets/postcss-LICENSE.txt`.
-
-### The interactive review preview (landing)
-
-The landing's "What a review looks like" Card is a condensed, hand-authored scan report that follows the hero and the sponsor and `Used by` sections. The diff is the first product demonstration under the headline. Rules:
-
-- The release-tree rows for changed files are real `<button>`s (`aria-current` on the selected file) that swap the diff pane and its pinned finding. Interaction mirrors the workbench exactly; no behavior is invented for marketing.
-- Content stays truthful to the report model: findings use the same left-bar annotation as `DiffView` (soft fill at `~60%` opacity, saturated `border-l-2`), severity Badges carry counts in the tree, and one selectable file has **no** finding so the preview demonstrates signal-vs-noise instead of theater.
-- A one-line `13px / --fg-muted` hint above the Card ("Select a file…") is the only affordance copy. No tooltips, no pulsing highlights.
-
-### The incident log (landing)
-
-The "Why review a publish" section grounds the pitch in real, named supply-chain incidents (event-stream, ua-parser-js, node-ipc, chalk & debug) rendered as a document-shaped `Card padding="none"` with `border-b` divided rows: mono `13px` package name + `MonoDetail` (`year · vector`) on the left, one sentence of `13px / --fg-muted` consequence copy on the right (`220px / 1fr` grid, stacking on mobile). Incidents are history, not report state, so rows stay on the ink scale — **no severity colors** (color = signal). The card closes with a single `13px / --fg` (full-ink) takeaway line. Keep entries factual and verifiable; never invent or embellish an incident.
-
-### Short public content pages (guides, incident analyses, benchmarks)
-
-`/npm-staged-publishing`, `/security`, `/incidents/*`, `/benchmarks/shai-hulud-nx` and their siblings are one document type, rendered by `src/features/public-content/ContentArticle.tsx`. Never re-declare the hero type scale in a page directory.
-
-- **Hero:** `ContentArticleHero` — Display 1 headline, `17px` lead, optional `MonoDetail`, primary/secondary `LinkButton` pair. It closes with `pb-2`, not `py-12`: the page's own `gap-12` supplies the section gap, and doubling them left a visible void under the CTA.
-- **Body:** `ContentArticleSections` — label/heading/body blocks whose `SectionLabel` carries a zero-padded index in the trailing metadata slot. The index is what stops three identically-shaped blocks from scanning as one wall; it also anchors the otherwise ragged right edge.
-- **Evidence:** `ContentArticleEvidence` — a document-shaped `Card padding="none"` of mono label/value rows, for pages that rest on specific artifact facts. Values stay on the ink scale with **no** `Badge`: these are properties of the compared releases, not risk states. The first row carries no `border-t` — the header `SectionLabel`'s rule is already that divider.
-- **Onward:** every page ends on a next step. `ContentArticleCta` reuses the landing's `Get started` shape; `ContentArticleLinks` is a peer-link grid with a `→` and an accent hover border. It is deliberately not the docs page's `JourneyCard` — a number on a peer link invents a sequence the reader will look for.
+| Part | Rule |
+| --- | --- |
+| `ContentArticleHero` | Display 1, `17px` lead, optional `MonoDetail`, primary/secondary `LinkButton`; ends `pb-2`, not `py-12`. |
+| `ContentArticleSections` | Each `SectionLabel` carries a zero-padded index in its trailing slot. |
+| `ContentArticleEvidence` | `Card padding="none"` of mono label/value rows; ink scale, **no** `Badge`; no `border-t` on row one. |
+| `ContentArticleCta` | Every page ends on a next step (landing `Get started` shape). |
+| `ContentArticleLinks` | Peer grid with `→` and accent hover border; not the numbered docs `JourneyCard`. |
 
 ### Sponsor recommendation on package diffs
 
-Successful published npm and PyPI diff results end with a compact `InstallProtection` card after the review evidence and Drydock's own release CTA. It reuses the Aikido sponsor identity, explains Safe Chain's installation-time checks, and offers a secondary `Set up Safe Chain →` link to the official setup instructions. The recommendation appears regardless of findings or risk; it does not imply a compromise or change the review verdict. npm preview builds and atpm results keep the generic sponsor strip, as do the landing and empty diff pages.
-
-The setup destination is constant, opens with `noopener noreferrer`, and carries no package, version, scan, share token, or attribution parameters. Install commands remain in Aikido's maintained documentation. The card introduces no browser tracking; outbound clicks and setup conversion remain outside Drydock's aggregate product analytics.
-
-### The closing CTA (landing)
-
-The page ends with a `Get started` section (the marketing page's only Display 2 heading outside the hero): `SectionLabel`, `32px / 600 / -0.02em` heading, one `14px / --fg-muted` sentence, a `Create account` / `Read the docs` primary/secondary pair, and a `MonoDetail` trust line (`read-only tokens · you keep the final approval`). The hero carries a different trio — `Read a diff` (primary, the no-account front door), `Create account` (secondary), `Sign in` (ghost) — because the top of the page proves value before asking for signup; the closing section may lead with signup because by then the case has been made. No banner treatment, no background fill, no extra `border-t` — the `SectionLabel` rule is the divider, like every other section.
+1. Successful published npm and PyPI diffs end with a compact `InstallProtection` card after the review evidence and Drydock's release CTA: Aikido identity, Safe Chain's install-time checks, secondary `Set up Safe Chain →`.
+2. It appears regardless of findings or risk and never implies compromise or changes the verdict.
+3. npm preview builds, atpm results, the landing, and empty diff pages keep the generic sponsor strip.
+4. The destination is constant, opens with `noopener noreferrer`, and carries no package, version, scan, share token, or attribution parameters; install commands stay in Aikido's docs.
+5. No browser tracking; outbound clicks and conversion stay outside Drydock's product analytics.
 
 ### Canonical widths
 
-| Surface                       | Max width |
-| ----------------------------- | --------- |
-| Hero headline                 | `760px`   |
-| Hero subhead                  | `620px`   |
-| Marketing content column      | `880px`   |
-| App content                   | `1160px`  |
-| Report body (document-shaped) | `880px`   |
-| Prose measure (running copy)  | `680px`   |
+| Surface | Max width |
+| --- | --- |
+| Hero headline | `760px` |
+| Hero subhead | `620px` |
+| Marketing content column | `880px` |
+| App content | `1160px` |
+| Report body (document-shaped) | `880px` |
+| Prose measure (running copy) | `680px` |
 
-Do not introduce additional content widths. `test/canonical-content-widths.test.ts` enforces this set across the public reading surfaces; a component with its own documented size (SeverityBar) is exempt because it sizes itself, not a column of content.
+Do not add widths. `test/canonical-content-widths.test.ts` enforces the set on public reading surfaces; SeverityBar is exempt because it sizes itself.
 
 ## Documentation surfaces
 
-The public docs are a learning path first and a configuration reference second. A first-time reader should understand the artifact-review model before being asked to choose an integration.
+Learning path first, configuration reference second.
 
-- **Information order:** artifact gap → three-step review loop → report anatomy → safety model → release-path choice → setup. Do not lead with credentials or workflow YAML.
-- **Wayfinding:** keep the sticky `200px` desktop rail and native mobile `<details>` jump list. The hero may add a three-card numbered learning path, but it links into the same page instead of creating parallel navigation.
-- **Conceptual flow:** show `Hold → Review → Decide` inside one document-shaped Card with internal dividers. Follow it with compact label/question/evidence rows in the same shell; do not turn each step or answer into its own Card.
-- **Report anatomy:** teach with a compact document-shaped Card using label/value/evidence rows. Severity tones only communicate the example's actual risk state.
-- **Setup comparison:** present release paths as three equal Cards with the same labeled fields (`Best for`, `Held by`, `Decision`) so readers compare contracts rather than marketing claims.
-- **Long code:** every code block over 14 lines folds itself. Its toolbar (name or example title, plus the copy button) doubles as the `<details>` summary with the `▸`/`▾` glyph; collapsed, it shows a six-line peek above a full-width `⋯ N more lines · show more` expander in the diff gap-row treatment (`bg-surface-2`, mono 11px). Blocks at or under 14 lines never fold — a click that saves four lines is friction. Keep at most one representative example open by default; everything else, including the longest snippet on the page, stays collapsed so code does not dominate the reading path.
-- **Callouts:** a `2px` accent left rule with `--accent-soft` fill is reserved for a key question, decision rule, trust boundary, or fail-closed note. It is not a generic highlight box.
-- **Copy:** define product terms in plain language on first use. Keep conceptual paragraphs under `680px`; operational steps use numbered lists and one action per step.
-- **Two edges, not five:** the docs body has exactly one structural edge and one text edge. The rail (`200px` + `40px` gap) leaves an `~880px` article column: section-label rules, card grids, document Cards, step lists, requirement rows, callout boxes, and code blocks all span it. Every run of body copy — including copy inside a callout or a step — stops at the `680px` measure. The hero rides the same article track (`lg:col-start-2`), so the `h1` starts on the column every `h2` starts on; only its full-bleed rule spans the shell. A block that is neither a filled container nor running text does not exist here — pick one.
+1. **Order:** artifact gap → three-step review loop → report anatomy → safety model → release-path choice → setup. Never lead with credentials or workflow YAML.
+2. **Wayfinding:** sticky `200px` desktop rail and native mobile `<details>` jump list; a hero three-card path links into the same page, never parallel navigation.
+3. **Concept flow:** `Hold → Review → Decide` in one document-shaped Card with internal dividers, then label/question/evidence rows in the same shell; no Card per step.
+4. **Report anatomy:** one compact Card of label/value/evidence rows; severity tones only for the example's real risk.
+5. **Setup comparison:** three equal Cards with the same fields (`Best for`, `Held by`, `Decision`).
+6. **Long code:** blocks over 14 lines fold. The toolbar (name + copy) is the `<details>` summary with `▸`/`▾`; collapsed shows a six-line peek and a full-width `⋯ N more lines · show more` expander (`bg-surface-2`, mono 11px). ≤14 lines never fold. At most one example open by default; the longest stays collapsed.
+7. **Callouts:** `2px` accent left rule on `--accent-soft`, only for a key question, decision rule, trust boundary, or fail-closed note.
+8. **Copy:** define terms on first use; prose under `680px`; steps numbered, one action each.
+9. **Two edges:** rail `200px` + `40px` gap leaves an ~`880px` article column that every container spans (section rules, card grids, document Cards, step lists, requirement rows, callouts, code). All running copy, including inside callouts and steps, stops at `680px`. The hero rides the article track (`lg:col-start-2`) so the `h1` starts where every `h2` does; only its rule is full-bleed. A block is either a filled container or running text.
 
 ## Publisher workflow setup
 
-The GitHub App integration in Settings includes `Prepare a release workflow` before the manual release-target form. It extends the existing settings card with three numbered steps on a rail (mono `01`–`03`, `✓` in `--ok-text` once done): **Choose the release** (repository, ecosystem, environment; the installation select appears only when more than one is linked, and choosing a repository inspects it), **Update the publishing workflow** (optional), and **Protect the environment and verify**. A step's controls render only once it is reachable, and an error renders inside the step whose operation failed. In step 2, `Prepare draft pull request` explicitly authorizes workflow generation, validation, an independent review, and automatic creation of a draft PR in GitHub. While that job runs, step 1 and the workflow select stay locked; `Cancel preparation` stops the server job. The completed state leads with the GitHub review link and the remaining environment configuration steps. The workflow diff and supporting file changes remain available under a native `View workflow changes` disclosure, each with its own copy action. New files are shown as additions; modified files show their actual previous and proposed contents. File contents render as source text. No additional in-product review checkbox or creation action blocks the job. Only the current step's action is primary: `Prepare draft pull request` turns secondary once a pull request exists, and `Check setup status` leads once it does or when there is nothing to draft. The manual release-target form below uses a secondary submit for the same reason.
+Settings → GitHub App shows `Prepare a release workflow` before the manual release-target form. Behavior contract: [publisher-setup.md](./publisher-setup.md).
 
-Preparation runs in the background. The UI reports queueing, source reads, drafting, validation, second review and PR creation instead of holding one long request open. The second review is labelled advisory, with its summary and requested changes separate from the maintainer's review in GitHub; a rejected attempt exposes no PR link. A blocked attempt displays its missing-evidence feedback as escaped text under `Agent feedback`. Bounded status polling pauses with a resume action on prolonged or repeated failures. A pending job can resume after refresh using only its ID and explicitly authorized request scope in organization-keyed session storage; workflow source, generated content and proposal tokens are never persisted in the browser. Selection changes, hiding a job, and component disposal stop local polling while the authorized server job continues.
-
-`Check setup status` separately reports the release-target mapping, GitHub protection configuration, administrator bypass state, and first observed pre-publish review. A completed published-package review does not complete these setup checks. Missing permissions, AI availability, or an unsupported workflow remain actionable errors; creating a PR never renders a protected-release success state. Changing the organization, repository, workflow, environment or ecosystem clears the corresponding stale job result from the current view.
+1. Three numbered steps on a rail (mono `01`–`03`, `✓` in `--ok-text` when done): **Choose the release** (repository, ecosystem, environment; installation select only when more than one is linked; choosing a repository inspects it), **Update the publishing workflow** (optional), **Protect the environment and verify**.
+2. A step's controls render only once reachable; an error renders inside the step whose operation failed.
+3. `Prepare draft pull request` authorizes generation, validation, independent review, and automatic draft PR creation; no extra in-product checkbox blocks it. While it runs, step 1 and the workflow select are locked; `Cancel preparation` stops the server job.
+4. Completed state leads with the GitHub review link and remaining environment steps. Changes sit under a native `View workflow changes` disclosure, each file with its own copy action: new files as additions, modified files with real before/after, contents as source text.
+5. Only the current step's action is primary: `Prepare draft pull request` turns secondary once a PR exists; `Check setup status` leads then or when there is nothing to draft; the manual form uses a secondary submit.
+6. Progress names queueing, source reads, drafting, validation, second review, PR creation. The second review is labelled advisory, separate from the maintainer's GitHub review; a rejected attempt shows no PR link; a blocked attempt shows missing-evidence feedback as escaped text under `Agent feedback`.
+7. Polling is bounded and pauses with a resume action on prolonged or repeated failures. A pending job resumes after refresh from its ID and authorized request scope in organization-keyed session storage; workflow source, generated content, and proposal tokens are never persisted in the browser.
+8. Selection changes, hiding a job, and disposal stop local polling; the server job continues.
+9. `Check setup status` reports release-target mapping, GitHub protection, administrator bypass, and first observed pre-publish review separately. A completed published-package review does not complete them; creating a PR never renders a protected-release success state.
+10. Missing permissions, AI availability, or an unsupported workflow are actionable errors. Changing organization, repository, workflow, environment, or ecosystem clears the stale job result.
 
 ## Iconography
 
-The system is typography-first. It communicates through type, severity color, and a small allowed set of Unicode glyphs. **No SVG icons.**
+Typography-first: type, severity color, and a small set of Unicode glyphs. **No SVG icons.**
 
-### Allowed glyphs
+| Glyph | Role | Used in |
+| --- | --- | --- |
+| `▸` | Collapsed folder | FileTree |
+| `▾` | Expanded folder | FileTree |
+| `→` | Relation / flow | `previous → staged` captions, VersionPicker |
+| `←` | Back link | Page header back-links |
+| `·` | Metadata separator | Mono detail line |
+| `✓` | Passed / connected | Inline status |
+| `✕` | Failed / disconnected | Inline status |
+| `•` | Badge dot | `Badge dot` prop |
+| `⋯` | More actions / overflow | Row menus, DiffView "show more" |
 
-| Glyph | Role                    | Used in                                     |
-| ----- | ----------------------- | ------------------------------------------- |
-| `▸`   | Collapsed folder        | FileTree                                    |
-| `▾`   | Expanded folder         | FileTree (when needed)                      |
-| `→`   | Relation / flow         | `previous → staged` captions, VersionPicker |
-| `←`   | Back link               | Page header back-links                      |
-| `·`   | Metadata separator      | Mono detail line                            |
-| `✓`   | Passed / connected      | Inline status                               |
-| `✕`   | Failed / disconnected   | Inline status                               |
-| `•`   | Badge dot               | `Badge dot` prop                            |
-| `⋯`   | More actions / overflow | Row action menus, DiffView "show more"      |
-
-### Glyph treatment
-
-- Rendered in the surrounding font (Geist for body, Geist Mono for mono lines).
-- Color is `--fg-subtle` unless the glyph carries severity meaning, in which case it inherits the severity text color via `currentColor`.
-- Never larger than `1em` of the surrounding text. Glyphs never scale into a "display icon."
-- Glyphs are never decorative. If a glyph would only be visual flourish, remove it.
-
-### Status indicator
-
-When a state needs a visual cue without a full Badge, use a `6px round span` with `background: currentColor` inside an element styled with the target severity text color. This is the `Badge dot` implementation — document it as the only allowed status-indicator shape.
-
-### The Alert disc
-
-Alerts include a `16px filled circle` in the alert's color. This is a _colored disc_, not an icon. It is the only exception to "no shapes." Do not introduce other filled shapes (squares, triangles, rings) anywhere in the system.
+1. Glyphs render in the surrounding font; color `--fg-subtle` unless they carry severity (then `currentColor`).
+2. Never larger than `1em`; never a "display icon"; never decorative.
+3. Status indicator: a `6px` round span with `background: currentColor` inside an element with the severity text color (the `Badge dot`); the only status-indicator shape.
+4. Alert disc: a `16px` filled circle in the alert's color; the only exception to "no shapes". No other filled shapes (squares, triangles, rings).
 
 ## Data visualization
 
-The product surfaces severity counts, file counts, and version metadata. It does not need a charting library — it needs **one** chart pattern, applied consistently.
+One chart pattern, applied consistently; no charting library.
 
-### Severity distribution (stacked bar)
+### Severity bar
 
-The only chart in the v1 product.
+The only chart in v1 (`src/components/SeverityBar.tsx`).
 
-- **Bar:** single horizontal element, `8px` tall, `4px` radius, `overflow: hidden`. Background `--bg-elev-2`. Max-width `480px` on a centered layout, `100%` of column otherwise.
-- **Segments:** ordered left-to-right `critical → high → medium → low → info → ok`. Segments use the **solid** severity tokens (`--danger`, `--warn`, `--info`, `--ok`). The two danger-tier segments use `--danger` with `high` at `opacity: 0.78` so they're distinguishable. The two info-tier segments use `--info` with `info` at `opacity: 0.5`.
-- **Widths:** percentage of total findings; zero buckets render `width: 0` (collapsed, not visible).
-- **Total label:** mono `11px / --fg-subtle`, sits to the right of the bar (`findings by severity` mono-label on the left, `N total` on the right).
-- **Legend:** mono `10px / 0.1em uppercase / --fg-subtle`, one entry per non-zero bucket, `8px×8px` square swatch + `severity · count`. No axis, no grid, no tooltip.
+| Part | Rule |
+| --- | --- |
+| Bar | One element, `8px` tall, `4px` radius, `overflow: hidden`, `--bg-elev-2`; max `480px` centered, else `100%`. |
+| Order | `critical → high → medium → low → info → ok`, solid tokens. |
+| Tiers | `high` = `--danger` at `opacity: 0.78`; `info` = `--info` at `opacity: 0.5`. |
+| Widths | Percentage of findings; zero buckets are `width: 0`. |
+| Labels | `findings by severity` mono label left; `N total` mono `11px / --fg-subtle` right. |
+| Legend | Mono `10px / 0.1em uppercase / --fg-subtle`; per non-zero bucket an `8px×8px` square + `severity · count`. |
 
-### Count tiles (the dashboard `OverviewStrip`)
+No axis, grid, or tooltip.
 
-- Wrapper: `--surface` background, `1px --border`, `8px` radius, `12px 14px` padding, vertical `4px` gap.
-- Label: mono `11px / 0.1em uppercase / --fg-subtle`.
-- Value: either `body 14px / --fg` (sentence-like values) or mono `13px / --fg` (identifiers) or `18px / 500 / -0.01em` (when the value is a number presented as a metric).
-- Tone variants: `danger`, `warn`, `ok` tint **only the value**, never the label or border.
+### Count tiles
 
-### Forbidden chart types (v1)
+The dashboard `OverviewStrip` tiles (`src/features/overview/tiles.ts`).
 
-- Pie, donut, line chart, area chart, scatter, radar, sankey.
-- If activity-over-time becomes necessary, the only allowed form is a sparkline: a thin SVG path in `--accent` against `--bg-elev`, no axis, no labels, embedded inside a SummaryCard. Anything beyond a sparkline requires an explicit `docs/design.md` update first.
+| Part | Rule |
+| --- | --- |
+| Wrapper | `--surface`, `1px --border`, `8px` radius, `12px 14px` padding, `4px` vertical gap. |
+| Label | Mono `11px / 0.1em uppercase / --fg-subtle`. |
+| Value | `14px / --fg` (sentences), mono `13px / --fg` (identifiers), `18px / 500 / -0.01em` (metrics). |
+| Tone | `danger`, `warn`, `ok` tint **only the value**, never label or border. |
 
-### Color rule
+### Chart limits
 
-Charts use **solid** severity tokens. Soft severity tokens are reserved for row fills (DiffView), Badges, and Alerts. Never mix the two roles. Do not introduce decorative chart palettes.
+1. Forbidden: pie, donut, line, area, scatter, radar, sankey.
+2. Activity over time may only be a sparkline: thin SVG path in `--accent` on `--bg-elev`, no axis or labels, inside a SummaryCard. Anything more needs a `docs/design.md` update first.
+3. Charts use solid severity tokens; soft tokens are for DiffView rows, Badges, Alerts. Never mix; no decorative palettes.
 
 ## States
 
-Five patterns, picked by _what the user can do next_.
+Pick by what the user can do next.
 
-| State                   | Trigger                            | Pattern                                                                                 | Visual                                                                          |
-| ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Empty**               | No data, action lives elsewhere    | `Muted` line inside the parent Card's padding. One sentence. No CTA inside the message. | `text-[13px] / --fg-muted / 1.55`                                               |
-| **Loading inline**      | Transient, next to a control       | `Muted` line, mono                                                                      | `text-[12px] / --fg-muted / mono`, trailing `…` (em-dash + ellipsis, not `...`) |
-| **Loading full**        | Transient, full card or full page  | `Muted` line, body type, pulsing counter for progress                                   | `text-[14px] / --fg-muted`                                                      |
-| **Async system**        | Resolves on its own, FYI not error | `Alert tone="info"`                                                                     | Used for "scan running, page will refresh." Never for plain loading.            |
-| **Error — recoverable** | Page still works                   | `Alert tone="warn"`                                                                     | Used for "couldn't load comparison version" where the rest of the page works.   |
-| **Error — blocking**    | Action can't complete              | `Alert tone="critical"`                                                                 | Failed scan, auth error. Body may include `mono 12px` detail + a `code:` line.  |
+| State | Trigger | Pattern | Visual |
+| --- | --- | --- | --- |
+| Empty | No data; action elsewhere | `Muted` line in the parent Card; one sentence, no CTA | `text-[13px] / --fg-muted / 1.55` |
+| Loading inline | Transient, by a control | `Muted` mono line | `text-[12px] / --fg-muted / mono`, trailing `…` |
+| Loading full | Transient, card or page | `Muted` line, pulsing counter for progress | `text-[14px] / --fg-muted` |
+| Async system | Resolves on its own | `Alert tone="info"` | "scan running, page will refresh"; never plain loading |
+| Error, recoverable | Page still works | `Alert tone="warn"` | "couldn't load comparison version" |
+| Error, blocking | Action can't complete | `Alert tone="critical"` | Failed scan, auth error; optional `mono 12px` + `code:` line |
+
+1. No spinners anywhere. Long operations show a pulsing mono counter or one mono line updated in place. Skeleton bones are deprecated; use a `Muted` loading line.
+2. State copy: one sentence, capitalized, ends with a period. Loading ends with `…` (not `...`). Empty describes the state; it never promises action ("we'll show…") or holds a CTA. Errors name what failed before what to do, debug detail on a second mono line.
 
 ### Product writing
 
-- Lead with the reader's task and a concrete benefit. Name the package, file, command, or job involved instead of relying on slogans.
-- Give each sentence one main point. Cut filler, dramatic contrasts, and long lists of capabilities; keep technical detail where it helps the reader act.
-- Buttons say what the action does. Advisory review actions use `Record approval` and `Record rejection`; only a Workflow Gate decision makes GitHub continue or block the configured protected job.
-- Use `approved` and `rejected` for recorded review decisions. Reserve `blocked` for an observed npm status or a protected GitHub job that cannot continue.
-- Keep public page titles and search descriptions aligned with the visible copy. Findings point to relevant evidence, with file and line context when available; a review does not guarantee a safe release.
-- Keep established mode names (`Workflow Gate — enforced`, `Stage Watchtower — advisory`) and useful technical terms. Remove decorative punctuation and unexplained jargon from surrounding prose.
-
-### Copy rules for state messages
-
-- One sentence per state. No paragraphs.
-- Capitalize first letter; period at the end.
-- Loading messages end with `…` (the Unicode ellipsis), not `...`.
-- Empty messages describe the current state. They do not promise action ("we'll show…") and do not contain a CTA — actions live elsewhere on the page.
-- Error messages name what failed before what to do; debugging detail is on the second line in mono, not inline in the sentence.
-
-### Progress
-
-No spinners anywhere in the system. Long-running operations show a pulsing mono counter or a single line of mono text that updates in place. Skeleton-bone placeholders are deprecated — show a `Muted` loading line instead.
+1. Lead with the reader's task and a concrete benefit; name the package, file, command, or job.
+2. One main point per sentence; cut filler, dramatic contrasts, and capability lists; keep technical detail that helps the reader act.
+3. Buttons say what they do. Advisory actions are `Record approval` / `Record rejection`; only a Workflow Gate decision makes GitHub continue or block the protected job.
+4. `approved` / `rejected` for recorded decisions; `blocked` only for an observed npm status or a protected GitHub job that cannot continue.
+5. Page titles and search descriptions match visible copy. Findings point to evidence with file and line when available; a review never guarantees a safe release.
+6. Keep mode names (`Workflow Gate — enforced`, `Stage Watchtower — advisory`) and useful technical terms; drop decorative punctuation and unexplained jargon. Marketing copy rules: `.agents/product-marketing.md`.
 
 ## Motion
 
-- **Approach:** Minimal-functional. Animation supports comprehension; it does not entertain.
-- **Easing:** enter `ease-out`, exit `ease-in`, move `ease-in-out`.
-- **Duration:** micro `100ms` (hover/focus), short `150ms` (default), medium `250ms` (entrance), long — avoid.
-- **Patterns:**
-  - Hover/focus → 150ms color & border transitions.
-  - Findings appear → fade-in via opacity, no slide.
-  - Scan progress → indeterminate bar or pulsing mono counter, not a spinner.
-  - Theme toggle → instant. No transition on color-scheme change.
+| Item | Rule |
+| --- | --- |
+| Easing | Enter `ease-out`, exit `ease-in`, move `ease-in-out`. |
+| Duration | Micro `100ms` (hover/focus), short `150ms` (default), medium `250ms` (entrance); avoid long. |
+| Hover/focus | 150ms color and border transitions. |
+| Findings appear | Opacity fade, no slide. |
+| Scan progress | Indeterminate bar or pulsing mono counter. |
+| Theme change | Instant, no transition. |
 
-## Components — non-obvious rules
+## Components
 
-- **Badges:** Squarish (3px radius), uppercase Geist Mono 11px, weight 600, letter-spacing 0.08–0.1em. Severity variants use the soft fill + saturated text color combo. Pill badges (`border-radius: 999px`) are deprecated in this repo.
-- **Buttons:** 6px radius, 8–12px vertical / 14–18px horizontal padding. Primary uses `--accent`; secondary uses `--bg-elev-2` with a border; ghost is text-only on hover; danger uses `--danger` (only for destructive actions like Reject publish).
-- **Inputs:** 6px radius, `--bg` background (intentionally lighter than the card it sits on for affordance), focus ring is a 3px `--accent-soft` halo + accent border. No inner shadow, no glow.
-- **Section labels:** A small mono uppercase label with a trailing rule. Every caller explicitly chooses `h2`, `h3`, or `p`, so report sections keep a navigable heading outline under the page `h1` without flattening nested subsections; an `aside` slot places trailing metadata (e.g. a count) after the rule. Disclosure summaries that label a section contain the heading as their single direct child. Replaces the generic visual H1/H2 stack with something more document-shaped. For a bare 11px mono label without the rule, use the `MonoLabel` primitive instead of copy-pasting the class string — page-local copies drift. The trailing rule **is** the section divider: never add a `border-b` or `<hr>` on that same edge, on the `SectionLabel` or on the summary/header that contains one — it stacks a second hairline a few pixels away and reads as a rendering glitch. A `border-t` on the label is also wrong, for a different reason: it puts a rule on the leading edge and boxes the label between two hairlines. This has regressed repeatedly, so both are machine-checked by the `design-local/no-stacked-section-rule` lint rule; when a section needs more separation, use spacing, not another rule.
-- **Review notes:** Group release findings by rule, severity, and source; keep each occurrence under a native disclosure with a file/line action into the diff. Show the shared explanation once, with readable sans titles and severity badges. Keep release-change counts separate from risk evidence and release memory beside the verdict evidence; draw the severity bar only when there are two or more findings, since one segment restates a single finding. Label model output **AI assessment · advisory**, keep the package-text warning visible, and fold the full narrative under its own disclosure. The structured AI assessment never clears deterministic findings; make that boundary explicit when findings exist. Declared source binding needs one unverified repository row, preserving additional evidence. Use the `680px` prose measure for expanded assessment and explanations.
-- **Primary vs. supplementary sections:** Most report sections share the flat `SectionLabel` altitude on the page background — that's the supplementary tier (Risk signals, Manifest changes, Reviewer notes). The report's _verdict_ (the scan-detail Recommendation) is the one primary section: it is elevated into a `Card` and leads with a headline-scale verdict (`18px / 600`, severity `-text` color) under its `SectionLabel`. Elevation + scale make it out-rank the bare sections. Use this sparingly — one primary "answer" block per report, never a page of competing cards. The diff workbench cards count as primary evidence and sit at the same elevated tier.
-- **Mono detail line:** Many surfaces have a one-line mono caption directly under the title (`scan_01HXY... · 2026-05-21 · 17 files`). This is the system's signature treatment — treat it like a generated metadata line, not a subtitle. It is plain text: no Badges inside it, and no fact the section below already states (the scan header once packed a risk Badge, an npm Badge, and the version comparison into it, all repeated by the verdict strip and picker directly underneath).
-- **Component ownership:** A component owns its appearance; the caller owns where it sits. `class` on a primitive carries placement — margin, `flex`/`grid`, width, position — not the component's own padding, color, radius, or type. Everything else goes through a prop, because `cn` in this repo is a plain joiner, not `tailwind-merge`: a caller's `p-5` and `Card`'s own `p-6` both land on the element and the stylesheet's order picks the winner, which is how `<Card class="p-5">` shipped rendering at `p-6`. `Card` takes `padding` (`default` 24px, `compact` 20px, `tight` 16px, `roomy` 24px rising to 32px at `md`, `none`), `emphasis="strong"` for the heavier border, and `hover` (`accent` for a card the reader is meant to open, `strong` for one that only needs to look reachable) with `hoverWithin` when an ancestor `group` drives the hover. `Input` and `Select` take `mono` for a field holding a machine value — a URL, a token, a digest. `Muted` takes `tone="danger"` for a field error. `Menu` takes `triggerVariant="icon"` for the square row-level overflow trigger. Machine-checked by the `shadcn/no-restyle` rule described in `docs/tooling.md`.
-- **Alerts:** 6px radius, 1px colored border, soft background fill, the indicator is a 16px filled disc in the alert's color (a _colored disc_, not an icon — see Iconography). Inline strong-tag retains body color.
+- **Badge:** 3px radius, uppercase Geist Mono 11px / 600, 0.08–0.1em tracking; severity = soft fill + saturated text. Pills (`999px`) are deprecated.
+- **Button:** 6px radius, 8–12px vertical / 14–18px horizontal padding. Primary `--accent`; secondary `--bg-elev-2` + border; ghost text-only on hover; danger `--danger` only for destructive actions (e.g. Reject publish).
+- **Input:** 6px radius, `--bg` background (lighter than its card, for affordance); focus = 3px `--accent-soft` halo + accent border; no inner shadow or glow.
+- **Alert:** 6px radius, 1px colored border, soft fill, 16px filled disc (see Iconography); inline strong keeps body color.
+- **SectionLabel:** mono uppercase label with a trailing rule. Callers choose `h2`, `h3`, or `p` so reports keep a navigable outline; the `aside` slot holds trailing metadata (e.g. a count). Disclosure summaries that label a section contain the heading as their single direct child. For a bare 11px label without the rule use `MonoLabel` (page-local copies drift).
+- **SectionLabel divider rule:** the trailing rule **is** the divider. Never add `border-b` or `<hr>` on that edge (on the label or the summary/header containing it), and never a `border-t` on the label (it boxes the label between hairlines). This regressed repeatedly; `design-local/no-stacked-section-rule` enforces it. Separate with spacing.
+- **Mono detail line:** one mono caption under a title (`scan_01HXY... · 2026-05-21 · 17 files`), the signature treatment. Generated metadata, plain text: no Badges and no fact the section below already states.
+- **Primary vs supplementary:** most sections (Risk signals, Manifest changes, Reviewer notes) share the flat `SectionLabel` altitude. The verdict (scan-detail Recommendation) is the one primary section: a `Card` led by an `18px / 600` severity `-text` headline. Diff workbench cards share that elevated tier. One primary answer per report, never competing cards.
+- **Review notes:** group findings by rule, severity, and source; each occurrence under a native disclosure with a file/line action into the diff; show the shared explanation once with sans titles and severity badges. Keep release-change counts apart from risk evidence and release memory beside the verdict evidence. Draw the severity bar only for two or more findings.
+- **AI assessment:** label model output **AI assessment · advisory**, keep the package-text warning visible, fold the full narrative under its own disclosure. The structured AI assessment never clears deterministic findings; say so when findings exist. Declared source binding needs one unverified repository row, preserving additional evidence. Expanded text uses the `680px` measure.
+- **Manifest dependency links (`PackageJsonDiffView`, `src/components/`):** each added or bumped dependency row ends with a right-aligned mono 11px underlined `view diff` text link (no glyph: `↗` is not allowed) opening in a new tab. Bumps between exact published versions link that pair; ranges never link (a semver bound is not proof of publication). Added dependencies use the package-only `/diff/<name>` route (latest published pair). PyPI scans suppress the links (their dependencies are not npm packages).
+- **Component ownership:** a component owns its appearance; the caller owns placement (`class` = margin, `flex`/`grid`, width, position). Everything else is a prop, because `cn` is a plain joiner, not `tailwind-merge` (`<Card class="p-5">` once rendered at `p-6`). Enforced by `shadcn/no-restyle` ([tooling.md](./tooling.md#lint-rules)).
+- **Ownership props:** `Card` takes `padding` (`default` 24px, `compact` 20px, `tight` 16px, `roomy` 24px rising to 32px at `md`, `none`), `emphasis="strong"`, `hover` (`accent` for a card to open, `strong` for one that only needs to look reachable) and `hoverWithin` for an ancestor `group`. `Input`/`Select` take `mono` for machine values (URL, token, digest). `Muted` takes `tone="danger"` for field errors. `Menu` takes `triggerVariant="icon"` for the square overflow trigger.
 
 ### DiffView
 
-Split-view diff inside an 8px-radius border shell.
+Split view inside an 8px-radius border shell (`src/components/DiffView.tsx`).
 
-- **Header strip:** `bg-surface-2`, mono `10px / 0.1em uppercase / ink-subtle`. Before label left-aligned, after label right-aligned.
-- **Body:** monospace `12px / 1.55`. Two gutters of `44px` each (line numbers, right-aligned, `ink-subtle`, right divider border). Sign column `20px`. Text column wraps with `whitespace-pre-wrap break-words`.
-- **Row backgrounds:** added → `--ok-soft`. Removed → `--danger-soft`. Unchanged → transparent. Soft severity tokens only (never solid).
-- **Syntax highlighting:** only languages whose grammars we explicitly bundle — JS/TS (`.js(x)`, `.ts(x)`, `.mjs/.cjs/.mts/.cts`), Python, JSON, TOML, YAML, Markdown, HTML, CSS/SCSS, shell, Dockerfile, Vue, Svelte (the `EXT_TO_LANG` map in `src/components/highlight.ts` is canonical); everything else stays plain mono. Deliberately restrained so it never competes with the severity row fills (color = signal): code structure rides the ink scale (keywords/constants/functions → `--ink`, identifiers/params → `--ink-muted`, punctuation/comments → `--ink-subtle`) and a single muted teal marks string literals. The palette lives in `src/style.css` as the `--sh-*` CSS variables (light/dark aware). Severity-reserved hues (red/amber/blue/green) and the orange accent are never used as token colors. Highlighting is best-effort decoration: it loads lazily and falls back to plain text.
-- **Scroll:** body capped at `560px` max-height then scrolls, and a diff shorter than the cap sizes to its own content — the pane never pads a two-line change out to a 560px box. Header stays outside the scroll region. The scroll pane is a keyboard-reachable `role="region"` (`tabIndex=0`, labeled with the file path) with an inset `--accent-soft` focus ring — an outer halo would clip against the shell's `overflow-hidden` — and `overscroll-behavior: contain` so wheel momentum stops at the pane's edges. Scroll anchoring is disabled (`overflow-anchor: none`) so gap expansion behaves identically in every browser.
-- **Collapsed gaps:** long unchanged runs collapse behind a full-width expander row (`bg-surface-2`, mono 11px, `⋯ N unchanged lines · show more`, left-aligned). "Show more" reveals rows from both edges of the gap; a right-aligned `show all` button (same treatment, `border-l` divider) appears only while the gap hides ≤ 5,000 rows, so a bulk reveal can never rebuild a megabyte-scale render. Rows carrying changes or pinned findings never collapse.
-- **Overview strip:** a 6px decorative rail (`aria-hidden`, non-interactive) inside the pane's right edge, showing change/finding density. It is hidden while the pane has nothing to scroll: with every row already on screen there is nothing to navigate to, and the rail reads as decoration rather than signal. It maps **scroll space**, not logical file lines: each collapsed gap counts as the one expander row it occupies, and markers reflow as gaps expand (positions are row-index approximations — long wrapped lines and annotation callouts each still count as one index). A translucent ink thumb (`bg-ink/15` — structural ink, never a severity hue) tracks the viewport position. Finding markers use saturated severity tokens with a `ring-surface` outline; change markers use ok/danger at reduced opacity.
-- **Inline finding annotations:** deterministic findings for the open file are pinned to the staged line they reference, rendered as a full-width row directly beneath that diff line (the diff is the headline — findings ride the hunk that triggered them, they are not a separate list). The annotation is a `border-l-2` callout: severity `Badge` + a mono `11px / 0.1em uppercase` `ruleId · line N` caption, the reason as `13px / --ink`, and optional evidence in mono. Fill uses the **soft** severity token at `~60%` opacity (so it reads over the green/red row fills) and the left bar uses the **saturated** token (shapes, not text — see "color = signal"). Severity → group: critical/high → `danger`, medium → `warn`, low/info → `info`, ok → `ok`. Findings with no line, or a line past a truncated sample, surface in a banner between the header strip and the scroll region so a clipped sample never hides a signal. The same callout body is reused for the binary / no-sample fallback. This mirrors the landing review-preview annotation so the marketed interaction matches the app.
-- **Single-sided modes:** added-only / removed-only / unchanged-only collapse to a single labeled `<pre>` pane that reuses the header strip styling and the matching soft fill.
-- **Binary / missing sample:** muted explainer line (`text-[13px]`), never a placeholder graphic. Truncation and binary flags surface as neutral Badges next to the path.
+| Part | Rule |
+| --- | --- |
+| Header strip | `bg-surface-2`, mono `10px / 0.1em uppercase / ink-subtle`; before left, after right. |
+| Body | Mono `12px / 1.55`; two `44px` gutters (right-aligned `ink-subtle` numbers, right divider); `20px` sign column. |
+| Wrapping | `whitespace-pre-wrap break-words`. |
+| Rows | Added `--ok-soft`, removed `--danger-soft`, unchanged transparent; soft tokens only. |
+| Scroll | Body max `560px`; shorter diffs size to content; header outside the scroll region. |
+| Single-sided | Added-only, removed-only, unchanged-only: one labeled `<pre>` with header styling and matching soft fill. |
+| Binary / missing | Muted `text-[13px]` explainer, never a graphic; truncation and binary flags as neutral Badges. |
+
+1. **Highlighting:** only bundled grammars (`EXT_TO_LANG` in `src/components/highlight.ts` is canonical: JS/TS incl. `.mjs/.cjs/.mts/.cts`, Python, JSON, TOML, YAML, Markdown, HTML, CSS/SCSS, shell, Dockerfile, Vue, Svelte); everything else plain mono. Keywords/constants/functions `--ink`, identifiers/params `--ink-muted`, punctuation/comments `--ink-subtle`, one muted teal for strings; palette is `--sh-*` in `src/style.css` (light/dark aware). Severity hues and the accent are never token colors. Lazy, best-effort, plain-text fallback.
+2. **Scroll pane:** keyboard-reachable `role="region"` (`tabIndex=0`, labeled with the path) with an inset `--accent-soft` focus ring (an outer halo clips against `overflow-hidden`), `overscroll-behavior: contain`, `overflow-anchor: none` so gap expansion behaves the same in every browser.
+3. **Collapsed gaps:** full-width expander (`bg-surface-2`, mono 11px, left-aligned `⋯ N unchanged lines · show more`) revealing from both edges; a right-aligned `show all` (`border-l` divider) appears only while the gap hides ≤ 5,000 rows, so a bulk reveal never rebuilds a megabyte-scale render. Rows with changes or pinned findings never collapse.
+4. **Overview strip:** a 6px `aria-hidden`, non-interactive rail at the pane's right edge showing change/finding density; hidden when the pane has nothing to scroll. It maps scroll space, not file lines: a collapsed gap counts as its one expander row and markers reflow as gaps expand (wrapped lines and callouts count as one index). A `bg-ink/15` thumb tracks the viewport. Finding markers: saturated tokens with `ring-surface`; change markers: ok/danger at reduced opacity.
+5. **Inline findings:** deterministic findings pin to the staged line they reference as a full-width row beneath it (the diff is the headline; no separate list). Callout: `border-l-2`, severity `Badge`, mono `11px / 0.1em uppercase` `ruleId · line N`, reason `13px / --ink`, optional mono evidence. Fill: soft token at ~60% opacity; bar: saturated token. Groups: critical/high → `danger`, medium → `warn`, low/info → `info`, ok → `ok`.
+6. Findings with no line, or a line past a truncated sample, show in a banner between header and scroll region, so a clipped sample never hides a signal. The same callout body serves the binary / no-sample fallback and mirrors the landing preview.
 
 ### FileTree
 
-Document-shaped tree, rendered with `<details>` + `<ul>`, not a custom widget.
+Document-shaped `<details>` + `<ul>`, not a custom widget (`src/components/FileTree.tsx`).
 
-- **Type:** Geist Mono `13px`.
-- **Indent:** `8px base + 20px per depth`. Indent is expressed as `padding-left` so the hover/selection background reaches the leftmost edge. Children should read as clearly nested under their parent folder.
-- **Folder marker:** the text glyph `▸` (collapsed) or `▾` (expanded), `10px / ink-subtle`. Files do not get a marker.
-- **Auto-expand:** folders open by default when `status ≠ unchanged` and `depth < 2`.
-- **Name color follows aggregate status:** `added → text-ok`, `removed → text-danger`, `modified → text-warn`, `mixed → text-accent`, `unchanged → text-ink-muted`. Selected file overrides to `text-ink`.
-- **Selected file:** `bg-surface-2` row with `text-ink` and `aria-current="true"` (the landing preview and the workbench share this contract). Border-radius `4px` on the row so the selection sits inside the tree padding.
-- **Status conveyance:** the name color above plus a visually hidden `(status)` suffix for assistive tech; no trailing status Badge — the finding-count Badge is the row's only Badge, keeping rows quiet.
-- **Finding count Badge:** when a file/folder has deterministic findings, a severity-toned count `Badge` (the count as text, **no SVG icon**) trails the name. The tone uses the highest severity among that node's findings; folder counts sum descendant counts and take the max severity (same bubble-up as `status`). The count carries an `aria-label` (`"N findings"`) for assistive tech. This is the tree-count surface of the diff-first finding model: the same finding set feeds the inline diff annotations, this tree count, and the risk-signals index (see DiffView).
-- **Truncation:** `truncate` on the name span only; the trailing Badges stay visible.
+| Part | Rule |
+| --- | --- |
+| Type | Geist Mono `13px`. |
+| Indent | `8px` base + `20px` per depth as `padding-left`, so hover/selection reaches the left edge. |
+| Folder marker | `▸` / `▾`, `10px / ink-subtle`; files get none. |
+| Auto-expand | When `status ≠ unchanged` and `depth < 2`. |
+| Name color | `added → text-ok`, `removed → text-danger`, `modified → text-warn`, `mixed → text-accent`, `unchanged → text-ink-muted`. |
+| Selection | `bg-surface-2` row, `text-ink`, `aria-current="true"`, `4px` radius (shared with the landing preview). |
+| Status for AT | Visually hidden `(status)` suffix; no trailing status Badge. |
+| Truncation | `truncate` on the name only; Badges stay visible. |
+
+Finding count: a severity-toned count `Badge` (text, **no SVG icon**) trails the name, toned by the highest severity; folders sum descendant counts and take the max severity (same bubble-up as `status`); `aria-label="N findings"`. The same finding set feeds inline annotations, this count, and the risk-signals index.
 
 ### VersionPicker
 
-The canonical "labeled control with metadata" row pattern. Re-use this composition any time a control needs a mono label prefix and a mono result caption.
+The canonical labeled-control-with-metadata row; reuse it for any control with a mono prefix and result caption.
 
-- **Layout:** `flex flex-wrap items-center gap-3`.
-- **Prefix label:** mono `11px / 0.1em uppercase / ink-subtle` reading "Compare against" (or analogous noun phrase).
-- **Control:** native `<select>` — never a custom combobox. `border + 6px radius`, font-mono `13px`, `min-w 200px`, padding `8px 12px`. Focus state is the standard 3px `--accent-soft` halo + accent border (matches `Input`).
-- **Result caption:** mono `11px / ink-muted` reading `→ staged X.Y.Z`. The `→` is the canonical relation glyph.
-- **Dist-tags:** named inside the option text (`1.0.0 [latest] (default)`), never as a trailing chip — a Badge after the result caption reads as tagging the staged version.
-- **Disabled:** `opacity-60 cursor-not-allowed`, no fade transitions.
+| Part | Rule |
+| --- | --- |
+| Layout | `flex flex-wrap items-center gap-3`. |
+| Prefix | Mono `11px / 0.1em uppercase / ink-subtle` ("Compare against"). |
+| Control | Native `<select>`, never a custom combobox; border + 6px radius, mono `13px`, `min-w 200px`, `8px 12px`. |
+| Focus | Standard 3px `--accent-soft` halo + accent border (matches `Input`). |
+| Caption | Mono `11px / ink-muted`, `→ staged X.Y.Z`. |
+| Dist-tags | In the option text (`1.0.0 [latest] (default)`), never a trailing chip. |
+| Disabled | `opacity-60 cursor-not-allowed`, no fades. |
 
-## Anti-patterns — do not introduce
+## Anti-patterns
 
-- Violet/purple as the primary accent. The previous `--accent: #7c5cff` is retired.
-- **Orange-600 (`#ea580c`) as the accent token.** The accent moved to orange-700 (`#c2410c`) so white text on the Button primary and `text-accent` body copy both clear WCAG AA. Going back to orange-600 re-breaks both.
-- **Saturated severity tokens (`text-warn`, `text-ok`) as text colors.** They fail AA on white (3.8:1 and 3.0:1). Use the `-text` variants. The saturated tokens belong on chart segments, alert discs, and borders.
-- **Sub-11px text used as a label.** 10px is reserved for scanning glyphs and structural metadata (DiffView header, SeverityBar legend, FileTree marker, gutter line numbers, mockup version metadata). If a user reads it as a labeled value, the floor is 11px.
-- Gradient buttons or gradient hero backgrounds.
-- Bubbly border-radius (`9999px`) on badges or buttons.
-- Icon-in-colored-circle three-column feature grids.
-- "AI" / "AI-powered" badges as decorative flourish.
-- Stock-photo hero treatments.
-- Decorative use of severity colors (red as accent, etc.). Color = signal here.
-- **SVG icons.** The system uses text glyphs (see Iconography). If you reach for an icon library, stop and find the typographic solution instead.
-- **Spinners.** Loading is a mono line, optionally with a pulsing counter. No rotating glyphs.
-- **Skeleton bones.** A `Muted` loading line replaces the placeholder content shape.
-- **Chart variants.** Pie, donut, line, area, scatter, radar, sankey. The only chart in v1 is the severity stacked bar (and a future sparkline if needed).
-- **Custom comboboxes.** Native `<select>` is the canonical control for picking from a list (see VersionPicker).
-- **CTAs inside empty-state messages.** The action lives elsewhere on the page; the empty message only describes state.
+| Never | Instead |
+| --- | --- |
+| Violet/purple accent (`#7c5cff` is retired) | Orange accent |
+| Orange-600 `#ea580c` accent | Orange-700 `#c2410c` (600 fails AA in both roles) |
+| `text-warn`, `text-ok` as text | `-text` variants |
+| Sub-11px labels | 10px only for scanning glyphs and metadata |
+| Gradient buttons or hero backgrounds | Flat fills |
+| `9999px` radius on badges or buttons | Squarish badges, 6px buttons |
+| Icon-in-circle feature grids, stock-photo heroes | Type + Cards |
+| Decorative "AI" / "AI-powered" badges | Nothing |
+| Decorative severity color | Color = signal |
+| SVG icons | Text glyphs |
+| Spinners, skeleton bones | Mono line, pulsing counter, `Muted` line |
+| Pie, donut, line, area, scatter, radar, sankey | Severity bar; future sparkline |
+| Custom comboboxes | Native `<select>` |
+| CTA inside an empty-state message | Action elsewhere on the page |
 
-## Decisions Log
+## Change checklist
 
-| Date       | Decision                                                                                                                                                                                                                                     | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-05-21 | Initial design system created via `/design-consultation`.                                                                                                                                                                                    | Replaces ad-hoc `src/style.css` palette. Moves brand off the default security-tool violet, makes Geist + Geist Mono official, and locks severity semantics so they cannot drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 2026-05-21 | Accent: orange `#ea580c` over violet.                                                                                                                                                                                                        | Differentiates from Socket/Snyk/Aikido violet convergence; preserves "caution / pre-flight" semantics; non-overlapping with severity colors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2026-05-21 | Light is the default surface; dark is first-class via `prefers-color-scheme`.                                                                                                                                                                | Auto-mode chosen by user. Both modes must be designed, not derived.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 2026-05-21 | Squarish badges (3px), not pills.                                                                                                                                                                                                            | Echoes terminal/document feel. Pill badges read as generic dashboard chrome.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2026-05-21 | Specced DiffView, FileTree, VersionPicker.                                                                                                                                                                                                   | New components shipped without `docs/design.md` coverage; locked in mono-label conventions, severity-soft row fills, native `<select>` for version picking, and document-shaped tree styling so future contributors don't drift.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 2026-05-21 | Marketing surfaces extend the system; status strip is the canonical headline unit.                                                                                                                                                           | Same primitives as the app, with hero-only relaxations (17px subhead, wider section gaps, accent-tinted eyebrow). Status strip carries from dashboard to marketing so visitors stay oriented.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 2026-05-21 | Zero SVG icons; text glyphs only.                                                                                                                                                                                                            | Risk taken deliberately: type and severity color carry identity. Allowed-glyph list closes the gap so contributors have a clear alternative to reaching for an icon library. The Alert disc is the only exception.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 2026-05-21 | One chart pattern (severity stacked bar) for v1; sparkline reserved for future.                                                                                                                                                              | Avoids dashboard fatigue and keeps the product document-shaped. Solid severity tokens belong to charts; soft tokens stay for rows/Badges/Alerts — color = signal, never mixed roles.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-05-21 | State patterns codified (empty / loading inline / loading full / async / recoverable / blocking).                                                                                                                                            | Per-page improvisation removed: mono sizes, copy rules, and trigger conditions now explicit. No spinners, no skeleton bones — `Muted` lines and pulsing counters only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 2026-05-30 | DiffView syntax highlighting via a restrained `--sh-*` palette.                                                                                                                                                                              | Wanted readable code diffs without breaking "color = signal." Structure rides the ink scale; one muted teal marks strings; severity hues and the orange accent are off-limits as token colors so the green/red row fills stay the only saturated signal. shiki tokenizes client-side, lazy-loaded, plain-text fallback.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 2026-06-03 | Light-mode contrast pass: `--fg-subtle` darkened, accent shifted to orange-700, severity text split into `*-text` variants, small-text size floor codified.                                                                                  | The system's signature treatment (mono detail line, mono labels) was rendered in `--fg-subtle` `#a8a29e` — 2.4:1 contrast, well below WCAG AA. White text on `--accent` `#ea580c` and `text-accent` body both failed AA (3.5–3.6:1). Light-mode `text-warn` and `text-ok` failed AA on white. The pass darkens `--fg-subtle` to `#6b6660` (5.9:1), unifies the accent at orange-700 `#c2410c` (4.97:1 in both surface and text roles), adds `--*-text` severity variants for text-on-bg use, and codifies the 10/11/12px role split so future contributors keep load-bearing labels at the 11px floor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 2026-06-05 | Information-hierarchy pass: findings pinned inline on diff hunks; Recommendation elevated as the one primary section; landing brought to npm + PyPI parity.                                                                                  | Holistic review found the marketed interaction (findings on the hunk that triggered them) absent from the real workbench — findings lived in a separate card grid — and every report section sharing one flat `SectionLabel` altitude so the verdict didn't out-rank supplements. DiffView now pins deterministic findings to their staged line (banner fallback for unpinned/truncated); the Risk-signals list becomes a clickable index into the diff. The Recommendation is the only carded/headline-scale section. The landing eyebrow/copy and a new "how it hooks in" two-registry section now cover PyPI workflow gating (was npm-only), replacing the redundant three-pillar feature grid that duplicated the status strip. Also: workbench panels go `lg:`-only fixed-height to avoid nested scroll on mobile; dashboard Status renders as a Badge to match Decision; freshness shows readable mono text instead of a bare ✓.                                                                                                                                               |
-| 2026-06-10 | What/why pass on landing + docs: problem-first copy, "Why review a publish" prose section, three-step "How it works", closing CTA; docs gain a two-card mode chooser.                                                                        | Both pages led with mechanism (staged tarballs, hunks, CI gates) before stating the problem, so first-time visitors couldn't tell what the product was for or why it matters. The landing now runs problem → proof (sample review) → mechanism → trust; the docs header states the problem and trust posture in two paragraphs and a card-shaped mode chooser replaces the bare anchor nav. The "why" section is deliberately prose (document-shaped, security-advisory mood), not another card grid, to avoid card fatigue next to the status strip and registry cards. Also fixed a latent step-list spacing bug: `last:pb-0` sat on a div that is always its `li`'s last child, zeroing inter-step padding in both step components.                                                                                                                                                                                                                                                                                                                                               |
-| 2026-06-10 | Design-review fixes: light mode un-stranded, dark subtle text bumped to AA, site footer added, narrow pages centered.                                                                                                                        | A design pass found the site permanently dark for everyone: the dark tokens lived in an `@theme` nested inside `@media (prefers-color-scheme: dark)`, which Tailwind v4 hoists to an unconditional `:root`, so dark overrode the light default for all users (light mode — the documented default surface — was unreachable). Moved the dark tokens to a media-scoped plain `:root`. Same pass: dark `--fg-subtle` `#71717a` was 3.8:1 on cards (fails AA for the signature mono detail line) → `#8b8b94` (≥5:1); added the always-present site footer (first trust/legal link surface, was none); `width="narrow"` card pages now vertically center instead of floating high with a void below. Landing sample-review mockup: version label dropped the `v` prefix to match the app's `4.2.0 → 4.3.0` convention, file-tree column widened `200px → 220px` so `package.json` stops truncating.                                                                                                                                                                                      |
-| 2026-07-07 | Docs page gains an "On this page" nav: sticky scrollspy rail on desktop, native `<details>` jump list on mobile, stable anchor ids on every subsection.                                                                                      | The docs read as one long scroll with only the top mode chooser for orientation, burying workflow-gate onboarding mid-page. The rail is typographic per system rules: mono 11px uppercase label, 13px links on a 1px `--border` left rule, active link = accent text + 2px accent bar (accent-as-active-nav per Color) driven by an IntersectionObserver reading band. Section links are weight 500; subsection links indent and stay `--fg-muted`. Mobile reuses the FileTree `▸`/`▾` disclosure glyphs on a native `<details>`. Layout stays inside the 1160px shell: `200px` rail + 40px gap + `minmax(0,1fr)` article at `lg:`; no new canonical widths.                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2026-07-14 | Public docs become a concept-first learning guide with a release-path comparison and progressive workflow examples.                                                                                                                          | Setup-first copy required readers to choose an integration before they understood the product. The new order teaches the artifact gap, review loop, report anatomy, and safety model first; then compares the two hold/decision contracts and keeps long YAML in native disclosures. The treatment stays inside existing widths, typography, Cards, accent, and allowed glyphs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2026-07-19 | Added/bumped dependencies link to that dependency's own public diff; the public diff page gains a Manifest changes section.                                                                                                                  | The new `dependency.added` / `dependency.major-bump` findings tell reviewers to inspect the dependency's own releases, but the manifest diff offered no path there. Each added/bumped row now carries a right-aligned mono 11px underlined `view diff` text link (no glyph — `↗` is not in the allowed set) opening in a new tab so the parent review stays put. Bumps between exact published versions link the version pair directly; ranges do not link because a semver bound is not proof that version was published. Added deps use a new package-only `/diff/<name>` route that resolves the latest published pair. `PackageJsonDiffView` moved to `src/components/` and now renders on the public diff page too (PyPI scans suppress the links — their dependencies are not npm packages).                                                                                                                                                                                                                                                                                   |
-| 2026-07-22 | Diff scroll/hidden-line pass: overview strip maps scroll space and gains a viewport thumb; gap expanders offer capped `show all`; scroll pane becomes a keyboard region.                                                                     | The overview strip positioned markers over logical file lines while the scrollbar operates over the collapsed display, so a 30k-line file showed markers at opposite ends for changes one screen apart — it now maps the rendered rows (a collapsed gap counts as its one expander row) and a `bg-ink/15` thumb tracks the viewport, keeping ink structural per "color = signal". Gap expanders add a one-click `show all` capped at 5,000 hidden rows so bulk reveal can't reintroduce the megabyte-scale freeze. The 560px pane was mouse-only: it's now a labeled `role="region"` with `tabIndex=0`, an inset accent-soft focus ring (outer halos clip against the shell), and contained overscroll. Scroll anchoring is off so expansion never jumps in any browser, and late-arriving findings no longer reset the scroll position (the reset key is file identity + content only).                                                                                                                                                                                             |
-| 2026-07-22 | Component-gap pass: keyboard/AT fixes across overlays and the tree, primitives pinned, spec drift reconciled.                                                                                                                                | A cross-component audit found the gaps clustered in keyboard/AT support and primitive drift. Fixed: CloseButton no longer suppresses the global focus ring; Menu returns focus to its trigger on item activation and closes on Tab-out; critical Toasts persist until dismissed and timed ones pause on hover/focus; Select forwards rest props so selects can be named (VersionPicker now uses `label/for`); Dialogs lock background scroll, ignore drag-to-backdrop clicks, and focus their first real control; FileTree rows carry `aria-pressed`; PageShell gains a banner landmark + skip link; SectionLabel renders a real `h2` with an `aside` slot and `MonoLabel` pins the bare label; SeverityBar is a div stack (last non-sanctioned SVG removed) with its name label at the 11px floor; Alert discs use saturated tokens; small primary/danger Buttons hold 13px. Spec updated to match reality where the code had deliberately outgrown it: highlight grammar list, FileTree status conveyance (no trailing status Badge), and the 20px indent now measured spacer+gap. |
-| 2026-07-22 | `Package diff` linked from both the marketing header and the site footer.                                                                                                                                                                    | The public diff tool is the no-account entry point to the product but had no navigation into it — visitors reached `/diff` only via a direct link. It now sits in `MarketingHeaderActions` (landing/docs/diff headers) as the discovery path, and in the site footer so app routes, whose headers carry dashboard actions instead of the marketing nav, still reach it. Both use the same label so the two surfaces read as one destination; `Docs` already appeared in both, so the duplication follows existing precedent rather than introducing a second nav vocabulary. No active-state treatment was added — the marketing header has never marked the current page, and adding it for one link only would be inconsistent.                                                                                                                                                                                                                                                                                                                                                    |
-| 2026-08-08 | `/diff` becomes the front door: hero leads with `Read a diff`, live incident diffs join the landing, public reports gain a conversion close.                                                                                                 | The zero-setup surface (`/diff`) was the product's strongest proof but reachable only from a ghost header link, while the hero's sole CTA asked for signup before showing any value. The hero now leads with `Read a diff` (primary) and demotes `Create account`/`Sign in` to secondary/ghost. The curated incident diffs move into `src/features/incident-diffs/` (shared by the `/diff` landing and the marketing landing per the two-page rule) and render under the hand-authored scan preview with copy naming the preview as hand-authored and the incidents as live. Shared public reports — warm traffic from existing users — close with the same conversion block shape as `/diff` (`Before it shipped`), linking `Create account` and `Diff a package`; the block sits after `Verify this report` so proof outranks pitch.                                                                                                                                                                                                                                               |
-| 2026-08-11 | Docs page gains a `Diffs in dependency PRs` section: Renovate preset extends-snippet and Dependabot workflow linking update PRs to public `/diff` pages.                                                                                     | The docs covered only the maintainer release paths; the consumer-side surface (`/diff` linked from Renovate/Dependabot update PRs, `docs/dependency-pr-diff-links.md`) had no user-facing setup instructions. The section reuses the page's existing primitives — `Subsection`, `Prose`, `CodeBlock`, `WorkflowExample`, `Callout` — and slots into the TOC/scrollspy after the release paths, since it addresses readers after the "which path" decision or with no release of their own. No new visual vocabulary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-11 | Share dialog offers copy-paste README badge markdown once a share is feed-listed.                                                                                                                                                            | The badge endpoint existed with no surface handing anyone the snippet — the missing link between minting proof and proof appearing in READMEs. The block reuses the dialog's existing link-row idiom (readonly mono `Input` + secondary `Copy` with signal-scoped `Copied ✓` feedback) under a `MonoLabel` header, and renders only when the badge would actually resolve (feed-listed + known ecosystem), so the dialog never offers markdown that renders `not reviewed`. No new components or visual vocabulary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 2026-08-21 | Dependabot workflow example on the Docs page grows to cover grouped update PRs: one diff link per dependency in a single upserted comment.                                                                                                   | The published snippet only handled single-dependency PRs, which a repository using Dependabot's recommended grouping never produces, so the section documented something that could not fire. No new visual vocabulary — the same `WorkflowExample` collapsible, and the snippet's longest line is held to 71 characters so it matches the other code blocks on the page instead of introducing horizontal scroll.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 2026-08-23 | Public positioning consistently names Drydock Package Review and the pre-publish package-security category.                                                                                                                                  | The bare name collides with unrelated deployment and container tools, while the earlier hero and title described the action without consistently naming the category. The visible hero, result metadata, README, and structured identity now pair the brand with package review and pre-publish package security; layout and visual vocabulary stay unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-08-23 | Landing and anonymous diff surfaces expose the existing Renovate and Dependabot distribution loops as one shared integration block.                                                                                                          | The integrations were complete but buried deep in the long Docs page, after a visitor had already found the product. The shared feature appears beside the no-account proof on both entry surfaces, reuses document-shaped Cards, mono operational detail, and secondary Buttons, and keeps the exact setup in Docs. Plain links remain explicit: no badge-like render-time requests or new anonymous traffic path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 2026-08-23 | Focused public guides give each release path, the package-diff utility, and the security model a stable entry page.                                                                                                                          | The single long learning guide remains the concept-first source of truth, but it had to answer several distinct search and setup intents through one URL. Seven prerendered entry pages now reuse one restrained document layout, link back to the canonical learning sections, and cross-link without inventing new navigation or visual primitives.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 2026-08-23 | The two real incident-diff cards lead to permanent, prerendered analyses that separate artifact evidence from historical context.                                                                                                            | A live diff proves which bytes and metadata changed, but a short card could not state what it does not prove. Each document-shaped analysis reuses the marketing shell, typography, and buttons, links the live diff and a primary public source, and includes an explicit scope note so historical advisories are not conflated with the surviving version pair. No new visual vocabulary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-08-23 | Guides and incident analyses share one `ContentArticle` shell; each short page gains numbered sections, an evidence card, a closing ask, and lateral links.                                                                                  | Both new page types shipped as the same hand-rolled hero/sections scaffold, so the marketing type scale was already duplicated in two page directories — the point at which copies drift. The shell moves to `src/features/public-content/` per the two-page rule. On top of it, three visual fixes address what made the pages read as unfinished: section labels carry `01/02/03` in the label's trailing metadata slot so three identically-shaped blocks stop scanning as one wall; incident analyses lead with a document-shaped `ContentArticleEvidence` card (ecosystem, package, compared pair, artifact signal — ink scale, no Badge, since these are facts and colour is signal); and every page ends on somewhere to go rather than whitespace, guides with the landing's `Get started` close and incidents with sibling diffs. Lateral link cards get a `→` and an accent hover border, and are deliberately not the docs page's numbered `JourneyCard` — those steps are ordered, these are peers.                                                                      |
-| 2026-08-28 | Site footer regrouped into an identity block plus four labelled link columns; the sponsor line leaves the nav.                                                                                                                               | The footer had grown to eight destinations plus a bare GitHub glyph and the Aikido sponsor line, all flat inside one `Footer` nav — the glyph interrupted the text run mid-list, the sponsor read as an eighth link, and nothing signalled that `Package diff` and `Report security` serve different intents. Links now sit in `Product` / `Trust` / `Project` / `Contact` columns, each a `<ul aria-labelledby>` under a `MonoLabel`, so scanning is by intent rather than by reading all eight. The GitHub mark gains its visible `GitHub` label and joins `Open source` under `Project`; the sponsor line moves into the identity block, where it is content rather than navigation.                                                                                                                                                                                                                                                                                                                                                                                              |
-| 2026-08-28 | Impeccable polish removes title eyebrows, restores the 11px label floor, simplifies the sample verdict, and neutralizes the light palette.                                                                                                   | Page titles now carry their own context instead of repeating a tracked uppercase scaffold. Badges, finding captions, sponsor links, and mockup section labels meet the documented read-label floor; only scanning metadata and glyphs remain at 10px. The sample review mirrors the real report hierarchy with one headline verdict, one supporting risk badge, and a non-duplicated severity distribution. Light surfaces move from warm stone to neutral zinc while Geist remains the validated operational typeface.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 2026-08-28 | Docs code blocks over 14 lines fold into a six-line peek behind a `show more` expander; the 112-line Dependabot workflow no longer opens by default.                                                                                         | Workflow YAML dominated the docs page — a single example ran longer than the section teaching it, so readers scrolled past prose to reach the next idea. Folding is the page's existing `<details>` vocabulary applied to the block itself instead of a wrapper, and the collapsed state reuses the DiffView gap-row expander (`⋯ N more lines · show more`) rather than inventing a second reveal treatment. Short snippets stay inline so the fold reads as a signal that code is long.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-29 | Docs page reduced to two edges: the hero joins the article column, and every run of body copy stops at the `680px` measure.                                                                                                                  | The page carried five competing widths at desktop. The hero band started `235px` left of every `h2` below it, so the reading column moved when the article began; inside the article, callouts and prose stopped at `680px` while the card grids and code blocks they sat between spanned the full `880px` column, and the step lists — the most-followed copy on the page — ran the whole column at `130` characters per line. The hero now renders on the article grid track (its rule stays full-bleed), callouts fill the column with their text capped at the measure, and step text is capped too. The `560px` one-off on the closing CTA is gone. `Prose measure` joins the canonical width table and a guard test locks the set.                                                                                                                                                                                                                                                                                                                                             |
-| 2026-09-02 | Every review surface leads with the diff: a verdict strip above the workbench, the same tree and diff on the public report, and dashboard rows led by the risk chip.                                                                         | Nothing followed the stated diff-first direction. The scan detail put the workbench sixth, behind four advisory sections; the shared report listed file names and no change; the dashboard's seven-column table gave "Status" and "Decision" the weight of the diff and sized every row to its widest cell. Advisory reading moves below the diff into a `CollapsibleCard` that opens itself only when it has something to say. No new visual vocabulary: the same Card/SectionLabel/Badge altitudes, the existing tree/diff grid now shared as `features/review/ReviewWorkbench`, and the disclosure treatment the docs page already uses.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-09-08 | The scan-detail Reviewer section carries an `advisory · may quote package text` aside on its `SectionLabel`.                                                                                                                                 | The summary is model-authored prose shaped by hostile package input, rendered under a label that reads as authority. The aside says what it is where the eye lands, so a maintainer weighs it as a reviewer's note, not a verdict, and does not act on instructions the model may have echoed from the package. Uses the existing `aside` slot (11px mono, after the rule); no new primitive, no extra rule.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2026-09-22 | Conversion-copy pass on the public surfaces: the landing hero names the reader's own gap, the enforced Workflow Gate leads the mode pair and drops its `Preview` badge, and each closing block asks for the release rather than the account. | The hero described the product ("Review the package artifact before it ships") instead of the reader's situation, so a first-time visitor had to infer why their existing code review was not already enough; it now opens on that gap and keeps the mechanism in the subhead. `Workflow Gate — enforced` is the documented default path but rendered second and carried a `Preview` badge, which read as the less finished option — the badge is gone and the card leads, with the docs learning path reordered to match. The `RegistryCard` `badge` prop had no other caller and was removed. Closing CTAs moved from `Create account` to `Review my next release` on the landing, `/diff`, docs, and public-report blocks; the landing hero keeps `Create account` as its secondary, where it literally names the action next to `Read a diff`. Copy rules for these surfaces now live in `.agents/product-marketing.md`: audience, the advisory-vs-enforced claim discipline, banned claims, and the CTA ladder.                                                                 |
-| 2026-10-08 | Information-architecture pass: one signed-in header, the ownership choice demoted, findings stated once on scan detail, and navigation labels unified.                                                                                       | An audit found four different signed-in headers (scan detail had none, settings dropped its own link), a full-width primary "Keep in personal workspace" button outranking the verdict and the release table, each finding stated three times on scan detail, and seven labels for `/diff`. `AppHeaderActions` is now the only signed-in header (`Reviews` · `Settings` with the current one in accent text, the organization switcher, the user menu); the marketing header reads `Package diff` · `Docs` · `Sign in` signed out and adds `Reviews` signed in (the brand mark is home). The ownership choice is a compact row with a secondary button placed after the report. Risk signals on scan detail keep only the package-context signals the diff cannot pin; the public report, which has no review notes, keeps the full index. `/diff` is `Package diff` in navigation and `Diff a package` as an action; the hero's `Read a diff` stays. The public report drops its tracked uppercase label above the title per Marketing surfaces.                                    |
-| 2026-10-09 | `Feedback` sits after the navigation and before account controls in every header.                                                                                                                                                            | App pages and the public report drew it before the navigation, the other marketing pages after `Sign in`, through a per-page `feedbackPosition` switch. A mailto is neither navigation nor account, so it follows the section links and precedes the organization switcher, user menu, or `Sign in`. The header actions place it themselves so tab order matches the drawn order; the switch is gone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 2026-10-18 | Docs `Diffs in dependency PRs`: the Dependabot subsection becomes `Pull request comment`, and its snippet is the repo workflow file.                                                                                                         | The comment now carries each bump's headline and findings for Dependabot and Renovate, so the subsection, TOC label, and integration card name the workflow rather than one bot. The snippet is imported from `.github/workflows/drydock-diff-link.yml` instead of a second inline copy, and outgrows the 71-character line cap from 2026-08-21: at ~650 lines a 59-column script body doubles in length, so it holds to the repository's 100-column print width and relies on the code-block fold. No new visual vocabulary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 2026-10-24 | Docs `Pull request comment`: the snippet becomes a ~20-line caller of the reusable workflow, pinned to its last commit, shown open as `.github/workflows/drydock-diff-link.yml`.                                                             | The 750-line snippet was a chore to copy and to keep current. The caller fits the 71-character cap from 2026-08-21 except its fixed `uses:` path and hash, so it renders as an open named `CodeBlock` like `renovate.json` instead of a folded `WorkflowExample`. No new visual vocabulary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| If you change | Also |
+| --- | --- |
+| A token in `src/style.css` | The token tables; contrast numbers; `pnpm run lint`. |
+| A content width | Canonical widths and `test/canonical-content-widths.test.ts`. |
+| A design rule worth recording | A dated row in [design-decisions.md](./design-decisions.md). |
+| A heading code cites | `Canonical widths`, `Severity bar`, `Count tiles`, `Iconography`: update the `docs/design.md` comments in `src/`, `server/`, `test/`. |

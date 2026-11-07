@@ -1,99 +1,149 @@
-# Diff Baseline Strategy
+# Diff baseline
 
-This note records the baseline-selection decision for Drydock's npm staged-publish review path.
+The npm review pipeline selects a published comparison and separates release changes from existing package risk. **Authority:** advisory. **Owner:** `server/lib/ecosystems/npm/acquire.ts`.
 
-## Implemented behavior
+## At a glance
 
-The scan pipeline downloads the staged tarball and fetches staged metadata in parallel. It reads `package.json`, fetches registry package metadata, then diffs the staged artifact against `pickBaselineVersion(metadata, stagedVersion, stagedTag)`.
+| Thing | Owner file | Who may call / trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Tag-aware selection | `server/lib/ecosystems/npm/registry.ts` | npm scan and workflow gate | `test/registry.test.mjs` |
+| Baseline acquisition | `server/lib/ecosystems/npm/acquire.ts` | Shared scan pipeline | `test/npm-acquire.test.mjs` |
+| Published byte stream | `server/lib/ecosystems/npm/published-tarball.ts` | Baseline and on-demand compare | `test/published-tarball.test.mjs` |
+| Finding attribution | `server/lib/review/diff-annotation.ts` | Shared scan pipeline | `test/review-diff-annotation.test.mjs` |
+| Workbench comparison | `src/models/scan-detail-model.ts` | Scan reader | `test/scan-detail-comparison-model.test.ts` |
 
-The baseline selector is intentionally tag-aware:
+PyPI and VS Code baseline behavior belongs to [PyPI workflow gate](./pypi-workflow-gate.md) and [workflow gates](./workflow-gates.md).
 
-1. If the staged metadata has a tag and current package metadata has `dist-tags[tag]` pointing at a published version other than the staged version, the scan diffs against that version.
-2. Otherwise, it falls back to the highest semver predecessor lower than the staged version.
-3. If there is no lower predecessor, it falls back to the highest published semver-like version.
-4. If no baseline can be selected or downloaded, the scan proceeds as an all-added diff and records the baseline reason in `summary_json.baseline`.
+## Contract
 
-This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. The first release on a new channel has no dist-tag to follow and falls to rule 2, so `2.0.0-beta.1 --tag beta` diffs against the newest stable below it — the right answer for a channel that has just branched off. The package release view (`docs/ui.md`) states the rule that applied per release ("2.0.0-beta.1 (beta)" versus "1.4.2 (previous version)") so a reviewer can see which comparison a report rests on. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
+### Selection
 
-### Fetching the baseline tarball
+The pipeline fetches staged bytes and stage metadata in parallel, reads `package.json`, then fetches package metadata. `pickBaselineVersion(metadata, stagedVersion, stagedTag)` applies this precedence:
 
-The selected baseline is a _published_ `.tgz`, and it is **not** downloaded through `NpmStageGateway`. The trusted parent Worker fetches it via `downloadPublishedTarball` (in `server/lib/ecosystems/npm/published-tarball.ts`): it validates that the tarball URL shares the configured registry origin before attaching the npm token (so the credential can never reach a package-controlled host), then pipes the response body — never buffered in the parent — into a credentials-free sandbox (`downloadInSandboxStream`) for gunzip/untar and parsing. The previous version is attacker-influenced evidence, so the decompression-bomb-prone parse stays sandboxed even though the fetch does not. Size enforcement lives in the sandbox — its compressed and decompressed stream caps (`SANDBOX_MAX_STREAM_TAR_BYTES`) map to a 413 — so baselines up to the cap diff normally and only beyond it does `acquireBaselineNpm` degrade to a no-baseline scan; the parent keeps just the advertised content-length gate and a looser 2× mid-stream backstop, which must not fire first because its error cannot carry the degradable 413 into the sandbox. The same helper backs the on-demand compare endpoint (`server/lib/compare-cache.ts`). Only the staged-tarball endpoint still flows through the credentialed gateway.
+| Order | Condition | Comparison / `summary_json.baseline.reason` |
+| --- | --- | --- |
+| 1 | Staged tag points to an existing published version other than the staged version | Tag target / `dist-tag:<tag>` |
+| 2 | A lower semver predecessor exists | Highest predecessor / `semver-predecessor` |
+| 3 | No predecessor; another semver-like published version exists | Highest published / `highest-published-fallback` |
+| 4 | No candidate | None / `none`, or `dist-tag-points-at-staged-version` |
+| — | Manifest lacks name/version | None / `package-json-missing-name-or-version` |
+| — | Package metadata unavailable | None / `metadata-unavailable` |
+| — | Selected version has no tarball | None / selection reason + `:no-tarball` |
 
-### Tarball and compare caching
+| Stage metadata | Contract |
+| --- | --- |
+| Registry endpoints | `GET /-/stage`; `GET /-/stage/{stage-id}` |
+| Parsed fields | Package name, version, dist-tag, actor, access, timestamp, shasum when present |
+| Tag semantics | Normal publish tag; defaults to `latest`; immutable for the staged package |
+| Historical certainty | Tag selection infers from current registry metadata; stage metadata supplies neither an explicit previous version nor a stage-time tag-target snapshot |
+| Concurrent publish | A normal publish may move the tag between stage creation and scanning |
+| Discovery | Account-wide list is only a candidate list; probe each staged tarball with the organization token before persisting/queueing |
+| Inaccessible stage | Per-stage 401/403/404 is filtered, not persisted as a failed review |
 
-Published tarball fetches read through a colo-level byte cache (`caches.default`, keyed by tarball URL). The cache is shared across organizations, which is safe because of how it is written: entries are only ever populated by a background **anonymous** re-fetch of the same URL (`ctx.waitUntil`), so the cache can only hold bytes any unauthenticated client could download — private tarballs 404 the anonymous warm fetch and are never stored. Token-bearing requests may read the cache only for `registry.npmjs.org`, where anonymous and authenticated bytes for a given tarball URL are identical; custom registries only participate for unauthenticated fetches, and the fake-registry e2e path (`allowInsecureLocalhost`) bypasses the cache entirely. The warm fetch is deliberately a second download rather than a tee of the serving stream, preserving the never-buffered-in-the-parent invariant above.
+A beta or maintenance tag follows its own channel. A first release on a new channel falls back to a predecessor. The release view names the selected version and rule; see [UI](./ui.md).
 
-The parsed compare payloads in the `COMPARE_CACHE` KV namespace are immutable once written (keys are content-addressed by org scope + registry + tarball URL), so reads pass `cacheTtl` to serve repeat diff browsing — one read of the same key per file view — from KV's colo cache instead of its central stores.
+### Published downloads and caches
 
-## npm staged metadata
+1. Baseline transport: Published `.tgz` uses `downloadPublishedTarball`, outside `NpmStageGateway`; staged tarball uses the gateway (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Credential origin: Validate configured registry origin before attaching npm token; package-controlled hosts never receive it (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Parsing: Parent streams without buffering into credentials-free `downloadInSandboxStream`; hostile baseline decompression/parsing stays sandboxed (`server/lib/sandbox.ts`).
+1. Stream caps: Compressed/decompressed `SANDBOX_MAX_STREAM_TAR_BYTES` maps overflow to 413 (`server/lib/sandbox.ts`).
+1. Parent limits: Advertised content-length gate plus 2× mid-stream backstop; sandbox must trip first so its degradable 413 survives (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Tarball byte cache: `caches.default`, keyed by tarball URL, shared across organizations (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Cache writes: Background anonymous re-fetch via `ctx.waitUntil`; private tarballs fail anonymous fetch and are not stored (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Cache reads with token: Only `registry.npmjs.org`, whose anonymous/authenticated bytes agree (`PUBLIC_NPM_HOSTS` in `server/lib/ecosystems/npm/published-tarball.ts`).
+1. Custom registry cache: Unauthenticated fetches only; `allowInsecureLocalhost` bypasses cache (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Cache warming: Separate download, never a tee that could buffer the serving stream (`server/lib/ecosystems/npm/published-tarball.ts`).
+1. Parsed compare cache: `COMPARE_CACHE` KV; immutable payload key includes org scope + registry + tarball URL; reads use colo `cacheTtl` (`server/lib/compare-cache.ts`).
 
-As of the npm stage API/CLI docs published with npm CLI 11.15, staged publish metadata exposes the staged package's package name, version, dist-tag, actor, access, and shasum through both the staged list endpoint and the staged detail endpoint:
+### Persistence and workbench
 
-- `GET /-/stage`
-- `GET /-/stage/{stage-id}`
+1. `summary_json.stagedPublish`: Parsed stage identity, tag, actor/access/timestamp, optional npm shasum; tarball verdict `verified` / `mismatch` / `unverified` and compared digests.
+1. `summary_json.baseline`: Selected version, staged tag, selection source, current dist-tag target, reason.
+1. `scans.previous_version`: Actual parsed version of downloaded comparison tarball.
+1. Mid-run baseline: Record after resolution, before deterministic/AI review; retry overwrites; final persist writes again; terminal rows untouched; write failure never fails scan.
+1. Failed scan: Clear previous version because no report exists.
+1. Published-pair exception: Registry-confirmed requested baseline exists at creation; mid-run recording leaves it alone; failure retains it for `Review again`; completion writes parsed manifest version.
+1. Default comparison: Persisted `scans.previous_version`; absent means persisted all-added diff, not the versions endpoint's `defaultPreviousVersion`.
+1. Versions endpoint: Before resolution, tag-blind semver predecessor may be an rc; it cannot define the report's default comparison.
+1. Alternate comparison: Rebuild tree from selected version's compare payload; show loading/failure until ready; verdict still describes persisted report.
+1. Concurrent picks: Payload/failure cache is per version; late responses never replace the displayed comparison.
+1. Picker settling: Fetch only after `COMPARE_PICK_SETTLE_MS` in `src/models/scan-detail-model.ts`.
+1. Retry: `Try again` in alternate tree or beside picker for recorded baseline.
+1. URL state: Only explicit user picks enter `?version=`.
+1. Running scan: Prefetch recorded baseline so previous side is ready; payload lacks finding annotations and uses `no-store`.
+1. Completion with different/no baseline: Drop mid-run payload for old baseline; later selection refetches with annotations.
 
-The CLI docs also state that the staged tag follows normal publish tag behavior, defaults to `latest` when omitted, and is immutable for the staged package.
+## Invariants
 
-The API gives us the staged tag. It does not document an explicit "previous version", nor a snapshot of the tag target at stage creation time. Because npm allows normal publishes while staged packages are pending, the tag target can theoretically move between stage creation and our scan. Therefore, tag-following baseline selection should be treated as an inference from current registry metadata, not as a registry-provided historical fact.
+1. Baseline failure does not always degrade: only recognized sandbox 413 archive safety limits do; malformed/other download errors still fail the scan (`server/lib/ecosystems/npm/acquire.ts`).
+2. AI cannot downgrade deterministic findings; deterministic review runs first (`server/lib/scan/pipeline.ts`).
+3. AI review is on by default; Flagship `ai-review` is the organization killswitch (`server/lib/scan/pipeline.ts`).
+4. AI evidence is diff-first: ecosystem, normalized manifest diff, delta deterministic findings, changed-file diff and bounded samples (`server/lib/scan/pipeline.ts`).
+5. Unchanged AI evidence is limited to deterministic-finding files, recognized manifest script/entrypoint references and package manifests; rank high-signal changes before caps (`server/lib/ai-review/evidence.ts`).
+6. Truncating baseline evidence can only lose context matches and classify more findings as release delta (`test/review-diff-annotation.test.mjs`).
 
-Discovery treats `GET /-/stage` as an account-wide candidate list, not as proof that the organization token is authorized for each publish. Before creating a review, Drydock probes the staged tarball endpoint with that organization token and only persists/queues scans for stage IDs that the token can actually access. Per-stage 401/403/404 responses are filtered out instead of becoming failed reviews.
+### Attribution
 
-## Baseline data stored on reports
+Deterministic review covers the entire staged artifact, including unchanged install hooks, native artifacts, credential access and secrets. Classification describes release changes without hiding artifact risk.
 
-Completed scans persist:
+1. New/modified risky evidence: Release-delta signal (`server/lib/review/diff-annotation.ts`).
+1. Removed risky evidence: Context retained for review (`server/lib/review/diff-annotation.ts`).
+1. Unchanged risky evidence: Existing package context unless policy blocks any presence (`server/lib/review/diff-annotation.ts`).
+1. Modified file: Release delta when finding line changed or rule pattern touches changed region (`server/lib/review/diff-annotation.ts`).
+1. Long replaced line: Trim common prefix/suffix, then bounded character diff; exceeding size/edit bound uses whole middle span and can only retain delta classification (`server/lib/review/changed-regions.ts`).
+1. Folded text: Both raw and constant-folded changed text count; newly joined string fragments can introduce a delta match (`server/lib/review/diff-annotation.ts`).
+1. No usable line/text evidence: Re-run rules on baseline versions of modified files, with manifests; same rule + file becomes context; unchanged files are not re-scanned (`server/lib/review/diff-annotation.ts`).
+1. No baseline counterpart: Fails open to release delta: missing evidence makes report louder, never quieter (`server/lib/review/diff-annotation.ts`).
+1. Baseline text: Cap each body at `BASELINE_TEXT_SAMPLE_LIMIT`; manifests exempt; clipped body has `baseline-truncated` (set in `server/lib/tar-parser.js`); reviewed side never capped (limit in `server/lib/sample-retention.ts`; [`sandbox-parser.md`](./sandbox-parser.md)).
+1. Previous-version UI text: Baseline samples are never persisted; separate `/compare` downloads/caches published tarball (`server/lib/compare-cache.ts`).
 
-- `summary_json.stagedPublish` with the parsed staged metadata (`id`, package name, version, tag, actor/access/timestamp, and npm shasum when present) plus the staged-tarball verification verdict (`verified`, `mismatch`, or `unverified`, with the compared digests);
-- `summary_json.baseline` with selected version, staged tag, selection source, current dist-tag target, and reason;
-- the existing `scans.previous_version` column as the actual parsed version of the downloaded comparison tarball.
+| Limit / bound | Contract | Owner |
+| --- | --- | --- |
+| Long-line threshold | Over 1 KiB: `LONG_LINE_CHARS` | `server/lib/review/changed-regions.ts` |
+| Match margin | Within 256 characters: `CHANGED_SPAN_MARGIN` | `server/lib/review/changed-regions.ts` |
 
-`scans.previous_version` is written before completion too: the pipeline records it, from the same baseline manifest, as soon as the baseline is resolved, which is before the deterministic rules and the AI review. A retried attempt overwrites it, final persist writes it again, a terminal row is never touched, and a failed scan clears it, since it has no report. Writing it early is a hint for the scan page and never fails the scan. A published-pair review is the exception: its baseline is a registry-confirmed request input, so the row names it from creation, the mid-run record leaves it alone (the baseline manifest is reviewed bytes), and a failed review keeps it so `Review again` restarts the same pair. Final persist still writes the manifest's version on completion.
+1. Same capability in modified predecessor: Persist/show `releaseDeltaKind: "expanded"`; release score one step lower; artifact score unaffected.
+1. Capability co-occurrence: Still counts, across files and expanded capabilities; two delta capabilities retain high floor.
+1. New rule in file, obfuscated match, newly folded capability match: Full scoring.
+1. New URL host, quoted hostname, IP absent from baseline package: Full scoring.
+1. Credential access, dynamic evaluation, standing-danger rules: Never expanded.
+1. Unreadable changes: Never expanded.
 
-The scan workbench's default comparison is `scans.previous_version`, because the persisted diff, risk summary, and finding annotations were all computed against it. A scan that recorded none defaults to "no baseline" and shows its persisted all-added diff. The versions endpoint's `defaultPreviousVersion` is not used for this: the page asks for it while the scan may still be running, when, until the pipeline has resolved the baseline, it can only offer the tag-blind semver predecessor, which for a stable release cut after release candidates is the newest rc. Picking any other version rebuilds the release tree from that version's on-demand compare payload; until the payload arrives, the tree says it is loading (or that the comparison failed) instead of showing the baseline's delta, and the verdict keeps describing the persisted report. The picker stays usable while a payload loads: payloads and failures are kept per version, so a late one lands under its own version and never stands in for the comparison on screen. A pick is fetched once it has held for `COMPARE_PICK_SETTLE_MS`, so arrowing through the picker fetches only the version the reader settles on. A failed comparison offers "Try again", in the tree for a picked version and beside the picker for the recorded baseline. Only a version the reader picks goes into the `?version=` query parameter.
+1. Candidates: Added JS/TS with removed predecessor in same directory and extension; one-to-one; content only, never trust filename hash.
+1. Persisted tree/finding status: Added entry records `renamedFrom`; `diffStatus: "added"` remains.
+1. Rules and attribution: Modified-file severity and predecessor text; no `diff.large-new-file`; changed spans, baseline findings, install reachability and expanded logic all use predecessor bytes.
+1. No pair / budget exceeded / predecessor unavailable: Full added-file treatment.
+1. Split/merged chunks below similarity bar: Full added-file treatment.
+1. Injection check: Spliced renamed payload must raise release risk like an in-place edit; `renamed` shapes in [detection eval](./detection-eval.md).
 
-While the scan runs, the page fetches the compare payload for the baseline the pipeline has recorded, so a modified file's previous side is ready when the workbench appears instead of waiting on the sandbox fetch after completion. A payload served for a running scan carries no finding annotations (they need the completed report) and is sent `no-store`. When the scan completes under a different baseline (a retry chose another, or final persist kept none), the page drops what it fetched mid-run for the old one, so picking it later refetches it with annotations.
+| Limit / bound | Contract | Owner |
+| --- | --- | --- |
+| Similarity | Statement shingles collapse short identifiers/numbers; Jaccard at least 0.8 (`MIN_SIMILARITY`); best pairs first | `server/lib/review/renamed-files.ts` |
+| Work bound | Leading `BASELINE_TEXT_SAMPLE_LIMIT` (`SHINGLE_WINDOW`) on both sides; per-diff character budget | `server/lib/review/renamed-files.ts` |
 
-The pipeline cross-checks staged detail package name/version against the staged tarball's `package.json`. A mismatch produces a critical deterministic finding (`stage.metadata-mismatch`) and suppresses tag-based baseline selection for that scan. The sandbox also hashes the staged `.tgz` wire bytes with SHA-1 and compares them against the stage's `shasum`; a mismatch produces the critical `stage.tarball-digest-mismatch` finding. Because the tarball and stage record arrive from separate requests, a disagreement is checked against a fresh stage record before it becomes a finding; that fresh record also replaces the initial metadata snapshot for manifest merging, baseline selection, and persistence. Missing/invalid registry digests, incomplete downloads, archives beyond the digest cap, and unavailable mismatch confirmation remain `unverified` rather than being called mismatches. The scan workbench and downloadable report expose the verdict even when the stage-detail request itself failed, so a reviewer can distinguish verified evidence from an unbound review whenever no finding is raised.
+1. `releaseRisk`: Delta findings; complete AI risk contributes only when an AI finding is delta; all-unchanged AI findings remain context, with manual-review floor medium below gate blocking threshold; no-finding AI review is scored wholesale.
+1. `artifactRisk`: Full reviewed-artifact evidence plus complete AI result when enabled; primary `scans.risk`; only [prior-approved context](./release-memory.md) may be discounted, never release-delta findings.
+1. `contextRisk`: Findings outside release delta.
+1. Missing breakdown on older report: Interpret `scans.risk` as artifact risk; derive release/context risk from persisted annotations.
 
-## AI evidence budget impact
+## Failure modes
 
-AI review is Flagship-gated and on by default (the `ai-review` flag is a killswitch), and while it runs for an organization it should remain diff-first:
+| Condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| No candidate/tarball/metadata | Unavailable comparison | All-added review; reason persisted | Inspect selection reason and registry metadata |
+| Baseline 413 size/expansion cap | Recognized safety limit | All-added review; reason suffix `:baseline-too-large` | Compare a bounded published artifact |
+| Baseline 413 entry cap | Too many files | All-added review; reason suffix `:baseline-too-many-files` | Inspect archive layout |
+| Malformed baseline / other fetch failure | Not a degradable safety limit | Scan fails | Repair artifact/registry access; retry |
+| Stage identity disagrees with `package.json` | Metadata/bytes mismatch | Critical `stage.metadata-mismatch`; suppress tag selection | Check fresh stage identity |
+| SHA-1 wire digest disagrees with stage shasum | Metadata/bytes mismatch | Critical `stage.tarball-digest-mismatch` only after fresh stage confirmation | Restage matching bytes |
+| Initial mismatch | Separate metadata/bytes requests | Refresh stage; replacement snapshot drives merge, baseline and persistence | Inspect confirmed snapshot |
+| Missing/invalid digest, incomplete bytes, digest cap, confirmation unavailable | Insufficient binding evidence | `unverified`, never guessed mismatch; workbench/export show verdict even if detail fetch failed | Obtain complete stage evidence |
 
-- deterministic findings stay authoritative and are computed before AI;
-- AI sees the ecosystem id, normalized manifest diff, release-delta deterministic findings, changed-file diff, and bounded samples for changed files only;
-- unchanged files should not be sent as AI review evidence unless a deterministic rule needs context or a recognized manifest field newly references that file;
-- changed files should be ranked so high-signal files are kept when caps are hit.
+## Change checklist
 
-Tag-aware baseline selection is the largest low-risk token reducer because it prevents channel releases from appearing as a broad diff against the wrong published artifact. It improves the evidence for both humans and models without reducing deterministic coverage of the staged artifact itself.
-
-## Deterministic findings and diff status
-
-Do not make deterministic safety depend only on the diff. The staged artifact is still the package under review, so risky install hooks, native artifacts, credential access, and secrets must be detected even if they existed before.
-
-However, report payloads, report presentation, and AI payload construction should distinguish:
-
-- new or modified risky evidence, which is release-blocking signal;
-- removed risky evidence, which may be positive but still deserves context;
-- unchanged risky evidence, which is pre-existing package risk and should not dominate "what changed" unless policy says the product blocks any release containing that behavior.
-
-New scan reports persist this split as a risk breakdown in `summary_json.risk`:
-
-- `releaseRisk` is computed from findings annotated as part of the package-to-package delta and is the focused release-delta verdict. A complete AI review contributes its risk here only when at least one of its findings is annotated as release delta; a review whose findings all cite unchanged files is package context and leaves `releaseRisk` alone (its manual-review flag still floors the score at medium, below the gate's blocking threshold). A review with no findings cannot be attributed and is scored wholesale;
-- `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and is the primary scan risk stored in `scans.risk` so deterministic evidence cannot be hidden by context classification;
-- `contextRisk` covers findings that were not part of the release delta.
-
-A modified-file finding is a release delta when its line changed or when one of its rule's patterns matches a changed region. Two refinements keep that test honest (`server/lib/review/changed-regions.ts`, `server/lib/review/diff-annotation.ts`):
-
-- **Changed spans for long lines.** A minified bundle is one or a few lines, so any edit makes the whole bundle "changed". A long (over 1 KiB) replaced line is narrowed to the characters that changed — common prefix and suffix trimmed, then a character diff bounded in size and edit count — and a rule counts as touched only when a match sits within 256 characters of a changed span. Past either bound the whole middle is one span, which is the line-level behaviour: the fallback can only keep a finding on the delta.
-- **Folded text.** Detection matches both the raw and the constant-folded text, so classification does too: a changed region that matches a rule only once string pieces are joined (`'chi' + 'ld_process'`) is on the delta even when the file already used that capability on an unchanged line.
-
-A release-delta capability finding in a modified file whose baseline version already had the same capability is marked `releaseDeltaKind: "expanded"` (more package-manager spawns in a CLI, another request in an HTTP client). `releaseRisk` scores an expanded capability one step lower; it still counts toward capability co-occurrence, so two capabilities on the delta — across files too, and whether or not each file already had its half — keep the high floor. `artifactRisk` is unaffected. A file keeps full scoring when anything in its changes is new to it: a finding for a rule its baseline version did not have, an obfuscated match, a change that matches a capability pattern only once string pieces are joined, or a URL host, quoted hostname or IP the baseline package never named. Credential access, dynamic evaluation and standing-danger rules are never expanded — one more environment variable is a different credential, and a new eval site runs new code — and a file whose changes cannot be read is never marked. The marker is persisted with the finding annotation and shown on the finding card; the release-injection eval (`docs/detection-eval.md`) measures that spliced payloads still raise release risk.
-
-**Renamed files.** Bundlers name chunks by content hash (`dist/chunk-YQNCOY6V.js`, `dist/chunks/cli-api.De07GUeT.js`), so an ordinary release removes last version's chunk and adds the same module under a new name. Read as a new file, every capability the chunk already had would land on the release delta at added-file severity. `createPackageDiff` therefore pairs each added JavaScript/TypeScript file with at most one removed file from the same directory with the same extension whose content is similar (`server/lib/review/renamed-files.ts`: statement-level shingles with short identifiers and numbers collapsed, Jaccard at least 0.8, so only near-identical content pairs, best pairs first, compared over the leading `BASELINE_TEXT_SAMPLE_LIMIT` characters of each side under a per-diff character budget), and records the predecessor as `renamedFrom` on the added entry. The pairing is by content only; a name's hash is release-controlled and only the directory and extension narrow the candidates. A paired file keeps `diffStatus: "added"` in the tree and on its findings, but it is judged as its predecessor modified: file-scoped rules grade it at modified-file severity and against the predecessor's text, `diff.large-new-file` does not fire for it, and release attribution uses the changed-span, baseline-finding, install-reachability and `expanded` logic above against the predecessor's bytes. That grants nothing an in-place edit of the predecessor would not, so a payload spliced into a renamed chunk raises release risk exactly as it would in a modified file; the release-injection eval measures this with its `renamed` shapes. A file with no similar predecessor, a file past the budget, and a pairing whose predecessor text is unavailable all keep the full added-file treatment. Chunks that a release split or merged (one predecessor's code spread across several new chunks) are below the similarity bar and still read as added.
-
-When a modified-file finding cannot be resolved against line-level diff evidence (no recorded line, or no usable text samples to diff), the annotator falls back to finding-set baselining: it re-runs the deterministic rules over the baseline versions of the modified files (with the manifests that give them context; unchanged files are never asked about, so they are not re-scanned) and classifies the finding as package context when the same rule already fired on the same file in the baseline version. Without a baseline counterpart the classification still fails open to release delta, so missing baseline data can only make the report louder, never quieter.
-
-That fail-open direction is what licenses the baseline-side sample cap described in [`architecture.md`](./architecture.md): baseline bodies are retained up to `BASELINE_TEXT_SAMPLE_LIMIT` per file (manifests exempt, clipped bodies flagged `baseline-truncated`) rather than whole, because a short baseline body can only cost baseline evidence — fewer baseline fingerprints and more lines reading as added — which classifies _more_ findings as release deltas. The reviewed side is never capped, and baseline text is never persisted: the workbench's "previous version" pane is served by the separate `/compare` path, which downloads and caches the published tarball on its own.
-
-The `scans.risk` column stores `artifactRisk` for new reports. Older reports without `summary_json.risk` are interpreted the same way, and release/context risk is derived from persisted finding annotations.
-
-This keeps the staged-publish review centered on the actual release delta without allowing contextual high-risk deterministic evidence to downgrade the primary scan verdict.
+| If you change | Also update | Run |
+| --- | --- | --- |
+| Selector / acquisition | Reason tables and [npm staged publishing](./npm-staged-publishing.md) | `pnpm exec vitest run --project node test/registry.test.mjs test/npm-acquire.test.mjs` |
+| Attribution / risk / rename pairing | [Detection eval](./detection-eval.md) and persisted annotations | `pnpm exec vitest run --project node test/review-diff-annotation.test.mjs test/review-risk.test.mjs test/review-renamed-files.test.mjs test/review-changed-regions.test.mjs` |
+| Compare UI / persistence | Workbench state contract | `pnpm exec vitest run --project node test/scan-detail-comparison-model.test.ts` |
