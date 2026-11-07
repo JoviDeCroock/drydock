@@ -24,7 +24,7 @@ import {
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { parseContentLength } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
-import { reliableFetch } from "../../platform/reliable-fetch";
+import { fetchWithinBaseUrl } from "../../platform/url-scope";
 import type { PackageVersionsLookup } from "./dependency-readiness";
 import { createPackumentExtractor } from "./packument-stream";
 import {
@@ -130,7 +130,11 @@ async function fetchPackageVersions(
     if (source.npmToken) headers.set("authorization", `Bearer ${source.npmToken}`);
     // One attempt: a retry could not finish inside the check's budget, and a
     // failed read is offered again as "Check again".
-    return reliableFetch(url, { headers, attempts: 1, timeoutMs: remaining });
+    return fetchWithinBaseUrl(url, source.registryUrl, {
+      headers,
+      attempts: 1,
+      timeoutMs: remaining,
+    });
   };
   let response: Response;
   try {

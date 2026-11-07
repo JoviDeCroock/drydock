@@ -11,6 +11,23 @@ describe("pathWithinBaseUrl", () => {
     expect(within("https://registry.npmjs.org/pkg", "https://registry.npmjs.org/")).toBe("/pkg");
   });
 
+  test("every credentialed npmjs.org endpoint Drydock builds is inside the default registry", () => {
+    const npm = "https://registry.npmjs.org";
+    for (const path of [
+      "/-/whoami",
+      "/-/stage?perPage=1",
+      "/-/stage/npm%3Astage%3Aabc123",
+      "/-/stage/npm%3Astage%3Aabc123/tarball",
+      "/@scope%2fpkg",
+      "/@scope/pkg",
+      "/-/package/%40scope%2Fpkg/version/1.0.0-rc.1%2Bbuild.5/status",
+      "/@scope/pkg/-/pkg-1.0.0.tgz",
+      "/pkg/-/pkg-1.0.0.tgz",
+    ]) {
+      expect(within(`${npm}${path}`, npm), path).toBe(path.split("?")[0]);
+    }
+  });
+
   test("a base under a path owns only that subtree, with or without a trailing slash", () => {
     for (const base of ["https://host.test/npm", "https://host.test/npm/"]) {
       expect(within("https://host.test/npm/-/stage/x/tarball", base)).toBe("/-/stage/x/tarball");
@@ -141,6 +158,24 @@ describe("fetchWithinBaseUrl", () => {
     const hops = stubHops(redirect("/npm/..%2fadmin"), ok);
     await fetchWithinBaseUrl(`${BASE}/start`, BASE, { headers: { authorization: AUTH } });
     expect(hops[1]).toMatchObject({ url: `${BASE}/..%2fadmin`, authorization: null });
+  });
+
+  test("on the default npmjs.org registry a same-origin redirect keeps the credential and another host does not", async () => {
+    const npm = "https://registry.npmjs.org";
+    const hops = stubHops(
+      redirect(`${npm}/@scope/pkg/-/pkg-1.0.0.tgz`, 301),
+      redirect("https://cdn.npmjs.example/blob.tgz", 302),
+      ok,
+    );
+    const response = await fetchWithinBaseUrl(`${npm}/@scope%2fpkg/-/pkg-1.0.0.tgz`, npm, {
+      headers: { authorization: AUTH },
+    });
+    expect(await response.text()).toBe("ok");
+    expect(hops.map((hop) => [hop.url, hop.authorization])).toEqual([
+      [`${npm}/@scope%2fpkg/-/pkg-1.0.0.tgz`, AUTH],
+      [`${npm}/@scope/pkg/-/pkg-1.0.0.tgz`, AUTH],
+      ["https://cdn.npmjs.example/blob.tgz", null],
+    ]);
   });
 
   test("a URL outside the base never carries the credential", async () => {

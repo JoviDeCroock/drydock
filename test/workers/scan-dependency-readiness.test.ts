@@ -554,6 +554,31 @@ describe("fetchPackageVersionsMany", () => {
     ]);
   });
 
+  test("the npm token stays inside a registry's base path across redirects", async () => {
+    const hops: RegistryCall[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = new Request(input as RequestInfo, init as RequestInit);
+      hops.push({ url: request.url, authorization: request.headers.get("authorization") });
+      return hops.length === 1
+        ? new Response(null, { status: 302, headers: { location: "/admin/pkg" } })
+        : new Response(JSON.stringify(packument(["1.0.0"])));
+    });
+
+    const results = await fetchPackageVersionsMany(
+      env,
+      createExecutionContext(),
+      { registryUrl: "https://host.test/npm", cacheScope: "public", npmToken: TOKEN },
+      ["pkg"],
+      { concurrency: 1, budgetMs: 5_000 },
+    );
+
+    expect(results[0]?.lookup).toMatchObject({ status: "found", versions: ["1.0.0"] });
+    expect(hops).toEqual([
+      { url: "https://host.test/npm/pkg", authorization: `Bearer ${TOKEN}` },
+      { url: "https://host.test/admin/pkg", authorization: null },
+    ]);
+  });
+
   test("a packument without versions has none published; a non-object one is unreadable", async () => {
     stubRawRegistry(
       (name) => new Response(name === "empty" ? '{"name":"empty"}' : '{"versions":"x"}'),
