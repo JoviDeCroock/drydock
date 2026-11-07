@@ -1,11 +1,15 @@
-import { and, asc, count, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
+import type { ApiKeyAccess } from "./enums";
+import { recordScanEvent } from "./events";
+import type { ApiKeyPrincipal } from "../lib/auth/api-keys";
 import { organizationApiKeys, organizationMembers, user } from "./schema";
 
 export interface OrganizationApiKey {
   id: string;
   name: string;
   prefix: string;
+  access: ApiKeyAccess;
   createdAt: Date;
   expiresAt: Date;
   lastUsedAt: Date | null;
@@ -15,19 +19,26 @@ export interface OrganizationApiKey {
 export interface ApiKeyAuthRecord {
   id: string;
   organizationId: string;
+  name: string;
+  prefix: string;
+  access: ApiKeyAccess;
+  createdByUserId: string;
   expiresAt: Date;
   lastUsedAt: Date | null;
 }
 
+/** `createdByUserId` narrows the list to one member's own keys. */
 export async function listOrganizationApiKeys(
   db: AppDb,
   organizationId: string,
+  options: { createdByUserId?: string } = {},
 ): Promise<OrganizationApiKey[]> {
   const rows = await db
     .select({
       id: organizationApiKeys.id,
       name: organizationApiKeys.name,
       prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
       createdAt: organizationApiKeys.createdAt,
       expiresAt: organizationApiKeys.expiresAt,
       lastUsedAt: organizationApiKeys.lastUsedAt,
@@ -37,12 +48,20 @@ export async function listOrganizationApiKeys(
     })
     .from(organizationApiKeys)
     .leftJoin(user, eq(user.id, organizationApiKeys.createdByUserId))
-    .where(eq(organizationApiKeys.organizationId, organizationId))
+    .where(
+      and(
+        eq(organizationApiKeys.organizationId, organizationId),
+        options.createdByUserId
+          ? eq(organizationApiKeys.createdByUserId, options.createdByUserId)
+          : undefined,
+      ),
+    )
     .orderBy(asc(organizationApiKeys.createdAt), asc(organizationApiKeys.id));
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
     prefix: row.prefix,
+    access: row.access,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     lastUsedAt: row.lastUsedAt,
@@ -55,9 +74,10 @@ export async function listOrganizationApiKeys(
 }
 
 /** Unexpired keys only: an expired key stays listed until revoked but holds no slot. */
-export async function countActiveOrganizationApiKeys(
+export async function countActiveMemberApiKeys(
   db: AppDb,
   organizationId: string,
+  createdByUserId: string,
   now: Date,
 ): Promise<number> {
   const [row] = await db
@@ -66,10 +86,47 @@ export async function countActiveOrganizationApiKeys(
     .where(
       and(
         eq(organizationApiKeys.organizationId, organizationId),
+        eq(organizationApiKeys.createdByUserId, createdByUserId),
         gt(organizationApiKeys.expiresAt, now),
       ),
     );
   return row?.value ?? 0;
+}
+
+/**
+ * Accepts the TOTP time step of a key decision's step-up and clears the key's
+ * failure count. A step is accepted once per creator: it is refused when any of
+ * their keys has accepted it or a later one, so an accepted code cannot be
+ * used again. One statement, so two requests carrying the same code cannot
+ * both pass.
+ */
+export async function acceptApiKeyTotpStep(
+  db: AppDb,
+  keyId: string,
+  creatorUserId: string,
+  step: number,
+): Promise<boolean> {
+  const rows = await db
+    .update(organizationApiKeys)
+    .set({ lastTotpStep: step, failedTotpAttempts: 0 })
+    .where(
+      and(
+        eq(organizationApiKeys.id, keyId),
+        sql`not exists (select 1 from organization_api_keys as used where used.created_by_user_id = ${creatorUserId} and used.last_totp_step >= ${step})`,
+      ),
+    )
+    .returning({ id: organizationApiKeys.id });
+  return rows.length > 0;
+}
+
+/** Counts a wrong step-up code against the key; the new count, or null once the key is gone. */
+export async function recordApiKeyTotpFailure(db: AppDb, keyId: string): Promise<number | null> {
+  const [row] = await db
+    .update(organizationApiKeys)
+    .set({ failedTotpAttempts: sql`${organizationApiKeys.failedTotpAttempts} + 1` })
+    .where(eq(organizationApiKeys.id, keyId))
+    .returning({ failed: organizationApiKeys.failedTotpAttempts });
+  return row?.failed ?? null;
 }
 
 export async function insertOrganizationApiKey(
@@ -80,6 +137,7 @@ export async function insertOrganizationApiKey(
     name: string;
     prefix: string;
     keyHash: string;
+    access: ApiKeyAccess;
     createdByUserId: string;
     createdAt: Date;
     expiresAt: Date;
@@ -89,10 +147,12 @@ export async function insertOrganizationApiKey(
 }
 
 /** The deleted key's name, or null when no such key belongs to the organization. */
+/** `createdByUserId` limits the revocation to that member's own key. */
 export async function deleteOrganizationApiKey(
   db: AppDb,
   organizationId: string,
   keyId: string,
+  options: { createdByUserId?: string } = {},
 ): Promise<{ name: string; prefix: string } | null> {
   const [removed] = await db
     .delete(organizationApiKeys)
@@ -100,6 +160,9 @@ export async function deleteOrganizationApiKey(
       and(
         eq(organizationApiKeys.organizationId, organizationId),
         eq(organizationApiKeys.id, keyId),
+        options.createdByUserId
+          ? eq(organizationApiKeys.createdByUserId, options.createdByUserId)
+          : undefined,
       ),
     )
     .returning({ name: organizationApiKeys.name, prefix: organizationApiKeys.prefix });
@@ -132,6 +195,10 @@ export async function findApiKeyByHash(
     .select({
       id: organizationApiKeys.id,
       organizationId: organizationApiKeys.organizationId,
+      name: organizationApiKeys.name,
+      prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
+      createdByUserId: organizationApiKeys.createdByUserId,
       expiresAt: organizationApiKeys.expiresAt,
       lastUsedAt: organizationApiKeys.lastUsedAt,
     })
@@ -151,11 +218,12 @@ export async function findApiKeyByHash(
 export async function getApiKeyDescription(
   db: AppDb,
   keyId: string,
-): Promise<{ name: string; prefix: string; expiresAt: Date } | null> {
+): Promise<{ name: string; prefix: string; access: ApiKeyAccess; expiresAt: Date } | null> {
   const [row] = await db
     .select({
       name: organizationApiKeys.name,
       prefix: organizationApiKeys.prefix,
+      access: organizationApiKeys.access,
       expiresAt: organizationApiKeys.expiresAt,
     })
     .from(organizationApiKeys)
@@ -183,4 +251,27 @@ export async function markApiKeyUsedIfStale(
         or(isNull(organizationApiKeys.lastUsedAt), lt(organizationApiKeys.lastUsedAt, staleBefore)),
       ),
     );
+}
+
+/**
+ * Audits a write an API key made. Key reads are not recorded, but a key that
+ * starts reviews spends the organization's npm token and scan budget, so each
+ * use names the key; the actor is its creator.
+ */
+export async function recordApiKeyAction(
+  db: AppDb,
+  apiKey: ApiKeyPrincipal,
+  input: {
+    type: "organization.api_key_review_started" | "organization.api_key_discovery_ran";
+    scanId?: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<void> {
+  await recordScanEvent(db, {
+    organizationId: apiKey.organizationId,
+    actorUserId: apiKey.userId,
+    scanId: input.scanId,
+    type: input.type,
+    metadata: { ...input.metadata, name: apiKey.name, prefix: apiKey.prefix },
+  });
 }

@@ -7,7 +7,7 @@ import { Card } from "../../components/Card";
 import { CodeBlock } from "../../components/CodeBlock";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
-import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
+import { InlineCode, MonoLabel, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { ProjectInstruction } from "../../features/agent-quickstart/ProjectInstruction";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -304,7 +304,7 @@ export default function DocsPage() {
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">Choose a release path</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Choose npm staging or a GitHub workflow gate.
+                Choose npm staging or a GitHub Actions workflow gate.
               </h2>
               <Prose>
                 Both paths produce the same kind of report. npm holds a private staged package;
@@ -330,7 +330,7 @@ export default function DocsPage() {
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
+                  bestFor="Releases from GitHub Actions: PyPI, npm, VS Code, and monorepos."
                   heldBy="A GitHub Environment holds the publish job."
                   decision="You approve or reject the job from Drydock."
                 />
@@ -341,6 +341,55 @@ export default function DocsPage() {
                 compose: run <InlineCode>npm stage publish</InlineCode> inside the gated job and the
                 gate reviews the tarball before npm holds it.
               </Callout>
+            </Subsection>
+
+            <Subsection id="release-walkthrough" title="Your release, start to finish">
+              <Prose>
+                With a workflow gate, Drydock sits between the GitHub Actions job that builds your
+                release and the job that publishes it. You set it up once, then release the way you
+                already do.
+              </Prose>
+              <MonoLabel as="p">Once</MonoLabel>
+              <Steps
+                items={[
+                  <>
+                    Install the Drydock GitHub App, create a GitHub Environment with Drydock as its
+                    protection rule, and map the repository in Drydock settings.
+                  </>,
+                  <>
+                    Split the release workflow into a build job that uploads the packed files and a
+                    publish job that uses the protected environment. The guided setup in Drydock
+                    settings can open this change as a draft pull request.
+                  </>,
+                  <>
+                    On npm and PyPI, pin trusted publishing to that environment. Remove other ways
+                    to publish, such as long-lived tokens.
+                  </>,
+                ]}
+              />
+              <MonoLabel as="p">Every release</MonoLabel>
+              <Steps
+                items={[
+                  <>
+                    Start the release as you do today: push a tag, merge a Changesets PR, or run the
+                    workflow. GitHub Actions builds and uploads the files.
+                  </>,
+                  <>
+                    GitHub pauses the publish job. Drydock compares the uploaded files with the most
+                    relevant published version.
+                  </>,
+                  <>
+                    Read the report in Drydock and approve or reject. After approval, the job
+                    publishes the files it uploaded; after a rejection, GitHub keeps it blocked.
+                  </>,
+                ]}
+              />
+              <Prose>
+                Stage Watchtower is advisory: you run <InlineCode>npm stage publish</InlineCode>,
+                review in Drydock, and finish the publish in npm, which does not wait for Drydock.
+                See <a href="#staged-lifecycle">Run a release review</a>. To work through the setup
+                with a coding agent, copy a prompt from <a href="/agents">the agent guide</a>.
+              </Prose>
             </Subsection>
           </section>
 
@@ -842,36 +891,60 @@ export default function DocsPage() {
             </Callout>
           </section>
 
-          <section id="agent-package-review" class="flex flex-col gap-4 scroll-mt-6">
-            <SectionLabel as="p">Package review for coding agents</SectionLabel>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              Ask your agent to read the published upgrade.
-            </h2>
-            <ProjectInstruction />
-            <LinkButton href="/agents" variant="secondary" size="sm" class="self-start">
-              Read the agent quickstart
-            </LinkButton>
+          <section id="agent-package-review" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Coding agents</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                Work through setup with your coding agent.
+              </h2>
+              <Prose>
+                Copy a prompt into your agent and it walks you through the setup in checkpoints: map
+                how the project releases, choose a path, prepare the workflow change, then hand you
+                the settings only you can change. For an existing workflow, it can review the draft
+                PR from Drydock's guided setup instead of writing its own.
+              </Prose>
+            </div>
+            <Subsection title="Set up publishing">
+              <div class="flex flex-wrap gap-3">
+                <LinkButton href="/agents#existing-project" variant="secondary" size="sm">
+                  Existing project prompt
+                </LinkButton>
+                <LinkButton href="/agents#new-project" variant="secondary" size="sm">
+                  New project prompt
+                </LinkButton>
+              </div>
+            </Subsection>
+            <Subsection title="Review dependency upgrades">
+              <ProjectInstruction />
+              <LinkButton href="/agents" variant="secondary" size="sm" class="self-start">
+                Read the agent quickstart
+              </LinkButton>
+            </Subsection>
           </section>
 
           <section id="automation" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Automate reads</SectionLabel>
+              <SectionLabel as="p">Automate</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Read reviews from scripts and CI. Decide them in Drydock.
+                Start and read reviews from scripts and CI. Decide them yourself.
               </h2>
               <Prose>
                 An organization API key reads the same reviews, report exports, and release receipts
-                the dashboard shows. It is read-only by construction: it cannot approve a gate,
-                record a decision, start a review, or change settings.
+                the dashboard shows. A key created with <strong>Start reviews</strong> can also
+                start reviews and check npm for staged publishes. A key created with{" "}
+                <strong>Record decisions</strong> also lets <InlineCode>drydock approve</InlineCode>{" "}
+                record your decision on a staged publish, with your authenticator code. No key can
+                decide a workflow gate or change settings.
               </Prose>
             </div>
 
             <Subsection id="api-keys" title="API keys">
               <Prose>
-                Owners and admins create keys in Organization settings → Integrations → API keys.
-                The key is shown once; Drydock keeps only its hash. Every key expires after 30, 90,
-                or 365 days, and a key stops working when the member who created it leaves the
-                organization.
+                Create your own keys in Organization settings → Integrations → API keys; a key acts
+                as you. The key is shown once; Drydock keeps only its hash. Every key expires after
+                30, 90, or 365 days, and a key stops working when you leave the organization. Choose{" "}
+                <strong>Start reviews</strong> for a key that CI uses to start reviews; each review
+                it starts is recorded in the audit log.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
                 {`curl -H "Authorization: Bearer $DRYDOCK_API_KEY" \\
@@ -887,17 +960,39 @@ export default function DocsPage() {
             <Subsection id="cli" title="The drydock CLI">
               <Prose>
                 The CLI wraps those endpoints with readable output, exit codes for CI, and a receipt
-                check against the digest Drydock sends. It is not published to npm yet: run it with
-                Node from a checkout of the Drydock repository. It reads the key from{" "}
+                check against the digest Drydock sends. Run it with{" "}
+                <InlineCode>npx drydock-cli</InlineCode>, or install it globally for a{" "}
+                <InlineCode>drydock</InlineCode> command. It reads the key from{" "}
                 <InlineCode>DRYDOCK_API_KEY</InlineCode> only, so the key stays out of shell
                 history.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`node cli/bin/drydock.mjs whoami
-node cli/bin/drydock.mjs scans list --filter undecided
-node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
-node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
-node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+                {`npx drydock-cli whoami
+npx drydock-cli scans list --filter undecided
+npx drydock-cli scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
+npx drydock-cli receipt <review-id> --output receipt.json
+npx drydock-cli diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+              </CodeBlock>
+              <Prose>
+                With a review-access key, CI can start the review itself instead of waiting for the
+                next scheduled npm check:
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`npx drydock-cli check-npm                                            # discover staged publishes now
+npx drydock-cli scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
+npx drydock-cli scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+              </CodeBlock>
+              <Prose>
+                On your own machine, <InlineCode>drydock approve</InlineCode> shows the review at
+                npm&apos;s approval moment: new install-time scripts, new dependencies, new
+                executables, and the top findings. It records your publish or reject decision, which
+                needs your authenticator code, then runs your own{" "}
+                <InlineCode>npm stage approve</InlineCode>, which asks for npm&apos;s one-time
+                password; Drydock never sees that one. It is a convenience and a record, not
+                enforcement: approving on npmjs.com skips it.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`npx drydock-cli approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI

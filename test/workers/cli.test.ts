@@ -1,30 +1,42 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
+import { createDb } from "../../server/db/client";
+import {
+  updateNpmConnectionValidation,
+  upsertNpmConnection,
+} from "../../server/db/npm-connections";
+import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
+import type { ScanQueueMessage } from "../../server/lib/scan/job";
 import { main } from "../../cli/src/main.mjs";
-import { type Jar, callWorker, signUpUserId } from "./helpers/auth-http";
+import { type Jar, PASSWORD, callWorker, signUpUserId, totpFor } from "./helpers/auth-http";
 import { seedCompletedScan } from "./helpers/seed";
+import * as schema from "../../server/db/schema";
+import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
+import { eq } from "drizzle-orm";
 
 // The CLI against the real Worker: its paths, headers, and response handling
 // must match what the API-key surface actually serves.
 
 const CLI_ORIGIN = "https://drydock.test";
 
-async function workerFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  const url = new URL(String(input));
-  expect(url.origin).toBe(CLI_ORIGIN);
-  const ctx = createExecutionContext();
-  const res = await worker.fetch(
-    new Request(`http://example.com${url.pathname}${url.search}`, init),
-    env,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  return res;
+function workerFetchWith(workerEnv: typeof env) {
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = new URL(String(input));
+    expect(url.origin).toBe(CLI_ORIGIN);
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`http://example.com${url.pathname}${url.search}`, init),
+      workerEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return res;
+  };
 }
 
-function cli(token: string) {
+function cli(token: string, workerEnv: typeof env = env) {
   const out: string[] = [];
   const err: string[] = [];
   const files = new Map<string, string>();
@@ -35,7 +47,7 @@ function cli(token: string) {
     run: (...argv: string[]) =>
       main(argv, {
         env: { DRYDOCK_API_KEY: token, DRYDOCK_URL: CLI_ORIGIN },
-        fetch: workerFetch as typeof fetch,
+        fetch: workerFetchWith(workerEnv) as typeof fetch,
         stdout: (text: string) => void out.push(text),
         stderr: (text: string) => void err.push(text),
         writeFile: async (path: string, data: string) => void files.set(path, data),
@@ -173,5 +185,230 @@ describe("drydock CLI against the Worker", () => {
     expect(await run.run("whoami")).toBe(1);
     expect(run.err.join("")).toContain("invalid_api_key");
     expect(run.err.join("") + run.out.join("")).not.toContain(token);
+  });
+
+  test("approve records a decide_staged key's decision, then runs npm; a read-only key records nothing", async () => {
+    const jar: Jar = new Map();
+    const userId = await signUpUserId(jar);
+    expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
+    const organizationId = personalOrganizationId(userId);
+    const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
+      body: { password: PASSWORD },
+      jar,
+    });
+    const totpURI = enable.json?.totpURI as string;
+    expect(
+      (
+        await callWorker("POST", "/api/auth/two-factor/verify-totp", {
+          body: { code: totpFor(totpURI) },
+          jar,
+        })
+      ).res.status,
+    ).toBe(200);
+    const stageId = "stage-approve-e2e-0001";
+    const scanId = await seedCompletedScan(
+      { userId, organizationId },
+      {
+        stageId,
+        packageJson: { name: "@acme/approve-e2e", version: "2.0.0" },
+        summary: {
+          diff: [{ path: "package.json", status: "modified" }],
+          packageJsonDiff: summarizePackageJsonDiff(
+            { name: "@acme/approve-e2e", version: "1.9.0", scripts: {} },
+            {
+              name: "@acme/approve-e2e",
+              version: "2.0.0",
+              scripts: { postinstall: "node setup.js" },
+              dependencies: { "left-pad": "^1.3.0" },
+            },
+          ),
+        },
+      },
+    );
+    const keyFor = async (access: string) =>
+      (await callWorker("POST", "/api/v1/api-keys", { jar, body: { name: access, access } })).json
+        ?.token as string;
+
+    const session = (token: string, answers: Array<string | null>) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const npmRuns: string[][] = [];
+      return {
+        out,
+        err,
+        npmRuns,
+        run: (...argv: string[]) =>
+          main(argv, {
+            env: { DRYDOCK_API_KEY: token, DRYDOCK_URL: CLI_ORIGIN },
+            fetch: workerFetchWith(env) as typeof fetch,
+            stdout: (text: string) => void out.push(text),
+            stderr: (text: string) => void err.push(text),
+            writeFile: async () => undefined,
+            sleep: async () => undefined,
+            now: () => 0,
+            stdinIsTerminal: true,
+            prompt: async () => answers.shift() ?? null,
+            runNpm: async (args: string[]) => {
+              npmRuns.push(args);
+              return { code: 0 };
+            },
+          }),
+      };
+    };
+    const decision = async () =>
+      (
+        await createDb(env.DB)
+          .select({ decision: schema.scans.decision })
+          .from(schema.scans)
+          .where(eq(schema.scans.id, scanId))
+      )[0]?.decision;
+
+    const readOnly = session(await keyFor("read"), ["p", "", totpFor(totpURI)]);
+    expect(await readOnly.run("approve", stageId)).toBe(1);
+    expect(readOnly.err.join("")).toContain("decide_staged access");
+    expect(readOnly.npmRuns).toEqual([]);
+    expect(await decision()).toBeNull();
+
+    const token = await keyFor("decide_staged");
+    // A wrong code is refused by the server and asked for again.
+    const wrong = String((Number(totpFor(totpURI)) + 500_000) % 1_000_000).padStart(6, "0");
+    const approve = session(token, ["publish", "read the diff", wrong, totpFor(totpURI)]);
+    const code = await approve.run("approve", stageId);
+    expect(code, approve.err.join("")).toBe(0);
+    const summary = approve.out.join("");
+    expect(summary).toContain("install-time scripts   postinstall added: node setup.js");
+    expect(summary).toContain("new dependencies       left-pad ^1.3.0");
+    expect(summary).toContain("Since 1.9.0:");
+    expect(approve.err.join("")).toContain("Drydock did not accept that code");
+    expect(summary).toContain(
+      `${CLI_ORIGIN}/dashboard/scans/${scanId}?org=${encodeURIComponent(organizationId)}`,
+    );
+    expect(approve.npmRuns).toEqual([["stage", "approve", stageId]]);
+    expect(await decision()).toBe("publish");
+    expect(approve.out.join("") + approve.err.join("")).not.toContain(token);
+  });
+
+  describe("starting reviews", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // The Worker's own registry calls (packument, stage listing) go through the
+    // global fetch; the CLI reaches the Worker through `workerFetchWith`, so it
+    // is unaffected by this stub.
+    function stubRegistry(packageName: string) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url === `https://registry.npmjs.org/${packageName}`) {
+            return Response.json({
+              "dist-tags": { latest: "1.1.0" },
+              versions: Object.fromEntries(
+                ["1.0.0", "1.1.0"].map((version) => [
+                  version,
+                  {
+                    dist: {
+                      tarball: `https://registry.npmjs.org/${packageName}/-/x-${version}.tgz`,
+                    },
+                  },
+                ]),
+              ),
+            });
+          }
+          if (url === "https://registry.npmjs.org/-/stage?perPage=50") {
+            return Response.json({
+              items: [
+                {
+                  id: "stage-cli-0001",
+                  packageName: "@cli-e2e/staged",
+                  access: "public",
+                  version: "3.0.0",
+                  tag: "latest",
+                  actor: "maintainer",
+                  createdAt: "2026-10-01T12:00:00.000Z",
+                  shasum: "c".repeat(40),
+                },
+              ],
+              total: 1,
+              perPage: 50,
+              page: 1,
+            });
+          }
+          if (url === "https://registry.npmjs.org/-/stage/stage-cli-0001/tarball") {
+            return new Response("", { status: 206 });
+          }
+          throw new Error(`unexpected fetch: ${url}`);
+        }),
+      );
+    }
+
+    test("a scan-access key starts a review and runs Check npm; a read-only key cannot", async () => {
+      const jar: Jar = new Map();
+      const userId = await signUpUserId(jar);
+      expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
+      const organizationId = personalOrganizationId(userId);
+      const db = createDb(env.DB);
+      await upsertNpmConnection(db, {
+        organizationId,
+        registryUrl: "https://registry.npmjs.org",
+        label: "npm registry",
+        createdByUserId: userId,
+        ...(await encryptNpmToken(env, "npm_test_token_0123456789")),
+      });
+      await updateNpmConnectionValidation(db, {
+        organizationId,
+        validationStatus: "valid",
+        validatedAt: new Date(),
+      });
+
+      const scanKey = await callWorker("POST", "/api/v1/api-keys", {
+        jar,
+        body: { name: "ci-scan", access: "scan" },
+      });
+      expect(scanKey.res.status, scanKey.text).toBe(201);
+      const scanToken = scanKey.json?.token as string;
+      const readKey = await callWorker("POST", "/api/v1/api-keys", { jar, body: { name: "ro" } });
+      const readToken = readKey.json?.token as string;
+
+      const packageName = `cli-e2e-${crypto.randomUUID()}`;
+      stubRegistry(packageName);
+      // A queue double keeps the review from running: only admission is under test.
+      const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
+      const queuedEnv = { ...env, SCAN_QUEUE: queue } as unknown as typeof env;
+
+      const whoami = cli(scanToken, queuedEnv);
+      expect(await whoami.run("whoami")).toBe(0);
+      expect(whoami.out.join("")).toMatch(/access\s+scan/);
+
+      const denied = cli(readToken, queuedEnv);
+      expect(await denied.run("scans", "start", `${packageName}@1.1.0`)).toBe(1);
+      expect(denied.err.join("")).toContain("read-only");
+      expect(denied.err.join("") + denied.out.join("")).not.toContain(readToken);
+      expect(await cli(readToken, queuedEnv).run("check-npm")).toBe(1);
+      expect(queue.send).not.toHaveBeenCalled();
+
+      const started = cli(scanToken, queuedEnv);
+      const code = await started.run("scans", "start", `${packageName}@1.1.0`, "--json");
+      expect(code, started.err.join("")).toBe(0);
+      const body = JSON.parse(started.out.join("")) as { scan: { id: string } };
+      expect(queue.send).toHaveBeenCalledTimes(1);
+      expect(queue.send.mock.calls[0]?.[0]).toMatchObject({
+        scanId: body.scan.id,
+        actorUserId: userId,
+        published: { packageName, version: "1.1.0", baselineVersion: "1.0.0" },
+      });
+      const detail = cli(scanToken, queuedEnv);
+      expect(await detail.run("scans", "get", body.scan.id)).toBe(0);
+      expect(detail.out.join("")).toContain(`${packageName}@1.1.0`);
+
+      const discovery = cli(scanToken, queuedEnv);
+      const discovered = await discovery.run("check-npm");
+      expect(discovered, discovery.err.join("")).toBe(0);
+      expect(discovery.out.join("")).toContain("1 review started");
+      expect(discovery.out.join("")).toContain("@cli-e2e/staged@3.0.0");
+      expect(queue.send).toHaveBeenCalledTimes(2);
+      expect(queue.send.mock.calls[1]?.[0]).toMatchObject({ stageId: "stage-cli-0001" });
+    });
   });
 });

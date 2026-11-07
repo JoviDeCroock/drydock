@@ -63,7 +63,7 @@ export function isValidLegacyNpmPackageName(name: string): boolean {
 // negotiates content answers with the full document rather than refusing; one
 // that refuses anyway is caught by the retry below. Both project to the same
 // shape, so callers cannot tell which arrived.
-const ABBREVIATED_PACKUMENT_ACCEPT =
+export const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
 export interface FetchPackageMetadataOptions {
@@ -116,7 +116,7 @@ export async function fetchPackageMetadata(
 // `application/vnd.npm.install-v1+json`. 401/403/404 are definitive answers
 // about the request itself, and 5xx has already been retried by reliableFetch,
 // so neither is worth a second round trip.
-function mayRejectVendorMediaType(status: number): boolean {
+export function mayRejectVendorMediaType(status: number): boolean {
   return status === 400 || status === 406 || status === 415 || status === 422;
 }
 

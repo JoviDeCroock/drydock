@@ -26,6 +26,7 @@ import { LoadingLine } from "../../../components/Typography";
 import { VersionPicker } from "../../../components/VersionPicker";
 import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
+import { DependencyReadinessNotice } from "./DependencyReadinessNotice";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
@@ -98,7 +99,11 @@ function ScanDetailView({ id, organizationId }: { id: string; organizationId: st
           named = true;
         }
       }
-      await model.load();
+      // Notification links carry `?via=notification` for the first load only;
+      // dropping it keeps a copied or reloaded address from claiming the same.
+      const fromNotification = location.query.via === "notification";
+      await model.load(fromNotification ? { via: "notification" } : {});
+      if (fromNotification && !isCancelled()) location.route(buildQueryUrl({ via: null }), true);
       const scanOrganization = model.detail.peek()?.scan.organizationId;
       // The lookup failed but the remembered organization held the review.
       if (!isCancelled() && !named && scanOrganization) {
@@ -268,6 +273,7 @@ function ScanReport({ model, view }: SectionProps) {
               hasDecisionControl(model, view) ? <VerdictDecision model={model} view={view} /> : null
             }
           />
+          <DependencyReadinessNotice model={model} />
 
           <div class="flex flex-col gap-3">
             {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}

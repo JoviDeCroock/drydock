@@ -51,10 +51,10 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`provenance-continuity.md`](./provenance-continuity.md) — `release.provenance-dropped` / `release.provenance-publisher-changed`: npm and PyPI registry provenance compared between a published baseline and candidate, what is trusted, and the FP classes.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
-- [`api-keys.md`](./api-keys.md) — read-only organization API keys: the route allowlist, authentication rules, storage, and lifecycle, plus the [`openapi.json`](./openapi.json) contract for that surface and the anonymous package diff.
+- [`api-keys.md`](./api-keys.md) — organization API keys (read, or read and start reviews): the route allowlists, authentication rules, storage, and lifecycle, plus the [`openapi.json`](./openapi.json) contract for that surface and the anonymous package diff.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
-- [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, the read-only public MCP endpoint, and machine-readable discovery.
+- [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart: publisher setup walkthrough prompts for existing and new projects, the copyable dependency-review instruction, anonymous HTTPS review recipe, the read-only public MCP endpoint, and machine-readable discovery.
 - [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset that links dependency-update PRs to public `/diff` pages, and the Dependabot/Renovate PR comment workflow that adds each bump's Drydock headline and findings; the preset path is a public contract.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.

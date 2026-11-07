@@ -41,6 +41,7 @@ const protectedRoutes: RouteCase[] = [
   { method: "GET", path: "/api/v1/scans/scan_auth_route/organization" },
   { method: "DELETE", path: "/api/v1/scans/scan_auth_route" },
   { method: "GET", path: "/api/v1/scans/scan_auth_route/versions" },
+  { method: "GET", path: "/api/v1/scans/scan_auth_route/dependency-readiness" },
   { method: "GET", path: "/api/v1/scans/scan_auth_route/compare?version=1.0.0" },
   {
     method: "POST",
