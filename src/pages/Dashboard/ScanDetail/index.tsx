@@ -26,6 +26,7 @@ import { LoadingLine } from "../../../components/Typography";
 import { VersionPicker } from "../../../components/VersionPicker";
 import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
+import { DependencyReadinessNotice } from "./DependencyReadinessNotice";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
@@ -272,6 +273,7 @@ function ScanReport({ model, view }: SectionProps) {
               hasDecisionControl(model, view) ? <VerdictDecision model={model} view={view} /> : null
             }
           />
+          <DependencyReadinessNotice model={model} />
 
           <div class="flex flex-col gap-3">
             {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}

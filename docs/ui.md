@@ -174,7 +174,18 @@ Both review pages lead with the diff:
 - **Scan detail** — a one-row verdict strip (the recommendation with its risk
   grade and any assistant note in one plain mono caption, a `manual review`
   Badge only when the assistant asks for it, and the recorded decision beside
-  the button that changes it), then the version picker directly above the
+  the button that changes it), then — only while approving still lies ahead and
+  a dependency cannot be installed yet — the dependency readiness notice
+  directly under the strip, beside that decision (`DependencyReadinessNotice`,
+  wording in `src/features/dependency-readiness.ts`: one warn Alert listing each
+  blocked dependency with its spec, a mono `optional`/`peer` label instead of a
+  Badge, and a `review →` link to a staged sibling; `info` tone when only
+  optional or peer dependencies are affected; muted lines, one per reason,
+  for dependencies that failed ("Check again"), were not reached yet ("Check
+  the rest"), or cannot be checked (no action); one muted line when the check
+  could not run at all; nothing for a clean check — see
+  [`npm-staged-publishing.md`](./npm-staged-publishing.md#dependency-readiness)),
+  then the version picker directly above the
   workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
   verdict reads that way, release memory, release changes, the advisory AI
   assessment, source binding), then the risk index and the manifest sections.

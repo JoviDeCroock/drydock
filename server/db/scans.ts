@@ -7,9 +7,11 @@ export {
   deletePendingScanJob,
   discardGateScans,
   discardScanAttempt,
+  findLiveStageReviewId,
   listExistingScanStageIds,
   markScanFailed,
   recordScanBaseline,
+  StageReviewExistsError,
 } from "./scan-jobs";
 export {
   SCAN_DECISION_FILTERS,
@@ -35,6 +37,7 @@ export {
 
 export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT } from "./scan-query";
 export { listScans } from "./scan-list";
+export { readScanRiskBreakdown } from "./scan-risk";
 
 export { getScanOverview, type ScanOverview } from "./scan-overview";
 export { listPackageReleases } from "./scan-package-releases";
@@ -48,6 +51,7 @@ export {
 } from "./scan-detail";
 
 export {
+  API_KEY_DECIDABLE_SCAN_SOURCES,
   BATCH_APPROVAL_LIMIT,
   listBatchApprovableScans,
   recordBatchApproval,

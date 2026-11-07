@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d3bf42f9-d010-4baa-82f9-43fbddf0fa32",
+  "id": "6673d9e8-d031-4704-aea6-a564cf06b260",
   "prevId": "f11dd94a-bae8-42a8-9450-3256ce58b62a",
   "tables": {
     "account": {
@@ -923,6 +923,122 @@
           "name": "npm_package_claims_registry_url_ecosystem_package_name_pk"
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "organization_api_keys": {
+      "name": "organization_api_keys",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "prefix": {
+          "name": "prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key_hash": {
+          "name": "key_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "organization_api_keys_key_hash_unique_idx": {
+          "name": "organization_api_keys_key_hash_unique_idx",
+          "columns": [
+            "key_hash"
+          ],
+          "isUnique": true
+        },
+        "organization_api_keys_creator_idx": {
+          "name": "organization_api_keys_creator_idx",
+          "columns": [
+            "organization_id",
+            "created_by_user_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "organization_api_keys_organization_id_organizations_id_fk": {
+          "name": "organization_api_keys_organization_id_organizations_id_fk",
+          "tableFrom": "organization_api_keys",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "organization_api_keys_created_by_user_id_user_id_fk": {
+          "name": "organization_api_keys_created_by_user_id_user_id_fk",
+          "tableFrom": "organization_api_keys",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -2828,41 +2944,6 @@
         "registry_approvable_notified_at": {
           "name": "registry_approvable_notified_at",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "registry_published_at": {
-          "name": "registry_published_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "report_first_viewed_at": {
-          "name": "report_first_viewed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "report_last_viewed_at": {
-          "name": "report_last_viewed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "report_view_count": {
-          "name": "report_view_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "report_first_view_surface": {
-          "name": "report_first_view_surface",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

@@ -70,7 +70,7 @@ scan, after the response through `waitUntil`, so the write can neither slow nor
 fail the read (`server/lib/scan/report-view.ts`, `server/db/scan-views.ts`).
 Loads of queued, running, or failed reviews have no report and are not views.
 Public share links, `/diff`, the report export, and the status poll are other
-surfaces and record nothing. Four columns on `scans` (migration `0041_tough_randall_flagg`):
+surfaces and record nothing. Four columns on `scans` (migration `0044_eager_tombstone`):
 
 - `report_first_viewed_at` / `report_last_viewed_at` — first and latest
   counted load.
