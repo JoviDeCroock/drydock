@@ -35,8 +35,25 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
 function summarizeApiKey(m: Record<string, unknown>): string | null {
   const name = str(m.name);
   const prefix = str(m.prefix);
-  if (name && prefix) return `${name} (${prefix}…)`;
-  return name ?? prefix;
+  const key = name && prefix ? `${name} (${prefix}…)` : (name ?? prefix);
+  if (!key) return key;
+  if (m.access === "scan") return `${key}, can start reviews`;
+  if (m.access === "decide_staged") return `${key}, can record staged decisions`;
+  return key;
+}
+
+function summarizeApiKeyReview(m: Record<string, unknown>): string | null {
+  const release = summarizePackageVersion(m);
+  const key = summarizeApiKey(m);
+  return release && key ? `${release} by ${key}` : (release ?? key);
+}
+
+function summarizeApiKeyDiscovery(m: Record<string, unknown>): string | null {
+  const key = summarizeApiKey(m);
+  const created = typeof m.created === "number" ? m.created : null;
+  if (created === null) return key;
+  const started = `${created} ${created === 1 ? "review" : "reviews"} started`;
+  return key ? `${started} by ${key}` : started;
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
@@ -117,7 +134,9 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "notice",
     summarize: (m) => {
       const verdict = m.decision === "publish" ? "approved publish" : "blocked publish";
-      const decision = m.batch === true ? `${verdict} in a batch` : verdict;
+      const batched = m.batch === true ? `${verdict} in a batch` : verdict;
+      const key = summarizeApiKey({ name: m.apiKeyName, prefix: m.apiKeyPrefix });
+      const decision = key ? `${batched} with API key ${key}` : batched;
       const reason = str(m.reason);
       return reason ? `${decision} · ${reason}` : decision;
     },
@@ -352,6 +371,24 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "API key revoked",
     severity: "notice",
     summarize: summarizeApiKey,
+  },
+  "organization.api_key_revoked_wrong_codes": {
+    category: "security",
+    label: "API key revoked after wrong authenticator codes",
+    severity: "security",
+    summarize: summarizeApiKey,
+  },
+  "organization.api_key_review_started": {
+    category: "integration",
+    label: "Review started with an API key",
+    severity: "info",
+    summarize: summarizeApiKeyReview,
+  },
+  "organization.api_key_discovery_ran": {
+    category: "integration",
+    label: "npm checked with an API key",
+    severity: "info",
+    summarize: summarizeApiKeyDiscovery,
   },
 };
 

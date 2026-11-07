@@ -24,8 +24,11 @@ for the lifecycle behavior behind it.
 ## Non-negotiable invariants
 
 - Every non-auth `/api/*` route requires a Better Auth session, except the read-only
-  routes in `API_KEY_ROUTES`, which also accept an organization API key
-  ([`api-keys.md`](./api-keys.md)).
+  routes in `API_KEY_ROUTES`, the review-starting routes in `API_KEY_SCAN_ROUTES`, and
+  the staged-publish decision in `API_KEY_DECIDE_ROUTES`, which also accept an
+  organization API key of the matching access level ([`api-keys.md`](./api-keys.md)).
+  No key decides a workflow gate or one of its packages, and a key's staged decision
+  needs a fresh TOTP code from the key's creator.
 - Client-supplied organization IDs are only selectors; route handlers must verify
   membership through `requireActiveOrganization`.
 - Queue messages carry scan IDs and organization IDs, not npm tokens or decrypted
@@ -83,6 +86,10 @@ Current structured events cover:
   `registry-record-unavailable` when npm's stage record was missing for an
   organization with a live release target); the scan persists an `unknown`
   record rather than none unless the organization has no live release target.
+- `scan.dependency_readiness.lookup_failed` (scan, organization, and a count of
+  failed registry reads), `scan.dependency_readiness.candidates_failed`, and
+  `scan.dependency_readiness.credential_unavailable` (no error detail; the broker keeps it) when the
+  decision-time dependency check degrades to "could not check".
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.

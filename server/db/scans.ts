@@ -7,9 +7,11 @@ export {
   deletePendingScanJob,
   discardGateScans,
   discardScanAttempt,
+  findLiveStageReviewId,
   listExistingScanStageIds,
   markScanFailed,
   recordScanBaseline,
+  StageReviewExistsError,
 } from "./scan-jobs";
 export {
   SCAN_DECISION_FILTERS,
@@ -49,6 +51,7 @@ export {
 } from "./scan-detail";
 
 export {
+  API_KEY_DECIDABLE_SCAN_SOURCES,
   BATCH_APPROVAL_LIMIT,
   listBatchApprovableScans,
   recordBatchApproval,

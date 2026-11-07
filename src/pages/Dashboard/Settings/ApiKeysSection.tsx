@@ -1,5 +1,5 @@
 import { useModel } from "@preact/signals";
-import { ApiKeysModel, type OrganizationApiKey } from "../../../models/api-keys";
+import { ApiKeysModel, type ApiKeyAccess, type OrganizationApiKey } from "../../../models/api-keys";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -10,6 +10,25 @@ import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
 import { formatDateTime } from "../../../lib/format";
+
+const ACCESS_LABELS: Record<ApiKeyAccess, string> = {
+  read: "Read",
+  scan: "Start reviews",
+  decide_staged: "Record decisions",
+};
+
+const ACCESS_NOTES: Record<ApiKeyAccess, string> = {
+  read: "Reads reviews, reports, release receipts, and gate status.",
+  scan: "Also starts reviews and checks npm. It never records a decision.",
+  decide_staged:
+    "Also records publish or reject on staged npm publishes, for drydock approve. Needs two-factor on your account, and every decision asks for your authenticator code. It never decides a workflow gate or approves anything on npm.",
+};
+
+const ACCESS_ROW_TEXT: Record<ApiKeyAccess, string> = {
+  read: "read only",
+  scan: "can start reviews",
+  decide_staged: "can record staged decisions",
+};
 
 export function ApiKeysSection({
   apiKeys,
@@ -25,6 +44,8 @@ export function ApiKeysSection({
   const revealed = apiKeys.revealed.value;
   const atLimit = apiKeys.atLimit.value;
   const draftName = apiKeys.draftName.value;
+  const draftAccess = apiKeys.draftAccess.value;
+  const manageAll = apiKeys.manageAll.value;
 
   const onCreate = async (event: Event) => {
     event.preventDefault();
@@ -45,10 +66,9 @@ export function ApiKeysSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Read-only keys for scripts and the Drydock CLI. A key reads this organization's reviews,
-          reports, release receipts, and gate status. It cannot record a decision, start a review,
-          or change settings. Keys expire, and a key is deleted when the member who created it
-          leaves the organization.
+          Keys let scripts and the Drydock CLI act in this organization as the member who creates
+          them. They expire, and are deleted when that member leaves.
+          {manageAll ? "" : " You see and revoke the keys you created."}
         </Muted>
 
         {revealed ? (
@@ -90,7 +110,7 @@ export function ApiKeysSection({
         )}
 
         <form
-          class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto] gap-3 items-end"
+          class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-3 items-end"
           onSubmit={onCreate}
         >
           <Field label="Key name" for="apiKeyName">
@@ -119,6 +139,20 @@ export function ApiKeysSection({
               ))}
             </Select>
           </Field>
+          <Field label="Access" for="apiKeyAccess">
+            <Select
+              id="apiKeyAccess"
+              value={draftAccess}
+              onChange={(value) => (apiKeys.draftAccess.value = value as ApiKeyAccess)}
+              disabled={busy || atLimit}
+            >
+              {(Object.keys(ACCESS_LABELS) as ApiKeyAccess[]).map((access) => (
+                <option key={access} value={access}>
+                  {ACCESS_LABELS[access]}
+                </option>
+              ))}
+            </Select>
+          </Field>
           {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
           <Button
             type="submit"
@@ -128,10 +162,13 @@ export function ApiKeysSection({
             {status === "creating" ? "Creating…" : "Create key"}
           </Button>
         </form>
+        {!atLimit ? (
+          <Muted class="text-[13px] m-0">{ACCESS_NOTES[draftAccess as ApiKeyAccess]}</Muted>
+        ) : null}
         {atLimit ? (
           <Muted class="text-[13px] m-0">
-            This organization holds the maximum of {apiKeys.limit.value} unexpired keys. Revoke one
-            to create another.
+            You hold the maximum of {apiKeys.limit.value} unexpired keys. Revoke one to create
+            another.
           </Muted>
         ) : null}
 
@@ -163,7 +200,7 @@ function ApiKeyRow({
           {expired ? <Badge tone="medium">expired</Badge> : null}
         </div>
         <Muted class="text-[12px] m-0">
-          created by {creator} ·{" "}
+          {ACCESS_ROW_TEXT[apiKey.access] ?? "read only"} · created by {creator} ·{" "}
           {expired
             ? formatDateTime(apiKey.expiresAt)
             : `expires ${formatDateTime(apiKey.expiresAt)}`}{" "}

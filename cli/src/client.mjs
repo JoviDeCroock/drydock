@@ -14,14 +14,21 @@ export class CliError extends Error {
    * origin was unreachable, rate limited (429), or failed (5xx).
    * @param {string} message
    * @param {number} [exitCode]
-   * @param {{ retryable?: boolean; retryAfterMs?: number | null }} [transient]
+   * @param {{ retryable?: boolean; retryAfterMs?: number | null; status?: number; code?: string }} [details]
+   *   `status` and `code` are the HTTP status and the error body's `code`, when the server answered
    */
-  constructor(message, exitCode = 1, { retryable = false, retryAfterMs = null } = {}) {
+  constructor(
+    message,
+    exitCode = 1,
+    { retryable = false, retryAfterMs = null, status, code } = {},
+  ) {
     super(message);
     this.name = "CliError";
     this.exitCode = exitCode;
     this.retryable = retryable;
     this.retryAfterMs = retryAfterMs;
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -86,27 +93,40 @@ export function pathSegment(value, label) {
  */
 
 /**
+ * @typedef {object} RequestOptions
+ * @property {boolean} [authenticated]
+ * @property {"GET" | "POST"} [method]
+ * @property {unknown} [body] sent as JSON; omitted entirely when undefined
+ * @property {number} [timeoutMs]
+ */
+
+/**
  * @param {{ baseUrl: string; apiKey: string | null; fetch: typeof globalThis.fetch }} options
  */
 export function createClient({ baseUrl, apiKey, fetch: send }) {
   /**
    * @param {string} path absolute path with an encoded query string
-   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
+   * @param {RequestOptions} [options]
    * @returns {Promise<ApiResponse>}
    */
-  async function request(path, { authenticated = true, timeoutMs } = {}) {
+  async function request(path, { authenticated = true, method = "GET", body, timeoutMs } = {}) {
     /** @type {Record<string, string>} */
     const headers = { accept: "application/json", "user-agent": `drydock-cli/${CLI_VERSION}` };
     if (authenticated) {
       if (!apiKey) throw new CliError("this command needs DRYDOCK_API_KEY", 2);
       headers.authorization = `Bearer ${apiKey}`;
     }
+    /** @type {RequestInit} */
+    const init = { method, headers, redirect: "manual" };
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
     let res;
     let text;
     try {
       res = await send(`${baseUrl}${path}`, {
-        headers,
-        redirect: "manual",
+        ...init,
         ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
       text = await res.text();
@@ -120,6 +140,8 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
       throw new CliError(errorMessage(res.status, text, res.headers), 1, {
         retryable: res.status === 429 || res.status >= 500,
         retryAfterMs: retryAfterMs(res.headers.get("retry-after")),
+        status: res.status,
+        code: errorCode(text),
       });
     }
     return { status: res.status, headers: res.headers, text };
@@ -127,7 +149,7 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
 
   /**
    * @param {string} path
-   * @param {{ authenticated?: boolean; timeoutMs?: number }} [options]
+   * @param {RequestOptions} [options]
    * @returns {Promise<any>}
    */
   async function json(path, options) {
@@ -143,12 +165,26 @@ export function createClient({ baseUrl, apiKey, fetch: send }) {
 }
 
 /**
+ * The error body's stable `code`, for callers that act on it.
+ * @param {string} text
+ * @returns {string | undefined}
+ */
+function errorCode(text) {
+  try {
+    const body = JSON.parse(text);
+    return typeof body?.code === "string" ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * @param {number} status
  * @param {string} text
  * @param {Headers} headers
  */
 function errorMessage(status, text, headers) {
-  /** @type {{ error?: unknown; code?: unknown }} */
+  /** @type {{ error?: unknown; code?: unknown; requiredAccess?: unknown }} */
   let body = {};
   try {
     body = JSON.parse(text);
@@ -157,7 +193,17 @@ function errorMessage(status, text, headers) {
   }
   const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
   const code = typeof body.code === "string" ? ` (${body.code})` : "";
+  // The decision route's two-factor step-up answers 401 like the session one;
+  // the key itself was accepted. A key revoked by that step-up says so itself.
+  if (typeof body.code === "string" && body.code.startsWith("two_factor_")) return detail;
+  if (body.code === "api_key_revoked") return detail;
   if (status === 401) return `the API key was rejected: ${detail}${code}`;
+  if (body.code === "api_key_access_insufficient" && body.requiredAccess === "decide_staged") {
+    return "this API key cannot record decisions; drydock approve needs a key with decide_staged access (Organization settings → Integrations → API keys)";
+  }
+  if (body.code === "api_key_access_insufficient") {
+    return "this API key is read-only; starting reviews needs a key with scan access (Organization settings → Integrations → API keys)";
+  }
   if (status === 429) {
     const retry = headers.get("retry-after");
     return `rate limited${retry ? `; retry after ${retry}s` : ""}: ${detail}`;
