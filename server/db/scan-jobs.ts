@@ -6,7 +6,7 @@
  * organization-scoped on every statement; a scan is only ever claimed by the
  * organization that created it.
  */
-import { and, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNull, ne, sql } from "drizzle-orm";
 import { deleteScanArtifacts } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
@@ -81,6 +81,50 @@ function registryTimestampOrNull(value: string | null | undefined): Date | null 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * The organization already has a review of this stage that has not failed, so
+ * no second one was created. Carries that review's id. A failed review does not
+ * count: "Review again" restarts a failed stage with a new row.
+ */
+export class StageReviewExistsError extends Error {
+  constructor(readonly scanId: string) {
+    super("This stage already has a review in this organization.");
+    this.name = "StageReviewExistsError";
+  }
+}
+
+const STAGED_SOURCES = ["manual", "auto_discovery"] as const;
+
+function liveStageReview(organizationId: string, stageId: string) {
+  return sql`exists (select 1 from ${scans}
+    where ${scans.organizationId} = ${organizationId}
+      and ${scans.stageId} = ${stageId}
+      and ${inArray(scans.source, [...STAGED_SOURCES])}
+      and ${scans.status} <> 'failed')`;
+}
+
+/** The newest review of a stage in this organization that has not failed, if any. */
+export async function findLiveStageReviewId(
+  db: AppDb,
+  organizationId: string,
+  stageId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.organizationId, organizationId),
+        eq(scans.stageId, stageId),
+        inArray(scans.source, [...STAGED_SOURCES]),
+        ne(scans.status, "failed"),
+      ),
+    )
+    .orderBy(desc(scans.createdAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 function sha1OrNull(value: string | null | undefined): string | null {
   const digest = value?.trim().toLowerCase();
   return digest && /^[0-9a-f]{40}$/.test(digest) ? digest : null;
@@ -146,23 +190,33 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     const selectedValues = Object.entries(getTableColumns(scans)).map(([key, column]) =>
       sql.param(insertValues[key as keyof typeof insertValues] ?? column.default ?? null, column),
     );
+    // One batch is one D1 transaction, so the existence check and the insert
+    // cannot interleave with a concurrent start of the same stage: a re-run CI
+    // job, the cron, and "Check npm" all land here, and only the first creates
+    // a review. The supersession below runs only if this insert happened, so a
+    // duplicate request never supersedes a review a person may have decided.
+    const inserted = sql`exists (select 1 from ${scans} where ${scans.id} = ${input.id})`;
+    const noLiveReview = sql`not ${liveStageReview(input.organizationId, input.stageId)}`;
     await db.batch([
       insertNpmPackageClaim(db, claim),
       db
         .insert(scans)
-        .select(sql`select ${sql.join(selectedValues, sql`, `)} where ${ownsPackage}`),
+        .select(
+          sql`select ${sql.join(selectedValues, sql`, `)} where ${ownsPackage} and ${noLiveReview}`,
+        ),
       db
         .update(scans)
         .set(registrySupersessionPatch(now))
         .where(
           and(
+            inserted,
             ownsPackage,
             eq(scans.organizationId, input.organizationId),
             // Legacy rows may carry the registry URL with a trailing slash.
             sql`rtrim(${scans.registryUrl}, '/') = ${claim.registryUrl}`,
             eq(scans.registryPackageName, claim.packageName),
             eq(scans.registryVersion, input.stagedVersion!),
-            inArray(scans.source, ["manual", "auto_discovery"]),
+            inArray(scans.source, [...STAGED_SOURCES]),
             isNull(scans.registryStatusSupersededAt),
             ne(scans.id, input.id),
           ),
@@ -172,7 +226,11 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     await db.insert(scans).values(values);
   }
   const detail = await getScan(db, input.id, input.organizationId);
-  if (isStaged && !detail) throw new PackageClaimConflictError();
+  if (isStaged && !detail) {
+    const existingId = await findLiveStageReviewId(db, input.organizationId, input.stageId);
+    if (existingId) throw new StageReviewExistsError(existingId);
+    throw new PackageClaimConflictError();
+  }
   return detail;
 }
 

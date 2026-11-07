@@ -60,6 +60,14 @@ export const TOC: Array<{
     label: "Coding agents",
     children: [],
   },
+  {
+    id: "automation",
+    label: "Automate",
+    children: [
+      { id: "api-keys", label: "API keys" },
+      { id: "cli", label: "The drydock CLI" },
+    ],
+  },
 ];
 
 export const TOC_IDS = TOC.flatMap((section) => [section.id, ...section.children.map((c) => c.id)]);

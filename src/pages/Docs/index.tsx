@@ -922,6 +922,86 @@ export default function DocsPage() {
             </Subsection>
           </section>
 
+          <section id="automation" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Automate</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                Start and read reviews from scripts and CI. Decide them yourself.
+              </h2>
+              <Prose>
+                An organization API key reads the same reviews, report exports, and release receipts
+                the dashboard shows. A key created with <strong>Start reviews</strong> can also
+                start reviews and check npm for staged publishes. A key created with{" "}
+                <strong>Record decisions</strong> also lets <InlineCode>drydock approve</InlineCode>{" "}
+                record your decision on a staged publish, with your authenticator code. No key can
+                decide a workflow gate or change settings.
+              </Prose>
+            </div>
+
+            <Subsection id="api-keys" title="API keys">
+              <Prose>
+                Create your own keys in Organization settings → Integrations → API keys; a key acts
+                as you. The key is shown once; Drydock keeps only its hash. Every key expires after
+                30, 90, or 365 days, and a key stops working when you leave the organization. Choose{" "}
+                <strong>Start reviews</strong> for a key that CI uses to start reviews; each review
+                it starts is recorded in the audit log.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`curl -H "Authorization: Bearer $DRYDOCK_API_KEY" \\
+  "https://drydock.org/api/v1/scans?filter=all"`}
+              </CodeBlock>
+              <Prose>
+                The endpoints a key reaches are described in the repository&apos;s{" "}
+                <InlineCode>docs/openapi.json</InlineCode>, also served at{" "}
+                <InlineCode>/api/v1/openapi.json</InlineCode>.
+              </Prose>
+            </Subsection>
+
+            <Subsection id="cli" title="The drydock CLI">
+              <Prose>
+                The CLI wraps those endpoints with readable output, exit codes for CI, and a receipt
+                check against the digest Drydock sends. It is not published to npm yet: run it with
+                Node from a checkout of the Drydock repository. It reads the key from{" "}
+                <InlineCode>DRYDOCK_API_KEY</InlineCode> only, so the key stays out of shell
+                history.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs whoami
+node cli/bin/drydock.mjs scans list --filter undecided
+node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
+node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
+node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+              </CodeBlock>
+              <Prose>
+                With a review-access key, CI can start the review itself instead of waiting for the
+                next scheduled npm check:
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs check-npm                                            # discover staged publishes now
+node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
+node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+              </CodeBlock>
+              <Prose>
+                On your own machine, <InlineCode>drydock approve</InlineCode> shows the review at
+                npm&apos;s approval moment: new install-time scripts, new dependencies, new
+                executables, and the top findings. It records your publish or reject decision, which
+                needs your authenticator code, then runs your own{" "}
+                <InlineCode>npm stage approve</InlineCode>, which asks for npm&apos;s one-time
+                password; Drydock never sees that one. It is a convenience and a record, not
+                enforcement: approving on npmjs.com skips it.
+              </Prose>
+              <CodeBlock name="terminal" lang="bash">
+                {`node cli/bin/drydock.mjs approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
+              </CodeBlock>
+              <Prose>
+                Package names and finding text come from the packages under review, so the CLI
+                strips terminal control characters from what it prints and escapes them in JSON
+                output. <InlineCode>--output</InlineCode> keeps a receipt&apos;s exact bytes for
+                digest checks.
+              </Prose>
+            </Subsection>
+          </section>
+
           <section class="border-t border-border pt-10">
             <Card
               padding="roomy"

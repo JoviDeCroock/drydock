@@ -1,0 +1,3116 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Drydock API",
+    "version": "1.2.0",
+    "description": "Automation surface for Drydock. Authenticate with an organization API key (`Authorization: Bearer ddk_…`); see docs/api-keys.md. Every key reads; a key with `scan` access can also start reviews (operations marked `x-drydock-api-key-access: scan`), and a key with `decide_staged` access can also record the advisory decision on a staged npm publish (`x-drydock-api-key-access: decide_staged`). No key decides a workflow gate. Package-diff endpoints are anonymous.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://drydock.org",
+      "description": "Hosted Drydock"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "API keys"
+    },
+    {
+      "name": "Meta"
+    },
+    {
+      "name": "Reviews"
+    },
+    {
+      "name": "Packages"
+    },
+    {
+      "name": "Workflow gates"
+    },
+    {
+      "name": "Public diff"
+    }
+  ],
+  "paths": {
+    "/api/v1/api-keys/current": {
+      "get": {
+        "operationId": "getCurrentApiKey",
+        "summary": "Describe the calling API key",
+        "description": "The key's name, display prefix, expiry, and organization. API keys only.",
+        "tags": [
+          "API keys"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyIdentity"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "This OpenAPI document",
+        "tags": [
+          "Meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans": {
+      "get": {
+        "operationId": "listScans",
+        "summary": "List the organization's reviews",
+        "description": "Newest first. `filter` defaults to `undecided`. `stageId` narrows the list to the reviews of one npm stage.",
+        "tags": [
+          "Reviews"
+        ],
+        "parameters": [
+          {
+            "name": "stageId",
+            "in": "query",
+            "description": "Only the reviews of this npm stage id (from `npm stage publish`)",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "description": "Decision filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "undecided",
+                "published_without_decision",
+                "decided",
+                "publish",
+                "no_publish",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`nextCursor` from the previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "startScan",
+        "summary": "Start a review",
+        "description": "Queues a review of one staged npm publish (`stageId`) or one published release. Needs a key with `scan` access; poll `GET /api/v1/scans/{id}/status` for the result. A stage the organization already has a review of (one that has not failed) is answered 200 with that review and `existing: true`, so a retried request starts nothing. Starting a review never records a release decision.",
+        "tags": [
+          "Reviews"
+        ],
+        "x-drydock-api-key-access": "scan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartScanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stage already has a review in this organization; nothing was started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedScan"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedScan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The release archive is larger than Drydock reviews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The registry named a package Drydock cannot review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The registry rejected or could not answer the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The registry could not be verified; retry later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/staged-publishes/scan": {
+      "post": {
+        "operationId": "checkNpmForStagedPublishes",
+        "summary": "Check npm for staged publishes",
+        "description": "The dashboard's \"Check npm\": lists the organization's staged npm publishes with its npm token and starts a review of each one not reviewed yet. Needs a key with `scan` access.",
+        "tags": [
+          "Reviews"
+        ],
+        "x-drydock-api-key-access": "scan",
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedPublishDiscovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The registry rejected or could not answer the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}/decision": {
+      "post": {
+        "operationId": "recordStagedDecision",
+        "summary": "Record a decision on a staged publish",
+        "description": "Records the advisory publish / no-publish decision on a completed staged npm publish review, as the key's creator. Needs a key with `decide_staged` access. It never approves or rejects anything on npm, and a key is refused (`403 api_key_staged_decisions_only`) on a workflow-gate package or a published-release review. Every decision needs `totpCode`, a current code from the authenticator of the member who created the key: missing is `401 two_factor_required`, wrong is `401 two_factor_invalid`, and a creator without two-factor authentication is `403 two_factor_enrollment_required`. A code is accepted once (a reused one is `401 two_factor_invalid`), five wrong codes in a row revoke the key (`401 api_key_revoked`), a creator whose two-factor is locked is `401 two_factor_unavailable`, and attempts are limited to 10 per 15 minutes per creator.",
+        "tags": [
+          "Reviews"
+        ],
+        "x-drydock-api-key-access": "decide_staged",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StagedDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/overview": {
+      "get": {
+        "operationId": "getScanOverview",
+        "summary": "Dashboard counts for the last 30 days",
+        "tags": [
+          "Reviews"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanOverview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}": {
+      "get": {
+        "operationId": "getScan",
+        "summary": "Read one review",
+        "tags": [
+          "Reviews"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}/status": {
+      "get": {
+        "operationId": "getScanStatus",
+        "summary": "A review's lifecycle status, for polling",
+        "tags": [
+          "Reviews"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}/report.json": {
+      "get": {
+        "operationId": "exportScanReport",
+        "summary": "Export a completed review",
+        "description": "Byte-stable canonical JSON, served as a download. 409 until the review completes.",
+        "tags": [
+          "Reviews"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportExport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans/{id}/release-receipt.json": {
+      "get": {
+        "operationId": "getReleaseReceipt",
+        "summary": "The Release Receipt of a completed review",
+        "description": "Served as a download with `x-drydock-receipt-sha256`. 409 until the review completes.",
+        "tags": [
+          "Reviews"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The review has not completed or was superseded, or the package is claimed by another organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{name}/releases": {
+      "get": {
+        "operationId": "listPackageReleases",
+        "summary": "One package's reviews in this organization",
+        "description": "Scoped npm names keep their slash: `/api/v1/packages/@scope/name/releases`.",
+        "tags": [
+          "Packages"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Package name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ecosystem",
+            "in": "query",
+            "description": "Registry; defaults to `npm`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "npm",
+                "pypi",
+                "vscode",
+                "atpm"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`nextCursor` from the previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageReleases"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/github-app/workflow-gates/by-scan/{scanId}": {
+      "get": {
+        "operationId": "getWorkflowGateByScan",
+        "summary": "The workflow gate a review belongs to",
+        "tags": [
+          "Workflow gates"
+        ],
+        "parameters": [
+          {
+            "name": "scanId",
+            "in": "path",
+            "required": true,
+            "description": "Review (scan) id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGate"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, unknown, or expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed for this credential or organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/package-diff": {
+      "get": {
+        "operationId": "getPublicPackageDiff",
+        "summary": "Diff two published releases",
+        "description": "Anonymous and rate limited per IP. Parses public release archives without executing them. On npm, `from`/`to` also accept pkg.pr.new preview URLs.",
+        "tags": [
+          "Public diff"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "package",
+            "in": "query",
+            "required": true,
+            "description": "Package name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "description": "Baseline version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "description": "Target version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ecosystem",
+            "in": "query",
+            "description": "Registry; defaults to `npm`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "npm",
+                "pypi",
+                "atpm"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicPackageDiff"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/package-diff/versions": {
+      "get": {
+        "operationId": "listPublicPackageVersions",
+        "summary": "A public package's published versions",
+        "tags": [
+          "Public diff"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "package",
+            "in": "query",
+            "required": true,
+            "description": "Package name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ecosystem",
+            "in": "query",
+            "description": "Registry; defaults to `npm`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "npm",
+                "pypi",
+                "atpm"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicPackageVersions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in this organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited; honor `retry-after`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "ddk_…",
+        "description": "Organization API key from Settings → Integrations → API keys"
+      }
+    },
+    "schemas": {
+      "RiskSummary": {
+        "type": "object",
+        "properties": {
+          "artifactRisk": {
+            "type": "string"
+          },
+          "releaseRisk": {
+            "type": "string"
+          },
+          "contextRisk": {
+            "type": "string"
+          },
+          "releaseFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "contextFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "unknownFindingCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "artifactRisk",
+          "releaseRisk",
+          "contextRisk",
+          "releaseFindingCount",
+          "contextFindingCount",
+          "unknownFindingCount"
+        ],
+        "additionalProperties": {},
+        "description": "Risk split into the release delta and pre-existing package context"
+      },
+      "Finding": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ruleId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruleVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "rule",
+              "ai"
+            ]
+          },
+          "diffStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releaseDelta": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "file",
+          "evidence",
+          "reason"
+        ],
+        "additionalProperties": {}
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "description": "Stable reason a client can act on",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": {}
+      },
+      "ApiKeyIdentity": {
+        "type": "object",
+        "properties": {
+          "organization": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": {}
+          },
+          "key": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string",
+                "description": "Non-secret head of the key, as shown in settings"
+              },
+              "expiresAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "expiresAt"
+            ],
+            "additionalProperties": {}
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "scan",
+              "decide_staged"
+            ],
+            "description": "`read` keys only read; `scan` keys can also start reviews; `decide_staged` keys can also record staged-publish decisions"
+          }
+        },
+        "required": [
+          "organization",
+          "key",
+          "access"
+        ],
+        "additionalProperties": {}
+      },
+      "StartScanRequest": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "stageId": {
+                "type": "string",
+                "description": "npm stage id from `npm stage publish`"
+              }
+            },
+            "required": [
+              "stageId"
+            ],
+            "additionalProperties": {},
+            "description": "Review a staged npm publish; needs the organization's npm token"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ecosystem": {
+                "type": "string",
+                "enum": [
+                  "npm",
+                  "pypi",
+                  "vscode",
+                  "atpm"
+                ]
+              },
+              "packageName": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "baselineVersion": {
+                "description": "Version to diff against; defaults to the previous release",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ecosystem",
+              "packageName",
+              "version"
+            ],
+            "additionalProperties": {},
+            "description": "Review an already-published release"
+          }
+        ]
+      },
+      "StagedDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "no_publish"
+            ]
+          },
+          "reason": {
+            "description": "Shown with the decision in Drydock",
+            "type": "string",
+            "maxLength": 500
+          },
+          "totpCode": {
+            "type": "string",
+            "description": "Current 6-digit code from the key creator's authenticator app, accepted once; never stored"
+          }
+        },
+        "required": [
+          "decision",
+          "totpCode"
+        ],
+        "additionalProperties": {}
+      },
+      "StartedScan": {
+        "type": "object",
+        "properties": {
+          "scan": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stageId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto_discovery",
+                  "workflow_gate",
+                  "published"
+                ]
+              },
+              "packageName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stagedVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "complete",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "stageId",
+              "source",
+              "packageName",
+              "stagedVersion",
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "existing": {
+            "type": "boolean",
+            "description": "True when the stage already had a review and this request started nothing"
+          }
+        },
+        "required": [
+          "scan",
+          "queued",
+          "existing"
+        ],
+        "additionalProperties": {}
+      },
+      "StagedPublishDiscovery": {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Staged publishes the npm token can see"
+          },
+          "created": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Reviews started by this call"
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Stages already reviewed, or not admissible"
+          },
+          "scans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "stageId": {
+                  "type": "string"
+                },
+                "packageName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "stageId",
+                "packageName",
+                "version"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "found",
+          "created",
+          "skipped",
+          "scans"
+        ],
+        "additionalProperties": {}
+      },
+      "ScanList": {
+        "type": "object",
+        "properties": {
+          "scans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "stageId": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "auto_discovery",
+                    "workflow_gate",
+                    "published"
+                  ]
+                },
+                "packageName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "stagedVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previousVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "risk": {
+                  "type": "string",
+                  "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "complete",
+                    "failed"
+                  ]
+                },
+                "decision": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "publish",
+                        "no_publish"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "decisionReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "decidedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "changedFileCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "findingCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reportDigest": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "startedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "completedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp"
+                },
+                "updatedAt": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp"
+                },
+                "ecosystem": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "riskSummary": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RiskSummary"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "stageId",
+                "source",
+                "packageName",
+                "stagedVersion",
+                "previousVersion",
+                "risk",
+                "status",
+                "decision",
+                "decisionReason",
+                "decidedAt",
+                "changedFileCount",
+                "findingCount",
+                "reportDigest",
+                "startedAt",
+                "completedAt",
+                "createdAt",
+                "updatedAt",
+                "ecosystem",
+                "riskSummary"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "nextCursor": {
+            "description": "Pass as `cursor` for the next page",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filter": {
+            "type": "string",
+            "enum": [
+              "undecided",
+              "published_without_decision",
+              "decided",
+              "publish",
+              "no_publish",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "scans",
+          "nextCursor",
+          "filter",
+          "limit"
+        ],
+        "additionalProperties": {}
+      },
+      "ScanOverview": {
+        "type": "object",
+        "properties": {
+          "totalScans": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "windowDays": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "waiting": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "oldestCompletedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "count",
+              "oldestCompletedAt"
+            ],
+            "additionalProperties": {}
+          },
+          "validating": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reviewReady": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "count",
+              "reviewReady"
+            ],
+            "additionalProperties": {}
+          },
+          "publishedWithoutDecision": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "count"
+            ],
+            "additionalProperties": {}
+          },
+          "decided": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "approved": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "rejected": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "medianDecisionMs": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "count",
+              "approved",
+              "rejected",
+              "medianDecisionMs"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "totalScans",
+          "windowDays",
+          "waiting",
+          "validating",
+          "publishedWithoutDecision",
+          "decided"
+        ],
+        "additionalProperties": {}
+      },
+      "ScanDetail": {
+        "type": "object",
+        "properties": {
+          "scan": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stageId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto_discovery",
+                  "workflow_gate",
+                  "published"
+                ]
+              },
+              "packageName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stagedVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "risk": {
+                "type": "string",
+                "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "complete",
+                  "failed"
+                ]
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "publish",
+                      "no_publish"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decisionReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "changedFileCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "findingCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reportDigest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "startedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              "updatedAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              "decidedByName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "stageId",
+              "source",
+              "packageName",
+              "stagedVersion",
+              "previousVersion",
+              "risk",
+              "status",
+              "decision",
+              "decisionReason",
+              "decidedAt",
+              "changedFileCount",
+              "findingCount",
+              "reportDigest",
+              "startedAt",
+              "completedAt",
+              "createdAt",
+              "updatedAt",
+              "decidedByName"
+            ],
+            "additionalProperties": {}
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "riskSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "scan",
+          "files",
+          "findings",
+          "riskSummary"
+        ],
+        "additionalProperties": {}
+      },
+      "ScanStatus": {
+        "type": "object",
+        "properties": {
+          "scan": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stageId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto_discovery",
+                  "workflow_gate",
+                  "published"
+                ]
+              },
+              "packageName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stagedVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "risk": {
+                "type": "string",
+                "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "complete",
+                  "failed"
+                ]
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "publish",
+                      "no_publish"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decisionReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "changedFileCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "findingCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reportDigest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "startedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              "updatedAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              }
+            },
+            "required": [
+              "id",
+              "stageId",
+              "source",
+              "packageName",
+              "stagedVersion",
+              "previousVersion",
+              "risk",
+              "status",
+              "decision",
+              "decisionReason",
+              "decidedAt",
+              "changedFileCount",
+              "findingCount",
+              "reportDigest",
+              "startedAt",
+              "completedAt",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": {}
+          },
+          "riskSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null until the review completes, and when no release delta was graded (no baseline compared, or a review recorded before the split); fall back to `scan.risk` then"
+          }
+        },
+        "required": [
+          "scan",
+          "riskSummary"
+        ],
+        "additionalProperties": {}
+      },
+      "ReportExport": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "drydock.report.v2"
+          },
+          "scan": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stageId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "complete",
+                  "failed"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "auto_discovery",
+                  "workflow_gate",
+                  "published"
+                ]
+              },
+              "risk": {
+                "type": "string",
+                "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "publish",
+                      "no_publish"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "stageId",
+              "status",
+              "source",
+              "risk",
+              "decision",
+              "createdAt",
+              "completedAt"
+            ],
+            "additionalProperties": {}
+          },
+          "package": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stagedVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previousVersion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "stagedVersion",
+              "previousVersion"
+            ],
+            "additionalProperties": {}
+          },
+          "riskSummary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RiskSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "scan",
+          "package",
+          "riskSummary",
+          "findings"
+        ],
+        "additionalProperties": {},
+        "description": "Canonical, stable-ordered export of a completed review (`drydock.report.v2`)"
+      },
+      "ReleaseReceipt": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "drydock.release-receipt.v1"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "const": "sha256"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "algorithm",
+              "value"
+            ],
+            "additionalProperties": {}
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "report": {
+                "type": "object",
+                "properties": {
+                  "schema": {
+                    "type": "string",
+                    "const": "drydock.report.v2"
+                  },
+                  "digest": {
+                    "type": "object",
+                    "properties": {
+                      "algorithm": {
+                        "type": "string",
+                        "const": "sha256"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "algorithm",
+                      "value"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "schema",
+                  "digest"
+                ],
+                "additionalProperties": {}
+              },
+              "release": {
+                "type": "object",
+                "properties": {
+                  "scanId": {
+                    "type": "string"
+                  },
+                  "stageId": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "workflow_gate",
+                      "staged_publish"
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "auto_discovery",
+                      "workflow_gate",
+                      "published"
+                    ]
+                  },
+                  "package": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "stagedVersion": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "previousVersion": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "stagedVersion",
+                      "previousVersion"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "risk": {
+                    "type": "string",
+                    "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+                  }
+                },
+                "required": [
+                  "scanId",
+                  "stageId",
+                  "mode",
+                  "source",
+                  "package",
+                  "risk"
+                ],
+                "additionalProperties": {}
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "description": "`complete`, `partial`, `conflicting`, or `unknown`"
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "report",
+              "release",
+              "evidence"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "schema",
+          "address",
+          "content"
+        ],
+        "additionalProperties": {},
+        "description": "Release Receipt v1; see docs/release-receipts.md"
+      },
+      "PackageReleases": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ecosystem": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "ecosystem"
+            ],
+            "additionalProperties": {}
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "totalReviews": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "publishedWithoutDecision": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "publishedDespiteBlock": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "totalReviews",
+              "publishedWithoutDecision",
+              "publishedDespiteBlock"
+            ],
+            "additionalProperties": {}
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "stageId": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "manual",
+                    "auto_discovery",
+                    "workflow_gate",
+                    "published"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "complete",
+                    "failed"
+                  ]
+                },
+                "stagedVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previousVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "risk": {
+                  "type": "string",
+                  "description": "`low`, `medium`, `high`, or `critical`; `pending` until a review completes"
+                },
+                "riskSummary": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RiskSummary"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "decision": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "publish",
+                        "no_publish"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "decisionReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "decidedByName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "decidedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp"
+                },
+                "completedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "ISO 8601 timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "stageId",
+                "source",
+                "status",
+                "stagedVersion",
+                "previousVersion",
+                "tag",
+                "risk",
+                "riskSummary",
+                "decision",
+                "decisionReason",
+                "decidedByName",
+                "decidedAt",
+                "createdAt",
+                "completedAt"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "package",
+          "summary",
+          "releases",
+          "nextCursor",
+          "limit"
+        ],
+        "additionalProperties": {}
+      },
+      "WorkflowGate": {
+        "type": "object",
+        "properties": {
+          "gate": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "repositoryFullName": {
+                "type": "string"
+              },
+              "environment": {
+                "type": "string"
+              },
+              "runId": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "description": "`pending` until every package is decided"
+              },
+              "decision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scanId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "packages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "scanId": {
+                      "type": "string"
+                    },
+                    "packageName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "version": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "releaseRisk": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decision": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "scanId",
+                    "packageName",
+                    "version",
+                    "status",
+                    "releaseRisk",
+                    "decision"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "requestedAt": {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              "decidedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "repositoryFullName",
+              "environment",
+              "runId",
+              "status",
+              "decision",
+              "scanId",
+              "packages",
+              "requestedAt",
+              "decidedAt"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "gate"
+        ],
+        "additionalProperties": {}
+      },
+      "PublicPackageVersions": {
+        "type": "object",
+        "properties": {
+          "ecosystem": {
+            "type": "string"
+          },
+          "packageName": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "versions": {
+            "type": "array",
+            "items": {}
+          },
+          "suggested": {}
+        },
+        "required": [
+          "ecosystem",
+          "packageName",
+          "displayName",
+          "versions",
+          "suggested"
+        ],
+        "additionalProperties": {}
+      },
+      "PublicPackageDiff": {
+        "type": "object",
+        "properties": {
+          "ecosystem": {
+            "type": "string"
+          },
+          "packageName": {
+            "type": "string"
+          },
+          "fromVersion": {
+            "type": "string"
+          },
+          "toVersion": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "status"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "risk": {
+            "type": "object",
+            "properties": {
+              "artifactRisk": {
+                "type": "string"
+              },
+              "releaseRisk": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifactRisk",
+              "releaseRisk"
+            ],
+            "additionalProperties": {}
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cachedAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          }
+        },
+        "required": [
+          "ecosystem",
+          "packageName",
+          "fromVersion",
+          "toVersion",
+          "diff",
+          "findings",
+          "risk",
+          "notices",
+          "cachedAt"
+        ],
+        "additionalProperties": {}
+      },
+      "OpenApiDocument": {
+        "type": "object",
+        "properties": {
+          "openapi": {
+            "type": "string"
+          },
+          "info": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          },
+          "paths": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "openapi",
+          "info",
+          "paths"
+        ],
+        "additionalProperties": {}
+      }
+    }
+  }
+}

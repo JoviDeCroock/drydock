@@ -392,7 +392,13 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
         ).toBe(false);
         return;
       }
-      expect(created.status, scenario.name).toBe(202);
+      // The smoke test's Check npm may already have started a review of this
+      // stage, and a repeated start answers with that review, not a second one.
+      if (created.status === 200) {
+        expect(created.body?.existing, `${scenario.name}: existing review`).toBe(true);
+      } else {
+        expect(created.status, scenario.name).toBe(202);
+      }
       const scanId = created.body?.scan?.id;
       expect(scanId, `${scenario.name}: scan id present`).toBeTruthy();
 
@@ -1449,6 +1455,7 @@ async function openAuthenticatedPage(
 interface CreateScanBody {
   scan?: { id?: string };
   queued?: boolean;
+  existing?: boolean;
 }
 
 async function createScan(

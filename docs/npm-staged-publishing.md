@@ -64,7 +64,15 @@ in-app guide at `/docs#staged-publishing` covers that setup.
 
 5. **Approve on npm with 2FA.** Either `npm stage approve <stage-id>` from the
    CLI or the Staged Packages tab on npmjs.com. Drydock never holds a credential
-   that can complete this step.
+   that can complete this step. From a terminal,
+   [`drydock approve <stage-id>`](../cli/README.md#approving-a-staged-publish)
+   shows the review's install-time scripts, new dependencies, new executables,
+   and top findings, records your publish or reject decision in Drydock (the
+   decision needs your Drydock authenticator code), and then runs your own
+   `npm stage approve`, which asks for npm's one-time password directly;
+   Drydock never sees that one. That is a convenience and a
+   record, not enforcement: approving on npmjs.com or with npm directly skips
+   it.
 
 ## Why each pin matters
 

@@ -5,7 +5,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 ## Server
 
 - `server/index.ts` mounts the Hono Worker routes under `/api/*`, owns the session guard and the anonymous-mount order, and is the deploy target in `wrangler.jsonc`; it re-exports the `scheduled` and `queue` handlers.
-- `server/middleware/` holds the request middleware `server/index.ts` composes: security headers, canonical host and static-asset fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin check, auth IP rate limit, and the per-request `c.var.db` handle.
+- `server/middleware/` holds the request middleware `server/index.ts` composes: security headers, canonical host and static-asset fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin check, auth IP rate limit, organization API-key authentication (`api-key-auth.ts`, see `api-keys.md`), and the per-request `c.var.db` handle.
 - `server/scheduled.ts` is the cron handler (staged-publish discovery sweep plus audit, auth-row, and rate-limit pruning); `server/queue.ts` is the `SCAN_QUEUE` consumer for scan and workflow-gate messages.
 - `server/lib/rate-limit.ts` composes the domain-free limiter in `server/lib/platform/rate-limit.ts` with the D1 fallback (`server/db/rate-limits.ts`); routes call its `enforceRateLimit`/`guardRateLimit`.
 - `server/routes/scans/` owns scan HTTP behavior, split by caller intent into `lifecycle`, `decisions`, `sharing`, and `compare` and mounted by its `index.ts`.
@@ -21,6 +21,10 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/notify/` owns notification fan-out, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.
 - `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, `scan-registry-status`, `scan-overview`, `scan-package-releases`, and `scan-risk`; `scan-share` (public share and threat-feed reads) is imported directly; `enums.ts`, `scan-status.ts`, and `scan-query.ts` are the leaves those modules share instead of importing each other.
+
+## CLI
+
+- `cli/` is the dependency-free `drydock` CLI over the API-key surface (`cli/README.md`). `cli/src/main.mjs` takes all process access as an injected `io`, so `test/cli.test.ts` drives it with a fake fetch and `test/workers/cli.test.ts` runs it against the real Worker. It is typechecked from JSDoc by `cli/tsconfig.json`.
 
 ## UI, migrations, and tests
 
