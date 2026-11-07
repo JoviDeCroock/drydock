@@ -1,7 +1,7 @@
 /**
- * Dependency review: the GitHub App's check on Dependabot and Renovate pull
- * requests. One model owns the organization's settings and its recent
- * reviews (one endpoint returns both); a second reads one review's bumps.
+ * Dependency review: the GitHub App's check on pull requests from branches
+ * in the installed repository. One model owns the organization's settings
+ * and recent reviews (one endpoint returns both); a second reads one review's bumps.
  * Both follow a queued or running review to its result while the page is
  * open, on the same cadence as a running scan.
  */

@@ -112,6 +112,51 @@ const INSTALL_SCRIPT = {
 };
 
 describe("dependency review job", () => {
+  test("a code-only PR succeeds with an explicit no-dependency-changes result", async () => {
+    const { api, review, input } = await scenario({
+      pr: { files: [{ filename: "src/app.ts", status: "modified" }] },
+    });
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({
+      status: "completed",
+      conclusion: "clear",
+      bumpCount: 0,
+      heldCount: 0,
+    });
+    expect(api.lastCheckRunState()).toMatchObject({
+      conclusion: "success",
+      output: {
+        title: "No dependency additions or updates",
+        summary: "This PR adds no dependencies and changes no resolved package versions.",
+      },
+    });
+    expect(api.requests.some((r) => r.url.includes("/contents/"))).toBe(false);
+    expectTokenStaysOnGithub(api);
+  });
+
+  test.each(["unchanged", "removal only"])(
+    "%s lockfile dependencies succeed without diffing package releases",
+    async (change) => {
+      const name = uniquePackageName("no-update");
+      const { api, review, input } = await scenario({
+        before: { [name]: "1.0.0" },
+        after: change === "unchanged" ? { [name]: "1.0.0" } : {},
+      });
+
+      await runDependencyReviewJob(input);
+
+      expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
+      expect(api.lastCheckRunState()).toMatchObject({
+        conclusion: "success",
+        output: { title: "No dependency additions or updates" },
+      });
+      expect(api.requests.every((r) => r.host === "api.github.com")).toBe(true);
+      expectTokenStaysOnGithub(api);
+    },
+  );
+
   test("a bump with nothing to hold completes the check as success", async () => {
     const { name, api, review, input } = await scenario();
     await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
@@ -352,7 +397,7 @@ describe("dependency review job", () => {
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
   });
 
-  test("a PR no dependency bot opened gets a skipped check and nothing else", async () => {
+  test("a legacy queued skip still completes safely", async () => {
     const seeded = await seedDependencyReviewOrg();
     const pr = fakePullRequest({ permissions: new Map([["octocat", "write"]]) });
     const api = stubGithubApi(pr);
@@ -532,7 +577,7 @@ describe("dependency review job", () => {
     );
   });
 
-  test("a .txt a dependency bot changed is read as requirements", async () => {
+  test("a changed .txt is read as requirements", async () => {
     const { pr, api, review, input } = await scenario({
       pr: { files: [{ filename: "deps/common.txt", status: "modified" }] },
     });
@@ -937,6 +982,119 @@ describe("lockfiles the review could not read", () => {
     expect(checkOutput(api).summary).toContain(`\`${filename}\``);
   });
 
+  test.each(["modified", "added", "renamed"])(
+    "an npm manifest %s with only metadata changes passes without a lockfile",
+    async (status) => {
+      const filename = "app/package.json";
+      const { pr, api, review, input } = await scenario({
+        pr: {
+          files: [
+            {
+              filename,
+              status,
+              ...(status === "renamed" ? { previous_filename: "old/package.json" } : {}),
+            },
+          ],
+        },
+      });
+      if (status !== "added") {
+        pr.contents.set(
+          `${pr.mergeBaseSha}:${status === "renamed" ? "old/package.json" : filename}`,
+          JSON.stringify({ name: "app", version: "1.0.0", description: "before" }),
+        );
+      }
+      pr.contents.set(
+        `${pr.headSha}:${filename}`,
+        JSON.stringify({ name: "app", version: "1.0.1", scripts: { test: "node test.js" } }),
+      );
+
+      await runDependencyReviewJob(input);
+
+      expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
+      expect(checkOutput(api).title).toBe("No dependency additions or updates");
+      expectTokenStaysOnGithub(api);
+    },
+  );
+
+  test("metadata changes with unchanged dependency declarations pass without a lockfile", async () => {
+    const filename = "package.json";
+    const { pr, api, review, input } = await scenario({
+      pr: { files: [{ filename, status: "modified" }] },
+    });
+    pr.contents.set(
+      `${pr.mergeBaseSha}:${filename}`,
+      JSON.stringify({ description: "before", dependencies: { a: "1.0.0", b: "2.0.0" } }),
+    );
+    pr.contents.set(
+      `${pr.headSha}:${filename}`,
+      JSON.stringify({ description: "after", dependencies: { b: "2.0.0", a: "1.0.0" } }),
+    );
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
+    expect(checkOutput(api).title).toBe("No dependency additions or updates");
+  });
+
+  test("a moved manifest's unchanged dependencies still need resolution in its new directory", async () => {
+    const filename = "new/package.json";
+    const { pr, api, review, input } = await scenario({
+      pr: {
+        files: [{ filename, status: "renamed", previous_filename: "old/package.json" }],
+      },
+    });
+    const manifest = JSON.stringify({ dependencies: { existing: "1.0.0" } });
+    pr.contents.set(`${pr.mergeBaseSha}:old/package.json`, manifest);
+    pr.contents.set(`${pr.headSha}:${filename}`, manifest);
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({ conclusion: "held" });
+    expect(checkOutput(api).summary).toContain("`new/package.json`");
+  });
+
+  test.each(["dependency edit", "malformed", "oversized"])(
+    "an npm manifest with a %s remains unread without a lockfile",
+    async (change) => {
+      const filename = "package.json";
+      const { pr, api, review, input } = await scenario({
+        pr: { files: [{ filename, status: "modified" }] },
+      });
+      pr.contents.set(`${pr.mergeBaseSha}:${filename}`, JSON.stringify({ dependencies: {} }));
+      pr.contents.set(
+        `${pr.headSha}:${filename}`,
+        change === "dependency edit"
+          ? JSON.stringify({ dependencies: { added: "1.0.0" } })
+          : change === "malformed"
+            ? "{ invalid"
+            : " ".repeat(8 * 1024 * 1024 + 1),
+      );
+
+      await runDependencyReviewJob(input);
+
+      expect(await readReview(review.id)).toMatchObject({ conclusion: "held" });
+      expect(checkOutput(api).summary).toContain("`package.json`");
+      expect(checkOutput(api).title).not.toBe("No dependency additions or updates");
+    },
+  );
+
+  test("npm manifests past the comparison cap stay unread", async () => {
+    const files = Array.from({ length: 21 }, (_, i) => ({
+      filename: `app${i}/package.json`,
+      status: "added",
+    }));
+    const { pr, api, review, input } = await scenario({ pr: { files } });
+    for (const file of files) {
+      pr.contents.set(`${pr.headSha}:${file.filename}`, JSON.stringify({ name: "app" }));
+    }
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({ conclusion: "held" });
+    expect(checkOutput(api).summary).toContain("`app20/package.json`");
+    expect(api.requests.filter((r) => r.url.includes("/contents/"))).toHaveLength(20);
+  });
+
   test("a manifest changed alongside a parsed lockfile is reviewed through the lockfile", async () => {
     const { name, api, review, input } = await scenario({
       pr: {
@@ -975,6 +1133,8 @@ describe("lockfiles the review could not read", () => {
     expect((await readReview(review.id)).conclusion).toBe("clear");
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
     expect(checkOutput(api).summary).toContain("bun.lock");
+    expect(checkOutput(api).title).toBe("No updates held");
+    expect(checkOutput(api).summary).not.toContain("adds no dependencies");
   });
 
   test("lockfiles past the 20-per-review cap hold the review", async () => {

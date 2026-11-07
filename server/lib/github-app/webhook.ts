@@ -234,6 +234,8 @@ export interface DispatchDeps {
   appId: string;
   // The `dependency-review` rollout flag for an organization.
   dependencyReviewAvailable: (organizationId: string) => Promise<boolean>;
+  // Required for non-bot PRs; absent fails closed before creating a review.
+  authorizeDependencyReviewPullRequest?: (event: ParsedPullRequestEvent) => Promise<boolean>;
 }
 
 /**
@@ -287,7 +289,12 @@ export async function applyGithubWebhookEvent(
   }
 
   if (event.kind === "pull_request") {
-    return applyPullRequestEvent(db, event, deps.dependencyReviewAvailable);
+    return applyPullRequestEvent(
+      db,
+      event,
+      deps.dependencyReviewAvailable,
+      deps.authorizeDependencyReviewPullRequest,
+    );
   }
   if (event.kind === "check_run") return applyCheckRunEvent(db, event, deps.appId);
 

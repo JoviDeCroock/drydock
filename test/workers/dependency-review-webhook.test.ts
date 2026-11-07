@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
   createDependencyReview,
@@ -8,14 +8,24 @@ import {
 } from "../../server/db/dependency-reviews";
 import * as schema from "../../server/db/schema";
 import {
+  applyGithubWebhookEvent,
+  parseGithubWebhookEvent,
+} from "../../server/lib/github-app/webhook";
+import {
   checkRunPayload,
+  fakePullRequest,
   pullRequestPayload,
   seedDependencyReviewOrg,
   sha,
+  stubGithubApi,
   uniqueInstallationId,
   webhookHarness,
 } from "./helpers/dependency-review";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 async function reviewRows(organizationId: string) {
   return createDb(env.DB)
@@ -102,8 +112,119 @@ describe("pull_request deliveries", () => {
     expect(sent).toHaveLength(1);
   });
 
+  test.each(["opened", "synchronize", "reopened"])(
+    "a human writer's same-repository PR is reviewed on %s",
+    async (action) => {
+      const seeded = await seedDependencyReviewOrg();
+      const pr = fakePullRequest({
+        permissions: new Map([
+          ["octocat", "write"],
+          ["pusher", "maintain"],
+        ]),
+      });
+      const api = stubGithubApi(pr);
+      const { sent, deliver } = webhookHarness();
+
+      const { res, json } = await deliver({
+        eventName: "pull_request",
+        body: pullRequestPayload({
+          installationId: seeded.installationExternalId,
+          authorLogin: "octocat",
+          authorType: "User",
+          senderLogin: "pusher",
+          action,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(json.result).toBe("dependency_review_queued");
+      const [row] = await reviewRows(seeded.organizationId);
+      expect(row).toMatchObject({ authorLogin: "octocat", status: "queued" });
+      expect(sent).toEqual([
+        { kind: "dependency_review", organizationId: seeded.organizationId, reviewId: row.id },
+      ]);
+      expect(api.tokenHosts()).toEqual(["api.github.com"]);
+      expect(api.unexpected).toEqual([]);
+    },
+  );
+
+  test("a human PR cannot claim a commit when its sender cannot write", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    stubGithubApi(fakePullRequest({ permissions: new Map([["octocat", "write"]]) }));
+    const { sent, deliver } = webhookHarness();
+
+    const { res, json } = await deliver({
+      eventName: "pull_request",
+      body: pullRequestPayload({
+        installationId: seeded.installationExternalId,
+        authorLogin: "octocat",
+        authorType: "User",
+        senderLogin: "reader",
+        action: "synchronize",
+        pullNumber: 4043,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(json.result).toBe("dependency_review_skipped");
+    expect(sent[0]).toHaveProperty("skip");
+    expect(await reviewRows(seeded.organizationId)).toEqual([]);
+
+    await deliver({
+      eventName: "pull_request",
+      body: pullRequestPayload({ installationId: seeded.installationExternalId }),
+    });
+    expect(await reviewRows(seeded.organizationId)).toEqual([
+      expect.objectContaining({ pullNumber: 42, authorLogin: "dependabot[bot]" }),
+    ]);
+  });
+
+  test("a writer's fork still skips without looking up repository permissions", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const api = stubGithubApi(fakePullRequest({ permissions: new Map([["octocat", "write"]]) }));
+    const { deliver } = webhookHarness();
+
+    const { json } = await deliver({
+      eventName: "pull_request",
+      body: pullRequestPayload({
+        installationId: seeded.installationExternalId,
+        authorLogin: "octocat",
+        authorType: "User",
+        headRepositoryId: 9999,
+      }),
+    });
+
+    expect(json.result).toBe("dependency_review_skipped");
+    expect(api.requests).toEqual([]);
+    expect(await reviewRows(seeded.organizationId)).toEqual([]);
+  });
+
+  test("dispatch without a human authorization callback cannot create a review", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const event = parseGithubWebhookEvent(
+      "pull_request",
+      JSON.stringify(
+        pullRequestPayload({
+          installationId: seeded.installationExternalId,
+          authorLogin: "octocat",
+          authorType: "User",
+        }),
+      ),
+    );
+    if ("error" in event) throw new Error(event.error);
+
+    const outcome = await applyGithubWebhookEvent(createDb(env.DB), event, {
+      deliveryId: crypto.randomUUID(),
+      appId: "1234",
+      dependencyReviewAvailable: async () => true,
+    });
+
+    expect(outcome.kind).toBe("dependency_review_skipped");
+    expect(await reviewRows(seeded.organizationId)).toEqual([]);
+  });
+
   test.each([
-    ["a human author", { authorLogin: "octocat", authorType: "User" }, false],
+    ["a human author without write access", { authorLogin: "octocat", authorType: "User" }, false],
     [
       "dependabot[bot] as a User account",
       { authorLogin: "dependabot[bot]", authorType: "User" },
@@ -118,6 +239,7 @@ describe("pull_request deliveries", () => {
     "%s gets a skipped check instead of a review",
     async (_label, payloadOptions, fromFork) => {
       const seeded = await seedDependencyReviewOrg();
+      stubGithubApi(fakePullRequest());
       const { sent, deliver } = webhookHarness();
 
       const { res, json } = await deliver({

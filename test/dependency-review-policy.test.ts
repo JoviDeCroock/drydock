@@ -391,7 +391,8 @@ describe("renderDependencyReviewCheck", () => {
         approvedBy: "octocat",
         unreadLockfiles: [],
       });
-    expect(render([], "clear").title).toBe("No reviewable package updates");
+    expect(render([], "clear").title).toBe("No dependency additions or updates");
+    expect(render([], "clear").summary).toContain("adds no dependencies");
     expect(render([clear], "clear").title).toBe("Update clear");
     expect(render([clear, clear], "clear").title).toBe("All 2 updates clear");
     // A bump passing without a diff read (policy off, or a new package) is not "clear".
@@ -450,6 +451,21 @@ describe("renderDependencyReviewCheck", () => {
     });
     expect(title).toBe("Held: some updates could not be read");
   });
+
+  test.each([{ unreadLockfiles: ["bun.lock"] }, { unreadLockfiles: [], listingComplete: false }])(
+    "incomplete coverage never claims no dependency changes, even if allowed",
+    (coverage) => {
+      const output = renderDependencyReviewCheck({
+        bumps: [],
+        conclusion: "clear",
+        diffUrl,
+        approvedBy: null,
+        ...coverage,
+      });
+      expect(output.title).toBe("No updates held");
+      expect(output.summary).not.toContain("adds no dependencies");
+    },
+  );
 
   test("output stays under GitHub's field limit", () => {
     const many: ReviewedBump[] = Array.from({ length: 2000 }, (_, i) => ({

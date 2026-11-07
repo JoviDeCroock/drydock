@@ -74,10 +74,11 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   const clear = input.bumps.filter((b) => b.verdict.status === "clear");
   const unreviewed = input.bumps.filter((b) => b.verdict.status === "unreviewed");
   const added = input.bumps.filter((b) => b.verdict.status === "new-package");
+  const complete = input.unreadLockfiles.length === 0 && input.listingComplete !== false;
 
   const lines: string[] = [];
-  if (input.bumps.length === 0) {
-    lines.push("This PR changes no package version Drydock can review.");
+  if (input.bumps.length === 0 && complete) {
+    lines.push("This PR adds no dependencies and changes no resolved package versions.");
   }
   if (held.length > 0) {
     lines.push(
@@ -119,7 +120,7 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   }
 
   return {
-    title: renderTitle(input.conclusion, held.length, input.bumps.length, clear.length),
+    title: renderTitle(input.conclusion, held.length, input.bumps.length, clear.length, complete),
     summary: bound(lines),
   };
 }
@@ -135,6 +136,7 @@ function renderTitle(
   heldCount: number,
   total: number,
   clearCount: number,
+  complete: boolean,
 ): string {
   if (conclusion === "held") {
     // Held with nothing held per bump: a lockfile or the file listing went unread.
@@ -142,10 +144,10 @@ function renderTitle(
     return `${heldCount} of ${total} ${total === 1 ? "update" : "updates"} held for review`;
   }
   if (conclusion === "approved") return "Held updates approved";
-  if (total === 0) return "No reviewable package updates";
+  if (total === 0 && complete) return "No dependency additions or updates";
   // "Clear" claims a diff was read; unreviewed and new packages passing by
   // policy were not.
-  if (clearCount < total) return "No updates held";
+  if (!complete || clearCount < total) return "No updates held";
   return `${total === 1 ? "Update" : `All ${total} updates`} clear`;
 }
 
