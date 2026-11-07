@@ -8,6 +8,7 @@ import type { PublicGithubAppInstallation } from "../../models/github-app";
 import { PublisherSetupModel, type SetupOperation } from "../../models/publisher-setup";
 import { ReleaseTargetsModel } from "../../models/release-targets";
 import { scanDetailPath } from "../../lib/scan-detail-path";
+import { setupStatusAgentSummary } from "./agent-summary";
 import { Alert } from "../../components/Alert";
 import { Button, LinkButton } from "../../components/Button";
 import { SettingsCardBody, SettingsCardHeader } from "../../components/Card";
@@ -672,6 +673,7 @@ function StatusResult({
 }) {
   const status = model.setupStatus.value!;
   const scanId = useComputed(() => model.setupStatus.value?.firstReview?.scanId ?? null);
+  const agentSummary = setupStatusAgentSummary(status);
   return (
     <div class="flex flex-col gap-3" aria-live="polite">
       <ul class="m-0 p-0 list-none border border-border rounded-md divide-y divide-border">
@@ -692,6 +694,15 @@ function StatusResult({
           </li>
         ))}
       </ul>
+      <div class="flex flex-col gap-2">
+        <CopyButton text={agentSummary} label="Copy for your agent" />
+        <details class="text-[13px] text-ink-muted">
+          <summary class="cursor-pointer focus-visible:outline-accent">Text for your agent</summary>
+          <pre class="m-0 mt-2 whitespace-pre-wrap font-mono text-[12px] leading-[1.6]">
+            {agentSummary}
+          </pre>
+        </details>
+      </div>
       <Show when={() => !model.setupStatus.value!.targetMapped}>
         <div>
           <Button disabled={model.busy} variant="secondary" onClick={() => void onMapTarget()}>

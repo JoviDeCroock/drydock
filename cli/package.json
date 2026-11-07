@@ -1,0 +1,24 @@
+{
+  "name": "drydock-cli",
+  "version": "0.1.0",
+  "description": "Read Drydock package reviews, reports, and receipts from scripts and CI",
+  "homepage": "https://github.com/JoviDeCroock/drydock/tree/main/cli#readme",
+  "bugs": "https://github.com/JoviDeCroock/drydock/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoviDeCroock/drydock.git",
+    "directory": "cli"
+  },
+  "bin": {
+    "drydock": "./bin/drydock.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  }
+}
