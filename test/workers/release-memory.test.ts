@@ -31,7 +31,14 @@ async function seedMemoryScan(owner: ScanOwner, options: SeedScanOptions = {}) {
     findings: options.findings ?? [spawnFinding("test/spawn.js")],
     job: options.source ? { source: options.source } : undefined,
   });
-  if (options.decision) {
+  if (options.decision && options.source === "workflow_gate") {
+    // A gate package decides through its gate, never `recordScanDecision`;
+    // this fixture only needs the recorded verdict.
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ decision: options.decision, decidedAt: new Date(), decidedByUserId: owner.userId })
+      .where(eq(schema.scans.id, scanId));
+  } else if (options.decision) {
     await recordScanDecision(createDb(env.DB), {
       scanId,
       organizationId: owner.organizationId,

@@ -307,6 +307,38 @@ describe("workflow-gate decision 2FA step-up", () => {
     },
   );
 
+  test(
+    "the generic scan decision route refuses a gate package, so the step-up cannot be skipped",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUpUserId(jar);
+      await enrollTwoFactor(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls);
+
+      const res = await callWorker("POST", `/api/v1/scans/${scanId}/decision`, {
+        body: { decision: "publish" },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(409);
+      const [scan] = await createDb(env.DB)
+        .select({ decision: schema.scans.decision })
+        .from(schema.scans)
+        .where(eq(schema.scans.id, scanId));
+      expect(scan?.decision).toBeNull();
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("pending");
+      expect(decisionCalls).toHaveLength(0);
+    },
+  );
+
   test("a maintainer without 2FA decides a gate without a code", { timeout: 30_000 }, async () => {
     const jar: Jar = new Map();
     const userId = await signUpUserId(jar);

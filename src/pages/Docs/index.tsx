@@ -981,26 +981,27 @@ export default function DocsPage() {
             <Subsection id="cli" title="The drydock CLI">
               <Prose>
                 The CLI wraps those endpoints with readable output, exit codes for CI, and a receipt
-                check against the digest Drydock sends. It is not published to npm yet: run it with
-                Node from a checkout of the Drydock repository. It reads the key from{" "}
+                check against the digest Drydock sends. Run it with{" "}
+                <InlineCode>npx drydock-cli</InlineCode>, or install it globally for a{" "}
+                <InlineCode>drydock</InlineCode> command. It reads the key from{" "}
                 <InlineCode>DRYDOCK_API_KEY</InlineCode> only, so the key stays out of shell
                 history.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`node cli/bin/drydock.mjs whoami
-node cli/bin/drydock.mjs scans list --filter undecided
-node cli/bin/drydock.mjs scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
-node cli/bin/drydock.mjs receipt <review-id> --output receipt.json
-node cli/bin/drydock.mjs diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
+                {`npx drydock-cli whoami
+npx drydock-cli scans list --filter undecided
+npx drydock-cli scans wait <review-id> --fail-on high   # exit 3 at high release risk or above
+npx drydock-cli receipt <review-id> --output receipt.json
+npx drydock-cli diff left-pad 1.3.0 1.4.0               # public diff, no key needed`}
               </CodeBlock>
               <Prose>
                 With a review-access key, CI can start the review itself instead of waiting for the
                 next scheduled npm check:
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`node cli/bin/drydock.mjs check-npm                                            # discover staged publishes now
-node cli/bin/drydock.mjs scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
-node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
+                {`npx drydock-cli check-npm                                            # discover staged publishes now
+npx drydock-cli scans start --stage "$STAGE_ID" --wait --fail-on high  # gate a staged publish on risk
+npx drydock-cli scans start @acme/cli@2.1.0 --wait --fail-on high      # review a published version`}
               </CodeBlock>
               <Prose>
                 On your own machine, <InlineCode>drydock approve</InlineCode> shows the review at
@@ -1012,7 +1013,7 @@ node cli/bin/drydock.mjs scans start @acme/cli@2.1.0 --wait --fail-on high      
                 enforcement: approving on npmjs.com skips it.
               </Prose>
               <CodeBlock name="terminal" lang="bash">
-                {`node cli/bin/drydock.mjs approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
+                {`npx drydock-cli approve "$STAGE_ID"   # or @acme/cli@2.1.0`}
               </CodeBlock>
               <Prose>
                 Package names and finding text come from the packages under review, so the CLI
