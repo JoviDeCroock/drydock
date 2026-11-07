@@ -2,7 +2,7 @@ import { type AppDb } from "../../../db/client";
 import { getNpmConnection, markNpmConnectionUsedIfStale } from "../../../db/npm-connections";
 import { base64UrlDecode, base64UrlEncode, sha256Base64Url } from "../../platform/crypto-utils";
 import { errorMessage } from "../../platform/errors";
-import { reliableFetch } from "../../platform/reliable-fetch";
+import { fetchWithinBaseUrl } from "../../platform/url-scope";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 
@@ -250,7 +250,7 @@ export async function validateNpmCredential(
 
 async function validateRegistryAuth(registry: string, token: string) {
   try {
-    const response = await reliableFetch(`${registry}/-/whoami`, {
+    const response = await fetchWithinBaseUrl(`${registry}/-/whoami`, registry, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     const data = (await response.json().catch(() => null)) as {
@@ -279,7 +279,7 @@ async function validateRegistryAuth(registry: string, token: string) {
 
 async function validateStagedListAccess(registry: string, token: string) {
   try {
-    const response = await reliableFetch(`${registry}/-/stage?perPage=1`, {
+    const response = await fetchWithinBaseUrl(`${registry}/-/stage?perPage=1`, registry, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     await response.body?.cancel();
@@ -299,7 +299,7 @@ async function validateStagedListAccess(registry: string, token: string) {
 async function validateStagedViewAccess(registry: string, token: string, stageId: string) {
   const url = `${registry}/-/stage/${encodeURIComponent(stageId)}`;
   try {
-    const response = await reliableFetch(url, {
+    const response = await fetchWithinBaseUrl(url, registry, {
       headers: npmAuthHeaders(token, "application/json"),
     });
     await response.body?.cancel();
@@ -321,7 +321,7 @@ async function validateStagedViewAccess(registry: string, token: string, stageId
 async function validateStagedTarballAccess(registry: string, token: string, stageId: string) {
   const url = `${registry}/-/stage/${encodeURIComponent(stageId)}/tarball`;
   try {
-    const ranged = await reliableFetch(url, {
+    const ranged = await fetchWithinBaseUrl(url, registry, {
       headers: {
         ...npmAuthHeaders(token, "application/octet-stream"),
         range: "bytes=0-0",

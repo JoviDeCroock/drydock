@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FileRecord, PackageJsonSummary } from "./review";
-import { STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
+import { isValidStageId, STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
+import { pathWithinBaseUrl } from "./platform/url-scope";
 import * as tarParser from "./tar-parser.js";
 import type { TarRootStrip, TarSuspiciousEntry } from "./tar-parser.js";
 
@@ -89,7 +90,22 @@ interface NpmStageGatewayProps {
 export interface NpmStageGatewayPolicy {
   allowed: boolean;
   credentialed: boolean;
-  kind: "staged-tarball" | "package-metadata" | "public-artifact" | "blocked";
+  kind: "staged-tarball" | "public-artifact" | "blocked";
+}
+
+// A whole-path match: a prefix/suffix test would let anything between them,
+// such as an encoded `..%2f` walk, ride along with the credential. The id is
+// matched decoded because the sandbox URL-encodes it (`:` arrives as `%3A`).
+const STAGED_TARBALL_PATH = /^\/-\/stage\/([^/]+)\/tarball$/;
+
+function isStagedTarballPath(path: string): boolean {
+  const encodedId = STAGED_TARBALL_PATH.exec(path)?.[1];
+  if (!encodedId) return false;
+  try {
+    return isValidStageId(decodeURIComponent(encodedId));
+  } catch {
+    return false;
+  }
 }
 
 export function evaluateNpmStageGatewayRequest(
@@ -100,23 +116,20 @@ export function evaluateNpmStageGatewayRequest(
 ): NpmStageGatewayPolicy {
   const url = new URL(requestUrl);
   const registry = new URL(registryUrl || "https://registry.npmjs.org");
-  const sameOrigin = url.origin === registry.origin;
   const normalizedMethod = method.toUpperCase();
   const isPublicArtifact =
     normalizedMethod === "GET" &&
     url.protocol === "https:" &&
     publicArtifactUrls.some((allowedUrl) => requestUrl === allowedUrl);
-  const packageMetadataPath = /^\/(?:@[^/]+%2[fF][^/]+|[^/@-][^/]*)$/.test(url.pathname);
+  // A registry served under a path owns only that subtree of its origin.
+  const registryPath = pathWithinBaseUrl(url, registry);
+  // The sandbox fetches only staged tarballs from the registry; packuments and
+  // published tarballs are read by the parent Worker.
   const isStagedTarball =
-    sameOrigin &&
-    normalizedMethod === "GET" &&
-    url.pathname.startsWith("/-/stage/") &&
-    url.pathname.endsWith("/tarball");
-  const isRegistryMetadata = sameOrigin && normalizedMethod === "GET" && packageMetadataPath;
+    registryPath !== null && normalizedMethod === "GET" && isStagedTarballPath(registryPath);
 
   if (isPublicArtifact) return { allowed: true, credentialed: false, kind: "public-artifact" };
   if (isStagedTarball) return { allowed: true, credentialed: true, kind: "staged-tarball" };
-  if (isRegistryMetadata) return { allowed: true, credentialed: true, kind: "package-metadata" };
   return { allowed: false, credentialed: false, kind: "blocked" };
 }
 
@@ -141,8 +154,9 @@ const MAX_PINNED_ARTIFACT_REDIRECTS = 3;
  *
  * Same-origin redirects stay allowed because the origin is exactly what was
  * vetted; only leaving it is refused. Credentialed npm requests do not come
- * through here — their redirect behavior is unchanged, so a registry that moves
- * a staged tarball to a CDN keeps working.
+ * through here: the gateway hands their 3xx back to the sandbox, whose next hop
+ * is evaluated as a fresh request, so a staged tarball redirected off the
+ * registry's subtree (a CDN included) is blocked.
  */
 async function fetchPinnedArtifact(request: Request): Promise<Response> {
   const pinnedOrigin = new URL(request.url).origin;
@@ -193,12 +207,15 @@ export class NpmStageGateway extends WorkerEntrypoint<Cloudflare.Env, NpmStageGa
     }
 
     const token = this.ctx.props.npmToken;
-    const forwarded = new Request(request);
+    // Never follow here: a credentialed registry response, 3xx included, goes
+    // back to the sandbox as is, and any hop it takes comes back through this
+    // policy as a new request.
+    const forwarded = new Request(request, { redirect: "manual" });
     if (token && policy.credentialed) forwarded.headers.set("authorization", `Bearer ${token}`);
     forwarded.headers.set("user-agent", "staged-publish-review/0.3");
 
     // A pinned artifact URL means the origin was vetted; keep redirects inside
-    // it. Credentialed registry requests keep the runtime's default handling.
+    // it.
     if (policy.kind === "public-artifact") return fetchPinnedArtifact(forwarded);
     return fetch(forwarded);
   }

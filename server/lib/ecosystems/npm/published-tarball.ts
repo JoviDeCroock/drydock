@@ -1,5 +1,6 @@
 import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
 import { coloCache } from "../../platform/colo-cache";
+import { fetchWithinBaseUrl, pathWithinBaseUrl } from "../../platform/url-scope";
 import { registryProtocolAllowed } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {
@@ -17,11 +18,12 @@ export function isPublishedTarballUrlAllowed(
   try {
     const tarball = new URL(tarballUrl);
     const registry = new URL(registryUrl);
+    const path = pathWithinBaseUrl(tarball, registry);
     return (
-      tarball.origin === registry.origin &&
+      path !== null &&
       registryProtocolAllowed(tarball, { allowInsecureLocalhost }) &&
-      tarball.pathname.endsWith(".tgz") &&
-      tarball.pathname.includes("/-/")
+      path.endsWith(".tgz") &&
+      path.includes("/-/")
     );
   } catch {
     return false;
@@ -168,7 +170,10 @@ export async function fetchPublishedTarballStream(
 
   let response: Response;
   try {
-    response = await reliableFetch(tarballUrl, { headers, timeoutMs: 60_000 });
+    response = await fetchWithinBaseUrl(tarballUrl, options.registryUrl, {
+      headers,
+      timeoutMs: 60_000,
+    });
   } catch {
     throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
   }

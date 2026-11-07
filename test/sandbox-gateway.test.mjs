@@ -21,13 +21,27 @@ describe("npm stage gateway policy", () => {
       credentialed: true,
       kind: "staged-tarball",
     });
+  });
+
+  // The sandbox URL-encodes the stage id, and the stage-id grammar allows `:`.
+  test("allows a staged tarball whose stage id contains a colon, encoded or not", () => {
+    for (const id of [encodeURIComponent("npm:stage:abc123"), "npm:stage:abc123"]) {
+      expect(
+        evaluateNpmStageGatewayRequest(`${registry}/-/stage/${id}/tarball`, "GET", registry),
+      ).toEqual({ allowed: true, credentialed: true, kind: "staged-tarball" });
+    }
+    for (const id of ["ab%3A", "stage%2F..%2Fadmin", "stage%ZZ123", "%2Dstage123"]) {
+      expect(
+        evaluateNpmStageGatewayRequest(`${registry}/-/stage/${id}/tarball`, "GET", registry),
+      ).toEqual({ allowed: false, credentialed: false, kind: "blocked" });
+    }
+  });
+
+  // The sandbox never reads packuments; the parent Worker does.
+  test("blocks package metadata", () => {
     expect(
       evaluateNpmStageGatewayRequest("https://registry.npmjs.org/@scope%2fpkg", "GET", registry),
-    ).toMatchObject({
-      allowed: true,
-      credentialed: true,
-      kind: "package-metadata",
-    });
+    ).toEqual({ allowed: false, credentialed: false, kind: "blocked" });
   });
 
   test("blocks published .tgz tarballs (fetched by the trusted parent, not the sandbox)", () => {
