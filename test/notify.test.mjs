@@ -388,7 +388,7 @@ describe("notifyStagedReleaseApprovable", () => {
       title: "Staged release ready to approve on npm",
       packageLabel: "demo-package@1.2.0",
       risk: "high",
-      dashboardUrl: "https://drydock.test/dashboard/scans/scan_1?org=org_1",
+      dashboardUrl: "https://drydock.test/dashboard/scans/scan_1?org=org_1&via=notification",
     });
     expect(payload.statusLine).toContain("npm stage approve stage-safe_123 --registry");
     const [event] = slackEvents();

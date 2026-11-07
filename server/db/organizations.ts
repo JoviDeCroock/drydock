@@ -5,6 +5,7 @@ import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
 import { reserveDeletedNpmPackages } from "./package-claims";
 import {
+  organizationApiKeys,
   githubAppInstallations,
   githubReleaseTargets,
   githubWorkflowGates,
@@ -279,6 +280,7 @@ export async function deleteOrganization(
     db
       .delete(organizationNotificationRecipients)
       .where(eq(organizationNotificationRecipients.organizationId, organizationId)),
+    db.delete(organizationApiKeys).where(eq(organizationApiKeys.organizationId, organizationId)),
     db
       .delete(organizationSlackConnections)
       .where(eq(organizationSlackConnections.organizationId, organizationId)),
@@ -407,6 +409,8 @@ export async function deleteUserAccount(
       .update(organizationInvitations)
       .set({ acceptedByUserId: null })
       .where(eq(organizationInvitations.acceptedByUserId, userId)),
+    // A key lives no longer than its creator's membership.
+    db.delete(organizationApiKeys).where(eq(organizationApiKeys.createdByUserId, userId)),
     db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);

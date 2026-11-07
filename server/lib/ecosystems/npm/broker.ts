@@ -4,6 +4,7 @@ import { getNpmConnection } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
 import { fetchPackageMetadataCached } from "./registry-cache";
+import { fetchPackageVersionsMany } from "./package-versions";
 import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { ScanPreconditionError } from "../../scan/errors";
@@ -16,6 +17,7 @@ import type {
   StagedArchiveRequest,
   StagedArchiveResult,
 } from "../package-adapter";
+import type { PackageVersionsLookup } from "./dependency-readiness";
 
 // SHA-1 binds the review to npm's own stage record (`shasum`); SHA-256 is the
 // digest a workflow gate recomputes for the same `.tgz`, so a stage can be
@@ -29,7 +31,34 @@ export interface NpmBroker extends AdapterBroker {
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   /** Raw staged bytes for the detonation sandbox, pinned to the reviewed SHA-256. */
   fetchStagedArchive(request: StagedArchiveRequest): Promise<StagedArchiveResult>;
+  /**
+   * Whether the organization's connection can serve credentialed reads for
+   * this ref (present, validated, still on the expected registry, token
+   * decryptable). Never returns the token.
+   */
+  connectionStatus(): Promise<NpmConnectionStatus>;
+  /**
+   * Published versions of several dependencies, read from the registry with
+   * the organization's credential, resolved once for the whole batch. A name
+   * missing from the result was not reached within `budgetMs`.
+   */
+  fetchPackageVersionsBatch(
+    names: string[],
+    options: PackageVersionsBatchOptions,
+  ): Promise<PackageVersionsBatchResult>;
 }
+
+interface PackageVersionsBatchOptions {
+  concurrency: number;
+  budgetMs: number;
+}
+
+// An array, not a map: RPC-safe, and a dependency named `__proto__` stays data.
+type PackageVersionsBatchResult = Array<{ name: string; lookup: PackageVersionsLookup }>;
+
+type NpmConnectionStatus =
+  | { status: "ready"; registryUrl: string }
+  | { status: "unavailable"; reason: "missing" | "unvalidated" | "changed" | "credential" };
 
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
@@ -112,6 +141,24 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     return fetchStagedArchive(this.ctx, await this.resolveCredentials(), request);
   }
 
+  async connectionStatus(): Promise<NpmConnectionStatus> {
+    return connectionStatusOf(() => this.resolveCredentials());
+  }
+
+  async fetchPackageVersionsBatch(
+    names: string[],
+    options: PackageVersionsBatchOptions,
+  ): Promise<PackageVersionsBatchResult> {
+    return fetchPackageVersionsBatchWith(
+      this.env,
+      this.ctx,
+      this.ctx.props.organizationId,
+      () => this.resolveCredentials(),
+      names,
+      options,
+    );
+  }
+
   private async resolveCredentials(): Promise<ResolvedCredentials> {
     return resolveNpmCredentials(
       this.env,
@@ -120,6 +167,51 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
       this.ctx.props.registryUrl,
     );
   }
+}
+
+async function connectionStatusOf(
+  resolve: () => Promise<ResolvedCredentials>,
+): Promise<NpmConnectionStatus> {
+  try {
+    const { registry } = await resolve();
+    return { status: "ready", registryUrl: registry };
+  } catch (err) {
+    const code = err instanceof ScanPreconditionError ? err.code : null;
+    const reason =
+      code === "npm_connection_missing"
+        ? "missing"
+        : code === "npm_connection_unvalidated"
+          ? "unvalidated"
+          : code === "npm_connection_changed"
+            ? "changed"
+            : "credential";
+    return { status: "unavailable", reason };
+  }
+}
+
+// One credential resolution (one D1 read, one decrypt) per batch, however many
+// packages it reads.
+async function fetchPackageVersionsBatchWith(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  organizationId: string,
+  resolve: () => Promise<ResolvedCredentials>,
+  names: string[],
+  options: PackageVersionsBatchOptions,
+): Promise<PackageVersionsBatchResult> {
+  let creds: ResolvedCredentials;
+  try {
+    creds = await resolve();
+  } catch {
+    return names.map((name) => ({ name, lookup: { status: "error" } }));
+  }
+  return fetchPackageVersionsMany(
+    env,
+    ctx,
+    { registryUrl: creds.registry, cacheScope: `org:${organizationId}`, npmToken: creds.token },
+    names,
+    options,
+  );
 }
 
 async function resolveNpmCredentials(
@@ -215,6 +307,24 @@ class LocalNpmBroker implements NpmBroker {
 
   async fetchStagedArchive(request: StagedArchiveRequest): Promise<StagedArchiveResult> {
     return fetchStagedArchive(this.ctx.executionCtx, await this.resolve(), request);
+  }
+
+  async connectionStatus(): Promise<NpmConnectionStatus> {
+    return connectionStatusOf(() => this.resolve());
+  }
+
+  async fetchPackageVersionsBatch(
+    names: string[],
+    options: PackageVersionsBatchOptions,
+  ): Promise<PackageVersionsBatchResult> {
+    return fetchPackageVersionsBatchWith(
+      this.ctx.env,
+      this.ctx.executionCtx,
+      this.props.organizationId,
+      () => this.resolve(),
+      names,
+      options,
+    );
   }
 
   private async resolve(): Promise<ResolvedCredentials> {

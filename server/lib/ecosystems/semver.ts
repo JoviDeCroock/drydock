@@ -44,9 +44,10 @@ export function compareParsedSemver(a: ParsedSemver, b: ParsedSemver) {
       return -1;
     } else if (rightNumber !== null) {
       return 1;
-    } else {
-      const diff = left.localeCompare(right);
-      if (diff) return diff;
+    } else if (left !== right) {
+      // SemVer 2.0.0 §11 and node-semver compare identifiers in ASCII order
+      // (`RC` < `beta`); localeCompare would fold case and disagree with npm.
+      return left < right ? -1 : 1;
     }
   }
   return 0;

@@ -20,9 +20,11 @@ import {
   type DiffEntry,
   type Finding,
   type FindingDiffAnnotation,
+  type PackageJsonSummary,
 } from "../../review";
 import { parsePersistedAiReview } from "../../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../../ai-review/types";
+import { isRecord } from "../../platform/guards";
 import { parseJsonObject } from "../json";
 
 export function parseManifest(text: string): ScanArtifactsManifest | null {
@@ -106,6 +108,46 @@ export function parseReportArtifactMetadata(
     diff,
     findings: reportFindings.findings,
     findingAnnotations: reportFindings.annotations,
+  };
+}
+
+/**
+ * The reviewed manifest as the report recorded it (parsed and redacted at scan
+ * time), its dependency changes, and the staged paths. Package bytes: callers
+ * treat every value as data.
+ */
+export interface ReportManifestDetail {
+  packageJson: PackageJsonSummary | null;
+  dependencyChanges: Array<{ key: string; section?: string; status: string }>;
+  stagedPaths: string[];
+}
+
+export function parseReportManifest(text: string): ReportManifestDetail | null {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  const diff = parseDiffEntries(parsed.diff);
+  if (!diff) return null;
+  const packageJson = isRecord(parsed.packageJson)
+    ? (parsed.packageJson as PackageJsonSummary)
+    : null;
+  const manifestDiff = isRecord(parsed.packageJsonDiff) ? parsed.packageJsonDiff : null;
+  const changes: unknown[] = Array.isArray(manifestDiff?.dependencies)
+    ? manifestDiff.dependencies
+    : [];
+  return {
+    packageJson,
+    dependencyChanges: changes.flatMap((entry) =>
+      isRecord(entry) && typeof entry.key === "string" && typeof entry.status === "string"
+        ? [
+            {
+              key: entry.key,
+              status: entry.status,
+              ...(typeof entry.section === "string" ? { section: entry.section } : {}),
+            },
+          ]
+        : [],
+    ),
+    stagedPaths: diff.filter((entry) => entry.status !== "removed").map((entry) => entry.path),
   };
 }
 
