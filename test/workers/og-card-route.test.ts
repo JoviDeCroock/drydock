@@ -175,6 +175,50 @@ describe("package-diff share card route", () => {
     expect(match?.[2]).toBe(match?.[1]);
   });
 
+  test("bounds an npm card by the expiry of a pair built on an unsettled read", async () => {
+    const cached = {
+      ecosystem: "npm",
+      packageName: "tape",
+      fromVersion: "5.6.0",
+      toVersion: "5.6.1",
+      fromPackageJson: null,
+      toPackageJson: null,
+      fromFiles: [],
+      toFiles: [],
+      diff: [],
+      packageJsonDiff: summarizePackageJsonDiff(null, null),
+      findings: [],
+      risk: {
+        artifactRisk: "low",
+        releaseRisk: "low",
+        contextRisk: "low",
+        releaseFindingCount: 0,
+        contextFindingCount: 0,
+        unknownFindingCount: 0,
+        priorApprovedContextFindingCount: 0,
+      },
+      cachedAt: new Date().toISOString(),
+      cacheExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+    } satisfies PublicPackageDiff;
+    const requestEnv = envWithAssets({
+      COMPARE_CACHE: {
+        get: async () => cached,
+        put: async () => undefined,
+      } as unknown as KVNamespace,
+    });
+
+    const res = await cardFetch("/og/diff/tape/5.6.0/5.6.1/card.png", { requestEnv });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-og-card-stats")).toBe("cached");
+    const match = res.headers
+      .get("cache-control")
+      ?.match(/^public, max-age=(\d+), s-maxage=(\d+)$/);
+    expect(Number(match?.[1])).toBeGreaterThan(0);
+    expect(Number(match?.[1])).toBeLessThanOrEqual(120);
+    expect(match?.[2]).toBe(match?.[1]);
+  });
+
   test("falls back to the static card when the fonts cannot be loaded", async () => {
     const brokenAssets = {
       ...env,

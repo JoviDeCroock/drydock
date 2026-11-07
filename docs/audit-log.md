@@ -33,10 +33,13 @@ The table is append-only in normal operation; the only deletes are org/scan casc
 
 | Group | Recorded | Visible | Notes |
 | --- | --- | --- | --- |
-| `scan.decided` | yes | yes | Batch approval writes one per approved review in the same transaction, `batch: true`; shown as "approved publish in a batch" |
+| `scan.decided` | yes | yes | Batch approval writes one per approved review in the same transaction, `batch: true`; shown as "approved publish in a batch". A `decide_staged` API-key decision is attributed to the key's creator and carries `apiKeyName`, `apiKeyPrefix`, and `twoFactor: true` (never the code); shown as "approved publish with API key …" |
+| `organization.api_key_created`, `organization.api_key_revoked` | yes | yes | Security category; detail shows the key's name, display prefix, and access ([API keys](./api-keys.md)) |
+| `organization.api_key_revoked_wrong_codes` | yes | yes | `API_KEY_TOTP_FAILURE_LIMIT` (5, `server/lib/auth/api-keys.ts`) wrong authenticator codes in a row revoke a `decide_staged` key; only the request that deleted the key records it |
+| `organization.api_key_review_started`, `organization.api_key_discovery_ran` | yes | yes | Every review a `scan` key starts (package and version) and every discovery run (reviews started), attributed to the key's creator (`recordApiKeyAction` in `server/db/api-keys.ts`); a failed write emits `api_key.audit_failed` and the review stays queued. Individual API-key reads are not recorded |
 | `github_workflow_gate.*` | yes | `requested`, `reviewed`, `approved`, `rejected`, `timeout_missed` | Internal gate-processing types are hidden |
 | `organization.member_*` | yes | yes | [Organization members](./organization-members.md#audit-events) |
-| `organization.*` (created, renamed, release_two_factor_changed, notification recipients, Slack, package badge) | yes | yes |  |
+| `organization.*` (created, renamed, release_two_factor_changed, notification recipients, Slack, package badge, API keys above) | yes | yes |  |
 | `npm_connection.{upserted,validated,deleted,token_expired,personal_confirmed}` | yes | yes |  |
 | `github_app_*` (installation linked, release target created/deleted, `github_app_setup.pr_created`) | yes | yes | Setup PR: actor, repository, environment, PR number; detail shows repository and PR number only; workflow contents and proposal tokens are never recorded |
 | `scan.share_*`, `scan.feed_*` | yes | yes | Security category |

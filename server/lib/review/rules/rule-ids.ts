@@ -113,6 +113,14 @@ export const DETERMINISTIC_RULES = {
     standingDanger: true,
   },
   releaseSourceDrift: { id: "release.source-drift", risk: "anchor" },
+  // Registry provenance continuity between a published baseline and candidate
+  // (server/lib/provenance-continuity.ts). Evidence about how the release
+  // arrived, not about its bytes, so not standing danger.
+  releaseProvenanceDropped: { id: "release.provenance-dropped", risk: "anchor" },
+  releaseProvenancePublisherChanged: {
+    id: "release.provenance-publisher-changed",
+    risk: "anchor",
+  },
 } as const satisfies Record<string, DeterministicRuleSpec>;
 
 export type DeterministicRuleKey = keyof typeof DETERMINISTIC_RULES;

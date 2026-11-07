@@ -348,7 +348,62 @@ describe("public package-diff routes", () => {
     expect(validate).toHaveBeenCalledWith(env, expect.anything(), input);
   });
 
-  test("records dependency-PR workflow fetches apart from other diff views", async () => {
+  test("diff response links the site's canonical review URL", async () => {
+    const payload = cachedPayload("@scope/review-link");
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "npm",
+        registryUrl: PUBLIC_NPM_REGISTRY,
+        packageName: payload.packageName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+    const res = await publicDiffFetch(
+      "/api/public/v1/package-diff?package=%40scope%2Freview-link&from=1.0.0&to=1.0.1",
+      "10.99.8.1",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reviewUrl: string };
+    expect(new URL(body.reviewUrl).pathname).toBe("/diff/@scope/review-link/1.0.0/1.0.1");
+  });
+
+  test("an atpm handle request links the DID-pinned review, not the handle", async () => {
+    const handleName = "@review-link.ebey.dev/counter";
+    const didName = "did:plc:twegdcgytckr5cxm57gyruxa/counter";
+    const payload = {
+      ...cachedPayload(handleName),
+      ecosystem: "atpm",
+      canonicalPackageName: didName,
+      cacheExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+      displayName: handleName,
+    } satisfies PublicPackageDiff;
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "atpm",
+        registryUrl: "at://",
+        packageName: handleName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+    const params = new URLSearchParams({
+      ecosystem: "atpm",
+      package: handleName,
+      from: payload.fromVersion,
+      to: payload.toVersion,
+    });
+    const res = await publicDiffFetch(`/api/public/v1/package-diff?${params}`, "10.99.8.2");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reviewUrl: string };
+    expect(new URL(body.reviewUrl).pathname).toBe(`/diff/atpm/${didName}/1.0.0/1.0.1`);
+  });
+
+  test("records dependency-PR, CLI, and MCP fetches apart from browser diff views", async () => {
     const payload = cachedPayload("left-pad-client");
     const input = {
       ecosystem: "npm",
@@ -364,7 +419,7 @@ describe("public package-diff routes", () => {
       PRODUCT_ANALYTICS: { writeDataPoint: (point: { blobs: string[] }) => points.push(point) },
     } as unknown as Cloudflare.Env;
 
-    for (const client of ["dependency-pr", undefined, "something-else"]) {
+    for (const client of ["dependency-pr", undefined, "something-else", "cli", "mcp"]) {
       const headers = new Headers({ "cf-connecting-ip": "10.99.7.1" });
       if (client) headers.set("x-drydock-client", client);
       const ctx = createExecutionContext();
@@ -380,7 +435,13 @@ describe("public package-diff routes", () => {
       expect(res.status).toBe(200);
     }
 
-    expect(points.map((point) => point.blobs.at(-1))).toEqual(["dependency-pr", "other", "other"]);
+    expect(points.map((point) => point.blobs.at(-1))).toEqual([
+      "dependency-pr",
+      "other",
+      "other",
+      "cli",
+      "mcp",
+    ]);
   });
 
   test("the anonymous surface reaches D1 on no request path", async () => {

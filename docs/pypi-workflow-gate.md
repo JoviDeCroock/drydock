@@ -71,8 +71,10 @@ PyPI has no registry-staged artifact; this gate is its only review-before-publis
 | Comparable release exists | `pickPyPiBaselineRelease` selects currently-published version from public PyPI JSON metadata; `acquireBaselinePyPi` fetches matching platforms anonymously from `files.pythonhosted.org` |
 | Many platform wheels | Download and sandbox-parse sequentially, never concurrently |
 | No comparable published release | No-baseline full-tree review |
-| Published baseline exceeds download budget | Set `BaselineInfo.comparisonSkipped: "baseline-too-large"`; findings have `unknown` package context, not release delta; report leads with “no baseline to compare” and skipped version |
-| Comparison skipped | Advisory recommendation `manual_review`; neither automatic approval nor rejection supported; gate stays pending for maintainer |
+| PyPI metadata fetch fails (non-2xx, timeout, oversized body) | Treated as no baseline (`metadata-unavailable`): full-tree review, every file reads as added, no `comparisonSkipped`; recommendation computed normally (`server/lib/ecosystems/pypi/broker.ts`) |
+| Baseline download or parse error | Scan fails; gate stays pending (`server/lib/workflow-gate-job.ts`) |
+| Published baseline exceeds download budget (more than `MAX_PYPI_BASELINE_ARTIFACTS` = 128 artifacts or `MAX_PYPI_BASELINE_ADVERTISED_BYTES` = 768 MiB advertised, `server/lib/ecosystems/pypi/acquire.ts`) | Set `BaselineInfo.comparisonSkipped: "baseline-too-large"`; findings have `unknown` package context, not release delta; report leads with “no baseline to compare” and skipped version |
+| Comparison skipped | Advisory recommendation `manual_review`; the gate stays pending until a maintainer decides (Drydock never auto-decides a gate) |
 
 ### Single-upload workflow
 

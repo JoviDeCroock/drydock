@@ -1,10 +1,21 @@
+import { isRecord } from "../../platform/guards";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
 
 export { compareSemver } from "../semver";
 
+interface RegistryVersionMetadata {
+  dist?: { tarball?: string };
+  /**
+   * Whether npm lists SLSA provenance for this version (`dist.attestations.provenance`).
+   * Undefined when the registry entry had no `dist` object, or the document was
+   * cached before this field was projected: both read as "unknown".
+   */
+  hasProvenance?: boolean;
+}
+
 export interface RegistryMetadata {
-  versions?: Record<string, { dist?: { tarball?: string } }>;
+  versions?: Record<string, RegistryVersionMetadata>;
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
 }
@@ -52,7 +63,7 @@ export function isValidLegacyNpmPackageName(name: string): boolean {
 // negotiates content answers with the full document rather than refusing; one
 // that refuses anyway is caught by the retry below. Both project to the same
 // shape, so callers cannot tell which arrived.
-const ABBREVIATED_PACKUMENT_ACCEPT =
+export const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
 export interface FetchPackageMetadataOptions {
@@ -105,7 +116,7 @@ export async function fetchPackageMetadata(
 // `application/vnd.npm.install-v1+json`. 401/403/404 are definitive answers
 // about the request itself, and 5xx has already been retried by reliableFetch,
 // so neither is worth a second round trip.
-function mayRejectVendorMediaType(status: number): boolean {
+export function mayRejectVendorMediaType(status: number): boolean {
   return status === 400 || status === 406 || status === 415 || status === 422;
 }
 
@@ -126,12 +137,19 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   const projected: RegistryMetadata = {};
 
   if (doc.versions && typeof doc.versions === "object") {
-    const versions: Record<string, { dist?: { tarball?: string } }> = {};
+    const versions: Record<string, RegistryVersionMetadata> = {};
     for (const [version, entry] of Object.entries(doc.versions)) {
-      const tarball = entry?.dist?.tarball;
+      const dist: unknown = entry?.dist;
+      const tarball = isRecord(dist) ? dist.tarball : undefined;
       // Every published version must survive as a truthy entry: baseline
       // selection walks the key set and dist-tag resolution checks presence.
-      versions[version] = typeof tarball === "string" ? { dist: { tarball } } : {};
+      const projectedEntry: RegistryVersionMetadata =
+        typeof tarball === "string" ? { dist: { tarball } } : {};
+      if (isRecord(dist)) {
+        const attestations = dist.attestations;
+        projectedEntry.hasProvenance = isRecord(attestations) && isRecord(attestations.provenance);
+      }
+      versions[version] = projectedEntry;
     }
     projected.versions = versions;
   }

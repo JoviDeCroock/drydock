@@ -1,0 +1,55 @@
+{
+  "id": "legit-provenance-pypi-not-found-page",
+  "title": "PyPI integrity API answers with its HTML not-found page",
+  "category": "control",
+  "intent": "PyPI's 404 means both 'no provenance' and 'no such file'; only the JSON 'No provenance available' body is absence, so an HTML 404 or a 403 (integrity API disabled) stays unknown rather than reading as a drop.",
+  "ecosystem": "pypi",
+  "registryProvenance": {
+    "packageName": "example-sdk",
+    "baseline": {
+      "version": "2.0.0",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.0.tar.gz",
+          "status": 200,
+          "body": {
+            "version": 1,
+            "attestation_bundles": [
+              {
+                "publisher": {
+                  "kind": "GitHub",
+                  "repository": "example-org/example-sdk",
+                  "workflow": "release.yml",
+                  "environment": "pypi"
+                },
+                "attestations": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "2.0.1",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.1.tar.gz",
+          "status": 404,
+          "body": null
+        },
+        {
+          "filename": "example_sdk-2.0.1-py3-none-any.whl",
+          "status": 403,
+          "body": null
+        }
+      ]
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "verdict": "benign",
+  "threatClass": "legit-provenance-continuity",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

@@ -1,0 +1,61 @@
+{
+  "id": "pypi-sdist-old-gnu-name-record",
+  "title": "sdist member named by an old GNU `N` record",
+  "category": "archive-structure",
+  "intent": "node-tar reads the `N` record as the next member's long path (docs/readme.txt), while pip's CPython tarfile has no `N` type: it extracts the record as notes.txt and writes the member under its header name, setup.py",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 74,
+          "sha256": "1be9b82eff188babac4fc0e2c99d8bf7a48ea1307544bcf032bce3ec57a3e779",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/docs/readme.txt",
+          "size": 15,
+          "sha256": "49ff8a159c339268d607076eae916603d1b587221696305542879da0561b60ad",
+          "flags": [],
+          "textSample": "Read me first.\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "parser-differential",
+          "path": "demo_package-1.2.0/docs/readme.txt",
+          "detail": "member is named by an old GNU `N` record; node-tar reads it as a long path, while extractors without that type (CPython tarfile) extract the record as a file of its own and keep the member's header name"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/docs/readme.txt"
+    }
+  ]
+}

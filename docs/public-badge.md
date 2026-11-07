@@ -63,7 +63,7 @@ Disclosure and feed identities belong to [public-reports.md](./public-reports.md
 4. npm candidates require canonical claim with confirmed personal management or durable shared ownership; provisional personal claim cannot answer/control badge. Un-audited historical ownership answers `not reviewed` (`server/db/scan-share.ts`, [package-claims.md](./package-claims.md)).
 5. npm workflow gates never answer the badge; PyPI/VS Code manifest-claimed gate reviews require listing and render unverified (`badgeLookupKey`, `server/lib/public-feed.ts`).
 6. Published-pair review never qualifies alone: `badgeLookupKey` supplies no index key and SQL excludes its source. Guarded post-release admission supplies the missing publisher relationship (`server/db/scan-share.ts`).
-7. Candidates union/deduplicate by scan ID, then `compareBadgeCandidates` orders releases by registry version semver, never latest scan completion; `pickBadgeScan` prefers registry-verified identity (`server/routes/public-reports.ts`).
+7. Candidates union/deduplicate by scan ID, then `compareBadgeCandidates` orders releases by registry version semver, never latest scan completion; `pickBadgeScan` prefers registry-verified identity (`compareBadgeCandidates` in `server/db/scan-share.ts`, `pickBadgeScan` in `server/lib/public-feed.ts`, served by `server/routes/public-reports.ts`).
 8. Version text uses npm `registry_version` when available; only reviews with no registry answer fall back to manifest version, already unverified (`buildBadgePayload`, `server/lib/public-feed.ts`).
 
 ### Badge states

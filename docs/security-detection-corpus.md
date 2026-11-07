@@ -12,6 +12,7 @@ Rule-version history: [`detection-rule-history.md`](./detection-rule-history.md)
 | `test/fixtures/security-corpus/cases-pypi/` | PyPI | `server/lib/ecosystems/pypi/index.ts` (`pyPiReleaseFindings` + shared rules) | `test/security-corpus-pypi.test.mjs` (oracle for paths: `test/pypi.test.mjs`) |
 | `test/fixtures/security-corpus/cases-atpm/` | atpm | `atpmRecordFindings` via `test/helpers/atpm-security-corpus.mjs` | `test/security-corpus-atpm.test.mjs` |
 | `test/fixtures/security-corpus/cases-vscode/` | VS Code | `createVscodeExtensionReview` | `test/security-corpus-vscode.test.mjs` |
+| `test/fixtures/security-corpus/cases-provenance/` | npm + PyPI | registry readers + lineage + `provenanceContinuityFindings` via `test/helpers/provenance-security-corpus.mjs` | `test/security-corpus-provenance.test.mjs` |
 | `cases-frontier/`, `cases-benign/` | all | eval only, never golden | `test/eval/detection-eval.test.mjs` ([`detection-eval.md`](./detection-eval.md)) |
 | npm/PyPI `parityGroup` pairs | npm + PyPI | both engines; sorted `ruleId:severity` multisets must match | `test/security-corpus-parity.test.mjs` (see `test/fixtures/security-corpus/README.md`) |
 | registry ↔ fixtures ↔ inventory | all | `DETERMINISTIC_RULES`, `PYPI_RULE_IDS`, `VSCODE_RULE_IDS` | `test/detection-rule-coverage.test.mjs` |
@@ -54,6 +55,7 @@ Rule-version history: [`detection-rule-history.md`](./detection-rule-history.md)
 | `artifacts` | yes | `[{path, files: FileRecord[]}]`; paths must exactly match the manifest's or `assertManifestArtifactSet` throws. |
 | `expectedRisk`, `expectedFindings` | yes | As npm. |
 | `previousArtifacts` | no | Previous `[{path, files}]`; enables `diff.*` findings. |
+| `artifacts[].suspiciousEntries` | no | Archive-reader disclosures `{kind, path, detail, archive?}` become `tar.suspicious-entry` at `<artifact path>/<entry path>`. |
 | `coverageGaps` | no | Documented blind spots (not asserted). |
 
 `FileRecord = {path, size, sha256, flags[], textSample?}`. A wheel fixture includes `*.dist-info/WHEEL` with a `Tag:` header so the diff namespace is deterministic. Binary artifacts use `flags: ["binary"]` and omit `textSample`.
@@ -77,6 +79,22 @@ Record projections, not package files: the signals compare verified provenance, 
 - Optional (mirrors the finding function): `target`, `manifest`, `archiveSha1`, `archiveSha512`, `recordName`, `trustPublisher`, `baseline`, `baselineArchiveSha512`.
 - All identities, repositories, digests, and timestamps are synthetic. A matching verified build is the benign control.
 
+### Registry provenance corpus
+
+`cases-provenance/` holds registry-record projections rather than package files; rule behavior and trust boundaries: [`provenance-continuity.md`](./provenance-continuity.md).
+
+| Field / path | Contract |
+| --- | --- |
+| Required metadata | `id`, `title`, `category`, `intent`, `ecosystem` (`npm` or `pypi`), `expectedRisk`, exact `expectedFindings`. |
+| `registryProvenance` | `{ packageName, history?, baseline, candidate }`. |
+| `history` | Earlier published releases of any channel; lineage selects the compared baseline and prior releases. A medium drop needs two attested releases before the baseline. |
+| `publishedAt` | Optional ISO timestamp on any side pins publication order. |
+| npm side | `{ version, packumentProvenance?, statements? \| attestations? }`; `packumentProvenance` is `dist.attestations.provenance`, omitted means unknown; decoded in-toto `statements` are wrapped in DSSE envelopes; raw `attestations` supplies malformed documents. |
+| PyPI side | `{ version, files: [{ filename, status, body }] }`; one integrity-API response per selected file. |
+| Production path | `test/helpers/provenance-security-corpus.mjs` calls `npmRegistryProvenance`, `classifyPyPiProvenanceResponse` + `combinePyPiFileProvenance`, `npmProvenanceLineage` / `pypiProvenanceLineage`, then `provenanceContinuityFindings`. |
+| Eval routing | Any fixture with `registryProvenance`, including `legit-provenance-*` hard negatives in `cases-benign/`, uses that same helper (`test/eval/harness.mjs`). |
+| Synthetic identities | Keep repositories and ids synthetic. |
+
 ### Rule versions
 
 | Findings | Stamped with | File |
@@ -99,7 +117,7 @@ The complete deterministic ruleset across all ecosystems. Scoring roles are decl
 
 `test/detection-rule-coverage.test.mjs` checks this table against the registries: IDs must match exactly, every rule needs a corpus fixture asserting it (or an exception in that test naming the unit-test layer), and fixtures may only assert registered IDs.
 
-Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (`test/staged-artifact-integrity.test.mjs`), `tar.suspicious-entry` (`test/review.test.mjs`), `release.source-drift` (`test/release-fingerprint.test.ts`), `vscode.metadata-mismatch`, `vscode.extension-dependency` (`test/vscode.test.mjs`).
+Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (`test/staged-artifact-integrity.test.mjs`), `release.source-drift` (`test/release-fingerprint.test.ts`), `vscode.metadata-mismatch`, `vscode.extension-dependency` (`test/vscode.test.mjs`).
 
 | Rule | Registry | Scored as | Standing danger |
 | --- | --- | --- | --- |
@@ -135,6 +153,8 @@ Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (
 | `package-json.parse-failed` | deterministic | anchor | no |
 | `propagation.package-mutation` | deterministic | anchor | yes |
 | `propagation.registry-publish` | deterministic | anchor | yes |
+| `release.provenance-dropped` | deterministic | anchor | no |
+| `release.provenance-publisher-changed` | deterministic | anchor | no |
 | `release.source-drift` | deterministic | anchor | no |
 | `stage.metadata-mismatch` | deterministic | anchor | no |
 | `stage.tarball-digest-mismatch` | deterministic | anchor | no |
@@ -214,7 +234,7 @@ What each family fires on and leaves quiet, with the pinning fixture: [`detectio
 | JS credential access reads names, not values | `process.env.CONFIG` holding a secret, `const { env } = process`, and `.npmrc` reads raise nothing; `process.env[key]` loops (`EnvironmentPlugin`) and `spawn(…, { env: { ...process.env } })` are known false positives. |
 | Decode gate is per file | A decode in one module executed from another is missed. |
 | Prompt detection is phrase-based | Paraphrased, encoded, non-English, or > 4 KiB-split phrases fall to the advisory AI reviewer. |
-| No registry intelligence | Maintainer/transfer, new publisher, reputation, OpenSSF/package-intel, typosquat/confusion name distance are not implemented. |
+| Registry intelligence beyond provenance | Registry provenance continuity is covered for published npm/PyPI pairs; maintainer/account-transfer intelligence, publisher reputation, OpenSSF/package-intel and typosquat/confusion name distance are not implemented. |
 | PyPI startup-hook reach | A `.pth` adding a package-internal dir makes a nested `sitecustomize.py` importable (the `.pth` still flags, medium without an import line); a `.data/scripts/` file named like a stdlib module shadows it for that script. |
 | PyPI install schemes | Only posix_prefix, venv, posix_user, macOS framework user, nt, nt venv, nt_user, Debian `dist-packages`; custom `--prefix`/`--root` layouts are not resolved. |
 | PyPI RECORD hashes | Only undeclared files are detected; `sha256=<base64url>` vs hex conversion deferred; truncated RECORD samples skipped. |
@@ -245,6 +265,7 @@ pnpm run test:node -- security-corpus.test.mjs
 pnpm run test:node -- security-corpus-pypi.test.mjs
 pnpm run test:node -- security-corpus.test.mjs pypi.test.mjs   # regression net after a rules bump
 pnpm test -- test/security-corpus-atpm.test.mjs --project node
+pnpm test -- test/security-corpus-provenance.test.mjs --project node
 pnpm run verify                                                # full pre-commit parity
 ```
 

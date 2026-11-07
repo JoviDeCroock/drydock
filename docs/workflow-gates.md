@@ -80,6 +80,7 @@ All gate API paths below have prefix `/api/v1/github-app`; their owner is `serve
 | Use | Built CI tarballs, GitHub-enforced pause, or gate before `npm stage publish` |
 | Candidate | Uploaded npm pack tarball; detect archive `package.json`, validate identity/version |
 | Grouping | One tarball per package release; baseline/findings/diff/risk reuse staged adapter projection |
+| Dependency readiness | While the gate is pending, completed npm reviews check runtime dependencies are installable; matching packages in the same gated release satisfy each other's dependencies because the gate releases them together. [Dependency readiness](./npm-staged-publishing.md#dependency-readiness) is advisory. |
 | Workflow | [Canonical npm workflow](./examples/npm-workflow-gate.yml): `npm-release-candidates` upload; `production` Environment |
 | Integrity | Build writes `SHA256SUMS`; publish runs `sha256sum --check --strict SHA256SUMS` before `npm publish *.tgz` |
 | Checksum file | Adapter ignores bundle `SHA256SUMS` because it is not a tarball |

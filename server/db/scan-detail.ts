@@ -9,6 +9,7 @@ import { npmPackageClaimMatches, npmPackageManagementAllowed } from "./package-c
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
+import { reportOpenedBeforePublication } from "./scan-views";
 import { organizationMembers, scanEvents, scans, user } from "./schema";
 
 export type ScanDetailFileMode = "samples" | "list" | "omit";
@@ -81,7 +82,11 @@ export async function getScan(
       })
     : [];
   return {
-    scan: { ...scan, decidedByName },
+    scan: {
+      ...scan,
+      decidedByName,
+      reportOpenedBeforePublication: reportOpenedBeforePublication(scan),
+    },
     files: responseFiles,
     findings: annotatedFindings,
     riskSummary:
@@ -155,6 +160,12 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
       changedFileCount: scans.changedFileCount,
       findingCount: scans.findingCount,
       riskSummaryJson: scans.riskSummaryJson,
+      // Without a downloaded baseline every finding scores as context, so the
+      // release risk grades nothing. Read in SQL so polling never loads summary_json.
+      baselineComparisonSkipped:
+        sql<number>`json_extract(${scans.summaryJson}, '$.baseline.comparisonSkipped') is not null`.mapWith(
+          Boolean,
+        ),
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
       startedAt: scans.startedAt,

@@ -56,8 +56,20 @@ export interface PublicDiffAcquiredSources {
   provenance?: PublicDiffProvenanceEntry[];
   attestation?: PublicDiffAttestation;
   displayName?: string;
+  /**
+   * The stable name links should use when the requested spelling is not it:
+   * an atpm handle request resolves to the DID form, which a handle transfer
+   * cannot redirect.
+   */
+  canonicalPackageName?: string;
   // Absolute expiry prevents downstream caches from restarting a mutable record's TTL.
   cacheExpiresAt?: string;
+  /**
+   * A registry read the findings depend on (provenance) was undetermined. The
+   * result is cached briefly so a transient failure does not stand in for the
+   * registry's answer for the immutable-pair TTL.
+   */
+  unsettledRegistryRead?: boolean;
 }
 
 export interface PublicDiffInput {

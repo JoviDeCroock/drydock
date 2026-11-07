@@ -48,6 +48,28 @@ describe("normalizeZipPath", () => {
     expect(normalizeZipPath("C:escape.py")).toBeNull();
     expect(normalizeZipPath("pkg\\escape.py")).toBeNull();
   });
+
+  test("collapses pure `.` segments like the tar reader, without unmasking unsafe names", () => {
+    expect(normalizeZipPath("./evil.pth")).toBe("evil.pth");
+    expect(normalizeZipPath("pkg/./sub/.//mod.py")).toBe("pkg/sub/mod.py");
+    expect(normalizeZipPath("/./evil.pth")).toBe("evil.pth");
+    expect(normalizeZipPath(".")).toBeNull();
+    expect(normalizeZipPath("./")).toBeNull();
+    expect(normalizeZipPath("./../escape.py")).toBeNull();
+    expect(normalizeZipPath("./C:escape.py")).toBeNull();
+    // Only a whole `.` segment is a no-op; dotfiles and `...` are real names.
+    expect(normalizeZipPath("./.pth")).toBe(".pth");
+    expect(normalizeZipPath("pkg/.../x.py")).toBe("pkg/.../x.py");
+  });
+
+  test("keeps rejecting a leading `.` before the directories pip reads by raw name", () => {
+    expect(normalizeZipPath("./demo-1.0.dist-info/METADATA")).toBeNull();
+    expect(normalizeZipPath(".//demo-1.0.dist-info/entry_points.txt")).toBeNull();
+    expect(normalizeZipPath("/./demo-1.0.data/purelib/hook.pth")).toBeNull();
+    // An inner `.` leaves pip's first-segment classification unchanged.
+    expect(normalizeZipPath("demo-1.0.dist-info/./METADATA")).toBe("demo-1.0.dist-info/METADATA");
+    expect(normalizeZipPath("./pkg/demo-1.0.dist-info/x")).toBe("pkg/demo-1.0.dist-info/x");
+  });
 });
 
 describe("readZipArchive", () => {
@@ -90,13 +112,65 @@ describe("readZipArchive", () => {
     const buffered = await readZipArchiveBuffered(zip, 100, 1 << 20);
 
     for (const parsed of [streamed, buffered]) {
-      expect(parsed.files.map((file) => file.path)).toEqual(["demo/good.py"]);
-      expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
-        ["parser-differential", "./evil.pth"],
-        ["parser-differential", "pkg/../usercustomize.py"],
-        ["parser-differential", "pkg\\hook.pth"],
+      // `./evil.pth` is the file pip installs as `evil.pth`, so it is read.
+      expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+        ["evil.pth", "import os\n"],
+        ["demo/good.py", "ok\n"],
+      ]);
+      expect(parsed.suspicious.map((entry) => [entry.kind, entry.archive, entry.path])).toEqual([
+        ["parser-differential", "zip", "pkg/../usercustomize.py"],
+        ["parser-differential", "zip", "pkg\\hook.pth"],
       ]);
     }
+  });
+
+  test("treats `./x` and `x` as the same wheel path for last-write-wins", async () => {
+    const zip = buildZip([
+      { path: "hook.pth", body: "# benign\n" },
+      { path: "./hook.pth", body: "import os\n" },
+    ]);
+    const parsed = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20);
+
+    expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+      ["hook.pth", "import os\n"],
+    ]);
+    expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
+      ["duplicate", "hook.pth"],
+    ]);
+  });
+
+  test("discloses a `./` alias of dist-info metadata instead of merging it", async () => {
+    const zip = buildZip([
+      {
+        path: "demo-1.0.dist-info/entry_points.txt",
+        body: "[console_scripts]\ndemo = demo:main\n",
+      },
+      { path: "./demo-1.0.dist-info/entry_points.txt", body: "[console_scripts]\n" },
+    ]);
+    const streamed = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20);
+    const buffered = await readZipArchiveBuffered(zip, 100, 1 << 20);
+
+    for (const parsed of [streamed, buffered]) {
+      expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+        ["demo-1.0.dist-info/entry_points.txt", "[console_scripts]\ndemo = demo:main\n"],
+      ]);
+      expect(parsed.suspicious.map((entry) => [entry.kind, entry.path])).toEqual([
+        ["parser-differential", "./demo-1.0.dist-info/entry_points.txt"],
+      ]);
+    }
+  });
+
+  test("the buffered (VSIX) reader keeps both copies of a `./` alias for the adapter's duplicate check", async () => {
+    const zip = buildZip([
+      { path: "extension/extension.js", body: "exports.a = 1;\n" },
+      { path: "./extension/extension.js", body: "exports.a = 2;\n" },
+    ]);
+    const parsed = await readZipArchiveBuffered(zip, 100, 1 << 20);
+
+    expect(parsed.files.map((file) => file.path)).toEqual([
+      "extension/extension.js",
+      "extension/extension.js",
+    ]);
   });
 });
 

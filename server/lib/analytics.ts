@@ -4,6 +4,9 @@
 // Never add PII or package evidence.
 import { emitOperationalEvent } from "./platform/observability";
 
+export const PUBLIC_DIFF_CLIENTS = ["dependency-pr", "cli", "mcp"] as const;
+export type PublicDiffClient = (typeof PUBLIC_DIFF_CLIENTS)[number] | "other";
+
 export type AnalyticsEvent =
   | {
       name: "publication.discrepancy";
@@ -57,6 +60,23 @@ export type AnalyticsEvent =
       /** `batch` when one action approved several staged reviews. */
       via: "single" | "batch";
       timeToDecisionMs: number;
+    }
+  | {
+      /**
+       * The first recorded load of a completed review's report by an
+       * organization member, once per scan. Opened, not reviewed.
+       */
+      name: "scan.viewed";
+      organizationId: string;
+      ecosystem: string;
+      source: string;
+      /** `web`, or `notification` for a landing from an email or Slack link. */
+      surface: string;
+      /** npm's last known version status at that moment, `superseded`, or `none`. */
+      registryStatus: string;
+      decided: "decided" | "undecided";
+      /** From review completion to the first view: a human wait, like `scan.decided`. */
+      sinceCompletionMs: number;
     }
   | {
       name: "ai_review.finished";
@@ -196,10 +216,11 @@ export type AnalyticsEvent =
       risk: string;
       /**
        * `dependency-pr` when the dependency-PR comment workflow fetched the
-       * pair from CI, `other` otherwise. Self-reported by the caller, so it
-       * separates traffic shapes; it is not an authority.
+       * pair from CI, `cli`/`mcp` for the Drydock CLI and the hosted MCP
+       * tools, `other` otherwise (the browser /diff page). Self-reported by
+       * the caller, so it separates traffic shapes; it is not an authority.
        */
-      client: "dependency-pr" | "other";
+      client: PublicDiffClient;
       durationMs: number;
     };
 
@@ -210,6 +231,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "scan.failed",
   "scan.discarded",
   "scan.decided",
+  "scan.viewed",
   "ai_review.finished",
   "ai_review.attempted",
   "ai_review.decided",
@@ -299,6 +321,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         event.ecosystem,
         [event.decision, event.releaseRisk, event.artifactRisk, event.via],
         [event.timeToDecisionMs],
+      );
+    case "scan.viewed":
+      return base(
+        event.organizationId,
+        event.ecosystem,
+        [event.source, event.surface, event.registryStatus, event.decided],
+        [event.sinceCompletionMs],
       );
     case "ai_review.finished":
       return base(

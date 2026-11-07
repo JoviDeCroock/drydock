@@ -7,12 +7,16 @@ import {
   passwordResetAvailable,
 } from "./lib/auth";
 import { describeOperationalError, emitOperationalEvent } from "./lib/platform/observability";
+import { API_KEY_ROUTES, API_KEY_SCAN_ROUTES, readApiKeyCredential } from "./lib/auth/api-keys";
+import { authenticateApiKeyRequest } from "./middleware/api-key-auth";
 import { authIpRateLimit } from "./middleware/auth-rate-limit";
 import { canonicalHostRedirect, staticAssetFallback } from "./middleware/canonical-host";
 import { csrfOriginCheck } from "./middleware/csrf-origin";
 import { attachDb } from "./middleware/db";
 import { handleAppError } from "./middleware/errors";
 import { securityHeaders } from "./middleware/security-headers";
+import { openApiDocument } from "./lib/openapi/document";
+import { apiKeyRoutes } from "./routes/api-keys";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
@@ -22,6 +26,7 @@ import { organizationMembersRoutes } from "./routes/organization-members";
 import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
+import { publicMcpRoutes } from "./routes/public-mcp";
 import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { npmPackageClaimRoutes } from "./routes/npm-package-claims";
@@ -56,6 +61,11 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
+
+// The agent transport exposes only the same public release evidence. It has
+// its own protocol budget and dispatches through the public router above, so
+// it cannot reach organization data or bypass analysis limits.
+app.route("/api/public/v1/mcp", publicMcpRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
@@ -125,6 +135,16 @@ app.post("/api/auth/reset-password", async (c, next) => {
 app.all("/api/auth/*", (c) => c.get("auth").handler(c.req.raw));
 
 app.use("/api/*", async (c, next) => {
+  // An organization API key authenticates on its own and only reaches the
+  // routes in API_KEY_ROUTES (plus API_KEY_SCAN_ROUTES for a `scan` key); its
+  // request never falls back to a cookie session (docs/api-keys.md).
+  const apiKey = readApiKeyCredential(c.req.header("authorization"));
+  if (apiKey !== null) {
+    const rejected = await authenticateApiKeyRequest(c, apiKey);
+    if (rejected) return rejected;
+    await next();
+    return;
+  }
   const session = await getAuthSession(c.get("auth"), c.req.raw);
   if (!session) return c.json({ error: "unauthorized" }, 401);
   c.set("authSession", session);
@@ -189,11 +209,14 @@ app.get("/api", (c) =>
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package[?tag=] (shields.io endpoint badge; tag defaults to latest)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
+      apiKeys:
+        "GET/POST /api/v1/api-keys; DELETE /api/v1/api-keys/:keyId (owners and admins manage the active organization's API keys; `access` is `read` or `scan`); GET /api/v1/api-keys/current (API key only: the calling key and its organization)",
       authConfig:
         "GET /api/auth/config (anonymous; which optional sign-in methods are offered, whether email verification can be enforced, and whether a password-reset link can be mailed)",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    apiKeyAuth: `Authorization: Bearer ddk_… authenticates as an organization API key on these read-only endpoints only: ${[...API_KEY_ROUTES].join("; ")}. A key created with scan access also reaches: ${[...API_KEY_SCAN_ROUTES].join("; ")}. Every other endpoint answers an API key with 403.`,
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only), /public/reports/* (a share token is the capability; the owning organization opted in per scan), and the endpoints an organization API key reaches (apiKeyAuth).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
@@ -216,6 +239,11 @@ app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
+app.route("/api/v1/api-keys", apiKeyRoutes);
+// The automation surface's own description (docs/openapi.json is the same
+// document checked in). Session- or API-key-authenticated like every other
+// /api/v1 read; it carries no organization data.
+app.get("/api/v1/openapi.json", (c) => c.json(openApiDocument()));
 
 app.notFound(staticAssetFallback);
 

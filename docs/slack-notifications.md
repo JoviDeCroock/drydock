@@ -16,7 +16,7 @@ Drydock delivers organization release notifications through an OAuth v2 bot and 
 
 | Setting | Contract |
 | --- | --- |
-| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Required (`server/env.d.ts`); otherwise `configured: false` and UI notice |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Optional (`server/env.d.ts`); both are needed to enable Slack, otherwise `configured: false`, a UI notice, and `503 slack_not_configured` on `POST /connect` |
 | `BETTER_AUTH_URL` | `slackRedirectUri` resolves `/api/v1/slack/callback`; register that exact URL in Slack |
 | `assets.run_worker_first` | Must cover `/api` in `wrangler.jsonc` to keep the callback out of SPA fallback |
 | `SLACK_OAUTH_SCOPES` | `chat:write,chat:write.public` in `server/lib/notify/slack.ts`; public posting needs no bot invite |

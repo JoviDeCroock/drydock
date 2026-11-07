@@ -58,8 +58,8 @@ Historical outputs retain the version/model that produced them; regenerate and a
 12. Attempted but unavailable review → Medium floor. (`server/lib/review/risk.ts`).
 13. All AI findings cite unchanged files → Keep overall AI concern out of `releaseRisk`, except manual-review floor. (`server/lib/review/risk.ts`).
 14. No AI findings → Use normal review-level scoring: overall risk counts only with findings or manual-review request; a manual-review request can escalate without findings. (`server/lib/review/risk.ts`).
-15. AI release attribution → File-level via `withoutFindingLine`; unlike deterministic pattern rematching, AI has no pattern to rescue stale lines; reused calls, clipped baselines, modified binaries, and decoys make located-line attribution unsafe. (`server/lib/scan/pipeline-phases.ts`).
-16. Finding exceeds its verdict cap → UI puts it after counted findings with neutral badge/cap explanation; excludes it from inspection link and severity bar. (`server/lib/review/risk.ts`).
+15. AI release attribution → File-level via `withoutFindingLine`; unlike deterministic pattern rematching, AI has no pattern to rescue stale lines; reused calls, clipped baselines, modified binaries, and decoys make located-line attribution unsafe. (`withoutFindingLine` in `server/lib/review/diff-annotation.ts`, applied in `server/lib/scan/pipeline-phases.ts`).
+16. Finding exceeds its verdict cap → UI puts it after counted findings with neutral badge/cap explanation; excludes it from inspection link and severity bar. (cap in `server/lib/review/risk.ts`; UI in `src/pages/Dashboard/ScanDetail/ReleaseRecommendation.tsx`).
 
 AI cannot downgrade deterministic findings: deterministic scoring runs first and combines the AI contribution through a max. Assessments never change risk. Release-gate authority belongs to [workflow gates](./workflow-gates.md); stage authority belongs to [npm staged publishing](./npm-staged-publishing.md).
 

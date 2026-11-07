@@ -6,7 +6,7 @@ import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
-import { recordProductEvent } from "../lib/analytics";
+import { PUBLIC_DIFF_CLIENTS, recordProductEvent, type PublicDiffClient } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
@@ -16,6 +16,7 @@ import {
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
+import { packageDiffPath, type DiffEcosystem } from "../../src/lib/package-diff-path";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
@@ -202,11 +203,16 @@ function recordPublicDiffView(
     packageName: payload.packageName,
     cache: cacheHit === null ? "unknown" : cacheHit ? "hit" : "miss",
     risk: payload.risk?.artifactRisk ?? "unknown",
-    // The dependency-PR workflow fetches once per PR push, not per reader, so
-    // its requests are kept apart from people opening the diff.
-    client: c.req.header("x-drydock-client") === "dependency-pr" ? "dependency-pr" : "other",
+    client: publicDiffClient(c.req.header("x-drydock-client")),
     durationMs: Math.max(0, Date.now() - startedAtMs),
   });
+}
+
+// The dependency-PR workflow fetches once per PR push, and CLI and MCP calls
+// come from agents and scripts, so each keeps its own value and `other` stays
+// people opening the /diff page.
+function publicDiffClient(header: string | undefined): PublicDiffClient {
+  return PUBLIC_DIFF_CLIENTS.find((client) => client === header) ?? "other";
 }
 
 /**
@@ -362,6 +368,18 @@ publicDiffRoutes.get("/", async (c) => {
       attestation: payload.attestation ?? null,
       displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
+      // The site's own path helper, so API clients link the URL the site
+      // renders instead of re-deriving its encoding.
+      reviewUrl: new URL(
+        packageDiffPath(
+          // Payloads come only from registry adapters, each with a /diff route.
+          payload.ecosystem as DiffEcosystem,
+          payload.canonicalPackageName ?? payload.packageName,
+          payload.fromVersion,
+          payload.toVersion,
+        ),
+        canonicalOrigin(c),
+      ).href,
     },
     200,
     analyzedPairHeaders(payload.ecosystem, payload.packageName),

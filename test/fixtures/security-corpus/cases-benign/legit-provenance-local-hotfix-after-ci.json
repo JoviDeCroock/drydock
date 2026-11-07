@@ -1,0 +1,139 @@
+{
+  "id": "legit-provenance-local-hotfix-after-ci",
+  "title": "npm hotfix published from a laptop after two CI-attested releases",
+  "category": "control",
+  "intent": "A project that recently moved releases to attested CI ships a hotfix by hand. Provenance was attested for only two releases in a row, so the drop is reported as low context, not release risk.",
+  "ecosystem": "npm",
+  "registryProvenance": {
+    "packageName": "example-widget",
+    "history": [
+      {
+        "version": "0.9.0",
+        "packumentProvenance": false
+      },
+      {
+        "version": "1.0.0",
+        "packumentProvenance": true,
+        "statements": [
+          {
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": [
+              {
+                "name": "pkg:npm/example-widget@1.0.0",
+                "digest": {
+                  "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                }
+              }
+            ],
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {
+              "buildDefinition": {
+                "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+                "externalParameters": {
+                  "workflow": {
+                    "ref": "refs/tags/v1.0.0",
+                    "repository": "https://github.com/example-org/widget",
+                    "path": ".github/workflows/release.yml"
+                  }
+                },
+                "internalParameters": {
+                  "github": {
+                    "event_name": "push",
+                    "repository_id": "1001",
+                    "repository_owner_id": "1"
+                  }
+                },
+                "resolvedDependencies": [
+                  {
+                    "uri": "git+https://github.com/example-org/widget@refs/tags/v1.0.0",
+                    "digest": {
+                      "gitCommit": "0000000000000000000000000000000000000000"
+                    }
+                  }
+                ]
+              },
+              "runDetails": {
+                "builder": {
+                  "id": "https://github.com/actions/runner/github-hosted"
+                },
+                "metadata": {
+                  "invocationId": "https://github.com/example-org/widget/actions/runs/1/attempts/1"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "baseline": {
+      "version": "1.0.1",
+      "packumentProvenance": true,
+      "statements": [
+        {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "pkg:npm/example-widget@1.0.1",
+              "digest": {
+                "sha512": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "ref": "refs/tags/v1.0.1",
+                  "repository": "https://github.com/example-org/widget",
+                  "path": ".github/workflows/release.yml"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "push",
+                  "repository_id": "1001",
+                  "repository_owner_id": "1"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+https://github.com/example-org/widget@refs/tags/v1.0.1",
+                  "digest": {
+                    "gitCommit": "0000000000000000000000000000000000000000"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/actions/runner/github-hosted"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/example-org/widget/actions/runs/1/attempts/1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "1.0.2",
+      "packumentProvenance": false
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "release.provenance-dropped",
+      "severity": "low",
+      "file": "<release-process>"
+    }
+  ],
+  "verdict": "benign",
+  "threatClass": "legit-provenance-continuity",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

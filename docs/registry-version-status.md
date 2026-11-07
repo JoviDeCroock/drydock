@@ -119,10 +119,12 @@ Scan detail lists every dated event oldest first, with the gap to the previous r
 | Staged on npm | `staged_created_at` (`0031`); fallback `summary.stagedPublish.createdAt` |
 | Review queued / started / completed | scan row |
 | npm status last observed | `registry_version_status_at`, phrased by `registryStatusPhrase`: validating, awaiting approval, published, blocked, removed |
+| Published on npm | `registry_published_at` (`0044_eager_tombstone`): npm's own publication time, when the [publication monitor](./publication-monitor.md) observed the release |
 | Drydock decision | scan row |
-| Supersession | `registry_status_superseded_at` (replaces the stale status row) |
+| Supersession | `registry_status_superseded_at` (replaces the stale status row and any publication row: a superseded review did not review the published stage) |
 
 - `staged_created_at` is captured from the stage record when the review row is created (and carried by the status poll), so queued and failed reviews show it too.
+- Report views are analytics ([report views](./product-analytics.md#report-views)) and are not listed.
 - A null or undocumented status renders no row. Stamps carry year and seconds: rows are often seconds apart and a stage can straddle a year.
 
 ### Storage
@@ -138,6 +140,7 @@ Scan detail lists every dated event oldest first, with the gap to the previous r
 | `registry_publish_reminder_at` | `0027` | Reminder send-once marker |
 | `registry_approvable_notified_at` | `0030` | Approvable-now send-once marker |
 | `staged_created_at` | `0031` | Stage creation time for the timeline |
+| `registry_published_at` | `0044_eager_tombstone` | npm's publication time for the version (packument `time[version]`), stamped on this organization's live staged reviews matched by the immutable registry coordinates and the stage's SHA-1 against the published bytes, when its [publication monitor](./publication-monitor.md) observes the release. Null when no watch saw the release; the status columns then only bound publication from above |
 
 `report.json` carries `registryStatus: { status, observedAt } | null`, additive and optional, with no schema bump (`drydock.report.v2`'s bump was for a removal).
 

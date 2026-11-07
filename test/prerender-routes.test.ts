@@ -152,11 +152,18 @@ describe("public route parity", () => {
     const head = "head" in result ? result.head : undefined;
 
     expect(head?.title).toBe(agentsPageSeo.title);
-    expect(result.html).toContain("Review dependency upgrades with your coding agent.");
+    expect(result.html).toContain("Set up Drydock with your coding agent.");
+    for (const id of ["existing-project", "new-project"]) {
+      expect(result.html).toContain(`id="${id}"`);
+      expect(result.html).toContain(`href="/agents/${id}.md"`);
+    }
+    expect(result.html).toContain("Stage Watchtower — advisory");
     expect(result.html).toContain('href="/agents/package-review.md"');
     expect(result.html).toContain('href="/diff/react/18.2.0/18.3.1"');
     expect(result.html).toContain('href="/diff/pypi/requests/2.31.0/2.32.3"');
     expect(result.html).toContain("textSamplesOmitted");
+    expect(result.html).toContain('id="mcp"');
+    expect(result.html).toContain("https://drydock.org/api/public/v1/mcp");
     expect(result.html).not.toContain("Page not found");
   });
 
@@ -167,21 +174,28 @@ describe("public route parity", () => {
     expect(result.html).toContain('href="#agent-package-review"');
     expect(result.html).toContain('id="agent-package-review"');
     expect(result.html).toContain('href="/agents"');
+    expect(result.html).toContain('href="/agents#existing-project"');
+    expect(result.html).toContain('href="/agents#new-project"');
     expect(result.html).toContain("AGENTS.md · package review");
+    expect(result.html).toContain('id="release-walkthrough"');
+    expect(result.html).toContain('href="#release-walkthrough"');
   });
 
-  it("keeps the project instruction and its public download identical", () => {
-    const source = readFileSync(
-      new URL("../src/features/agent-quickstart/package-review.md", import.meta.url),
-      "utf8",
-    );
-    const download = readFileSync(
-      new URL("../public/agents/package-review.md", import.meta.url),
-      "utf8",
-    );
+  it.each(["package-review", "existing-project", "new-project"])(
+    "keeps %s and its public download identical",
+    (name) => {
+      const source = readFileSync(
+        new URL(`../src/features/agent-quickstart/${name}.md`, import.meta.url),
+        "utf8",
+      );
+      const download = readFileSync(
+        new URL(`../public/agents/${name}.md`, import.meta.url),
+        "utf8",
+      );
 
-    expect(download).toBe(source);
-  });
+      expect(download).toBe(source);
+    },
+  );
 
   it("resolves every machine-readable discovery link to a public page or static document", () => {
     const discovery = readFileSync(new URL("../public/llms.txt", import.meta.url), "utf8");

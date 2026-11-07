@@ -82,7 +82,7 @@ Owner: `server/lib/scan/pipeline.ts`, driven by a `PackageAdapter` (`server/lib/
 | 3 | `analyzeRelease`: acquire both sides, pick the baseline ([`diff-baseline.md`](./diff-baseline.md)), diff, run deterministic findings on **raw** text. |
 | 4 | Project what later phases need into `ArtifactFacts` (package summary, file counts, baseline, intent-envelope repository) and release raw file arrays. |
 | 5 | Redact; AI review ([`ai-review-eval.md`](./ai-review-eval.md)), risk, report assembly, persistence ([`artifact-storage.md`](./artifact-storage.md)). |
-| 6 | UI polls `GET /api/v1/scans/:id/status` (one indexed row, lifecycle columns only) and fetches `GET /api/v1/scans/:id` once on a terminal status. |
+| 6 | UI polls `GET /api/v1/scans/:id/status` (one indexed row, lifecycle columns only) and fetches `GET /api/v1/scans/:id` once on a terminal status. A detail read of a completed scan records a report view on the scan row after the response ([`product-analytics.md`](./product-analytics.md#report-views)). |
 
 `POST /api/v1/scans` input shapes:
 
@@ -97,7 +97,7 @@ Pipeline invariants:
 2. Peak memory (both sides in a 128 MiB isolate) caps reviewable size. The step-4 release frees record wrappers, arrays, and rewritten text; it is a no-op on the workflow-gate path, where the prepared-package list (up to 3 packages concurrently) keeps artifacts alive.
 3. Published-pair requests resolve against the public registry before a scan row exists: an unpublished version is a `404`, and `baselineVersion` defaults to the immediately preceding release. Mutable refs (pkg.pr.new URLs) are rejected.
 4. `DELETE /api/v1/scans/:id` deletes only `failed` scans; any other status returns `409`.
-5. Registry packument reads are cached 5 minutes in `COMPARE_CACHE` (`fetchPackageMetadataCached`), keyed `org:<id>` because a token-authenticated packument can include private packages. The scan path uses the abbreviated packument (separate key). Documents are projected to `versions[].dist.tarball`, `dist-tags`, `time` at fetch.
+5. Registry packument reads are cached 5 minutes in `COMPARE_CACHE` (`fetchPackageMetadataCached`, shared with the compare/versions routes), keyed `org:<id>` because a token-authenticated packument can include private packages. The decision-time dependency readiness check keeps its streamed versions-only answers in a sibling `<scope>|versions` partition of the same namespace. The scan path uses the abbreviated packument (separate key). Documents are projected to `versions[].dist.tarball`, `dist-tags`, `time` at fetch. The decision-time dependency readiness check keeps its streamed versions-only answers in a sibling `<scope>|versions` partition of the same namespace.
 6. Cache staleness usually picks an older baseline (louder diff, recorded in `BaselineInfo`). Exception: a dist-tag rolled back within the 5-minute TTL diffs against a baseline ahead of the release, which reads quieter. The report's baseline version shows which one was used.
 
 ## Workflow gates
@@ -151,6 +151,7 @@ All bindings with required/optional status: [`self-hosting.md`](./self-hosting.m
 | Rule | Detail |
 | --- | --- |
 | Non-auth `/api/*` | Better Auth session + active organization, except the anonymous surfaces listed in [`security-model.md`](./security-model.md) |
+| Organization API keys | accepted instead of a session only on allowlisted routes: reads; plus starting a review and "Check npm" for `scan` keys; plus staged-publish decisions for `decide_staged` keys. No key decides a workflow gate ([`api-keys.md`](./api-keys.md)) |
 | Scoping | scans, npm connections, workflow gates, release targets, Slack installs, settings are organization-scoped |
 | `x-organization-id` | a selector only; a non-member selector falls back to the caller's personal organization |
 | `x-organization-strict: 1` | non-member selector returns `403 not_organization_member` instead of falling back (pages whose URL names the org) |

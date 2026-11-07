@@ -6,7 +6,8 @@ Publisher setup inspects an installed repository and prepares an independently r
 
 | Thing | Owner file | Who may call / trigger | Pinned by (test) |
 | --- | --- | --- | --- |
-| Settings → Integrations → GitHub App → Set up a release workflow | `src/features/publisher-setup/PublisherSetup.tsx` | Organization owner/admin | `test/workers/publisher-setup-jobs.test.ts` |
+| Settings → Integrations → GitHub App → Prepare a release workflow | `src/features/publisher-setup/PublisherSetup.tsx` | Organization owner/admin | `test/workers/publisher-setup-jobs.test.ts` |
+| Setup checks for coding agents | `src/features/publisher-setup/agent-summary.ts` | Maintainer copies session-bound checks | `test/publisher-setup-agent-summary.test.ts` |
 | Model: GLM 5.3 Flash (`AI_MODEL`) | `server/lib/ai-review/index.ts` | Setup agents | `test/publisher-setup-agent.test.ts` |
 | Inspection and PR writes | `server/lib/github-app/setup-api.ts` | Authorized job | `test/publisher-setup.test.ts` |
 | Investigation, implementation, judge | `server/lib/github-app/setup-agent.ts` | Durable job; native function tools | `test/publisher-setup-agent.test.ts` |
@@ -26,6 +27,17 @@ Publisher setup inspects an installed repository and prepares an independently r
 | Map | Map repository/environment/ecosystem/artifact as a release target; remove conflicting mappings explicitly. |
 | Verify | Run a real release; refresh setup checks. Requested gate, observed Environment rule and completed pre-publication review are separate states. |
 | Completion | Already-published review does not finish setup; a draft PR does not establish release protection. |
+
+### Agent handoff
+
+| Surface / condition | Contract |
+| --- | --- |
+| Copy for your agent | Copies plain text with repository, Environment, passed-check count and every check's label, status and detail; excludes gate and scan IDs. |
+| Text for your agent | Shows the same text for a maintainer to give a coding agent following the `/agents` setup prompts. |
+| Configuration pending / unknown | Closing line says "Not ready" until target mapping, Environment, protection rule and disabled administrator bypass all pass. |
+| Configuration passes; first review incomplete | Closing line reports "ready, pending first release" until a real release completes review. |
+| First review complete | A completed scan proves neither a real release nor approval; the closing line asks to confirm a real release instead of declaring setup complete. |
+| Access | Drydock exposes no agent-callable setup API; checks require the owner/admin session. |
 
 ### HTTP surface
 
@@ -184,6 +196,7 @@ Owner: `server/lib/github-app/setup-agent.ts`.
 | GitHub boundary | `test/publisher-setup.test.ts` |
 | Auth, cancellation, retention, durable execution | `test/workers/publisher-setup-jobs.test.ts`; [release safety](./release-safety.md) |
 | UI/completion states | `src/models/publisher-setup.ts`, `src/features/publisher-setup/PublisherSetup.tsx`; [workflow gates](./workflow-gates.md) |
+| Agent handoff text | `src/features/publisher-setup/agent-summary.ts`, `test/publisher-setup-agent-summary.test.ts`, `test/e2e/publisher-setup.spec.ts` |
 | This doc | `pnpm run verify:file docs/publisher-setup.md` |
 
 ## Why

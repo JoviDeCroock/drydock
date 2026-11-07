@@ -12,7 +12,7 @@ Every `package.json` script, lint rule, and static invariant test in one place. 
 | [oxfmt](https://oxc.rs/docs/guide/usage/formatter) v0 | Rust Prettier replacement (also Markdown, except `docs/**/*.md`: column padding doubled table bytes; `test/docs-shape.test.ts` guards doc shape instead) | `.oxfmtrc.json` |
 | [@preact/eslint-plugin-signals](https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md) | Signal rules via oxlint `jsPlugins` (alpha) | `.oxlintrc.json` |
 | [@shadcn/lint](https://github.com/shadcn-ui/lint) | Tailwind design-system rules via `jsPlugins` (oxlint >= 1.80) | `.oxlintrc.json` |
-| tsrs | Typecheck | `tsconfig.json`, `test/tsconfig.json` |
+| tsrs | Typecheck | `tsconfig.json`, `test/tsconfig.json`, `cli/tsconfig.json` |
 | knip | Unused files, exports, dependencies | `tooling/knip.jsonc` |
 | Vitest | `node` and `workers` projects | `vitest.config.ts` |
 | Playwright | Browser e2e | `playwright.config.ts` |
@@ -31,7 +31,7 @@ Always spell lint as `pnpm run lint`: bare `pnpm lint` can collide with workspac
 | `pnpm run lint:fix` | Apply oxlint autofixes. |
 | `pnpm run format` | Rewrite files with oxfmt. |
 | `pnpm run format:check` | Report files that would change. |
-| `pnpm run typecheck` | `tsrs --noEmit` over `src/`, `server/`, `vite.config.ts`, then over `test/` via `test/tsconfig.json` (note 1). |
+| `pnpm run typecheck` | `tsrs --noEmit` over `src/`, `server/`, `vite.config.ts`, then `tsrs -p test/tsconfig.json --noEmit`, then `tsrs -p cli/tsconfig.json` over the CLI's JSDoc (note 1). |
 | `pnpm run knip` | Unused files, exports, dependencies. Part of `verify` and CI. |
 | `pnpm run test` | Node (`test/**`) and D1-backed worker (`test/workers/**`) suites as two parallel Vitest processes (note 2). |
 | `pnpm run test:node` | `vitest run --project node`. |
@@ -41,7 +41,7 @@ Always spell lint as `pnpm run lint`: bare `pnpm lint` can collide with workspac
 | `pnpm run verify:file` | After editing one or two files: `--file <path...>` (note 4). No knip. |
 | `pnpm run fuzz` | Archive-parser property fuzz (`FUZZ_RUNS=20000`, long timeout). Not in `verify`. |
 
-1. Typecheck covers node, workers, e2e, and agent-tour tests. Vitest only strips types, so this is where test files are typechecked.
+1. Typecheck covers node, workers, e2e, and agent-tour tests, plus the CLI's checked JavaScript. Vitest only strips types, so this is where test files are typechecked.
 2. `scripts/test.mjs` spawns the projects defined in `scripts/lib/vitest-commands.mjs` (shared with `verify`). `pnpm test -- <file>` runs one file; `pnpm test -- --project workers <file>` pins the suite.
 3. `verify:quick`: oxlint and oxfmt on changed files (committed, staged, unstaged, untracked), full typecheck (cannot be scoped), whole-graph knip (removing the last import creates the unused export in another file), `vitest run --changed <merge-base>` for both projects. Skipped checks say so.
 4. `verify:file`: oxlint and oxfmt on exactly those files, full typecheck, `vitest related` for both projects (a test relates to itself; a Markdown file also runs the prose checks). Faster than `verify:quick` when the change set is wide but the edit is narrow.
@@ -50,6 +50,7 @@ Always spell lint as `pnpm run lint`: bare `pnpm lint` can collide with workspac
 
 | Command | What it does |
 | --- | --- |
+| `pnpm run drydock` | Run the checkout's CLI ([cli/README.md](../cli/README.md)); for example `pnpm run drydock scans list`. Reads reviews; scan access starts reviews; `decide_staged` access plus a fresh authenticator code records staged decisions and can run local npm approval. Workflow-gate decisions require a signed-in maintainer. |
 | `pnpm run dev` | Vite + Worker at `http://localhost:5173` against your `.dev.vars`. Credential-free alternative: `pnpm run e2e:dev:seed`. |
 | `pnpm run build` | Production build into `dist/`, including `dist/staged_publish_review/wrangler.json` that `deploy` reads. |
 | `pnpm run preview` | Serve the last `build` locally. |

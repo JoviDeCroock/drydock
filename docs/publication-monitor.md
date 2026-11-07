@@ -126,6 +126,8 @@ Applies when the published bytes match only records nobody decided and the ownin
 - **No record:** `published_without_approval` without downloading, so padding or an oversized tarball cannot suppress it. Bytes are downloaded only for releases with a Drydock record or a started post-release review.
 - **Dist-tags:** each observation stores `dist_tags` (sorted; malformed names dropped), refreshed every check including settled ones; the watch stamps `dist_tags_checked_at`. Over 1,000 tags, every `dist_tags` is null (unknown), never a partial list that would read as "not `latest`".
 - **Re-evaluation:** transient unknowns (a failed download) retry every check. `decision_history_unavailable`, `review_digest_unavailable`, and `artifact_too_large` re-evaluate once a day (`SETTLED_RECHECK_MS`) from stored digests, never a new download. Confirmed observations are retained.
+- **Publication time on reviews:** when an observation carries npm's publication time, the check stamps it as `scans.registry_published_at` on this organization's live (non-superseded) staged reviews of that exact registry package and version whose stage SHA-1 matches the published bytes (the hash this check computed, else npm's `dist.shasum`), first write wins (`recordScanRegistryPublishedAt` in `server/db/scan-views.ts`).
+- **Publication-time binding:** keyed on npm's registry coordinates, never the tarball manifest; a stage rejected on npm whose version shipped from other bytes is not stamped. A failed write emits `npm.publication_monitor.published_at_write_failed` and leaves the observation untouched. Feeds the exact opened-before-publication answer ([report views](./product-analytics.md#report-views)).
 
 ### Coverage gaps
 
@@ -164,7 +166,7 @@ Applies when the published bytes match only records nobody decided and the ownin
 
 ### Reviewing an alert after release
 
-1. **Scan** (beside **Acknowledge** on the card and package page) starts the same published-pair review `POST /api/v1/scans` starts: the observed version against the predecessor the monitor recorded. The scan id is stored on the alert; a second Scan opens it. A failed review can be deleted on its page, which unlinks it. Audited `publication.review_started`.
+1. **Scan** (beside **Acknowledge** on the card and package page) starts the same published-pair review `POST /api/v1/scans` starts: the observed version against the predecessor the monitor recorded. The scan id is stored on the alert; a second Scan opens it. A failed review can be deleted on its page, which unlinks it. Audited `publication.review_started`. Like every published-pair review, it compares npm's provenance record for the two versions, so a direct publish that dropped the predecessor's provenance, or was attested from a different repository, is a release finding on that review ([provenance continuity](./provenance-continuity.md)); the alert itself never reads provenance.
 2. A release with no Drydock record was decided from metadata alone. Starting the review hashes its bytes now with the same credential-free bounded collector and killswitch, filling only digests the observation never recorded; the decision retries once if that has not landed. The observation's status and reason are never touched.
 3. The review page's Decide dialog (diff first) reads "Decision after release". The outcome is recorded on the alert (audited `publication.review_resolved`); re-deciding updates it. Every decision records `reviewed_bytes`: `match`, `differ`, or `unavailable`.
 

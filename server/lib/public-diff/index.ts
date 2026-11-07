@@ -81,6 +81,9 @@ export interface PublicPackageDiff {
   // Human-facing spelling of `packageName`, when the canonical one is an atpm
   // DID rather than the readable verified handle. See PublicDiffVersionListing.
   displayName?: string;
+  // Stable spelling of `packageName` for links, set only when the request used
+  // another one (an atpm handle). See PublicDiffAcquiredSources.
+  canonicalPackageName?: string;
   cachedAt: string;
   // Absolute freshness bound for mutable acquisition metadata. Cache rewarms
   // use the remaining lifetime rather than restarting the adapter's TTL.
@@ -102,6 +105,9 @@ const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 // involve a preview keep a short TTL: repeat views stay cheap while staleness
 // is bounded.
 const PREVIEW_CACHE_TTL_SECONDS = 60 * 15;
+// A pair whose provenance read was undetermined (a timed-out registry call)
+// would otherwise keep that gap, and the finding it hides, for the full TTL.
+const UNSETTLED_READ_CACHE_TTL_SECONDS = 60 * 15;
 const CACHE_READ_COLO_TTL_SECONDS = 60;
 // KV values cap at 25 MiB; leave headroom for metadata around the samples.
 const CACHE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
@@ -161,7 +167,12 @@ export async function loadPublicPackageDiff(
 
   const cachedAtMs = Date.now();
   const cachedAt = new Date(cachedAtMs).toISOString();
-  const cacheExpiresAt = mutablePayloadExpiry(adapter, sources.cacheExpiresAt, cachedAtMs);
+  const cacheExpiresAt = sources.unsettledRegistryRead
+    ? earliestExpiry(
+        mutablePayloadExpiry(adapter, sources.cacheExpiresAt, cachedAtMs),
+        new Date(cachedAtMs + UNSETTLED_READ_CACHE_TTL_SECONDS * 1000).toISOString(),
+      )
+    : mutablePayloadExpiry(adapter, sources.cacheExpiresAt, cachedAtMs);
   const payload: PublicPackageDiff = {
     ecosystem: input.ecosystem,
     packageName: input.packageName,
@@ -179,6 +190,9 @@ export async function loadPublicPackageDiff(
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
     ...(sources.attestation ? { attestation: sources.attestation } : {}),
     ...(sources.displayName ? { displayName: sources.displayName } : {}),
+    ...(sources.canonicalPackageName && sources.canonicalPackageName !== input.packageName
+      ? { canonicalPackageName: sources.canonicalPackageName }
+      : {}),
     cachedAt,
     ...(cacheExpiresAt ? { cacheExpiresAt } : {}),
   };
@@ -432,7 +446,15 @@ export function payloadCacheTtlSeconds(
     if (!payload.cacheExpiresAt) return 0;
     return remainingCacheTtlSeconds(payload.cacheExpiresAt, maximum, nowMs);
   }
-  return maximum;
+  // An immutable pair carries an expiry only when a read behind it was
+  // unsettled; rewarms must keep that short deadline.
+  return payload.cacheExpiresAt
+    ? remainingCacheTtlSeconds(payload.cacheExpiresAt, maximum, nowMs)
+    : maximum;
+}
+
+function earliestExpiry(a: string | undefined, b: string): string {
+  return a !== undefined && Date.parse(a) < Date.parse(b) ? a : b;
 }
 
 /** Bound an absolute deadline by a cache layer's own maximum lifetime. */

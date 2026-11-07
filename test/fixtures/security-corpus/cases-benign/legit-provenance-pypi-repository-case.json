@@ -1,0 +1,63 @@
+{
+  "id": "legit-provenance-pypi-repository-case",
+  "title": "PyPI publisher repository differs only in letter case",
+  "category": "control",
+  "intent": "GitHub repository names are case-insensitive and PyPI publishers carry no repository id, so Owner/Repo and owner/repo are the same publisher.",
+  "ecosystem": "pypi",
+  "registryProvenance": {
+    "packageName": "example-sdk",
+    "baseline": {
+      "version": "2.0.0",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.0.tar.gz",
+          "status": 200,
+          "body": {
+            "version": 1,
+            "attestation_bundles": [
+              {
+                "publisher": {
+                  "kind": "GitHub",
+                  "repository": "Example-Org/Example-SDK",
+                  "workflow": "release.yml",
+                  "environment": "pypi"
+                },
+                "attestations": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "version": "2.0.1",
+      "files": [
+        {
+          "filename": "example_sdk-2.0.1.tar.gz",
+          "status": 200,
+          "body": {
+            "version": 1,
+            "attestation_bundles": [
+              {
+                "publisher": {
+                  "kind": "GitHub",
+                  "repository": "example-org/example-sdk",
+                  "workflow": "release.yml",
+                  "environment": "pypi"
+                },
+                "attestations": []
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "verdict": "benign",
+  "threatClass": "legit-provenance-continuity",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

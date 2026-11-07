@@ -1,0 +1,235 @@
+// @ts-check
+import { CLI_VERSION } from "./version.mjs";
+
+// HTTP access to one Drydock origin. The API key is attached only to requests
+// for that origin, never follows a redirect, and never appears in an error.
+
+const DEFAULT_URL = "https://drydock.org";
+const KEY_RE = /^ddk_[A-Za-z0-9_-]{43}$/;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export class CliError extends Error {
+  /**
+   * `retryable` marks a failure a later identical request may not repeat: the
+   * origin was unreachable, rate limited (429), or failed (5xx).
+   * @param {string} message
+   * @param {number} [exitCode]
+   * @param {{ retryable?: boolean; retryAfterMs?: number | null; status?: number; code?: string }} [details]
+   *   `status` and `code` are the HTTP status and the error body's `code`, when the server answered
+   */
+  constructor(
+    message,
+    exitCode = 1,
+    { retryable = false, retryAfterMs = null, status, code } = {},
+  ) {
+    super(message);
+    this.name = "CliError";
+    this.exitCode = exitCode;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * The origin requests go to. Plain HTTP is accepted only for loopback, so a
+ * key is never sent in the clear to a remote host.
+ * @param {string | undefined} value
+ * @returns {string}
+ */
+export function resolveBaseUrl(value) {
+  const raw = value?.trim() || DEFAULT_URL;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new CliError(`invalid Drydock URL: ${raw}`, 2);
+  }
+  if (url.username || url.password) {
+    throw new CliError("the Drydock URL must not contain credentials", 2);
+  }
+  const secure = url.protocol === "https:";
+  const loopback = url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  if (!secure && !loopback) {
+    throw new CliError("the Drydock URL must use https (http is allowed only for localhost)", 2);
+  }
+  return url.origin;
+}
+
+/**
+ * @param {string | undefined} value
+ * @returns {string}
+ */
+export function requireApiKey(value) {
+  const key = value?.trim();
+  if (!key) {
+    throw new CliError(
+      "set DRYDOCK_API_KEY to an organization API key (Settings → Integrations → API keys)",
+      2,
+    );
+  }
+  if (!KEY_RE.test(key)) throw new CliError("DRYDOCK_API_KEY is not a Drydock API key", 2);
+  return key;
+}
+
+/**
+ * One path segment. Dot segments would be resolved away by URL parsing and
+ * point the request somewhere else, so they are refused rather than encoded.
+ * @param {string} value
+ * @param {string} label
+ */
+export function pathSegment(value, label) {
+  if (!value || value === "." || value === "..")
+    throw new CliError(`invalid ${label}: ${value}`, 2);
+  return encodeURIComponent(value);
+}
+
+/**
+ * @typedef {object} ApiResponse
+ * @property {number} status
+ * @property {Headers} headers
+ * @property {string} text
+ */
+
+/**
+ * @typedef {object} RequestOptions
+ * @property {boolean} [authenticated]
+ * @property {"GET" | "POST"} [method]
+ * @property {unknown} [body] sent as JSON; omitted entirely when undefined
+ * @property {number} [timeoutMs]
+ */
+
+/**
+ * @param {{ baseUrl: string; apiKey: string | null; fetch: typeof globalThis.fetch }} options
+ */
+export function createClient({ baseUrl, apiKey, fetch: send }) {
+  /**
+   * @param {string} path absolute path with an encoded query string
+   * @param {RequestOptions} [options]
+   * @returns {Promise<ApiResponse>}
+   */
+  async function request(path, { authenticated = true, method = "GET", body, timeoutMs } = {}) {
+    // `x-drydock-client` keeps CLI calls apart from /diff page views in analytics.
+    /** @type {Record<string, string>} */
+    const headers = {
+      accept: "application/json",
+      "user-agent": `drydock-cli/${CLI_VERSION}`,
+      "x-drydock-client": "cli",
+    };
+    if (authenticated) {
+      if (!apiKey) throw new CliError("this command needs DRYDOCK_API_KEY", 2);
+      headers.authorization = `Bearer ${apiKey}`;
+    }
+    /** @type {RequestInit} */
+    const init = { method, headers, redirect: "manual" };
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    let res;
+    let text;
+    try {
+      res = await send(`${baseUrl}${path}`, {
+        ...init,
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      });
+      text = await res.text();
+    } catch (err) {
+      throw new CliError(`could not reach ${baseUrl}: ${describe(err)}`, 1, { retryable: true });
+    }
+    if (res.status >= 300 && res.status < 400) {
+      throw new CliError(`${baseUrl} answered with a redirect; check the Drydock URL`);
+    }
+    if (!res.ok) {
+      throw new CliError(errorMessage(res.status, text, res.headers), 1, {
+        retryable: res.status === 429 || res.status >= 500,
+        retryAfterMs: retryAfterMs(res.headers.get("retry-after")),
+        status: res.status,
+        code: errorCode(text),
+      });
+    }
+    return { status: res.status, headers: res.headers, text };
+  }
+
+  /**
+   * @param {string} path
+   * @param {RequestOptions} [options]
+   * @returns {Promise<any>}
+   */
+  async function json(path, options) {
+    const res = await request(path, options);
+    try {
+      return JSON.parse(res.text);
+    } catch {
+      throw new CliError(`${path} did not return JSON`);
+    }
+  }
+
+  return { request, json };
+}
+
+/**
+ * The error body's stable `code`, for callers that act on it.
+ * @param {string} text
+ * @returns {string | undefined}
+ */
+function errorCode(text) {
+  try {
+    const body = JSON.parse(text);
+    return typeof body?.code === "string" ? body.code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @param {number} status
+ * @param {string} text
+ * @param {Headers} headers
+ */
+function errorMessage(status, text, headers) {
+  /** @type {{ error?: unknown; code?: unknown; requiredAccess?: unknown }} */
+  let body = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // A non-JSON error body is described by its status alone.
+  }
+  const detail = typeof body.error === "string" ? body.error : `HTTP ${status}`;
+  const code = typeof body.code === "string" ? ` (${body.code})` : "";
+  // The decision route's two-factor step-up answers 401 like the session one;
+  // the key itself was accepted. A key revoked by that step-up says so itself.
+  if (typeof body.code === "string" && body.code.startsWith("two_factor_")) return detail;
+  if (body.code === "api_key_revoked") return detail;
+  if (status === 401) return `the API key was rejected: ${detail}${code}`;
+  if (body.code === "api_key_access_insufficient" && body.requiredAccess === "decide_staged") {
+    return "this API key cannot record decisions; drydock approve needs a key with decide_staged access (Organization settings → Integrations → API keys)";
+  }
+  if (body.code === "api_key_access_insufficient") {
+    return "this API key is read-only; starting reviews needs a key with scan access (Organization settings → Integrations → API keys)";
+  }
+  if (status === 429) {
+    const retry = headers.get("retry-after");
+    return `rate limited${retry ? `; retry after ${retry}s` : ""}: ${detail}`;
+  }
+  return `${detail}${code}`;
+}
+
+/**
+ * `Retry-After` as delta-seconds or an HTTP date, in milliseconds from now.
+ * @param {string | null} value
+ * @returns {number | null}
+ */
+function retryAfterMs(value, now = Date.now()) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? null : Math.max(0, date - now);
+}
+
+/** @param {unknown} err */
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
+}

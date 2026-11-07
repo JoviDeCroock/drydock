@@ -41,6 +41,7 @@ import type {
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { DETERMINISTIC_RULES_VERSION, deterministicFindings, type Finding } from "../../review";
 import { downloadInSandbox } from "../../sandbox";
+import { pypiProvenanceContinuity } from "./provenance";
 
 // PyPI side of the anonymous public package diff. Like the npm path it only
 // touches public-registry data: project metadata comes from the canonical
@@ -521,24 +522,42 @@ async function acquirePublicPyPiDiff(
   const selection = limitPublicPyPiDiffArtifacts(
     selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion),
   );
-  const downloads = await downloadPublicPyPiArtifacts(env, ctx, selection);
+  const projectName =
+    typeof metadata.info?.name === "string" ? metadata.info.name : input.packageName;
+  const [downloads, continuity] = await Promise.all([
+    downloadPublicPyPiArtifacts(env, ctx, selection),
+    pypiProvenanceContinuity({
+      metadata,
+      projectName,
+      fromVersion: input.fromVersion,
+      toVersion: input.toVersion,
+      fromFilenames: selection.from.map((artifact) => artifact.filename),
+      toFilenames: selection.to.map((artifact) => artifact.filename),
+    }),
+  ]);
   const resolved = resolvePublicPyPiDownloads(downloads.from, downloads.to);
   const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
   const notices = [...selection.notices, ...resolved.notices];
+  const sources = buildPublicPyPiDiffSources({
+    packageName: metadata.info?.name ?? input.packageName,
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+    from: resolved.from,
+    to: resolved.to,
+    // The synthetic release manifest must describe only the artifacts the
+    // diff actually contains, or the metadata-mismatch rules would flag the
+    // omitted artifact as missing evidence.
+    toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
+  });
 
   return {
-    ...buildPublicPyPiDiffSources({
-      packageName: metadata.info?.name ?? input.packageName,
-      fromVersion: input.fromVersion,
-      toVersion: input.toVersion,
-      from: resolved.from,
-      to: resolved.to,
-      // The synthetic release manifest must describe only the artifacts the
-      // diff actually contains, or the metadata-mismatch rules would flag the
-      // omitted artifact as missing evidence.
-      toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
-    }),
+    ...sources,
+    buildFindings: (fileDiff, manifestDiff) => [
+      ...sources.buildFindings(fileDiff, manifestDiff),
+      ...continuity.findings,
+    ],
     ...(notices.length ? { notices } : {}),
+    ...(continuity.unsettled ? { unsettledRegistryRead: true } : {}),
   };
 }
 

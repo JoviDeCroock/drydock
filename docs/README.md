@@ -11,7 +11,7 @@ Read one row, not the folder. User-facing guide: `src/pages/Docs/index.tsx` (kee
 | Know which tests a change needs | [`release-safety.md`](./release-safety.md) | `pnpm run verify:file <path>` |
 | Find a command | [`tooling.md`](./tooling.md) |  |
 | Understand the system | [`architecture.md`](./architecture.md) | [`security-model.md`](./security-model.md) |
-| Touch auth, an anonymous route, or egress | [`security-model.md`](./security-model.md) | [`two-factor-auth.md`](./two-factor-auth.md), [`organization-members.md`](./organization-members.md) |
+| Touch auth, an anonymous route, an API key route, or egress | [`security-model.md`](./security-model.md) | [`api-keys.md`](./api-keys.md), [`two-factor-auth.md`](./two-factor-auth.md), [`organization-members.md`](./organization-members.md) |
 | Change UI | [`design.md`](./design.md) | [`ui.md`](./ui.md), the Signals skill named in `tooling.md`, `verify-live` skill |
 | Add or change a detection rule | [`security-detection-corpus.md`](./security-detection-corpus.md) | [`detection-eval.md`](./detection-eval.md), `add-detection-rule` skill |
 | Change the AI reviewer | [`ai-review-eval.md`](./ai-review-eval.md) | [`security-model.md`](./security-model.md) |
@@ -40,13 +40,15 @@ Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-w
 | [`artifact-storage.md`](./artifact-storage.md) | D1 metadata + R2 report/artifact layout |
 | [`release-memory.md`](./release-memory.md) | prior-release finding-profile consistency (advisory) |
 | [`release-fingerprint.md`](./release-fingerprint.md) | `release.source-drift` rule |
+| [`provenance-continuity.md`](./provenance-continuity.md) | `release.provenance-dropped` / `release.provenance-publisher-changed`: registry provenance compared between baseline and candidate |
 | [`registry-version-status.md`](./registry-version-status.md) | npm lifecycle status of a staged version, forgotten-approval reminder |
 | [`publication-monitor.md`](./publication-monitor.md) | public npm watches, direct releases outside staging |
 | [`package-claims.md`](./package-claims.md) | canonical npm package ownership and migration audit |
 | [`public-reports.md`](./public-reports.md) | share links, attestations, threat feed |
 | [`public-badge.md`](./public-badge.md) | README badge states, opt-out, release lines |
 | [`release-receipts.md`](./release-receipts.md) | Release Receipt v1 |
-| [`agent-package-review.md`](./agent-package-review.md) | coding-agent quickstart and anonymous review recipe |
+| [`agent-package-review.md`](./agent-package-review.md) | coding-agent quickstart: publisher setup prompts, dependency-review instruction, anonymous HTTPS recipe, read-only public MCP endpoint |
+| [`api-keys.md`](./api-keys.md) | organization API keys: route allowlists by access level, auth rules, storage, lifecycle; [`openapi.json`](./openapi.json) contract |
 | [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) | Renovate preset + Dependabot/Renovate PR comment workflow (public contract) |
 | [`two-factor-auth.md`](./two-factor-auth.md) | 2FA enrollment, sign-in challenge, step-up |
 | [`organization-members.md`](./organization-members.md) | roles, invitations |

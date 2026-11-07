@@ -18,6 +18,11 @@ import {
   isPublishedTarballUrlAllowed,
 } from "./published-tarball";
 import { compareSemver, isValidNpmPackageName } from "./registry";
+import { npmProvenanceContinuity } from "./provenance";
+import {
+  PROVENANCE_NOT_EVALUATED,
+  type ProvenanceContinuityOutcome,
+} from "../../provenance-continuity";
 
 export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
@@ -106,6 +111,10 @@ export const npmPublicDiff: PublicDiffAdapter = {
     // preview-vs-preview pair may not be published on npm at all yet.
     let fromTarballUrl = fromPreview?.url;
     let toTarballUrl = toPreview?.url;
+    // Provenance continuity compares two published releases; a preview side
+    // has no registry record, so the pair is not evaluated.
+    let provenance: Promise<ProvenanceContinuityOutcome> =
+      Promise.resolve(PROVENANCE_NOT_EVALUATED);
     if (!fromTarballUrl || !toTarballUrl) {
       const metadata = await fetchPublicPackageMetadata(
         env,
@@ -133,9 +142,19 @@ export const npmPublicDiff: PublicDiffAdapter = {
           throw new PublicDiffError("registry returned an unexpected tarball URL", 502);
         }
       }
+      if (!fromPreview && !toPreview) {
+        provenance = npmProvenanceContinuity({
+          metadata,
+          packageName: input.packageName,
+          fromVersion: input.fromVersion,
+          toVersion: input.toVersion,
+          registryUrl: input.registryUrl,
+        });
+      }
     }
 
-    const [fromArchive, toArchive] = await Promise.all([
+    const [continuity, fromArchive, toArchive] = await Promise.all([
+      provenance,
       fromPreview
         ? downloadPreviewArchive(env, ctx, fromPreview.url)
         : downloadArchive(env, ctx, fromTarballUrl, input),
@@ -155,8 +174,8 @@ export const npmPublicDiff: PublicDiffAdapter = {
               sha256: toArchive.archiveSha256 ?? null,
             },
           }),
-      buildFindings: (fileDiff, manifestDiff) =>
-        buildNpmFindings({
+      buildFindings: (fileDiff, manifestDiff) => [
+        ...buildNpmFindings({
           staged: {
             files: toArchive.files,
             manifest: toArchive.packageJson ?? null,
@@ -169,6 +188,9 @@ export const npmPublicDiff: PublicDiffAdapter = {
           stagedManifestText:
             toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
         }),
+        ...continuity.findings,
+      ],
+      ...(continuity.unsettled ? { unsettledRegistryRead: true } : {}),
     };
   },
 };

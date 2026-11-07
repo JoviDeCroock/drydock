@@ -83,7 +83,7 @@ Surface-specific code stays with its page: `src/pages/Dashboard/ScanDetail/diff-
 
 | Surface | Order |
 | --- | --- |
-| Scan detail | Identity header → verdict strip → version picker → workbench → review notes (`CollapsibleCard`) → risk index → manifest sections → pending package-management row → `ReleaseTimeline`. |
+| Scan detail | Identity header → verdict strip → dependency readiness notice (when applicable) → version picker → workbench → review notes (`CollapsibleCard`) → risk index → manifest sections → pending package-management row → `ReleaseTimeline`. |
 | Public report | Identity header → verdict card (risk grade, not the approver recommendation) → workbench → full risk index. |
 
 Scan detail rules:
@@ -99,6 +99,21 @@ Scan detail rules:
 9. AI assessment leads with its structured assessment and risk and reminds that deterministic findings keep their severity. Model prose stays inert under **Read full AI assessment**, labeled advisory and potentially quoting package text. The severity bar renders only for two or more findings. Declared source binding shows one unverified repository link; only an exact duplicate manifest declaration is omitted.
 
 Public report rules: header is a `public release review` MonoDetail lead, package, compared pair, review time, changed-file count, and decision as plain `DecisionState` text. Its diff is single-sided: a share token buys the staged artifact's redacted samples (`GET /public/reports/:token/file`), never a baseline (that would spend the organization's npm credentials). `singleSidedTone` in `DiffView` keeps a one-sided `modified` file neutral.
+
+### Dependency readiness
+
+`DependencyReadinessNotice` (`src/pages/Dashboard/ScanDetail/DependencyReadinessNotice.tsx`) sits directly under the verdict strip, beside the decision it informs. Eligibility and wording: `src/features/dependency-readiness.ts`; pinned by `test/dependency-readiness-view.test.ts`. Registry contract: [npm-staged-publishing.md](./npm-staged-publishing.md#dependency-readiness).
+
+| Condition | Presentation / action |
+| --- | --- |
+| Completed npm review with approval still ahead | Check only an actionable stage (`manual` / `auto_discovery`) or a `pending` npm workflow gate; other ecosystems and published-pair reviews show nothing. |
+| Required dependency cannot be installed yet | One `warn` Alert lists each blocked dependency with its spec and consequence; a staged sibling gets a `review →` link scoped to the organization. |
+| Only optional or peer dependencies affected | `info` Alert; mono `optional` / `peer` text rather than a Badge. npm may omit unresolved optional dependencies; a missing peer can fail installation. |
+| Registry lookup failed | Muted line with the count; **Check again** retries. |
+| Dependencies not reached within the read budget | Separate muted line with the count; **Check the rest** advances checks (a blocking dependency or failure takes precedence with **Check again**). |
+| Unsupported spec, oversized registry document, or past the limit | Separate muted line with the count; no action when these are the only issues. |
+| Whole check unavailable | One muted explanation; a failed request offers **Check again**. |
+| Clean or inapplicable check | Render nothing. |
 
 ## Dashboard
 

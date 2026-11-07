@@ -196,6 +196,19 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 - release targets and workflow gates: map GitHub repositories/environments, review queued gate artifacts, and post accept/reject decisions;
 - auth/org/settings helpers for Better Auth-backed sessions and organization membership.
 
+Scripts and CI use the same API, directly or with the dependency-free [`drydock` CLI](cli/README.md)
+(`npx drydock-cli …`), authenticated by an organization API key (`Authorization: Bearer ddk_…`,
+created in `Organization settings → Integrations → API keys`).
+
+| Key access      | Reaches                                                             |
+| --------------- | ------------------------------------------------------------------- |
+| read            | the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) |
+| `scan`          | read, plus starting a review and "Check npm"                        |
+| `decide_staged` | `scan`, plus recording a staged-publish decision (advisory record)  |
+
+No key decides a workflow gate. [`docs/openapi.json`](docs/openapi.json) is the OpenAPI 3.1
+description of that surface (also served at `GET /api/v1/openapi.json`).
+
 Consult route definitions under `server/routes/` for exact request/response shapes; shared types are imported by the UI from `server/`.
 
 ## Security posture

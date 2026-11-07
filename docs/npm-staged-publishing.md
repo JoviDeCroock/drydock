@@ -13,6 +13,8 @@ Prerequisite: a Drydock organization with a read-scoped npm token connected, so 
 | Gate continuity lookup and events | `server/lib/scan/gate-continuity.ts` | `test/workers/gate-continuity.test.ts` |
 | Gate review history read | `server/db/scan-gate-continuity.ts` | `test/workers/gate-continuity.test.ts` |
 | Gate continuity UI | `src/pages/Dashboard/ScanDetail/ReportSections.tsx` | `test/gate-continuity-view.test.ts` |
+| Dependency readiness check | `server/routes/scans/npm-dependency-readiness.ts`, `server/lib/ecosystems/npm/dependency-readiness.ts` | `test/dependency-readiness.test.ts`, `test/workers/scan-dependency-readiness.test.ts` |
+| Readiness UI | `src/pages/Dashboard/ScanDetail/DependencyReadinessNotice.tsx`, `src/models/dependency-readiness.ts` | `test/dependency-readiness-view.test.ts`, `test/dependency-readiness-model.test.ts` |
 | npm lifecycle status after review | [registry-version-status.md](./registry-version-status.md) | — |
 
 ## Stage-only recipe
@@ -43,7 +45,7 @@ Prerequisite: a Drydock organization with a read-scoped npm token connected, so 
    ```
 
 4. **Read the review.** Drydock scans the private tarball against the last published release on the same dist-tag. Record the decision and reason.
-5. **Approve on npm with 2FA:** `npm stage approve <stage-id>` or the Staged Packages tab on npmjs.com. Drydock never holds a credential that can complete this step.
+5. **Approve on npm with 2FA:** `npm stage approve <stage-id>` or the Staged Packages tab on npmjs.com. Drydock never holds a credential that can complete this step. From a terminal, [`drydock approve <stage-id>`](../cli/README.md#approving-a-staged-publish) shows the review's install-time scripts, new dependencies, new executables, and top findings, records the publish or reject decision in Drydock (needs your Drydock authenticator code; [API keys](./api-keys.md)), then runs your own `npm stage approve`, which asks for npm's one-time password directly; Drydock never sees that one. It is a convenience and a record, not enforcement: approving on npmjs.com or with npm directly skips it.
 
 | Publish attempt | Stopped by |
 | --- | --- |
@@ -118,6 +120,31 @@ No record at all means the organization does not gate this package: no live targ
 5. A gate review never establishes the [package claim](./package-claims.md). A stage is admitted like any other through the claim; a stage whose package another organization claims gets no staged review here, so it carries no continuity record.
 6. Continuity is folded into the [release receipt](./release-receipts.md) as `evidence.gateContinuity` (names the gate review). `report.json` carries `gateContinuity` with status, reason, `stagedDigest`, and `gateDigest` only: a public share link serves those bytes, so the gate's repository, environment, run, decision, and internal ids stay behind authentication.
 
+## Dependency readiness
+
+Approving a stage makes it installable, so approving `a@2.0.0` while it depends on `b@^2.0.0` and `b@2.0.0` is still staged publishes a release nobody can install. The decision view checks this before approval: `GET /api/v1/scans/:id/dependency-readiness` asks whether each runtime dependency resolves to a public version. **Authority:** advisory; nothing here blocks approval.
+
+| Rule | Contract |
+| --- | --- |
+| Manifest | The one npm installs from: for a staged review, the registry's stage record (read live through the npm broker); the reviewed tarball's manifest from the report artifact when the stage record is unavailable, and always for a gate review (no stage yet) |
+| Checked | `dependencies`; `optionalDependencies` (labeled `optional`: npm installs without one it cannot resolve); non-optional `peerDependencies` (labeled `peer`: npm 7+ installs them and fails when the range cannot resolve) |
+| Skipped | Optional peers, `devDependencies`, and bundled dependencies (packed under `node_modules/<name>/` and declared in the tarball's `bundleDependencies`; `true` bundles every dependency). A packed directory the manifest does not bundle is installed from the registry, so it is checked |
+| Ranges | node-semver semantics in `server/lib/ecosystems/semver-range.ts`, including the prerelease rule (`^2.0.0` never resolves to `2.1.0-rc.1`) and ASCII ordering of prerelease identifiers; a spec that is not a range is a dist-tag. Only literal `*` (or an empty spec) resolves to a prerelease `latest`; `x` or `>=0.0.0` needs a stable version |
+| Aliases and local specs | `npm:` aliases are checked against the target package. `workspace:`, `catalog:`, `link:`, `file:`, and path specs are flagged: no consumer can resolve them from the registry, so the publish should have replaced them. Git, GitHub-shorthand, and URL specs are counted, not checked |
+| Staged in this organization | An unresolved dependency is matched against the organization's current staged reviews of that package on the same registry, keyed on npm's stage record (`registry_package_name` / `registry_version`, never a tarball manifest; `server/db/scan-dependency-candidates.ts`). A satisfying stage is named with a link to its review: approve it first. A stage npm blocked or deleted is never offered; one npm reports `published` counts as installable |
+| Gated releases | The other packages of the same gated release satisfy each other (the gate releases them together). The gate contract names no publish target, so a gate review reads the organization's npm connection's registry (as its baseline does), or the public registry anonymously without a usable connection (`credentialed: false`), where an unseen package reads "not publicly listed", not missing. A gate publishing to another registry is checked against the wrong one |
+| When computed | When the decision view loads, not at scan time: the answer changes after the scan while the reviewed bytes do not. Nothing is persisted, no migration exists, and report, risk, and findings are unchanged |
+| Credentials | Every credentialed registry request goes through the npm broker (`connectionStatus`, `fetchStagedDetails`, `fetchPackageVersionsBatch`, which resolves the credential once per batch); only the broker decrypts the token, and it fails closed (`npm-connection-changed`) when the connection was edited to another registry since a staged scan. The route never sees the token |
+| Packument read | Streamed by `server/lib/ecosystems/npm/package-versions.ts` through the packument extractor in version-keys-only mode, so memory stays flat (`next`'s abbreviated packument is ~25 MB) |
+| Too large | Over `MAX_PACKUMENT_BYTES` (64 MiB decompressed), `MAX_VERSIONS` (100,000), or `MAX_VERSION_KEY_CHARS` (2 Mi chars of version keys; a key over semver's 256 chars is skipped) is `too-large`: an answer, not a failure; no retry, no failure event. These bounds keep every cached answer well under KV's 25 MiB value limit |
+| No versions | No `versions` key: nothing published. A non-object `versions`: could not be checked |
+| Cache | Answers (found, not found, too large; never a failed read) cached 5 minutes (`METADATA_CACHE_TTL_SECONDS` in `server/lib/compare-metadata-cache.ts`) in their own partition, `org:<id>\|versions` or `public\|versions`, beside the pipeline's projected `\|abbrev` packuments, which a versions-only document must never replace |
+| Read budget | Each check first reads the cache for every target (no registry request), then spends at most `MAX_REGISTRY_READS` (40) registry reads, `DEPENDENCY_LOOKUP_CONCURRENCY` (6) at a time, within `DEPENDENCY_LOOKUP_BUDGET_MS` (10 s, a ceiling: one attempt per read; headers and body still in flight are abandoned as a failed read), on targets with no answer; only then re-reads cached negatives, since "not published yet" is the answer that goes stale. A first check reads changed specs first |
+| Paging | A dependency the budget did not reach is `lookup-skipped` ("Check the rest"); the response carries `nextOffset`, which the client sends back as `?offset=` so the next check starts its registry reads there, rotating through the queue. The offset is a server-clamped hint for which advisory reads to make. It makes progress independent of KV visibility (a miss can persist up to a minute, and failed reads are never cached) |
+| Target limit | Each check adds up to 40 answers, so up to `MAX_CHECKED_TARGETS` (300) dependencies need their checks within the 5-minute TTL; targets past 300 are never read (`lookup-limit`) |
+| Fails open | A failed read, or a batch whose broker call failed outright, is "could not check" ("Check again"), never missing. A check that cannot run shows one muted `unavailable` line (`report-unavailable`, `npm-connection-unavailable`, `npm-connection-changed`) rather than reading like a clean result |
+| Rate limit and events | 30 requests per minute per user (`dependency-readiness:<userId>`); lookup failures emit `scan.dependency_readiness.lookup_failed` with a count only |
+
 ## Compared with the workflow gate
 
 |  | Stage-only trusted publishing | [Workflow gate](./workflow-gates.md) |
@@ -145,3 +172,4 @@ Stage-only is the shorter setup for a maintainer already running `npm stage publ
 
 - New continuity status or reason → `server/lib/scan/gate-continuity-record.ts`, the tables here, the UI view, `test/gate-continuity.test.mjs`, and [release-receipts.md](./release-receipts.md) if the receipt shape changes.
 - Change to the gate YAML → edit only [the canonical file](./examples/npm-workflow-gate.yml); update the delta tables here and in [npm-trusted-publishing.md](./npm-trusted-publishing.md).
+- Dependency readiness rule or bound → `server/lib/ecosystems/npm/dependency-readiness.ts` (ranges in `server/lib/ecosystems/semver-range.ts`), the table above, and `test/dependency-readiness.test.ts`, `test/semver-range.test.ts`, `test/workers/scan-dependency-readiness.test.ts`.

@@ -95,7 +95,7 @@ Deterministic review covers the entire staged artifact, including unchanged inst
 1. Folded text: Both raw and constant-folded changed text count; newly joined string fragments can introduce a delta match (`server/lib/review/diff-annotation.ts`).
 1. No usable line/text evidence: Re-run rules on baseline versions of modified files, with manifests; same rule + file becomes context; unchanged files are not re-scanned (`server/lib/review/diff-annotation.ts`).
 1. No baseline counterpart: Fails open to release delta: missing evidence makes report louder, never quieter (`server/lib/review/diff-annotation.ts`).
-1. Baseline text: Cap each body at `BASELINE_TEXT_SAMPLE_LIMIT`; manifests exempt; clipped body has `baseline-truncated`; reviewed side never capped (`server/lib/sample-retention.ts`).
+1. Baseline text: Cap each body at `BASELINE_TEXT_SAMPLE_LIMIT`; manifests exempt; clipped body has `baseline-truncated` (set in `server/lib/tar-parser.js`); reviewed side never capped (limit in `server/lib/sample-retention.ts`; [`sandbox-parser.md`](./sandbox-parser.md)).
 1. Previous-version UI text: Baseline samples are never persisted; separate `/compare` downloads/caches published tarball (`server/lib/compare-cache.ts`).
 
 | Limit / bound | Contract | Owner |

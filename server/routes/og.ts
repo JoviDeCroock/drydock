@@ -110,12 +110,12 @@ function cardCacheKey(requestUrl: string, spec: CardSpec): Request {
 }
 
 function cardCacheControl(adapter: PublicDiffAdapter, cacheExpiresAt?: string): string {
-  if (!adapter.cacheTtlSeconds) return CARD_CACHE_CONTROL;
-  const maxAge = remainingCacheTtlSeconds(cacheExpiresAt, Math.min(3600, adapter.cacheTtlSeconds));
-  const sharedMaxAge = remainingCacheTtlSeconds(
-    cacheExpiresAt,
-    Math.min(86400, adapter.cacheTtlSeconds),
-  );
+  // An immutable pair carries an expiry only when a registry read behind its
+  // risk was unsettled; the card must not outlive that payload.
+  if (!adapter.cacheTtlSeconds && !cacheExpiresAt) return CARD_CACHE_CONTROL;
+  const lifetime = adapter.cacheTtlSeconds ?? Number.POSITIVE_INFINITY;
+  const maxAge = remainingCacheTtlSeconds(cacheExpiresAt, Math.min(3600, lifetime));
+  const sharedMaxAge = remainingCacheTtlSeconds(cacheExpiresAt, Math.min(86400, lifetime));
   return `public, max-age=${maxAge}, s-maxage=${sharedMaxAge}`;
 }
 
@@ -260,7 +260,7 @@ ogRoutes.get("/diff/*", async (c) => {
   });
   if (
     !cacheExpiresAt ||
-    remainingCacheTtlSeconds(cacheExpiresAt, spec.adapter.cacheTtlSeconds ?? 0) > 0
+    remainingCacheTtlSeconds(cacheExpiresAt, spec.adapter.cacheTtlSeconds ?? 86400) > 0
   ) {
     c.executionCtx.waitUntil(coloCache().put(cacheKey, response.clone()));
   }

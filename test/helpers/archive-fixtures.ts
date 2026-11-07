@@ -129,6 +129,20 @@ export function buildTarHeaderOnly({
   return header;
 }
 
+// A pax extended-header body with each record's self-inclusive length prefix
+// computed. A `[key]` pair with no value writes the bare `key` record (no `=`).
+export function paxBody(records: Array<[string, string?]>): string {
+  return records
+    .map(([key, value]) => {
+      const record = value === undefined ? key : `${key}=${value}`;
+      const tail = encoder.encode(` ${record}\n`).length;
+      let length = tail + 1;
+      while (String(length).length + tail !== length) length = String(length).length + tail;
+      return `${length} ${record}\n`;
+    })
+    .join("");
+}
+
 // Strip the two-block end-of-archive marker `buildTar` appends, so a fixture can
 // splice extra blocks (a lone zero block, a second archive) after real entries.
 export function tarEntriesOnly(tar: Uint8Array): Uint8Array {

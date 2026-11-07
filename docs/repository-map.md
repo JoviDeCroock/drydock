@@ -7,7 +7,7 @@ Where each behavior lives, which tests pin it, and which doc explains it. Load o
 | Area | Owner | Tests | Doc |
 | --- | --- | --- | --- |
 | Route mounting, session guard, anonymous-mount order | `server/index.ts` (deploy target in `wrangler.jsonc`; re-exports `scheduled` and `queue`) | `test/api-auth-boundary-invariants.test.mjs` | [`security-model.md`](./security-model.md) |
-| Request middleware | `server/middleware/`: security headers, canonical host + static fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin, auth IP rate limit, `c.var.db` | `test/workers/` | [`security-model.md`](./security-model.md) |
+| Request middleware | `server/middleware/`: security headers, canonical host + static fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin, auth IP rate limit, organization API-key auth (`server/middleware/api-key-auth.ts`, [`api-keys.md`](./api-keys.md)), `c.var.db` | `test/workers/` | [`security-model.md`](./security-model.md) |
 | Cron | `server/scheduled.ts`: staged-publish discovery, audit/auth-row/rate-limit pruning | `test/workers/` | [`architecture.md`](./architecture.md#scheduled-discovery) |
 | Queue consumer | `server/queue.ts` (`SCAN_QUEUE`: scan + workflow-gate messages) | `test/workers/` | [`architecture.md`](./architecture.md#scan-pipeline) |
 | Rate limits | `server/lib/rate-limit.ts` (`enforceRateLimit`, `guardRateLimit`) over `server/lib/platform/rate-limit.ts` + D1 fallback `server/db/rate-limits.ts` | `test/rate-limit-boundary-invariants.test.mjs` | [`security-model.md`](./security-model.md#rate-limiting) |
@@ -18,6 +18,8 @@ Where each behavior lives, which tests pin it, and which doc explains it. Load o
 | AI review + Clef screen | `server/lib/ai-review/` (`injection-screen.ts`, `clef.ts`), wired via `server/lib/scan/pipeline.ts` | `test/ai-review-*.test.mjs` | [`ai-review-eval.md`](./ai-review-eval.md) |
 | Ecosystems | `server/lib/ecosystems/<id>/`; registry `server/lib/ecosystems/index.ts`; gate adapters `<id>/workflow-gate.ts`; `published-pair.ts` | `test/ecosystem-registry.test.ts`, `test/ecosystem-branching-invariants.test.mjs` | [`architecture.md`](./architecture.md#ecosystems-and-capabilities) |
 | Public `/diff` | `server/lib/public-diff/`, `server/routes/public-diff.ts` | `test/workers/` | [`public-diff.md`](./public-diff.md), [`atpm.md`](./atpm.md) |
+| Public MCP endpoint (anonymous) | `server/routes/public-mcp.ts` (transport boundary), `server/lib/public-mcp.ts` (tools over the public package-diff router) | `test/workers/` | [`agent-package-review.md`](./agent-package-review.md) |
+| `drydock` CLI | `cli/` (dependency-free, over the API-key surface; `cli/README.md`); `cli/src/main.mjs` takes process access as an injected `io`; JSDoc-typechecked by `cli/tsconfig.json` | `test/cli.test.ts` (fake fetch), `test/workers/cli.test.ts` (real Worker) | [`api-keys.md`](./api-keys.md) |
 | Workflow gates | `server/lib/workflow-gates/` (shared plumbing only), webhook `server/routes/github-webhooks.ts` → `github_workflow_gates` | `test/workers/`, e2e | [`workflow-gates.md`](./workflow-gates.md) |
 | Auth, orgs, roles, audit allowlist | `server/lib/auth/` | `test/workers/` | [`organization-members.md`](./organization-members.md), [`audit-log.md`](./audit-log.md) |
 | Notifications | `server/lib/notify/` (fan-out, Slack, email) | `test/workers/` | [`slack-notifications.md`](./slack-notifications.md) |
@@ -31,7 +33,7 @@ Where each behavior lives, which tests pin it, and which doc explains it. Load o
 | --- | --- | --- |
 | App shell | `src/index.tsx` (`preact-iso`); `src/models/` reuses server types | [`ui.md`](./ui.md) |
 | Shared page behavior | `src/features/` (review UI in `src/features/review/`) | [`ui.md`](./ui.md), [`design.md`](./design.md) |
-| Coding-agent quickstart | `src/pages/Agents/`, `src/features/agent-quickstart/`; static `public/llms.txt`, `public/agents/package-review.md` | [`agent-package-review.md`](./agent-package-review.md) |
+| Coding-agent quickstart | `src/pages/Agents/`, `src/features/agent-quickstart/` (setup prompts + project instruction shared with Docs); static `public/llms.txt`, `public/agents/*.md` | [`agent-package-review.md`](./agent-package-review.md) |
 | User-facing docs page | `src/pages/Docs/index.tsx` | keep aligned with this folder |
 | Migrations | `drizzle/`, generated from `server/db/schema.ts` by `pnpm db:generate`; never hand-written | — |
 

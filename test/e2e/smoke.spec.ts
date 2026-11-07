@@ -144,6 +144,99 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("blocked").first()).toBeVisible();
 });
 
+test("a release waiting on a staged dependency says which one, beside the decision", async ({
+  page,
+}) => {
+  await installWorkflowGateMocks(page);
+  // Registered later, so these take precedence over the gate mocks. The demo
+  // gate is a PyPI release (never checked); this one is the npm release of it.
+  const npmGate = scanDetail(null);
+  await page.route(
+    (url) => url.pathname === `/api/v1/scans/${scanId}`,
+    async (route) => {
+      await fulfillJson(route, {
+        ...npmGate,
+        scan: {
+          ...npmGate.scan,
+          stageId: `workflow-gate:${gateId}:npm:@drydock/gate-demo`,
+          summaryJson: {
+            ...npmGate.scan.summaryJson,
+            stagedPublish: {
+              mode: "workflow_gate",
+              ecosystem: "npm",
+              provenance: {
+                ecosystem: "npm",
+                mode: "workflow_gate",
+                artifacts: [
+                  {
+                    path: "drydock-gate-demo-1.2.0.tgz",
+                    kind: "tarball",
+                    sha256: "d".repeat(64),
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    },
+  );
+  await page.route(`**/api/v1/scans/${scanId}/dependency-readiness`, async (route) => {
+    await fulfillJson(route, {
+      status: "checked",
+      declared: 3,
+      notRegistry: 0,
+      satisfiedByRelease: 0,
+      credentialed: true,
+      issues: [
+        {
+          name: "@drydock/core",
+          spec: "^2.0.0",
+          section: "dependencies",
+          kind: "staged",
+          staged: {
+            scanId: "stage-smoke-core-000001",
+            version: "2.0.0",
+            decision: null,
+            registryVersionStatus: "staged",
+          },
+        },
+        {
+          name: "@drydock/types",
+          spec: "^2.0.0",
+          section: "peerDependencies",
+          kind: "unpublished",
+          packageFound: true,
+        },
+        {
+          name: "left-pad",
+          spec: "^1.0.0",
+          section: "dependencies",
+          kind: "unchecked",
+          reason: "lookup-failed",
+        },
+      ],
+    });
+  });
+
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const notice = page.getByRole("alert").filter({ hasText: "cannot be installed from npm yet" });
+  await expect(notice).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByText("2 dependencies cannot be installed from npm yet.")).toBeVisible();
+  await expect(
+    notice.getByText(
+      "@drydock/core@2.0.0 is staged in this organization and not published yet. Approve it first.",
+    ),
+  ).toBeVisible();
+  await expect(notice.getByRole("link", { name: "review →" })).toHaveAttribute(
+    "href",
+    "/dashboard/scans/stage-smoke-core-000001?org=org-smoke",
+  );
+  await expect(notice.getByText("peer", { exact: true })).toBeVisible();
+  await expect(notice.getByText("Could not check 1 dependency against npm.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Decide", exact: true })).toBeVisible();
+});
+
 test("review notes group evidence and keep AI advice subordinate to findings", async ({
   page,
 }, testInfo) => {
