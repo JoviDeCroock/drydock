@@ -99,12 +99,25 @@ make it required.
    through a mirror therefore holds every bump while `holdOnUnreviewed` is
    on. Config set outside the repository (environment, user-level files,
    Dependabot `registries:`) is invisible here.
-6. **Diff.** Each bump runs through `loadPublicPackageDiff`, the same pipeline,
+6. **Check malware, then diff.** Every public target version is checked against
+   the [Aikido Intel feeds used by Safe Chain](https://github.com/AikidoSec/safe-chain/tree/main/packages/safe-chain/src/scanning),
+   including new packages, transitive dependencies, and bumps beyond the diff
+   cap. The job downloads one fresh index per ecosystem; package names and
+   versions are matched locally and are never sent to Aikido. Only `MALWARE`
+   entries block (exact versions or `*`); npm names match exactly, and PyPI
+   uses normalized names and equivalent PEP 440 versions. A match holds with
+   `known-malware`. An unavailable, malformed, oversized, or timed-out index
+   holds public bumps with `malware-index-unavailable`. Both holds are mandatory
+   and cannot be approved or waived by an earlier capability approval. Replace
+   a flagged version, or use Re-run to retry an unavailable index. Private
+   sources skip the index entirely.
+
+   Remaining bumps run through `loadPublicPackageDiff`, the same pipeline,
    rules, and versioned KV cache as `/diff`. Direct bumps go first. At most 40
    bumps are diffed per review, four at a time, inside an eight-minute budget.
    The rest are _unreviewed_ (`over-cap`, `timed-out`), as are bumps the public
    diff can't serve (`not-found`, `unsupported`, `failed`). A deployment with a
-   custom `NPM_REGISTRY` diffs nothing (`publicDiffEgressAllowed`, the same
+   custom `NPM_REGISTRY` fetches no malware index and diffs nothing (`publicDiffEgressAllowed`, the same
    killswitch as the anonymous `/diff` surface), so every bump is unreviewed.
 7. **Decide.** `server/lib/dependency-review/policy.ts` reads the release delta
    only. Context findings describe code the previous version already shipped,
@@ -136,8 +149,9 @@ make it required.
    other platforms holds under `holdOnUninspectedFiles`.
 
 8. **Publish.** The check completes `success` (nothing held, or every hold
-   already approved) or `action_required` with an **Approve held updates**
-   action. Its summary lists held bumps with their reasons, release risk, file
+   already approved) or `action_required`. Ordinary holds offer an **Approve held
+   updates** action when all are shown; malware and index-unavailable holds
+   never offer approval. Its summary lists held bumps with their reasons, release risk, file
    counts, and the top findings, then unreviewed bumps, new packages, and clear
    bumps, each linked to its public `/diff` page (private-source bumps get no
    link). The title says "clear" only when every bump's diff was read and held
@@ -224,6 +238,10 @@ bumps and waits on held ones.
   the public registries the diff already reads. The shared result cache means a
   public pair one organization diffed is cached for `/diff` visitors, the same
   as a browser visit to that pair.
+- Aikido receives only a request for its ecosystem-wide public index, without
+  credentials or package selectors. Each review fetches fresh data, bounded
+  to 16 MiB for npm and 2 MiB for PyPI with a 15-second deadline per index;
+  redirects and stale fallback are refused.
 - The installation token only goes to `api.github.com`. Listing pagination
   refuses a `Link` to any other host, and no request follows a redirect: a 3xx
   (a renamed or transferred repository) fails the review without a retry.
@@ -247,5 +265,5 @@ bumps and waits on held ones.
 - PRs opened by people. Only dependency bots' PRs are reviewed; the rest get a
   `skipped` check. A person's commit pushed onto a bot's PR is reviewed, because
   the PR's author is still the bot.
-- New packages have no diff. They are listed, and hold only under
-  `holdOnNewPackages`.
+- New packages have no diff. They still get the malware check; otherwise they
+  are listed, and hold only under `holdOnNewPackages`.

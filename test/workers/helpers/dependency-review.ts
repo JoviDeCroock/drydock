@@ -253,6 +253,7 @@ export function fakePullRequest(overrides: Partial<FakePullRequest> = {}): FakeP
  * would surface only as a swallowed "diff failed".
  */
 export function stubGithubApi(pr: FakePullRequest) {
+  const malwareResponses = new Map<string, { body: unknown; status?: number }>();
   const requests: RecordedRequest[] = [];
   const unexpected: string[] = [];
   const checkRunCreates: CheckRunWrite[] = [];
@@ -273,6 +274,13 @@ export function stubGithubApi(pr: FakePullRequest) {
       body,
     });
 
+    if (
+      url.host === "malware-list.aikido.dev" &&
+      ["/malware_predictions.json", "/malware_pypi.json"].includes(url.pathname)
+    ) {
+      const response = malwareResponses.get(url.pathname);
+      return Response.json(response?.body ?? [], { status: response?.status ?? 200 });
+    }
     if (url.host === "registry.npmjs.org" || url.host === "pypi.org") {
       return new Response("not found", { status: 404 });
     }
@@ -367,6 +375,7 @@ export function stubGithubApi(pr: FakePullRequest) {
 
   vi.stubGlobal("fetch", vi.fn(handler));
   return {
+    malwareResponses,
     requests,
     unexpected,
     checkRunCreates,

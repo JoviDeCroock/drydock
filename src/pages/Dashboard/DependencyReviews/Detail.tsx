@@ -224,6 +224,7 @@ function ReviewReport({
       <ReviewHeadline
         review={review}
         state={state}
+        bumps={bumps}
         pollingStalled={model.pollingStalled.value}
         onResume={() => model.resumePolling()}
       />
@@ -258,11 +259,13 @@ function ReviewReport({
 function ReviewHeadline({
   review,
   state,
+  bumps,
   pollingStalled,
   onResume,
 }: {
   review: DependencyReview;
   state: ReviewState;
+  bumps: ReviewedBump[];
   pollingStalled: boolean;
   onResume: () => void;
 }) {
@@ -300,12 +303,29 @@ function ReviewHeadline({
     );
   }
   if (state === "held") {
+    const knownMalware = bumps.some(
+      ({ verdict }) => verdict.status === "hold" && verdict.reasons.includes("known-malware"),
+    );
+    const indexUnavailable = bumps.some(
+      ({ verdict }) =>
+        verdict.status === "hold" && verdict.reasons.includes("malware-index-unavailable"),
+    );
+    const guidance =
+      knownMalware || indexUnavailable
+        ? [
+            "Malware checks cannot be approved.",
+            knownMalware ? "Remove or replace versions listed as malware." : "",
+            indexUnavailable
+              ? "Re-run the pull request's Drydock dependency review check to retry the malware index."
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : "Read the diffs, then approve on the pull request's Drydock dependency review check; anyone with write access to the repository can approve.";
     return (
       <Alert tone="warn">
         {review.heldCount} of {review.bumpCount}{" "}
-        {review.bumpCount === 1 ? "update is" : "updates are"} held. Read the diffs, then approve on
-        the pull request's Drydock dependency review check; anyone with write access to the
-        repository can approve.
+        {review.bumpCount === 1 ? "update is" : "updates are"} held. {guidance}
       </Alert>
     );
   }

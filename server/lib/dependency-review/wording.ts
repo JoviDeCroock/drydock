@@ -4,6 +4,8 @@ import type { HoldReason, UnreviewedReason } from "./types";
 // reviewer sees the same words on GitHub and in Drydock. Plain text: the check
 // run embeds them in markdown and the UI renders them as text.
 export const HOLD_REASON_TEXT: Record<HoldReason, string> = {
+  "known-malware": "target version is listed as malware by Aikido Intel",
+  "malware-index-unavailable": "Aikido malware index could not be checked; use Re-run to try again",
   "install-script-added": "adds an install script",
   "install-script-changed": "changes an install script",
   "native-binary-added": "adds a native binary",

@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import type { BumpEvidence, ReviewedBump } from "../../server/lib/dependency-review/types";
 
 const ORG = "org-deps";
 const SCREENSHOTS = ".context/e2e-artifacts/dependency-review";
@@ -39,7 +40,7 @@ type ReviewWire = Omit<typeof REVIEW, "conclusion" | "completedAt"> & {
   completedAt: string | null;
 };
 
-const EVIDENCE = {
+const EVIDENCE: BumpEvidence = {
   releaseRisk: "high",
   filesAdded: 2,
   filesRemoved: 0,
@@ -50,6 +51,7 @@ const EVIDENCE = {
   dependenciesAdded: 2,
   binCommandsAdded: 0,
   uninspectedFiles: 0,
+  coverageNotices: 0,
   findings: [
     {
       severity: "high",
@@ -61,7 +63,7 @@ const EVIDENCE = {
   findingCount: 3,
 };
 
-const BUMPS = [
+const BUMPS: ReviewedBump[] = [
   {
     bump: {
       ecosystem: "npm",
@@ -144,6 +146,11 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
   await expect(page.getByRole("heading", { name: "acme/web #128" })).toBeVisible();
   await expect(page.getByText("1 of 3 updates are held.")).toBeVisible();
   await expect(
+    page.getByRole("alert").getByText("anyone with write access to the repository can approve", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
     page.getByText(
       "Adds an install script; adds a dependency (2); release risk at or above the hold threshold.",
     ),
@@ -169,6 +176,42 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
   await page.screenshot({ path: `${SCREENSHOTS}/detail.png`, fullPage: true });
   expect(errors).toEqual([]);
 });
+
+for (const { reason, rowText, guidance, absentGuidance } of [
+  {
+    reason: "known-malware",
+    rowText: "Target version is listed as malware by Aikido Intel.",
+    guidance: "Remove or replace versions listed as malware.",
+    absentGuidance: "to retry the malware index",
+  },
+  {
+    reason: "malware-index-unavailable",
+    rowText: "Aikido malware index could not be checked; use Re-run to try again.",
+    guidance:
+      "Re-run the pull request's Drydock dependency review check to retry the malware index.",
+    absentGuidance: "Remove or replace versions",
+  },
+] as const) {
+  test(`dependency review explains the mandatory ${reason} hold`, async ({ page }) => {
+    const errors = watchErrors(page);
+    const bumps: ReviewedBump[] = [
+      { ...BUMPS[0], verdict: { status: "hold", reasons: [reason], evidence: null } },
+      ...BUMPS.slice(1),
+    ];
+    await installMocks(page, [], { bumps });
+    await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+    const banner = page.getByRole("alert");
+    await expect(banner).toContainText("1 of 3 updates are held.");
+    await expect(banner).toContainText("Malware checks cannot be approved.");
+    await expect(banner).toContainText(guidance);
+    await expect(banner).not.toContainText(absentGuidance);
+    await expect(banner).not.toContainText("anyone with write access");
+    await expect(page.getByText(rowText, { exact: true })).toBeVisible();
+    await page.screenshot({ path: `${SCREENSHOTS}/${reason}.png`, fullPage: true });
+    expect(errors).toEqual([]);
+  });
+}
 
 test("dependency review list links each review with its organization", async ({ page }) => {
   const errors = watchErrors(page);
@@ -234,7 +277,12 @@ function watchErrors(page: Page): string[] {
 async function installMocks(
   page: Page,
   writes: unknown[],
-  { dependencyReview = true, requested = [] as string[], review = (): ReviewWire => REVIEW } = {},
+  {
+    dependencyReview = true,
+    requested = [] as string[],
+    review = (): ReviewWire => REVIEW,
+    bumps = BUMPS,
+  } = {},
 ) {
   let settings = { enabled: false, policy: POLICY, extraBotLogins: [] as string[] };
   await page.route("**/api/**", async (route) => {
@@ -300,7 +348,7 @@ async function installMocks(
       const current = review();
       await fulfillJson(route, {
         review: current,
-        bumps: current.status === "completed" ? BUMPS : [],
+        bumps: current.status === "completed" ? bumps : [],
       });
       return;
     }

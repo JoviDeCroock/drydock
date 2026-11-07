@@ -112,6 +112,103 @@ const INSTALL_SCRIPT = {
 };
 
 describe("dependency review job", () => {
+  test("known malware holds a clean diff and cannot be approved by a writer", async () => {
+    const { name, api, pr, review, seeded, input } = await scenario({
+      policy: { holdOnUnreviewed: false, holdAtReleaseRisk: null },
+    });
+    await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+    api.malwareResponses.set("/malware_predictions.json", {
+      body: [{ package_name: name, version: "1.0.1", reason: "MALWARE" }],
+    });
+    await runDependencyReviewJob(input);
+    expect((await readReview(review.id)).bumps[0]).toMatchObject({
+      verdict: { status: "hold", reasons: ["known-malware"] },
+      approved: false,
+    });
+    expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required", actions: [] });
+    expect(String((api.lastCheckRunState()?.output as { summary?: string })?.summary)).toContain(
+      "Aikido Intel",
+    );
+    pr.permissions.set("maintainer", "admin");
+    await runDependencyReviewJob({ ...input, approver: { login: "maintainer", githubId: 3141 } });
+    expect(await approvals(seeded.organizationId)).toEqual([]);
+    expect((await readReview(review.id)).conclusion).toBe("held");
+    expectTokenStaysOnGithub(api);
+  });
+
+  test("new and transitive targets beyond the diff cap still get one index check", async () => {
+    const prefix = uniquePackageName("malware-cap");
+    const names = Array.from({ length: 41 }, (_, i) => `${prefix}-${String(i).padStart(2, "0")}`);
+    const added = `${prefix}-new`;
+    const { api, pr, review, input } = await scenario({
+      before: Object.fromEntries(names.map((n) => [n, "1.0.0"])),
+      after: Object.fromEntries([...names.map((n) => [n, "1.0.1"]), [added, "2.0.0"]]),
+    });
+    const head = JSON.parse(pr.contents.get(`${pr.headSha}:package-lock.json`) as string);
+    delete head.packages[""].dependencies[names[40]];
+    pr.contents.set(`${pr.headSha}:package-lock.json`, JSON.stringify(head));
+    for (const name of names.slice(0, 40)) await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+    api.malwareResponses.set("/malware_predictions.json", {
+      body: [
+        { package_name: names[40], version: "1.0.1", reason: "MALWARE" },
+        { package_name: added, version: "*", reason: "MALWARE" },
+      ],
+    });
+    await runDependencyReviewJob(input);
+    const row = await readReview(review.id);
+    expect(row.bumps.find((b) => b.bump.name === names[40])).toMatchObject({
+      bump: { direct: false },
+      verdict: { status: "hold", reasons: ["known-malware"] },
+    });
+    expect(row.bumps.find((b) => b.bump.name === added)?.verdict).toMatchObject({
+      reasons: ["known-malware"],
+    });
+    expect(api.requests.filter((r) => r.host === "malware-list.aikido.dev")).toHaveLength(1);
+    expectTokenStaysOnGithub(api);
+  });
+
+  test("PyPI changed pins are checked against the PyPI index", async () => {
+    const { pr, api, review, input } = await scenario({
+      pr: { files: [{ filename: "requirements.txt", status: "modified" }] },
+    });
+    pr.contents.set(`${pr.mergeBaseSha}:requirements.txt`, "Example_Pkg==1.0\n");
+    pr.contents.set(`${pr.headSha}:requirements.txt`, "Example_Pkg==2.0\n");
+    api.malwareResponses.set("/malware_pypi.json", {
+      body: [{ package_name: "example.pkg", version: "2.0.0", reason: "MALWARE" }],
+    });
+    await runDependencyReviewJob(input);
+    expect((await readReview(review.id)).bumps[0].verdict).toMatchObject({
+      reasons: ["known-malware"],
+    });
+    expect(
+      api.requests
+        .filter((r) => r.host === "malware-list.aikido.dev")
+        .map((r) => new URL(r.url).pathname),
+    ).toEqual(["/malware_pypi.json"]);
+    expectTokenStaysOnGithub(api);
+  });
+
+  test.each([503, 200])(
+    "an unavailable or malformed index (%s) blocks until a fresh Re-run succeeds",
+    async (status) => {
+      const { name, api, review, input } = await scenario({ policy: { holdOnUnreviewed: false } });
+      await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+      api.malwareResponses.set("/malware_predictions.json", {
+        body: { error: "unavailable" },
+        status,
+      });
+      await runDependencyReviewJob(input);
+      expect((await readReview(review.id)).bumps[0].verdict).toMatchObject({
+        reasons: ["malware-index-unavailable"],
+      });
+      expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required", actions: [] });
+      api.malwareResponses.clear();
+      await runDependencyReviewJob({ ...input, rerun: true });
+      expect((await readReview(review.id)).conclusion).toBe("clear");
+      expect(api.requests.filter((r) => r.host === "malware-list.aikido.dev")).toHaveLength(2);
+    },
+  );
+
   test("a bump with nothing to hold completes the check as success", async () => {
     const { name, api, review, input } = await scenario();
     await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
@@ -149,6 +246,20 @@ describe("dependency review job", () => {
       api.requests.some((r) => r.url.includes(`/contents/package-lock.json?ref=${sha("c")}`)),
     ).toBe(true);
     expect(api.requests.some((r) => r.url.includes(`ref=${sha("a")}`))).toBe(false);
+    expectTokenStaysOnGithub(api);
+  });
+
+  test("private sources never load or match a same-named public malware entry", async () => {
+    const { name, api, pr, review, input } = await scenario();
+    pr.contents.set(`${pr.headSha}:.npmrc`, "registry=https://npm.internal.example/\n");
+    api.malwareResponses.set("/malware_predictions.json", {
+      body: [{ package_name: name, version: "*", reason: "MALWARE" }],
+    });
+    await runDependencyReviewJob(input);
+    expect((await readReview(review.id)).bumps[0].verdict).toMatchObject({
+      unreviewed: "private-source",
+    });
+    expect(api.requests.filter((r) => r.host === "malware-list.aikido.dev")).toEqual([]);
     expectTokenStaysOnGithub(api);
   });
 
@@ -1002,6 +1113,30 @@ describe("approving held updates", () => {
     expect((await readReview(s.review.id)).conclusion).toBe("held");
     return { ...s, updatesBefore: s.api.checkRunUpdates.length };
   }
+
+  test.each(["malware", "outage"])(
+    "a prior capability approval cannot waive a later %s result",
+    async (result) => {
+      const { name, api, pr, review, input } = await heldScenario();
+      pr.permissions.set("maintainer", "admin");
+      await runDependencyReviewJob({ ...input, approver: { login: "maintainer", githubId: 3141 } });
+      expect((await readReview(review.id)).conclusion).toBe("approved");
+      api.malwareResponses.set(
+        "/malware_predictions.json",
+        result === "malware"
+          ? { body: [{ package_name: name, version: "1.0.1", reason: "MALWARE" }] }
+          : { body: [], status: 503 },
+      );
+      await runDependencyReviewJob({ ...input, rerun: true });
+      const row = await readReview(review.id);
+      expect(row.conclusion).toBe("held");
+      expect(row.bumps[0].approved).toBe(false);
+      expect(row.bumps[0].verdict).toMatchObject({
+        reasons: [result === "malware" ? "known-malware" : "malware-index-unavailable"],
+      });
+      expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required", actions: [] });
+    },
+  );
 
   test.each([
     ["read access", "read"],

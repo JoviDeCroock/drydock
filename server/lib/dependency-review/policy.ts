@@ -138,6 +138,16 @@ export function newPackageVerdict(policy: DependencyReviewPolicy): BumpVerdict {
     : { status: "new-package" };
 }
 
+// Capability approvals cannot waive known malware or missing malware coverage.
+export function hasMalwareHold(verdict: BumpVerdict): boolean {
+  return (
+    verdict.status === "hold" &&
+    verdict.reasons.some(
+      (reason) => reason === "known-malware" || reason === "malware-index-unavailable",
+    )
+  );
+}
+
 /**
  * The check's outcome. Any hold nobody approved keeps the check blocking;
  * `approved` means every hold was approved, which reads differently from a
