@@ -1,3 +1,4 @@
+import { Show } from "@preact/signals/utils";
 import { useEffect, useRef } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
@@ -13,6 +14,7 @@ import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
 import { ReleaseTargetsModel } from "../../../models/release-targets";
 import { MembersModel } from "../../../models/organization-members";
+import { DependencyReviewsModel } from "../../../models/dependency-review";
 import {
   normalizeRole,
   roleCanManageIntegrations,
@@ -27,6 +29,7 @@ import { Muted } from "../../../components/Typography";
 import { GeneralSection, OrganizationDangerZone } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
+import { DependencyReviewSection } from "./DependencyReviewSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
@@ -52,6 +55,10 @@ export default function SettingsPage() {
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
+  const dependencyReviews = useModel(DependencyReviewsModel);
+  // Its routes answer 404 outside the `dependency-review` rollout flag.
+  const loadDependencyReviews = () =>
+    organizations.dependencyReviewAvailable.peek() ? dependencyReviews.load() : Promise.resolve();
   const apiKeys = useModel(ApiKeysModel);
   const activeTab = useSignal<SettingsTab>("general");
 
@@ -83,6 +90,7 @@ export default function SettingsPage() {
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
+        loadDependencyReviews(),
         apiKeys.load(),
       ]);
     },
@@ -96,6 +104,7 @@ export default function SettingsPage() {
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
+    loaders.push(loadDependencyReviews());
     loaders.push(apiKeys.load());
     await Promise.all(loaders);
   };
@@ -210,6 +219,11 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
                 </div>
+                <Show when={organizations.dependencyReviewAvailable}>
+                  <div id={SETTINGS_SECTION.dependencyReview} class={SECTION_ANCHOR_CLASS}>
+                    <DependencyReviewSection model={dependencyReviews} defaultOpen />
+                  </div>
+                </Show>
                 <ApiKeysSection apiKeys={apiKeys} defaultOpen />
               </>
             ) : null}

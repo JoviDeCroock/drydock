@@ -10,6 +10,8 @@ export interface Organization {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  // The `dependency-review` rollout flag; a just-created organization lacks it until reload.
+  dependencyReview?: boolean;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -60,6 +62,7 @@ export const OrganizationModel = createModel(() => {
     return list[0] ?? null;
   });
   const busy = computed(() => status.value !== "idle");
+  const dependencyReviewAvailable = computed(() => active.value?.dependencyReview === true);
 
   return {
     organizations,
@@ -69,6 +72,7 @@ export const OrganizationModel = createModel(() => {
     error,
     active,
     busy,
+    dependencyReviewAvailable,
 
     async load(): Promise<void> {
       this.status.value = "loading";

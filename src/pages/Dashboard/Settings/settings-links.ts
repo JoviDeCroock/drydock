@@ -20,6 +20,7 @@ export function isSettingsTab(value: unknown): value is SettingsTab {
 export const SETTINGS_SECTION = {
   npmAccess: "npm-access",
   githubApp: "github-app",
+  dependencyReview: "dependency-review",
 } as const;
 
 type SettingsSectionId = (typeof SETTINGS_SECTION)[keyof typeof SETTINGS_SECTION];

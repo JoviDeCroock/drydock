@@ -60,6 +60,8 @@ Analytics Engine counters measure review work, reviewer health, feedback, whethe
 | `workflow_gate.opened` | `deployment_protection_rule` webhook | None | 0 |
 | `workflow_gate.reviewed` | Gate runner | recommendation, timeout state | duration, package count |
 | `workflow_gate.decided` | Human route or automatic block | surface, decision | 0, package count |
+| `dependency_review.completed` | Dependency review job | conclusion | duration, bumps, held bumps |
+| `dependency_review.approved` | Check-run Approve | None | 0, approved bumps |
 
 | `ai_review.attempted` slot | Coverage count |
 | --- | --- |

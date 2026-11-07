@@ -1,6 +1,6 @@
 # Dependency PR diff links
 
-Renovate and Dependabot updates link to anonymous package diffs and can post release summaries in one PR comment. **Authority:** advisory. **Owner:** `.github/workflows/drydock-diff-link.yml`.
+Renovate and Dependabot updates link to anonymous package diffs and can post release summaries in one PR comment. **Authority:** advisory. **Owner:** `.github/workflows/drydock-diff-link.yml`. To make the diff decide rather than inform, the GitHub App's [dependency review](./dependency-review.md) check holds bumps that add capabilities until a repository writer approves them; this workflow stays the no-install path.
 
 ## At a glance
 

@@ -52,7 +52,7 @@ Must match `server/env.d.ts`; `test/env-binding-parity.test.mjs` checks the temp
 | `PUBLISHER_SETUP_WORKFLOW` | Workflow (`PublisherSetupWorkflow`) | Optional | Repository-agent PR preparation; drafting returns `503` without it. |
 
 1. A completed scan's body lives only in R2 (canonical report JSON, redacted samples, generated diffs, manifests); D1 keeps the metadata row. Without `ARTIFACTS` the scan fails closed at persist time (`scan.artifacts.binding_missing`, `server/lib/scan/artifacts/write.ts`) instead of storing a reviewable scan with no diff ([artifact-storage.md](./artifact-storage.md)).
-2. With `FLAGS` wired, AI review is on by default per organization and the `ai-review` flag switches it off per org or globally. The same Flagship app holds `clef-injection-screen` (default off, no extra secret) and `out-of-band-watch`.
+2. With `FLAGS` wired, AI review is on by default per organization and the `ai-review` flag switches it off per org or globally. The same Flagship app holds `clef-injection-screen` (default off, no extra secret), `out-of-band-watch`, and `dependency-review` (default off; offers [dependency review](./dependency-review.md) to an organization, and without `FLAGS` every organization is offered it).
 3. Keep the queue consumer `max_retries` and `dead_letter_queue` aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
 4. Tiers are `NATIVE_TIERS` in `server/lib/platform/rate-limit.ts`; they need no provisioning ([security-model.md](./security-model.md#rate-limiting)).
 5. A custom registry signals a private deployment: `/api/public/v1/package-diff` (including PyPI mode) and `/og/*` return 404.
@@ -171,6 +171,10 @@ Keep the `*/15 * * * *` cron trigger: it runs staged-publish discovery, the publ
 ### Workflow gates
 
 Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
+
+### Dependency review
+
+Uses the same GitHub App. Add the **Checks: read and write**, **Pull requests: read**, and **Contents: read** repository permissions and subscribe to the **Pull request** and **Check run** events. GitHub asks each installation's owner to accept the new permissions; until they do, reviews in that installation fail to create their check run. With `FLAGS` wired, roll it out per organization with the `dependency-review` flag; each organization then turns it on in Settings → Integrations ([dependency-review.md](./dependency-review.md)).
 
 ### Publisher setup assistant
 

@@ -72,7 +72,7 @@ Surface-specific code stays with its page: `src/pages/Dashboard/ScanDetail/diff-
 
 ## Headers and session
 
-1. Every signed-in page uses `AppHeaderActions` (`src/features/account/AppHeaderActions.tsx`): `Reviews` and `Settings` (current one `aria-current="page"`, accent text), `Feedback`, the organization switcher where org-scoped, the user menu. `/dashboard` is "Reviews" in every link.
+1. Every signed-in page uses `AppHeaderActions` (`src/features/account/AppHeaderActions.tsx`): `Reviews`, `Dependencies` (only for an organization the `dependency-review` rollout flag covers, or on its own pages), and `Settings` (current one `aria-current="page"`, accent text), `Feedback`, the organization switcher where org-scoped, the user menu. `/dashboard` is "Reviews" in every link.
 2. Marketing header: `Package diff` · `Docs` · `Feedback` · `Sign in`. Feedback always sits after navigation and before account controls; header actions render `HeaderFeedback` (`src/components/PageShell.tsx`) themselves so DOM and tab order match. Without header actions Feedback shows alone; at phone width beside header actions it hides (header max two rows) and the footer Contact column carries it.
 3. Every `/dashboard*` page runs `useAuthedDashboardSession` on mount: load session, redirect signed-out visitors to `/login?returnTo=<page>`, remember list surfaces as the back link, then run page loads.
 4. A page whose model is built from a route param (scan detail, package releases) renders under `key={param}` so a new param remounts with a fresh model and guard.
@@ -159,6 +159,10 @@ Public report rules: header is a `public release review` MonoDetail lead, packag
 2. Watches arrive whole and render 25 at a time behind **Show more**, server-ordered: unacknowledged alerts, then "not verified" or coverage gap, then the rest, newest first within each. Up to 100 observations show, unacknowledged alerts first.
 3. One notice lists packages queued for scheduled enrollment and capacity deferrals. The advisory meta line says checks happen after publication; unknown evidence never gets an approval badge. Acknowledgment is audited and never changes release evidence. Requests are fenced across organization changes.
 4. The card ends with **Unapproved publishes** (`src/features/publication-monitor/UnapprovedPublishLog.tsx` over `src/models/publication-alert-log.ts`), reloaded after a check, acknowledgment, enrollment, or stop.
+
+## Dependency reviews
+
+`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads `?org=` like scan detail because the check run's details link carries it. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
 
 ## Package release view
 

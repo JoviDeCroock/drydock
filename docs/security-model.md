@@ -43,7 +43,7 @@ Hono registration order makes mounts above the session guard anonymous (`server/
 |Registration|Routes served|Trust boundary|Abuse control|Owner|
 |---|---|---|---|---|
 |`use *` (x2)|Security headers, canonical-host redirect|Middleware only|—|`server/middleware/security-headers.ts`, `server/middleware/canonical-host.ts`|
-|`route /webhooks`|`POST /webhooks/github`|GitHub App webhook HMAC signature; no Origin/Referer, so above CSRF|Per installation per event kind per minute: `deployment_protection_rule` 240, `installation` 60|`server/routes/github-webhooks.ts`|
+|`route /webhooks`|`POST /webhooks/github`|GitHub App webhook HMAC signature; no Origin/Referer, so above CSRF|Per installation per event kind per minute: `deployment_protection_rule` 240, `installation` 60, `pull_request` 240, `check_run` 120|`server/routes/github-webhooks.ts`|
 |`route /api/public/v1/package-diff`|`GET /`, `/versions`, `/file`, `/atpm-stage`|Public release data only|Per-IP limits before validation or fetch; shared cold-computation budget|`server/routes/public-diff.ts`|
 |`route /api/public/v1/mcp`|`GET`, `POST`, `DELETE /`|Tools over public package diff only; no organization selector or arbitrary fetch target|Per-IP 120/minute; 16 KiB body cap; canonical Origin only when present|`server/routes/public-mcp.ts`|
 |`route /og`|`GET /og/diff/**/card.png`|Reads public-diff result cache only|Per-IP limit charged only on a cold render|`server/routes/og.ts`|
@@ -300,7 +300,7 @@ Sessions are Better Auth cookies signed with `BETTER_AUTH_SECRET` (`server/lib/a
 2. `Retry-After` is derived from the wall-clock window, because the binding reports only allowed/blocked.
 3. Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`).
 4. Without `ratelimits` bindings every limit still holds via D1 and logs `rate_limit.tier_missing`. A new per-minute limit needs a matching tier and binding or it silently degrades to D1.
-5. GitHub does not retry a rejected webhook, so webhook budgets are runaway-loop backstops, gate and installation events have separate buckets, and a rejection logs `github_webhook.rate_limited` at error.
+5. GitHub does not retry a rejected webhook, so webhook budgets are runaway-loop backstops, gate, installation, `pull_request`, and `check_run` events have separate buckets, and a rejection logs `github_webhook.rate_limited` at error.
 6. Better Auth's own limiter runs only when `NODE_ENV` is `production`, per isolate, and is not relied on. IPv6 addresses are not grouped by prefix.
 
 ## Workflow gates and publisher setup

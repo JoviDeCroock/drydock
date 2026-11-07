@@ -218,7 +218,28 @@ async function installSetupMocks(
     else if (path === "/api/v1/organizations/members") json = { members: [] };
     else if (path === "/api/v1/organizations/invitations") json = { invitations: [] };
     else if (path === "/api/v1/audit-events") json = { events: [], nextCursor: null };
-    else if (path === "/api/v1/api-keys") json = { keys: [], limit: 10, expiryDays: [30, 90, 365] };
+    else if (path === "/api/v1/dependency-reviews") {
+      json = {
+        settings: {
+          enabled: false,
+          policy: {
+            holdOnInstallScripts: true,
+            holdOnNativeBinaries: true,
+            holdOnNewDependencies: true,
+            holdOnNewBinCommands: true,
+            holdAtReleaseRisk: "high",
+            holdOnUninspectedFiles: true,
+            holdOnUnreviewed: true,
+            holdOnNewPackages: false,
+          },
+          extraBotLogins: [],
+        },
+        githubAppInstalled: false,
+        reviews: [],
+        viewer: { canManage: true },
+      };
+    } else if (path === "/api/v1/api-keys")
+      json = { keys: [], limit: 10, expiryDays: [30, 90, 365] };
     else if (path === "/api/v1/github-app/setup/inspect") {
       // Choosing a repository inspects it, so either fixture repository may arrive.
       const body = request.postDataJSON();
@@ -388,7 +409,7 @@ test("publisher setup automatically prepares a draft PR after its checks and obs
   });
   const observations = await installSetupMocks(page);
   await draftSetup(page, testInfo.outputPath("publisher-draft-progress.png"));
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator("#github-app").getByRole("checkbox")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Create draft pull request", exact: true }),
   ).toHaveCount(0);
@@ -551,7 +572,7 @@ test("a pending background draft resumes after refresh without persisting workfl
   observations.holdJob = false;
   await page.reload();
   await expect(page.getByRole("heading", { name: "Draft pull request ready" })).toBeVisible();
-  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator("#github-app").getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Review pull request #42 on GitHub" })).toBeVisible();
   expect(observations.created).toBe(1);
 });

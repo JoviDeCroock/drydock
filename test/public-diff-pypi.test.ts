@@ -12,6 +12,7 @@ import {
   pypiPublicDiff,
   resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
+  unreadPublicPyPiWheelNotice,
   type PublicPyPiArtifactDownload,
 } from "../server/lib/ecosystems/pypi/public-diff";
 import { createPackageDiff, summarizePackageJsonDiff, type FileRecord } from "../server/lib/review";
@@ -365,6 +366,30 @@ function download(
     error: outcome.error ?? null,
   };
 }
+
+describe("unreadPublicPyPiWheelNotice", () => {
+  test("names the target version's wheels the diff did not read", () => {
+    const selection = selectPublicPyPiDiffArtifacts(metadata, "1.0.0", "1.1.0");
+    expect(unreadPublicPyPiWheelNotice(metadata, "1.1.0", selection.to)).toEqual([
+      "1 other wheel of 1.1.0 was not inspected; this diff reads one wheel per version.",
+    ]);
+  });
+
+  test("counts every wheel when the wheel kind was omitted from the diff", () => {
+    expect(unreadPublicPyPiWheelNotice(metadata, "1.1.0", [])).toEqual([
+      "2 other wheels of 1.1.0 were not inspected; this diff reads one wheel per version.",
+    ]);
+  });
+
+  test("says nothing when the only wheel was read", () => {
+    const single: PyPiProjectMetadata = {
+      info: { name: "solo", version: "2.0.0" },
+      releases: { "2.0.0": [releaseFile("solo-2.0.0-py3-none-any.whl")] },
+    };
+    const [wheel] = selectPublicPyPiDiffArtifacts(single, "2.0.0", "2.0.0").to;
+    expect(unreadPublicPyPiWheelNotice(single, "2.0.0", [wheel])).toEqual([]);
+  });
+});
 
 describe("resolvePublicPyPiDownloads", () => {
   const tooManyFiles = new PublicDiffError("package has too many files to diff", 413);

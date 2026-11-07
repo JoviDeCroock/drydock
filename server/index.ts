@@ -18,6 +18,7 @@ import { securityHeaders } from "./middleware/security-headers";
 import { openApiDocument } from "./lib/openapi/document";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { auditRoutes } from "./routes/audit";
+import { dependencyReviewRoutes } from "./routes/dependency-reviews";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
 import { publicReportsRoutes } from "./routes/public-reports";
@@ -239,6 +240,7 @@ app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
+app.route("/api/v1/dependency-reviews", dependencyReviewRoutes);
 app.route("/api/v1/api-keys", apiKeyRoutes);
 // The automation surface's own description (docs/openapi.json is the same
 // document checked in). Session- or API-key-authenticated like every other
