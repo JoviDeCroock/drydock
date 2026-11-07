@@ -232,6 +232,8 @@ export interface DispatchDeps {
   deliveryId: string;
   // This deployment's GitHub App id; check-run actions for any other app are ignored.
   appId: string;
+  // The `dependency-review` rollout flag for an organization.
+  dependencyReviewAvailable: (organizationId: string) => Promise<boolean>;
 }
 
 /**
@@ -284,7 +286,9 @@ export async function applyGithubWebhookEvent(
     };
   }
 
-  if (event.kind === "pull_request") return applyPullRequestEvent(db, event);
+  if (event.kind === "pull_request") {
+    return applyPullRequestEvent(db, event, deps.dependencyReviewAvailable);
+  }
   if (event.kind === "check_run") return applyCheckRunEvent(db, event, deps.appId);
 
   return { kind: "ignored", reason: "unhandled event kind" };

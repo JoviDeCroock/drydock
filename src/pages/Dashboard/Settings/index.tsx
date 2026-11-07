@@ -1,3 +1,4 @@
+import { Show } from "@preact/signals/utils";
 import { useEffect, useRef } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
@@ -55,6 +56,9 @@ export default function SettingsPage() {
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
   const dependencyReviews = useModel(DependencyReviewsModel);
+  // Its routes answer 404 outside the `dependency-review` rollout flag.
+  const loadDependencyReviews = () =>
+    organizations.dependencyReviewAvailable.peek() ? dependencyReviews.load() : Promise.resolve();
   const apiKeys = useModel(ApiKeysModel);
   const activeTab = useSignal<SettingsTab>("general");
 
@@ -86,7 +90,7 @@ export default function SettingsPage() {
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
-        dependencyReviews.load(),
+        loadDependencyReviews(),
         apiKeys.load(),
       ]);
     },
@@ -100,7 +104,7 @@ export default function SettingsPage() {
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
-    loaders.push(dependencyReviews.load());
+    loaders.push(loadDependencyReviews());
     loaders.push(apiKeys.load());
     await Promise.all(loaders);
   };
@@ -215,9 +219,11 @@ export default function SettingsPage() {
                 <div id={SETTINGS_SECTION.githubApp} class={SECTION_ANCHOR_CLASS}>
                   <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
                 </div>
-                <div id={SETTINGS_SECTION.dependencyReview} class={SECTION_ANCHOR_CLASS}>
-                  <DependencyReviewSection model={dependencyReviews} defaultOpen />
-                </div>
+                <Show when={organizations.dependencyReviewAvailable}>
+                  <div id={SETTINGS_SECTION.dependencyReview} class={SECTION_ANCHOR_CLASS}>
+                    <DependencyReviewSection model={dependencyReviews} defaultOpen />
+                  </div>
+                </Show>
                 <ApiKeysSection apiKeys={apiKeys} defaultOpen />
               </>
             ) : null}

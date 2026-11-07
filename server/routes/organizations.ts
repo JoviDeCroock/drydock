@@ -25,6 +25,7 @@ import { describeOperationalError, emitOperationalEvent } from "../lib/platform/
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
+import { dependencyReviewAvailable } from "../lib/dependency-review/flag";
 
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} _\-./]{0,79}$/u;
 const ORGANIZATION_NAME_ERROR =
@@ -39,7 +40,14 @@ organizationsRoutes.get("/", async (c) => {
   if (!(await ensurePersonalOrganization(db, session))) {
     return c.json({ error: "unauthorized" }, 401);
   }
-  const organizations = await listUserOrganizations(db, session.userId);
+  const listed = await listUserOrganizations(db, session.userId);
+  // Per-organization rollout flags the dashboard needs before it shows a section.
+  const organizations = await Promise.all(
+    listed.map(async (organization) => ({
+      ...organization,
+      dependencyReview: await dependencyReviewAvailable(c.env, organization.id),
+    })),
+  );
   return c.json({ organizations });
 });
 

@@ -177,6 +177,19 @@ test("dependency review list links each review with its organization", async ({ 
   expect(errors).toEqual([]);
 });
 
+test("an organization outside the rollout flag sees no dependency review", async ({ page }) => {
+  const errors = watchErrors(page);
+  const requested: string[] = [];
+  await installMocks(page, [], { dependencyReview: false, requested });
+  await page.goto("/dashboard/settings?tab=integrations");
+
+  await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Dependencies" })).toHaveCount(0);
+  await expect(page.locator("#dependency-review")).toHaveCount(0);
+  expect(requested.filter((path) => path.startsWith("/api/v1/dependency-reviews"))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 function watchErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -186,10 +199,15 @@ function watchErrors(page: Page): string[] {
   return errors;
 }
 
-async function installMocks(page: Page, writes: unknown[]) {
+async function installMocks(
+  page: Page,
+  writes: unknown[],
+  { dependencyReview = true, requested = [] as string[] } = {},
+) {
   let settings = { enabled: false, policy: POLICY, extraBotLogins: [] as string[] };
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    requested.push(path);
     const empty: Record<string, unknown> = {
       "/api/v1/npm-connection": { connection: null },
       "/api/v1/github-app/config": { configured: true, appSlug: "drydock" },
@@ -220,6 +238,7 @@ async function installMocks(page: Page, writes: unknown[]) {
             isPersonal: false,
             npmConnectionConfigured: false,
             requireTwoFactorForReleaseDecisions: false,
+            dependencyReview,
           },
         ],
       });

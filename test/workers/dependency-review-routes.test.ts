@@ -273,3 +273,59 @@ describe("dependency review routes", () => {
     expect(spoofed.status).toBe(404);
   });
 });
+
+describe("dependency review rollout flag", () => {
+  // Flagship serves the flag on only for the organizations a rule targets.
+  const flagFor = (enabledOrganizationId: string | null) => ({
+    FLAGS: {
+      getBooleanValue: async (
+        key: string,
+        defaultValue: boolean,
+        context?: { organizationId?: unknown },
+      ) =>
+        key === "dependency-review"
+          ? context?.organizationId === enabledOrganizationId
+          : defaultValue,
+    } as unknown as Flagship,
+  });
+
+  test("an organization outside the flag gets 404 from every route", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const review = await seedCompletedReview(seeded);
+    const app = buildTestApp(mount, seeded);
+    const envOverride = flagFor("org_someone_else");
+
+    const list = await call(app, "GET", BASE, { envOverride });
+    const detail = await call(app, "GET", `${BASE}/${review.id}`, { envOverride });
+    const save = await call(app, "PUT", `${BASE}/settings`, { body: VALID_SETTINGS, envOverride });
+
+    expect([list.status, detail.status, save.status]).toEqual([404, 404, 404]);
+    expect(await settingsEvents(seeded.organizationId)).toHaveLength(0);
+  });
+
+  test("an organization the flag targets reads its reviews", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    await seedCompletedReview(seeded);
+
+    const res = await call(buildTestApp(mount, seeded), "GET", BASE, {
+      envOverride: flagFor(seeded.organizationId),
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  test("a failed flag lookup reads as off", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const failing = {
+      FLAGS: {
+        getBooleanValue: async () => {
+          throw new Error("flagship unavailable");
+        },
+      } as unknown as Flagship,
+    };
+
+    const res = await call(buildTestApp(mount, seeded), "GET", BASE, { envOverride: failing });
+
+    expect(res.status).toBe(404);
+  });
+});

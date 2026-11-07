@@ -96,7 +96,10 @@ account-owned value with a `REPLACE_*` placeholder. Replace at least:
   the AI reviewer is on by default per organization and can be switched off per
   org or globally), or remove the `flagship` block to keep AI review disabled.
   The same app's `clef-injection-screen` flag (default off) opts an
-  organization into the Clef prompt-injection screen; it needs no extra secret;
+  organization into the Clef prompt-injection screen; it needs no extra secret.
+  Its `dependency-review` flag (default off) offers
+  [dependency review](./dependency-review.md) to an organization; without a
+  `flagship` block every organization is offered it;
 - public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
   `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
   `SLACK_CLIENT_ID`.

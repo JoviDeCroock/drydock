@@ -742,3 +742,46 @@ describe("organization deletion", () => {
     expect(await getOrganizationRole(db, owner.organizationId, owner.userId)).toBe("owner");
   });
 });
+
+describe("organization list rollout flags", () => {
+  async function listed(envOverride?: { FLAGS: Flagship }) {
+    const user = await seedUser();
+    const res = await call(buildTestApp(mountOrganizations, user), "GET", "/api/v1/organizations", {
+      envOverride,
+    });
+    const body = (await res.json()) as {
+      organizations: Array<{ id: string; dependencyReview?: boolean }>;
+    };
+    return body.organizations;
+  }
+
+  test("each organization says whether the dependency-review flag covers it", async () => {
+    const targeted = new Set<string>();
+    const flags = {
+      getBooleanValue: async (
+        key: string,
+        _default: boolean,
+        context?: { organizationId?: string },
+      ) => key === "dependency-review" && targeted.has(String(context?.organizationId)),
+    } as unknown as Flagship;
+
+    const [first] = await listed({ FLAGS: flags });
+    expect(first.dependencyReview).toBe(false);
+
+    const user = await seedUser();
+    const app = buildTestApp(mountOrganizations, user);
+    const before = (await (await call(app, "GET", "/api/v1/organizations")).json()) as {
+      organizations: Array<{ id: string }>;
+    };
+    targeted.add(before.organizations[0].id);
+    const after = (await (
+      await call(app, "GET", "/api/v1/organizations", { envOverride: { FLAGS: flags } })
+    ).json()) as { organizations: Array<{ dependencyReview?: boolean }> };
+    expect(after.organizations[0].dependencyReview).toBe(true);
+  });
+
+  test("without Flagship (self-hosting) dependency review is offered everywhere", async () => {
+    const [first] = await listed();
+    expect(first.dependencyReview).toBe(true);
+  });
+});

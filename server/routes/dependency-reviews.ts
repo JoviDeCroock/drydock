@@ -14,6 +14,7 @@ import {
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
+import { dependencyReviewAvailable } from "../lib/dependency-review/flag";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import { listInstallationsForOrganization } from "../lib/github-app/persistence";
 import { isRecord } from "../lib/platform/guards";
@@ -26,6 +27,10 @@ const LIST_LIMIT = 50;
 
 dependencyReviewRoutes.use("*", async (c, next) => {
   c.header("cache-control", "private, no-store");
+  const { organizationId } = await requireActiveOrganizationContext(c, c.var.db);
+  if (!(await dependencyReviewAvailable(c.env, organizationId))) {
+    return c.json({ error: "Dependency review is not available for this organization." }, 404);
+  }
   await next();
 });
 

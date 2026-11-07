@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
   createDependencyReview,
@@ -173,6 +173,39 @@ describe("pull_request deliveries", () => {
     expect(sent).toEqual([]);
     expect(await reviewRows(seeded.organizationId)).toEqual([]);
   });
+
+  test.each([
+    ["a Dependabot PR", "dependabot[bot]", "Bot"],
+    ["a person's PR, which would otherwise get a skipped check", "octocat", "User"],
+  ] as const)(
+    "outside the rollout flag, %s gets no review and no check",
+    async (_label, authorLogin, authorType) => {
+      const seeded = await seedDependencyReviewOrg();
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const { sent, deliver } = webhookHarness({
+        FLAGS: { getBooleanValue: async () => false } as unknown as Flagship,
+      });
+
+      const { res, json } = await deliver({
+        eventName: "pull_request",
+        body: pullRequestPayload({
+          installationId: seeded.installationExternalId,
+          authorLogin,
+          authorType,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(json).toMatchObject({
+        result: "ignored",
+        reason: "dependency review is not available",
+      });
+      expect(sent).toEqual([]);
+      expect(await reviewRows(seeded.organizationId)).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    },
+  );
 
   test("an installation Drydock never recorded is ignored", async () => {
     const { sent, deliver } = webhookHarness();

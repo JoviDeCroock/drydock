@@ -1,3 +1,4 @@
+import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { LinkButton } from "../../components/Button";
 import { HeaderFeedback } from "../../components/PageShell";
@@ -17,7 +18,8 @@ export type AppSection = "reviews" | "dependencies" | "settings";
  * organizations means for them — a list reloads, a review that belongs to one
  * organization leaves for the new organization's reviews — so those are the
  * inputs. A page without an organization scope (account) omits the switcher
- * rather than showing one that changes nothing on it.
+ * rather than showing one that changes nothing on it. Dependency reviews show
+ * only for an organization the `dependency-review` rollout flag covers.
  */
 export function AppHeaderActions({
   current,
@@ -42,9 +44,11 @@ export function AppHeaderActions({
         <SectionLink href="/dashboard" current={current === "reviews"}>
           Reviews
         </SectionLink>
-        <SectionLink href="/dashboard/dependency-reviews" current={current === "dependencies"}>
-          Dependencies
-        </SectionLink>
+        <Show when={organizations?.dependencyReviewAvailable ?? (() => current === "dependencies")}>
+          <SectionLink href="/dashboard/dependency-reviews" current={current === "dependencies"}>
+            Dependencies
+          </SectionLink>
+        </Show>
         <SectionLink href="/dashboard/settings" current={current === "settings"}>
           Settings
         </SectionLink>

@@ -20,6 +20,7 @@ import {
 import { recordProductEvent } from "../lib/analytics";
 import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
+import { dependencyReviewAvailable } from "../lib/dependency-review/flag";
 
 export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 // Anonymous surface mounted outside /api, so it attaches its own db handle.
@@ -199,7 +200,12 @@ githubWebhookRoutes.post("/github", async (c) => {
 
   const db = c.var.db;
   try {
-    const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId, appId: config.appId });
+    const outcome = await applyGithubWebhookEvent(db, parsed, {
+      deliveryId,
+      appId: config.appId,
+      dependencyReviewAvailable: (organizationId) =>
+        dependencyReviewAvailable(c.env, organizationId),
+    });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
     // Hand a pending gate to the queue consumer that runs the PyPI review and
     // posts the deployment decision. Guarded because the binding is optional in

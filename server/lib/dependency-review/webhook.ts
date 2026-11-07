@@ -155,6 +155,7 @@ export type DependencyReviewWebhookOutcome =
 export async function applyPullRequestEvent(
   db: AppDb,
   event: ParsedPullRequestEvent,
+  available: (organizationId: string) => Promise<boolean>,
 ): Promise<DependencyReviewWebhookOutcome> {
   const installation = await getInstallationByExternalId(db, event.installationId);
   if (!installation || installation.status !== "active") {
@@ -162,6 +163,11 @@ export async function applyPullRequestEvent(
   }
   const settings = await getDependencyReviewSettings(db, installation.organizationId);
   if (!settings.enabled) return { kind: "ignored", reason: "dependency review is off" };
+  // Not offered to this organization: post nothing, not even a skip, so a
+  // rollout never puts a check on a repository Drydock won't keep reviewing.
+  if (!(await available(installation.organizationId))) {
+    return { kind: "ignored", reason: "dependency review is not available" };
+  }
   if (!isDependencyBot(event.authorLogin, event.authorType, settings.extraBotLogins)) {
     return {
       kind: "dependency_review_skipped",

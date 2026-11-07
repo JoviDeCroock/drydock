@@ -172,6 +172,22 @@ the review again against the current policy and approvals.
 
 ## Configuration
 
+### Rollout flag
+
+The `dependency-review` Flagship flag (default off) decides which organizations
+are offered dependency review (`server/lib/dependency-review/flag.ts`). Outside
+it, `/api/v1/dependency-reviews` answers 404, the dashboard hides the
+Dependencies link and the settings section (`GET /api/v1/organizations` carries
+`dependencyReview` per organization), and a `pull_request` delivery is ignored
+before anything is posted, not even a skipped check. A failed flag lookup reads
+as off. Check-run actions on reviews posted earlier still work, so turning the
+flag off leaves existing holds approvable; a repository that made the check
+required stops getting it on new bot PRs. A deployment without a `FLAGS` binding
+(self-hosting) offers it to every organization, which still has to turn it on in
+settings.
+
+### Settings
+
 Settings → Integrations → Dependency review (`/api/v1/dependency-reviews`).
 Members read it, and owners and admins (`roleCanManageIntegrations`) change it.
 Each change writes `dependency_review.settings_updated`. The policy is stored as

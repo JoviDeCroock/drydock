@@ -64,15 +64,20 @@ describe("signed-in header", () => {
     );
 
     // "Account settings" sits inside the closed user menu, which follows.
-    expect(linkLabels(html)).toEqual([
-      "Reviews",
-      "Dependencies",
-      "Settings",
-      "Feedback",
-      "Account settings",
-    ]);
+    // Dependencies needs an organization the rollout flag covers.
+    expect(linkLabels(html)).toEqual(["Reviews", "Settings", "Feedback", "Account settings"]);
     expect(html.indexOf("</nav>")).toBeLessThan(html.indexOf(">Feedback</a>"));
     expect(html.indexOf(">Feedback</a>")).toBeLessThan(html.indexOf("Account menu for"));
+  });
+
+  test("the dependency reviews page keeps its own section link", async () => {
+    sessionModel.session.value = { user: { id: "u1", email: "a@example.test" } } as AuthSession;
+    locationStub("/dashboard/dependency-reviews");
+    const { html } = await prerender(
+      h(LocationProvider, null, h(AppHeaderActions, { current: "dependencies" })),
+    );
+
+    expect(linkLabels(html).slice(0, 3)).toEqual(["Reviews", "Dependencies", "Settings"]);
   });
 });
 
