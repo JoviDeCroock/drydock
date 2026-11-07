@@ -43,7 +43,11 @@ function repoFiles() {
     execFileSync("git", ["ls-files", "-z", ...args], { cwd: repoRoot, encoding: "utf8" })
       .split("\0")
       .filter(Boolean);
-  return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])].sort();
+  // A tracked file deleted in the working tree is gone for the reader too: it
+  // must neither be scanned nor resolve a reference.
+  return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])]
+    .filter((file) => existsSync(path.join(repoRoot, file)))
+    .sort();
 }
 
 /**

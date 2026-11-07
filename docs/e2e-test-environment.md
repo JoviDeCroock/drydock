@@ -1,143 +1,125 @@
-# Local E2E test environment
+# Local e2e test environment
 
-The normal end-to-end loop is local and deterministic. It uses fixture packages plus a tiny fake npm staging registry, so agents and developers can exercise the product without publishing to npm. Keep `packages/experiments` and real npm staged publishes as a final canary for npm endpoint drift, not as the everyday test path.
+A deterministic local loop: fixture packages, a fake npm staging registry, and the real Worker, with no npm publish and no real credentials. **Authority:** internal (test harness). **Owner:** `test/e2e/dev-server.mjs`.
 
-## What Runs
+Real npm staged publishes (`packages/experiments`) are a final canary for npm endpoint drift, not the everyday path.
 
-- `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `staged/` package, optional `previous/` package, and `scenario.json` expected outcome.
-- `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous and staged package directories and writes generated registry state to `.context/e2e-registry/`. A scenario may rewrite the packed `package.json` (`staged.packageJsonText`), which repacks the tarball with the system `tar`. Fixture tarballs must name only the package's own members, so the builder packs with `COPYFILE_DISABLE=1` and `--no-xattrs` — macOS tar otherwise writes each file's extended attributes back as AppleDouble `._name` members and pax `xattr` records, and a bare `._package` member is itself a scanner finding — and fails the build if any tarball still names a packing-host entry (`._*`, `__MACOSX/`, `.DS_Store`).
-- `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses.
-- Public packages for the publication monitor are packed from `test/e2e-fixtures/publication-monitor/` (`@drydock/e2e-publication`, one release) and `test/e2e-fixtures/post-release-review/{1.0.0,1.1.0}` (`@drydock/e2e-post-release`; 1.0.0 is dated before any watch, 1.1.0 has a real code change) and written to `registry.json` as `publicPackages`. A version with no `publishedAt` gets its publish time on its first packument lookup, so it lands after the watch that finds it. Public packuments and their tarballs are served without a token, as public npm serves them; the journal test asserts none is ever sent one. With `ALLOW_INSECURE_LOCAL_REGISTRY` on, the monitor and the published-pair review both read this loopback registry, so an alert's **Scan** runs end to end; since it is not public npm, a decision there never reaches the badge. The post-release test runs in its own organization, because the suite spends the first organization's hourly scan budget exactly.
-- `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to an isolated `.context/e2e/state` persistence path that is reset on each run.
-- `test/e2e/local-registry.spec.ts` creates one authenticated browser state, runs the implicit node-gyp fixture through the UI, then runs each remaining fixture as its own Playwright test through the local Worker API. Each scenario asserts its `scenario.json` expected outcome independently, so CI points at the exact fixture that regressed.
-- `test/e2e/smoke.spec.ts` is a cheap browser smoke suite with mocked API responses. It covers the workflow-gate scan-detail surface and decision dialog, shared public reports, and the recovery card a failed route-chunk load lands on (the premise behind `lazyRoute`), without touching the fake-registry journal, so Playwright can run it across desktop, mobile, and dark-mode projects without multiplying the full scan matrix.
-- `test/e2e/publisher-setup.spec.ts` exercises the setup assistant across the same desktop, mobile, and dark-mode projects. Mocked GitHub-backed API responses cover reviewing the proposed workflow before opening a draft PR, clearing a proposal after a repository change, permission recovery, and distinguishing environment configuration from an observed completed pre-publish review. Worker tests cover the authenticated server and GitHub contracts separately.
+## Quick start
 
-The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
+```sh
+pnpm install
+pnpm run e2e:dev:seed
+```
 
-Any change to npm staged-publish endpoints, registry metadata handling,
-credential forwarding, or browser-visible scan workflow should add or update a
-fixture scenario and journal assertion in this harness. See
-[`release-safety.md`](./release-safety.md) for the broader test matrix.
+1. Starts the fake registry and the Vite/Worker dev server, then runs `scripts/e2e-seed.mjs` over the app's own HTTP API.
+2. The seed signs up a throwaway account, connects the fake registry, runs the implicit node-gyp fixture through a full scan, and shares the completed review.
+3. It prints the login email/password, the scan URL, and the public report URL.
+4. The report URL answers `404` until npm's status for the version is read (no public route serves a review before its release is public). The fixture registry reports the implicit node-gyp version `published`, so **Check npm** on the dashboard makes it live.
+5. Against an already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed`; pass extra fixture stage ids as arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
 
 ## Commands
 
-```sh
-pnpm run e2e:fixtures
-pnpm run e2e:dev
-pnpm run e2e:dev:seed
-pnpm run e2e:seed
-pnpm run test:e2e
-pnpm run agent:tour
-```
+| Command | Ports | State dir | Needs creds? |
+| --- | --- | --- | --- |
+| `pnpm run e2e:dev:seed` | app `5173`, registry app+1 | `.context/e2e/state` (reset each run), `.context/e2e-registry/` | No |
+| `pnpm run e2e:dev` | app `5173`, registry app+1 | same | No |
+| `pnpm run e2e:seed` | targets the running app | — | No |
+| `pnpm run e2e:fixtures` | — | writes `.context/e2e-registry/registry.json` | No |
+| `pnpm run e2e:registry` | registry only, `--port` or `E2E_REGISTRY_PORT` (default `5184` standalone) | `.context/e2e-registry/` | No |
+| `pnpm run test:e2e` | starts `e2e:dev` via Playwright `webServer` (reused locally, fresh in CI) | `.context/e2e-artifacts/` | No |
+| `pnpm run agent:tour` | same harness | `agent-tour-output/` ([agent-tour.md](./agent-tour.md)) | No |
+| `pnpm run dev` | `5173` | your `.dev.vars` | Yes ([self-hosting.md](./self-hosting.md#local-development)) |
 
-`pnpm run e2e:dev` prints the app URL, fake registry URL, request journal, artifact directory, and Worker state directory. By default it uses:
+`pnpm run e2e:dev` prints the app URL, registry URL, request journal, artifact directory, and Worker state directory.
 
-- app: `http://127.0.0.1:5173`
-- fake registry: `http://127.0.0.1:5174`
+### Environment variables
 
-Override ports when needed:
+| Variable | Effect |
+| --- | --- |
+| `E2E_APP_PORT` | App port (then `CONDUCTOR_PORT`, then `5173`). Also honored by plain `pnpm run dev` (`vite.config.ts`). |
+| `E2E_REGISTRY_PORT` | Registry port (default app port + 1). |
+| `CONDUCTOR_PORT` | Parallel workspaces: app = `CONDUCTOR_PORT`, registry = `CONDUCTOR_PORT + 1`. |
+| `E2E_APP_URL`, `E2E_NPM_REGISTRY` | Override URLs for seed and Playwright. |
+| `E2E_REGISTRY_STATE_DIR`, `E2E_ARTIFACTS_DIR`, `E2E_CONFIG_DIR` | Relocate registry state, artifacts, and generated config + Worker state (parallel harnesses need separate dirs). |
+| `E2E_SEED=1` | Same as `--seed` on `test/e2e/dev-server.mjs`. |
 
-```sh
-E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
-```
+Example: `E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e`.
 
-`pnpm run e2e:dev:seed` is the one-command seeded path for UI iteration: it
-starts the same harness and then runs `scripts/e2e-seed.mjs`, which signs up a
-throwaway account, connects the fake registry, runs the implicit node-gyp
-fixture through a full scan, and shares the completed review — all over the
-app's own HTTP API, with no real credentials. It prints the login
-email/password, the scan URL, and the public report URL. That URL answers
-`404` until npm's status for the version is read, because no public route
-serves a review before its release is public; the fixture registry reports
-the implicit node-gyp version `published`, so **Check npm** on the dashboard
-makes it live. Against an
-already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
-fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
-arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
+Ports are strict, never auto-picked: `BETTER_AUTH_URL` and the generated Wrangler config bake the app port in before start, so a taken port fails fast; set the env var instead.
 
-Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
+## Components
 
-`pnpm run agent:tour` is the portable product walkthrough for agents and manual
-inspection. It uses the same fake registry and Worker harness, but writes a
-narrative report, screenshots, exported JSON, trace, and video under the tour
-output directory. See [`agent-tour.md`](./agent-tour.md).
+| Piece | File | Role |
+| --- | --- | --- |
+| Scenarios | `test/e2e-fixtures/scenarios/*` | Each has `staged/`, optional `previous/`, and `scenario.json` (expected risk, rule IDs, baseline, or failure response). |
+| Fixture builder | `test/e2e/build-fixtures.mjs` | `npm pack --json` for each side into `.context/e2e-registry/`. `staged.packageJsonText` rewrites the packed `package.json` and repacks with system `tar`. |
+| Fake registry | `test/e2e/fake-registry.mjs` | Only the staged-publish, packument, and tarball endpoints the app uses; writes `.context/e2e-registry/requests.jsonl`. Not a general-purpose registry. |
+| Dev server | `test/e2e/dev-server.mjs` | Generates a Wrangler config, applies D1 migrations to the isolated state dir, starts registry + Vite/Worker. |
+| Worker routes | `test/e2e/worker-routes.mjs` | Prefixes routed to the Worker (see below). |
+| Seed | `scripts/e2e-seed.mjs` | Account, connection, scan, share. |
+| Playwright config | `playwright.config.ts` | Projects below. |
 
-Vite ignores `.context/**` in its file watcher. The E2E runner writes registry state, Worker state, traces, screenshots, and reports there while the app is open; watching those files can cause hot-reload loops that interrupt browser interactions in CI.
+| Playwright project | Specs |
+| --- | --- |
+| `chromium` | `test/e2e/local-registry.spec.ts`, `test/e2e/two-factor.spec.ts`, `test/e2e/org-switcher.spec.ts`, `test/e2e/slack-selector.spec.ts`, `test/e2e/npm-scope-guide.spec.ts` |
+| `desktop-smoke`, `mobile-smoke`, `dark-smoke` | `test/e2e/smoke.spec.ts`, `test/e2e/publisher-setup.spec.ts` |
 
-## Worker-owned routes in local development
+1. `local-registry.spec.ts` creates one authenticated state, runs the implicit node-gyp fixture through the UI, then runs each remaining fixture as its own test via the local Worker API; each asserts its own `scenario.json`, so CI names the regressed fixture.
+2. `smoke.spec.ts` uses mocked API responses (workflow-gate scan detail and decision dialog, shared public reports, the recovery card after a failed route-chunk load) and never touches the registry journal. Unmocked `/api` calls 404 and the spec asserts no console errors, so a new scan-detail fetch needs a mock.
+3. `publisher-setup.spec.ts` mocks GitHub-backed responses: reviewing the workflow before a draft PR, clearing a proposal on repository change, permission recovery, and separating environment configuration from an observed pre-publish review. Worker tests cover the server and GitHub contracts.
 
-Production puts the Worker in front of every request (`run_worker_first: true`)
-and reaches static assets from inside it through the `ASSETS` binding. The
-harness routes only the Worker-owned prefixes — `test/e2e/worker-routes.mjs`,
-kept equal to `SERVER_OWNED_PATH_PREFIXES` in `server/middleware/canonical-host.ts` — so `/api/*`,
-`/webhooks/*`, `/og/*`, and `/public/*` reach their real handlers while
-documents come from Vite.
+## Invariants
 
-A prefix missing from that list does not fail visibly: Vite's SPA fallback
-answers `200` with the app shell, so the route looks alive in a browser and its
-handler never runs. `test/dev-server-route-parity.test.mjs` pins the two lists
-together.
+1. Fixture tarballs name only the package's own members: the builder packs with `COPYFILE_DISABLE=1` and `--no-xattrs` and fails if any tarball names a packing-host entry (`._*`, `__MACOSX/`, `.DS_Store`). macOS tar otherwise adds AppleDouble `._name` members and pax `xattr` records, and a bare `._package` member is itself a scanner finding.
+2. The browser test checks `requests.jsonl` so authorization headers appear only on expected npm-like endpoints.
+3. Public packuments and tarballs are served without a token, as public npm serves them; the journal test asserts none is ever sent one.
+4. `ALLOW_INSECURE_LOCAL_REGISTRY=true` (generated config only) permits loopback HTTP registries (`localhost`, `127.0.0.1`, `::1`); non-local HTTP is still rejected and production URLs require HTTPS. Never set it in a production Wrangler config.
+5. Package code is never executed: fixtures are packed tarballs treated as hostile evidence by the same Dynamic Worker sandbox path as production.
+6. The generated config carries a throwaway Ed25519 `ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start and never committed, so report attestations verify locally instead of returning the no-key `503`.
+7. Vite ignores `.context/**`; watching harness output causes hot-reload loops that interrupt browser tests.
 
-Routing documents through the Worker as well would need the generated config to
-declare the `ASSETS` binding (the Vite plugin wires it back into the dev server
-only when one is named) and `DISABLE_SECURITY_HEADERS` set: the document CSP's
-`style-src-elem 'self'` blocks the styles Vite injects at runtime. That flag is
-all-or-nothing, so it would also drop the headers from the `/api/*` and
-`/public/*` responses that carry them locally today. The harness therefore keeps
-documents on Vite, and `assetFallbackRequest`'s `/reports/`, `/diff/`, and
-`/dashboard/` rewrites stay unexercised locally — they are covered by
-`test/workers/` instead.
+### Publication-monitor fixtures
 
-Reaching a handler is not the same as exercising it: `/og/*` is killswitched
-whenever `NPM_REGISTRY` is not the public npm registry, which it never is here,
-so OG cards answer `404` locally by design.
+| Package | Source | Purpose |
+| --- | --- | --- |
+| `@drydock/e2e-publication` | `test/e2e-fixtures/publication-monitor/` | One release. |
+| `@drydock/e2e-post-release` | `test/e2e-fixtures/post-release-review/` (`1.0.0`, `1.1.0`) | 1.0.0 dated before any watch; 1.1.0 has a real code change. |
 
-The generated config also carries a throwaway Ed25519
-`ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start rather than committed,
-so a shared report's attestation and published key verify locally instead of
-degrading to the no-key `503`.
+1. Written to `registry.json` as `publicPackages`. A version without `publishedAt` gets its publish time on first packument lookup, so it lands after the watch that finds it.
+2. With `ALLOW_INSECURE_LOCAL_REGISTRY` on, the monitor and published-pair review read this loopback registry, so an alert's **Scan** runs end to end; it is not public npm, so a decision never reaches the badge.
+3. The post-release test runs in its own organization because the suite spends the first organization's hourly scan budget exactly.
+
+### Scenario contract
+
+| Scenario | Expected |
+| --- | --- |
+| registry-access-failure | Admission rejected with `503`; no scan or package claim created. |
+| registry-failure | Access probe passes, full artifact download fails: covers failed-review deletion after verified admission. |
+| Cross-organization | A second organization cannot admit the same staged package or create a competing watch. |
+
+The matrix is executable, not duplicated here: add a directory under `test/e2e-fixtures/scenarios/` with `scenario.json`; the suite reads `.context/e2e-registry/registry.json` and asserts it.
+
+## Worker-owned routes locally
+
+| Path | Served by | Note |
+| --- | --- | --- |
+| `/api/*`, `/webhooks/*`, `/og/*`, `/public/*` | Worker | `test/e2e/worker-routes.mjs` equals `SERVER_OWNED_PATH_PREFIXES` (`server/middleware/canonical-host.ts`); pinned by `test/dev-server-route-parity.test.mjs`. |
+| Documents | Vite | Production runs the Worker first (`run_worker_first: true`) and reaches assets via `ASSETS`. |
+
+1. A prefix missing from the list fails silently: Vite's SPA fallback answers `200` with the app shell and the handler never runs.
+2. Documents stay on Vite because routing them through the Worker needs the `ASSETS` binding in the generated config and `DISABLE_SECURITY_HEADERS` (the document CSP `style-src-elem 'self'` blocks Vite's injected styles); that flag is all-or-nothing and would drop headers from `/api/*` and `/public/*`. So `assetFallbackRequest`'s `/reports/`, `/diff/`, `/dashboard/` rewrites are covered by `test/workers/`, not here.
+3. `/og/*` answers `404` locally by design: it is killswitched whenever `NPM_REGISTRY` is not public npm.
 
 ## CI
 
-The GitHub Actions CI workflow runs `pnpm run test:e2e` after lint, format check, typecheck, and Vitest. CI installs Chromium with:
+1. `.github/workflows/ci.yml` runs `pnpm run test:e2e` after lint, format check, typecheck, and Vitest, after `pnpm exec playwright install --with-deps chromium`.
+2. Every run uploads `.context/e2e-artifacts/` and `.context/e2e-registry/requests.jsonl` as `e2e-artifacts` (traces, screenshots, videos, journal). Locally, traces land there on failure and `implicit-node-gyp-report.png` on success.
+3. Expensive scenarios run only in `chromium`; smoke projects add responsive/theme coverage without rerunning the fixture matrix.
 
-```sh
-pnpm exec playwright install --with-deps chromium
-```
+## Change checklist
 
-The workflow uploads `.context/e2e-artifacts/` and `.context/e2e-registry/requests.jsonl` as `e2e-artifacts` for every run, so failed browser tests keep traces, screenshots, videos, and the fake-registry request journal.
-
-`playwright.config.ts` keeps the expensive scenario coverage in the `chromium`
-project (`local-registry.spec.ts` and `two-factor.spec.ts`). The lightweight
-`smoke.spec.ts` runs in `desktop-smoke`, `mobile-smoke`, and `dark-smoke`, giving
-responsive/theme coverage without rerunning every staged-publish fixture.
-
-## Parallel workspace ports
-
-When `CONDUCTOR_PORT` is present, the E2E runner uses it as the app port and
-`CONDUCTOR_PORT + 1` as the fake registry port. That lets multiple workspaces run
-the harness concurrently without requiring repository-specific Conductor settings.
-
-Plain `pnpm run dev` (vite.config.ts) follows the same override chain
-(`E2E_APP_PORT`, then `CONDUCTOR_PORT`, then `5173`), so two workspaces can run
-dev servers side by side. Ports stay strict rather than auto-picked on
-conflict: `BETTER_AUTH_URL` and the generated e2e Wrangler config bake the app
-port in before the server starts, so a silently reassigned port would break
-auth and the harness. A taken port fails fast — set the env var instead.
-
-## Local HTTP Registry Guard
-
-Production registry URLs still require HTTPS. The E2E runner generates a Wrangler config with `ALLOW_INSECURE_LOCAL_REGISTRY=true`, which permits only loopback HTTP registries (`localhost`, `127.0.0.1`, `::1`). Non-local HTTP registries are still rejected.
-
-This flag exists for local testability only. Do not set it in production Wrangler config.
-
-## Scenario Contract
-
-The registry-access-failure scenario rejects admission with 503 and creates no scan or package claim. The registry-failure scenario permits the access probe and then fails the full artifact download, preserving coverage of failed-review deletion after verified admission. The browser suite also verifies that a second organization cannot admit the same staged package or create a competing watch.
-
-The scenario matrix is executable instead of duplicated in docs. Add a directory under `test/e2e-fixtures/scenarios/`, define the package inputs, and put the expected risk, rule IDs, baseline, or failure response in `scenario.json`. The Playwright smoke reads the generated `.context/e2e-registry/registry.json` and asserts those expectations automatically.
-
-## Notes
-
-The fake registry is intentionally not a general-purpose npm registry. It only mirrors the staged-publish and packument surface this app consumes. Package code is never executed; fixture packages are packed as tarballs and treated as hostile evidence by the same Dynamic Worker sandbox path as production scans.
+| If you change | Also |
+| --- | --- |
+| npm staged-publish endpoints, registry metadata handling, credential forwarding, or a browser-visible scan flow | Add or update a scenario and a journal assertion here; see [release-safety.md](./release-safety.md). |
+| `SERVER_OWNED_PATH_PREFIXES` | Update `test/e2e/worker-routes.mjs`. |
+| A Cloudflare binding | Add it to the generated config in `test/e2e/dev-server.mjs` (`test/env-binding-parity.test.mjs`). |

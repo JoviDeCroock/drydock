@@ -1,432 +1,293 @@
-# Linting and formatting
+# Commands and tooling
+
+Every `package.json` script, lint rule, and static invariant test in one place. **Authority:** internal. **Owner:** `package.json`, `.oxlintrc.json`, `scripts/verify.mjs`.
+
+`test/prose-command-references.test.mjs` fails if a script is missing from the tables below or a documented `pnpm` command does not exist. Test scope by change type: [release-safety.md](./release-safety.md).
 
 ## Stack
 
-- **[oxlint](https://oxc.rs/docs/guide/usage/linter)** v1 — Rust-based ESLint replacement. Config in `.oxlintrc.json`.
-- **[oxfmt](https://oxc.rs/docs/guide/usage/formatter)** v0 — Rust-based Prettier replacement. Config in `.oxfmtrc.json`.
-- **[@preact/eslint-plugin-signals](https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md)** — loaded via oxlint's `jsPlugins` (alpha) for signal-specific rules.
-- **[@shadcn/lint](https://github.com/shadcn-ui/lint)** — a Tailwind design-system linter, loaded through the same `jsPlugins` hook. Requires oxlint >= 1.80. shadcn/ui is not required and is not used here; the rules read this repo's own components and the `@theme` tokens in `src/style.css`.
+| Tool | Role | Config |
+| --- | --- | --- |
+| [oxlint](https://oxc.rs/docs/guide/usage/linter) v1 | Rust ESLint replacement | `.oxlintrc.json` |
+| [oxfmt](https://oxc.rs/docs/guide/usage/formatter) v0 | Rust Prettier replacement (also Markdown, except `docs/**/*.md`: column padding doubled table bytes; `test/docs-shape.test.ts` guards doc shape instead) | `.oxfmtrc.json` |
+| [@preact/eslint-plugin-signals](https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md) | Signal rules via oxlint `jsPlugins` (alpha) | `.oxlintrc.json` |
+| [@shadcn/lint](https://github.com/shadcn-ui/lint) | Tailwind design-system rules via `jsPlugins` (oxlint >= 1.80) | `.oxlintrc.json` |
+| tsrs | Typecheck | `tsconfig.json`, `test/tsconfig.json` |
+| knip | Unused files, exports, dependencies | `tooling/knip.jsonc` |
+| Vitest | `node` and `workers` projects | `vitest.config.ts` |
+| Playwright | Browser e2e | `playwright.config.ts` |
+
+`@shadcn/lint` reads this repo's own components and the `@theme` tokens in `src/style.css`; shadcn/ui itself is not used.
 
 ## Scripts
 
-| Command                                           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run lint`                                   | Run oxlint over the repo. Exit non-zero on errors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `pnpm run lint:fix`                               | Apply oxlint autofixes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `pnpm run format`                                 | Rewrite files with oxfmt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `pnpm run format:check`                           | Report files that would change without writing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `pnpm run test`                                   | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node and workers projects run as two parallel Vitest processes. The project spawn definitions live in `scripts/lib/vitest-commands.mjs`, shared with `verify`. Extra args go straight to Vitest: `pnpm test -- <file>` runs one file, `pnpm test -- --project workers <file>` pins the suite.                                                                                                                                  |
-| `pnpm run test:node`                              | Just the node logic suite (`vitest run --project node`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `pnpm run test:workers`                           | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `test/config/wrangler.jsonc` + `drizzle/`).                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `pnpm run e2e:fixtures`                           | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `pnpm run e2e:dev`                                | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `pnpm run test:e2e`                               | Run Playwright against the local fake-registry harness.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `pnpm run agent:tour`                             | Run the portable local product walkthrough and write `agent-tour-output/report.md`, screenshots, traces, video, and an exported report JSON.                                                                                                                                                                                                                                                                                                                                                                                            |
-| `pnpm run verify`                                 | Run lint + format check + typecheck + knip + tests **in parallel** (`scripts/verify.mjs`); the cheap checks finish while the worker pool runs. All five always run to completion and every failure is reported together.                                                                                                                                                                                                                                                                                                                |
-| `pnpm run verify:quick`                           | The iteration loop (`scripts/verify.mjs --quick`): oxlint and oxfmt scoped to files changed vs the `origin/main` merge base (committed + staged + unstaged + untracked), the full typecheck (the checker cannot be scoped), knip (whole-graph; an unused export is created by _removing_ the last import, so a changed-file scope would miss the file that broke), and `vitest run --changed <merge-base>` for both projects. Skipped checks say so explicitly. Not the commit gate — run the full `pnpm run verify` before committing. |
-| `pnpm run verify:file`                            | The inner loop after editing one or two files (`scripts/verify.mjs --file <path...>`): oxlint and oxfmt on exactly those files, the full typecheck, and `vitest related` for both projects, which runs only the test files that import the given paths (a test file relates to itself; a Markdown file additionally runs the prose checks). No knip. Faster than `verify:quick` when the change set is wide but the edit is narrow.                                                                                                     |
-| `pnpm run dev`                                    | Vite + Worker dev server at `http://localhost:5173` against your `.dev.vars`. For a seeded, credential-free local environment use `pnpm run e2e:dev:seed` instead.                                                                                                                                                                                                                                                                                                                                                                      |
-| `pnpm run build`                                  | Production build into `dist/`; also emits the Worker bundle and `dist/staged_publish_review/wrangler.json` that `deploy` reads.                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `pnpm run preview`                                | Serve the last `build` locally.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `pnpm run deploy`                                 | `build` then `wrangler deploy` with the generated config. Needs Cloudflare credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `pnpm run typecheck`                              | `tsrs --noEmit` over `src/`, `server/`, and `vite.config.ts`, then `tsrs -p test/tsconfig.json --noEmit` over `test/` (node, workers, e2e, agent-tour). Vitest only strips types, so this is where test files are typechecked.                                                                                                                                                                                                                                                                                                          |
-| `pnpm run knip`                                   | Unused files, exports, and dependencies (`tooling/knip.jsonc`). Part of `verify` and CI.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `pnpm run cf-typegen`                             | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` for reference only — typecheck uses the hand-maintained `server/env.d.ts`, so new bindings are declared there by hand.                                                                                                                                                                                                                                                                                                                                                     |
-| `pnpm db:generate`                                | Generate a D1 migration under `drizzle/` from `server/db/schema.ts`. Never hand-write migration SQL.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `pnpm run db:migrate:local`                       | Apply pending D1 migrations to the local Miniflare database.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `pnpm run db:migrate:remote`                      | Apply pending D1 migrations to production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `pnpm run db:backfill:scan-list-summaries:local`  | One-off backfill of scan list summaries (`scripts/backfill-scan-list-summaries.sql`) for databases migrated before the column existed.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `pnpm run db:backfill:scan-list-summaries:remote` | The same backfill against production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pnpm run db:backfill:badge-package-key:local`    | One-off backfill of `scans.badge_package_key` and `badge_public` (`scripts/backfill-badge-package-key.sql`) so reviews predating the columns answer the default-on badge and can be recognized as superseded, and withdrawal of listed badge keys whose manifest name disagrees with npm's. Read its header first: it lists the read-only queries that check its assumptions and count what it withdraws.                                                                                                                               |
-| `pnpm run db:backfill:badge-package-key:remote`   | The same backfill against production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pnpm run e2e:registry`                           | Start only the fake npm staging registry (`test/e2e/fake-registry.mjs`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `pnpm run e2e:dev:seed`                           | `e2e:dev` plus `e2e:seed` in one command: a throwaway account, the fake-registry connection, and one scanned fixture stage. The credential-free local path; see `e2e-test-environment.md`.                                                                                                                                                                                                                                                                                                                                              |
-| `pnpm run e2e:seed`                               | Seed an already-running local app (`scripts/e2e-seed.mjs`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `pnpm run eval`                                   | Deterministic detection eval over the security corpus; `pnpm run eval:npm-sweep` replays real npm release pairs through the production rules to surface false positives (network-bound, report-only). See `detection-eval.md`.                                                                                                                                                                                                                                                                                                          |
-| `pnpm run benchmark:incidents`                    | Generate the public Shai-Hulud/Nx behavior benchmark; ordinary tests check the committed results. See `incident-benchmark.md`.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `pnpm run eval:ai`                                | Offline AI-review eval against recorded fixtures. `pnpm run eval:ai:live` runs the paid live comparison and `pnpm run eval:clef:live` the paid Clef injection-screen eval; see `ai-review-eval.md`.                                                                                                                                                                                                                                                                                                                                     |
-| `pnpm run fuzz`                                   | Archive-parser property fuzz (`FUZZ_RUNS=20000`, long timeout). Not part of `verify`.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pnpm run ops:package-claims -- --query`          | Print the read-only package-claim inventory query. Use `--input` and `--output` to build a private audit outside the repository; explicit `--approvals` generates guarded SQL without executing it. `--assume-public-npm-registry` records an operator-approved assumption for missing historical registry URLs. See [package claims](./package-claims.md).                                                                                                                                                                             |
-| `pnpm run ops:snapshot`                           | Query production D1 for the ops feedback loop; see `ops-snapshot.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pnpm incident:post`                              | Fill the incident-post templates and verify the `/diff` link resolves before anyone posts it; see `incident-content-playbook.md`.                                                                                                                                                                                                                                                                                                                                                                                                       |
+Always spell lint as `pnpm run lint`: bare `pnpm lint` can collide with workspace forwarding or shell wrappers.
 
-`pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
+### Checks and tests
 
-Server-risk changes have a stricter test matrix than the command table alone
-can express. See [`release-safety.md`](./release-safety.md) for the expected
-Worker-route, sandbox invariant, fake-registry e2e, security-corpus, and
-observability coverage by change type.
+| Command | What it does |
+| --- | --- |
+| `pnpm run lint` | oxlint over the repo; non-zero on errors. |
+| `pnpm run lint:fix` | Apply oxlint autofixes. |
+| `pnpm run format` | Rewrite files with oxfmt. |
+| `pnpm run format:check` | Report files that would change. |
+| `pnpm run typecheck` | `tsrs --noEmit` over `src/`, `server/`, `vite.config.ts`, then over `test/` via `test/tsconfig.json` (note 1). |
+| `pnpm run knip` | Unused files, exports, dependencies. Part of `verify` and CI. |
+| `pnpm run test` | Node (`test/**`) and D1-backed worker (`test/workers/**`) suites as two parallel Vitest processes (note 2). |
+| `pnpm run test:node` | `vitest run --project node`. |
+| `pnpm run test:workers` | `vitest run --project workers` (Miniflare D1 from `test/config/wrangler.jsonc` + `drizzle/`). |
+| `pnpm run verify` | Lint, format check, typecheck, knip, tests **in parallel**; all five finish and every failure is reported. The commit gate. |
+| `pnpm run verify:quick` | Iteration loop scoped to changes vs the `origin/main` merge base (note 3). Not the commit gate. |
+| `pnpm run verify:file` | After editing one or two files: `--file <path...>` (note 4). No knip. |
+| `pnpm run fuzz` | Archive-parser property fuzz (`FUZZ_RUNS=20000`, long timeout). Not in `verify`. |
+
+1. Typecheck covers node, workers, e2e, and agent-tour tests. Vitest only strips types, so this is where test files are typechecked.
+2. `scripts/test.mjs` spawns the projects defined in `scripts/lib/vitest-commands.mjs` (shared with `verify`). `pnpm test -- <file>` runs one file; `pnpm test -- --project workers <file>` pins the suite.
+3. `verify:quick`: oxlint and oxfmt on changed files (committed, staged, unstaged, untracked), full typecheck (cannot be scoped), whole-graph knip (removing the last import creates the unused export in another file), `vitest run --changed <merge-base>` for both projects. Skipped checks say so.
+4. `verify:file`: oxlint and oxfmt on exactly those files, full typecheck, `vitest related` for both projects (a test relates to itself; a Markdown file also runs the prose checks). Faster than `verify:quick` when the change set is wide but the edit is narrow.
+
+### Dev, build, deploy
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run dev` | Vite + Worker at `http://localhost:5173` against your `.dev.vars`. Credential-free alternative: `pnpm run e2e:dev:seed`. |
+| `pnpm run build` | Production build into `dist/`, including `dist/staged_publish_review/wrangler.json` that `deploy` reads. |
+| `pnpm run preview` | Serve the last `build` locally. |
+| `pnpm run deploy` | `build` then `wrangler deploy` with the generated config. Needs Cloudflare credentials ([self-hosting.md](./self-hosting.md#deploy-checklist)). |
+| `pnpm run cf-typegen` | Regenerate `worker-configuration.d.ts` for reference only; declare bindings by hand in `server/env.d.ts`. |
+
+### Database
+
+| Command | What it does |
+| --- | --- |
+| `pnpm db:generate` | Generate a D1 migration under `drizzle/` from `server/db/schema.ts`. Never hand-write migration SQL. |
+| `pnpm run db:migrate:local` | Apply pending migrations to local Miniflare. |
+| `pnpm run db:migrate:remote` | Apply pending migrations to production. |
+| `pnpm run db:backfill:scan-list-summaries:local` | One-off scan list summary backfill (`scripts/backfill-scan-list-summaries.sql`) for databases migrated before the column. |
+| `pnpm run db:backfill:scan-list-summaries:remote` | Same, against production. |
+| `pnpm run db:backfill:badge-package-key:local` | One-off `scans.badge_package_key` / `badge_public` backfill (`scripts/backfill-badge-package-key.sql`) (note 5). |
+| `pnpm run db:backfill:badge-package-key:remote` | Same, against production. |
+
+5. The badge backfill lets older reviews answer the default-on badge and be recognized as superseded, and withdraws listed badge keys whose manifest name disagrees with npm's. Read its header first: it lists read-only queries that check its assumptions and count what it withdraws.
+
+### E2E and tour
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run e2e:fixtures` | Pack fixture packages and generate `.context/e2e-registry/registry.json`. |
+| `pnpm run e2e:registry` | Start only the fake npm staging registry (`test/e2e/fake-registry.mjs`). |
+| `pnpm run e2e:dev` | Fake registry + Vite/Worker dev server. |
+| `pnpm run e2e:dev:seed` | `e2e:dev` + `e2e:seed`: the credential-free local path ([e2e-test-environment.md](./e2e-test-environment.md)). |
+| `pnpm run e2e:seed` | Seed an already-running app (`scripts/e2e-seed.mjs`): account, registry connection, one scanned fixture. |
+| `pnpm run test:e2e` | Playwright against the fake-registry harness. |
+| `pnpm run agent:tour` | Product walkthrough into `agent-tour-output/` ([agent-tour.md](./agent-tour.md)). |
+
+### Evals and operations
+
+| Command | What it does |
+| --- | --- |
+| `pnpm run eval` | Deterministic detection eval over the security corpus ([detection-eval.md](./detection-eval.md)). |
+| `pnpm run eval:npm-sweep` | Replay real npm release pairs through production rules for false positives (network-bound, report-only). |
+| `pnpm run eval:ai` | Offline AI-review eval on recorded fixtures ([ai-review-eval.md](./ai-review-eval.md)). |
+| `pnpm run eval:ai:live` | Paid live AI-review comparison. |
+| `pnpm run eval:clef:live` | Paid Clef injection-screen eval. |
+| `pnpm run benchmark:incidents` | Regenerate the Shai-Hulud/Nx benchmark; ordinary tests check committed results ([incident-benchmark.md](./incident-benchmark.md)). |
+| `pnpm run ops:package-claims -- --query` | Print the read-only package-claim inventory query (note 6). |
+| `pnpm run ops:snapshot` | Query production D1 for the ops feedback loop ([ops-snapshot.md](./ops-snapshot.md)). |
+| `pnpm incident:post` | Fill incident-post templates and verify the `/diff` link resolves ([incident-content-playbook.md](./incident-content-playbook.md)). |
+
+6. `--input`/`--output` build a private audit outside the repo; explicit `--approvals` generates guarded SQL without executing it; `--assume-public-npm-registry` records an operator-approved assumption for missing historical registry URLs ([package-claims.md](./package-claims.md)).
+
+## Verification and CI
+
+| When | Run |
+| --- | --- |
+| After editing a file | `pnpm run verify:file <path>` |
+| While iterating | `pnpm run verify:quick` |
+| Before every commit | `pnpm run verify` (no git hook enforces it) |
+| CI | `.github/workflows/ci.yml`: same core checks, then Chromium + `pnpm run test:e2e` |
 
 ## Worker-suite performance
 
-Importing the server module graph into a fresh workerd isolate costs ~5s per
-test file (every module is fetched individually over the pool's module-fallback
-socket), so the suite's wall time is dominated by how often that import is
-repeated — not by the tests themselves. Deliberate choices that keep it fast:
+Importing the server graph into a fresh workerd isolate costs ~5s per test file (modules fetched one by one over the pool's module-fallback socket). Keep these settings.
 
-- **Pool workers are reused across test files.** `vitest.config.ts`
-  sets `isolate: false` with `maxWorkers: 3`, so the module graph is imported
-  once per pool worker instead of once per file. More workers means more
-  redundant imports, so raising `maxWorkers` makes the suite _slower_. To keep
-  the per-file clean-database semantics tests are written against,
-  `test/workers/setup.ts` wipes all D1 tables and R2 objects in a `beforeAll`
-  before re-applying migrations — files on a worker run sequentially, so the
-  reset cannot race another file. Consequence: a worker test must not assert
-  against state it did not create _within its own file_, and tests that sweep
-  globally (e.g. the discovery cron) rely on that per-file reset.
-- **The node project uses the `threads` pool** (per-file isolation kept, since
-  several files `vi.mock` the same modules) to skip the default forks pool's
-  per-file process spawn.
-- **`test/config/wrangler.jsonc` has no `main`.** The worker tests don't use `SELF` —
-  they `import worker from "../../server/index"` and call `worker.fetch(req, env, ctx)`
-  directly. Setting `main` makes Miniflare eagerly evaluate the whole app graph
-  in _every_ isolate at boot (~5s/file → most of the suite's wall time). Leaving
-  it unset drops per-file boot to ~0.3s; the files that need the app still import
-  it themselves. **Do not add `main` back** unless a test genuinely needs `SELF`
-  or a Durable Object binding — and if one does, scope it to a separate project
-  rather than taxing the whole worker suite.
-- **Native scrypt for password hashing.** `server/lib/auth/index.ts` overrides Better
-  Auth's KDF with `node:crypto`'s native scrypt (same params, byte-identical
-  output — see `test/workers/auth-password-hash.test.ts`). On `workerd` the
-  default falls back to a pure-JS scrypt that runs synchronously in the isolate;
-  native scrypt is ~10× faster, which matters for production logins and for the
-  auth-heavy worker tests that sign up / sign in / enroll TOTP.
+| Setting | Where | Invariant |
+| --- | --- | --- |
+| `isolate: false`, `maxWorkers: 3` | `vitest.config.ts` | Graph imported once per pool worker; raising `maxWorkers` makes the suite slower. |
+| Per-file reset | `test/workers/setup.ts` | `beforeAll` wipes D1 tables and R2 objects, then re-applies migrations. |
+| `threads` pool for `node` | `vitest.config.ts` | Keeps per-file isolation (files `vi.mock` the same modules) without process spawns. |
+| No `main` | `test/config/wrangler.jsonc` | Tests call `worker.fetch(req, env, ctx)` on an imported `server/index`. |
+| Native scrypt | `server/lib/auth/index.ts` | Better Auth KDF on `node:crypto` scrypt: same params, byte-identical, ~10x faster. |
+| Lazy AI SDK | `server/lib/scan/pipeline.ts` | `await import(...)` only after the `ai-review` check. |
 
-Heavy, conditionally-used modules (e.g. the Vercel AI SDK behind the off-by-default
-AI reviewer) are loaded with `await import(...)` past their feature gate, to keep
-them out of the worker boot graph.
+1. A worker test must not assert on state it did not create in its own file; global sweeps (the discovery cron) rely on the per-file reset, which cannot race because a worker runs its files sequentially.
+2. **Do not add `main` back** to `test/config/wrangler.jsonc`: Miniflare would evaluate the whole app in every isolate (~5s/file vs ~0.3s). If a test needs `SELF` or a Durable Object, give it a separate project.
+3. Native scrypt is pinned by `test/workers/auth-password-hash.test.ts`; the pure-JS fallback runs synchronously in the isolate and slows logins and auth-heavy tests.
+4. AI review is on by default and the org `ai-review` flag is a killswitch; the Vercel AI SDK stays out of the Worker boot graph until that check passes.
 
-## Pre-commit verification
+## Lint rules
 
-Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + knip + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
+All `error` unless noted. Local plugins live in `tooling/oxlint/`; each has a fixture under `test/fixtures/` (excluded via `ignorePatterns`) and a test that runs the real oxlint runtime.
+
+| Rule | Enforces | Plugin | Pinned by |
+| --- | --- | --- | --- |
+| `no-restricted-imports` | No `useState`/`useReducer`; no `preact/compat` | core | lint |
+| `@preact/signals/no-signal-write-in-computed` | No signal writes in computeds | signals | lint |
+| `@preact/signals/no-value-after-await` | No `.value` read after `await` (breaks tracking) | signals | lint |
+| `@preact/signals/no-signal-in-component-body` | No `signal`/`computed`/`effect` calls in a component body (use hooks) | signals | lint |
+| `@preact/signals/no-conditional-value-read` | No `.value` read behind a non-reactive guard | signals | lint |
+| `@preact/signals/no-signal-truthiness` | Truthiness on a signal object (`warn`) | signals | lint |
+| `signals-local/no-signal-conditional-jsx` | Signal-driven conditional JSX children use `<Show>` | `signals-local/` | `test/oxlint-signal-conditional-jsx.test.mjs` |
+| `boundaries-local/no-cross-page-import` | Pages never import another page's directory | `boundaries-local/` | `test/oxlint-cross-page-import.test.mjs` |
+| `boundaries-local/no-platform-domain-import` | `server/lib/platform/` imports only platform modules and packages | `boundaries-local/` | `test/oxlint-platform-domain-import.test.mjs` |
+| `typescript/no-explicit-any` | No `any`, repo-wide | core | lint |
+| `no-console` | Only `emitOperationalEvent` logs in `server/**` | core override | lint |
+| `design-local/no-stacked-section-rule` | No second hairline beside a `SectionLabel` | `design-local/` | `test/oxlint-stacked-section-rule.test.mjs` |
+| `design-local/no-off-system-color` | Colors come only from `src/style.css` tokens (`src/**`) | `design-local/` | `test/oxlint-design-tokens.test.mjs` |
+| `design-local/no-sub-floor-text` | No text under 11px except exactly 10px (`src/**`) | `design-local/` | `test/oxlint-design-tokens.test.mjs` |
+| `shadcn/no-restyle` | Caller `class` never overrides what a component owns | shadcn | `test/oxlint-shadcn-restyle.test.mjs` |
+| `shadcn/no-unknown-classes` | Every class generates CSS in the installed Tailwind | shadcn | same |
+| `shadcn/require-static-classes` | Class values are statically readable | shadcn | same |
+| `shadcn/no-inline-styles` | Dynamic geometry goes through a custom property | shadcn | same |
+| `shadcn/no-raw-colors` | No raw palette colors; names the nearest token | shadcn | same |
+| `react/immutability`, `react/purity`, `react-hooks/exhaustive-deps` | Off | core | — |
+
+### Escape hatches and details
+
+| Rule | Escape hatch / limit |
+| --- | --- |
+| `no-restricted-imports` | None. Use `useSignal`/`useComputed`/`useSignalEffect` or `createModel`/`useModel`. |
+| `signals-local/no-signal-conditional-jsx` | Attribute positions (use `useComputed`) and single derivations (`{format(size.value)}`) pass; member-access signals (`model.count.value`) are not detected, fix by hand. |
+| `boundaries-local/no-cross-page-import` | `src/pages/*.tsx` root files are unconstrained; a dynamic import built from a variable is not checked. Shared code goes in `src/features/`. |
+| `boundaries-local/no-platform-domain-import` | None, type-only imports included. Take the dependency as an argument or move the module out of platform. |
+| `typescript/no-explicit-any` | Use `unknown` and narrow, or a typed fixture builder. |
+| `no-console` | `server/lib/platform/observability.ts` is excluded; frontend and scripts unaffected. |
+| `design-local/no-stacked-section-rule` | A rule two elements away is a spacing question and is not reported. |
+| `design-local/no-off-system-color` | `var(--color-…)`, `white`/`black`, and prose like `#123` pass; server images (OG card) are outside `src/**`. |
+| `design-local/no-sub-floor-text` | `calc()`, `var()`, viewport units, keywords are not evaluated; glyph vs label at 10px is a review call. |
+| `shadcn/no-restyle` | Per-component contracts in `.oxlintrc.json` (below). |
+| `shadcn/require-static-classes` | `src/components/**` excluded (primitives forward `cn(base, className)`). |
+| `no-irregular-whitespace` | `off` for `server/lib/tar-parser.js`: its comment carries a real zero-width space as the confusable-path example. |
+
+1. `no-restricted-imports` bans `useState`/`useReducer` from `preact/hooks` and `react`, and `preact/compat` plus subpaths by pattern (it re-exports the React hook surface and adds a second component model).
+2. `no-signal-conditional-jsx` flags a ternary or `&&`/`||`/`??` in JSX child position whose condition reads or derives from a signal's `.value` (text children count). Scope-based: catches `useSignal`/`useComputed` locals and `Signal<T>` props. See the [`preact-signals-no-eager-unwrap`](../.claude/skills/preact-signals-no-eager-unwrap/SKILL.md) skill.
+
+   ```tsx
+   {
+     error.value ? <Alert>{error.value}</Alert> : null;
+   } // flagged
+   <Show when={error}>{(msg) => <Alert>{msg}</Alert>}</Show>; // ok
+   ```
+
+3. Boundary rules resolve relative static imports, re-exports, and literal `import("…")`. The platform rule rejects anything resolving to `server/db/`, `server/routes/`, `server/lib/<domain>/`, or `server/types.ts` (examples: `platform/rate-limit.ts` receives its D1 fallback from `server/lib/rate-limit.ts`; `server/lib/analytics.ts` owns the event schema). Fixtures: `test/fixtures/oxlint-boundaries/`.
+4. `no-console` exists because `emitOperationalEvent` is where fields are redacted; a route `console.log` can put a token in logs.
+5. `no-stacked-section-rule` reports a `border-t`/`border-b`/`border-y` or `<hr>` on the label itself, its direct wrapper (top for a leading label, bottom for a trailing one), an adjacent JSX sibling on the touching edge, and the wrapper's touching sibling. Only non-zero directional widths count (color utilities draw nothing, all-sides `border` is a box). Logical and conditional siblings are checked per branch; JSX comments do not break adjacency; classes are read from static strings and `cn(...)` args. Fixtures: `test/fixtures/oxlint-design/`.
+6. `no-off-system-color` scans every static string and template quasi in `src/**` (so class maps in objects count): Tailwind palette utilities (`text-red-600`, `hover:bg-zinc-100`), raw colors in arbitrary values or color-carrying style values (`bg-[#fafafa]`, `style={{ boxShadow: "0 0 0 1px #e4e4e7" }}`), and saturated severity tokens as text (`text-warn`, `text-ok/80`). Fixtures: `test/fixtures/oxlint-design/src/off-system-color.tsx`, `test/fixtures/oxlint-design/src/tokens-clean.tsx`, and `test/fixtures/oxlint-design/server/card.ts` (must stay unreported).
+7. `no-sub-floor-text` reports `text-[…]`, `text-[length:…]`, `[font-size:…]` under 11px other than exactly 10px, with or without `/leading` or important, plus `text-xs` (10.5px on the 14px root). Units are case-insensitive; `rem`/`em`/`%` convert at 14px, absolute units at 96px/in. Fixture: `test/fixtures/oxlint-design/src/sub-floor-text.tsx`.
+8. `@shadcn/lint` resolves a JSX tag to its defining file, reads its props and variants, and treats Preact `class` like `className`. Components are recognized by import path via `settings.shadcn.componentImports`: `(^|/)components/[A-Z]` (pages, features) and `^\./[A-Z]` (sibling primitives), since there is no `components.json` or `@/` alias. `src/style.css` is the only stylesheet importing Tailwind, so the theme is found automatically.
+9. `no-restyle` contracts: `Muted` leaves typography and spacing to the caller; `CloseButton` leaves typography; `Menu` has no `class` prop (its `triggerClass`/`panelClass` are the declared hatches); `Card`, `SettingsCard`, `PageShell` allow `gap-*` but not padding (use `padding`; a caller `p-*` collides in a plain `cn` join). See [design.md](./design.md#components).
+10. `no-unknown-classes` fails `rounded-huge` and `hovr:flex` and keeps `w-(--segment-width)` honest. `no-inline-styles` wants `style={{ "--segment-width": … }}` plus `w-(--segment-width)` (Preact sets it via `setProperty` and renders it verbatim server-side). `no-raw-colors` is a second net under `no-off-system-color`.
+11. `shadcn/no-arbitrary-values` is deliberately off: the type and tracking scale is arbitrary px (`text-[13px]`, `tracking-[0.1em]`) at ~730 sites; enabling it means moving that scale into `@theme`, a design decision.
+12. `react/immutability` and `react/purity` (in `correctness` since oxlint 1.83) encode React's hook model: `immutability` flags every `count.value = 1` (155 sites), `purity` flags `useSignal(Date.now())`. No signals-safe narrowing exists.
+13. `test/oxlint-shadcn-restyle.test.mjs` also fails if a JS plugin silently fails to load (oxlint exits 0 when one does). Fixture: `test/fixtures/oxlint-shadcn/`.
+
+## Signal unboxing
+
+Passing a signal through props, context, or a model does not subscribe; `.value` subscribes the current reactive scope. Unbox as late as correctness allows.
+
+| Context | Result |
+| --- | --- |
+| Component render reads `signal.value` | Component rerenders on change. |
+| `computed()` / `useComputed()` reads `.value` | Computed recomputes. |
+| `effect()` / `useSignalEffect()` reads `.value` | Effect reruns. |
+| JSX text renders `{signal}` | Text node updates without rerender. |
+| DOM prop receives `{signal}` | DOM property updates without rerender. |
+| Component prop or context carries `signal` | No subscription until a consumer unboxes or renders it. |
+
+Pass `Signal<T>` to leaves, utilities, and context consumers. Read `.value` earlier only to branch, derive, run an effect, validate, or hand a snapshot to an API that cannot take a signal. A signal holds one value; a model holds state plus the writes that touch it (`loading + error + items + load()`).
+
+## Invariant tests
+
+Node tests pinning boundaries lint cannot express. Those marked (lexer) first blank comments, strings, and regexes via `test/helpers/sanitized-source.mjs`.
+
+| Test | Pins |
+| --- | --- |
+| `test/ecosystem-branching-invariants.test.mjs` (lexer) | Routes and orchestrators never branch on ecosystem-name literals. |
+| `test/sandbox-boundary-invariants.test.mjs` (lexer) | Sandbox config keys allowlisted; no credential lexemes; no execution primitives in parsing/review. |
+| `test/api-auth-boundary-invariants.test.mjs` | Exact registrations allowed above the `/api/*` session guard. |
+| `test/agent-context-budget.test.mjs` | Agent-file character ceilings; every `docs/` file reachable from `docs/README.md`. |
+| `test/rate-limit-boundary-invariants.test.mjs` | `server/lib/platform/rate-limit.ts` is the only rate limiter. |
+| `test/migration-integrity.test.mjs` | Migration indexes, journal, and snapshots agree. |
+| `test/prose-path-references.test.mjs` | Every backticked repo path in prose and comments exists. |
+| `test/prose-command-references.test.mjs` | Every `pnpm` command exists; every script is documented here. |
+| `test/env-binding-parity.test.mjs` | Bindings agree across configs and `server/env.d.ts`. |
+| `test/dev-server-route-parity.test.mjs` | e2e harness routes every Worker-owned prefix. |
+| `test/bounded-read-deadline-invariants.test.mjs` | Every remote body read names a `deadlineMs`. |
+| `test/sandbox-sample-retention-invariants.test.mjs` | Only allowlisted files originate a per-file text-sample cap. |
+| `test/test-helper-invariants.test.mjs` | Worker fixtures (e.g. `seedUser`) come from shared helpers. |
+
+1. Ecosystem branching covers `server/routes/`, `server/lib/scan/`, `server/lib/public-diff/`, `server/lib/workflow-gates/`; ecosystems arrive via `server/lib/ecosystems/`; justified branches are in the test's allowlist.
+2. API auth: Hono runs handlers in registration order, so a route above `app.use("/api/*")` in `server/index.ts` ships anonymous, and an `app.use()` that returns without `next()` does the same. The test pins the real `getAuthSession` guard and every registration above it (including catch-alls and non-API bootstrap routes), blanks commented-out code, and checks no other `server/` module registers an absolute `/api` path.
+3. Context budget: 6,000 characters combined for AGENTS.md + CLAUDE.md, 8,000 per SKILL.md, 200 per skill description; an unlinked doc goes stale unread.
+4. Rate limits: nothing else names a `RATE_LIMIT_*` binding or queries `rate_limits`; `NATIVE_TIERS` matches `wrangler.jsonc` `ratelimits` and `server/env.d.ts` (a tier missing in one place silently degrades to D1). It walks the filesystem, so an untracked limiter fails `verify`.
+5. Migrations: unique file indexes, dense ordered journal whose tags carry their own index, journal and `.sql` set agree, one snapshot per entry. Concurrent branches collide on indexes and git merges it silently; a migration missing from the journal never runs.
+6. Prose paths: AGENTS.md, `docs/`, `.claude/skills/`, and source comments (via the JS lexer); tracked plus non-ignored untracked files. Any root resolving to exactly one file works; Markdown and comment paths may be relative to their file. Non-repo paths are in the test's exception list.
+7. Prose commands: built-ins, `node_modules/.bin` binaries (`pnpm wrangler …`), and fixtures under `test/` are skipped.
+8. Env parity: `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, `test/config/wrangler.jsonc`, and the e2e dev server all declare only what `server/env.d.ts` declares (typecheck uses that file, not `cf-typegen`); the self-host template declares exactly the production set; every required `Env` member is a production binding, var, or listed secret.
+9. Route parity: `test/e2e/worker-routes.mjs` covers every `SERVER_OWNED_PATH_PREFIXES` prefix (`server/middleware/canonical-host.ts`) with its wildcard; `wrangler.jsonc` and the self-host template keep `run_worker_first: true`. A missing prefix gets Vite's SPA `200` and the handler never runs.
+10. Deadlines: a byte cap alone lets a trickling body run unbounded once headers arrive; exceptions are recorded deliberately in the test.
 
 ## Agent hooks
 
-`scripts/hooks/` holds harness-agnostic hook scripts that give coding agents edit-time feedback. Each accepts the target file as `argv[2]` or as hook JSON on stdin (Claude Code's `tool_input.file_path` shape; Codex CLI's `apply_patch` patch envelope is also parsed):
+Harness-agnostic scripts; each takes the file as `argv[2]` or hook JSON on stdin (Claude Code `tool_input.file_path`, Codex `apply_patch` envelope). Wired in `.claude/settings.json` (PreToolUse/PostToolUse on `Edit|Write`) and `.codex/hooks.json` (trust project hooks once via `/hooks`). Tests: `test/agent-hooks.test.mjs`.
 
-- `post-edit-check.mjs` — after an Edit/Write, runs `oxfmt --check` + `oxlint` scoped to the edited file and exits 2 with a concise message on violations. Report-only by design: rewriting the file in place would invalidate the harness's file-state tracking and cause "file modified since read" friction on the next edit. It fails open (exit 0) on unparseable input, missing files, or missing binaries — `pnpm run verify` stays authoritative. The target file is never executed.
-- `guard-protected-paths.mjs` — before an Edit/Write, blocks (exit 2) writes to `drizzle/**/*.sql` and `drizzle/meta/**`; migrations are generated via `pnpm db:generate` (Bash, unaffected). It only blocks clearly matched paths and fails open otherwise.
+| Hook | When | Does | Fails |
+| --- | --- | --- | --- |
+| `scripts/hooks/post-edit-check.mjs` | After Edit/Write | `oxfmt --check` + `oxlint` on the file; exit 2 on violations. Never executes the file. | Open (exit 0) |
+| `scripts/hooks/guard-protected-paths.mjs` | Before Edit/Write | Blocks (exit 2) `drizzle/**/*.sql` and `drizzle/meta/**`. | Open unless clearly matched |
 
-Wired for Claude Code in `.claude/settings.json` (PreToolUse/PostToolUse on `Edit|Write`) and for Codex CLI in `.codex/hooks.json` (same schema; Codex maps `Edit`/`Write` matchers onto `apply_patch` and requires trusting project hooks via `/hooks` once). Tests: `test/agent-hooks.test.mjs`.
+1. The post-edit hook is report-only: rewriting the file would invalidate the harness's file-state tracking. `pnpm run verify` stays authoritative.
+2. Migrations are generated with `pnpm db:generate` (Bash, unaffected by the guard).
 
-## Banned hooks
+## Agent files
 
-`useState` and `useReducer` are forbidden via oxlint's `no-restricted-imports` from `preact/hooks` (and `react`, defensively). The same rule bans `preact/compat` and its subpaths by pattern: it re-exports the React hook surface signals replaced, and pulls a second component model into the bundle. The codebase is migrating component-local state to:
+| File | Holds |
+| --- | --- |
+| `AGENTS.md` (imported by `CLAUDE.md`) | Durable trust boundaries, ownership constraints, context routing. |
+| `.claude/skills/` (also `.agents/skills`) | Task-specific contracts and evidence requirements. |
 
-- `@preact/signals` — `useSignal`, `useComputed`, `useSignalEffect`. See the [`preact-signals-preact-integration`](../.claude/skills/preact-signals-preact-integration/SKILL.md) skill.
-- `createModel` / `useModel` for cohesive state-plus-actions objects. See the [`preact-signals-models-utils`](../.claude/skills/preact-signals-models-utils/SKILL.md) skill.
+1. Describe capabilities conditionally; never pin model names or assume every runtime has the same tools.
+2. The [super-agent](../.claude/skills/super-agent/SKILL.md) skill is the execution model for complex work; small tasks need no planning ceremony.
+3. State outcome, non-obvious facts, and completion evidence; prescribe order only when it protects a boundary (triage before edits, inspect remote divergence before a push). No generic tutorials, repeated checklists, or anecdotes.
+4. Lint and invariant tests own mechanically enforceable detail; prose keeps rationale or routing that changes a decision or protects a trust boundary. Context ceilings are maintenance budgets, not targets.
+5. [pre-pr](../.claude/skills/pre-pr/SKILL.md) owns review triage, parity fixes, the adversarial fix review, and the stopping rule; dispositions go in `.context/review-log.md`; earlier P1/P2 resolve before P3 polish. Remote actions follow the user's session authorization.
 
-Reach for a signal when the state is one value; reach for a model when the state and the writes that touch it form a unit (e.g. `loading + error + items + load()`).
+## Shared helpers
 
-## Signal unboxing model
-
-Treat a signal as a stable box around a value. Passing the signal object through props, context, or a model does not subscribe the current component. Unboxing it with `.value` subscribes the current reactive scope, so unbox as late as correctness allows.
-
-| Context                                               | Result                                                                                              |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Component render reads `signal.value`                 | That component rerenders when the signal changes.                                                   |
-| `computed()` / `useComputed()` reads `signal.value`   | The computed tracks the read and recomputes when the signal changes.                                |
-| `effect()` / `useSignalEffect()` reads `signal.value` | The effect tracks the read and reruns when the signal changes.                                      |
-| JSX text renders `{signal}`                           | Preact binds the signal to the text node and updates it directly without rerendering the component. |
-| DOM element prop receives `{signal}`                  | Preact can update the DOM property directly without rerendering the component.                      |
-| Component prop or context carries `signal`            | No subscription occurs until a consumer unboxes it or renders it directly.                          |
-
-Prefer passing `Signal<T>` to leaf components, utility components, and context consumers when they need live state. Read `.value` earlier only when the current scope needs to branch, derive a value, run an effect, validate input, or pass a plain snapshot to an API that cannot accept a signal.
-
-## Signal plugin rules
-
-The following rules from `@preact/eslint-plugin-signals` are enforced (see [`preact-signals-eslint-plugin`](../.claude/skills/preact-signals-eslint-plugin/SKILL.md) for intent):
-
-- `no-signal-write-in-computed` (error)
-- `no-value-after-await` (error)
-- `no-signal-in-component-body` (error)
-- `no-conditional-value-read` (error)
-- `no-signal-truthiness` (warn)
-
-### Local rule: `signals-local/no-signal-conditional-jsx`
-
-A project-specific oxlint JS plugin lives in `tooling/oxlint/signals-local/` and is loaded
-through `jsPlugins` in `.oxlintrc.json` under the `signals-local` alias. Its one rule
-(`no-signal-conditional-jsx`, error) flags conditional rendering — a ternary or
-`&&`/`||`/`??` in JSX **child** position — whose condition reads (or derives from) a
-signal's `.value`, and points you at `<Show>`:
-
-```tsx
-{
-  error.value ? <Alert>{error.value}</Alert> : null;
-} // ❌ flagged
-<Show when={error}>{(msg) => <Alert>{msg}</Alert>}</Show>; // ✅
-
-{
-  loading.value ? "Saving…" : "Save";
-} // ❌ flagged (text counts too)
-<Show when={loading} fallback="Save">
-  Saving…
-</Show>; // ✅
-```
-
-It deliberately does not flag attribute positions (a `<Show>` can't live there — use a
-`useComputed`) or single derivations like `{format(size.value)}`. Detection is scope-based,
-so it catches local signals (`useSignal`/`useComputed`) and `Signal<T>`-typed props but not
-member-access signals (`model.count.value`) — fix those by hand. See the
-[`preact-signals-no-eager-unwrap`](../.claude/skills/preact-signals-no-eager-unwrap/SKILL.md)
-skill for the full set of eager-unwrap anti-patterns and fixes. Fixture and test:
-`test/fixtures/oxlint-signals/` and `test/oxlint-signal-conditional-jsx.test.mjs`.
-
-The rule ships as `error`; all existing call sites satisfy it, so every infraction fails lint.
-
-### Local rule: `boundaries-local/no-cross-page-import`
-
-A second local oxlint plugin, `tooling/oxlint/boundaries-local/`, machine-enforces the
-AGENTS.md page-isolation rule: a file inside one page's directory
-(`src/pages/<X>/…`) must never import from another page's directory — code shared by
-two or more pages belongs in `src/features/`. The rule resolves relative static
-imports, re-exports, and literal `import("…")` expressions; the router and pages-root
-shared files (`src/pages/*.tsx`) are outside every page directory and stay
-unconstrained. A dynamic import built from a variable cannot be resolved without
-executing code, so it is not checked. Fixture and test:
-`test/fixtures/oxlint-boundaries/` and `test/oxlint-cross-page-import.test.mjs`.
-
-The rule ships as `error` with no existing violations, so every infraction fails lint.
-
-### Local rule: `boundaries-local/no-platform-domain-import`
-
-The same plugin keeps `server/lib/platform/` domain-free: a platform module may import
-only other platform modules and packages. Any relative import, re-export, or literal
-`import("…")` that resolves outside the directory (`server/db/`, `server/routes/`,
-`server/lib/<domain>/`, `server/types.ts`) fails lint, including type-only imports,
-because a type dependency still couples the primitive's contract to the domain. Take
-the dependency as an argument (`platform/rate-limit.ts` receives its D1 fallback from
-`server/lib/rate-limit.ts`) or move the module out of platform (`server/lib/analytics.ts`
-owns the product event schema and its positional encoding). Fixture and test:
-`test/fixtures/oxlint-boundaries/server/` and `test/oxlint-platform-domain-import.test.mjs`.
-
-### `typescript/no-explicit-any`
-
-Enabled as `error` repo-wide. Source had no violations when it was turned on; tests were
-cleaned up in the same change. Use `unknown` and narrow, or a typed fixture builder.
-
-### Logging boundary
-
-`no-console` is scoped to `server/**` through an oxlint `overrides` entry, with
-`server/lib/platform/observability.ts` excluded. That module's `emitOperationalEvent` is
-where operational fields are redacted, so it is the only place allowed to reach the
-console; a direct `console.log` in a route bypasses redaction and can put a token in the
-logs. Frontend and script logging is unaffected.
-
-### Local rule: `design-local/no-stacked-section-rule`
-
-A third local oxlint plugin, `tooling/oxlint/design-local/`, pins the one `docs/design.md`
-rule that keeps regressing by eye: `SectionLabel` draws its own trailing hairline, so a
-`border-t`, `border-b`, `border-y`, or `<hr>` on the same boundary stacks a second 1px line and
-reads as a double border. The rule reports the label's own class, the class of the
-element that directly wraps it (a top border for a leading label or a bottom border
-for a trailing label), and an immediately adjacent JSX sibling that draws a rule on
-the touching edge. When a label touches its wrapper edge, that wrapper's touching
-sibling is checked too, covering summary/header wrappers around the label. Logical and
-conditional JSX siblings are inspected branch-by-branch, and JSX comments do not interrupt
-visual adjacency. Only non-zero
-border-width utilities count — directional color utilities do not create a line, an
-all-sides `border` is a box outline, and zero-width utilities remove rather than draw a rule — and class names are read
-from static strings, including the string arguments of a `cn(...)` call. A rule two
-elements away is a spacing question and is not reported. Fixture and test:
-`test/fixtures/oxlint-design/` and
-`test/oxlint-stacked-section-rule.test.mjs`.
-
-The rule ships as `error` with no existing violations, so every infraction fails lint.
-
-### Local rules: `design-local/no-off-system-color` and `design-local/no-sub-floor-text`
-
-The same plugin pins the two `docs/design.md` rules that are cheapest to break by
-hand and hardest to see in review. Both are scoped to `src/**` (server-rendered images
-such as the OG card legitimately carry literal colors) and scan every static string
-literal and template quasi token by token, so class maps in plain objects are covered,
-not just `class=`. `no-off-system-color` reports a Tailwind default-palette utility
-(`text-red-600`, `hover:bg-zinc-100`), a raw color inside an arbitrary value or
-anywhere in the value of a color-carrying style property (`bg-[#fafafa]`, `shadow-[…rgba(…)]`,
-`style={{ boxShadow: "0 0 0 1px #e4e4e7" }}`), and a
-saturated severity token used as a text color (`text-warn`, `text-ok/80`), pointing at the
-`-text` variant. `var(--color-…)` inside an arbitrary value, `white`/`black`, and prose
-containing `#123` are not reported. `no-sub-floor-text` reports an arbitrary `text-[…]`,
-`text-[length:…]`, or `[font-size:…]` size under 11px other than exactly 10px (the scanning
-size), with or without a `/leading` modifier or important marker. Units are case-insensitive;
-`rem`, `em`, and `%` convert at the 14px root and absolute units (`pt`, `in`, …) at 96px/in.
-`text-xs` is reported too (10.5px on the 14px root). `calc()`, `var()`, viewport units, and
-keywords are not evaluated, and whether a 10px string is a glyph or a label stays a review
-judgement. Fixtures and test: `test/fixtures/oxlint-design/src/off-system-color.tsx`,
-`test/fixtures/oxlint-design/src/sub-floor-text.tsx`, `test/fixtures/oxlint-design/src/tokens-clean.tsx`,
-`test/fixtures/oxlint-design/server/card.ts` (must stay unreported: the fixture config uses the
-same `src/**` override as the repo config), and `test/oxlint-design-tokens.test.mjs`. Both ship as `error` with no existing violations.
-
-### Design-system rules: `shadcn/*`
-
-`@shadcn/lint` enforces the component-ownership rule in `docs/design.md`: a component owns
-its appearance, a caller owns placement. It resolves a JSX tag back to the file that defines
-it, reads that file's props and variants, and reports a `class` that overrides something the
-component owns. Preact's `class` attribute is read the same as `className`.
-
-The repo has no `components.json` and no `@/` alias, so components are recognized by import
-path through `settings.shadcn.componentImports` (`(^|/)components/[A-Z]`) rather than by a `ui`
-prefix. One consequence: a sibling import inside `src/components/` (`./Menu`) does not match, so
-primitives composing each other are not checked — only their callers are. The theme is
-discovered on its own, because `src/style.css` is the only stylesheet importing Tailwind.
-
-Four rules ship as `error`, scoped to `src/**`:
-
-- `no-restyle` — the ownership rule itself. Two contracts name the aspects a component
-  deliberately leaves to its caller: `Muted` sets `text-ink-muted` and nothing else, so the
-  caller picks size and spacing; `Card`, `SettingsCard`, and `PageShell` never set `flex`, so
-  the gap between their children is the caller's. Padding is not delegated — `Card` takes a
-  `padding` prop, and a caller-side `p-*` collides with it in a plain `cn` join.
-- `no-unknown-classes` — asks the installed Tailwind whether a class generates CSS, so
-  `rounded-huge` and `hovr:flex` fail the build. This is what keeps the
-  `w-(--segment-width)` custom-property utilities honest.
-- `require-static-classes` — a class value the linter cannot read on a recognized component.
-- `no-inline-styles` — dynamic geometry belongs in a custom property (`style={{ "--segment-width": … }}`
-  plus `w-(--segment-width)`), which Preact sets through `setProperty` and renders verbatim server-side.
-- `no-raw-colors` — a second net under `design-local/no-off-system-color`. It reports a raw
-  palette color and names the nearest declared token.
-
-`no-arbitrary-values` is deliberately **not** enabled. The type and tracking scale in
-`docs/design.md` is written as arbitrary px (`text-[13px]`, `tracking-[0.1em]`) at roughly 730
-sites; turning the rule on means first moving that scale into `@theme` tokens, which is a
-design decision rather than a lint fix.
-
-### Rules disabled with the 1.83 upgrade
-
-`react/immutability` and `react/purity` entered oxlint's `correctness` category and both encode
-React's hook model, which signals deliberately break. `immutability` reads every
-`count.value = 1` on a `useSignal` result as mutating a hook return — 155 sites, this repo's
-whole state model — and `purity` reads the `useSignal(Date.now())` seed of a ticking clock as an
-impure render. Neither has a signals-safe narrowing, so both are `off` in `.oxlintrc.json`.
-
-### What belongs in an agent file
-
-`AGENTS.md` is the shared repository contract; `CLAUDE.md` imports it. Keep durable
-trust boundaries, ownership constraints, and context routing there. Skills under
-`.claude/skills/` supply task-specific contracts and evidence requirements, with the
-same files exposed through `.agents/skills`. Describe capabilities conditionally rather
-than pinning model names or assuming every runtime exposes the same tools.
-
-The operating expectation is a super agent that owns the full outcome: investigate,
-implement, recover, integrate, verify, and complete authorized delivery. The
-[super-agent skill](../.claude/skills/super-agent/SKILL.md) provides the execution model
-for complex work, including independent delegation with file ownership and critical
-assessment of agent results. Keep this guidance in the shared contract so Claude and
-other agents follow the same standard. Small tasks do not need a planning ceremony
-or a team.
-
-Assume the agent can choose an implementation strategy. State the desired outcome,
-non-obvious repository facts, and what evidence establishes completion. Prescribe a
-sequence only when ordering protects a real boundary, such as triaging findings
-before edits or inspecting remote divergence before a push. Avoid generic coding
-tutorials, repeated checklists, historical anecdotes, and automatic escalation from
-a local task into commits or external actions.
-
-Lint and invariant tests own mechanically enforceable detail. Keep a short rationale
-or routing hint in prose when it changes a design decision or protects a trust
-boundary; do not duplicate entire configurations. The context ceilings are maintenance
-budgets, not targets or claims about a particular model's instruction capacity.
-
-For review fixes and branch finishing, [pre-pr](../.claude/skills/pre-pr/SKILL.md)
-owns triage, parity-wide fixes, the adversarial fix review, and the stopping rule.
-Record dispositions and reviewed revisions in `.context/review-log.md`. Use the skill's
-completion conditions, including resolving earlier P1/P2 findings, before carrying P3
-polish into follow-ups. Remote actions follow the user's session authorization.
-
-### Prose invariants with static checks
-
-Boundaries that lint rules cannot express are pinned by node-project invariant tests
-that statically scan source text. The first two blank comments, strings, and detection
-regexes via the non-executing JS lexer before scanning (see
-`test/helpers/sanitized-source.mjs`):
-
-- `test/ecosystem-branching-invariants.test.mjs` — routes and orchestrators
-  (`server/routes/`, `server/lib/scan/`, `server/lib/public-diff/`,
-  `server/lib/workflow-gates/`) must not branch on ecosystem-name literals; new
-  ecosystems arrive through the `server/lib/ecosystems/` registry. Pre-existing
-  justified branches live in the test's explicit allowlist.
-- `test/sandbox-boundary-invariants.test.mjs` — the rendered sandbox worker reads
-  only allowlisted config env keys and contains no credential lexemes, and the
-  archive-parsing/deterministic-review layers contain no execution primitives.
-- `test/api-auth-boundary-invariants.test.mjs` — Hono runs handlers and middleware in registration
-  order, so an `app.route("/api/…")` placed above the `app.use("/api/*")` session guard
-  in `server/index.ts` ships anonymous with nothing in the route file to show it; an
-  `app.use()` handler can do the same by returning without `next()`. This pins the
-  real `getAuthSession` guard and the exact registrations allowed above it, including
-  catch-alls and non-API bootstrap routes because they can still answer an API request.
-  Commented-out registrations and guards are blanked before the structural scan.
-  The same file pins that no other `server/` module registers an absolute `/api` path,
-  since the ordering argument only holds for the file it reads.
-- `test/agent-context-budget.test.mjs` — AGENTS.md and CLAUDE.md load on every session
-  and each skill `description` sits in the always-present skill listing, so both carry a
-  per-session cost no other file has. Character ceilings (6,000 combined for
-  AGENTS.md + CLAUDE.md, 8,000 per SKILL.md, 200 per description) make growth a
-  deliberate trade rather than an accumulation. The same file checks that every
-  `docs/` Markdown file is reachable by following links from `docs/README.md`, which is
-  where AGENTS.md sends agents to load context progressively — an unlinked doc goes
-  stale unread while the next agent re-derives what it already answers.
-- `test/rate-limit-boundary-invariants.test.mjs` — `server/lib/platform/rate-limit.ts` is
-  the only rate limiter: no other module names a `RATE_LIMIT_*` binding or queries the
-  `rate_limits` table, and its `NATIVE_TIERS` table matches the `ratelimits` declarations
-  in `wrangler.jsonc` and the optional bindings in `server/env.d.ts`. A tier declared in
-  one place and not the other degrades silently to the D1 counter. It walks the
-  filesystem rather than `git ls-files`, so a still-untracked new limiter fails `verify`.
-- `test/migration-integrity.test.mjs` — migrations are the one artifact concurrent
-  branches generate at the same index, and git merges the collision without complaint.
-  Pins unique file indexes, a dense ordered journal whose tags carry their own index,
-  journal and `.sql` files describing the same set, and a snapshot per entry. A
-  migration missing from the journal never runs, surfacing in prod as a missing column.
-- `test/prose-path-references.test.mjs` — every backtick-quoted repo path in
-  markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
-  file that exists. The scan covers tracked files plus untracked ones git would not
-  ignore, so a doc an agent just wrote fails `verify` rather than CI. Prose here navigates by path, and a rename silently breaks the
-  reference, sending the next reader to a file that is gone. A path may be written
-  from any root that resolves to exactly one repository file (`routes/scans/index.ts` and
-  `server/routes/scans/index.ts` both resolve today); relative paths in Markdown and source
-  comments are resolved from the containing file. JavaScript and TypeScript comments are identified by
-  the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
-  package under review, inside a dependency, or in a gitignored output directory —
-  are listed in the test's explicit non-repository exceptions.
-- `test/env-binding-parity.test.mjs` — every binding and var in `wrangler.jsonc`,
-  `docs/examples/wrangler.self-host.jsonc`, `test/config/wrangler.jsonc`, and the e2e
-  dev server is declared in `server/env.d.ts` (typecheck uses that file, not
-  `cf-typegen` output); the self-host template declares exactly the production set;
-  and every required `Env` member is a production binding, var, or listed secret. A
-  binding added to one file and forgotten in another fails `verify` and names the file.
-- `test/dev-server-route-parity.test.mjs` — the e2e dev server (`test/e2e/worker-routes.mjs`)
-  routes every prefix `SERVER_OWNED_PATH_PREFIXES` (`server/middleware/canonical-host.ts`) claims, each with
-  its wildcard, and `wrangler.jsonc` and the self-host template keep
-  `run_worker_first: true`. A prefix added to the Worker but not the harness is answered
-  locally by Vite's SPA fallback with a `200` HTML document, so the route looks alive in a
-  browser and its handler never runs.
-- `test/prose-command-references.test.mjs` — the command-shaped sibling: every
-  `pnpm <script>` or `pnpm run <script>` in markdown or a source comment must be a
-  `package.json` script, and every script must have a row in the table above, so a
-  renamed script fails `verify` instead of failing the next reader who types it. Built-in
-  sub-commands, bare binaries from `node_modules/.bin` (`pnpm wrangler …`), and
-  reviewed-package fixtures under `test/` are not checked.
-
-## Client API helpers
-
-Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active organization headers and `ApiError` handling stay consistent. Use `apiJson` for JSON request bodies instead of repeating `content-type` and `JSON.stringify` at call sites. Use `errorMessage(err)` when model actions need to surface caught errors into a signal.
-
-## Server route helpers
-
-Use `rateLimitResponse` from `server/lib/platform/http.ts` for 429 JSON responses so `retryAfterSeconds` and `retry-after` headers stay consistent. Use `errorMessage(err)` from `server/lib/platform/errors.ts` for server-side caught-error stringification instead of repeating local branches; it also preserves `message` from Worker RPC-serialized error objects.
+| Helper | File | Use for |
+| --- | --- | --- |
+| `apiFetch` | `src/models/api.ts` | Same-origin JSON with active-organization headers and `ApiError`. |
+| `apiJson` | `src/models/api.ts` | JSON bodies without repeated `content-type` / `JSON.stringify`. |
+| `errorMessage` | `src/models/api.ts` | Caught errors into a signal in model actions. |
+| `rateLimitResponse` | `server/lib/platform/http.ts` | 429 JSON with consistent `retryAfterSeconds` and `retry-after`. |
+| `errorMessage` | `server/lib/platform/errors.ts` | Server error strings; keeps `message` from RPC-serialized errors. |
 
 ## Related skills
 
-The `.claude/skills/` directory ships the canonical reference set used by Claude Code in this repo. The same skills are exposed to agents through the `.agents/skills` symlink:
+| Skill | Use for |
+| --- | --- |
+| [`shared-primitives`](../.claude/skills/shared-primitives/SKILL.md) | Ownership, contracts, naming, tests for shared helpers. |
+| [`split-large-module`](../.claude/skills/split-large-module/SKILL.md) | Responsibility seams; proof declarations, routes, init survive. |
+| [`preact-signals-preact-integration`](../.claude/skills/preact-signals-preact-integration/SKILL.md) | Component ownership, props/context, subscriptions. |
+| [`preact-signals-models-utils`](../.claude/skills/preact-signals-models-utils/SKILL.md) | Model actions, constructor inputs, async state, lifetime. |
+| [`preact-signals-eslint-plugin`](../.claude/skills/preact-signals-eslint-plugin/SKILL.md) | Diagnosing or changing Signals lint. |
+| [`preact-signals-no-eager-unwrap`](../.claude/skills/preact-signals-no-eager-unwrap/SKILL.md) | JSX refactors with `Show`, bindings, computeds. |
 
-Codebase-shape skills:
+## Change checklist
 
-- [`shared-primitives`](../.claude/skills/shared-primitives/SKILL.md) — ownership, contract compatibility, context-specific naming, and direct tests where shared correctness matters.
-- [`split-large-module`](../.claude/skills/split-large-module/SKILL.md) — responsibility seams, public contracts, and evidence that declarations, routes, and initialization behavior survived the move.
-
-Signals and models:
-
-- `preact-signals-preact-integration` — component ownership, props/context, and subscription boundaries.
-- `preact-signals-models-utils` — model actions, constructor inputs, async state, and lifetime.
-- `preact-signals-eslint-plugin` — diagnosing or changing the repository's Signals lint rules.
-- `preact-signals-no-eager-unwrap` — JSX refactors using `Show`, direct bindings, and computeds while preserving live inputs and prop contracts.
+| If you add or change | Also |
+| --- | --- |
+| A `package.json` script | Add a row under [Scripts](#scripts). |
+| A Cloudflare binding | `server/env.d.ts`, both Wrangler configs, [self-hosting.md](./self-hosting.md#bindings). |
+| A lint rule or local plugin | Fixture + test under `test/`, a row in [Lint rules](#lint-rules), the fixture in `ignorePatterns`. |
+| A static invariant test | A row in [Invariant tests](#invariant-tests). |

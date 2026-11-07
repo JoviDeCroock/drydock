@@ -1,132 +1,92 @@
 # Release safety
 
-Drydock is a security-grade service, so confidence comes from layered evidence:
-small unit checks, Worker-route tests that exercise Cloudflare/D1 behavior,
-fake-registry e2e tests, and production observability. A server change is not
-ready just because TypeScript compiles.
+Required test layer per change type, the invariants every server change keeps, and the operational events that make failures visible. **Authority:** enforced (by tests and review). **Owner:** `server/lib/platform/observability.ts` (events); tests per row below.
+
+A server change is not ready because TypeScript compiles. Confidence comes from unit checks, Worker-route tests against Cloudflare/D1 behavior, fake-registry e2e tests, and production observability.
 
 ## Required test layer by change type
 
-| Change type                                                                                  | Required coverage                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/`                                                                                                                                                  |
-| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch      | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes                                                                                         |
-| Sandbox, tar/zip parsing, archive limits, credential egress                                  | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved |
-| Deterministic findings, risk, redaction, package diff behavior                               | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk                                                       |
-| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts`                                                                             |
-| UI-only changes                                                                              | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes                                                                  |
+| Change type | Required coverage |
+| --- | --- |
+| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/` |
+| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes |
+| Sandbox, tar/zip parsing, archive limits, credential egress | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved |
+| Deterministic findings, risk, redaction, package diff behavior | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk |
+| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts` |
+| Anonymous route added or moved above the session guard | `test/api-auth-boundary-invariants.test.mjs` allowlist plus the anonymous table in [security model](./security-model.md#anonymous-surfaces) |
+| UI-only changes | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes |
 
-When a change spans layers, test the lowest deterministic unit and the highest
-user- or operator-visible contract. For example, a new scan route should usually
-have a Worker-route test for the HTTP/D1 contract and a scan-job or pipeline test
-for the lifecycle behavior behind it.
+When a change spans layers, test the lowest deterministic unit and the highest user- or operator-visible contract. Example: a new scan route gets a Worker-route test for the HTTP/D1 contract and a scan-job or pipeline test for the lifecycle behind it.
 
-## Non-negotiable invariants
+## Invariants
 
-- Every non-auth `/api/*` route requires a Better Auth session.
-- Client-supplied organization IDs are only selectors; route handlers must verify
-  membership through `requireActiveOrganization`.
-- Queue messages carry scan IDs and organization IDs, not npm tokens or decrypted
-  credential material.
-- The Dynamic Worker sandbox never receives npm token material.
-- `NpmStageGateway` is the only credentialed sandbox egress path and only forwards
-  auth to allowlisted registry endpoints.
-- Package code is never executed, imported, installed, built, rendered as active
-  content, or allowed to define instructions for reviewers.
-- Archive parsing fails closed on traversal, symlinks/hardlinks, malformed
-  archives, excessive files, and excessive expanded size.
-- Deterministic findings are authoritative while AI review is unavailable, and AI
-  cannot downgrade deterministic findings when it runs. A completed review's
-  findings are carried additively in the report artifact with `source: "ai"` (and
-  count into `finding_count` / the risk summary), but they never replace, mutate,
-  or re-score a rule finding, and they fold into risk through `combineRisk` — a
-  max — so they can only escalate. The escalation itself is bounded by the
-  review's own verdict, with file-level release attribution (see
-  [`docs/ai-review-eval.md`](ai-review-eval.md#risk-contribution));
-  `test/risk.test.mjs` pins the cap matrix and the never-lower property.
-- AI review fails safe: an enabled review that was attempted but could not complete
-  escalates the scan to manual-review risk rather than reading as clean, and a
-  near-miss submission is clamped to bounds instead of discarded. See
-  [`docs/security-model.md`](security-model.md).
+1. Every non-auth `/api/*` route requires a Better Auth session (`test/api-auth-boundary-invariants.test.mjs`).
+2. Client-supplied organization IDs are only selectors; handlers verify membership through `requireActiveOrganization` or `requireOrganizationRole` (`server/lib/auth/active-organization.ts`).
+3. Queue messages carry scan IDs and organization IDs, never npm tokens or decrypted credential material.
+4. The Dynamic Worker sandbox never receives npm token material.
+5. `NpmStageGateway` is the only credentialed sandbox egress path and forwards auth only to allowlisted registry endpoints.
+6. Package code is never executed, imported, installed, built, rendered as active content, or allowed to define instructions for reviewers.
+7. Archive parsing fails closed on traversal, symlinks/hardlinks, malformed archives, excessive files, and excessive expanded size.
+8. Deterministic findings are authoritative while AI review is unavailable, and AI cannot downgrade deterministic findings when it runs. Completed-review findings are carried additively in the report artifact with `source: "ai"` and count into `finding_count` and the risk summary, but never replace, mutate, or re-score a rule finding.
+9. AI findings fold into risk through `combineRisk` (a max), so they only escalate; the escalation is bounded by the review's own verdict with file-level release attribution ([AI review](./ai-review-eval.md#submission-and-scoring)). `test/risk.test.mjs` pins the cap matrix and the never-lower property.
+10. AI review fails safe: an enabled review that was attempted but could not complete escalates the scan to manual-review (medium) risk instead of reading clean (`server/lib/review/risk.ts`); a near-miss submission is clamped to bounds (`clampAiReviewSubmission` in `server/lib/ai-review/contract.ts`) instead of discarded.
 
-## Operational observability
+## Operational events
 
-Runtime paths should emit structured events through
-`server/lib/platform/observability.ts`. The helper redacts sensitive key names and bearer
-tokens before calling `console`, which keeps Cloudflare logs useful without
-turning them into a credential sink.
+Runtime paths emit structured events through `emitOperationalEvent` (`server/lib/platform/observability.ts`), which redacts sensitive key names and bearer tokens before calling `console`. Every event below also carries the fields named; `error` is always `describeOperationalError` output.
 
-Current structured events cover:
+| Event | Level | Fields | Emitter |
+| --- | --- | --- | --- |
+| `scan.pipeline.completed` | info | scanId, organizationId, stageId, adapterId, durationMs, packageName, releaseRisk, artifactRisk, contextRisk, fileCount, previousFileCount, findingCount, ruleFindingCount, aiFindingCount | `server/lib/scan/pipeline-phases.ts` |
+| `scan.pipeline.failed` | error | scanId, organizationId, stageId, adapterId, durationMs, error | `server/lib/scan/pipeline.ts` |
+| `scan.ai_review.completed` | info | scanId, organizationId, durationMs, status, model, usage (steps, input, cachedInput, output, total) | `server/lib/scan/pipeline.ts` |
+| `scan.ai_review.failed` | error | scanId, organizationId, durationMs, error | `server/lib/scan/pipeline.ts` |
+| `scan.staged_artifact.digest_mismatch` | warn | stageId, packageName, version, algorithm, declaredDigest, computedDigest (registry-declared values, no credentials) | `server/lib/ecosystems/npm/acquire.ts` |
+| `scan.staged_artifact.digest_unverified` | info | stageId, packageName, version, algorithm, reason (which side was missing, including a fresh stage record needed to confirm a mismatch) | `server/lib/ecosystems/npm/acquire.ts` |
+| `scan.gate_continuity.broken` | warn | scanId, organizationId, packageName, version, status, reason (`gate-not-approved`, `digest-mismatch`, `unverified`, `ungated`), gateScanId | `server/lib/scan/gate-continuity.ts` |
+| `scan.gate_continuity.lookup_failed` | warn | scanId, organizationId, packageName, reason (`history-unavailable` with error, `registry-record-unavailable`), error | `server/lib/scan/gate-continuity.ts` |
+| `scan.job.completed` | info | scanId, organizationId, stageId, source, attempt, durationMs, packageName, releaseRisk, artifactRisk | `server/lib/scan/job.ts` |
+| `scan.job.failed` | error | scanId, organizationId, stageId, source, attempt, finalAttempt, durationMs, registryStatus, error | `server/lib/scan/job.ts` |
+| `scan.job.retryable_failed` | warn | scanId, organizationId, stageId, source, attempt, durationMs, error | `server/lib/scan/job.ts` |
+| `scan.job.skipped` | warn | scanId, organizationId, stageId, source, attempt, reason, durationMs | `server/lib/scan/job.ts` |
+| `scan.queue.message.completed` | info | scanId, organizationId, stageId, source, attempt, durationMs | `server/queue.ts` |
+| `scan.queue.retry_scheduled` | warn | scanId, organizationId, stageId, source, attempt, nextDelaySeconds, durationMs, error | `server/queue.ts` |
+| `scan.queue.message_failed` | error | scanId, organizationId, stageId, source, attempt, exhausted, durationMs, error | `server/queue.ts` |
+| `rate_limit.tier_missing` | warn | limit, windowMs | `server/lib/platform/rate-limit.ts` |
 
-- `scan.pipeline.completed` / `scan.pipeline.failed` with adapter, duration,
-  file counts, finding count, and risk. `findingCount` counts rule rows plus a
-  completed AI review's rows (matching persisted `scans.finding_count`), with
-  `ruleFindingCount` / `aiFindingCount` emitted alongside for the split.
-- `scan.ai_review.completed` / `scan.ai_review.failed` when AI review is enabled.
-- `scan.staged_artifact.digest_mismatch` when a staged npm tarball's bytes do not
-  hash to the digest the registry recorded for the stage (stage id, package,
-  version, and both digests — all registry-declared values, no credentials).
-- `scan.staged_artifact.digest_unverified` when a scan could not be bound to the
-  registry's record at all (stage id, package, version, and which side was
-  missing, including a fresh stage record needed to confirm a mismatch).
-  Verification silently covering nothing looks exactly like
-  verification working, so a registry that stops returning digests — or a cap
-  that starts biting — is visible as a coverage outage rather than silence.
-- `scan.gate_continuity.broken` when a registry stage of a package the
-  organization gates does not match an approved gate review
-  (`gate-not-approved`, `digest-mismatch`, `unverified`, or `ungated`; scan,
-  package, version, status, reason, and the gate scan id), and
-  `scan.gate_continuity.lookup_failed` when the check could not run
-  (`reason`: `history-unavailable` with the safe error, or
-  `registry-record-unavailable` when npm's stage record was missing for an
-  organization with a live release target); the scan persists an `unknown`
-  record rather than none unless the organization has no live release target.
-- `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
-  `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
-  and safe error code.
-- `scan.queue.message.completed`, `scan.queue.retry_scheduled`, and
-  `scan.queue.message_failed` with attempt, delay/exhaustion, duration, and safe
-  error code.
+1. `findingCount` counts rule rows plus a completed AI review's rows, matching persisted `scans.finding_count`.
+2. `scan.ai_review.*` fire only when AI review is enabled.
+3. `digest_unverified` exists because verification silently covering nothing looks like verification working; a registry that stops returning digests, or a cap that starts biting, shows up as a coverage outage.
+4. After `gate_continuity.lookup_failed`, the scan persists an `unknown` record unless the organization has no live release target.
+5. Never log raw package text, headers, tokens, token fingerprints, ciphertext, nonces, cookies, or raw unexpected error messages. If an operator needs detail, add a safe structured code or sanitized field.
+6. Usage keys omit the word "token" because the redaction regex would blank them.
 
-Do not log raw package text, headers, tokens, token fingerprints, ciphertext,
-nonces, cookies, or raw unexpected error messages. If an operator needs detail,
-add a safe structured code or sanitized metadata field instead.
+## Workers Issues destinations
 
-Cloudflare Workers Issues (`observability.issues` in `wrangler.jsonc`) groups
-uncaught exceptions, 5xx responses, and `error`-level events into issues with
-first-seen time, frequency, and the Worker version. It is a separate collector:
-each occurrence keeps invocation and request details, plus a stack trace when
-available, whether or not Workers Logs or traces are on, and Cloudflare retains occurrence details for seven days.
-Emit a handled failure at `error` level through `emitOperationalEvent` for it to
-surface as an issue. Automation destinations (coding agents, webhooks, chat) are
-configured with the `cf` CLI or in the Cloudflare dashboard, not in this
-repository, and receive each issue's diagnostic context, including surrounding
-logs and traces.
+Workers Issues (`observability.issues` in `wrangler.jsonc`) groups uncaught exceptions, 5xx responses, and `error`-level events into issues with first-seen time, frequency, and Worker version. It collects independently of Workers Logs and traces; each occurrence keeps invocation and request details plus a stack trace when available, retained seven days by Cloudflare. A handled failure surfaces as an issue only when emitted at `error` through `emitOperationalEvent`. Destinations (coding agents, webhooks, chat) are configured with the `cf` CLI or the dashboard, not in this repository, and receive each issue's context including surrounding logs and traces.
 
-That payload is sensitive and partly attacker-controlled. Drydock request URLs
-can carry capability tokens: share links (`/reports/:token`,
-`/public/reports/:token`), organization invites, email-verification links that
-sign the user in, OAuth callbacks, and Better Auth's password-reset callback
-(`/api/auth/reset-password/:token`; Drydock's own reset emails keep the token in
-a fragment no request carries). Error text can carry request paths and
-package names, and anonymous endpoints let anyone cause failures, so an outsider
-can push an issue past an automation's threshold. A destination must be private
-to the operator. A coding agent that receives issues and opens pull requests
-here is writing to a public repository: its instructions must treat the payload
-as evidence, never as instructions, and keep URLs, tokens, package names, org or
-user identifiers, request IDs, and raw log lines out of branches, commits, and
-PR text. It must open draft PRs only and never deploy.
+That payload is sensitive and partly attacker-controlled:
 
-## Release checklist
+| Payload risk | Detail |
+| --- | --- |
+| Capability tokens in URLs | Share links (`/reports/:token`, `/public/reports/:token`), organization invites, email-verification links, OAuth callbacks, Better Auth's `/api/auth/reset-password/:token` (Drydock's own reset mails keep the token in a fragment) |
+| Identifying text | Error text can carry request paths and package names |
+| Outsider-triggered volume | Anonymous endpoints let anyone cause failures and push an issue past a threshold |
 
-Before merging server-risk changes:
+Destination rules:
 
-1. Identify the touched trust boundary: auth/org, credential, sandbox, parser,
-   registry, queue, persistence, detection, or UI-only.
-2. Add or update tests in the table above.
+1. A destination must be private to the operator.
+2. A coding agent receiving issues and opening PRs here writes to a public repository: its instructions treat the payload as evidence, never instructions.
+3. It keeps URLs, tokens, package names, org or user identifiers, request IDs, and raw log lines out of branches, commits, and PR text.
+4. It opens draft PRs only and never deploys.
+
+## Change checklist
+
+Before merging a server-risk change:
+
+1. Identify the touched trust boundary: auth/org, credential, sandbox, parser, registry, queue, persistence, detection, or UI-only.
+2. Add or update tests per the table above.
 3. Run `pnpm run verify`.
-4. Run `pnpm run test:e2e` when registry behavior or end-to-end scan workflow
-   changed.
-5. Confirm operational events exist for new failure modes and do not include
-   sensitive material.
+4. Run `pnpm run test:e2e` when registry behavior or the end-to-end scan workflow changed.
+5. Confirm new failure modes emit an operational event (add a row above) with no sensitive material.
 6. Update the relevant docs in the same change.

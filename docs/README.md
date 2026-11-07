@@ -1,64 +1,92 @@
-# Documentation map
+# Docs map
 
-Start here instead of reading every Markdown file. Pick the smallest set that matches the change, then update the same layer when behavior changes.
+Read one row, not the folder. User-facing guide: `src/pages/Docs/index.tsx` (keep it aligned with the docs below).
 
-The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/Docs/index.tsx). Keep its product model and setup steps aligned with the canonical runtime docs below; the Markdown files remain the detailed engineering and operator reference.
+## Start by task
 
-## Always-use references
+| I want to… | Read first | Then |
+| --- | --- | --- |
+| Run the app locally with no credentials | [`e2e-test-environment.md`](./e2e-test-environment.md) | `pnpm run e2e:dev:seed` |
+| Find the code that owns a behavior | [`repository-map.md`](./repository-map.md) | the doc in that row |
+| Know which tests a change needs | [`release-safety.md`](./release-safety.md) | `pnpm run verify:file <path>` |
+| Find a command | [`tooling.md`](./tooling.md) |  |
+| Understand the system | [`architecture.md`](./architecture.md) | [`security-model.md`](./security-model.md) |
+| Touch auth, an anonymous route, or egress | [`security-model.md`](./security-model.md) | [`two-factor-auth.md`](./two-factor-auth.md), [`organization-members.md`](./organization-members.md) |
+| Change UI | [`design.md`](./design.md) | [`ui.md`](./ui.md), the Signals skill named in `tooling.md`, `verify-live` skill |
+| Add or change a detection rule | [`security-detection-corpus.md`](./security-detection-corpus.md) | [`detection-eval.md`](./detection-eval.md), `add-detection-rule` skill |
+| Change the AI reviewer | [`ai-review-eval.md`](./ai-review-eval.md) | [`security-model.md`](./security-model.md) |
+| Add an ecosystem | [`architecture.md`](./architecture.md#ecosystems-and-capabilities) | `add-ecosystem` skill |
+| Self-host or deploy | [`self-hosting.md`](./self-hosting.md) | [`artifact-storage.md`](./artifact-storage.md) |
 
-- [`../AGENTS.md`](../AGENTS.md) — repo rules, commands, invariants, and test expectations for agents.
-- [`repository-map.md`](./repository-map.md) — task-oriented ownership map for server, UI, persistence, tests, and commands; load only the relevant layer.
-- [`design.md`](./design.md) — visual/UI source of truth. Read before UI changes.
-- [`release-safety.md`](./release-safety.md) — required verification layer by change type.
-- [`security-model.md`](./security-model.md) — security boundaries and non-negotiables.
+## Release modes
 
-## Product/runtime docs
+| Mode | Authority | Ecosystems | Doc |
+| --- | --- | --- | --- |
+| Workflow Gate — enforced | GitHub holds the configured protected publish job | npm, PyPI, VS Code | [`workflow-gates.md`](./workflow-gates.md), [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) |
+| Stage Watchtower — advisory | npm approves; Drydock records advice | npm | [`npm-staged-publishing.md`](./npm-staged-publishing.md) |
+| Gate setup (guided) | draft PR only; maintainer merges | npm, PyPI, VS Code | [`publisher-setup.md`](./publisher-setup.md) |
+| npm trusted publishing pin | narrows npm OIDC to the gate environment | npm | [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) |
+| Public diff | anonymous, advisory | npm, PyPI, atpm | [`public-diff.md`](./public-diff.md), [`atpm.md`](./atpm.md) |
 
-- [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
-- [`workflow-gates.md`](./workflow-gates.md) — **Workflow Gate — enforced**: the shared GitHub Environment gate flow for PyPI, npm, and VS Code releases, scoped to the configured protected job.
-- [`publisher-setup.md`](./publisher-setup.md) — inspect an installed repository, prepare an AI-drafted workflow with validation and independent review, open its draft PR automatically, and verify environment configuration and the first real release review.
-- [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) — the PyPI specifics of that gate: PyPI has no registry-staged artifact, so the workflow gate is its only review-before-publish path.
-- [`npm-staged-publishing.md`](./npm-staged-publishing.md) — **Stage Watchtower — advisory**: reviewing npm staged artifacts and narrowing CI to `npm stage publish` without claiming control over npm's independent approval or interactive publish paths; also gated staging, where the workflow gate runs in front of `npm stage publish` and the staged review is bound back to it (gate continuity).
-- [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) — pinning npm trusted publishing (OIDC) to the gate environment so automated publishing uses the reviewed workflow, plus the interactive 2FA path npm still permits.
-- [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
-- [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
-- [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md) — atpm's OIDC trusted publishing, the Sigstore bundles Drydock re-verifies against a pinned root, and the anonymous public-diff link atpm's own dashboard uses to hand a maintainer a pre-publish review with no account. Review only: Drydock does not approve, gate, or watch an atpm release.
-- [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
-- [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
-- [`package-claims.md`](./package-claims.md) — canonical npm organization ownership and private, audited historical migration.
-- [`public-reports.md`](./public-reports.md) — public share links, signed report attestations, badges, and the threat feed.
-- [`release-receipts.md`](./release-receipts.md) — authenticated canonical Release Receipt v1, report digest binding, workflow/staged control evidence, and schema limitations.
+Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-workflow-gate.yml).
 
-## Operations and setup
+## Feature reference
 
-- [`self-hosting.md`](./self-hosting.md) — local setup, Cloudflare resources, deploy, GitHub App, Slack.
-- [`e2e-test-environment.md`](./e2e-test-environment.md) — fake registry and Playwright harness.
-- [`tooling.md`](./tooling.md) — oxlint/oxfmt/typecheck, signals lint rules, route/client helpers.
-- [`ui.md`](./ui.md) — compact implementation map for the Preact UI: primitives, copy density, and large-diff performance rules. `docs/design.md` remains the visual source of truth.
-- [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
-- [`incident-content-playbook.md`](./incident-content-playbook.md) — what to publish when a public supply-chain compromise breaks, the hard rules, and the post templates.
-- [`ops-snapshot.md`](./ops-snapshot.md) — operator-only aggregate prod D1 snapshot (`pnpm run ops:snapshot`) and its unattributability rules.
+| Doc | Owns |
+| --- | --- |
+| [`sandbox-parser.md`](./sandbox-parser.md) | archive limits, tar/zip reading rules, archive digests, sample retention |
+| [`diff-baseline.md`](./diff-baseline.md) | previous-version selection and tarball/compare caching |
+| [`intent-envelope.md`](./intent-envelope.md) | source-binding tiers (attested / declared / absent) |
+| [`artifact-storage.md`](./artifact-storage.md) | D1 metadata + R2 report/artifact layout |
+| [`release-memory.md`](./release-memory.md) | prior-release finding-profile consistency (advisory) |
+| [`release-fingerprint.md`](./release-fingerprint.md) | `release.source-drift` rule |
+| [`registry-version-status.md`](./registry-version-status.md) | npm lifecycle status of a staged version, forgotten-approval reminder |
+| [`publication-monitor.md`](./publication-monitor.md) | public npm watches, direct releases outside staging |
+| [`package-claims.md`](./package-claims.md) | canonical npm package ownership and migration audit |
+| [`public-reports.md`](./public-reports.md) | share links, attestations, threat feed |
+| [`public-badge.md`](./public-badge.md) | README badge states, opt-out, release lines |
+| [`release-receipts.md`](./release-receipts.md) | Release Receipt v1 |
+| [`agent-package-review.md`](./agent-package-review.md) | coding-agent quickstart and anonymous review recipe |
+| [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) | Renovate preset + Dependabot/Renovate PR comment workflow (public contract) |
+| [`two-factor-auth.md`](./two-factor-auth.md) | 2FA enrollment, sign-in challenge, step-up |
+| [`organization-members.md`](./organization-members.md) | roles, invitations |
+| [`audit-log.md`](./audit-log.md) | organization audit log |
+| [`account-deletion.md`](./account-deletion.md) | account deletion lifecycle |
+| [`slack-notifications.md`](./slack-notifications.md) | Slack install and delivery |
+| [`product-analytics.md`](./product-analytics.md) | Analytics Engine events and privacy posture |
 
-## Domain docs
+## Quality and evals
 
-- [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
-- [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
-- [`incident-benchmark.md`](./incident-benchmark.md) — public Shai-Hulud/Nx behavior benchmark, reproduction, pinned inputs, controls, and citation limits.
-- [`ai-review-eval.md`](./ai-review-eval.md) — versioned AI reviewer contract, recorded-output evals, live model comparison, traces, and feedback loop.
-- [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
-- [`registry-version-status.md`](./registry-version-status.md) — npm's own lifecycle status for a staged version (`blocked` / `validating` / `published` / …), the forgotten-approval reminder, and why an unresolved lookup is never a verdict.
-- [`publication-monitor.md`](./publication-monitor.md) — automatic and manual public npm package watches, direct releases outside staging, and comparison of published bytes with prior organization approvals.
-- [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
-- [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
-- [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
-- [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
-- [`agent-package-review.md`](./agent-package-review.md) — public coding-agent quickstart, copyable project instruction, anonymous HTTPS review recipe, and machine-readable discovery.
-- [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset that links dependency-update PRs to public `/diff` pages, and the Dependabot/Renovate PR comment workflow that adds each bump's Drydock headline and findings; the preset path is a public contract.
-- [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
-- [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
-- [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
+| Doc | Owns |
+| --- | --- |
+| [`security-detection-corpus.md`](./security-detection-corpus.md) | rule inventory, fixture format, coverage gaps |
+| [`detection-rule-behavior.md`](./detection-rule-behavior.md) | what each rule fires on and leaves quiet, with pinning fixtures |
+| [`detection-rule-history.md`](./detection-rule-history.md) | rule-set version history |
+| [`detection-eval.md`](./detection-eval.md) | eval harness, metrics, gated thresholds |
+| [`incident-benchmark.md`](./incident-benchmark.md) | Shai-Hulud / Nx benchmark |
+| [`ai-review-eval.md`](./ai-review-eval.md) | AI reviewer contract, evals, promotion checklist |
 
-## Retired or compatibility pointers
+## Development and operations
 
-- [`npm-workflow-gate.md`](./npm-workflow-gate.md) — short pointer kept for old links; canonical npm workflow-gate details now live in [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes).
-- [`vscode-workflow-gate.md`](./vscode-workflow-gate.md) — short pointer; canonical VS Code workflow-gate details live in [`workflow-gates.md`](./workflow-gates.md#vs-code-workflow-gate-notes).
+| Doc | Owns |
+| --- | --- |
+| [`tooling.md`](./tooling.md) | Commands and tooling: every `pnpm` script, lint rules, hooks |
+| [`e2e-test-environment.md`](./e2e-test-environment.md) | fake registry, seeded dev server, Playwright harness |
+| [`agent-tour.md`](./agent-tour.md) | fixed product walkthrough artifacts |
+| [`design.md`](./design.md) | visual source of truth (tokens, components) |
+| [`design-decisions.md`](./design-decisions.md) | dated design decisions behind `design.md` |
+| [`ui.md`](./ui.md) | UI implementation map, primitives, large-diff performance |
+| [`self-hosting.md`](./self-hosting.md) | bindings, secrets, deploy, GitHub App, Slack |
+| [`ops-snapshot.md`](./ops-snapshot.md) | operator-only aggregate prod snapshot |
+| [`incident-content-playbook.md`](./incident-content-playbook.md) | what to publish during a public supply-chain incident |
+
+## Human path
+
+1. [`../README.md`](../README.md): what Drydock is and how to add it to a release.
+2. [`architecture.md`](./architecture.md) → [`security-model.md`](./security-model.md): how it works and what it refuses to do.
+3. [`workflow-gates.md`](./workflow-gates.md) or [`npm-staged-publishing.md`](./npm-staged-publishing.md): pick a release mode.
+4. [`../CONTRIBUTING.md`](../CONTRIBUTING.md): send a change.
+
+## Doc shape
+
+New and edited docs follow this order, omitting empty sections: one-sentence purpose with **Authority** and **Owner** → At a glance table → Contract (endpoints, states, config, one example) → Invariants (each naming its enforcing file or test) → Failure modes table → Change checklist → optional short Why. No history in reference docs; git has it.

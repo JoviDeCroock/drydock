@@ -1,13 +1,25 @@
 # Registry version status
 
-This feature follows known staged reviews. The separate
-[publication monitor](./publication-monitor.md) watches explicitly enrolled public
-npm packages for new published versions even when no stage scan exists, and
-compares their actual bytes with prior approvals.
+Reads npm's per-version lifecycle status for completed staged reviews, so Drydock can show whether npm is validating, blocked, or published a release and whether an approval here took effect. **Authority:** advisory (never feeds risk, findings, or a gate decision). **Owner:** `server/lib/ecosystems/npm/release-outcome.ts`.
 
-npm knows two things about a staged release that Drydock cannot derive from the
-staged tarball: whether its own automated validation has cleared the version,
-and what eventually happened to the stage. Both are read from a single endpoint:
+The separate [publication monitor](./publication-monitor.md) watches enrolled public packages for published versions even when no stage scan exists.
+
+## At a glance
+
+| Thing | Owner file | Trigger | Pinned by |
+| --- | --- | --- | --- |
+| Status lookup (never throws) | `server/lib/ecosystems/npm/version-status.ts` | sweep, failure refinement | `test/npm-version-status.test.mjs` |
+| Sweep, notice, reminder | `server/lib/ecosystems/npm/release-outcome.ts` | discovery cron `*/15`, **Check npm** | `test/workers/registry-version-status.test.ts` |
+| Failure refinement | `server/lib/scan/job.ts` (`refineStagedFailure`) | scan fails with `staged_tarball_unavailable` | `test/scan-job.test.mjs` |
+| Badge, notice, phrase | `src/features/registry-status.ts`, `src/pages/Dashboard/ScanDetail/RegistryStatusNotice.tsx` | render | `test/registry-status-notice.test.ts` |
+| Release timeline | `src/pages/Dashboard/ScanDetail/release-timeline.ts` | render | `test/release-timeline.test.ts` |
+| Published-no-decision filter | `publishedWithoutDecisionConditions` in `server/db/scan-query.ts` | list, package view | — |
+| Overview strip | `server/db/scan-overview.ts` | dashboard | — |
+| Export | `server/lib/scan/report-export.ts` | `report.json` | — |
+
+## Contract
+
+### npm endpoint
 
 ```
 GET /-/package/{package-name}/version/{version}/status
@@ -15,264 +27,154 @@ Authorization: Bearer <npm token>
 → { packageName, version, status }
 ```
 
-`status` is one of `published`, `validating`, `staged`, `blocked`, `deleted`.
-npm reports progress "without exposing validation-system details", so `blocked`
-says the version failed npm's validation, never which check or why.
+- `status` is one of `published`, `validating`, `staged`, `blocked`, `deleted`.
+- npm reports progress "without exposing validation-system details": `blocked` says the version failed npm's validation, never which check or why.
+- npm answers `404` both for a missing version and for one the token may not ask about; it documents `429`. Every failure collapses to "unknown".
+- The spec says the caller "must have publish access to the package". Drydock keeps its read-only granular token ([security-model.md](./security-model.md)); if that token cannot ask, the feature degrades to "no status" everywhere. Do not widen the requested token scope to make it work.
 
-## Why it exists
+### Status → action and UI
 
-- **npm's validation verdict is invisible otherwise.** A reviewer reading a
-  clean Drydock report has no way to see that npm has `blocked` the same
-  version, or is still `validating` it. It is an independent signal, not an
-  input to ours: it never feeds risk, findings, or a gate decision.
-- **Approving in Drydock does not publish anything.** The organization's
-  `decision` records what it decided; nothing recorded whether that took effect.
-  The common failure is mundane — someone approves here, never runs
-  `npm stage approve <stage-id>`, and the release silently never ships.
-- **It decides when a staged review may go public.** A share link, a
-  threat-feed listing, and the badge serve a staged review only once npm
-  reports the version `published` (or `deleted` after publishing). Until then
-  the release may be an embargoed security fix. An unresolved lookup keeps them
-  dark, like any other unknown (see
-  [`public-reports.md`](./public-reports.md#share-flow)).
-- **A staged tarball we cannot read is usually not a token problem.** A stage
-  approved seconds after discovery queued its scan returns 404 on the tarball,
-  which used to surface as "the npm token may have expired, or its scope may not
-  cover this package". Telling a maintainer to rotate a working token because
-  their publish succeeded is the failure mode this removes.
+`registryStatusBadge` names npm in every label and reads a published version against the decision recorded here. Tone is set only when the state asks something of the reader.
 
-## Absence is not a verdict
+| npm status | Drydock decision | Badge label | Tone | Notice row | Leaves **Undecided** | Reader action |
+| --- | --- | --- | --- | --- | --- | --- |
+| null / undocumented | any | none | — | none | no | — |
+| `validating` | any | npm validating | none | yes | no | wait for npm's scan |
+| `staged` | none / `no_publish` | none | — | none | no | normal resting state |
+| `staged` | `publish` | npm awaiting approval | medium | yes | — | run `npm stage approve` |
+| `blocked` | any | npm blocked | critical | yes | yes | nothing to approve; bytes are gone |
+| `published` | `publish` | npm published | none | none | — | — |
+| `published` | none | npm published, no decision | medium | none | yes | record a decision for the audit trail |
+| `published` | `no_publish` | npm published, rejected here | critical | none | — | investigate |
+| `deleted` | none | npm removed, no decision | medium | none | yes | — |
+| `deleted` | `no_publish` | npm removed, published, rejected here | critical | none | — | investigate |
+| `deleted` | `publish` | npm removed | none | none | — | — |
 
-npm answers `404` for a version that does not exist **and** for one the token
-may not ask about, and the endpoint documents `429`. Every failure mode
-therefore collapses to "we do not know":
+- A superseded review renders no status.
+- Once npm reports `published`, `blocked`, or `deleted`, the stage is no longer actionable: a later Drydock decision is still accepted for the audit trail but offers no npm follow-up.
+- **Published with no decision in this organization** (filter and package-view counts) includes `published` and subsequently `deleted` releases with no decision, including a manual scan that failed because npm published before the review read the tarball. `blocked` is excluded: it never went live.
+- The overview strip counts null only as "not settled" alongside `staged` and `validating`; never as its own tile.
+- Public share links, threat-feed listings, and the badge serve a staged review only once npm reports `published` (or `deleted` after publishing); an unresolved lookup keeps them dark ([public-reports.md](./public-reports.md#share-flow)).
 
-- `fetchNpmVersionStatus` never throws and never returns a status it did not
-  read for the requested package and version; mismatched coordinates and
-  unrecognized enum values are treated as unknown rather than passed through.
-- An unresolved first lookup persists only
-  `registry_version_status_attempted_at` (so the next sweep is throttled) and
-  leaves `registry_version_status` null. An unresolved recheck preserves the
-  last status npm actually returned and its observation timestamp.
-- The UI renders nothing for a null status — no badge, no notice, no
-  reassurance. `RegistryStatusNotice` and `registryStatusVariant` own that rule.
-- A `staged` status with no decision recorded also renders nothing: that is the
-  normal resting state of a release under review.
-- The dashboard overview strip (`server/db/scan-overview.ts`, `docs/ui.md`)
-  counts a null status only as "not settled" alongside `staged` and
-  `validating`; it never becomes a tile of its own.
+- **Dashboard list:** Toned chip on the row's lead line; otherwise plain text at the end of the mono meta line; the published-no-decision filter.
+- **Scan workbench header:** Plain-text metadata line with observation time; `RegistryStatusNotice` adds a row only for validating, blocked, or awaiting approval after an approval here.
+- **Package release view (`/dashboard/packages/:name`):** State and observation time per release; highlights published-no-decision and published over `no_publish`.
+- **Release timeline (scan detail):** Dated events oldest first with the gap to the previous row (below).
 
-## Where it runs
+### Sweep
 
-| Path                                      | Trigger                                                             | What it does                                                                                                                                                                                                                                                                      |
-| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button) | Resolves status for completed reviews and sends the approvable-now notice and the forgotten-approval nudge. On-demand checks use `waitUntil`; cron awaits a smaller, serial-per-org slice so its five-organization cap also bounds status traffic. Failures never fail discovery. |
-| `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                    | Asks npm what happened before deciding the message.                                                                                                                                                                                                                               |
+| Setting | Value | Constant (`release-outcome.ts` unless noted) |
+| --- | --- | --- |
+| On-demand lookups per organization per invocation | 16, concurrency 4, via `waitUntil` | `LOOKUPS_PER_SWEEP`, `LOOKUP_CONCURRENCY` |
+| Cron lookups per organization | 8, concurrency 1, awaited | `lookupLimit`/`lookupConcurrency` in `staged-publishes-discovery.ts` |
+| Organizations swept in parallel by cron | 5 | `DISCOVERY_CRON_CONCURRENCY` in `server/scheduled.ts` |
+| Lookup timeout | 5 seconds | `LOOKUP_TIMEOUT_MS` in `version-status.ts` |
+| Recheck: never asked, `validating` | 5 minutes | `PENDING_RECHECK_MS` |
+| Recheck: `staged` | 1 hour | `STAGED_RECHECK_MS` |
+| Recheck: `published` (may become `deleted`) | 24 hours | `PUBLISHED_RECHECK_MS` |
+| Recheck: `blocked`, `deleted` | never (terminal) | — |
+| Age cutoff after the first attempt | 30 days | `MAX_RELEASE_AGE_MS` |
+| Forgotten-approval delay | 6 hours | `FORGOTTEN_APPROVAL_DELAY_MS` |
 
-On-demand lookups are bounded per organization per invocation (16, concurrency
-4), so four worst-case five-second waves leave headroom inside Workers'
-30-second `waitUntil` lifetime for persistence and notification delivery. Cron
-uses eight lookups at concurrency 1 per organization and awaits them, so its
-five-organization sweep cap bounds status traffic across the invocation. They use
-recheck floors by last known status: 5 minutes for never-asked and `validating`,
-1 hour for `staged`, and 24 hours for `published`, which can later become
-`deleted`. The terminal `blocked` and `deleted` states are never rechecked.
-Every never-attempted review receives one lookup regardless of age. Once that
-attempt is stamped, reviews older than 30 days stop being asked about. Recent
-work is drained before that legacy first-lookup backlog, so historical reviews
-cannot consume a sweep while a current release waits. Only npm staged-publish scans are eligible;
-workflow-gate scans are excluded because their package coordinates may describe
-PyPI or VS Code releases. Within each age tier, due rows share one oldest-work
-timeline: creation time until the first lookup, then the last-attempt time. This
-drains new work without letting continuous arrivals starve validating, staged,
-or published rechecks.
-Status writes are fenced by that attempt timestamp, so an older overlapping
-sweep cannot replace a newer answer.
+- Four worst-case five-second on-demand waves leave headroom inside Workers' 30-second `waitUntil` lifetime for persistence and delivery. Cron awaits a smaller serial slice so the sweep's organization concurrency also bounds status traffic.
+- Every never-attempted review gets one lookup regardless of age. Recent work drains before that legacy backlog. Within each age tier, due rows share one oldest-work timeline (creation time until the first lookup, then last-attempt time), so new arrivals cannot starve rechecks.
+- Only npm staged-publish scans are eligible. Workflow-gate scans are excluded (their coordinates may be PyPI or VS Code); published-pair scans are never selected.
+- Status failures never fail discovery.
+- After queueing, the dashboard refreshes immediately, then a bounded set of follow-up refreshes while `waitUntil` lookups finish.
 
-The scan captures the registry URL and immutable registry-supplied package
-coordinates separately from the inspected tarball manifest. A connection edit
-therefore cannot make an old review ask a different registry about a
-coincidentally identical name and version, and hostile package bytes cannot
-retarget the credentialed lookup. Queued scans carry that captured registry into
-the credential broker too: if the organization's connection changes before or
-during the scan, every staged, detail, and baseline request fails closed instead
-of reviewing the same stage ID from another registry. If the best-effort
-pre-queue detail read was unavailable but the worker later recovers the stage
-record, it fills the missing control-plane coordinates and reconciles release
-ownership before persisting the completed report. If recovered coordinates
-disagree with the identity captured before queueing, the scan fails instead of
-combining a report for one release with lifecycle status for another. Within one registry, only
-the newest scan for a package/version is eligible: duplicate manual reviews get
-one status owner and one reminder, and a rejected version staged again under a
-new stage ID supersedes the previous incarnation. Supersession is stamped on
-the older rows and clears their displayable registry status, so historical
-reviews cannot keep presenting a live-looking verdict or command for an obsolete
-stage ID. Any public report capability, badge, or threat-feed listing attached
-to the obsolete stage is retired at the same time. Superseded reviews cannot
-accept or update decisions; they remain under **All** as history but leave the
-default **Undecided** work queue. Likewise, a review with no Drydock decision
-leaves **Undecided** once npm reports `published`, `blocked`, or `deleted`, or a
-terminal scan failure proves the same outcome, because the stage is no longer
-actionable. It remains under **All** with its npm status when one was
-persisted. Completed reviews, unlike superseded history, can still accept a
-decision for the audit trail; failed reviews remain read-only history.
-**Published with no decision in this organization** isolates both `published` and
-subsequently `deleted` releases that still have no decision, including a manual
-scan that failed because npm published before the review could read the tarball.
-`blocked` releases are excluded because they did not go live. Failure
-refinement rechecks ownership after its registry request so a concurrent restage
-cannot attribute the replacement stage's outcome to the older scan. The reminder
-marker remains as send-once history. Deleting a failed newer scan therefore
-cannot revive historical stage IDs. Discovery creates the new scan row before
-scheduling status resolution and also passes the current stage IDs as a
-fail-closed race guard.
+### Failure codes
 
-The dashboard refreshes immediately for newly queued scans, then performs a
-bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
-This keeps the **Check npm** request responsive without requiring a second
-manual refresh to see registry outcomes. Approval commands are pinned to the
-registry URL captured with the scan, including for custom registries. The
-npmjs.com staged-packages shortcut is only offered for scans captured from the
-public npm registry; custom registries keep the registry-pinned CLI command.
-Once npm reports `published`, `blocked`, or `deleted`, the stage is no longer
-actionable, so recording a later Drydock decision does not offer either npm
-follow-up even though the decision itself remains available for the audit trail.
+`refineStagedFailure` only narrows `staged_tarball_unavailable`, and only for non-gate scans:
 
-## Failure codes
+| npm status | Code | Meaning |
+| --- | --- | --- |
+| `published` | `staged_release_published` | Approved and published before the review could read it |
+| `deleted` | `staged_release_deleted` | Published, then removed before the review could read it |
+| `blocked` | `staged_release_blocked` | npm's validation rejected it; the staged bytes are gone |
+| `staged` / `validating` / unresolved | `staged_tarball_unavailable` | Still there and unreadable: a genuine token-scope problem |
 
-`refineStagedFailure` only ever narrows `staged_tarball_unavailable`, and only
-for non-gate scans (workflow-gate reviews span three ecosystems, where npm's
-stage lifecycle means nothing):
+- Auto-discovered candidates in every case are discarded rather than shown as failures; the recorded `reason` says which.
+- Failed scans are not swept. They persist only terminal `blocked`/`deleted` statuses; a `published` lookup stays in the refined message. The list derives a settled outcome from the safe failure code for filtering without showing it as a fresh status badge.
+- Refinement rechecks ownership after its registry request, so a concurrent restage cannot attribute the replacement stage's outcome to the older scan.
 
-| npm status                           | code                         | meaning                                                                                      |
-| ------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------- |
-| `published`                          | `staged_release_published`   | Approved and published before the review could read it.                                      |
-| `deleted`                            | `staged_release_deleted`     | Published, then removed before the review could read it.                                     |
-| `blocked`                            | `staged_release_blocked`     | npm's validation rejected it; the staged bytes are gone.                                     |
-| `staged` / `validating` / unresolved | `staged_tarball_unavailable` | The release is still there and we still could not read it — genuinely a token-scope problem. |
+### Notifications
 
-Auto-discovered candidates in every one of these cases are discarded rather than
-shown as failures, as before: nobody asked for the scan and there is nothing left
-to review. The recorded `reason` now says which.
+- **Approvable-now** ("ready to approve", email + Slack): fires when a lookup observes `staged` after a persisted `validating` or no persisted status (so a review that completed after npm settled is told on its first lookup). Marker `registry_approvable_notified_at`. Carries package, version, release-risk grade, finding count, Drydock decision if any, dashboard link, registry-pinned `npm stage approve`.
+- **Forgotten-approval reminder** (email): once per registry release when the decision is `publish`, npm still reports `staged` (not `validating`: that is npm working, not a human forgetting), the decision is at least 6 hours old, and the marker is unset. Marker `registry_publish_reminder_at`. Carries release identity, stage id, `npm stage approve --registry <captured-registry>`, dashboard link.
 
-Failed scans are not eligible for the background sweep. They therefore persist
-only terminal `blocked` and `deleted` registry statuses; a `published` lookup is
-kept in the refined failure message instead of storing a snapshot that could
-later become stale. The dashboard list derives a settled release outcome from
-that safe failure code for queue and audit filtering without presenting it as a
-fresh registry-status badge.
+- Neither carries a token, header, or package bytes.
+- Each marker is claimed before sending, only if the observation (and, for the reminder, the approval) it acted on is still current; overlapping sweeps and duplicate reviews of the same stage id send once.
+- A `staged` recheck of a row already persisted as `staged` is not a transition: rows predating the notice are never announced.
+- If both would fire in one sweep, the notice (which carries the approve command) is sent and the reminder keeps its marker for a later sweep.
+- Never for `published`, `blocked`, `deleted`, superseded, workflow-gate, or published-pair scans.
+- The workbench shows the awaiting-approval state immediately; the 6-hour delay gates only the email.
+- Approval commands are pinned to the registry URL captured with the scan, including custom registries. The npmjs.com staged-packages shortcut appears only for scans captured from public npm.
 
-## Forgotten-approval reminder
+### Release timeline
 
-Sent once per registry release, when all four hold: the organization decided `publish`,
-npm still reports `staged` (not `validating` — that is npm working, not a human
-forgetting), the decision is at least 6 hours old, and
-`registry_publish_reminder_at` is unset. The sweep claims that column before
-sending only if the approval and `staged` observation it acted on are still
-current, so overlapping sweeps cannot double-send and an in-flight decision or
-registry-status change cannot produce a stale reminder. The email carries release
-identity, the stage id, an `npm stage approve --registry <captured-registry>` command, and a dashboard link —
-no token, header, or package bytes.
+Scan detail lists every dated event oldest first, with the gap to the previous row:
 
-The workbench shows the same state immediately, without the 6-hour delay: the
-delay only gates the email.
+| Row | Source |
+| --- | --- |
+| Staged on npm | `staged_created_at` (`0031`); fallback `summary.stagedPublish.createdAt` |
+| Review queued / started / completed | scan row |
+| npm status last observed | `registry_version_status_at`, phrased by `registryStatusPhrase`: validating, awaiting approval, published, blocked, removed |
+| Drydock decision | scan row |
+| Supersession | `registry_status_superseded_at` (replaces the stale status row) |
 
-## Where the status is rendered
+- `staged_created_at` is captured from the stage record when the review row is created (and carried by the status poll), so queued and failed reviews show it too.
+- A null or undocumented status renders no row. Stamps carry year and seconds: rows are often seconds apart and a stage can straddle a year.
 
-`registryStatusBadge` in `src/features/registry-status.ts` names npm in every
-label and reads a published version against the decision recorded here. It sets
-a tone only for states that ask something of the reader: `blocked` (critical),
-awaiting approval after an approval here (medium), published with no decision
-(medium, "npm published, no decision"), and published over a block (critical).
-Validating, removed, and published after approval carry no tone and render as
-plain text.
+### Storage
 
-- The dashboard list: a chip on the row's lead line when the state has a tone,
-  otherwise plain text at the end of the mono meta line; and the
-  **Published with no decision in this organization** filter.
-- The scan workbench header's plain-text metadata line, with its observation
-  time. `RegistryStatusNotice`
-  adds a separate row only for states with actionable context: validating,
-  blocked, or approved here while still awaiting npm approval.
-- The package release view (`/dashboard/packages/:name`), which shows the
-  state with its observation time per release and highlights the rows where
-  npm's outcome disagrees with Drydock's record: published with no decision,
-  and published over a `no_publish` decision. Its summary counts reuse the
-  same `published`/`deleted` conditions as the dashboard filter
-  (`publishedWithoutDecisionConditions` in `server/db/scan-list.ts`).
+| Column on `scans` | Migration | Meaning |
+| --- | --- | --- |
+| `registry_url` | `0027` | Registry captured at scan creation; legacy null fails closed, not polled |
+| `registry_package_name`, `registry_version` | `0027` | Immutable control-plane coordinates; legacy null fails closed, not polled |
+| `registry_version_status` | `0027` | Last known npm status, or null |
+| `registry_version_status_at` | `0027` | When npm last returned it |
+| `registry_version_status_attempted_at` | `0027` | Last lookup, set even on failure; throttle and overlap fence |
+| `registry_status_superseded_at` | `0027` | A newer scan owns this registry/package/version lifecycle |
+| `registry_publish_reminder_at` | `0027` | Reminder send-once marker |
+| `registry_approvable_notified_at` | `0030` | Approvable-now send-once marker |
+| `staged_created_at` | `0031` | Stage creation time for the timeline |
 
-## Approvable-now notice
+`report.json` carries `registryStatus: { status, observedAt } | null`, additive and optional, with no schema bump (`drydock.report.v2`'s bump was for a removal).
 
-npm holds `npm stage approve` until its own malware scan settles, so the moment
-a maintainer can act is when the status leaves `validating`. The sweep sends one
-"ready to approve" notice (email plus Slack, through the same recipient and
-connection plumbing as scan completion) when a lookup observes `staged` after a
-persisted `validating`, or after no persisted status at all — which is also how
-a review that completed only after npm had already settled gets told on its
-first lookup. It carries package and version, Drydock's release-risk grade and
-finding count, the recorded Drydock decision if any, a dashboard link, and the
-registry-pinned `npm stage approve` command. Never for `published`, `blocked`,
-`deleted`, or superseded releases, and never for workflow-gate or published-pair
-scans, which the sweep does not select.
+## Invariants
 
-`registry_approvable_notified_at` is the send-once marker. The sweep claims it
-before sending, only if the `staged` observation it acted on is still current
-and no other review of the same stage id has already sent one, so overlapping
-sweeps and duplicate reviews produce a single notice. A `staged` recheck of a
-row already persisted as `staged` is not a transition: rows that predate the
-notice are never announced retroactively. When the forgotten-approval reminder
-would fire in the same sweep, the notice — which already carries the approve
-command — is sent instead and the reminder keeps its own marker for a later
-sweep.
+1. `fetchNpmVersionStatus` never throws and never returns a status it did not read for the requested package and version; mismatched coordinates and unrecognized values are unknown (`version-status.ts`).
+2. An unresolved first lookup persists only `registry_version_status_attempted_at` and leaves status null; an unresolved recheck keeps the last status npm returned and its timestamp.
+3. Null renders nothing: no badge, no notice, no reassurance (`registryStatusVariant`, `RegistryStatusNotice`).
+4. Status writes are fenced by the attempt timestamp, so an older overlapping sweep cannot replace a newer answer.
+5. Lookups use the registry URL and registry-supplied coordinates captured on the scan, never the tarball manifest or the current connection, so hostile bytes or a connection edit cannot retarget the credentialed lookup.
+6. Queued scans carry the captured registry into the credential broker; if the organization's connection changes before or during the scan, every staged, detail, and baseline request fails closed.
+7. If the pre-queue detail read failed and the worker later recovers the stage record, it fills missing coordinates and reconciles ownership before persisting; recovered coordinates that disagree with the captured identity fail the scan.
+8. Within one registry only the newest scan of a package/version owns status: duplicates get one owner and one reminder; a restage under a new stage id supersedes the old one.
+9. Supersession clears displayable status and retires any public report capability, badge, or threat-feed listing for the obsolete stage. Superseded reviews cannot accept decisions; they stay under **All** but leave **Undecided**. Deleting a failed newer scan cannot revive historical stage ids. The reminder marker stays on superseded rows as send-once history.
+10. Completed reviews with no decision leave **Undecided** once npm reports `published`, `blocked`, or `deleted` (or a terminal failure proves it), stay under **All**, and still accept a decision. Failed reviews are read-only history.
+11. Discovery creates the new scan row before scheduling status resolution and passes current stage ids as a fail-closed race guard.
 
-## Release timeline
+## Failure modes
 
-The scan detail page lists every dated event the persisted review knows about,
-oldest first, with the gap to the previous row: staged on npm
-(`staged_created_at`, migration `0031`, captured from the registry's stage
-record when the review row is created — and carried by the status poll's
-projection — so a queued or failed review shows it too; reviews that completed
-before that column existed fall back to the stage's `createdAt` under
-`summary.stagedPublish`), review queued/started/completed,
-npm status last observed (`registry_version_status_at`, phrased with the same
-vocabulary as the dashboard badge — "validating", "awaiting approval",
-"published", "blocked", "removed" — from `registryStatusPhrase` in
-`src/features/registry-status.ts`), the Drydock decision, and supersession. A
-null or undocumented status renders no row, and a superseded review shows the
-supersession instead of its stale registry status. Stamps carry the year and
-seconds, because rows are often seconds apart and a stage can straddle a year.
-`src/pages/Dashboard/ScanDetail/release-timeline.ts` owns the ordering.
+| Symptom | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| No status anywhere | token cannot ask (404), or 429 | status stays null; UI silent | measure against a real read-only token; never widen scope |
+| "Token may have expired" on a working token | stage approved before the scan read the tarball | refined to `staged_release_published` | none; the release shipped |
+| Approved here, never shipped | nobody ran `npm stage approve` | badge "npm awaiting approval"; reminder after 6 hours | run the pinned command |
+| Old review shows no status | superseded by a restage | status cleared; supersession row | open the newer review |
+| Legacy review not polled | null registry coordinates | fails closed | none |
 
-## Token scope
+## Change checklist
 
-The endpoint's specification says the caller "must have publish access to the
-package" and returns authorization failures as `404`. Drydock asks organizations
-for a read-only granular token (`docs/security-model.md`), and that stance does
-not change for this: if a read-only token cannot ask, the feature degrades to
-"no status" everywhere and nothing else breaks. **This is worth measuring
-against a real read-only token before relying on the signal** — npm's
-enforcement may be looser than the wording, since read-only tokens already work
-against `/-/stage`. Do not widen the requested token scope to make it work.
+- New status or label → `src/features/registry-status.ts`, the status table here, `test/registry-status-notice.test.ts`.
+- Sweep limits → constants table; check the `waitUntil` budget arithmetic.
+- New column → migration via `pnpm db:generate`, the storage table, `report-export.ts` if exported.
+- Public-visibility rule → [public-reports.md](./public-reports.md#share-flow).
 
-## Storage
+## Why
 
-Eight columns on `scans` (migration `0027`), plus one from `0030`:
-
-- `registry_url` — registry base URL captured when the scan is created; legacy
-  null rows fail closed and are not polled.
-- `registry_package_name` / `registry_version` — immutable registry-control-plane
-  coordinates; legacy null rows fail closed and are not polled.
-
-- `registry_version_status` — last known npm status, or null.
-- `registry_version_status_at` — when npm last returned that status.
-- `registry_version_status_attempted_at` — when the lookup last ran, set even on
-  failure; this is the throttle and overlapping-sweep fence.
-- `registry_status_superseded_at` — durable marker that a newer scan owns this
-  registry/package/version lifecycle.
-- `registry_publish_reminder_at` — send-once marker for the nudge.
-- `registry_approvable_notified_at` — send-once marker for the approvable-now
-  notice (migration `0030`).
-
-Exported additively as `registryStatus: { status, observedAt } | null` on
-`report.json`. No schema bump: the field is optional and additive, and
-`drydock.report.v2`'s bump was for a removal.
+- npm's validation verdict is otherwise invisible: a clean Drydock report says nothing about npm having `blocked` or still `validating` the version.
+- Approving in Drydock publishes nothing; the common failure is approving here and never running `npm stage approve`.
+- An unreadable staged tarball is usually a shipped release, not a bad token; telling a maintainer to rotate a working token is the failure this removes.
+- Unverified: npm's enforcement of "publish access" may be looser than the spec, since read-only tokens already work against `/-/stage`; measure before relying on the signal.

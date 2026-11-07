@@ -1,331 +1,311 @@
 # Security model
 
-Drydock handles hostile package artifacts, private review evidence, and npm credentials. The core posture is: **package bytes are evidence, credentials stay outside the sandbox, and approval remains a human release action.**
+Trust boundaries, anonymous surfaces, credential and egress rules, and auth posture for Drydock. **Authority:** enforced. **Owner:** `server/index.ts` (route order), `server/lib/sandbox.ts` (egress), `server/lib/auth/index.ts` (sessions).
 
-## Assets
+Package bytes are evidence, credentials stay outside the sandbox, and approval stays a human release action.
 
-- Organization npm credentials and GitHub/Slack integration secrets.
-- Better Auth sessions, users, memberships, and organization boundaries.
-- Scan reports, package evidence, changed-file samples, and private pre-release contents.
-- Cloudflare resources: D1, R2, Queues, Workers AI, AI Gateway, and Dynamic Worker loader.
-- Maintainer trust in the review report and release decision workflow.
+## At a glance
 
-## Risky inputs
-
-- Malicious package artifacts attempting to hide supply-chain malware.
-- Archives attempting traversal, duplicate-path confusion, resource exhaustion, or parser edge cases.
-- Package text attempting prompt injection against the AI reviewer.
-- Package files containing accidentally leaked secrets.
-- Unauthorized users trying to read or act on another organization's scans.
-- Over-broad or leaked registry credentials.
+| Boundary | Owner file | Failure posture | Pinned by |
+| --- | --- | --- | --- |
+| Session guard on `/api/*` | `server/index.ts` | `401 { error: "unauthorized" }` | `test/api-auth-boundary-invariants.test.mjs` |
+| Organization scoping | `server/lib/auth/active-organization.ts` | Personal-org fallback, or `403` when strict | `test/workers/organization-members-routes.test.ts` |
+| npm credential egress | `NpmStageGateway` in `server/lib/sandbox.ts` | Rejects non-allowlisted endpoints | `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts` |
+| Archive parsing | Sandbox parser ([sandbox parser](./sandbox-parser.md)) | Fails closed; size degrades to hash-only | `test/sandbox-boundary-invariants.test.mjs`, `test/sandbox-sample-retention-invariants.test.mjs` |
+| AI review | `server/lib/review/risk.ts` | Advisory; cannot downgrade deterministic findings | `test/risk.test.mjs`, `test/ai-review.test.mjs` |
+| Public disclosure | `publicDisclosureAllowedCondition` in `server/db/scan-query.ts` | Same `404` as an unknown token | `test/workers/public-reports.test.ts`, `test/workers/threat-feed-badge.test.ts` |
+| Per-action email verification | `server/lib/auth/email-verification.ts` | `403 { code: "email_verification_required" }` | `test/workers/email-verification-guard.test.ts` |
+| Session cache | `server/lib/auth/index.ts` | Bounded revocation lag | `test/workers/auth-session-cache.test.ts` |
+| Rate limiting | `server/lib/rate-limit.ts` | `429` + `Retry-After`; D1 fallback without bindings | `test/workers/rate-limit.test.ts`, `test/rate-limit-boundary-invariants.test.mjs` |
+| Browser headers | `server/middleware/security-headers.ts` | Deny-all policy on `/api` and `/public` | `test/workers/security-headers.test.ts` |
 
 ## Non-negotiable boundaries
 
-- **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
-- **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
-- **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
-- **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
-- **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks must block/reject on uncertainty rather than silently approving.
+1. **No approval automation.** Drydock never runs `npm stage approve`, collects npm 2FA codes, publishes packages, or presents AI output as release approval.
+2. **No package execution.** Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
+3. **No npm token in the sandbox.** The Dynamic Worker never receives npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
+4. **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set it false to disable AI review for one organization or globally. Deterministic findings stay authoritative; AI cannot downgrade deterministic findings.
+5. **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks block or reject on uncertainty; they never silently approve.
+6. **Server routes decide access.** Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution; reads and writes of scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings check organization ownership. UI state is not authority.
+
+| Asset | Risky input |
+| --- | --- |
+| Organization npm credentials; GitHub/Slack integration secrets | Malicious package artifacts hiding supply-chain malware |
+| Better Auth sessions, users, memberships, organization boundaries | Archives using traversal, duplicate paths, resource exhaustion, parser edge cases |
+| Scan reports, evidence, changed-file samples, private pre-release contents | Package text attempting prompt injection against the AI reviewer |
+| D1, R2, Queues, Workers AI, AI Gateway, Dynamic Worker loader | Package files with leaked secrets |
+| Maintainer trust in the report and release decision | Cross-organization reads; over-broad or leaked registry credentials |
+
+## Anonymous surfaces
+
+Hono runs middleware in registration order, so anything registered above the session guard in `server/index.ts` is served without a session. This table mirrors `REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD` in `test/api-auth-boundary-invariants.test.mjs`, which fails when that set changes. Adding a row is a security decision.
+
+| Registration | Routes served | Trust boundary | Abuse control | Owner |
+| --- | --- | --- | --- | --- |
+| `use *` (x2) | Security headers, canonical-host redirect | Middleware only | — | `server/middleware/security-headers.ts`, `server/middleware/canonical-host.ts` |
+| `route /webhooks` | `POST /webhooks/github` | GitHub App webhook HMAC signature; no Origin/Referer, so above CSRF | Per installation per event kind per minute: `deployment_protection_rule` 240, `installation` 60 | `server/routes/github-webhooks.ts` |
+| `route /api/public/v1/package-diff` | `GET /`, `/versions`, `/file`, `/atpm-stage` | Public release data only | Per-IP limits before validation or fetch; shared cold-computation budget | `server/routes/public-diff.ts` |
+| `route /og` | `GET /og/diff/**/card.png` | Reads public-diff result cache only | Per-IP limit charged only on a cold render | `server/routes/og.ts` |
+| `route /public` | `GET /public/reports/:token` (+ `/file`, `/attestation`), `GET /public/attestation-key`, `GET /public/threat-feed.json`, `GET /public/badge/:ecosystem/*` | Share token (256-bit) or publication rules below | One per-IP bucket for reports/feed; separate per-IP badge bucket | `server/routes/public-reports.ts` |
+| `use /api/*` (x2) | Better Auth init (`503` if unconfigured), CSRF origin check | Middleware only | — | `server/middleware/csrf-origin.ts` |
+| `use /api/auth/*` | Per-IP auth buckets | Middleware only | See [rate limiting](#rate-limiting) | `server/middleware/auth-rate-limit.ts` |
+| `get /api/auth/config` | `{ githubSignIn, emailVerification, passwordReset }` booleans | Env presence only; no bindings, D1, KV, or caller data | None needed; it cannot be made to do work | `server/index.ts` |
+| `get /api/auth/reset-password/*` | Always `404` | Refuses URL-borne reset tokens | — | `server/index.ts` |
+| `post /api/auth/reset-password` | `400` when `?token=` is present, else Better Auth | Refuses URL-borne reset tokens | `password-reset-redeem` bucket | `server/index.ts` |
+| `all /api/auth/*` | Better Auth handler | Better Auth | Per-IP auth buckets | `server/lib/auth/index.ts` |
+
+### Public package diff (`/api/public/v1/package-diff`, `/og`)
+
+1. Serves only public release data: the public npm registry and public `pkg.pr.new` preview tarballs (`ecosystem=npm`), the `pypi.org` JSON API with bytes only from `files.pythonhosted.org` (`ecosystem=pypi`), the publisher's own AT Protocol identity and PDS (`ecosystem=atpm`, see [atpm](./atpm.md)). Never organization resources.
+2. Attaches no credentials, persists no review data to D1, never runs AI review.
+3. Returns `404` when `NPM_REGISTRY` is a custom origin, PyPI mode included; the card route shares this killswitch.
+4. With the Rate Limiting bindings configured, reaches D1 on no request path; `test/workers/public-diff-routes.test.ts` hands the routes a D1 binding that throws on use.
+5. Abuse controls: per-IP limits before validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of results, and sandbox archive caps.
+6. A share card never triggers analysis: on a cache miss it renders name and version with no numbers. Names and versions are XML-escaped, stripped of control characters and bidi overrides, and width-fitted.
+7. `pkg.pr.new` egress goes through the strict parser in `src/lib/pkg-pr-new.ts`: only `https://pkg.pr.new` (exact host, no port, credentials, query, or fragment) with a canonical `owner/repo/name@ref` path. `fetchPkgPrNewTarballStream` accepts no token option. Preview bytes never enter the shared colo tarball cache; results with a preview side are cached at most 15 minutes.
+8. `/api/public/v1/package-diff/atpm-stage` redirects browsers and returns JSON to API callers; it persists no staged record or link-resolution event and creates no session. Requiring a session would gate a diff of public bytes at the one moment it matters, before publication.
+9. Public pages are not instrumented: no referrer classification, campaign parameters, or page-view event. The only analytics is `public_diff.viewed`, written when a diff is computed, carrying the package name and nothing about the visitor ([product analytics](./product-analytics.md)).
+
+Any new public endpoint must document the same properties here or require a session.
+
+### Public reports, feed, and badge (`/public`)
+
+Not every `/public` answer is opt-in. Which consent each surface needs:
+
+| Surface | Needs |
+| --- | --- |
+| `GET /public/reports/:token` + `…/attestation` | Owner/admin share of a completed scan |
+| `GET /public/reports/:token/file?path=` | Share with `public_share_includes_files` true (column default false; new shares set true; re-sharing upgrades an old token) |
+| `GET /public/threat-feed.json` | Share plus a second opt-in (feed listing) |
+| Badge, listed path | Share plus feed listing |
+| Badge, default-on path | No opt-in: approved, npm-published release of a provably public npm package whose reviewed bytes matched npm's stage digest (`badge_public`, set at write time) |
+| Badge, post-release path | No opt-in: the organization decided a post-release review of a publication-monitor alert, as a registry-verified publisher, with reviewed digests equal to the monitor's ([public badge](./public-badge.md)) |
+| `GET /public/attestation-key` | Nothing; public key material only |
+
+**Pre-publication disclosure.** A staged security fix is embargoed until it ships, and its review is the patch. No anonymous route serves a review before its release is public, whatever was opted into. `publicDisclosureAllowedCondition` (`server/db/scan-query.ts`) is the one predicate, applied in SQL by the share-token resolver (report, file, attestation), the threat feed, and the listed badge.
+
+| Scan source | Public once |
+| --- | --- |
+| npm staged review | npm reports the version `published` or `deleted` |
+| Published-pair review | Always (public registry bytes) |
+| PyPI or VS Code gate review | Its gate approves the publish job |
+| npm gate review | npm evidence shows the gate's bytes shipped: a matched published staged review, or a publication-monitor approved match naming it |
+| Unknown status or source | Never (unreleased) |
+| Decided `no_publish` and listed | At once: a listed rejection is a threat disclosure; unlisting or approving takes it dark again |
+
+Links can be minted early; until the rule holds they return the same `404` as an unknown token, and only the authenticated share route reports `awaitingPublication`. Residual pre-publication channels, all private to the organization or operator: Slack and email notifications (`package@version` and risk, no bytes), AI review inside the operator's Cloudflare account with Gateway payload logging off, and operational logs and traces carrying package names. A per-organization "embargo staged releases" setting is the named remedy if an organization needs more.
+
+Invariants (report detail in [public reports](./public-reports.md), badge detail in [public badge](./public-badge.md)):
+
+1. Unknown, malformed, revoked, and not-yet-public tokens are indistinguishable `404`s. Report routes are `no-store`, so revocation is immediate; they return the canonical report export and never scan events or org/user identifiers.
+2. The `file` route is the only anonymous route that discloses private-review package bytes. It reads through the same `getScanFile` as `GET /api/v1/scans/:id/file`, so it cannot serve a larger or less-redacted sample than the maintainer read; it serves exactly one entry of the persisted `files.json` set (any other path is the bad-token `404`) and never fetches a baseline, because that would spend the organization's npm credentials. The share dialog states the widened disclosure before creating or upgrading a link.
+3. The badge index is keyed by ecosystem and package name, so entering it needs a credential-backed tie to that name: an npm staged review the org's token could read (read access, not publish rights), answering under npm's stage-record name (`registry_package_name`) while the manifest agrees, on the public npm registry, under the canonical organization claim. Anything short of that has no public identity (`scanPublicPackageName`) and the feed labels it `manifest-claimed`.
+4. npm workflow-gate scans never answer the badge; PyPI and VS Code gate badges stay `unverified`; published-pair reviews never qualify alone (`badgeLookupKey`, `listBadgeCandidateScans`). `scanPackageIdentity` fails closed, so adding a badge-capable scan source is a security decision.
+5. No enumeration oracle: a badge carries no package name, org identity, or share token, and unlisted-but-scanned, never-scanned, and switched-off packages return byte-identical bodies. A throttled badge says `unavailable`, never `not reviewed`.
+6. A default-on badge carries a verdict only, never an undecided or rejected review, report link, findings, or feed entry.
+7. Deliberate disclosure, only for a package that already answers: a newer release on the line with no listed review, or the same organization's monitor evidence short of an approved match (discrepancy, or a published digest differing from the reviewed one), shows `<version> not reviewed` instead of vouching for older bytes. `unknown` evidence and other organizations' watches never count; the newer version string is npm's `registry_version`, never the tarball manifest.
+8. Badge and feed are colo-cached for 300 s; revoke/unlist purges only the serving colo (best effort), so other colos and badge proxies serve the old body until TTL. Treat them as eventually consistent; the report route is the authority.
+
+## Egress
+
+| Path | Hosts | Credential | Redirects | Owner / detail |
+| --- | --- | --- | --- | --- |
+| npm staged tarball/metadata/baseline | Organization's npm registry, allowlisted staged/metadata/tarball endpoints | Org npm token, attached only by `NpmStageGateway` | Runtime default | `server/lib/sandbox.ts` |
+| PyPI artifacts | `https://files.pythonhosted.org` only | None | — | [PyPI workflow gate](./pypi-workflow-gate.md) |
+| GitHub artifacts | Scoped to the workflow-gate installation and run under review | Installation token, attached only to `api.github.com` (`server/lib/github-app/artifacts.ts`) | 302 to a signed artifact-storage URL with the token dropped; other hosts blocked (`evaluateGithubArtifactEgress`) | [workflow gates](./workflow-gates.md) |
+| Public diff npm / pkg.pr.new | Public npm registry; `https://pkg.pr.new` | None | — | [public diff](./public-diff.md) |
+| atpm identity, records, blobs | Hosts named by the publisher's handle, DID, and PDS | None | Manual; ≤3 hops, each re-checked; pinned blob same-origin only | [atpm](./atpm.md) |
+| Publication monitor | Fixed public npm origin (loopback fake registry only with the local override) | None; never reads a connection token | `redirect: "manual"`; a 3xx is unavailable evidence | [publication monitor](./publication-monitor.md) |
+| Workers AI reviewer and Clef | `drydock-gateway` AI Gateway inside the Cloudflare account | Binding | — | `server/lib/ai-review/gateway.ts` |
+
+1. Direct Internet egress from the sandbox is intercepted; registry and artifact fetches go through brokers.
+2. The atpm path is bounded, not trusted: every URL is rebuilt from validated parts (a record's `meta.dist.tarball` is ignored), checked against one public-host policy, and the Worker sets `global_fetch_strictly_public`.
+3. atpm bytes and identity are verified, not asserted: the blob's SHA-256 must match its CID, a staged record's CID is recomputed locally, and Sigstore bundles verify against a pinned root through `server/lib/platform/x509.ts`, where any malformed bundle becomes a displayable "does not verify" verdict, never an exception or page failure. A displayed handle is one the resolution proved, never one the repository asserted; `did:web` stays tied to domain control and is disclosed. Computed atpm pairs and share cards expire after five minutes.
+4. The publication monitor fetches a tarball only for a release the organization has a Drydock record of or started a post-release review of, and only after the published-tarball origin policy passes. Responses stream into bounded state; what cannot be verified within bounds is reported as a coverage gap, never settled silently.
 
 ## Credential posture
 
-Organizations store their own encrypted npm connection. Operators should recommend read-only, granular, minimally scoped, expiring tokens without publish/write/org-management permission unless npm proves a staged-review endpoint requires more.
+1. Organizations store their own encrypted npm connection. Recommend read-only, granular, minimally scoped, expiring tokens with no publish/write/org-management permission.
+2. The npm granular form is `Packages and scopes: Read-only` over the staged packages or their scope plus `Organizations: No access`; an org-scoped package such as `@nanostores/i18n` is reached by selecting the `@nanostores` scope. The npm connection card in Organization settings → npm access states this verbatim; keep them in sync.
+3. The npm version-status lookup ([registry version status](./registry-version-status.md)) documents a publish-access requirement and returns authorization failures as `404`. It is advisory and fails closed to "no status"; do not broaden the requested scope to enable it.
+4. Registry URLs cannot embed usernames or passwords, so scan metadata, pasteable commands, and notification email never become a second secret channel.
+5. Deployed instances configure `NPM_CONNECTIONS_ENCRYPTION_KEY`. Tokens are encrypted at rest, never returned by APIs (label/fingerprint/last-used only), validated before use and re-checked immediately before a queued worker decrypts them.
+6. Add/validate/use/rotate/remove produce audit events. Credentials are redacted from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
+7. Custom npm registries are supported; token use still flows through `NpmStageGateway` and production abuse controls.
 
-Registry URLs cannot contain embedded usernames or passwords. Registry authentication belongs in the separately encrypted npm token; keeping credentials out of URLs prevents captured scan metadata, pasteable approval commands, and notification email from becoming a second secret channel.
+## Artifact evidence
 
-In npm's granular-token form that is `Packages and scopes: Read-only` over the staged packages (or their scope) and `Organizations: No access` — an org-scoped package such as `@nanostores/i18n` is reached by selecting the `@nanostores` scope, not by granting the Organizations permission, which covers member and settings management Drydock never reads. The npm connection card in `Organization settings → npm access` states this permission set verbatim; keep the two in sync.
+1. Raw tarballs are not retained by default. Persisted evidence: package identity/version; file path/size/hash/status/flags; bounded redacted text samples, package.json summaries, and diffs; deterministic and AI findings; risk summaries; safety posture; audit events.
+2. Canonical report JSON and redacted file/diff artifacts live in R2; D1 holds compact metadata only, with no D1 copy or fallback ([artifact storage](./artifact-storage.md)).
+3. Never store raw staged/baseline tarballs, unredacted full source, binary payloads, or rendered assets unless an explicit, short-TTL, organization-scoped setting is added and documented.
+4. Parser bugs and malformed archives fail closed (the scan errors, never partial evidence). Size is the one deliberate exception, and coverage degrades to hash-only, never to unseen; path-based skipping of vendored/test/doc trees is never used because payloads hide there (xz's backdoor lived in build scripts and test fixtures). Caps and parser rules: [sandbox parser](./sandbox-parser.md).
+5. The root npm manifest is always retained or the scan fails closed; other manifests draw on bounded extra headroom.
 
-The npm version-status endpoint (`docs/registry-version-status.md`) documents a publish-access requirement and returns authorization failures as `404`. That does not widen this stance: the lookup is advisory, fails closed to "no status", and a read-only token that cannot ask simply gets nothing. Do not broaden the requested scope to enable it.
+| Size condition | Result |
+| --- | --- |
+| Body over the per-file inspection limit | `content-skipped` medium finding: path, declared size, streamed sha256, native-format flag sniffed from the first 64 bytes; no text |
+| Retention budget spent or `SANDBOX_MAX_FILES` tier filled | Hash-only bodies; one aggregate `retention-tier` finding per cause: info when every hash-only body is byte-identical to the baseline, medium when any was added or modified |
+| Hash-only body that would carry no sample anyway | No escalation for a sniffed native binary (`file.native-artifact` reports it) or a never-sampled source map / minified bundle, unless a manifest entrypoint names it or shipped code refers to it by file name |
+| Baseline stored hash-only, release inspected | Not a gap: the reviewed side's record decides |
+| More than `SANDBOX_MAX_ENTRIES` entries | Parse fails |
+| Oversized baseline (previous-version) archive | Degrades to a no-baseline scan; the staged review does not fail |
+| PyPI artifact over a cap on the anonymous public diff | Dropped from both sides of the pair, never one, and disclosed as a notice; transient download failures stay fatal |
 
-Implementation requirements:
+The streamed hash lets the diff prove a skipped body is byte-identical to the baseline; changed-but-uninspected bytes must be verified out of band. An extensionless Linux/macOS binary raises the same `file.native-artifact` finding as a Windows `.exe`.
 
-- configure `NPM_CONNECTIONS_ENCRYPTION_KEY` for deployed instances;
-- encrypt token material at rest and never return it from APIs;
-- show only label/fingerprint/last-used metadata after storage;
-- validate registry auth and staged access before use;
-- re-check validation immediately before queued workers decrypt/use a token;
-- record add/validate/use/rotate/remove audit events;
-- redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
+**npm install hooks.** Consumer install lifecycle hooks for npm tarballs are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time and are not consumer-install evidence unless other evidence shows they changed the shipped artifact.
 
-Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
+### Byte binding
 
-## Artifact handling and retention
+The sandbox digests each archive's raw wire bytes with SHA-1 (npm's `shasum`); the npm staged path compares it with the digest npm recorded for the stage. This proves transport and parse integrity against the registry's own record; it is not publisher authentication, and SHA-1 is used only because npm publishes it.
 
-Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
+| Condition | Verdict | Effect |
+| --- | --- | --- |
+| Digests equal | `verified` | — |
+| Digests differ and a second stage read confirms | `mismatch` | Critical `stage.tarball-digest-mismatch`; the confirming record becomes canonical for manifest merge, baseline selection, persistence |
+| Digest missing on either side | `unverified` | No finding (absence of evidence) |
+| Confirmation read unavailable | `unverified` | No finding |
+| Stage-detail request failed | `unverified` | Persisted explicitly; the section is never hidden |
 
-- package identity/version, file path/size/hash/status/flags;
-- bounded redacted text samples, package.json summaries, and diffs;
-- deterministic findings and optional AI findings;
-- release/artifact/context risk summaries;
-- safety posture and audit events;
-- canonical report JSON plus redacted file/diff artifacts in R2, with D1 holding compact metadata and historical fallback samples.
+Verification fails to `unverified`, never to `mismatch`. The verdict and both digests appear in the report's staged-publish block, the workbench, and the downloadable report.
 
-Avoid storing raw staged/baseline tarballs, unredacted full source, binary payload contents, or rendered package assets unless a future explicit short-TTL org setting is added.
+## AI review posture
 
-Session records carry an IP address and user agent, so they are not kept past their usefulness: the scheduled tick deletes Better Auth `session` and `verification` rows once they expired more than a day ago (`pruneExpiredAuthRows`, see [`audit-log.md`](./audit-log.md)). Better Auth's Drizzle adapter does not do this itself.
+1. Package text is hostile instruction. Prompts frame it as evidence; output is schema-validated findings; deterministic findings and risk stay independent.
+2. AI input is the minimum changed-file evidence, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe output is ignored or `unavailable`, never a clean review.
+3. AI risk is bounded by verdict and attributed by file; only findings on the release delta reach `releaseRisk`. Scoring is owned by [AI review](./ai-review-eval.md#submission-and-scoring).
+4. `file.review-manipulation` (verdict coercion; never discounted by a prior approval) and `file.prompt-injection` (instructions aimed at any LLM reading package bytes) are deterministic rules, so the killswitch and a swayed model cannot suppress them. The reviewer does not restate an injection a rule already reports for the same file and attempt.
+5. AI Gateway logs keep metadata only (model, status, token counts, duration, `cf-aig-metadata` scan/organization/stage ids). Every Workers AI call sends `cf-aig-collect-log-payload: false` from `AI_GATEWAY_POLICY_HEADERS` (`server/lib/ai-review/gateway.ts`), pinned by `test/ai-review.test.mjs` and `test/ai-review-clef.test.mjs`, because a retained prompt could expose an embargoed fix to anyone with account access.
+6. Agent Traces are fully sampled with payloads off at the wrapper (`storeMessages`/`storeTools`) and the AI SDK call (`recordInputs`/`recordOutputs`). Trace metadata is an allowlist (operation/timing, model/usage, tool names, reviewer version, ecosystem, random invocation id); the reviewer exposes only `run` through a narrow binding facade so the Gateway log id cannot reach a trace. Traces never carry scan, stage, organization, package, file, prompt, evidence, or tool-result content.
+7. A maintainer decision is feedback, never an automatic truth label.
 
-The cleanup uses expiry indexes on both tables (`session_expires_idx` and
-`verification_expires_idx`, migration `0037`), so an idle tick searches expired
-rows rather than scanning every live session and verification record.
+### Clef injection screen
 
-## Sandbox and broker posture
+| Property | Contract |
+| --- | --- |
+| Flag | `clef-injection-screen` Flagship flag, default off; runs only after a completed review, so `ai-review` also disables it (`server/lib/scan/pipeline.ts`) |
+| Input | Changed text from redacted samples, windows ≤2,000 chars, two cue-richest windows per file, then filled across files before path order; at most `MAX_SPANS` (6) and `MAX_TOTAL_SPAN_BYTES` (12 KiB, UTF-8) per scan (`server/lib/ai-review/injection-screen.ts`). Changed lines come from a linear multiset match, not an LCS diff |
+| Scope | Only files where both phrase rules and reviewer found nothing; adds evidence, never restates it |
+| Payload | Ecosystem and package-relative paths; no package name, version, organization, or credential (Gateway metadata carries scan/org ids) |
+| Output | Hazard probabilities and severity per span; a row needs a probability and severity to agree; any malformed or missing answer discards the batch |
+| Finding | AI finding `category: "prompt-injection"`, `source: "injection-screen"`; excluded from deterministic export and release memory; describes the span, never quotes it |
+| Risk | Forces `requiresManualReview` (reviewer's own kept as `reviewerRequiresManualReview`) and adds only the medium floor; never lowers or contradicts a rule finding |
+| Limit | Samples; never claims a file clean. A payload with no review/AI cue words behind enough cue-bearing text can go unsampled; the phrase rules read every byte and remain the floor |
 
-The sandbox parses untrusted bytes under archive/file/expanded-size caps and returns evidence only. Direct Internet egress is intercepted. Registry/artifact fetches go through constrained brokers:
+## Authorization and accounts
 
-- `NpmStageGateway` for npm staged tarballs, metadata, and previous-version tarballs;
-- PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
-- GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
-
-The sandbox must remain small and boring. Genuine parser bugs and malformed archives fail closed — the scan errors rather than returning partial evidence. Size is the one deliberate exception: tar and zip archives are parsed as streams (VSIX zips are the sub-exception — their yazl-packed entries carry sizes in data descriptors, so they buffer under the wire cap and are read via the central directory exactly as VS Code does), and a regular-file body larger than the per-file inspection limit, or one that no longer fits the archive's cumulative retention budget, is recorded as a `content-skipped` finding (path, declared size, a sha256 hashed over the bytes as they are discarded, and a native-format flag magic-byte sniffed from the first 64 discarded bytes — no text) so oversized prepackaged binaries can be reviewed without buffering them, and an extensionless Linux/macOS binary raises the same `file.native-artifact` finding as a Windows `.exe`. File counts degrade the same way: bodies past the `SANDBOX_MAX_FILES` full-inspection tier are recorded hash-only (manifests keep their bounded retention headroom regardless of position), and only the `SANDBOX_MAX_ENTRIES` hard walk cap fails the parse. The streamed hash lets the diff prove whether a skipped body is byte-identical to the published baseline; its contents are still never inspected, so a body over the per-file limit is surfaced as a medium finding, while bulk demotions (budget spent or tier filled) are surfaced as one aggregate `retention-tier` finding per cause — info when every hash-only body is byte-identical to the baseline, medium when any hash-only file was added or modified. The reviewed side's record decides (a file the baseline stored hash-only but this release inspected is not a gap), and a hash-only body that would carry no text sample even if retained does not escalate the notice: a sniffed native binary (`file.native-artifact` reports the change) or a source map / minified bundle the parser never samples, unless a manifest entrypoint names it or shipped code refers to it by file name, because then it is the code that runs. Changed-but-uninspected bytes must be verified out of band. Path-based filtering (skipping vendored/test/doc trees) is deliberately NOT used to stay under the caps: those are exactly the trees real supply-chain payloads hide in (xz's backdoor lived in build scripts and test fixtures), so coverage degrades to hash-only, never to unseen. The root npm manifest is always retained (or the scan fails closed); other manifests draw on bounded extra retention headroom. An oversized baseline (previous-version) archive degrades to a no-baseline scan rather than failing the staged review. On the anonymous public diff, a PyPI artifact that exceeds a sandbox cap is dropped from both sides of the pair (never one) and disclosed as a response notice; transient download failures stay fatal.
-
-**Reviews are bound to the bytes they reviewed.** A file diff's strongest claim — "the publisher removed this file" — is only true if the archive Drydock parsed is the archive the registry holds; a truncated or substituted download produces the same report. The sandbox therefore digests each archive's raw wire bytes (SHA-1, the digest npm publishes as `shasum`) and returns it alongside the parsed evidence, and the npm staged-publish path compares it against the digest npm recorded for the stage. A mismatch raises the critical `stage.tarball-digest-mismatch` finding, which says the whole report describes a different artifact. The verdict (`verified` / `mismatch` / `unverified`, with both digests) is persisted in the report's staged-publish block and exposed in both the scan workbench and downloadable report so a reviewer reading an old report can tell a proven artifact from an unproven one; a failed stage-detail request persists an explicit `unverified` verdict rather than hiding the section. Scope: this proves transport and parse integrity against the registry's own record. It is not publisher authentication — a registry serving tampered bytes reports the tampered digest with them — and SHA-1 is used because it is the digest npm publishes, not for collision resistance. Verification fails to `unverified`, never to `mismatch`: a missing digest on either side is absence of evidence, so it raises no finding. A mismatch is confirmed against a second read of the stage record before it becomes a finding, because the bytes and the digest they are checked against arrive from two independent requests — a stage rewritten between them would otherwise be reported as tampering. If that confirmation read is unavailable, the verdict remains `unverified`; if it succeeds, its stage metadata becomes canonical for manifest merging, baseline selection, and persistence so a verified digest is never paired with a stale record.
-
-## Workflow-gate posture
-
-### Publisher setup proposals
-
-The GitHub publisher setup endpoints require a verified session and permission to
-manage the active organization's integrations. Repository inspection and status
-checks remain scoped to an installation owned by that organization. Workflow text
-is untrusted evidence for drafting; Drydock never executes it. AI drafting uses
-the existing organization killswitch, and workflow payloads must not be retained
-in AI Gateway logs.
-
-The user explicitly authorizes preparation of a draft pull request before the
-background job starts. The persisted request must include `createPullRequest: true`;
-older clients and queued jobs without that authorization cannot write to GitHub.
-After validation and independent review, the job opens or recovers a draft PR for
-maintainer review in GitHub. It rechecks the pinned source and current authority
-before each mutation. The write token is repository-scoped and requires already
-granted Contents, Pull requests, and Workflows permissions. Preparation cannot grant
-permissions, enable environment protection, approve a release, or publish a
-package. Setup status reports observed configuration and a real scoped gate
-review; it does not certify arbitrary workflow code or publication paths.
-
-### Durable publisher setup jobs
-
-Publisher preparation uses native-tool drafting and independent read-only judging agents. Repository reads are scoped to pinned Git objects; regular-file modes, paths and blob identities are checked. Proposed files, source and tool conversations are hostile evidence, never instructions or executable input. Tools expose no shell, package execution, installation, external URL fetching, or GitHub writes. Generic file edits live in a private revision-checked workspace; a complete immutable digest binds submission, full-diff judge inspection and the resulting PR.
-
-Each model turn saves complete private state in organization-scoped R2 before its Workflow checkpoint. Checkpoints return only opaque IDs/completion metadata. D1 stores authorization and safe job metadata, and logs exclude prompts, tool payloads and raw errors. Budgets bound turns, time, tokens, repository reads, files and bytes. Explicit blockers, incomplete evidence, failed static checks or negative review stop automatic PR creation.
-
-The persisted start authorization, creator/organization membership, installation, killswitch, source revision, proposal digest and independent verdict are rechecked before GitHub mutations. Multiple files are committed atomically; recovery checks the entire exact change set and never overwrites collaborator edits. v3 signatures invalidate older proposal formats. Jobs never merge PRs or configure protection. Account/organization deletion and expiry remove private data, and late writes cannot restore it. Static checks and AI review do not certify arbitrary script semantics; maintainer review is required. See `publisher-setup.md` for limits and API contracts.
-
-### Release decisions
-
-Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone.
-
-## AI prompt-injection posture
-
-Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
-
-The reviewer's risk is attributed through the files its findings cite. Only a finding on this release's delta reaches `releaseRisk`, the score the workflow gate reads; a review whose findings all cite unchanged files raises the artifact headline but cannot reject a gate that nothing in the release changed. That keeps a longstanding string in package context — an old injection attempt included — from re-rejecting every subsequent release through the advisory path when the deterministic layer has already scoped it as context.
-
-The reviewer's contribution is also bounded by its own verdict: `nothing_unusual` adds nothing, `review_recommended` at most medium, `suspicious` at most high, and only `blocked` reaches critical, on the artifact, release, and context scores alike. Release attribution is file-level — a line an AI finding records never moves it out of the release, so a decoy call on unchanged code cannot demote a newly added one. None of this lowers a deterministic score: the bound applies to the AI's upgrade before the max with the deterministic side. The reviewer's `deterministicAssessments` (confirmed/disputed notes on individual rule findings) are display-only, shown only when they name a rule finding the scan reported, and never move a score.
-
-Injection attempts are also detection targets, not just something to resist: the deterministic rules `file.review-manipulation` (verdict coercion aimed at the automated review — standing danger, never discounted by a prior approval) and `file.prompt-injection` (instruction content aimed at any LLM/agent that reads package bytes, such as a consumer's coding assistant) fire independently of the AI reviewer, so the killswitch and a swayed model cannot suppress them. The reviewer preserves or raises the high/critical assessment but does not repeat an injection already represented by a deterministic finding for the same file and attempt; AI finding rows are reserved for materially distinct injection evidence the phrase-based rules missed.
-
-### Clef prompt-injection screen
-
-The phrase rules match phrases and are evadable by paraphrase. The
-`clef-injection-screen` lane adds a second, advisory judgment over the same
-threat: bounded spans of the release's _changed_ text go to Workers AI's Clef
-classifier, which returns two hazard probabilities and a severity level per span
-rather than free text. A span clears the thresholds only when a hazard
-probability and the severity level agree, and the resulting row is an ordinary
-AI finding (`category: "prompt-injection"`) — advisory everywhere the
-deterministic lane is authoritative, excluded from the deterministic report
-export and release memory, and unable to lower or contradict a rule finding. It
-looks only at files where both the phrase rules and the reviewer found nothing,
-so it can add evidence but never restate it. Its rows carry
-`source: "injection-screen"` and it forces `requiresManualReview` (keeping the
-reviewer's own flag as `reviewerRequiresManualReview`) without touching the
-reviewer's risk or assessment. Risk scores the reviewer as if the screen never
-ran and adds only the medium manual-review floor: a reviewer an injection
-talked into `nothing_unusual` cannot silence the screen, and the screen cannot
-lift a release past that floor or carry the reviewer's package-context concern
-into the release score.
-
-The screen samples, so it never claims a file is clean. It splits each run of
-added lines (the whole file when new) into windows of at most 2,000 characters
-and keeps, per file, the two windows with the most review- and AI-directed
-words, then fills six spans across files the same way before falling back to
-path order. Leading filler cannot push a payload out of a window, and filler
-files cannot outrank a span that addresses a reviewer; a payload that avoids
-every such word and sits behind enough other cue-bearing text can still go
-unsampled, and the phrase rules, which read every byte, remain the floor.
-Changed lines are found with a linear multiset match rather than an LCS diff,
-so a rewritten bundle costs milliseconds.
-
-Clef runs on the same Workers AI binding and `drydock-gateway` as the reviewer,
-so package text stays inside the Cloudflare account, and it sends the same
-per-request Gateway policy: metadata is logged, request and response bodies are
-not. What is sent is bounded by
-construction — at most six spans and 12 KiB (UTF-8) per scan, taken only from changed
-text in redacted samples, carrying ecosystem and package-relative paths but no
-package name, version, organization, or credential (Gateway metadata carries
-scan and organization ids for log joining). Answers are re-validated field by
-field and a batch with any malformed or missing answer is discarded whole,
-because a lane that silently lost one question would read a missing hazard
-probability as a confident "no". The lane is opt-in per organization through its
-Flagship flag (default off) and runs only after a completed review, so the
-`ai-review` killswitch also turns it off.
-
-Screen findings describe their span and never quote it. A finding row is
-rendered in the dashboard and travels into exports, so echoing attacker-authored
-text verbatim would carry the injection to its next reader.
-
-Cloudflare Agent Traces are fully sampled for reviewer debugging, with message
-and tool payload persistence explicitly disabled at both the tracing wrapper
-(`storeMessages`/`storeTools`) and the AI SDK call
-(`recordInputs`/`recordOutputs`). Trace metadata is restricted to an explicit
-allowlist of runtime-context keys — operation/timing, model/usage, tool names,
-reviewer version, ecosystem, and a fresh invocation-scoped random id. The
-reviewer exposes only `run` through a narrow Workers AI binding facade so the
-tracing wrapper cannot copy the AI Gateway log id into the trace. It must not
-include scan, stage, organization, package, file, prompt, evidence, or
-tool-result content. Aggregate AI execution and decision events follow the same
-no-package-content rule; a maintainer decision is feedback, never an automatic
-truth label. See
-[`ai-review-eval.md`](./ai-review-eval.md).
-
-AI Gateway logs keep metadata only: model, status, token counts, duration, and
-the `cf-aig-metadata` ids (scan, organization, stage) used to join a log to a
-scan. Request and response bodies are never collected. A prompt carries changed
-files of a release that may not be public yet, including an embargoed security
-fix, so a retained body would make that fix readable to anyone with Cloudflare
-account access for the whole log retention window. The rule is enforced per
-request rather than by the gateway's dashboard setting: every Workers AI call
-sends `cf-aig-collect-log-payload: false` from `AI_GATEWAY_POLICY_HEADERS`
-(`server/lib/ai-review/gateway.ts`), which `test/ai-review.test.mjs` and
-`test/ai-review-clef.test.mjs` pin. Reviewer debugging relies on the recorded
-eval fixtures, the live eval harness, and payload-free Agent Traces instead
-(see [`ai-review-eval.md`](./ai-review-eval.md)).
-
-Workers Issues is a second store inside the account: each failure keeps
-invocation and request details, and request URLs can carry share, invite, and
-verification tokens.
-An Issues automation sends that data outside the Cloudflare account, so its
-destination is a trust decision. See
-[`release-safety.md`](./release-safety.md) for the destination rules.
-
-For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time hooks and should not be treated as consumer-install evidence unless other evidence shows they changed the shipped artifact.
-
-## Authorization posture
-
-Every non-auth `/api/*` endpoint requires a Better Auth session and organization resolution. Reads and writes for scans, reports, npm connections, Slack installs, release targets, workflow gates, and settings must check organization ownership. UI state is not an authority; server routes make all access-control decisions.
-
-One read resolves ownership by membership instead of the active organization: `GET /api/v1/scans/:id/organization` answers which of the caller's own organizations holds a scan, so a review link without `?org=` (the workflow gate's GitHub comment has no room for one) opens in the right organization. It is a single join of the scan to the caller's membership rows, read from D1 on every request, and it answers a scan in an organization the caller is not a member of with the same 404 and body as a scan id that does not exist, so it confirms nothing about other organizations' scans; a member learns only what opening the scan under each of their own organizations would already tell them. Scan ids are random UUIDs. A gate comment can publish one in a public repository's Actions log, and that id still opens nothing for a non-member.
-
-One deliberate exception: the `/api/public/v1/package-diff` endpoints are anonymous by design. They serve only public release data — the public npm registry for `ecosystem=npm` (plus public `pkg.pr.new` preview tarballs), for `ecosystem=pypi` the `pypi.org` JSON API with artifact bytes only from `files.pythonhosted.org`, and for `ecosystem=atpm` the publisher's own AT Protocol identity and PDS (see [`atpm-public-diff.md`](./atpm-public-diff.md)) — never organization resources. They attach no credentials to any fetch, return 404 when `NPM_REGISTRY` is configured to a custom origin (the PyPI mode included), persist no review data to D1, and never run AI review. With the Rate Limiting bindings configured they reach D1 on no request path at all — locked by a test that hands the routes a D1 binding which throws on use. Their abuse controls are per-IP rate limits enforced before any validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of computed results, and the sandbox's archive caps. Any new public endpoint must document the same properties here or require a session. Which mounts are anonymous is not a per-route decision: Hono runs middleware in registration order, so anything mounted above the `/api/*` session guard in `server/index.ts` is served without a session, and `test/api-auth-boundary-invariants.test.mjs` fails when that set changes.
+1. Client organization ids are selectors. A selector for an organization the caller is not in falls back to their personal organization, except with `x-organization-strict: 1`, which answers `403 { code: "not_organization_member" }`.
+2. `GET /api/v1/scans/:id/organization` resolves a scan through the caller's own memberships (one D1 join per request), so gate-comment links without `?org=` open correctly. A scan in another organization returns the same `404` and body as a nonexistent id; scan ids are random UUIDs and open nothing for non-members.
+3. Organization membership and role, resource ownership, two-factor enrollment (`userHasTwoFactor`), the organization two-factor policy, and the encrypted TOTP secret read D1 on every request; nothing that authorizes a release decision is cached.
+4. Roles and route guards: [organization members](./organization-members.md). Step-up: [two-factor auth](./two-factor-auth.md).
 
 ### Email verification
 
-A verified email address is not a condition of signing in. Blocking sign-in put a mail round-trip in front of a product an account cannot evaluate without signing in, so an unverified account can sign in, open the dashboard, and run published-pair reviews — which are credential-free and touch nothing but public registry data.
+Sign-in never requires a verified address; unverified accounts can use the dashboard and run published-pair reviews. `requireVerifiedEmail` gates the actions that spend trust in the address or reach a third party, answering `403 { code: "email_verification_required" }`:
 
-Verification is instead required per action, by `requireVerifiedEmail` (`server/lib/auth/email-verification.ts`), on the requests that either spend trust the address is the only proof of or reach a third party: connecting and validating an npm token, recording a scan decision (one or a batch), creating a public share link, inviting an organization member, and starting a GitHub App install. Those answer `403 { code: "email_verification_required" }`. Accepting an invitation already required it, and still does — checked against the user row rather than the session, since an invitee's account may predate the session in hand.
+| Action | Route |
+| --- | --- |
+| Connect / validate npm token | `POST /api/v1/npm-connection`, `POST /api/v1/npm-connection/validate` |
+| Personal scanning consent | `POST /api/v1/npm-connection/personal-confirmation` |
+| Record a scan decision | `POST /api/v1/scans/:id/decision`, `POST /api/v1/scans/batch-approval` |
+| Create a public share link | `POST /api/v1/scans/:id/share` |
+| Invite a member | `POST /api/v1/organizations/invitations` |
+| GitHub App install | `POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback` |
+| Decide a workflow gate | `POST /api/v1/github-app/workflow-gates/:gateId/decision` |
+| Publisher setup | Every `/api/v1/github-app/setup/*` route |
+| Accept an invitation | `POST /api/v1/organizations/invitations/accept`; checks the user row, not the session (`403`) |
 
-The guard reads Better Auth's own `emailVerified` session flag and is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL` transport, or a local `BETTER_AUTH_URL` whose link the recipient could not follow); on such a deployment no account could ever clear the flag, so gating on it would lock the product rather than protect it. An absent flag is treated as verified, so a Better Auth payload change can never silently remove access an account already had. `GET /api/auth/config` reports whether verification is enforceable, so the dashboard banner is shown only where clicking it accomplishes something.
-
-A verification link proves the inbox, never the account, so it never signs anyone in (`autoSignInAfterVerification: false`). Better Auth's two-factor hook guards only the `/sign-in/*` paths, so a session minted by `/verify-email` would hand anyone reading the inbox an account past both its password and its TOTP. Opening the link in a browser already signed in to that account refreshes that session's cached `emailVerified` flag (the `hooks.after` on `/verify-email`); it never creates a session.
+1. The guard reads Better Auth's `emailVerified` session flag; an absent flag counts as verified, so a payload change never removes access.
+2. It is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL`, or a local `BETTER_AUTH_URL`), because no account could ever clear it. `GET /api/auth/config` reports this so the banner shows only where it can work.
+3. A verification link never signs anyone in (`autoSignInAfterVerification: false`): Better Auth's two-factor hook guards only `/sign-in/*`, so a `/verify-email` session would skip password and TOTP. In a browser already signed in to that account, the `hooks.after` on `/verify-email` refreshes the cached flag.
 
 ### Password reset
 
-A password is reset, or added to an account that signed up with GitHub, only through an emailed link: `POST /api/auth/request-password-reset` mails it and `POST /api/auth/reset-password` redeems it, both Better Auth endpoints wired in `server/lib/auth/index.ts`. Redeeming creates the `credential` account row when the account has none, which is how a GitHub-only account becomes able to enrol in two-factor (see [`two-factor-auth.md`](./two-factor-auth.md#management)). Better Auth's `setPassword`, which would add a password from a session alone, is server-only and not exposed, so a stolen session cookie cannot mint a password; the inbox round-trip is the proof of ownership.
+`POST /api/auth/request-password-reset` mails a link; `POST /api/auth/reset-password` redeems it (`server/lib/auth/index.ts`). Redeeming creates the `credential` row when absent, which is how a GitHub-only account can enrol in two-factor ([management](./two-factor-auth.md#management)). Better Auth's `setPassword` is server-only and not exposed, so a stolen cookie cannot mint a password.
 
-- **A first password needs the account's own session and a verified address as well.** For an account with no `credential` row, the link is mailed only when the request is signed in as that same account (Account settings → "Set a password") and the account's `emailVerified` is true. An anonymous request, one signed in as someone else, or one for an unverified address gets the identical response and no mail (`auth.first_password_link_refused`). Without the session check, whoever can read a GitHub-only account's inbox could add a password and sign in without the second factor the GitHub sign-in carries. Without the verified check, a GitHub sign-up whose address GitHub itself reported unverified (Better Auth then stores `emailVerified = false`) would let whoever holds that inbox and obtains a session mint a password that outlives revoking that session and skips GitHub's own second factor. Adding a first password therefore takes the session, a verified address, and the inbox; the account page asks an unverified account to verify first.
-- **The owner is told.** Redeeming a link mails a "your password was set" notice with no link in it, so a reset the owner did not make is visible beyond being signed out.
-- **Redeeming verifies the address.** Using the mailed token proves the inbox as well as a verification link would, so a redeemed reset sets `emailVerified` (Better Auth's reset does not). Requesting a link changes nothing.
-
-- **Availability.** The flow is wired only when `passwordResetAvailable(env)`: verification's mail requirements plus a configured `BETTER_AUTH_URL`. Elsewhere Better Auth refuses the request before looking anything up, so the refusal is identical for every address. `GET /api/auth/config` reports `passwordReset` so the UI never offers a flow that sends nothing.
-- **No account oracle.** The request answers with the same body whether or not the address is registered, and the email is handed to the request's `waitUntil`, so the response does not wait on a delivery only a registered address triggers. Sign-up still reports a taken address, so this keeps reset from adding an oracle rather than removing one; it does not make registration secret.
-- **The link.** It is built from `BETTER_AUTH_URL`, never from the request's `Host`, so a forged header cannot send the token elsewhere. The token travels in the fragment (`/reset-password#token=…`), which browsers never send to a server or put in a `Referer`; the page moves it into memory and strips it from the address bar. Better Auth's own URL-borne forms are refused before they reach it: `GET /api/auth/reset-password/:token` (which would redirect with the token in a query string) answers 404, and a redeem `POST` with `?token=` answers 400, because Cloudflare's request logs and traces record full URLs. `redactCapabilityPath` still rewrites the callback path before any Drydock log line.
-- **Where the link returns to.** The forgot-password page sends its sanitized `returnTo` as Better Auth's `redirectTo` (`/reset-password?returnTo=…`), which Better Auth accepts only same-origin. The mail hook reads that value back and sanitizes it again with `passwordResetPageReturnTo` (`src/lib/auth-return.ts`): only this origin's `/reset-password` page counts, its `returnTo` must be a `/dashboard` or `/diff` path, and because the requester need not own the inbox while the mail comes from Drydock, the destination may carry only an allowlist of view parameters (`org`, `tab`, `filter`, `file`, `changedOnly`, `version`, `path`, `ecosystem`) and a section-id fragment. Anything else, such as an invitation `token`, a GitHub install callback's `code` and `state`, or the Slack callback's message, and anything too long for one unwrapped mail line (768 encoded characters), is dropped rather than mailed. A refused destination yields the bare link and the same response. The reset page then hands `returnTo` to "Go to sign in".
-- **The token.** 24 random alphanumeric characters (about 143 bits), single use, valid for one hour. D1 stores only its SHA-256 (`verification.storeIdentifier` overrides the `reset-password:` prefix to `hashed`), so a leaked row or backup cannot redeem it, and consumption stays on D1's transactional path.
-- **After a reset.** `revokeSessionsOnPasswordReset` deletes every session of the account from D1 and KV. A cached session cookie still lives out the bounded revocation lag in [Session posture](#session-posture); the reset page signs its own browser out so that copy is cleared immediately. A reset does not remove an enrolled second factor: signing in with the new password still meets the TOTP challenge.
-- **Abuse.** Requesting is limited per IP by the `password-reset-request` bucket (5 per hour) and redeeming by `password-reset-redeem` (10 per hour), separately so a user who retried the request can still use the link. Each address also receives at most 3 reset mails per hour, whichever IPs ask, so a distributed sender cannot flood one inbox. That budget is spent in the mail hook's background work, which never changes Better Auth's own response, so a request over it gets the same 200 and body as an accepted one or an unknown address, and no mail (`auth.password_reset_address_limited`). Its `rate_limits` key holds the SHA-256 of the trimmed, lowercased stored address, never the address. The cost is that a sender can spend an address's budget and hold back its owner's reset mail until the hour rolls over. Better Auth's own limiter runs only when `NODE_ENV` is `production` and counts per isolate, so it is not relied on. IPv6 addresses are not grouped by prefix for the per-IP buckets.
+| Property | Contract |
+| --- | --- |
+| First password | Mailed only when signed in as that same account and `emailVerified` is true; otherwise identical response, no mail, `auth.first_password_link_refused` |
+| Availability | Only when `passwordResetAvailable(env)` (verification mail requirements plus `BETTER_AUTH_URL`); `GET /api/auth/config` reports `passwordReset` |
+| No account oracle | Same body for registered and unknown addresses; mail sent from `waitUntil`. Sign-up still reports a taken address |
+| Link origin | Built from `BETTER_AUTH_URL`, never the request `Host`; token in the fragment (`/reset-password#token=…`), stripped from the address bar |
+| URL-borne tokens | `GET /api/auth/reset-password/:token` → `404`; redeem `POST` with `?token=` → `400`; `redactCapabilityPath` still rewrites callback paths in logs |
+| Return target | `passwordResetPageReturnTo` (`src/lib/auth-return.ts`): only this origin's `/reset-password`, inner `returnTo` a `/dashboard` or `/diff` path, view params `org`, `tab`, `filter`, `file`, `changedOnly`, `version`, `path`, `ecosystem` plus a section fragment, ≤768 encoded chars; anything else yields the bare link |
+| Token | 24 alphanumeric chars (~143 bits), single use, one hour (`PASSWORD_RESET_TOKEN_TTL_SECONDS`); D1 stores only its SHA-256 (`verification.storeIdentifier`) |
+| After redeem | `revokeSessionsOnPasswordReset` deletes all sessions in D1 and KV; the reset page signs its browser out; sets `emailVerified`; mails a linkless "your password was set" notice; an enrolled second factor stays |
+| Per-IP limits | `password-reset-request` 5/hour, `password-reset-redeem` 10/hour |
+| Per-address limit | 3 mails/hour (`PASSWORD_RESET_MAILS_PER_ADDRESS`), spent in background so the response is unchanged; `auth.password_reset_address_limited`; key is SHA-256 of the trimmed lowercased address. A sender can hold back an owner's mail for the hour |
 
 ## Session posture
 
-Sessions are Better Auth sessions in a cookie signed with `BETTER_AUTH_SECRET`. Two caches sit in front of the session store so a burst of authenticated requests does not turn into a burst of D1 reads and refresh writes (`server/lib/auth/index.ts`):
+Sessions are Better Auth cookies signed with `BETTER_AUTH_SECRET` (`server/lib/auth/index.ts`).
 
-- **Cookie cache.** `session.cookieCache` puts a signed copy of the session and user in the `spr.session_data` cookie for `SESSION_COOKIE_CACHE_SECONDS` (5 minutes). While it is fresh, a request resolves its session with no storage read at all.
-- **KV secondary storage.** When the `AUTH_SESSIONS` KV namespace is bound, the session read/write path moves to KV. `storeSessionInDatabase` stays on, so D1 remains the durable record: a direct token miss or read failure falls back to D1, cache-write failures do not fail session creation after the D1 write, and sign-out and account deletion still delete a row. D1 fallback values stay request-local rather than being written through to KV: otherwise a fallback racing a revocation could put the stale session back after the revoker deleted both stores. Better Auth's `active-sessions-*` index is rebuilt from D1 on read, and those hydrated records likewise stay request-local while Better Auth lists them, so sessions created before KV was enabled—or temporarily absent from an eventually-consistent KV view—remain visible to list and revoke operations even during a KV read outage.
+| Layer | Contract |
+| --- | --- |
+| Cookie cache | `spr.session_data` holds a signed session copy for `SESSION_COOKIE_CACHE_SECONDS` (5 minutes); fresh cookies resolve with no storage read |
+| KV secondary storage | With `AUTH_SESSIONS` bound, session reads/writes use KV; `storeSessionInDatabase` keeps D1 durable. Token miss or read failure falls back to D1; cache-write failure does not fail creation |
+| Fallback values | D1 fallback and `active-sessions-*` hydration stay request-local, never written through, so a fallback racing a revocation cannot restore a session |
+| Key guard | `isSessionStoreKeyAllowed` refuses any `<namespace>:<identifier>` key, so verification records (reset tokens, 2FA challenges) never become KV key names |
+| Verification storage | `verification.storeInDatabase` keeps consumption transactional on D1, so a reset token or 2FA challenge cannot be redeemed twice |
+| Better Auth limiter | Pinned to `memory`; the KV adapter rejects `getAndDelete` and `increment`, so routing either into KV fails closed |
+| Expired rows | Scheduled tick deletes `session` and `verification` rows expired more than a day (`pruneExpiredAuthRows`, indexes `session_expires_idx`, `verification_expires_idx` in migration `0037`) |
 
-**Only session records reach KV, and that is enforced in code.** Better Auth has no per-model opt-out for secondary storage: once it is configured, its writer also runs for _verification_ records — email-verification links, password-reset tokens, the two-factor challenge and its attempt counter — and it names the KV key after the identifier, so `verification:reset-password:<token>` would put a live single-use credential in a KV key _name_, readable by anything with list access to the namespace. Two settings close this:
-
-- `verification.storeInDatabase` keeps D1 authoritative, so `consumeVerificationValue` stays a transaction and a reset token or 2FA challenge cannot be redeemed twice (Workers KV cannot provide atomic consumption).
-- `isSessionStoreKeyAllowed` in `server/lib/auth/index.ts` refuses to read, write, or delete any namespaced (`<namespace>:<identifier>`) key. Session keys — the raw token and `active-sessions-<userId>` — carry no colon, so the guard passes sessions and blocks verification records and any namespace a future Better Auth version adds. It is fail-safe: because D1 stays authoritative for both record kinds, a suppressed write costs a cache miss, never correctness.
-
-Better Auth's own request limiter also silently switches from in-isolate memory to secondary storage when one is configured. It is pinned back to `memory`, so enabling the session cache adds no KV round-trip to `/api/auth/*` and the limiter does not inherit KV's eventual consistency under the load it exists to shed. Drydock's per-IP limits below are the real control. Better Auth 1.7 requires atomic `getAndDelete` and `increment` methods on secondary storage; the session-only KV adapter rejects both. Verification consumption stays on D1, and rate-limit counters stay in memory, so a future configuration that routes either operation into KV fails closed.
-
-Better Auth 1.7.7 stores OAuth state with the `auth-state:` purpose prefix in D1. Pending GitHub sign-ins created before this upgrade must restart after deployment; no database schema migration is needed for Drydock's configuration.
-
-The security consequence is a bounded **revocation lag**. After a sign-out, a session revocation, or an account deletion, a request that still presents a fresh `spr.session_data` cookie can be served for up to the cookie-cache lifetime, plus KV's own eventual consistency across colos. Sign-out expires both cookies, so a cookie-following client loses access immediately; the lag matters for a replayed or stolen cookie. Keep `SESSION_COOKIE_CACHE_SECONDS` short. Better Auth normally catches a session-delete failure and still reports sign-out success, so Drydock preflights the authorizing KV-token eviction before the endpoint runs. If that eviction fails, sign-out returns an error without clearing either cookie or deleting the D1 row, leaving the caller able to retry instead of reporting that a still-replayable session was revoked. The non-authorizing active-session index is best-effort cleanup and is rebuilt from D1 when needed.
-
-Account deletion evicts every known session key from KV before its destructive Drydock cleanup begins. If that eviction fails, the request fails while the user, organizations, artifacts, memberships, and two-factor data are still intact; Better Auth's duplicate cache deletes become request-local no-ops only after the preflight succeeds.
-
-Nothing that authorizes a release decision is cached. Organization membership and role (`requireActiveOrganization*`), resource ownership, two-factor enrollment (`userHasTwoFactor`), the organization's two-factor policy, and the encrypted TOTP secret all read D1 on every request, so a member removed from an organization or a policy change takes effect immediately even while a session cookie is still cached.
-
-A cached session can outlive its user by up to the cache lifetime, so `ensurePersonalOrganization` verifies the user row still exists before lazily creating an organization for it. Without that check the first organization-scoped request from a deleted account's second device would trip the `owner_user_id` foreign key and answer 500; it now raises `UnauthorizedError`, which `app.onError` renders as 401.
+1. **Revocation lag.** After sign-out, revocation, or account deletion, a replayed fresh `spr.session_data` cookie can be served for up to the cookie-cache lifetime plus KV eventual consistency. Sign-out expires both cookies. Keep `SESSION_COOKIE_CACHE_SECONDS` short.
+2. Sign-out preflights the KV token eviction; if it fails, sign-out errors without clearing cookies or deleting the D1 row, so the caller can retry. The active-session index is best-effort and rebuilt from D1.
+3. Account deletion evicts every known KV session key before destructive cleanup; if eviction fails, nothing is deleted.
+4. `ensurePersonalOrganization` checks the user row still exists, so a cached session of a deleted account gets `401` (`UnauthorizedError`), not a `500` from the `owner_user_id` foreign key.
 
 ## Rate limiting
 
-`enforceRateLimit` (`server/lib/rate-limit.ts`, composing the domain-free limiter in `server/lib/platform/rate-limit.ts` with its D1 fallback) is the single entry point for abuse control. Its backend is Cloudflare's native Rate Limiting binding — a per-colo fixed-window counter that costs no D1 write — so anonymous `/diff` floods and credential-stuffing bursts never reach the D1 single writer.
+`enforceRateLimit` (`server/lib/rate-limit.ts`, composing `server/lib/platform/rate-limit.ts` with its D1 fallback) is the single entry point. Its backend is Cloudflare's native Rate Limiting binding (per-colo fixed window, no D1 write).
 
-The binding's `{limit, period}` pair is static per binding and `period` may only be 10 or 60 seconds. `wrangler.jsonc` therefore declares one `ratelimits` binding per per-minute limit the app enforces (`NATIVE_TIERS` in the module), and:
+| Budget | Mechanism | Examples |
+| --- | --- | --- |
+| Per-minute | One `ratelimits` binding per limit (`NATIVE_TIERS`: 10, 20, 30, 60, 120, 240); `period` may be only 10 or 60 s | Anonymous `/diff`, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks |
+| 15-minute and hourly | D1 `rate_limits` counter behind a native per-minute burst guard at or above the long limit | Sign-in (10/15 min), sign-up (5/hour), two-factor (10/15 min), password reset, org creation, invitations, npm or Slack connect |
 
-- **Per-minute budgets** (the anonymous `/diff` endpoints, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks) are enforced entirely by the binding.
-- **Longer budgets** — the 15-minute and hourly limits on human-initiated actions such as sign-in, sign-up, password reset, organization creation, invitations, and connecting npm or Slack — cannot be expressed by the binding, so they keep the D1 `rate_limits` counter. Each one first passes a native per-minute burst guard whose limit is at or above the long-window limit, which can only reject traffic the long window would reject anyway while capping how many D1 writes one key can force per minute per colo.
+1. Counters are per colo, not global: abuse controls, not quotas. Authorization is what protects data.
+2. `Retry-After` is derived from the wall-clock window, because the binding reports only allowed/blocked.
+3. Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`).
+4. Without `ratelimits` bindings every limit still holds via D1 and logs `rate_limit.tier_missing`. A new per-minute limit needs a matching tier and binding or it silently degrades to D1.
+5. GitHub does not retry a rejected webhook, so webhook budgets are runaway-loop backstops, gate and installation events have separate buckets, and a rejection logs `github_webhook.rate_limited` at error.
+6. Better Auth's own limiter runs only when `NODE_ENV` is `production`, per isolate, and is not relied on. IPv6 addresses are not grouped by prefix.
 
-Semantic differences from the previous D1-only scheme, accepted deliberately:
+## Workflow gates and publisher setup
 
-- Counters are **per-colo, not global**. A distributed client gets up to `limit` per colo per window. These are abuse controls, not quotas; the authorization checks above are what protect data.
-- `Retry-After` is derived from the wall-clock window instead of read back from a counter row, because the binding reports only allowed/blocked.
-- Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`) rather than by an unbounded `DELETE` piggybacked on a request that happened to cross a per-isolate timer.
+1. Workflow gates never publish. GitHub Environment protection holds the publish job; Drydock reviews uploaded artifacts and only posts accept/reject to GitHub. Gate state must resolve to the original installation, repository, run, environment, callback URL, and organization; artifact identity and digests are recomputed from bytes ([workflow gates](./workflow-gates.md)).
+2. Publisher setup routes require a verified session and `roleCanManageIntegrations`; repository reads stay scoped to an installation the organization owns. Workflow text, proposed files, and tool conversations are hostile evidence; tools expose no shell, package execution, installation, external fetch, or GitHub writes.
+3. A draft PR needs `createPullRequest: true` in the persisted request; jobs without it cannot write to GitHub. Authorization, membership, installation, killswitch, source revision, proposal digest, and independent verdict are rechecked before each mutation; multi-file commits are atomic and recovery never overwrites collaborator edits.
+4. The write token is repository-scoped and needs already-granted Contents, Pull requests, and Workflows permissions. Setup cannot grant permissions, enable environment protection, approve, merge, or publish. Setup status reports observed configuration; it never certifies workflow code.
+5. Private job state lives in organization-scoped R2; D1 holds authorization and safe metadata; logs exclude prompts, tool payloads, and raw errors; workflow payloads are not retained in AI Gateway logs. Deletion and expiry remove private data and late writes cannot restore it. Limits and API: [publisher setup](./publisher-setup.md).
 
-GitHub webhook deliveries are the one place where a 429 destroys work rather than deferring it: GitHub does not retry a delivery we reject, so a dropped `deployment_protection_rule` leaves a workflow waiting on a gate nobody will review, and a dropped `installation` leaves a stale installation record. Those budgets are sized as a runaway-loop backstop rather than a queueing control (240/min for gate deliveries, far above any realistic monorepo fan-out), the two event kinds get separate buckets so gate traffic cannot starve lifecycle events, and a rejection is logged at error because it means work was lost.
+## Package claims
 
-A deployment that omits the `ratelimits` bindings still enforces every limit, through the D1 counter, and logs `rate_limit.tier_missing`. Adding a new per-minute limit at a call site requires a matching tier and binding; without one it silently degrades to D1.
-
-The `/og/diff/**/card.png` share cards are part of the same anonymous surface and inherit its rules: no session, no credentials, the same custom-registry 404 killswitch, and a per-IP rate limit charged only on a cold render. A card never triggers analysis — it reads the public-diff result cache and, on a miss, renders the package name and version pair with no numbers, so an unauthenticated request can never make the Worker download or parse a tarball. Package names and versions reach the card as text: they are XML-escaped and stripped of control characters and bidi overrides before rasterization, and width-fitted so a long name cannot overflow the frame.
-
-Document requests for the public surfaces (landing, docs, `/diff`) are not instrumented at all. There is no referrer classification, no campaign parameter handling, and no page-view event — the only analytics a visit can produce is the `public_diff.viewed` counter written when a diff is actually computed, which carries the package name and nothing about the visitor. See [`product-analytics.md`](./product-analytics.md).
-
-`GET /api/auth/config` belongs to the anonymous `/api/auth/*` surface because the login and register pages must know which sign-in methods the deployment offers before any session can exist. It returns three booleans — whether the operator configured the GitHub sign-in credential pair, whether email verification can be enforced, and whether a password-reset link can be mailed — derived from environment configuration alone. It reads no bindings, touches neither D1 nor KV, reflects nothing about the caller, and cannot be made to do work, so it carries no rate limit of its own. Sign-in itself stays behind the existing per-IP `sign-in` bucket.
-
-Three further anonymous endpoints exist, all under `/public`, all serving only data an organization owner/admin explicitly opted into publishing, and only once the reviewed release is public:
-
-- **Pre-publication disclosure.** A staged release that fixes a vulnerability is embargoed information until it ships, and its review is the patch itself: changed files, findings, and the version. No anonymous route serves a review before its release is public, whatever the owner/admin opted into. `publicDisclosureAllowedCondition` (`server/db/scan-query.ts`) is the one predicate, applied in SQL by the share-token resolver (report, file, and attestation), the threat feed, and the listed badge; the default-on badge already required npm's `published` status. An npm staged review is public once npm reports the version `published` or `deleted`; a published-pair review always (public registry bytes); a PyPI or VS Code gate review once its gate approves the publish job; an npm gate review only once npm evidence shows the gate's bytes shipped (a matched, published staged review, or a publication-monitor approved match naming this review), because gated staging leaves approved bytes in a private npm stage. Anything else, including an unknown status or an unclassified source, is unreleased. One exception is deliberate: a review decided `no_publish` that the owner/admin also listed in the threat feed is public at once, because a listed rejection is a threat disclosure with no release to wait for. A maintainer who rejects their own embargoed fix and lists it therefore discloses it; that takes two explicit opt-ins, and unlisting or approving takes it dark again. Links can still be minted early; until the rule holds they return the same 404 as an unknown token, so a link is not an oracle for a pending release, and only the authenticated share route says `awaitingPublication`. See `public-reports.md`. Residual pre-publication channels, all private to the organization or the operator: Slack and email notifications name `package@version` and risk (metadata, no bytes) on scan completion; AI review sends changed files through Workers AI and AI Gateway inside the operator's Cloudflare account, with Gateway payload logging off per request; operational logs and traces carry package names. A per-organization "embargo staged releases" setting that withholds `package@version` from notifications is the named remedy if an organization needs more.
-
-- `GET /public/reports/:token`, `GET /public/reports/:token/file?path=`, and `GET /public/reports/:token/attestation` — capability URLs. The unguessable 256-bit share token _is_ the authorization; unknown, malformed, and revoked tokens, and tokens whose release is not public yet, are indistinguishable 404s. They serve the canonical report export and, only when that share's persisted opt-in permits it, one redacted staged file sample at a time — never scan events or org/user identifiers. They attach no credentials, persist nothing, are `no-store` so revocation is immediate, and share one per-IP rate-limit bucket. `GET /public/attestation-key` returns public key material only.
-- The `file` route is the one anonymous surface that discloses package bytes from a private review, so it is bounded by construction rather than by its own checks. `public_share_includes_files` defaults false, preserving every capability issued before file diffs existed; new shares set it true, and an owner/admin can deliberately upgrade an existing token by re-sharing. A false flag returns the same 404 as a bad token. For opted-in shares, the route reads through the same `getScanFile` the authenticated `GET /api/v1/scans/:id/file` uses, which resolves the scan's persisted `files.json` artifact: redaction and the sandbox's per-file retention caps were both applied at persist time, so the public route cannot serve a larger or less-redacted sample than the maintainer read. It returns exactly one entry of that artifact's file set — a path outside it is the same 404 as a bad token, so the route is an oracle for neither the token space nor a package's file list — and it never fetches a baseline, because reaching a published previous version spends the organization's npm credentials and no public route holds one. The share dialog states the widened disclosure before a link is created or upgraded, and revoke is immediate on this route as on the report.
-- `GET /public/badge/:ecosystem/*` — a shields.io endpoint payload for a package's latest review. Answers from two routes. For a package that is **provably public** — a registry-verified source answering under npm's own name for the stage, the public npm registry, and npm's own `access: public` from the stage record (never the name shape or the tarball's `publishConfig`) — an _approved_ release npm has already published answers with no opt-in at all, provided the scan verified the bytes it reviewed against npm's digest for the stage, so a published tarball with other bytes can be noticed (`badge_public`, decided at write time and false unless all four hold; see `public-reports.md`). Everything else reflects only scans whose org took the _second_ opt-in (feed listing) on top of sharing, and whose release is public (see pre-publication disclosure above), so a private share link never makes a scan name-queryable. A default-on badge carries a verdict only: no report link, no findings, no feed entry, and never an undecided or rejected review — publishing those still takes a deliberate listing. The response carries no package name, no org identity, and no share token; an unlisted-but-scanned package and a never-scanned package return byte-identical bodies, so there is no enumeration oracle. **One deliberate exception, only for a package that already answers the badge:** when the same organization has a newer release on that line with no listed review, the badge names that version as `not reviewed` instead of continuing to vouch for the older one (see `public-reports.md`). It reveals that the newer release was not listed — which is the signal — and, combined with the feed's silence about that version, supports the inference that a published release was reviewed and withheld. That is the tradeoff: a badge that cannot be kept green by listing only the releases that reviewed well. The same organization's publication-monitor evidence counts the same way: any observation short of an approved match for a newer release on the line names that version, and a recorded discrepancy (published without or despite a decision, or bytes other than the approved ones) for the quoted version — or a published-tarball digest the monitor recorded that differs from the digest the review verified, whatever the observation's status — turns it into `<version> not reviewed` rather than `approved`. That reveals the organization's own monitor recorded something about a version npm already published — the alternative is a green badge over bytes the review did not establish. `unknown` evidence about the quoted version never counts, and another organization's watch never does. Nothing further leaks. The version string is npm's own answer about `registry_version`, never the reviewed tarball's manifest, so neither an unreleased version, its timing, nor attacker-authored bytes can reach the badge, and the newer review's decision is never consulted or disclosed. A package with nothing listed is unaffected, so the enumeration property above is unchanged. A third route answers for a release npm already published: a publication-monitor alert that its organization reviewed after release (a published-pair review linked to the alert) and decided. It answers `<version> approved` or, for a decline, `<version> rejected`, and only when the organization is a registry-verified publisher of that exact name (the off switch's rule), the monitor and the review both read public npm, and the reviewed tarball's digests equal the ones the monitor recorded for the release — checked when decided, with the publisher rule, the review's source, registry and coordinates, and its current decision enforced again on read (`listPostReleaseBadgeCandidates`). The same guarded decisions count in the organization's own monitor evidence: an approval clears that version's discrepancy or supersession, a decline reads `rejected`. It reveals only a verdict the publisher made about a version npm already published. A publisher's "public badge: off" (see the authorization bullet below) answers byte-identically to a never-reviewed package, so it adds no enumeration signal. Separate per-IP rate-limit bucket (badge proxies multiplex unrelated packages through shared egress addresses), and a throttled response says `unavailable` rather than impersonating `not reviewed`.
-  - **The badge index is keyed by ecosystem and package name alone, so entering it requires a credential-backed tie to that name.** Only the credential-backed staged sources have one: npm let the org's token read that exact stage — which proves read access to the package's stages, not publish rights, since a read-only token passes — and the scan answers only under npm's name for the stage (`registry_package_name`, from npm's stage record), only while the reviewed manifest agrees with it, and only for a stage on the public npm registry — an org may point its connection at any https registry, including one it runs. A staged review that falls short has no public identity at all (`scanPublicPackageName`, enforced again in SQL on both badge routes), and the threat feed labels it `manifest-claimed` (`scanIdentity`), so the feed never presents a decision as registry-verified for a name no credential reached. Every npm badge lookup path, the post-release route included, additionally requires the canonical organization claim for that public-registry package, with explicit management confirmation for a personal claim. npm workflow-gate scans cannot answer the badge, even when listed; PyPI and VS Code gate badges remain visibly `unverified`. A published-pair review proves nothing at all — it needs no credential and any account can run one against any public release — so it is excluded from the index, at both the write (`badgeLookupKey` assigns it no `public_package_key`) and the read (`listBadgeCandidateScans` excludes the source). The only exception is the guarded post-release decision above, where the credential-backed tie comes from the deciding organization's own staged reviews of the name and the bytes are bound to the monitor's digests; the review alone never qualifies. Adding a scan source that can occupy the badge is a security decision; `scanPackageIdentity` fails closed so a new one does not inherit the credential-backed identity by default. See `public-reports.md` for the full identity ladder.
-- `GET /public/threat-feed.json` — the listed set whose releases are public, newest first, keyset-paginated. Entries carry package identity, risk, decision, counts, and the public report URL; no organization id, user id, or internal scan id.
-
-Both derived surfaces are colo-cached for 300s and purged on revoke/unlist. That purge is **colo-local and best effort** — it clears the region that served the revoking request, and every other region serves the withdrawn body until the TTL expires (longer still behind a badge proxy's own cache). The report itself has no such window. Treat the badge and feed as eventually consistent; the report route is the authority.
-
-The atpm egress is the one public-diff path whose hosts are named by the party under review: a handle resolves to a DID chosen by whoever controls that domain, and a DID document names a PDS chosen by whoever controls the DID. It is bounded rather than trusted. Every URL is rebuilt from validated parts — never followed as given, so a record's own `meta.dist.tarball` is ignored in favour of a blob URL built from the resolved PDS and the content address — and re-checked against one public-host policy before the parent Worker fetches it: https only, no embedded credentials, default port only (a DID document naming `https://<host>:9200` would otherwise make this a port prober), no IPv4/IPv6 literals, no loopback, no atproto-reserved or local-use suffixes (`.alt`, `.arpa`, `.example`, `.invalid`, `.local`, `.localhost`, `.onion`, `.test`, plus private-network suffixes), and no single-label hostnames. A DID document's PDS service endpoint must be an origin with no path, query, or fragment; Drydock rejects extra components instead of silently discarding them. The Worker enables `global_fetch_strictly_public`, so even same-zone global `fetch()` targets traverse Cloudflare's public front door rather than bypassing mapped Workers and security settings for the zone's origin. Automatic redirects are disabled for identity and record fetches; at most three hops are followed, and every resolved target is checked by the same policy before any request. Identity and DID documents are read under a hard 256 KiB ceiling and package records under 4 MiB, so a publisher-controlled endpoint cannot decide how much parent-Worker memory a lookup costs. A handle is only accepted when it is the DID document's first valid `at://` claim; a DID-addressed lookup instead resolves that same primary claimed handle back through DNS/well-known and keeps it only if it returns the same DID. Either way a displayed handle is one this resolution proved, never one asserted by the repository under review. The canonical DID form prevents ordinary handle reuse from redirecting a link, but `did:web` remains tied to domain control and is disclosed as such on the report. Tarball bytes reach the credentials-free sandbox with the blob URL pinned as the single allowed egress, exactly as the PyPI path does, and a pinned artifact may not be redirected off its origin: `NpmStageGateway` resolves 3xx responses for `public-artifact` requests itself, following same-origin hops (bounded at three) and refusing anything that leaves the vetted origin, so a redirect cannot route around the host policy. The sandbox also computes SHA-256 over the complete archive and the parent requires it to match the digest encoded by the blob's CID, so a PDS cannot substitute bytes at a requested address. Credentialed npm requests keep the runtime's own redirect handling. Nothing on this path ever holds npm credentials. Computed atpm pairs and their share cards expire after five minutes because the version-to-CID record, PDS location, and verified display handle remain mutable even though CID-addressed bytes do not.
-
-The same policy, and the same absence of credentials, covers atpm's staged review: a release candidate is a public record in the publisher's repository read through the identity above, so it adds reachable hosts but no new trust and no new secret. The staged URL carries the record CID, and Drydock re-encodes the returned value as DAG-CBOR and recomputes that CID locally; an untrusted PDS cannot make one revision-pinned URL describe a different record merely by echoing the old CID. Build attestations read on either atpm path are verified against a _pinned_ Sigstore root using a bounded DER reader (`server/lib/platform/x509.ts`) that parses only the certificate fields a signature check needs; a bundle is attacker-supplied data, so every malformed input becomes a displayable "does not verify" verdict rather than an exception or a page failure. Verification work is capped at 64 bundles for each published record, while a staged review verifies its one requested candidate. The Rekor signed-entry timestamp is verified against a pinned log key before its integrated time may evaluate the short-lived Fulcio leaf's validity window; the Merkle inclusion proof itself is not independently reconstructed. `GET /api/public/v1/package-diff/atpm-stage?publisher=<publisher>&rkey=<rkey>` resolves a staged atpm candidate inside the existing public-diff surface: browser navigation redirects to the ordinary review, while API callers receive the same resolution as JSON. It reads only public records in the publisher's own AT Protocol repository, attaches no credentials, persists no staged record or link-resolution event, and creates no session; abuse control is the same per-IP rate limiting as the rest of `/diff`. Once redirected, the ordinary public-diff analytics posture described above applies: the public package name may be recorded, but no visitor identity. Like every public-diff route, it is disabled before any outbound fetch when the deployment configures a custom `NPM_REGISTRY`. Requiring a session there would gate a deterministic diff of public bytes behind an account, at the one moment it is worth reading — before the release is published.
-
-Nothing on the atpm path holds a credential, and staged reviews are reached by link rather than by watching or persisting a publisher's repository. See [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
-
-The `pkg.pr.new` egress (npm only) is bounded by a shared strict URL parser (`src/lib/pkg-pr-new.ts`): only `https://pkg.pr.new` (exact host, no port, no credentials, no query/fragment) with a canonical `owner/repo/name@ref`-shaped path is ever fetched, the fetch path is structurally anonymous (`fetchPkgPrNewTarballStream` accepts no token option), and preview bytes are never written to the shared colo tarball cache because preview refs are mutable. Diff results that involve a preview side are cached for at most 15 minutes.
-
-The publication monitor's cron sweep (and its authenticated **Check now** button) is a second credential-free egress path, reached by no anonymous request: it reads public npm metadata and, only for a release the organization has a Drydock record of or started a post-release review of (**Scan** on an alert), that release's tarball. It never attaches a credential, never reads an npm connection token, and has no redirects (`redirect: "manual"`; a 3xx is unavailable evidence). Metadata comes from the fixed public origin (the loopback fake registry only when the local-development override is enabled), and a tarball URL must pass the published-tarball origin policy before it is fetched. Both responses stream into bounded state, so memory stays flat: the package document into only the fields the verdict reads (64 MiB cap, 15-second deadline; tracked containers are at most four deep, unread values are skipped by a bracket counter with no per-level state, and an overlong field degrades only itself), tarball bytes into two hashes (256 MiB cap). Bytes are only hashed, and each tick is bounded to a per-organization round-robin share of 24 watch checks, at most three tarballs sharing one 30-second deadline per check, no new check or download once a sweep has read 1 GiB, and a one-minute start window. What cannot be verified within those bounds is reported to the organization as a coverage gap rather than settled silently. See [`publication-monitor.md`](./publication-monitor.md).
+1. A claim governs badges, enrollment, and management only; it never deactivates another organization's public-release monitoring unless that organization holds competing staged reviews of the package.
+2. A personal reservation moves once into a shared organization through the authenticated package-management route, which rechecks personal ownership and destination owner/admin membership and atomically records claim, enrollment, and audit. It transfers no scans, reports, observations, or credentials; shared and ownerless reservations have no self-service transfer.
+3. Pre-claim history with no recorded registry, and the ownerless `*` reservation left when a last scan is deleted, block only public npm claims, so a private registry cannot probe other organizations' names. Pre-claim history blocks only unrelated organizations. Detail: [package claims](./package-claims.md).
 
 ## Browser response headers
 
-Production responses should keep conservative security headers: no package-provided active content, no cross-origin credential leakage, and no relaxed CSP/CORS decisions for convenience.
+1. Every response passes through the Worker (`run_worker_first`); `server/middleware/security-headers.ts` sets the policy.
+2. `/api/*` and `/public/*` get the deny-all API policy, even for HTML. Everything else gets `DOCUMENT_CSP` (same-origin scripts only).
+3. HTML outside `/api` and `/public` also gets a fresh per-response `script-src` nonce, solely for Cloudflare's Bot Fight Mode injected script. The app ships no inline script and must not depend on the nonce; `'unsafe-inline'` stays out.
+4. Never relax CSP/CORS for convenience or allow package-provided active content.
 
-Every response goes through the Worker (`run_worker_first`), and `server/middleware/security-headers.ts` sets its policy. `/api/*` and `/public/*` responses get the deny-all API policy, even when they are HTML. Every other response gets the `DOCUMENT_CSP` policy, which allows only same-origin scripts. An HTML response outside `/api` and `/public` also gets a random `script-src` nonce, generated fresh for each response. It exists only for Cloudflare's JavaScript detections: Bot Fight Mode injects an inline script into every page, and the plan cannot turn it off. Cloudflare copies the nonce from the response header onto the scripts it injects. The app itself ships no inline script and must not depend on the nonce. `'unsafe-inline'` stays out of the policy.
+## Workers Issues
 
-## Known gaps / future work
+Workers Issues stores invocation and request details, and request URLs can carry share, invite, and verification tokens. An automation sends that outside the account, so its destination is a trust decision; rules are in [release safety](./release-safety.md#workers-issues-destinations).
 
-- Public report sharing is an explicit owner/admin opt-in per completed scan; the threat feed is a second opt-in on top of it, and so is the badge — except that an approved, npm-published release of a provably public npm package answers the badge with no opt-in. Owner/admin of the canonical npm package owner with a completed registry-verified review can switch its badge off. Both badge paths require that claim, and opt-outs from other organizations' historical scans do not suppress the owner. Qualifying ownership is enforced on write and again on read; enabling only removes the caller organization's own opt-out row. See `public-reports.md` and the authorization posture section above.
-- Raw-artifact retention, if ever added, must be explicit, short-TTL, organization-scoped, and documented.
-- Additional ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
-- Keep dependency and parser updates covered by regression/fuzz tests because archive handling is a trust boundary.
+## Known gaps
 
-Personal package reservations can move once into a shared organization through the authenticated package-management route. The mutation rechecks the caller's actual personal ownership and current destination owner/admin membership, and atomically records the claim, enrollment, and audit outcome. It transfers no scans, reports, observations, or credentials. Shared claims and ownerless reservations have no self-service transfer path. See `package-claims.md`. A claim governs badges, enrollment, and management only: it never deactivates another organization's public-release monitoring unless that organization holds competing staged reviews of the package, so a first claimant cannot silence other watchers ahead of a publish. Pre-claim history with no recorded registry, and the ownerless `*` reservation left when its last scan is deleted, block only public npm claims, so a registry an organization runs cannot probe for other organizations' reviewed names. Pre-claim history blocks only unrelated organizations: the organization that made it, or a shared organization with its own history whose member made it in a personal workspace, claims the package with its next npm-verified staged scan, which is the same evidence a first claim of a new package needs.
+1. Raw-artifact retention, if added, must be explicit, short-TTL, organization-scoped, and documented.
+2. New ecosystems need adapter-specific credential, baseline, artifact, and failure-mode review before enablement.
+3. Archive handling is a trust boundary; keep dependency and parser updates covered by regression and fuzz tests.
+
+## Change checklist
+
+- New route above the session guard → add a row to the anonymous table, update `REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD`, run `test/api-auth-boundary-invariants.test.mjs`.
+- New egress host or fetch path → add an egress row and test that no credential is attached.
+- New per-minute limit → add a `NATIVE_TIERS` entry and `ratelimits` binding, and check `server/env.d.ts` parity (`test/env-binding-parity.test.mjs`).
+- New action that reaches a third party → add `requireVerifiedEmail` and a row above.
+- New scan source that could answer the badge → security review; `scanPackageIdentity` must stay fail-closed.

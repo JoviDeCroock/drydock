@@ -24,4 +24,4 @@ Add a benign hard-negative when legitimate packages could trigger the rule. The 
 
 Run the affected corpus suite (`pnpm run test:node -- security-corpus.test.mjs`, or `security-corpus-pypi.test.mjs` for PyPI), focused rule tests, and `pnpm run eval`. Use the full verify gate before finishing a branch.
 
-Update the rule inventory, taxonomy, and version changelog in `docs/security-detection-corpus.md`; `test/detection-rule-coverage.test.mjs` checks registry/fixture/inventory coverage. Update eval docs only when eval behavior changes.
+Update the rule inventory and taxonomy in `docs/security-detection-corpus.md`, the rule's row in `docs/detection-rule-behavior.md`, and add a version row to `docs/detection-rule-history.md`; `test/detection-rule-coverage.test.mjs` checks registry/fixture/inventory coverage. Update eval docs only when eval behavior changes.

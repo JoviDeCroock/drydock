@@ -21,7 +21,7 @@ Archive parsing stays in the credentials-free sandbox (`server/lib/sandbox.ts`).
 
 For gates, put `workflow-gate.ts` in the ecosystem directory. Preserve artifact classification, content-based detection, package-identity grouping, and fail-closed handling of inconsistent artifacts through `WorkflowArtifactError` from `server/lib/github-app/artifacts.ts`. If shared plumbing needs custom behavior, extend `WorkflowGateAdapter` with an optional hook and check existing adapters; `narrowParsedArtifact?` and `shardedArtifactNames?` are precedents.
 
-For public diff, the adapter validates/normalizes identity, lists versions, acquires both sides, and selects findings. Shared orchestration owns diffing, redaction, risk, and caching. Bind cache identity to rule/payload versions and bound cache lifetime when release identity or resolution is mutable. Read `docs/atpm-public-diff.md` for the publisher-controlled resolution/egress case; do not copy its protocol choices into unrelated ecosystems.
+For public diff, the adapter validates/normalizes identity, lists versions, acquires both sides, and selects findings. Shared orchestration owns diffing, redaction, risk, and caching. Bind cache identity to rule/payload versions and bound cache lifetime when release identity or resolution is mutable. Read `docs/atpm.md` for the publisher-controlled resolution/egress case; do not copy its protocol choices into unrelated ecosystems.
 
 ## Evidence and docs
 

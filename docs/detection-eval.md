@@ -1,264 +1,146 @@
 # Detection eval harness
 
-Drydock's core claim is that it catches risky package changes. That claim has to
-be _measured_, not assumed. This harness measures detection quality and turns the
-regex/sampling blind spots into numbers we can move.
+Aggregate detection-quality metrics (recall, false positives, evasion, release injection) over the corpus, run through the real detection code. **Authority:** internal (a CI quality gate; it never affects a scan). **Owner:** `test/eval/harness.mjs`.
 
-It is deliberately separate from the golden corpus tests
-(`test/security-corpus.test.mjs`, `test/security-corpus-pypi.test.mjs`,
-`test/security-corpus-atpm.test.mjs`, `test/security-corpus-vscode.test.mjs`), which
-assert exact rule output and exist to catch regressions. Two different jobs:
+## At a glance
 
-|            | Golden regression (existing)              | Eval harness (this)                                        |
-| ---------- | ----------------------------------------- | ---------------------------------------------------------- |
-| Asserts    | Exact `expectedFindings` + `expectedRisk` | Aggregate quality metrics                                  |
-| Fails when | Any rule output changes                   | A gated threshold regresses                                |
-| Corpus     | Hand-written to pass current rules        | Labeled by _truth_, plus evasion variants                  |
-| Value      | Don't break a known case                  | Know our false-negative / false-positive / evasion profile |
+| Thing | Owner | Trigger | Pinned by |
+| --- | --- | --- | --- |
+| Gated thresholds | `test/eval/detection-eval.test.mjs` | `pnpm run eval`; also every `pnpm test` (normal Vitest file) | the test itself |
+| Report | `writeReport` in `test/eval/harness.mjs` → `.context/eval/detection-eval.md` + `.json` (gitignored) | every eval run; a write failure fails the command | — |
+| CI artifact + PR comment | `.github/workflows/ci.yml`, `scripts/comment-detection-eval.mjs` | main check job uploads `detection-eval-report`; PRs get one sticky comment, updated each run | — |
+| Real-package FP sweep | `test/eval/npm-fp-sweep.test.mjs` | `pnpm run eval:npm-sweep` (network, report-only, never in `pnpm test`) | — |
+| Golden regression (separate job) | `test/security-corpus*.test.mjs` | `pnpm test` | [`security-detection-corpus.md`](./security-detection-corpus.md) |
 
-The harness reuses the real detection code (`deterministicFindings` + risk for
-npm, `createPyPiReleaseCandidateReview` for PyPI, and `atpmRecordFindings` for
-atpm, and `createVscodeExtensionReview` for VS Code), so it can never drift from
-what production runs.
+|  | Golden regression | Eval harness |
+| --- | --- | --- |
+| Asserts | Exact `expectedFindings` + `expectedRisk` | Aggregate quality metrics |
+| Fails when | Any rule output changes | A gated threshold regresses |
+| Corpus | Hand-written to pass current rules | Labeled by truth, plus evasion variants |
+| Answers | Did a known case break? | What is the FN / FP / evasion profile? |
 
-## Running it
+Engines reused (never a reimplementation): `deterministicFindings` + risk (npm), `createPyPiReleaseCandidateReview` (PyPI), `atpmRecordFindings` (atpm), `createVscodeExtensionReview` (VS Code).
 
-```sh
-pnpm run eval        # runs the gated thresholds and writes the report
-```
+## Contract
 
-The report is written to `.context/eval/detection-eval.md` (and `.json`), which
-is gitignored. A report write failure fails the command rather than leaving a
-green run with missing evidence. `pnpm test` also runs the gated thresholds,
-since the harness is a normal Vitest file (`test/eval/detection-eval.test.mjs`).
+### Corpus layout
 
-## CI visibility
+| Directory (`test/fixtures/security-corpus/`) | Role | Gated? |
+| --- | --- | --- |
+| `cases/`, `cases-pypi/`, `cases-atpm/`, `cases-vscode/` | Golden regression sets; eval infers missing labels | yes |
+| `cases-frontier/` | Truth-labeled hard cases the rules may miss (v2 schema, eval-only) | reported |
+| `cases-benign/` | Benign hard-negatives the rules may flag (v2 schema, eval-only) | yes (FP rate) |
 
-GitHub Actions uploads `.context/eval/detection-eval.*` as the
-`detection-eval-report` artifact from the main check job. Pull requests also get
-a sticky detection-eval comment that is updated on every run, so reviewers see
-the gated regression numbers, reported frontier misses, benign hard-negative
-false positives, and evasion robustness without digging through logs.
+The golden tests never read `cases-frontier/` or `cases-benign/`, so a frontier miss or benign FP does not break the regression suite.
 
-## Corpus layout
+### Fixture v2 schema
 
-```
-test/fixtures/security-corpus/
-  cases/          npm golden cases     (regression set, also consumed by the eval)
-  cases-pypi/     PyPI golden cases    (regression set)
-  cases-atpm/     atpm provenance golden cases (regression set)
-  cases-vscode/   VS Code extension golden cases (regression set)
-  cases-frontier/ truth-labeled hard cases the rules may MISS  (reported, not gated)
-  cases-benign/   benign hard-negatives that the rules may flag (reported, not gated)
-```
-
-The four ecosystem regression directories keep their existing golden schema;
-the eval infers any omitted labels. The gate also holds a per-ecosystem coverage
-floor, so deleting fixtures or an entire directory cannot turn into a vacuous
-100% recall. `cases-frontier/` and `cases-benign/` use the v2 schema below and
-are eval-only (the golden tests never read them, so a frontier miss or a benign
-false positive does not break the regression suite).
-
-## Fixture v2 schema
-
-Additive over the golden schema — all golden fields still work.
+Additive over the golden schema; all golden fields still work.
 
 ```jsonc
 {
   "id": "npm-assembled-require-exfil",
   "title": "…",
-  "ecosystem": "npm",                  // npm | pypi | atpm | vscode (default npm)
-  "verdict": "malicious",              // malicious | benign
-  "threatClass": "obfuscated-dropper", // taxonomy, see below
-  "source": "synthetic-adversarial",   // synthetic | synthetic-adversarial | real-sanitized | benign-popular
+  "ecosystem": "npm", // npm | pypi | atpm | vscode (default npm)
+  "verdict": "malicious", // malicious | benign
+  "threatClass": "obfuscated-dropper", // taxonomy below
+  "source": "synthetic-adversarial", // synthetic | synthetic-adversarial | real-sanitized | benign-popular
   "provenance": "incident + how it was defanged", // required for source: real-sanitized
   "intent": "what this models and why it is safe",
-  "expectMinRisk": "high",             // malicious must land >= this risk
-  "expectAnyRule": [],                 // [] = any finding is fine; else >=1 of these rule ids must fire
-  // npm payload (same shape as golden fixtures):
-  "previousPackageJson": { … }, "stagedPackageJson": { … },
-  "previousFiles": [ … ], "stagedFiles": [ … ]
-  // pypi payload: "manifest", "artifacts", "previousArtifacts" (as in cases-pypi/)
-  // atpm payload: target/baseline record projections, archive digests, trustPublisher
+  "expectMinRisk": "high", // malicious must land >= this risk
+  "expectAnyRule": [], // [] = any finding; else >= 1 of these rule ids must fire
+  // npm: previousPackageJson, stagedPackageJson, previousFiles, stagedFiles
+  // pypi: manifest, artifacts, previousArtifacts (as in cases-pypi/)
+  // atpm: target/baseline record projections, archive digests, trustPublisher
 }
 ```
 
-If `verdict`/`expectMinRisk`/`expectAnyRule` are omitted (golden fixtures), the
-harness derives them: `verdict = benign` when `expectedRisk` is `low` with no
-finding ≥ medium, otherwise `malicious`; `expectMinRisk = expectedRisk`;
-`expectAnyRule` = the rule ids in `expectedFindings`.
+Derived labels for golden fixtures: `verdict = benign` when `expectedRisk` is `low` with no finding ≥ medium, else `malicious`; `expectMinRisk = expectedRisk`; `expectAnyRule` = rule ids in `expectedFindings`; `threatClass` = `category`.
 
-### Threat-class taxonomy
+### Threat classes
 
-Recall is measured per class so blind spots are visible. Malicious:
-`install-script-exfil`, `phantom-gyp`, `obfuscated-dropper`, `credential-steal`,
-`network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`,
-`typosquat-metadata`, `protestware`, `dependency-confusion`,
-`wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
-`legit-build-infrastructure`, `legit-childprocess`, `legit-dependency-patching`,
-`legit-documentation`, `legit-dynamic-require`, `legit-entrypoint-declaration`,
-`legit-env-read`, `legit-llm-tooling`, `legit-release-tooling`, `legit-test-suite`.
-atpm golden cases add release-provenance classes for invalid, missing, mismatched,
-or regressed attestations plus a matching-provenance control.
+| Kind | Classes |
+| --- | --- |
+| Malicious | `install-script-exfil`, `phantom-gyp`, `obfuscated-dropper`, `credential-steal`, `network-exfil`, `native-artifact-smuggle`, `files-allowlist-escape`, `typosquat-metadata`, `protestware`, `dependency-confusion`, `self-propagating-worm`, `wheel-integrity` (PyPI), `pth-injection` (PyPI); atpm adds invalid/missing/mismatched/regressed provenance classes plus a matching-provenance control |
+| Benign hard-negative | `legit-build-infrastructure`, `legit-byte-codec`, `legit-childprocess`, `legit-dependency-patching`, `legit-documentation`, `legit-dynamic-require`, `legit-entrypoint-declaration`, `legit-env-detection`, `legit-env-read`, `legit-key-handling`, `legit-llm-tooling`, `legit-minified-bundle`, `legit-release-tooling`, `legit-secret-shaped-code`, `legit-test-suite` |
 
-## Metrics
+### Metrics and gates
 
-- **Regression recall (gated).** Malicious recall over `cases/` + `cases-pypi/` +
-  `cases-atpm/` + `cases-vscode/`.
-  This set is golden-tuned, so it is ~100% by construction — its job is
-  regression protection, not quality measurement.
-- **Benign regression positives (gated by exact id).** Explicitly benign golden
-  controls remain truth-labeled even when the product intentionally surfaces a
-  warning. The acknowledged list currently contains the PyPI test-key control;
-  any additional positive fails the gate instead of being absorbed into a count.
-- **Frontier recall (reported).** Recall over `cases-frontier/`, which are
-  labeled by _truth_ and intentionally hard. These are where real detection gaps
-  show up. Starts low; that is the point.
-- **Benign false-positive rate (gated, < 10%).** Over `cases-benign/`. Popular
-  packages that legitimately use scary capabilities (native binaries, build-time
-  `child_process`, reading `process.env`). A case counts as a false positive when
-  the **risk roll-up** surfaces it as risky (`>= medium`), not merely when a
-  finding fires — these packages are expected to emit findings; weighted
-  multi-signal scoring (`computeRisk`, issue #193) is what keeps the roll-up low.
-  Promoted from reported to gated once that scoring brought the rate under the
-  ratchet target.
-- **Evasion robustness (blocked rate gated, retention reported).** For each
-  transform, over npm malicious cases we currently catch that ship a JavaScript
-  file (the transforms rewrite only `.js`/`.cjs`/`.mjs` files: a README wrapped
-  in `eval(atob(…))` is not the same attack):
-  - `blockedRate` — would the product still treat it as risky? (often high,
-    because manifest signals like `preinstall` survive code obfuscation)
-  - `codeRetention` — how many of the original `code.*` rules still fire? (the
-    honest measure of how fragile the regex code-scanner is)
+| Metric | Gated? | Threshold | Definition |
+| --- | --- | --- | --- |
+| Coverage floor | yes | regression ≥ npm 30, pypi 15, atpm 6, vscode 3; frontier npm ≥ 12; benign npm ≥ 12; every evasion transform > 0 samples | Deleting fixtures or a directory cannot turn into a vacuous 100%. |
+| Regression malicious recall | yes | ≥ 90% | Over the four golden sets; ~100% by construction (regression protection, not quality). |
+| Critical recall | yes | 100% | Every `expectMinRisk: critical` case caught. |
+| Benign regression positives | yes | exact id list | Must equal the acknowledged list (currently `pypi-benign-docs-metadata-and-test-fixtures`); any new positive fails rather than being counted. |
+| Benign hard-negative FP rate | yes | < 10% | Over `cases-benign/`; a case is a FP when the risk roll-up reaches `>= medium`, not when a finding fires. |
+| Release injection | yes | 0 misses in each of `lines`, `minified`, `renamed`, `renamed-minified`; ≥ 20 samples each; every renamed sample paired | See below. |
+| Evasion blocked rate | yes | 100% per transform; ≥ 20 samples each | Would the product still treat the payload as risky? |
+| Evasion code-rule retention | no (reported) | — | Share of the original `code.*` rules still firing; the honest fragility measure. |
+| Frontier recall | no (reported) | — | Recall over `cases-frontier/`; next ratchet candidate. |
 
-- **Release injection (gated).** Every malicious npm case whose release-delta
-  findings include a `code.*` rule is replayed as a payload spliced into an
-  existing module: each code file becomes a modification of a carrier that
-  already uses the network, process, environment and dynamic-code primitives,
-  once as ordinary lines and once as a single minified line. The `renamed`
-  shapes replay the same splice into a bundler chunk that changed content hash:
-  the carrier, padded with a module body, shipped last release under a hashed
-  sibling name, so the payload's file is added and pairs with it as a rename
-  (`paired` counts samples that did). The payload must
-  still raise `releaseRisk` (the score the workflow gate reads) to its
-  `expectMinRisk`, through the real annotation and risk-breakdown path. This
-  guards release-delta classification, which the other metrics never exercise:
-  they score `computeRisk` over every finding.
+Evasion samples are npm malicious cases currently caught that ship a `.js`/`.cjs`/`.mjs` file (only those files are rewritten).
+
+Release injection:
+
+1. Input: every malicious npm case whose release-delta findings include a `code.*` rule.
+2. `lines` / `minified`: the payload is spliced as a modification into a carrier module that already uses network, process, environment, and dynamic-code primitives, as ordinary lines or one minified line.
+3. `renamed` / `renamed-minified`: the same splice into a bundler chunk whose content hash changed (carrier padded with a module body, shipped last release under a hashed sibling name), so the payload file is added and pairs as a rename (`paired`).
+4. Pass: `releaseRisk` (what the workflow gate reads) still reaches `expectMinRisk` through the real annotation and risk-breakdown path. No other metric exercises release-delta classification.
 
 ### Evasion transforms
 
-- `splitStringLiterals` — `'child_process'` → `'chi'+'ld_process'`; defeats
-  literal-based matches like `require('https')`. Now defeated by the
-  constant-folding pre-pass (`server/lib/review/rules/normalize.ts`), which folds
-  the chain back to `'child_process'` before the regex set runs, so
-  `codeRetention` is back to baseline.
-- `bracketifyMemberAccess` — `process.env` → `process['e'+'nv']`. Also folded
-  back (concat → `process['env']` → member access → `process.env`).
-- `base64Wrap` — wrap the payload in `eval(atob("…"))`. The constant folder
-  decodes literal `atob`/`Buffer.from`/`String.fromCharCode`/URI decodes as
-  data and splices a decode consumed by a code-running call back in as code,
-  so the specific network/process/credential rules fire on the decoded payload
-  (marked obfuscated) instead of only dynamic evaluation.
-- `pushPastWindow` — prepend >64KB of filler so the payload sits past the old
-  per-file sandbox window. This is the acceptance test for the "scan full bytes,
-  persist a bounded sample" refactor (issue #191), and it now passes: the sandbox
-  returns whole files (`summarizeFile` no longer clips; truncation moved to the
-  persistence display sample in `scanFileRowsForArtifacts`), so the transform no
-  longer truncates and `blockedRate`/`codeRetention` are back to 100%. The metric
-  is kept in the report as a regression guard against re-introducing a scan-time
-  window.
+| Transform | Rewrite | Countered by |
+| --- | --- | --- |
+| `splitStringLiterals` | `'child_process'` → `'chi'+'ld_process'` | Constant folding (`server/lib/review/rules/normalize.ts`). |
+| `bracketifyMemberAccess` | `process.env` → `process['e'+'nv']` | Folding: concat → `process['env']` → `process.env`. |
+| `base64Wrap` | Payload wrapped in `eval(atob("…"))` | Literal decodes folded as data; a decode consumed by a code-running call is scanned as code (marked obfuscated). |
+| `pushPastWindow` | > 64 KB filler before the payload | The sandbox returns whole files (`summarizeFile` does not clip); truncation applies only to the persisted display sample (`scanFileRowsForArtifacts`). Kept as a guard against reintroducing a scan-time window. |
+
+### Real-sanitized frontier cases
+
+| Case | Technique | Provenance | Caught |
+| --- | --- | --- | --- |
+| `npm-eslint-scope-npmrc-exfil` | credential-steal | eslint-scope 3.7.2 (2018) | yes (postinstall + network) |
+| `npm-ua-parser-js-preinstall-dropper` | install-script-exfil | ua-parser-js (2021) | yes (preinstall dropper) |
+| `npm-event-stream-flatmap-decrypt` | obfuscated-dropper | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval) |
+| `npm-shai-hulud-secret-harvest` | credential-steal | Shai-Hulud worm (2025) | yes (postinstall harvest) |
+| `npm-miasma-phantom-gyp` | phantom-gyp | Miasma / Phantom Gyp (2026) | yes (root `binding.gyp` command substitution) |
+| `npm-prebuilt-node-addon-smuggle` | native-artifact-smuggle | OpenSSF prebuilt-addon family | yes (native artifact) |
+| `npm-dependency-confusion-beacon` | dependency-confusion | Birsan research (2021) | yes (preinstall beacon) |
+| `npm-node-ipc-protestware-wiper` | protestware | node-ipc 10.1.x (2022) | yes: modified-file network + dynamic eval co-occur to high; the destructive `fs` loop itself is unmodeled |
+| `npm-solana-web3js-keytheft` | network-exfil | @solana/web3.js (2024) | yes: `code.key-material-exfiltration` traces `keypair.secretKey` from a function argument into the `fetch` header |
+| `npm-aws-credential-file-steal` | credential-steal | OpenSSF cloud-stealer family | yes: credential file path read + co-located network egress |
+| `pypi-litellm-pth-credential-stealer` | pth-injection | LiteLLM 1.107.0 (2026) | yes: `.data/purelib` `.pth` import + install-root `sitecustomize.py`; `.data/data` and package-form variants also covered |
+
+The remaining frontier cases are synthetic (`install-root-*`, `npm-install-hook-worm-propagation`, `npm-assembled-require-exfil`). Read the current frontier recall and any misses from the report, not from this doc.
+
+## Invariants
+
+1. The harness calls production detection code, so it cannot drift from what scans run (`test/eval/harness.mjs`).
+2. Benign FPs are judged on the risk roll-up, not on findings: popular packages are expected to emit findings (`detection-eval.test.mjs`).
+3. A real-package FP found by the sweep becomes a distilled `cases-benign/` fixture before the rule changes, so the gated eval keeps the fix.
+4. Sweep tarballs are only ever parsed as data, never executed or installed.
+5. `real-sanitized` cases store the behavioral shape, never a live payload: hosts are `example.invalid`, secrets stripped, destructive loops reduced to inert stubs, and a `provenance` note records the incident and the defanging.
+6. Sanitized cases measure selected incident behaviors; they do not prove detection of authentic compromised artifacts or historical prevention (see [`incident-benchmark.md`](./incident-benchmark.md)).
 
 ## Real-package false-positive sweep
 
-The benign hard-negatives are distilled by hand. `pnpm run eval:npm-sweep`
-measures the same thing against what maintainers actually ship: it pulls
-consecutive releases of a curated list of popular packages
-(`test/eval/npm-fp-sweep-packages.json`) from the public registry and runs
-each pair through the production public-diff path — the rendered sandbox
-parser, `buildNpmFindings`, redaction, release-delta annotation, and the risk
-breakdown with AI review off. A pair whose `releaseRisk` reaches medium (or
-whose `artifactRisk` reaches high) is listed in
-`.context/npm-fp-sweep/report.md` with the finding, its line and an excerpt.
+`pnpm run eval:npm-sweep` pulls consecutive releases of `test/eval/npm-fp-sweep-packages.json` from the public registry and runs each pair through the production public-diff path (sandbox parser, `buildNpmFindings`, redaction, release-delta annotation, risk breakdown, AI off).
 
-It is network-bound and report-only, so `pnpm test` never runs it, and a
-flagged pair is a triage candidate rather than a proven false positive.
-Tarballs are cached compressed under `.context/npm-fp-sweep/tarballs` and are
-only ever parsed as data. `NPM_FP_SWEEP_DEPTH` sets release pairs per package,
-`NPM_FP_SWEEP_PACKAGES` replaces the list, and `NPM_FP_SWEEP_CACHE` moves the
-cache. A false positive it finds becomes a distilled `cases-benign/` fixture
-before the rule changes, so the gated eval keeps the fix.
+A pair whose `releaseRisk` reaches medium or `artifactRisk` reaches high is listed in `.context/npm-fp-sweep/report.md` with finding, line, and excerpt; it is a triage candidate, not a proven FP.
 
-## Gated thresholds (and the ratchet)
+| Env var | Effect |
+| --- | --- |
+| `NPM_FP_SWEEP_DEPTH` | Release pairs per package (default 1) |
+| `NPM_FP_SWEEP_CONCURRENCY` | Sweep concurrency (default 6) |
+| `NPM_FP_SWEEP_PACKAGES` | Comma-separated names replacing the curated list |
+| `NPM_FP_SWEEP_CACHE` | Moves the compressed tarball cache (default `.context/npm-fp-sweep/tarballs`) |
 
-Gated metrics (`detection-eval.test.mjs`):
+## Change checklist
 
-- malicious recall ≥ 90%
-- every `expectMinRisk: critical` case caught (100%)
-- benign regression positives exactly match the acknowledged fixture ids
-- benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
-- release injection: no misses in any of the four shapes (lines, minified,
-  renamed, renamed-minified), over at least 20 cases each, and every renamed
-  sample paired
-- evasion: every transform leaves 100% of samples blocked, over at least 20
-  samples each
-
-Frontier recall and evasion code-rule retention are reported, not gated, so they
-can start red. Evasion blocked rate is gated at 100% now that every transform
-reaches it. The benign FP gate was the first ratchet step and landed with weighted
-multi-signal scoring (issue #193). Full-bytes scanning has now landed too (issue
-#191), so `pushPastWindow` already sits at 100% blocked/retained. Remaining
-ratchet plan as the corpus and detector improve: gate frontier recall.
-
-## Corpus expansion
-
-Three tracks, in priority order:
-
-1. **Benign hard-negatives (`benign-popular`).** Cheapest, immediately exposes
-   the false-positive rate. Popular packages that legitimately use native
-   binaries / `child_process` / env reads.
-2. **Synthetic adversarial (`synthetic-adversarial`).** Written to _evade_, not
-   to pass — string assembly, dynamic indirection, payload past the window.
-3. **Real-sanitized (`real-sanitized`).** Distilled from published supply-chain
-   incidents and public datasets (OpenSSF `malicious-packages`, npm advisories,
-   vendor write-ups). Store the _behavioral shape_, never a live payload:
-   - replace exfil/C2 hosts with `example.invalid`;
-   - strip real secrets and tokens;
-   - keep the technique (the `child_process` + `https` + env-read shape);
-   - record `source: real-sanitized` and a `provenance` note (the incident and
-     how it was defanged).
-
-These cases measure selected incident-derived behaviors. Sanitization and
-simplification change detectable features, so they do not prove detection of
-the authentic compromised artifacts or historical prevention. The separate
-[public Shai-Hulud/Nx benchmark](./incident-benchmark.md) publishes a fixed input
-roster, exact hashes, release-risk results, and benign controls with these limits.
-
-The first real-sanitized batch lives in `cases-frontier/` and is truth-labeled,
-so frontier recall now reflects real technique coverage rather than synthetic
-shapes only:
-
-| case                                  | technique               | provenance                         | caught today                                                                                                                                  |
-| ------------------------------------- | ----------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm-eslint-scope-npmrc-exfil`        | credential-steal        | eslint-scope 3.7.2 (2018)          | yes (postinstall + network)                                                                                                                   |
-| `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                                                                                      |
-| `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                                                                                                 |
-| `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                                                                                     |
-| `npm-miasma-phantom-gyp`              | phantom-gyp             | Miasma / Phantom Gyp (2026)        | yes (root `binding.gyp` command substitution)                                                                                                 |
-| `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                                                                                         |
-| `npm-dependency-confusion-beacon`     | dependency-confusion    | Birsan research (2021)             | yes (preinstall beacon)                                                                                                                       |
-| `npm-node-ipc-protestware-wiper`      | protestware             | node-ipc 10.1.x (2022)             | yes (rules >= 1.12.0) — modified-file network + dynamic-eval co-occur to high (fs wiping itself is still unmodeled)                           |
-| `npm-solana-web3js-keytheft`          | network-exfil           | @solana/web3.js (2024)             | **no** — key read from a function arg, modified-file network only medium                                                                      |
-| `npm-aws-credential-file-steal`       | credential-steal        | OpenSSF cloud-stealer family       | yes (rules >= 1.9.0) — file-path credential read + co-located network egress                                                                  |
-| `pypi-litellm-pth-credential-stealer` | pth-injection           | LiteLLM 1.107.0 (2026)             | yes — `.data/purelib` `.pth` import + `sitecustomize.py` at the install root; PyPI rules 0.5.0 add the `.data/data` and package-form variants |
-
-The remaining misses are the point: each documents a concrete residual gap
-(function-argument secret flows) for the rules to ratchet against.
-`npm-aws-credential-file-steal` was such a gap until rules 1.9.0 taught the JS
-credential rule to match sensitive credential file paths (`.aws/credentials`,
-`.ssh/id_`, `.netrc`) and to escalate `code.credential-access` to high when a
-network egress path co-occurs in the same file. `npm-node-ipc-protestware-wiper`
-was a gap until rules 1.12.0 replaced the max-severity risk roll-up with weighted
-multi-signal scoring: its two individually-medium capabilities (modified-file
-network + dynamic-eval) now co-occur to high, even though the destructive `fs`
-loop itself is still unmodeled. Never commit a live payload — keep hosts at
-`example.invalid` and reduce destructive loops to inert stubs.
+| If you change | Also |
+| --- | --- |
+| A rule | Run `pnpm run eval`; update the golden fixture and [`detection-rule-history.md`](./detection-rule-history.md). |
+| A gate threshold or coverage floor | Edit `test/eval/detection-eval.test.mjs` and the Metrics and gates table above. |
+| The report shape | Check `scripts/comment-detection-eval.mjs` and the CI upload in `.github/workflows/ci.yml`. |
+| Add corpus | Priority: `benign-popular` hard-negatives (cheapest FP signal), then `synthetic-adversarial` (written to evade: string assembly, indirection, payload past a window), then `real-sanitized` (OpenSSF `malicious-packages`, npm advisories, vendor write-ups). |
