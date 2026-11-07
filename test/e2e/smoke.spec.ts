@@ -134,6 +134,39 @@ test("dependency Intel shows advisory matches and incomplete coverage", async ({
   );
   expect(errors).toEqual([]);
 
+  await routePublicIntelDiff(page, intelManifestDiff());
+  await page.goto("/diff/intel-demo/1.1.0/1.2.0");
+  await expect(page.getByText("Known malware", { exact: true })).toBeVisible();
+  await expect(page.getByText("Intel unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText(/npm dependency intelligence is advisory/)).toBeVisible();
+  await expect(page.locator("time").first()).toContainText("2026");
+  await page.screenshot({
+    path: testInfo.outputPath("public-dependency-intel.png"),
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
+});
+
+// With the `aikido-intel` flag off the server returns rows without Intel; the
+// page must not hint at a feed that was never consulted.
+test("public diff without Intel rows shows no Intel copy", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  const withoutIntel = intelManifestDiff();
+  withoutIntel.dependencies = withoutIntel.dependencies.map(({ intel: _intel, ...row }) => row);
+  await routePublicIntelDiff(page, withoutIntel);
+  await page.goto("/diff/intel-demo/1.1.0/1.2.0");
+  await expect(page.getByText(/Deterministic findings only/)).toBeVisible();
+  await expect(page.getByText("lookup-failed").first()).toBeVisible();
+  await expect(page.getByText(/npm dependency intelligence/)).toHaveCount(0);
+  await expect(page.getByText(/Known malware|Intel unavailable|Spec not checked/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+async function routePublicIntelDiff(page: Page, packageJsonDiff: PackageJsonDiff) {
   await page.route("**/api/public/v1/package-diff**", async (route) => {
     if (new URL(route.request().url()).pathname.endsWith("/versions")) {
       await fulfillJson(route, {
@@ -156,7 +189,7 @@ test("dependency Intel shows advisory matches and incomplete coverage", async ({
       fromPackageJson: null,
       toPackageJson: null,
       diff: [],
-      packageJsonDiff: intelManifestDiff(),
+      packageJsonDiff,
       findings: [],
       risk: riskSummary(),
       textSamplesOmitted: false,
@@ -167,16 +200,7 @@ test("dependency Intel shows advisory matches and incomplete coverage", async ({
       cachedAt: now,
     });
   });
-  await page.goto("/diff/intel-demo/1.1.0/1.2.0");
-  await expect(page.getByText("Known malware", { exact: true })).toBeVisible();
-  await expect(page.getByText("Intel unavailable", { exact: true })).toBeVisible();
-  await expect(page.locator("time").first()).toContainText("2026");
-  await page.screenshot({
-    path: testInfo.outputPath("public-dependency-intel.png"),
-    fullPage: true,
-  });
-  expect(errors).toEqual([]);
-});
+}
 
 function intelManifestDiff(): PackageJsonDiff {
   return {

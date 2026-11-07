@@ -2,6 +2,7 @@ import { sha256Hex } from "../platform/crypto-utils";
 import type { AiReview } from "../ai-review/types";
 import { getPublicDiffAdapter } from "../ecosystems";
 import { coloCache } from "../platform/colo-cache";
+import { dependencyIntelEnabled } from "../dependency-intel-flag";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import { writePublicDiffDisplayName } from "./display-metadata";
@@ -142,7 +143,7 @@ export async function loadPublicPackageDiff(
   options.onCacheOutcome?.(Boolean(cached));
   if (cached) {
     await adapter.validateCachedPair?.(env, ctx, input);
-    return enrichPublicDiffDependencies(cached, ctx);
+    return enrichPublicDiffDependencies(env, cached, ctx);
   }
 
   const sources = await adapter.acquire(env, ctx, input);
@@ -206,18 +207,22 @@ export async function loadPublicPackageDiff(
     payload.cacheExpiresAt,
   );
   await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
-  return enrichPublicDiffDependencies(payload, ctx);
+  return enrichPublicDiffDependencies(env, payload, ctx);
 }
 
 // Refresh mutable intelligence separately from the immutable artifact cache.
 // Saved scan reports keep their original snapshot; anonymous diffs use the
-// current feed even when their package pair was cached weeks ago.
+// current feed even when their package pair was cached weeks ago. The cache
+// only ever holds the unenriched payload, so an `aikido-intel` flip applies to
+// the next request.
 export async function enrichPublicDiffDependencies(
+  env: Cloudflare.Env,
   payload: PublicPackageDiff,
   ctx: ExecutionContext,
 ): Promise<PublicPackageDiff> {
   const adapter = requirePublicDiffAdapter(payload.ecosystem);
   if (!adapter.enrichDependencyIntel) return payload;
+  if (!(await dependencyIntelEnabled(env, null))) return payload;
   return {
     ...payload,
     packageJsonDiff: await adapter.enrichDependencyIntel(payload.packageJsonDiff, ctx),

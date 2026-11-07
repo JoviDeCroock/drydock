@@ -355,8 +355,7 @@ function DiffLanding() {
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
           This public tool uses deterministic rules to flag changes that need attention. Drydock
           reads the package files without executing their code; AI review is available only on
-          authenticated reviews. npm dependency intelligence is advisory and refreshes as the feed
-          changes.
+          authenticated reviews.
         </Muted>
       </section>
 
@@ -397,6 +396,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const shownName = diff?.displayName ?? versions?.displayName ?? packageName;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);
+  const hasIntel = Boolean(diff?.packageJsonDiff.dependencies.some((row) => row.intel));
   // Preview sides (pkg.pr.new URLs) get short labels; registry versions pass
   // through unchanged.
   const fromLabel = diffRefLabel(fromVersion);
@@ -465,9 +465,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           )}
         </div>
         {hasFindings ? <SeverityBar counts={severityCounts.value} class="max-w-[420px]" /> : null}
+        {/* Intel rows arrive only while the `aikido-intel` flag is on; without
+            them the report really is a pure function of the version pair. */}
         <Muted class="m-0 text-[13px] leading-[1.6] max-w-[680px]">
-          Deterministic rules review package bytes without executing code. npm dependency
-          intelligence is advisory and refreshes as the feed changes.
+          {hasIntel
+            ? "Deterministic rules review package bytes without executing code. npm dependency intelligence is advisory and refreshes as the feed changes."
+            : "Deterministic findings only: package code is never executed and AI review does not run on this public surface, so the same version pair always produces the same report."}
         </Muted>
         {pickerVersions ? (
           <VersionPairPicker

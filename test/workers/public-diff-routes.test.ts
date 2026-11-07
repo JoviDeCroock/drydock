@@ -43,7 +43,7 @@ function cachedPayload(packageName: string): PublicPackageDiff {
   };
 }
 
-test("cached public diffs refresh advisory Intel while preserving cached findings and risk", async () => {
+async function seedCachedIntelPair(): Promise<{ payload: PublicPackageDiff; path: string }> {
   const packageName = `intel-cache-${crypto.randomUUID()}`;
   const payload = cachedPayload(packageName);
   payload.packageJsonDiff.dependencies = [
@@ -57,6 +57,20 @@ test("cached public diffs refresh advisory Intel while preserving cached finding
     toVersion: "1.0.1",
   });
   await writePublicDiffCache(env, cacheKey, payload);
+  const query = new URLSearchParams({ package: packageName, from: "1.0.0", to: "1.0.1" });
+  return { payload, path: `/api/public/v1/package-diff?${query}` };
+}
+
+function flagsEnv(getBooleanValue: Flagship["getBooleanValue"]): Cloudflare.Env {
+  return { ...env, FLAGS: { getBooleanValue } as Flagship };
+}
+
+test("cached public diffs refresh advisory Intel when aikido-intel is enabled globally", async () => {
+  const { payload, path } = await seedCachedIntelPair();
+  const getBooleanValue = vi.fn(async (flag: string, defaultValue: boolean) =>
+    flag === "aikido-intel" ? true : defaultValue,
+  );
+  const intelEnv = flagsEnv(getBooleanValue);
   const enrich = vi.spyOn(npmPublicDiff, "enrichDependencyIntel");
   enrich.mockImplementation(async (diff) => ({
     ...diff,
@@ -72,14 +86,15 @@ test("cached public diffs refresh advisory Intel while preserving cached finding
     })),
   }));
   try {
-    const query = new URLSearchParams({ package: packageName, from: "1.0.0", to: "1.0.1" });
-    const response = await publicDiffFetch(`/api/public/v1/package-diff?${query}`);
+    const response = await publicDiffFetchWithEnv(path, intelEnv);
     expect(response.status).toBe(200);
     const body = (await response.json()) as PublicPackageDiff;
     expect(body.packageJsonDiff.dependencies[0].intel?.status).toBe("known_malware");
     expect(body.findings).toEqual(payload.findings);
     expect(body.risk).toEqual(payload.risk);
     expect(enrich).toHaveBeenCalledOnce();
+    // No organization exists on /diff, so org-targeted rules must not match.
+    expect(getBooleanValue).toHaveBeenCalledWith("aikido-intel", false, undefined);
     enrich.mockImplementation(async (diff) => ({
       ...diff,
       dependencies: diff.dependencies.map((row) => ({
@@ -87,9 +102,33 @@ test("cached public diffs refresh advisory Intel while preserving cached finding
         intel: { provider: "aikido", status: "unavailable", packageName: row.key },
       })),
     }));
-    const unavailable = await publicDiffFetch(`/api/public/v1/package-diff?${query}`);
+    const unavailable = await publicDiffFetchWithEnv(path, intelEnv);
     const refreshed = (await unavailable.json()) as PublicPackageDiff;
     expect(refreshed.packageJsonDiff.dependencies[0].intel?.status).toBe("unavailable");
+  } finally {
+    enrich.mockRestore();
+  }
+});
+
+test.each([
+  ["no Flagship binding", env],
+  ["the flag at its default", flagsEnv(async (_flag, defaultValue) => defaultValue)],
+  [
+    "a failed flag evaluation",
+    flagsEnv(async () => {
+      throw new Error("flag store unavailable");
+    }),
+  ],
+])("public diffs skip Intel lookups with %s", async (_label, requestEnv) => {
+  const { payload, path } = await seedCachedIntelPair();
+  const enrich = vi.spyOn(npmPublicDiff, "enrichDependencyIntel");
+  try {
+    const response = await publicDiffFetchWithEnv(path, requestEnv);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PublicPackageDiff;
+    expect(body.packageJsonDiff).toEqual(payload.packageJsonDiff);
+    expect(body.packageJsonDiff.dependencies[0].intel).toBeUndefined();
+    expect(enrich).not.toHaveBeenCalled();
   } finally {
     enrich.mockRestore();
   }

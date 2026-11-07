@@ -2,6 +2,16 @@
 
 Drydock adds advisory Aikido Intel results to added and changed npm dependency declarations. The shared manifest view displays them on authenticated scan reports and anonymous package diffs. Runtime, optional and peer dependency changes are checked; unchanged and removed declarations are outside this delta review. PyPI and other ecosystems are not checked against the npm feed.
 
+## Feature flag
+
+The `aikido-intel` Flagship flag controls whether lookups run. It **defaults off**, unlike the `ai-review` killswitch: Aikido's written confirmation of production data-use rights for the feed is still pending, so no deployment fetches or shows Intel until an operator turns the flag on. Turning it on later is the killswitch in reverse; turning it off again stops new lookups immediately.
+
+- **Scans** evaluate the flag per organization (`targetingKey` and `organizationId`), the same context `ai-review` uses. When it is off the pipeline never loads the feed, and the report carries no Intel rows. Reports saved while the flag was on keep their dated snapshot.
+- **Anonymous `/diff`** has no organization, so it evaluates the flag with no targeting context. Organization rules cannot match, and Intel appears there only when the flag is enabled for everyone. Because the package-pair cache stores the unenriched payload, a flag flip applies to the next request.
+- A missing `FLAGS` binding or a failed flag evaluation reads as off, so the flag can never fail a scan or a diff.
+
+With the flag off there is no cold feed download, no Intel section and no "unavailable" result; the public diff keeps its "deterministic findings only" wording.
+
 ## Evidence and version semantics
 
 The integration downloads Aikido's complete public [npm malware feed](https://malware-list.aikido.dev/malware_predictions.json). Its schema and matching conventions come from the official [Safe Chain client](https://github.com/AikidoSec/safe-chain/blob/main/packages/safe-chain/src/api/aikido.js) and [malware database](https://github.com/AikidoSec/safe-chain/blob/main/packages/safe-chain/src/scanning/malwareDatabase.js). Only entries classified as `MALWARE` contribute a malware match; telemetry and protestware classifications do not.
@@ -17,12 +27,12 @@ Results name Aikido, carry the feed check time when available, and link to its n
 
 Intel results do not create findings, enter the AI review, change risk scores or affect workflow-gate decisions. The scan pipeline enriches the manifest diff after AI review and scoring, then persists the dated snapshot in the canonical report and its digest. Historical reports retain that snapshot.
 
-Anonymous diffs refresh intelligence separately from the immutable package-pair cache, including on cache hits. A feed snapshot is fresh for at most 15 minutes from its original check time. Failed refreshes expose unavailable results; stale negative results are not reused. Unavailable results are retried after 30 seconds.
+While the flag is on, anonymous diffs refresh intelligence separately from the immutable package-pair cache, including on cache hits. A feed snapshot is fresh for at most 15 minutes from its original check time. Failed refreshes expose unavailable results; stale negative results are not reused. Unavailable results are retried after 30 seconds.
 
 ## Egress and operations
 
 The parent Worker performs a tokenless GET to one fixed HTTPS feed URL, with redirects rejected, a five-second fetch/body deadline and a 16 MiB response cap. Reviewed dependency names, registry URLs, manifest contents, organization IDs and npm credentials are never sent. The sandbox has no new network authority. Matching is local, including for scans acquired from a private registry; a registry's private package identity is not independently verified as the same public npm package.
 
-The validated malware index uses a short per-isolate and per-colo cache. A `dependency.intel.unavailable` operational event records only provider, status and a safe error code. No new bindings, secrets or migrations are required.
+The validated malware index uses a short per-isolate and per-colo cache. A `dependency.intel.unavailable` operational event records only provider, status and a safe error code. No new bindings, secrets or migrations are required; the flag lives in the existing Flagship app.
 
-Aikido also offers an authenticated [research API](https://apidocs.aikido.dev/reference/getmalwarepackages) and [commercial Intel licensing](https://www.aikido.dev/blog/launching-aikido-malware---open-source-threat-feed). Confirm applicable data-use rights with Aikido for a production product integration; public feed availability does not establish licensing terms.
+Aikido also offers an authenticated [research API](https://apidocs.aikido.dev/reference/getmalwarepackages) and [commercial Intel licensing](https://www.aikido.dev/blog/launching-aikido-malware---open-source-threat-feed). Confirm applicable data-use rights with Aikido for a production product integration before enabling `aikido-intel`; public feed availability does not establish licensing terms.

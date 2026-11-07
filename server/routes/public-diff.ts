@@ -166,6 +166,7 @@ async function loadRequestedDiff(
         if (options.countView) recordPublicDiffView(c, cached, true, startedAtMs);
         return {
           payload: await enrichPublicDiffDependencies(
+            c.env,
             cached,
             workerExecutionContext(c.executionCtx),
           ),

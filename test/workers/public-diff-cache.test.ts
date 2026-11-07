@@ -59,37 +59,53 @@ describe("public diff cache", () => {
     vi.restoreAllMocks();
   });
 
-  test("cold diffs enrich responses while keeping mutable Intel out of the artifact cache", async () => {
-    const packageName = `intel-cold-${crypto.randomUUID()}`;
-    vi.spyOn(npmPublicDiff, "acquire").mockResolvedValue({
-      from: { files: [], packageJson: { name: packageName, version: "1.0.0" } },
-      to: {
-        files: [],
-        packageJson: { name: packageName, version: "1.0.1", dependencies: { dep: "1.0.0" } },
-      },
-      buildFindings: () => [],
-    });
-    vi.spyOn(npmPublicDiff, "enrichDependencyIntel").mockImplementation(async (diff) => ({
-      ...diff,
-      dependencies: diff.dependencies.map((row) => ({
-        ...row,
-        intel: { provider: "aikido", status: "no_known_malware", packageName: row.key },
-      })),
-    }));
-    const input = {
-      ecosystem: "npm",
-      registryUrl: npmPublicDiff.registryUrl,
-      packageName,
-      fromVersion: "1.0.0",
-      toVersion: "1.0.1",
-    };
-    const ctx = createExecutionContext();
-    const result = await loadPublicPackageDiff(env, ctx, input);
-    await waitOnExecutionContext(ctx);
-    expect(result.packageJsonDiff.dependencies[0].intel?.status).toBe("no_known_malware");
-    const cached = await readPublicDiffCache(env, await computePublicDiffCacheKey(input));
-    expect(cached?.packageJsonDiff.dependencies[0].intel).toBeUndefined();
-  });
+  test.each([
+    { intelFlag: true, expected: "no_known_malware" },
+    { intelFlag: false, expected: undefined },
+  ])(
+    "cold diffs with aikido-intel $intelFlag keep mutable Intel out of the artifact cache",
+    async ({ intelFlag, expected }) => {
+      const packageName = `intel-cold-${crypto.randomUUID()}`;
+      vi.spyOn(npmPublicDiff, "acquire").mockResolvedValue({
+        from: { files: [], packageJson: { name: packageName, version: "1.0.0" } },
+        to: {
+          files: [],
+          packageJson: { name: packageName, version: "1.0.1", dependencies: { dep: "1.0.0" } },
+        },
+        buildFindings: () => [],
+      });
+      const enrich = vi
+        .spyOn(npmPublicDiff, "enrichDependencyIntel")
+        .mockImplementation(async (diff) => ({
+          ...diff,
+          dependencies: diff.dependencies.map((row) => ({
+            ...row,
+            intel: { provider: "aikido", status: "no_known_malware", packageName: row.key },
+          })),
+        }));
+      const flagsEnv: Cloudflare.Env = {
+        ...env,
+        FLAGS: {
+          getBooleanValue: async (flag: string, defaultValue: boolean) =>
+            flag === "aikido-intel" ? intelFlag : defaultValue,
+        } as Flagship,
+      };
+      const input = {
+        ecosystem: "npm",
+        registryUrl: npmPublicDiff.registryUrl,
+        packageName,
+        fromVersion: "1.0.0",
+        toVersion: "1.0.1",
+      };
+      const ctx = createExecutionContext();
+      const result = await loadPublicPackageDiff(flagsEnv, ctx, input);
+      await waitOnExecutionContext(ctx);
+      expect(result.packageJsonDiff.dependencies[0].intel?.status).toBe(expected);
+      expect(enrich).toHaveBeenCalledTimes(intelFlag ? 1 : 0);
+      const cached = await readPublicDiffCache(env, await computePublicDiffCacheKey(input));
+      expect(cached?.packageJsonDiff.dependencies[0].intel).toBeUndefined();
+    },
+  );
 
   test("versions computed results by deterministic rules and risk schema", async () => {
     const key = await computePublicDiffCacheKey({

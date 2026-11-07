@@ -16,6 +16,7 @@ import {
   emitOperationalEvent,
 } from "../platform/observability";
 import { recordProductEvent } from "../analytics";
+import { dependencyIntelEnabled } from "../dependency-intel-flag";
 import { ScanPreconditionError } from "./errors";
 import { releaseFingerprintFindings } from "../release-fingerprint";
 import { redactJson, type Finding, type PackageJsonSummary } from "../review";
@@ -157,7 +158,10 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
 
     // Vendor intelligence is a dated advisory snapshot. Enrich only after AI
     // review and scoring so it cannot influence findings or gate decisions.
-    if (adapter.enrichDependencyIntel) {
+    if (
+      adapter.enrichDependencyIntel &&
+      (await dependencyIntelEnabled(env, identity.organizationId))
+    ) {
       diff.manifestDiff = await adapter.enrichDependencyIntel(diff.manifestDiff, executionCtx);
     }
 

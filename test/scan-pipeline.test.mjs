@@ -90,6 +90,7 @@ describe("npm adapter pattern set", () => {
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
+    dependencyIntelMock.enrichNpmDependencyIntel.mockClear();
     dependencyIntelMock.enrichNpmDependencyIntel.mockImplementation(async (diff) => diff);
     dbMock.getNpmConnection.mockResolvedValue({
       registryUrl: "https://registry.npmjs.org",
@@ -183,38 +184,76 @@ describe("scan pipeline baseline selection", () => {
     session: { userId: "user_1" },
   };
 
-  test("persists the advisory Intel snapshot without changing findings or risk", async () => {
-    const bucket = createMemoryArtifactBucket();
-    const input = { stageId: "stage-beta-123", organizationId: "org_1" };
-    const baseline = await runScanPipeline(baseContext, npmAdapter, input);
-    const verdict = {
-      provider: "aikido",
-      status: "known_malware",
-      packageName: "listed-dependency",
-      checkedAt: "2026-10-11T10:00:00.000Z",
-      matchKind: "exact",
-      matchedVersions: ["1.0.0"],
-      matchedVersionCount: 1,
-    };
+  const intelVerdict = {
+    provider: "aikido",
+    status: "known_malware",
+    packageName: "listed-dependency",
+    checkedAt: "2026-10-11T10:00:00.000Z",
+    matchKind: "exact",
+    matchedVersions: ["1.0.0"],
+    matchedVersionCount: 1,
+  };
+
+  function mockIntelMatch() {
     dependencyIntelMock.enrichNpmDependencyIntel.mockImplementation(async (diff) => ({
       ...diff,
       dependencies: [
-        { key: "listed-dependency", status: "added", staged: "1.0.0", intel: verdict },
+        { key: "listed-dependency", status: "added", staged: "1.0.0", intel: intelVerdict },
       ],
     }));
-    const result = await runScanPipeline(
-      { ...baseContext, env: { ...baseContext.env, ARTIFACTS: bucket } },
-      npmAdapter,
-      input,
+  }
+
+  function intelFlagContext(enabled, bucket) {
+    const getBooleanValue = vi.fn(async (flag, defaultValue) =>
+      flag === "aikido-intel" ? enabled : flag === "ai-review" ? false : defaultValue,
     );
+    return {
+      getBooleanValue,
+      context: {
+        ...baseContext,
+        env: { ...baseContext.env, ARTIFACTS: bucket, FLAGS: { getBooleanValue } },
+      },
+    };
+  }
+
+  test("persists the advisory Intel snapshot without changing findings or risk when aikido-intel is on", async () => {
+    const bucket = createMemoryArtifactBucket();
+    const input = { stageId: "stage-beta-123", organizationId: "org_1" };
+    const baseline = await runScanPipeline(baseContext, npmAdapter, input);
+    mockIntelMatch();
+    const { getBooleanValue, context } = intelFlagContext(true, bucket);
+    const result = await runScanPipeline(context, npmAdapter, input);
+    expect(getBooleanValue).toHaveBeenCalledWith("aikido-intel", false, {
+      targetingKey: "org_1",
+      organizationId: "org_1",
+    });
     expect(result.riskSummary).toEqual(baseline.riskSummary);
     expect(result.ruleFindings).toEqual(baseline.ruleFindings);
-    expect(result.packageJsonDiff.dependencies[0].intel).toEqual(verdict);
+    expect(result.packageJsonDiff.dependencies[0].intel).toEqual(intelVerdict);
     expect(
       dbMock.persistScan.mock.calls.at(-1)[1].summary.packageJsonDiff.dependencies[0].intel,
-    ).toEqual(verdict);
+    ).toEqual(intelVerdict);
     const report = [...bucket.objects.entries()].find(([key]) => key.endsWith("report.json"));
-    expect(JSON.parse(report[1]).packageJsonDiff.dependencies[0].intel).toEqual(verdict);
+    expect(JSON.parse(report[1]).packageJsonDiff.dependencies[0].intel).toEqual(intelVerdict);
+  });
+
+  test.each([
+    ["the flag at its default", (bucket) => intelFlagContext(false, bucket).context],
+    [
+      "no Flagship binding",
+      (bucket) => ({ ...baseContext, env: { ...baseContext.env, ARTIFACTS: bucket } }),
+    ],
+  ])("skips the Intel lookup with %s", async (_label, buildContext) => {
+    const bucket = createMemoryArtifactBucket();
+    mockIntelMatch();
+    const result = await runScanPipeline(buildContext(bucket), npmAdapter, {
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+    expect(dependencyIntelMock.enrichNpmDependencyIntel).not.toHaveBeenCalled();
+    expect(result.packageJsonDiff.dependencies.some((row) => row.intel)).toBe(false);
+    const report = [...bucket.objects.entries()].find(([key]) => key.endsWith("report.json"));
+    expect(JSON.stringify(JSON.parse(report[1]).packageJsonDiff)).not.toContain("aikido");
   });
 
   test("refuses to decrypt a rotated unvalidated npm connection", async () => {
