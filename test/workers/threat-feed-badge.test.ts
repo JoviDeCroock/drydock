@@ -3605,6 +3605,26 @@ describe("the badge verdict the /diff page renders", () => {
     });
   });
 
+  test("a rejection npm published over carries no timing claim", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // The rejection may well predate npm's publish, so the page must not say
+    // it came after.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 rejected");
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({
+      verdict: { version: "3.0.1", outcome: "rejected", decidedAfterPublish: false },
+    });
+  });
+
   test("switching the badge off silences the verdict too", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);

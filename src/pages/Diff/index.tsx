@@ -481,9 +481,6 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         ) : null}
       </section>
 
-      {/* The click target of the README badge, so the claim that earned the
-          click is stated here; the model only sets it for this exact version. */}
-      <Show when={model.badgeVerdict}>{(verdict) => <BadgeVerdictNotice verdict={verdict} />}</Show>
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {loading ? (
         <LoadingState
@@ -494,6 +491,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
       {diff ? (
         <>
+          {/* The click target of the README badge, so the claim that earned the
+              click is stated here; the model only sets it for this exact
+              version, and it points at the diff, so it waits for one. */}
+          <Show when={model.badgeVerdict}>
+            {(verdict) => <BadgeVerdictNotice verdict={verdict} />}
+          </Show>
           {diff.notices?.length ? (
             <Alert tone="warn">
               {diff.notices.map((notice) => (

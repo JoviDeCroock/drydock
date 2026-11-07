@@ -760,11 +760,13 @@ export function buildBadgeVerdict(
   // publisher, the second would put a second risk grade beside the diff's own.
   if (!row || scanIdentity(row) !== "registry-verified") return null;
   if (superseded) {
+    // `blocked` covers both a guarded post-release decline and npm publishing
+    // over an earlier rejection, so it carries no timing either way.
     if (superseded.blocked) {
       return {
         version: badgeVersion(superseded.version),
         outcome: "rejected",
-        decidedAfterPublish: true,
+        decidedAfterPublish: false,
       };
     }
     if (superseded.unapproved) {
