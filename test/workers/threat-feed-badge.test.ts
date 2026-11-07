@@ -3523,3 +3523,126 @@ describe("a listed rejection is a threat disclosure", () => {
     expect((await request(app, `/public/reports/${token}`)).status).toBe(404);
   });
 });
+
+async function fetchVerdict(
+  app: TestApp,
+  ecosystem: string,
+  name: string,
+  options: { cached?: boolean } = {},
+): Promise<{ status: number; body: { verdict: unknown } }> {
+  const path = `/public/badge-verdict/${ecosystem}/${name}`;
+  if (!options.cached) await purgeColoCache(path);
+  const res = await request(app, path);
+  return { status: res.status, body: (await res.json()) as { verdict: unknown } };
+}
+
+describe("the badge verdict the /diff page renders", () => {
+  test("says what the badge says for an approved release, and nothing for none", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `@acme/pkg-${crypto.randomUUID().slice(0, 8)}`;
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({ verdict: null });
+
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.1");
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({
+      verdict: { version: "3.0.1", outcome: "approved", decidedAfterPublish: false },
+    });
+  });
+
+  test("an undecided or unverified review that the badge quotes stays off the page", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const undecided = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const undecidedScan = await seedPublicRelease(owner, undecided, "3.0.1");
+    await share(app, undecidedScan, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", undecided)).body.message).toBe(
+      "3.0.1 reviewed · low risk",
+    );
+    expect((await fetchVerdict(app, "npm", undecided)).body).toEqual({ verdict: null });
+
+    // A PyPI gate review only claims its name in a manifest: the badge says
+    // `unverified`, and the page cannot say "its publisher".
+    const claimed = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const gate = await seedBadgeScan(owner, {
+      packageName: claimed,
+      version: "3.0.1",
+      ecosystem: "pypi",
+    });
+    await decide(app, gate, "publish");
+    await share(app, gate, { threatFeed: true });
+    expect((await fetchBadge(app, "pypi", claimed)).body).toMatchObject({
+      label: "drydock (unverified)",
+      message: "3.0.1 approved",
+    });
+    expect((await fetchVerdict(app, "pypi", claimed)).body).toEqual({ verdict: null });
+  });
+
+  test("a newer release the badge cannot speak for removes the claim", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    const newer = await seedBadgeScan(owner, { packageName, version: "3.0.1" });
+    await markRegistryPublished(newer, "3.0.1");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({ verdict: null });
+  });
+
+  test("the publisher's monitor alert reads as published without approval", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(owner.organizationId, packageName, "3.0.0", "artifact_mismatch");
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({
+      verdict: {
+        version: "3.0.0",
+        outcome: "published_without_approval",
+        decidedAfterPublish: false,
+      },
+    });
+  });
+
+  test("a rejection npm published over carries no timing claim", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // The rejection may well predate npm's publish, so the page must not say
+    // it came after.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1",
+      "published_despite_rejection",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 rejected");
+    expect((await fetchVerdict(app, "npm", packageName)).body).toEqual({
+      verdict: { version: "3.0.1", outcome: "rejected", decidedAfterPublish: false },
+    });
+  });
+
+  test("switching the badge off silences the verdict too", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.1");
+    // Warm the verdict's colo entry: turning the badge off must purge it with
+    // the badge's, or the page would keep vouching for five minutes.
+    expect((await fetchVerdict(app, "npm", packageName)).body.verdict).not.toBeNull();
+
+    expect((await setBadgeVisibility(app, packageName, true)).status).toBe(200);
+    expect((await fetchVerdict(app, "npm", packageName, { cached: true })).body).toEqual({
+      verdict: null,
+    });
+  });
+
+  test("rejects the names and ecosystems the badge rejects", async () => {
+    const app = publicApp(null);
+    expect((await fetchVerdict(app, "cargo", "serde")).status).toBe(404);
+    expect((await fetchVerdict(app, "npm", "x".repeat(300))).status).toBe(400);
+  });
+});

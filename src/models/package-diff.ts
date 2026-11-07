@@ -11,6 +11,7 @@ import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
 import { packageDiffPath, type DiffEcosystem } from "../lib/package-diff-path";
 import { findingFirstPath } from "../features/review/initial-path";
 import { apiFetch, errorMessage } from "./api";
+import type { BadgeVerdict } from "../../server/lib/public-feed";
 
 export interface PublicDiffVersionsResponse {
   ecosystem: DiffEcosystem;
@@ -188,6 +189,32 @@ function ecosystemQuery(ecosystem: DiffEcosystem): string {
   return ecosystem === "npm" ? "" : `&ecosystem=${ecosystem}`;
 }
 
+/**
+ * What the package's README badge says about its latest release, from the same
+ * read the badge uses. Only npm badges link to `/diff`; every other ecosystem's
+ * badge points at a report, so nothing here would be read in context.
+ *
+ * Best-effort: the page must render the same with or without it, so any
+ * failure is the same as no verdict.
+ */
+async function getBadgeVerdict(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+): Promise<BadgeVerdict | null> {
+  if (ecosystem !== "npm") return null;
+  try {
+    const res = await fetch(
+      `/public/badge-verdict/npm/${packageName.split("/").map(encodeURIComponent).join("/")}`,
+      { credentials: "omit", headers: { accept: "application/json" } },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { verdict?: BadgeVerdict | null };
+    return body.verdict ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // One model instance per (package, from, to) page view; the page remounts the
 // model when the route changes, so all state here is for a single version pair.
 export const PackageDiffModel = createModel(
@@ -196,6 +223,10 @@ export const PackageDiffModel = createModel(
     const error = signal<string | null>(null);
     const diff = signal<PublicDiffResponse | null>(null);
     const versions = signal<PublicDiffVersionsResponse | null>(null);
+    // Set only when the badge speaks for exactly the version on the right of
+    // this diff. Any other version — an older pair, or a newer release the
+    // badge has not caught up with — gets no claim rather than a stale one.
+    const badgeVerdict = signal<BadgeVerdict | null>(null);
     const selectedPath = signal<string | null>(null);
     const fileLoading = signal(false);
     const fileError = signal<string | null>(null);
@@ -207,6 +238,7 @@ export const PackageDiffModel = createModel(
       error,
       diff,
       versions,
+      badgeVerdict,
       selectedPath,
       fileLoading,
       fileError,
@@ -214,6 +246,9 @@ export const PackageDiffModel = createModel(
       async load() {
         loading.value = true;
         error.value = null;
+        void getBadgeVerdict(ecosystem, packageName).then((verdict) => {
+          if (verdict?.version === toVersion) badgeVerdict.value = verdict;
+        });
         const [diffResult, versionsResult] = await Promise.allSettled([
           getPublicDiff(ecosystem, packageName, fromVersion, toVersion),
           getPublicDiffVersions(ecosystem, packageName),

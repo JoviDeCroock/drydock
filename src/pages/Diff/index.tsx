@@ -4,6 +4,7 @@ import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import type { DiffEntry } from "../../../server/lib/review";
+import { BadgeVerdictNotice } from "./BadgeVerdictNotice";
 import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
 import { countSeverities } from "../../lib/findings";
@@ -490,6 +491,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
       {diff ? (
         <>
+          {/* The click target of the README badge, so the claim that earned the
+              click is stated here; the model only sets it for this exact
+              version, and it points at the diff, so it waits for one. */}
+          <Show when={model.badgeVerdict}>
+            {(verdict) => <BadgeVerdictNotice verdict={verdict} />}
+          </Show>
           {diff.notices?.length ? (
             <Alert tone="warn">
               {diff.notices.map((notice) => (
