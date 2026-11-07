@@ -26,7 +26,7 @@ Read one row, not the folder. User-facing guide: `src/pages/Docs/index.tsx` (kee
 | Stage Watchtower — advisory | npm approves; Drydock records advice | npm | [`npm-staged-publishing.md`](./npm-staged-publishing.md) |
 | Gate setup (guided) | draft PR only; maintainer merges | npm, PyPI, VS Code | [`publisher-setup.md`](./publisher-setup.md) |
 | npm trusted publishing pin | narrows npm OIDC to the gate environment | npm | [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) |
-| Dependency review — enforced when required | GitHub App check on Dependabot/Renovate PRs; holds capability changes until a repository writer approves | npm, PyPI | [`dependency-review.md`](./dependency-review.md) |
+| Dependency review — enforced when required | GitHub App check on same-repository PRs; holds capability changes until a repository writer approves | npm, PyPI | [`dependency-review.md`](./dependency-review.md) |
 | Public diff | anonymous, advisory | npm, PyPI, atpm | [`public-diff.md`](./public-diff.md), [`atpm.md`](./atpm.md) |
 
 Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-workflow-gate.yml).

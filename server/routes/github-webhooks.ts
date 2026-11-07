@@ -21,6 +21,9 @@ import { recordProductEvent } from "../lib/analytics";
 import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 import { dependencyReviewAvailable } from "../lib/dependency-review/flag";
+import { hasRepositoryWriteAccess } from "../lib/dependency-review/github";
+import { getInstallationAccessToken } from "../lib/github-app/api";
+import { parseRepositoryFullName } from "../lib/github-app/validation";
 
 export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 // Anonymous surface mounted outside /api, so it attaches its own db handle.
@@ -205,6 +208,15 @@ githubWebhookRoutes.post("/github", async (c) => {
       appId: config.appId,
       dependencyReviewAvailable: (organizationId) =>
         dependencyReviewAvailable(c.env, organizationId),
+      authorizeDependencyReviewPullRequest: async (event) => {
+        const repo = parseRepositoryFullName(event.repositoryFullName);
+        if (!repo) return false;
+        const token = await getInstallationAccessToken(config, event.installationId);
+        for (const login of new Set([event.authorLogin, event.senderLogin])) {
+          if (!login || !(await hasRepositoryWriteAccess(token, repo, login))) return false;
+        }
+        return true;
+      },
     });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
     // Hand a pending gate to the queue consumer that runs the PyPI review and

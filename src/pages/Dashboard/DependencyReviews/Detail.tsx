@@ -217,7 +217,7 @@ function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: Revi
 
       {state !== "reviewing" && state !== "failed" && bumps.length === 0 ? (
         <Card>
-          <EmptyLine>This pull request changes no package version Drydock can review.</EmptyLine>
+          <EmptyLine>No package version changes were collected for this review.</EmptyLine>
         </Card>
       ) : null}
 
