@@ -1,132 +1,86 @@
 # Release memory (prior-release consistency)
 
-Release memory tells a reviewer when the scan they are looking at has the same
-deterministic finding profile as a release the organization already reviewed
-and approved. It exists to cut alert fatigue: benign packages such as test
-runners trigger the same high-severity capability findings on every release
-(spawning processes is their declared purpose), and without context each new scan
-presents those findings as if they were novel.
+Compares a scan's deterministic finding profile with the organization's last approved release of the same package, and stops already-approved package-context findings from anchoring the headline risk. **Authority:** advisory context (it never changes findings or `releaseRisk`). **Owner:** `server/lib/scan/release-memory.ts`.
 
-## What it does
+Purpose: benign packages such as test runners raise the same high capability findings every release; without context each scan presents them as novel.
 
-During a scan, after deterministic findings are computed and before they are
-scored, the pipeline looks up the most recent scan in the **same organization**, for the
-**same `packageName`** in the **same ecosystem**, with `status = 'complete'` and
-`decision = 'publish'` (the in-flight scan id is excluded). Both scans are reduced to a **finding
-profile**: the multiset of `(ruleId, severity, file)` over rule findings.
-`line` and `evidence` are ignored — a finding that moved lines is the same
-profile entry — and findings without a `ruleId` participate as `"unknown"`.
+## At a glance
 
-The ecosystem is part of the package's identity: an npm package and a PyPI
-project that share a name are different packages, and approving one says
-nothing about the other. The current scan's ecosystem is the pipeline adapter's
-id (`npm`, `pypi`, `vscode`), never a manifest field, so package bytes cannot
-pick which approval they are compared against. A stored scan's ecosystem is
-`scanEcosystemSql` (`server/db/scan-query.ts`), the derivation the package
-release view uses: `npm` for `manual`/`auto_discovery`, otherwise the gate
-provenance or published-pair ecosystem the summary recorded. Each adapter's id
-equals what its own persisted rows read back as
-(`test/ecosystem-registry.test.ts` pins this). A completed workflow-gate scan
-whose summary predates the provenance snapshot has no ecosystem, and is never
-a prior for any ecosystem: an approval that cannot be attributed to a registry
-discounts nothing, which is the same fail-closed `none` as having no approval.
-Names match exactly as recorded; PyPI names are not PEP 503-normalized here.
+| Thing | Owner | Trigger | Pinned by |
+| --- | --- | --- | --- |
+| Profile build + comparison | `server/lib/scan/release-memory.ts` | every scan, after deterministic findings, before scoring | `test/release-memory.test.ts` |
+| Prior-approved lookup | `getPriorApprovedScanFindings` in `server/db/release-memory.ts` | same | `test/workers/release-memory.test.ts` |
+| Pipeline phase | `resolveReleaseConsistency` in `server/lib/scan/pipeline-phases.ts` | same | `test/scan-pipeline-phases.test.mjs` |
+| Risk adjustment | `server/lib/review/risk.ts` (`priorApprovedContextFindingCount`) | scoring | `test/risk.test.mjs` |
+| UI | `src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice.tsx` | scan detail | `test/release-consistency-notice.test.ts` |
+| Notifications | `server/lib/notify/format.ts` | completion email, Slack | `test/notify.test.mjs` |
 
-The profiles are compared as multisets:
+## Contract
 
-| Status     | Meaning                                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `match`    | Identical multisets — the approved release had exactly this finding profile.                                                                                  |
-| `subset`   | Strict multiset subset — every current finding (duplicates included) was in the approved profile, plus more.                                                  |
-| `diverged` | Something is present now that the approved profile lacked; `newFindings` lists the difference (capped at 25 entries; `newFindingCount` keeps the true count). |
-| `none`     | No prior approved scan for this package in this organization and ecosystem (or the lookup was skipped/failed).                                                |
+### Prior scan selection
 
-The result is persisted as `summary.releaseConsistency` on the scan (no schema
-migration; it lives in `summaryJson`), returned on `ScanResult`, included in
-the digested report payload, and exported by `report.json` as an additive
-optional field (`null` for scans that predate it).
+| Criterion | Value |
+| --- | --- |
+| Organization | Same `organizationId` (mandatory) |
+| Package | Same `packageName`, exact as recorded (PyPI names not PEP 503-normalized) |
+| Ecosystem | Same; current = pipeline adapter id (`npm`, `pypi`, `vscode`), never a manifest field; stored = `scanEcosystemSql` (`server/db/scan-query.ts`): `npm` for `manual`/`auto_discovery`, else the gate provenance or published-pair ecosystem in the summary |
+| Status / decision | `status = 'complete'` and `decision = 'publish'` |
+| Exclusion | The in-flight scan id |
+| Order | Most recent |
+| Findings source | The prior scan's digest-verified R2 `report.json`; AI rows (`source: "ai"`) filtered out |
 
-Completion email and Slack notifications surface the same context. They lead
-with release-delta risk (rather than whole-package artifact risk) and say when
-the profile matches, is a subset of, or has diverged from the prior approved
-release. This keeps recurring package-context findings from arriving as an
-unexplained high-risk alert while preserving the recorded risk and findings.
+### Finding profile
 
-## What it changes, and what it must not
+Multiset of `(ruleId, severity, file)` over rule findings. `line` and `evidence` are ignored (a moved finding is the same entry). Findings without a `ruleId` participate as `"unknown"`.
 
-Release memory has exactly one scoring effect: **package-context findings that
-were already in an approved release stop anchoring `contextRisk` and
-`artifactRisk`.** It never edits, hides, or re-severities a finding — every one
-is still emitted, persisted, and listed in the UI. Only its contribution to the
-headline score is dropped, and `priorApprovedContextFindingCount` on the risk
-breakdown records how many were dropped so the banner can say so. A headline
-that silently falls from high to low is worse than one that never moved.
+### Status
 
-The boundaries are what make this safe:
+| Status | Meaning |
+| --- | --- |
+| `match` | Identical multisets. |
+| `subset` | Strict multiset subset: every current finding (duplicates included) was in the approved profile, plus more. |
+| `diverged` | Something is present now that the approved profile lacked; `newFindings` lists it, capped at `RELEASE_CONSISTENCY_NEW_FINDINGS_CAP` (25); `newFindingCount` keeps the true count. |
+| `none` | No prior approved scan in this organization and ecosystem, or the lookup was skipped/failed. |
 
-- **Release-delta findings are never demoted.** A finding on a file this
-  release changed says something about new bytes, so matching a prior profile
-  entry proves nothing about it. `releaseRisk` is therefore untouched, and
-  because `workflow-gate-job.ts` reads `releaseRisk` for its accept/reject
-  recommendation, a prior approval can never release a held GitHub job.
-- **It cannot escalate.** The adjustment only ever removes findings from a
-  score; it has no path to raise one.
-- **It fails closed.** No prior approved scan, or a `diverged` profile whose
-  `newFindings` list hit the 25-entry cap (so the approved set can't be
-  reconstructed exactly), drops nothing at all.
-- **A skipped baseline disables it entirely.** When the published baseline
-  exceeded the download budget (`BaselineInfo.comparisonSkipped`), every finding
-  is annotated `unknown` package context, so the whole scan would otherwise land
-  in the adjustment's bucket. Release memory's premise is "this evidence was
-  reviewed before _and nothing changed_"; with nothing compared, the second half
-  cannot be established, and a profile match on
-  `(ruleId, severity, file)` does not imply identical bytes. Discounting there
-  would grade an uncompared release as clean — the failure the skipped-baseline
-  handling exists to prevent.
-- **AI output can't reach it, in either direction.** The profile is
-  deterministic-only, so the advisory reviewer cannot influence what counts as
-  previously approved — and, symmetrically, an AI finding is never dropped by
-  the adjustment, because a `match` on the deterministic profile says nothing
-  about what the reviewer found. AI findings are projected without a `ruleId`,
-  which is what makes them ineligible.
+### Where it surfaces
 
-The motivating evidence is production: across scans whose release delta was
-clean but whose package context read high, **every single one was published
-anyway.** Re-anchoring a headline on evidence a maintainer already accepted is
-how a real signal ends up buried.
+| Surface | Behavior |
+| --- | --- |
+| Scan summary | `summary.releaseConsistency` in `summaryJson` (no migration); returned on `ScanResult`; included in the digested report payload |
+| `report.json` export | Optional additive field, `null` for scans that predate it; `drydock.report.v2` omits `priorScanId` and `decidedAt` (`server/lib/scan/report-export.ts`) |
+| Email / Slack | Lead with release-delta risk, not artifact risk, and say whether the profile matches, is a subset of, or diverged from the prior approved release |
+| UI `diverged` | Warn `Alert` ("N findings are new since the last approved release"); the only emphasized variant and the only one that opens review notes on its own |
+| UI `match` / `subset` | Quiet muted line; with zero current findings it switches to "No deterministic findings" wording that says only deterministic checks are compared |
+| UI `none` | Nothing rendered |
 
-The UI renders it next to the recommendation. `diverged` ("N findings are new
-since the last approved release") is the only variant that asks for attention,
-so it is the only one with emphasis — a warn Alert — and the only one that opens
-the review notes on its own. `match`/`subset` render as a quiet muted line;
-`none` renders nothing.
+## Invariants
 
-A `match`/`subset` with **zero current findings** is a vacuous comparison
-(empty profile vs. empty-or-any prior profile), so the line switches to
-dedicated "No deterministic findings" wording that says only deterministic
-checks are compared. The line is not suppressed — the prior-approval context
-is still useful — but it must not read as reassurance about the diff or the AI
-review, which remain specific to the new release.
+1. One scoring effect only: package-context findings already in an approved release stop anchoring `contextRisk` and `artifactRisk`. Every finding is still emitted, persisted, and listed; `priorApprovedContextFindingCount` records how many were dropped so the banner can say so (a headline that silently falls is worse than one that never moved).
+2. Release-delta findings are never demoted, so `releaseRisk` is untouched; `server/lib/workflow-gate-job.ts` reads `releaseRisk`, so a prior approval can never release a held GitHub job.
+3. It cannot escalate: the adjustment only removes findings from a score.
+4. Fails closed: no prior approved scan, or a `diverged` profile whose `newFindings` hit the cap (approved set not reconstructible), drops nothing.
+5. A skipped baseline (`BaselineInfo.comparisonSkipped`) disables the adjustment: with nothing compared, "nothing changed" cannot be established, and a `(ruleId, severity, file)` match does not imply identical bytes.
+6. AI cannot reach it in either direction: the profile is deterministic-only, and AI findings (projected without a `ruleId`) are never dropped by the adjustment.
+7. Standing-danger rules (see [`security-detection-corpus.md`](./security-detection-corpus.md#rule-inventory)) are never discounted as previously-approved context.
+8. Organization-scoped: one organization's review history is never visible to another; `scans_org_decision_created_idx` covers the query and the ecosystem predicate runs on rows it narrowed.
+9. A completed workflow-gate scan whose summary predates the provenance snapshot has no ecosystem and is never a prior for any ecosystem (same fail-closed `none` as no approval).
+10. A `match`/`subset` with zero current findings must not read as reassurance about the diff or the AI review.
 
-## Failure and compatibility behavior
+## Failure modes
 
-- The lookup is wrapped: a database or artifact-read error degrades to `none`
-  and emits a structured `scan.release_memory.lookup_failed` operational event
-  instead of failing the scan.
-- The prior scan's rule findings are read from the digest-verified R2
-  `report.json` — the only place a scan's findings live. A report that cannot be
-  read yields no profile at all (rather than an empty one, which would read as
-  `diverged`). The profile stays deterministic-only: AI finding rows
-  (`source: "ai"`) are filtered out so the advisory reviewer's non-deterministic
-  output can never make a routine release read as `diverged`.
-- Old scans lack the field entirely; every reader goes through
-  `normalizeReleaseConsistency`, which tolerates absence and malformed blobs.
-- The query is organization-scoped (`scans_org_decision_created_idx` covers
-  it); one organization's review history is never visible to another. The
-  ecosystem predicate is checked on the rows that index already narrowed, so
-  it needs no index of its own.
+| Condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Lookup throws | D1 or artifact-read error | Status `none`; scan continues; `scan.release_memory.lookup_failed` operational event | Check D1/R2 health |
+| Prior `report.json` unreadable | Missing or digest mismatch | No profile at all (not an empty one, which would read as `diverged`) → `none` | — |
+| Old or malformed `releaseConsistency` | Scan predates the field | Every reader goes through `normalizeReleaseConsistency`, which tolerates absence and malformed blobs | — |
+| Everything annotated `unknown` package context | Baseline over the download budget | Adjustment disabled (invariant 5) | — |
 
-Code: `server/lib/scan/release-memory.ts` (profile building + comparison),
-`server/db/release-memory.ts` (prior-approved-scan lookup),
-`resolveReleaseConsistency` in `server/lib/scan/pipeline-phases.ts` (pipeline
-phase), `src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice.tsx` (UI).
+## Change checklist
+
+- Change profile or comparison → `server/lib/scan/release-memory.ts`, `test/release-memory.test.ts`.
+- Change scoring effect → `server/lib/review/risk.ts`, `test/risk.test.mjs`; keep invariants 2-6.
+- Change the export shape → bump `REPORT_EXPORT_SCHEMA` in `server/lib/scan/report-export.ts`.
+
+## Why
+
+Production evidence: across scans whose release delta was clean but whose package context read high, every one was published anyway. Re-anchoring the headline on evidence a maintainer already accepted is how a real signal gets buried.

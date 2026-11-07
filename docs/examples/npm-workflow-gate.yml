@@ -1,0 +1,34 @@
+name: release
+on:
+  release:
+    types: [published]
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: mkdir -p dist && npm pack --pack-destination dist # npm does not create the directory
+      - run: cd dist && sha256sum *.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-candidates # the name Drydock's npm gate looks for
+          path: dist/
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    environment: production # GitHub holds this job for Drydock's decision
+    permissions: { id-token: write, contents: read } # npm trusted publishing (OIDC), no token
+    steps:
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, registry-url: "https://registry.npmjs.org" }
+      - run: npm install -g npm@^11.5.1 # trusted publishing needs npm >= 11.5.1
+      - uses: actions/download-artifact@v4
+        with: { name: npm-release-candidates, path: dist }
+      - run: cd dist && sha256sum --check --strict SHA256SUMS # fail if bytes drifted from the review
+      - run: npm publish dist/*.tgz --access public --provenance

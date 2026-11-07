@@ -1,525 +1,277 @@
-# Public npm publication monitoring
+# Publication monitor
 
-The dashboard's **Publication monitor** watches automatically and manually enrolled public npm
-packages independently of staged scans. It checks new public versions against
-the active organization's prior release decisions and hashes the actual
-published tarball. A direct publication can therefore appear even when Drydock
-never discovered a stage or received a GitHub gate webhook.
+Watches enrolled public npm packages for new published versions, hashes the published tarball, and compares it with the organization's own prior release decisions, so a direct publish shows up even when Drydock never saw a stage or a gate webhook. **Authority:** advisory (observation after publication). **Owner:** `server/lib/ecosystems/npm/publication-monitor.ts`.
 
-This is advisory observation after publication. It does not hold npm releases,
-establish package ownership, classify malware, or prevent the first install.
-Private packages and custom registries are not supported in production.
+It does not hold npm releases, establish package ownership, classify malware, or prevent the first install. Private packages and custom registries are not supported in production; public npm is the production registry boundary.
 
-## Enrollment and observations
+## At a glance
 
-Drydock automatically watches public npm packages from the organization's completed
-staged reviews whose captured registry status confirms publication. It also enrolls
-public packages after verified staged admission claims them for the organization, before review runs.
-Automatic enrollment also requires a package claim belonging to this organization and confirmed management when it is a personal workspace. Historical packages awaiting audit do not auto-enroll. Only stages from public npm qualify in production; private or unknown visibility,
-custom registries, and published-pair reviews do not enroll packages. Completed npm
-workflow gates supply suggestions that require **Watch package**, because a gate
-alone does not establish public visibility.
+| Thing | Owner file | Pinned by |
+| --- | --- | --- |
+| Enrollment, reconciliation | `server/lib/ecosystems/npm/publication-auto-enrollment.ts` | `test/workers/publication-auto-enrollment.test.ts`, `test/workers/publication-enrollment-cron.test.ts` |
+| Acquisition, sweep, limits | `server/lib/ecosystems/npm/publication-monitor.ts` | `test/workers/publication-monitor.test.ts`, `test/workers/publication-monitor-cron.test.ts` |
+| Verdict | `server/lib/ecosystems/npm/publication-verdict.ts` | `test/publication-verdict.test.ts` |
+| Alert and coverage-notice delivery | `server/lib/ecosystems/npm/publication-notices.ts` | `test/workers/publication-alerts.test.ts` |
+| Post-release review, badge guard | `server/lib/ecosystems/npm/publication-review.ts` | `test/workers/publication-post-release-review.test.ts` |
+| Authenticated API | `server/routes/npm-publication-watches.ts` | `test/workers/publication-watches-routes.test.ts` |
+| Ecosystem capability | `server/lib/ecosystems/npm/publication.ts` | — |
+| Persistence | `server/db/publication-watches.ts`, `server/db/publication-alerts.ts` | `test/publication-watches-model.test.ts`, `test/publication-alert-log-model.test.ts` |
+| UI copy | `src/features/publication-monitor/copy.ts` | `test/publication-monitor-copy.test.ts` |
 
-Enrollment is a backend job: listing watches never enrolls anything. Historical
-enrollment runs in bounded per-organization batches whenever a stage is submitted,
-the discovery cron sweeps an organization's npm connection (including sweeps that
-find no stages), or the 15-minute publication cron finds the organization has work
-waiting. That cron reconciles up to 20 such organizations per tick, in random order,
-before it checks watches: those with eligible review history or gate reviews not yet
-recorded, and those with an enrollable candidate and a free slot. It is what reaches
-organizations without an npm connection, turns gate reviews into suggestions, and
-fills a slot freed by a stop. Finding those organizations still walks every scan for
-review history on each tick, since nothing marks history as already considered; it counts a
-full organization's watches once rather than once per deferred package, and reads gate
-reviews through the partial `scans_workflow_gate_enrollment_idx`. Each reconciliation records up to 50 historical packages
-and enrolls up to 50 watches, so a larger backlog enrolls over several of them. It starts monitoring at enrollment time, never at the older review date;
-older releases are not retrospectively reported as bypasses. The dashboard shows
-where each watch came from, how many eligible packages are waiting for background
-enrollment, and how many do not fit under the 250-watch limit. Deferred packages
-enroll at the next reconciliation after a slot frees.
+- Triggers: the `*/15` publication cron, **Check now**, stage submission, the discovery sweep, and **Watch package**.
+- `server/scheduled.ts`, the staged-review route, and the decision route reach the monitor only through the `publicationMonitor` capability on the ecosystem registry.
+- Tables: `publication_watches`, `publication_observations`, `publication_watch_candidates` (enrollment evidence, persistent opt-outs), `publication_alerts` (dedup, acknowledgment, post-release review and resolution; outlives a stopped watch).
 
-Discovery and staged admission run enrollment without computing the dashboard's
-deferred-count and suggestion summary. Dashboard reads still compute that summary.
-Scheduled checks also avoid loading the decorated watch summary after checking;
-manual check routes load it once to return the current watch and observations.
+## Contract
 
-You can also enter a public npm package name and choose **Watch package** without
-an npm token or existing scan. A subscription never establishes ownership, and another organization's claim never stops it: monitoring a public release needs no authority, and letting the first claimant silence everyone else's alerts would let a stolen stage-read token mute the monitor right before a malicious publish. A claim only deactivates the watch of an organization that competed for or handed over management, that is, one holding its own staged reviews of the package while another organization (or an ownerless reservation) holds the claim, such as a personal workspace after moving the package to a shared organization. That watch retains its observations; enrollment and manual checks return a conflict, cron skips it, and it no longer counts toward the watch limit. Personal enrollment requires an explicit workspace choice, and choosing **Watch package** in the personal workspace is that choice. A provisional personal claim must still be kept or moved before polling starts; the package page offers that choice instead of **Watch package**, and hides it while another organization holds the claim. A package page reports automatic enrollment as pending only for packages the organization manages, because auto-enrollment never enrolls any other package; others show as not enrolled. A package awaiting a personal management choice starts monitoring once it is kept or moved. Duplicate enrollment preserves the original start
-time. Removing a watch deletes its observations and persists an organization-scoped
-opt-out, so later discovery or history reconciliation cannot silently restore it.
-Because stopping hides unacknowledged alerts and opts the package out, only owners
-and admins (the integration-management role) can stop a watch; any member can enroll
-one. Stopping asks for confirmation first, saying what it removes and that alerts
-already raised stay listed on the package's page. Explicitly enrolling it again
-clears the opt-out and starts a new observation window. Both are recorded in the
-audit log. A watch enrolled from a staged review (discovered, or submitted by hand)
-is labelled "added from a staged review"; one enrolled from published review history,
-"added from your past reviews".
+### Endpoints
 
-The existing 15-minute cron checks watches independently of staged discovery.
-**Check now** runs a bounded check of one watch on demand (distinct from the
-Recent reviews **Check npm**, which runs stage discovery). The dashboard lists watches 25 at a
-time, those with unacknowledged alerts first, then those with unverified releases or a coverage
-gap, then the rest, newest first within each. It displays the latest
-100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
-last check, how many releases it has recorded and any coverage problem; each package links to its package page,
-which shows the same watch, observations and controls for that package and says
-why an unwatched package is not watched. Each observed release links to its public
-diff against the published version it follows (recorded when observed), and to its
-Drydock review when one exists. The row and an empty list claim "no new releases"
-only after a check that finished with no problem; before a check they say it has
-not run, and after any problem (a failed read, a backlog, an unreadable version or
-tarball) the list says only that no releases are recorded yet, and the problem says what is unknown. Checks drain a backlog in batches, so one
-check is not a promise that every pending version has been processed.
+All require a Better Auth session and active-organization membership. Responses are private and not cacheable.
 
-A record of the version is a staged review or workflow gate of exactly that package
-and version in this organization. A record identifies bytes by digest: the bytes
-Drydock hashed while reviewing (the verified staged tarball, or the gate's tarball
-by SHA-256 and, for gate reviews recorded since it was added, SHA-1), or npm's own
-SHA-1 for the stage (its shasum, stored when the review is queued), which identifies
-the staged bytes while the review is in flight, failed or unverified but never stands
-in for an approval.
+| Method | Path under `/api/v1/publication-watches` | Role | Effect |
+| --- | --- | --- | --- |
+| GET | `/` | member | List watches in attention order; never enrolls |
+| POST | `/` `{ "packageName": "@scope/package" }` | member | Enroll (201) |
+| GET | `/alerts` | member | Log of unapproved publishes (latest 100); read-only |
+| GET | `/:id` | member | Watch and latest observations |
+| GET | `/packages/:name` | member | One package's watch or `null`; read-only, never reconciles |
+| POST | `/:id/check` | member | Check one bounded batch; 10/min per organization |
+| POST | `/:id/observations/:observationId/acknowledge` | member | Acknowledge; idempotent; audited |
+| POST | `/:id/observations/:observationId/review` | as starting any review | Start or open the post-release review |
+| DELETE | `/:id` | owner/admin | Stop, delete observations, persist opt-out |
 
-| Observation                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Approved bytes published                           | The published bytes match a review whose bytes Drydock hashed, approved strictly before npm's publication timestamp.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Published despite a rejection in this organization | The published bytes match a record rejected before publication, or every decision on those bytes is a rejection, including one recorded only after publication (reason `rejected_after_publication`, worded "rejected after it was published").                                                                                                                                                                                                                                                                                                                                                    |
-| Published bytes differ from what this org reviewed | The published bytes match no record of the version, and some record of it was approved or rejected (at any time), or a stage of it was superseded by a restage.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Published with no approval in this organization    | No record of the version exists at all (decided without bytes); the published bytes match no record and none was decided or superseded; or they match only records nobody decided that are in review (`review_pending`), failed (`review_failed`), or completed without grading the release low risk (a `reviewed_<cause>_without_decision` reason naming why, or `ai_flagged_without_decision` when the AI reviewer flagged it), or completed low risk but unable to vouch for these bytes alone (`reviewed_without_decision`; see below). The alert links that review and asks for its decision. |
-| Reviewed, no decision in this organization         | The published bytes match only completed records nobody decided, and every one graded the release low risk (`undecided_low_risk`). Recorded and shown, but never an alert (see below).                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Evidence unknown                                   | A decision in this organization on the same bytes exists but cannot settle it: an approval recorded after publication (`decision_history_unavailable`), an approval matched only by npm's stage shasum (`review_digest_unavailable`) or by npm's `dist.shasum` when the tarball could not be hashed. Also a missing publication time, and bytes that could not be hashed or compared.                                                                                                                                                                                                              |
+- `GET /` fields per watch: `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap`, `coverageGapSince`; plus `autoEnrollment.pending` (fits; a later cron reconciliation enrolls it), `autoEnrollment.deferred` (over the limit), opt-in `autoEnrollment.suggestions`.
+- `POST /` returns 409: `package_management_required` in a personal workspace without `confirmPersonalOrganization: true` or with a provisional claim; another organization holds the claim; watch limit reached.
+- `GET /alerts` entries: `packageName`, `version`, `status`, `createdAt`, `acknowledgedAt`, `reviewScanId`, `resolution`, `resolvedAt`, `resolutionBadge`, `reviewedBytes`, `watched`; plus `moreAlerts`.
+- `GET /packages/:name` also returns observations, the latest 50 ledger alerts (each with `inCurrentWatch`), `moreAlerts`, why it is not watched, and whether the caller may stop it. The package page renders it.
+- `POST /:id/check` returns 409 while management is pending or the claim is elsewhere. A check that fails after claiming the watch records `check_failed`; the response carries it.
+- `POST .../review` returns `{ scanId, started: true }` (202) or the linked one as `{ scanId, started: false }` (200). It uses the per-organization scan budget.
+- `DELETE` requires `roleCanManageIntegrations`, because stopping hides unacknowledged alerts and opts the package out.
+- Observations carry `reviewScanId`, `reviewStatus`, `reviewDecision`, `resolution`, `resolvedAt`, `resolutionBadge`, `reviewedBytes`. A linked scan's detail and decision responses carry `postRelease`. Deciding goes through `POST /api/v1/scans/:id/decision`.
 
-`unknown` is earned only by a decision someone in this organization made about the
-same bytes. An attacker who can stage can create records, including a record of the
-very bytes they then publish directly, and npm reports a version as published the
-same way whether it was promoted from a stage (which needs the maintainer's 2FA) or
-published directly: its version status endpoint (`published`) and the packument carry
-no stage reference, and stage records carry no outcome. So an undecided, pending or
-failed review of the published bytes cannot tell the owner's release from a bypass,
-and it never earns `unknown` or `approved_match`. A pending or failed one alerts as
-published with no approval; a completed one is tiered by what it found (next
-section), and only a low-risk one stays quiet. The alert says Drydock has an
-undecided review of these exact bytes: decide it, or investigate if nobody here
-published it. Likewise a record of other bytes (a benign seed stage, or a restage that
-superseded the owner's approved stage) never turns an alert into `unknown`, and a
-superseded approval with no approved replacement stays a mismatch. Decision timing
-matters only when the bytes match: an approval of other bytes is a mismatch whether it
-was recorded before or after publication. Beside an approval of the same bytes, a
-decision recorded after publication leaves the verdict unknown, since reconfirming a
-decision overwrites its timestamp and the overwritten one may have been newer.
+### Enrollment
+
+| Source | Result | UI label |
+| --- | --- | --- |
+| Completed staged review whose captured registry status confirms publication | Auto-enrolled | "added from a staged review" |
+| Verified staged admission that claims the package (before review runs) | Auto-enrolled | "added from a staged review" |
+| Published review history | Auto-enrolled | "added from your past reviews" |
+| Completed npm workflow gate | Suggestion; needs **Watch package** | — |
+| **Watch package** (any public npm name; no token or scan needed) | Manual watch | — |
+| Private/unknown visibility, custom registry, published-pair review | Never enrolls | — |
+
+- Automatic enrollment requires a package claim belonging to this organization, and confirmed management in a personal workspace. Historical packages awaiting the claims audit do not auto-enroll.
+- A gate alone does not establish public visibility, which is why gates only suggest.
+- Reconciliation runs in bounded per-organization batches when a stage is submitted, when the discovery cron sweeps the organization's npm connection (including sweeps that find no stages), and when the publication cron finds work waiting.
+- The publication cron reconciles up to `RECONCILE_ORGANIZATIONS_PER_TICK` (20) organizations per tick, in random order, before it checks watches: those with eligible review history or unrecorded gate reviews, and those with an enrollable candidate and a free slot. This reaches organizations without an npm connection and fills slots freed by a stop.
+- Finding those organizations walks every scan for review history each tick (nothing marks history as considered); a full organization's watches are counted once, not per deferred package; gate reviews are read through partial index `scans_workflow_gate_enrollment_idx`.
+- Each reconciliation records up to `HISTORY_BATCH` (50) historical packages and enrolls up to `ENROLLMENT_BATCH` (50) watches (`publication-auto-enrollment.ts`).
+- The organization limit is `PUBLICATION_WATCH_LIMIT` (250) in `server/db/publication-watch-limit.ts`. Deferred packages enroll at the next reconciliation after a slot frees.
+- Discovery and staged admission enroll without computing the deferred-count/suggestion summary; dashboard reads compute it. Scheduled checks skip the decorated summary; manual checks load it once.
+
+### Observation states
+
+A **record** is a staged review or workflow gate of exactly that package and version in this organization. Published-pair reviews are never records. A record identifies bytes by digest:
+
+- bytes Drydock hashed while reviewing: the verified staged tarball, or the gate tarball by SHA-256 (plus SHA-1 in `summary.stagedPublish.sha1` for gate reviews recorded since it was added);
+- or npm's stage shasum, stored when the review is queued: it identifies staged bytes while a review is in flight, failed, or unverified, but never stands in for an approval.
+
+| Status | UI label | Trigger | Alert? | Softened by |
+| --- | --- | --- | --- | --- |
+| `approved_match` | Approved bytes published | T1 | No | — |
+| `published_despite_rejection` | Published despite a rejection in this organization | T2 | Yes | Post-release approval, `match` |
+| `artifact_mismatch` | Published bytes differ from what this org reviewed | T3 | Yes | Post-release approval, `match` |
+| `published_without_approval` | Published with no approval in this organization | T4 | Yes | Post-release approval, `match` |
+| `undecided_low_risk` | Reviewed, no decision in this organization | T5 | Never | Any decision → `unknown` |
+| `unknown` | Evidence unknown | T6 | No | — |
+
+- **T1:** published bytes match a record whose bytes Drydock hashed, approved strictly before npm's publication timestamp.
+- **T2:** bytes match a record rejected before publication, or every decision on those bytes is a rejection, including one recorded after publication (reason `rejected_after_publication`, "rejected after it was published").
+- **T3:** bytes match no record, and some record of the version was approved or rejected (at any time), or a stage of it was superseded by a restage. A superseded approval with no approved replacement stays a mismatch.
+- **T4:** no record of the version exists (decided without bytes); or bytes match no record and none was decided or superseded; or bytes match only undecided records that are in review (`review_pending`), failed (`review_failed`), or completed but not quiet (a tier reason below). The alert links that review and asks for its decision.
+- **T5:** bytes match only completed undecided records, all graded low risk and able to vouch (see tiers). Recorded and shown, never an alert.
+- **T6:** a decision in this organization on the same bytes exists but cannot settle it: approval recorded after publication (`decision_history_unavailable`); approval matched only by npm's stage shasum (`review_digest_unavailable`) or by `dist.shasum` when the tarball could not be hashed. Also `publication_time_unavailable`, and bytes that could not be hashed or compared (`artifact_unavailable`, `artifact_timeout`, `artifact_too_large`, `artifact_identity_invalid`).
+- Any alerting status may carry `review_history_limit` when only the newest undecided records were compared.
 
 ### Undecided reviews are tiered by risk
 
-Most maintainers approve the stage on npm and never record the decision in Drydock,
-so alerting on every completed, undecided review of the published bytes was mostly
-noise that went unacknowledged. When the published bytes match only
-records nobody decided and the owning record (the one a restage did not supersede)
-has completed, `undecidedReviewTier` in
-`server/lib/ecosystems/npm/publication-verdict.ts` grades each matching record:
+Applies when the published bytes match only records nobody decided and the owning record (the one a restage did not supersede) has completed; pending and failed owners alert as `review_pending` / `review_failed`. `undecidedReviewTier` in `server/lib/ecosystems/npm/publication-verdict.ts` grades each matching record; the first matching row wins:
 
-| Tier                       | When                                                                                                                                                                         | Result                                                                                               |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| AI reviewer flagged it     | The completed AI review's `releaseAssessment` is `suspicious` or `blocked`.                                                                                                  | Alert, reason `ai_flagged_without_decision`, worded and listed first as the AI reviewer flagging it. |
-| Not bound to the gate      | The stage is not bound to an approved gate review of a gated package (`gateContinuity.status` other than `none` or `matched`, such as `ungated`, the account-takeover path). | Alert, reason `reviewed_ungated_without_decision`.                                                   |
-| Release risk not low       | The persisted release risk (`risk_summary_json.releaseRisk`, which already carries any AI escalation) is `medium` or above.                                                  | Alert, reason `reviewed_risk_without_decision`.                                                      |
-| AI review asked for a look | The AI review recommended a look (`review_recommended`, `requiresManualReview`).                                                                                             | Alert, reason `reviewed_ai_concern_without_decision`.                                                |
-| AI review unfinished       | The AI review was attempted and did not finish.                                                                                                                              | Alert, reason `reviewed_ai_unfinished_without_decision`.                                             |
-| New findings               | Findings are new since the last approved release (`releaseConsistency.status` `diverged`).                                                                                   | Alert, reason `reviewed_diverged_without_decision`.                                                  |
-| Risk not graded            | The release risk is unreadable, or the baseline comparison was skipped (`baseline.comparisonSkipped`, so release risk graded nothing).                                       | Alert, reason `reviewed_ungraded_without_decision`.                                                  |
-| Low risk                   | None of the above: release risk `low`, and the AI review reported `nothing_unusual` with no manual review, or no AI review ran.                                              | Observation `undecided_low_risk`; no alert, if the review can vouch for these bytes (below).         |
+| Tier | When | Result |
+| --- | --- | --- |
+| AI flagged | AI `releaseAssessment` is `suspicious` or `blocked` | `ai_flagged_without_decision`, listed first |
+| Not bound to the gate | `gateContinuity.status` not `none`/`matched` (e.g. `ungated`) | `reviewed_ungated_without_decision` |
+| Release risk not low | `risk_summary_json.releaseRisk` is `medium`+ | `reviewed_risk_without_decision` |
+| AI asked for a look | `review_recommended` / `requiresManualReview` | `reviewed_ai_concern_without_decision` |
+| AI unfinished | AI review attempted, did not finish | `reviewed_ai_unfinished_without_decision` |
+| New findings | `releaseConsistency.status` is `diverged` | `reviewed_diverged_without_decision` |
+| Risk not graded | release risk unreadable, or `baseline.comparisonSkipped` | `reviewed_ungraded_without_decision` |
+| Low risk | `low`; AI `nothing_unusual` and no manual review, or no AI ran | `undecided_low_risk` if vouched, else `reviewed_without_decision` |
 
-Release risk, not artifact or context risk, decides: those describe the whole
-package, which the owner has shipped before. An AI-flagged matching record wins (it is
-the review the alert links); otherwise the alert names one cause, the first in table
-order, of the owning record or, when that reads low, of another matching record. A
-release that reads low is quiet only when the review can vouch for these bytes alone:
-every matching record has
-completed, the match was on bytes Drydock hashed on both sides (the published tarball
-here and the reviewed tarball in the sandbox, so never a match on npm's shasum alone),
-no record of the version fell outside the history read, and no record of the version,
-of any bytes, was decided or superseded by a restage. An organization that decides
-here, or a restaged version, is not the noise this answers. Otherwise it alerts as
-`reviewed_without_decision`, which claims only that the review is undecided. Pending
-and failed owning reviews alert as before: nothing is known about their risk.
+- An AI-flagged matching record wins and is the review the alert links ("AI reviewer flagged a release published with no approval in <organization>"). Otherwise the alert names the owning record's first cause, or another matching record's when the owner reads low.
+- Release risk decides, not artifact or context risk: those describe the whole package, which the owner has shipped before. `releaseRisk` already carries any AI escalation.
+- **Vouched** means: every matching record completed; the match was on bytes Drydock hashed on both sides (the published tarball here and the reviewed tarball in the sandbox, never npm's shasum alone); no record of the version fell outside the history read; and no record of the version, of any bytes, was decided or superseded by a restage.
+- AI review is advisory and only escalates: a deterministic medium alerts whatever the AI said. The organization `ai-review` flag (killswitch) is read at check time; without a FLAGS binding AI review counts as off, and a failed read counts as on. With it off the stored AI result is not read, so nothing is `ai_flagged_without_decision`.
+- `undecided_low_risk` links its review. It is never emailed, posted to Slack, written to the ledger or audit log, or counted as unacknowledged, and has no **Acknowledge** or **Scan**: decide its review instead.
+- Deciding any review of that version (singly, in a batch, or as a gate package) sets it to `unknown` (`decided_after_observation`); a check that read reviews before the decision landed writes that too. The next check re-reads stored digests: a rejection becomes `rejected_after_publication`, an approval `decision_history_unavailable`.
 
-AI review is advisory and only escalates. A clean AI review never quiets a release:
-the release risk it is checked against carries the deterministic score, so a
-deterministic medium alerts whatever the AI said. AI review is on by default; the
-organization `ai-review` flag is its killswitch, read at check time (AI review counts
-as off without a FLAGS binding, and a failed read counts as on, which can only
-escalate). With AI review off the stored AI result is not read, so nothing is
-`ai_flagged_without_decision` and the tier rests on the persisted grades alone, which
-keep any escalation the AI added while the review ran.
+### Byte and decision binding
 
-This deliberately reverses the rule above for low-risk releases. An undecided review
-still cannot tell the owner's release from a bypass: anyone who can stage can create
-the record and then publish the same bytes directly. A bypass publish of bytes
-Drydock graded low risk now raises nothing, so that case rests on detection quality.
-The attacker controls the bytes, so they can stage variants under fresh versions
-(restaging one version supersedes, which alerts) until a review grades one low and
-its AI review comes back clean, then publish it. That is accepted because
-the noise cost more than the alert protected; every release that is not low risk, or
-that the AI flagged, still alerts.
+- **Collector:** sends no credentials. Metadata comes from the fixed public npm origin; tarball requests must stay on that origin; redirects are rejected. Bytes stream into SHA-256 and SHA-1 without extraction, install, or execution. It uses the published-tarball URL policy and never calls the gate's sandbox parser.
+- **Packument:** the full document (only it carries per-version publish times; the abbreviated install document omits them), streamed into just the fields the verdict reads by `server/lib/ecosystems/npm/packument-stream.ts`. Unread fields are skipped without a depth limit; an overlong read field degrades only that field or version.
+- **History read:** organization-scoped, exact package and version. Every decided record up to `DECIDED_HISTORY_LIMIT` (500); undecided records newest first up to `UNDECIDED_HISTORY_LIMIT` (100). Beyond that a byte match still decides; without one the release alerts with `review_history_limit` ("only the latest 100 were compared").
+- **Staged reviews:** registry coordinates must match public npm. An approval counts only for bytes the review hashed itself. They carry SHA-1, so continuity holds at that digest strength.
+- **Gate reviews:** the server-derived manifest and artifact digest supply SHA-256 (plus SHA-1 since `summary.stagedPublish.sha1`). A record with SHA-256 is matched by SHA-256 alone when bytes are hashed, so a SHA-1 collision cannot stand in. An approval of identical gate bytes does not prove the intended registry, callback delivery, or package ownership.
+- **Unhashable tarball:** when every record carrying a digest carries SHA-1, npm's `dist.shasum` identifies the bytes one-sidedly; it can raise an alert, but an approval stays `unknown`. Gate reviews with only SHA-256 cannot be compared this way, so the release stays `unknown`. Either way it is a coverage gap.
+- **No record:** `published_without_approval` without downloading, so padding or an oversized tarball cannot suppress it. Bytes are downloaded only for releases with a Drydock record or a started post-release review.
+- **Dist-tags:** each observation stores `dist_tags` (sorted; malformed names dropped), refreshed every check including settled ones; the watch stamps `dist_tags_checked_at`. Over 1,000 tags, every `dist_tags` is null (unknown), never a partial list that would read as "not `latest`".
+- **Re-evaluation:** transient unknowns (a failed download) retry every check. `decision_history_unavailable`, `review_digest_unavailable`, and `artifact_too_large` re-evaluate once a day (`SETTLED_RECHECK_MS`) from stored digests, never a new download. Confirmed observations are retained.
+- **Publication time on reviews:** when an observation carries npm's publication time, the check stamps it as `scans.registry_published_at` on this organization's live (non-superseded) staged reviews of that exact registry package and version whose stage SHA-1 matches the published bytes (the hash this check computed, else npm's `dist.shasum`), first write wins (`recordScanRegistryPublishedAt` in `server/db/scan-views.ts`).
+- **Publication-time binding:** keyed on npm's registry coordinates, never the tarball manifest; a stage rejected on npm whose version shipped from other bytes is not stamped. A failed write emits `npm.publication_monitor.published_at_write_failed` and leaves the observation untouched. Feeds the exact opened-before-publication answer ([report views](./product-analytics.md#report-views)).
 
-An `undecided_low_risk` observation is listed in the release list as "Reviewed, no
-decision in this organization" with a link to its review. It is never emailed,
-posted to Slack, written to the ledger or audit log, or counted as an unacknowledged
-alert, and it has no **Acknowledge** or **Scan**: decide its review instead. Deciding
-any review of that version (singly, in a batch approval, or as a gate package)
-returns the observation to `unknown` (`decided_after_observation`); a check that read
-the reviews before the decision landed writes that instead of quiet. The next check
-re-reads it from its stored digests: a rejection becomes the `rejected_after_publication`
-alert, and an approval, recorded after publication, `decision_history_unavailable`.
-Every other observation stays as recorded. It never turns the public badge orange; a
-newer one still takes the badge off an older quote as `not reviewed`. Observations
-and alerts recorded before tiering keep their verdict and reason
-(`reviewed_without_decision`, worded as before); they are not rewritten.
+### Coverage gaps
 
-A version's release records are staged reviews and workflow gates (published-pair
-reviews are excluded in the query). Every decided record is read, up to 500, since
-only people make decisions; undecided records, which anyone who can stage or run a
-gate can create, are read newest first up to 100. With more, a byte match still
-decides; without one the release alerts, with reason `review_history_limit` so the
-message says only the latest 100 were compared. A flood of records, such as a gate
-re-run many times for one version, can neither settle a release nor push a decision
-out of view.
+| Scope | Reason | Meaning |
+| --- | --- | --- |
+| Package | `registry_metadata_too_large` | packument over `METADATA_LIMIT` |
+| Package | `publication_history_limit` | over 10,000 versions or stored observations (`MAX_VERSIONS`) |
+| Package | `invalid_version_metadata` | a version since enrollment is not a readable version string |
+| Package | `registry_evidence_unavailable` | packument unreadable; only when no other gap is recorded |
+| Release | `unknown` artifact reason | tarball too large, timing out, unavailable, or invalid |
 
-A gate review that carries SHA-256 is matched by SHA-256 alone when the bytes are
-hashed; its SHA-1 is used only when they cannot be, so a SHA-1 collision cannot stand
-in for bytes whose SHA-256 differs.
+- The watch records the gap and since when; a check that reads the package again clears a package-wide gap. An outage never displaces or restarts another gap.
+- The dashboard card and package page show the gap; each unverifiable release reads "not verified".
+- After `COVERAGE_GAP_AFTER_MS` (1 hour, `server/db/publication-watches.ts`) the organization is told once per gap (per watch for package-wide, per release otherwise) via alert email and Slack: "Drydock could not verify <release> against <organization>'s reviews: <reason>". It is never worded as a discrepancy. A notice claim makes overlapping checks send it once; a failed delivery gives the claim back.
+- An outage shorter than an hour shows only as the watch's last problem.
 
-Tarballs are hashed as they stream, so memory stays flat: the cap is 256 MiB, and all
-of a check's downloads share one 30-second deadline. When a tarball still cannot be
-hashed (over the cap, timed out, unavailable) and every record that carries a digest
-carries a SHA-1, npm's own `dist.shasum` from the packument identifies the published
-bytes one-sidedly: the same rules as above apply, except that an approval then stays
-`unknown` with the reason recorded, because the bytes were not independently hashed.
-Gate reviews recorded before the gate hashed SHA-1 carry only SHA-256 and cannot be
-compared this way, so such a release stays `unknown`. Either way an unhashed release
-becomes a coverage gap (below). A version with no record is published without approval without any bytes, so
-padding cannot suppress it. Unknown does not mean approved; observations describe the
-evidence available when checked, not a complete immutable history of every decision,
-deleted review or registry event.
+### Alerts and acknowledgment
 
-When an observation carries npm's publication time, the check also stamps it on
-this organization's live staged reviews of that exact registry package and
-version whose stage SHA-1 matches the published bytes (the hash this check
-computed, else npm's `dist.shasum`) as `scans.registry_published_at`, first
-write wins, so "was the report opened before publication" can be answered
-exactly ([`product-analytics.md`](./product-analytics.md#report-views)). It is
-keyed on the registry coordinates npm supplied, never the tarball manifest, a
-stage rejected on npm whose version shipped from other bytes is not stamped,
-and a failed write leaves the observation untouched.
+- Discrepancies (`published_without_approval`, `published_despite_rejection`, `artifact_mismatch`) create one durable alert per organization/package/version. Observations that predate alert support are never announced; those recorded before tiering keep `reviewed_without_decision` and are not rewritten.
+- Wording follows the reason: an undecided review asks for the decision first; an AI-flagged one asks to investigate first; a rejection after publication says so. The release list and ledger mark AI-flagged releases ("flagged by the AI reviewer") and sort them ahead of other open alerts.
+- Every verdict concerns the alerting organization's own records only. It never says another organization reviewed or approved the release (that would disclose one organization's activity to another), and never words the alert as "unreviewed" or as an accusation against the publisher.
+- Delivery goes to configured email recipients (owner fallback) and the connected Slack channel. Observation, alert, and audit rows commit together; delivery follows.
+- The creating check holds the delivery claim; other checks claim a pending alert atomically. A failed delivery releases the claim; a claim older than `ALERT_DELIVERY_LEASE_MS` (5 minutes, `publication-notices.ts`) may be taken over.
+- An alert is marked notified only when a recipient or Slack accepted it, or the organization has nowhere to deliver (no resolvable recipient or email transport and no Slack, or a Slack connection failing permanently until reconnected: revoked token, archived or missing channel), which is logged. A failed audit write never un-delivers an accepted notification.
+- A failed delivery stays pending and retries once per check of the same watch, only within the watch's current observation window: an older window's alert is never re-sent.
+- Any member can acknowledge (audited `publication.acknowledged`); evidence is unchanged. Watch rows count only unacknowledged alerts in the current window.
+- The ledger survives a stop: re-enrolling cannot resend a notification or erase an acknowledgment. It reads the reason from the current watch's observation; an earlier window's alert reads by status alone.
+- The creating check emits `npm.publication_monitor.unapproved_publish` (warn; organization and watch ids, package, version, verdict, reason) through `emitOperationalEvent`, alongside the `publication.discrepancy` product event.
 
-Each observation also records which dist-tags pointed at the version at the latest
-check (`dist_tags`, sorted; malformed tag names are dropped). Every check refreshes
-them, settled observations included, and stamps the watch's `dist_tags_checked_at`, so
-a consumer can tell which release line a version is on and how current that is. Up to
-1,000 tags are read; when npm lists more, every observation's `dist_tags` is null
-(unknown) rather than a partial list that would read as "not `latest`".
+### The log of unapproved publishes
 
-## Coverage gaps
+- The dashboard card ends with **Unapproved publishes**: every ledger alert across watched and formerly watched packages, newest first, latest 100, with a note when older exist.
+- Each entry: `<package>@<version>` linking to the package page, verdict, post-release decision, when raised, when decided, whether an open alert was acknowledged, whether still watched.
+- It reloads after a check, acknowledgment, enrollment, stop, or reviews-list change (a post-release decision is one), not on row expand.
+- `unknown` evidence is never an entry. Acknowledge or **Scan** from the release list.
 
-A watch that cannot establish a verdict for a reason another check will not fix says
-so rather than settling silently. Package-wide: npm's document is larger than Drydock
-reads (`registry_metadata_too_large`), the package has more versions than it compares
-(`publication_history_limit`), npm lists a version since enrollment that is not a
-readable version string (`invalid_version_metadata`), or the document cannot be read
-at all (`registry_evidence_unavailable`, recorded only when no other gap is, so an
-outage never displaces or restarts one). The watch records the gap and since when,
-and a check that reads the package again clears it. Per release: an `unknown`
-observation whose tarball is too large, keeps timing out, cannot be downloaded, or is
-not a valid npm tarball, so its bytes were never hashed here (at best npm's declared
-shasum was compared). One hostile release cannot blind the watch to the others: the
-package document parser skips fields it does not read without a depth limit, and an
-overlong field it does read degrades only that field or version.
-Once a gap has lasted an hour, the organization is told once per gap (per watch for a
-package-wide reason, per release otherwise) through the same email and Slack delivery
-as alerts, worded as a coverage notice: "Drydock could not verify <release> against
-<organization>'s reviews: <reason>", never as a discrepancy. The dashboard card and
-the package page show the gap, and each unverifiable release is marked "not verified".
-A notice claim makes overlapping checks send it once; a failed delivery gives the
-claim back for a later check. An outage shorter than an hour is shown as the watch's
-last problem only.
+### Reviewing an alert after release
 
-## Alerts and acknowledgment
+1. **Scan** (beside **Acknowledge** on the card and package page) starts the same published-pair review `POST /api/v1/scans` starts: the observed version against the predecessor the monitor recorded. The scan id is stored on the alert; a second Scan opens it. A failed review can be deleted on its page, which unlinks it. Audited `publication.review_started`. Like every published-pair review, it compares npm's provenance record for the two versions, so a direct publish that dropped the predecessor's provenance, or was attested from a different repository, is a release finding on that review ([provenance continuity](./provenance-continuity.md)); the alert itself never reads provenance.
+2. A release with no Drydock record was decided from metadata alone. Starting the review hashes its bytes now with the same credential-free bounded collector and killswitch, filling only digests the observation never recorded; the decision retries once if that has not landed. The observation's status and reason are never touched.
+3. The review page's Decide dialog (diff first) reads "Decision after release". The outcome is recorded on the alert (audited `publication.review_resolved`); re-deciding updates it. Every decision records `reviewed_bytes`: `match`, `differ`, or `unavailable`.
 
-New confirmed discrepancies (no approval in this organization, publication despite a
-rejection here, or bytes that differ from what this organization reviewed) create one
-durable alert per organization/package/version (`undecided_low_risk` is not one). The
-message follows the observation's reason: an undecided review of the published bytes
-asks for the decision first, one the AI reviewer flagged is titled "AI reviewer flagged
-a release published with no approval in <organization>" and asks to investigate first,
-and a rejection recorded after publication says so. The release list and the alert
-ledger name an AI-flagged release ("flagged by the AI reviewer"), and the release list
-puts it ahead of other open alerts. The ledger reads the reason from the current
-watch's observation, so an alert from an earlier watch window reads by its status
-alone. Every verdict and message is about
-the alerting organization's own records only: another organization may have reviewed
-or approved the same release, and Drydock neither says so (that would disclose one
-organization's activity to another) nor words the alert as "unreviewed" or as an
-accusation against whoever published it.
-The monitor attempts email delivery to the organization's configured recipients (owner
-fallback) and Slack delivery to its connected channel. Unknown evidence and matching
-approvals do not generate discrepancy alerts. Existing observations from before alert
-support are not retroactively announced.
+| Decision | `reviewed_bytes` | Alert |
+| --- | --- | --- |
+| Approve after release | `match` | Resolved: not unacknowledged, sorted with settled, not re-sent |
+| Approve after release | `differ`, `unavailable` | Recorded; stays open, counted, emailed; page says why |
+| Decline after release | any | Stays open, labelled declined after release |
 
-Each watch row shows the unacknowledged alerts represented in its current observation
-window. Stopping removes that visible history; retained deduplication records from older
-windows do not create inaccessible alert counts on a new watch. Expand its releases to acknowledge
-an alert; any organization member can acknowledge it. Acknowledgment is audited and
-leaves the publication evidence unchanged. The alert ledger survives stopping a watch,
-so explicitly re-enrolling cannot resend that release's notification or erase its
-acknowledgment. Observation history still follows the watch's enrollment window; the
-package page lists the latest 50 alerts from the ledger, with their acknowledgment,
-split into those from earlier watch windows and older ones from the current watch that
-its release list does not show, and says when older alerts exist beyond those 50. A
-stop or re-enrollment never erases what was alerted.
+- Decline next steps shown: deprecate or unpublish the version on npm, rotate tokens that can publish it, check its trusted publishers and who holds publish rights.
+- The observation keeps its historical verdict; the post-release outcome sits beside it on the alert.
 
-Observation, alert and audit creation commit together, and delivery follows. The check
-that creates an alert holds its delivery claim; any other check claims a pending alert
-atomically before sending it, so a long check and an overlapping manual one cannot both
-send it. A failed delivery releases the claim for the next check, and a claim older
-than five minutes (a delivery that died) may be taken over. Recording the delivery in
-the audit log never decides it: a notification a recipient accepted stays delivered
-when that write fails. An alert
-is marked notified only when a recipient or the Slack channel accepted it, or when the
-organization has nowhere to deliver it (no resolvable recipient or email transport and
-no connected Slack channel, or a Slack connection that fails permanently until it is
-reconnected: revoked token, archived or missing channel), which is logged because
-retrying cannot help. A delivery
-that failed stays pending and is attempted again, once per check, on each later check
-of the same watch until one lands. Only alerts in the watch's current observation
-window are re-sent: after a stop and re-enrollment, an older window's alert is never
-emailed, because the dashboard can no longer show or acknowledge it. The durable
-dashboard alert remains available until the watch is stopped.
+The badge counts the decision only when all checks pass; the alert records the result as `resolution_badge`:
 
-## The log of unapproved publishes
+| `resolution_badge` | Meaning |
+| --- | --- |
+| `applied` | all checks passed |
+| `not_a_verified_publisher` | organization is not a registry-verified publisher of that exact name |
+| `not_public_npm` | monitor or review did not read the release from public npm |
+| `digests_unavailable` | digests could not be compared, including when the two sides share no algorithm |
+| `digests_differ` | an algorithm both sides carry disagrees |
 
-The dashboard card ends with **Unapproved publishes**: every alert in the
-organization's ledger, across all the packages it watches or has watched, newest
-first (the latest 100, and a note when older ones exist). Each entry is
-`<package>@<version>` linking to the package page, the alert's verdict, the
-post-release decision when one was made, and a line saying when it was raised,
-when it was decided, whether an alert still open was acknowledged, and whether the
-package is still watched.
-It reads the same ledger as the watch rows and the package page, so a stopped watch
-does not remove an entry, and it reloads after a check, an acknowledgment, an
-enrollment, a stop or a change to the reviews list, which a post-release decision is
-(not when a row is merely expanded). `unknown` evidence is never an entry: it is not a record
-that npm published without an approval. Acting on an entry happens where it always
-did: acknowledge or **Scan** it from its release list.
+- Registry-verified publisher: holds the [package claim](./package-claims.md) and has a completed staged review of a public-npm stage its own token could read, under npm's name (the badge off-switch rule).
+- Otherwise the decision speaks for the organization alone.
 
-The same event is written to the Worker logs for operators: each new alert emits
-`npm.publication_monitor.unapproved_publish` (warn) with the organization and watch
-ids, the package name, the version (both npm's public record), the verdict and its
-reason, through `emitOperationalEvent`. It is emitted once, by the check that
-created the alert, alongside the `publication.discrepancy` product event.
+### Badge inputs
 
-When the organization is a registry-verified publisher of the package, the public
-README badge flags the release too: `<version> published without approval`, in
-orange, or `<version> rejected`, in red, when the organization rejected those bytes
-(before npm published them, or only after), until the release is decided after it shipped (see
-[`public-reports.md`](./public-reports.md#flagging-an-unapproved-publish)).
+Badge rendering is owned by [`public-badge.md`](./public-badge.md). What the monitor feeds it, for the answering organization:
 
-## Reviewing an alert after release
+- A registry-verified publisher's badge reads `<version> published without approval` (orange) or `<version> rejected` (red; rejected before or after publication) until the release is decided after it shipped.
+- A discrepancy for the quoted version, or any non-`approved_match` observation for another release the badge's dist-tag now points at (by `dist_tags`) or a newer release on the quoted line (by version shape), turns it grey `<version> not reviewed`.
+- `unknown` about the quoted version does not, unless its bytes differ from the reviewed ones. `undecided_low_risk` never turns it orange.
+- A guarded post-release approval clears that version's discrepancy or supersession; a decline reads `<version> rejected`.
 
-Each alert (dashboard card and package page) offers **Scan** beside **Acknowledge**.
-Scan starts the same published-pair review `POST /api/v1/scans` starts, of the
-observed version against the published version the monitor recorded it following
-(the predecessor its diff link uses), and links that review to the alert: the scan id
-is stored on the alert, and a second Scan opens the linked review instead of starting
-another. It takes the same role and the same per-organization scan budget as
-starting any review. The alert shows the review's state and links to it ("Open
-post-release review"); a review that failed can be deleted on its page, which unlinks
-it and offers Scan again. Starting it is audited (`publication.review_started`).
-Like every published-pair review, it compares npm's provenance record for the two
-versions, so a direct publish that dropped the provenance the predecessor carried, or
-was attested from a different repository, is a release finding on that review (see
-[`provenance-continuity.md`](./provenance-continuity.md)); the alert itself does not
-read provenance.
+### Dashboard behavior
 
-A release with no Drydock record was decided from metadata alone, so its bytes were
-never hashed. Starting the review asks the monitor to hash them now, with the same
-credential-free, bounded collector a check uses (and the same killswitch), filling
-only digests the observation never recorded; the decision tries once more if that has
-not landed. The observation's status and reason are never touched.
+- Watches list 25 at a time (`WATCH_PAGE_SIZE` in `src/models/publication-watches.ts`): unacknowledged alerts first, then unverified releases or a coverage gap, then the rest, newest first within each.
+- The selected watch shows its latest 100 observed versions (unacknowledged alerts first, then newest), enrollment time, last check, release count, and coverage problem. Each release links its public diff against the predecessor recorded when observed, and its Drydock review when one exists.
+- "No new releases" appears only after a check that finished with no problem; before any check, "has not run"; after a problem, "no releases are recorded yet" plus what is unknown. One check drains a batch, not every pending version.
+- **Check now** checks one watch; Recent reviews **Check npm** runs stage discovery.
+- Stopping asks for confirmation, saying what it removes and that raised alerts stay listed on the package page. The package page lists the latest 50 ledger alerts, split into earlier-window alerts and older current-window ones the release list does not show.
+- The package page reports automatic enrollment as pending only for packages the organization manages; others show as not enrolled, with why.
 
-The decision happens on the review page's Decide dialog, diff first, which reads
-"Decision after release" for a linked review. Deciding it records the outcome on the
-alert, audited as `publication.review_resolved`, and re-deciding updates it. Every
-decision also compares the reviewed tarball's digests with the ones the monitor recorded
-for the release (`reviewed_bytes`: `match`, `differ`, or `unavailable`), whoever decides
-it and whatever the badge rule below says. Only a decision on the published bytes
-speaks for them:
+### Sweep limits
 
-- **Approve after release** of a `match` resolves the alert as approved after release.
-  It no longer counts as unacknowledged, sorts with the settled releases, is not
-  re-sent, and needs no acknowledgment. Approving bytes that differ from the published
-  ones, or that could not be compared with them, is recorded but leaves the alert open
-  (counted, sorted first, emailed, and acknowledgeable), and the page says why.
-- **Decline after release** keeps the alert open, labelled declined after release,
-  with next steps: deprecate or unpublish the version on npm, rotate the tokens that
-  can publish it, and check its trusted publishers and who holds publish rights.
+Constants live in `publication-monitor.ts`.
 
-The observation keeps its historical verdict (published without prior approval); the
-post-release outcome is recorded beside it on the alert, never over it. A published-
-pair review still never counts as a release record in the verdict (see "Byte and
-decision binding"), so a post-release review cannot settle or suppress any later
-observation. A published-pair review of the same version started any other way
-resolves nothing: only the linked one does.
+| Limit | Constant |
+| --- | --- |
+| 24 due watches per tick, round-robin across organizations | `SWEEP_WATCH_BUDGET` |
+| Due when last checked over 5 minutes ago | `WATCH_DUE_AFTER_MS` |
+| No new check after the sweep's first minute | `SWEEP_DEADLINE_MS` |
+| 6 pending versions per check, at most 3 downloads | `RELEASES_PER_CHECK`, `TARBALLS_PER_CHECK` |
+| 1-minute check claim (`check_in_progress`) | `CLAIM_LEASE_MS` |
+| Packument 64 MiB, 15 seconds | `METADATA_LIMIT`, `METADATA_DEADLINE_MS` |
+| Tarball 256 MiB; one shared 30-second download deadline per check | `TARBALL_LIMIT`, `DOWNLOAD_BUDGET_MS` |
+| 1 GiB read per sweep or manual check | `SWEEP_BYTE_BUDGET` |
+| 10,000 versions or stored observations | `MAX_VERSIONS` |
 
-Whether the decision may also speak on the public badge is stricter, because anyone
-can run a published-pair review of any public package. It does only when the
-organization is a **registry-verified publisher** of that exact name (the rule the
-badge's off switch uses: it holds the package's claim, see
-[`package-claims.md`](./package-claims.md), and has a completed staged review of a
-public-npm stage its own token could read, under npm's name), the monitor and the review both read the release from
-the public npm registry, and the reviewed tarball's digests equal the ones the monitor
-recorded for the release (every algorithm both carry must agree, and at least one must
-be shared). The alert records the outcome of that check (`resolution_badge`:
-`applied`, or `not_a_verified_publisher`, `not_public_npm`, `digests_unavailable`,
-`digests_differ`), and the page says whether the badge counts the decision. Otherwise
-the decision speaks for the organization alone and never changes the badge. See
-[`public-reports.md`](./public-reports.md#decided-after-release).
+- Round-robin: every organization's oldest due watch before any organization's second, so a large organization cannot slow others; 250 watches take about eleven ticks.
+- Remaining versions report a backlog and drain on later checks. After the byte budget, no new check or download starts.
+- A watch whose check throws records `check_failed`, moves to the back of the order, and the sweep continues.
 
-The organization `out-of-band-watch` flag disables acquisition and new alerts when
-false, including manual checks. It defaults on without a FLAGS binding. Enrollment
-and existing evidence remain accessible while disabled; each affected watch shows that
-monitoring is switched off, and the sweep moves those watches to the back of its order
-without spending any of its check budget.
+## Invariants
 
-This consolidates the out-of-band watcher proposed in PR #651 into one monitor.
-No separate metadata-only poller, package-watch tables, or dashboard banner is needed.
-Public npm is the production registry boundary. The monitor discovers releases that have
-no gate and makes no public badge claim. It uses the npm published-tarball URL policy
-but hashes bytes itself and never calls the gate's sandbox parser.
+1. Only a decision someone in this organization made about the same bytes earns `unknown` or `approved_match`; an undecided, pending, or failed record never does (`publication-verdict.ts`, `test/publication-verdict.test.ts`).
+2. A record of other bytes (a benign seed stage, a superseding restage) never turns an alert into `unknown`; decision timing matters only when the bytes match.
+3. Beside an approval of the same bytes, a decision recorded after publication leaves the verdict `unknown`, because reconfirming overwrites the timestamp.
+4. Late decisions never become an approval-before-publication match. Published-pair reviews, including one started from an alert, are never release records, so a post-release decision cannot settle or suppress a later observation. Only the linked review resolves an alert.
+5. A subscription never establishes ownership, and another organization's claim never stops it. A claim deactivates only the watch of an organization holding its own staged reviews while another organization (or an ownerless reservation) holds the claim; that watch keeps its observations, returns 409 on enroll/check, is skipped by cron, and stops counting toward the limit.
+6. Monitoring starts at enrollment time; older releases are never reported as bypasses. Duplicate enrollment preserves the original start time.
+7. Stopping deletes observations and persists an organization-scoped opt-out that discovery and history reconciliation honor; explicit re-enrollment clears it and starts a new window. Both are audited (`publication_watch.started`, `publication_watch.stopped`).
+8. Personal-workspace enrollment requires an explicit workspace choice; **Watch package** there is that choice. A provisional personal claim must still be kept or moved before polling; the package page offers that choice instead of **Watch package** and hides it while another organization holds the claim ([package-claims.md](./package-claims.md)).
+9. A running check, or one killed before recording an outcome, never reads as clean (`check_in_progress`).
+10. `unknown` never means approved. Observations describe evidence available when checked, not an immutable history of decisions, deleted reviews, or registry events.
+11. The monitor never rewrites scan findings, risk, decisions, signed public reports, public badge identity, or Release Receipt v1.
+12. Operational failures use safe codes through `emitOperationalEvent`, never raw registry errors.
+13. Production enrollment cannot select a registry URL; only the local fake-registry harness may use the explicitly enabled loopback override (`server/lib/ecosystems/npm/publication-registry.ts`).
+14. The organization `out-of-band-watch` flag, when false, disables acquisition and new alerts, including manual checks; it defaults on without a FLAGS binding. Enrollment and evidence stay accessible; affected watches say monitoring is off; the sweep moves them to the back without spending check budget.
 
-## Byte and decision binding
+## Failure modes
 
-The collector sends no credentials. Metadata comes from the fixed public npm
-origin; tarball requests must remain on that origin and redirects are rejected.
-Both response size and request duration are bounded. It streams tarball bytes
-into SHA-256 and SHA-1 hashes without extracting, installing or executing them.
+| Symptom | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Releases marked "not verified" | tarball too large, slow, unavailable, invalid | `unknown`, logged; notice after 1 hour | transient causes retry each check |
+| Package-wide coverage gap | oversized packument, version cap, bad version, outage | gap with `since`; notice after 1 hour | clears on next successful read |
+| 409 on check, watch inactive | another organization manages the package | observations kept; cron skips | resolve the claim |
+| 409 `package_management_required` | personal workspace, no management choice | not enrolled or polled | keep or move on the package page |
+| 409 on enroll | 250-watch limit | not enrolled | stop a watch |
+| Alert retried every check | transient delivery failure | stays pending | fix recipients or Slack |
+| Notified, nobody received it | nowhere to deliver | logged; no retry | add recipients or reconnect Slack |
+| `review_history_limit` alert | over 100 undecided records, no byte match | alert names the limit | decide the relevant review |
+| `check_failed` | check threw | back of sweep order | **Check now** |
 
-Review lookup is organization-scoped, requires the exact package and version, and
-reads every decided release record and the newest 100 undecided ones.
-For staged reviews, registry coordinates must also match public npm, and an approval
-counts only for bytes the review hashed itself (npm's stage shasum alone identifies the
-bytes but cannot approve them). Staged reviews carry SHA-1, so their comparison
-establishes continuity at that digest strength.
-For npm workflow gates, the server-derived manifest and artifact digest supply
-SHA-256 evidence, plus SHA-1 of the same bytes for gate reviews recorded since the
-gate hashed it (`summary.stagedPublish.sha1`). An approval of identical gate bytes does not prove which
-registry the workflow intended to publish to, successful callback delivery, or
-ownership of the npm package.
+## Change checklist
 
-Published-pair reviews are not prior release authorization and are not records of
-the release path, including one started from an alert: its decision resolves the
-alert beside the observation and is never read back into a verdict. Late decisions
-never turn a publication into an approval-before-publication match. Confirmed observations are retained. Unresolved
-observations with a transient cause (a failed download) are retried on each check;
-those no further check can resolve by itself (late decision, missing review digest, a
-tarball over the hashing cap) are re-evaluated once a day. A published version's bytes are immutable, so a re-evaluation reuses the
-stored digests and never downloads the tarball again. Bytes are downloaded only for a
-release the organization has a Drydock record of, or one it started a post-release
-review of. The monitor does not rewrite scan
-findings, risk, decisions, signed public reports, public badge identity, or Release
-Receipt v1.
+- Verdict or tier rule → state and tier tables here, `src/features/publication-monitor/copy.ts`; run `pnpm exec vitest run --project node test/publication-verdict.test.ts test/publication-monitor-copy.test.ts`.
+- New observation reason or status → copy, alert wording in `server/lib/notify/publication-alerts.ts`, badge evidence in `server/db/badge-publication-evidence.ts`, and [`public-badge.md`](./public-badge.md).
+- Endpoint or role change → endpoint table, `test/workers/publication-watches-routes.test.ts`, and [`security-model.md`](./security-model.md) if authority changes.
+- New limit → add its constant to the limits table; never inline a number without it.
+- Tests must keep covering organization isolation, direct releases with no scan, prior decisions, digest mismatch, missing evidence, bounded acquisition, the dashboard flow, and the closed evasions: stage then publish the same bytes, rejection after publication, a padded tarball beside a gate review, a flood of records, an oversized package document.
 
-The public README badge reads these observations, and the alert ledger, for the
-answering organization: a discrepancy for the version it quotes, or any
-observation other than an approved match for another release the badge's
-dist-tag now points at (by the recorded `dist_tags`), or for a newer release
-on the quoted line (inferred from version shape), turns it grey as `<version>
-not reviewed` instead of green. `unknown` about the quoted
-version itself does not, unless its published bytes differ from the reviewed
-ones. A guarded decision after release (above) answers for its version: an
-approval clears that version's discrepancy or supersession, and a decline reads
-`<version> rejected`. See
-[`public-reports.md`](./public-reports.md#releasing-again-badge_package_key).
+## Why
 
-## API and operation
-
-All endpoints require a Better Auth session and active-organization membership:
-
-- `GET /api/v1/publication-watches` lists every watch in attention order (described above)
-  without enrolling anything, with per-watch `releaseCount`, `unresolvedAlertCount`, `unverifiedReleaseCount`, `coverageGap` and
-  `coverageGapSince`, plus `autoEnrollment.pending` (fits under the limit; a later cron reconciliation enrolls it),
-  `autoEnrollment.deferred` (does not fit under the limit) and opt-in `autoEnrollment.suggestions`.
-- `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
-- `GET /api/v1/publication-watches/alerts` returns the organization's log of
-  unapproved publishes: the latest 100 ledger alerts across all packages, newest
-  first, each with `packageName`, `version`, `status`, `createdAt`,
-  `acknowledgedAt`, `reviewScanId`, `resolution`, `resolvedAt`, `resolutionBadge`,
-  `reviewedBytes` and `watched`, plus `moreAlerts`. Read-only.
-- `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
-- `GET /api/v1/publication-watches/packages/:name` returns one package's watch (or
-  `null`), its observations, the latest 50 ledger alerts (each with `inCurrentWatch`)
-  and `moreAlerts`, why it is not watched when it is not, and whether the caller may
-  stop it. It is read-only and never reconciles enrollment; the package
-  page renders it.
-- `POST /api/v1/publication-watches/:id/check` checks a bounded batch and returns
-  current observations. Repeated checks are rate-limited. A check that fails after
-  claiming the watch records `check_failed` on it, as a scheduled one does, and the
-  response carries that state.
-- `POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge`
-  acknowledges a discrepancy and returns current watch/observations; repeats are idempotent.
-- `POST /api/v1/publication-watches/:id/observations/:observationId/review` starts the
-  alert's post-release review and returns `{ scanId, started: true }` (202), or the
-  linked one as `{ scanId, started: false }` (200). Observations carry the linked
-  review (`reviewScanId`, `reviewStatus`, `reviewDecision`) and the outcome
-  (`resolution`, `resolvedAt`, `resolutionBadge`, `reviewedBytes`); ledger alerts carry
-  `reviewScanId`, `resolution`, `resolvedAt` and `reviewedBytes`; a linked scan's detail and decision responses carry
-  `postRelease`. Deciding goes through `POST /api/v1/scans/:id/decision`.
-- `DELETE /api/v1/publication-watches/:id` (owner/admin only) stops monitoring, removes history,
-  and remembers the opt-out.
-
-Responses are private and not cacheable. The organization has a 250-watch limit.
-Each 15-minute tick checks up to 24 due watches (last checked more than five minutes
-ago), taken round-robin across organizations: every organization's oldest due watch
-before any organization's second, so no organization gets more than its share and a
-large one cannot slow the others. An organization with more due watches than one tick
-checks is covered over several ticks; 250 watches alone take about eleven (under three hours). No new check starts after the first minute of the
-sweep. A watch whose check throws is recorded (`check_failed`) and moved to the back of
-the order rather than holding its place, and the sweep continues. One check examines up
-to six pending versions, at most three of which may download a tarball; the rest
-report a backlog and drain on later checks. A short database claim prevents
-overlapping manual and scheduled checks from multiplying work on the same watch. The
-claim records `check_in_progress` until the check writes its outcome, so a check that
-is still running, or was killed before recording anything, never reads as a clean one.
-npm's full package document is read because only it carries per-version publish
-times (the abbreviated install document omits them); it streams into just the fields
-the verdict reads (`packument-stream.ts`), so memory stays flat, under a 64 MiB cap and
-a 15-second deadline. Tarballs are capped at 256 MiB, and a check's downloads share
-one 30-second deadline, so its reads end well inside its one-minute claim (alert
-deliveries are claimed separately). Once a sweep (or a manual check) has read 1 GiB,
-no new check or download starts, and the rest drain on later ticks. An oversized document is `registry_metadata_too_large`, distinct from a transient
-`registry_evidence_unavailable`; an oversized or timed-out tarball is recorded on the
-watch and logged. A package exceeding 10,000 versions or stored observations reports
-`publication_history_limit` rather than silently treating a partial history as
-complete. Both package-wide limits become coverage gaps.
-
-Persistence lives in `publication_watches`, `publication_observations`, and
-`publication_watch_candidates` (enrollment evidence and persistent opt-outs), and
-`publication_alerts` (durable notification deduplication, acknowledgment, and the
-post-release review and its resolution, which outlive a stopped watch with it).
-`server/lib/ecosystems/npm/publication-auto-enrollment.ts` owns enrollment;
-`server/lib/ecosystems/npm/publication-monitor.ts` owns acquisition and the sweep;
-`server/lib/ecosystems/npm/publication-notices.ts` owns alert and coverage-notice
-delivery; `server/lib/ecosystems/npm/publication-verdict.ts` owns comparison;
-`server/lib/ecosystems/npm/publication-review.ts` resolves an alert from its
-post-release review and decides whether the decision may reach the badge;
-`server/routes/npm-publication-watches.ts` owns the authenticated API. The scheduled
-handler (`server/scheduled.ts`), the staged-review route, and the decision route reach
-the monitor only through the `publicationMonitor` capability on the ecosystem registry
-(`server/lib/ecosystems/npm/publication.ts`). Operational
-failures use safe codes through `emitOperationalEvent`, never raw registry errors.
-
-The local fake-registry harness may use the existing explicitly enabled loopback
-registry override. Production enrollment cannot select a registry URL. Tests cover
-organization isolation, direct releases with no scan, prior decisions, actual
-digest mismatch, missing evidence, bounded acquisition and the dashboard flow, and
-the evasions this design closes: staging then publishing the same bytes, a rejection
-after publication, a padded tarball beside a gate review, a flood of records, and an
-oversized package document.
+- Stage records carry no outcome, and npm reports a promoted stage (needs the maintainer's 2FA) and a direct publish identically (`published`; the packument has no stage reference). An attacker who can stage can create a record of the very bytes they then publish, so an undecided review cannot tell the owner's release from a bypass.
+- Most maintainers approve on npm and never decide in Drydock, so alerting on every low-risk undecided review was unacknowledged noise. Accepted cost: a bypass publish of bytes Drydock graded low risk with a clean AI review raises nothing; an attacker can stage variants under fresh versions until one grades low (restaging one version supersedes, which alerts). Every non-low or AI-flagged release still alerts.
+- Letting the first claimant silence other organizations' monitoring would let a stolen stage-read token mute the monitor right before a malicious publish.
+- Bounded history (500 decided, 100 undecided) means a flood of records, such as a gate re-run many times, can neither settle a release nor push a decision out of view.

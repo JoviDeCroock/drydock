@@ -1,80 +1,81 @@
 # Account deletion
 
-A signed-in user can permanently delete their own account from **Account settings**
-(`/dashboard/account` → Danger zone). It is built on Better Auth's first-party
-[`deleteUser`](https://www.better-auth.com/docs/concepts/users-accounts#delete-user) feature,
-enabled in `server/lib/auth/index.ts`:
+A signed-in user permanently deletes their own account from Account settings (`/dashboard/account` → Danger zone). **Authority:** enforced. **Owner:** `beforeDelete` in `server/lib/auth/index.ts` (Better Auth [`deleteUser`](https://www.better-auth.com/docs/concepts/users-accounts#delete-user)) and `deleteUserAccount` in `server/db/organizations.ts`.
 
-```ts
-user: {
-  deleteUser: {
-    enabled: true,
-    beforeDelete: async (deletedUser) => { /* tear down Drydock-owned data */ },
-  },
-}
-```
+## At a glance
 
-## Reauth
+| Thing | Owner file | Who may trigger | Pinned by |
+| --- | --- | --- | --- |
+| Delete request + reauth | Better Auth `POST /api/auth/delete-user` | The account's own session | `test/workers/account-deletion.test.ts` |
+| Co-owned organization block | `findCoOwnedOrganizations` in `server/db/organizations.ts` | — | `test/workers/account-deletion.test.ts` |
+| Drydock data teardown | `deleteUserAccount` in `server/db/organizations.ts` | `beforeDelete` only | `test/workers/account-deletion.test.ts` |
+| UI | `src/pages/Dashboard/Account/DeleteAccountSection.tsx` | Signed-in user | `test/auth-account-deletion-model.test.ts` |
 
-Deletion is irreversible, so it is reauthenticated according to the account's
-sign-in method. A credential account posts `{ password }` to
-`POST /api/auth/delete-user`; Better Auth verifies it before running
-`beforeDelete`, and a wrong password returns `400 INVALID_PASSWORD` with nothing
-touched. A GitHub-only account has no password, so the client posts `{}` and
-Better Auth requires the OAuth-created session to still be fresh. If it has aged
-out, the user signs out, signs back in with GitHub, and retries.
+## Contract
 
-The UI (`src/pages/Dashboard/Account/DeleteAccountSection.tsx`) always requires
-the user to type their own email, so the action cannot fire from a stray click.
-It asks for a password only when `GET /api/auth/list-accounts` reports a
-`credential` row.
+### Request
 
-## What gets deleted
+| Account type | Body | Reauthentication | Failure |
+| --- | --- | --- | --- |
+| Has `credential` | `{ password }` | Better Auth verifies the password before `beforeDelete` runs | `400 INVALID_PASSWORD`, nothing touched |
+| GitHub-only | `{}` | The OAuth-created session must still be fresh | User signs out, signs in with GitHub, retries |
 
-Better Auth removes the `user`, `session`, and `account` rows itself **after** `beforeDelete`
-returns. Everything else is Drydock-owned, and because **D1 does not enforce foreign keys** none
-of it cascades on its own (the same reason `deleteOrganization` deletes children by hand). So
-`deleteUserAccount(db, userId)` in `server/db/organizations.ts` does, in order:
+The UI always requires typing the account's own email, so a stray click cannot fire it, and asks for a password only when `GET /api/auth/list-accounts` reports a `credential` row.
 
-1. **Owned organizations** — deletes every org the user owns outright via `deleteOrganization`:
-   the personal workspace (always sole-owned), plus any non-personal org where they are the only
-   member. That clears the org's scans, findings, npm connection, GitHub install/targets/gates,
-   Slack connection, invitations, notification recipients, and membership rows.
-   npm package claims retain their registry/package identity with a null organization
-   as a reservation; deleting an account never makes its packages available for automatic
-   reassignment. An operator must explicitly resolve any subsequent ownership transfer.
-2. **References in surviving orgs** — in organizations owned by _other_ people, the departing user
-   may have created, decided on, or publicly shared rows (`scans.owner_user_id` /
-   `decided_by_user_id` / `public_shared_by_user_id`,
-   `scan_events.actor_user_id`, `npm_connections.created_by_user_id`, the GitHub/Slack/notification
-   `created_by_user_id` columns, and `organization_invitations.invited_by_user_id` /
-   `accepted_by_user_id`). These are all `ON DELETE SET NULL`, so we null them by hand — otherwise a
-   join to the now-deleted user would dangle.
-3. **Remaining memberships + 2FA** — deletes the user's `organization_members` rows in surviving
-   orgs and their `two_factor` secret.
+### Order of operations
 
-## The co-owned-organization block
+| Step | Action | Owner |
+| --- | --- | --- |
+| 1 | Refuse if the user owns a non-personal organization with other members: `400 { code: "OWNS_SHARED_ORGANIZATIONS" }` naming them | `findCoOwnedOrganizations` |
+| 2 | Evict every known session key from KV; on failure the request fails with all data intact | `sessionCache.prepareUserDeletion` |
+| 3 | Delete the user's publisher setup jobs and their private R2 state | `deletePublisherSetupJobsForUser` |
+| 4 | Delete every sole-owned organization (personal workspace plus owned orgs with no other members) | `deleteOrganization` |
+| 5 | Null the user's references in surviving organizations | `deleteUserAccount` batch |
+| 6 | Delete remaining `organization_members` rows and the `two_factor` row | `deleteUserAccount` batch |
+| 7 | Better Auth deletes `user`, `session`, `account` rows after `beforeDelete` returns | Better Auth |
 
-If the user still **owns a non-personal organization that has other members**, the deletion is
-**refused** rather than executed: silently removing the owner would orphan the org, or — if we
-cascaded — destroy other members' scans, npm token, and GitHub gates. `findCoOwnedOrganizations`
-detects these before any cleanup runs, and `beforeDelete` throws
-`400 { code: "OWNS_SHARED_ORGANIZATIONS" }` naming the blocking orgs. The owner must delete each
-shared org (Settings → General → Danger zone) or hand it off first, then retry. The personal
-workspace is always sole-owned, so it never blocks.
+### What `deleteOrganization` removes (step 4)
 
-> Ownership transfer (promoting another member to owner) is not implemented; today the path out of
-> a co-owned org is to delete it. If transfer is added later, it slots in ahead of this block.
+One D1 batch removes publisher setup jobs, scan events, scans, workflow gates, release targets, GitHub App installations, npm connection, notification recipients, Slack connection, invitations, memberships, and the organization row. The organization's R2 artifacts are deleted afterwards, separately (`deleteOrganizationArtifacts` in `server/db/organizations.ts`). npm package claims keep their registry/package identity with a null organization as a reservation; deleting an account never makes its packages available for automatic reassignment, and an operator must explicitly resolve any later ownership transfer ([package claims](./package-claims.md)).
 
-## On success
+### References nulled in surviving organizations (step 5)
 
-The session cookie is cleared server-side; the client drops its local session and redirects to the
-landing page (`/`). All of the user's other sessions are revoked as part of the Better Auth delete.
+| Table | Columns |
+| --- | --- |
+| `scans` | `owner_user_id`, `decided_by_user_id`, `public_shared_by_user_id` |
+| `scan_events` | `actor_user_id` |
+| `npm_connections` | `created_by_user_id` |
+| `organization_slack_connections` | `created_by_user_id` |
+| `github_app_installations` | `created_by_user_id` |
+| `github_release_targets` | `created_by_user_id` |
+| `organization_notification_recipients` | `created_by_user_id` |
+| `organization_invitations` | `invited_by_user_id`, `accepted_by_user_id` |
+
+### On success
+
+The session cookie is cleared server-side and all other sessions are revoked by the Better Auth delete; the client drops its local session and redirects to `/`.
+
+## Invariants
+
+1. Drydock-owned rows are deleted or nulled by hand: D1 does not enforce foreign keys, so nothing cascades on its own (same reason as `deleteOrganization`). The nulled columns are `ON DELETE SET NULL`; nulling them prevents dangling joins.
+2. A co-owned organization is never wiped: `findCoOwnedOrganizations` rejects before any cleanup, and `deleteUserAccount` also skips one if it is reached. Removing the owner would orphan the org or destroy other members' scans, npm token, and GitHub gates.
+3. The personal workspace is always sole-owned, so it never blocks deletion.
+4. A cached session can outlive the user by the cookie-cache lifetime; such a request gets `401`, not a lazily recreated organization ([session posture](./security-model.md#session-posture)).
+
+## Failure modes
+
+| Condition | Response | Fix |
+| --- | --- | --- |
+| Wrong password | `400 INVALID_PASSWORD` | Retry with the right password |
+| Stale GitHub-only session | Better Auth freshness error | Sign out, sign in with GitHub, retry |
+| Owns a shared organization | `400 { code: "OWNS_SHARED_ORGANIZATIONS" }` | Delete each shared org (Settings → General → Danger zone), then retry. Ownership transfer is not implemented; if added, it slots in ahead of this block |
+| KV session eviction fails | Request fails; no data deleted | Retry |
 
 ## Tests
 
-- `test/workers/account-deletion.test.ts` — drives the real Better Auth handler via `worker.fetch`
-  and asserts against D1: password and GitHub-only deletion (user + personal workspace +
-  sessions/accounts gone), the shared-org block (account and org untouched, error names the org),
-  membership removal + reference nulling in an org owned by someone else, and wrong-password
-  rejection.
+`test/workers/account-deletion.test.ts` drives the real Better Auth handler and asserts against D1: password and GitHub-only deletion (user, personal workspace, sessions, accounts gone), the shared-org block (account and org untouched, error names the org), membership removal and reference nulling in an org owned by someone else, and wrong-password rejection.
+
+## Change checklist
+
+- New table with a user-id column → add it to step 5 (null) or step 4 (org-scoped delete) and extend `test/workers/account-deletion.test.ts`.
+- New org-scoped table → add it to `deleteOrganization` and to [organization members](./organization-members.md#organization-deletion).

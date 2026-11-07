@@ -1,21 +1,18 @@
 # Self-hosting
 
-This guide covers running Drydock on your own Cloudflare account. The default
-deployment target is a Cloudflare Worker with static assets, D1, R2, KV, Queues,
-Workers AI, a Dynamic Worker loader, and optional email, Slack, and GitHub App
-integrations.
+Run Drydock on your own Cloudflare account as one Worker with static assets. **Authority:** internal (operator guide). **Owner:** `docs/examples/wrangler.self-host.jsonc` (template) and `server/env.d.ts` (binding types).
+
+The checked-in `wrangler.jsonc` targets the maintainers' production deployment. **Never deploy from it.** Every remote `wrangler` command below selects your config explicitly: `--config wrangler.self-host.jsonc` before the build, or the generated `dist/staged_publish_review/wrangler.json` after it.
 
 ## Requirements
 
-- Node `22.14.0+`
-- pnpm `11.1.1`
-- A Cloudflare account with Workers, D1, and Worker Loaders available
-- Optional Cloudflare services for the corresponding features: R2, KV, Queues,
-  Workers AI, Analytics Engine, Email Routing, and Flagship
-- An npm access token for each organization that will review staged npm
-  publishes
-- Optional: a GitHub App for workflow gates
-- Optional: a Slack app for notifications
+| Need | Detail |
+| --- | --- |
+| Node | `>=22.14.0` (`package.json` `engines`) |
+| pnpm | `11.1.1` (`packageManager`) |
+| Cloudflare | Workers, D1, R2, and Worker Loaders; Workers AI for AI review; other services per the [bindings table](#bindings) |
+| npm access token | One per organization that reviews staged npm publishes ([npm-trusted-publishing.md](./npm-trusted-publishing.md)) |
+| Optional | GitHub App (workflow gates), classic GitHub OAuth app (sign-in), Slack app (notifications) |
 
 ## Local development
 
@@ -26,280 +23,183 @@ pnpm run test
 pnpm run dev
 ```
 
-Generate local secrets:
+1. Generate secrets with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` or `openssl rand -base64 32`.
+2. Set in `.dev.vars`: `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL=http://localhost:5173`, `NPM_CONNECTIONS_ENCRYPTION_KEY`.
+3. The Worker serves UI and API at `http://localhost:5173`. Sign in, create or select an organization, and add an npm connection in Settings before scanning.
+4. Validate your self-host config locally: `CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run dev`.
+5. No credentials at all: `pnpm run e2e:dev:seed` ([e2e-test-environment.md](./e2e-test-environment.md)).
 
-```sh
-node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-openssl rand -base64 32
-```
+Never commit `.dev.vars`, private keys, tokens, or generated credential material.
 
-Set these in `.dev.vars`:
+## Bindings
 
-- `BETTER_AUTH_SECRET`
-- `BETTER_AUTH_URL=http://localhost:5173`
-- `NPM_CONNECTIONS_ENCRYPTION_KEY`
+Must match `server/env.d.ts`; `test/env-binding-parity.test.mjs` checks the template against it.
 
-The local Worker serves the UI and API at `http://localhost:5173`. After signing
-in, create or select an organization and add an npm connection from Settings
-before scanning staged publishes.
+| Binding | Type | Required? | Feature / behavior when absent |
+| --- | --- | --- | --- |
+| `DB` | D1 | Yes | All durable state. |
+| `ARTIFACTS` | R2 | **Yes** | Scan bodies and publisher-setup payloads; without it completed scans fail closed (note 1). |
+| `LOADER` | Worker Loader | Yes | Dynamic Worker sandbox that parses package bytes (`server/lib/sandbox.ts`). |
+| `AI` | Workers AI | Yes (typed required) | AI review and publisher setup. |
+| `ASSETS` | Static assets | Yes in production | SPA and prerendered pages; template keeps `run_worker_first: true`. |
+| `FLAGS` | Flagship | Optional | Feature flags incl. the `ai-review` killswitch. **Without it AI review and setup drafting are off** (note 2). |
+| `SCAN_QUEUE` | Queue producer + consumer | Optional | Scan jobs; without it scans run in a `waitUntil()` fallback (note 3). |
+| `COMPARE_CACHE` | KV | Optional | Public-diff and compare result cache. |
+| `AUTH_SESSIONS` | KV | Optional | Better Auth secondary session store (D1 stays the durable record); without it, D1 only. |
+| `RATE_LIMIT_{10,20,30,60,120,240}_PER_MINUTE` | Rate Limiting | Optional | Native per-minute tiers; without them limits fall back to the D1 `rate_limits` counter (note 4). |
+| `PRODUCT_ANALYTICS` | Analytics Engine | Optional | Aggregate product counters; every call is a no-op without it ([product-analytics.md](./product-analytics.md)). |
+| `SEND_EMAIL` | Send Email | Optional | Notifications, verification links, password reset. |
+| `PUBLISHER_SETUP_WORKFLOW` | Workflow (`PublisherSetupWorkflow`) | Optional | Repository-agent PR preparation; drafting returns `503` without it. |
 
-## Cloudflare resources
+1. A completed scan's body lives only in R2 (canonical report JSON, redacted samples, generated diffs, manifests); D1 keeps the metadata row. Without `ARTIFACTS` the scan fails closed at persist time (`scan.artifacts.binding_missing`, `server/lib/scan/artifacts/write.ts`) instead of storing a reviewable scan with no diff ([artifact-storage.md](./artifact-storage.md)).
+2. With `FLAGS` wired, AI review is on by default per organization and the `ai-review` flag switches it off per org or globally. The same Flagship app holds `clef-injection-screen` (default off, no extra secret), `out-of-band-watch`, and `dependency-review` (default off; offers [dependency review](./dependency-review.md) to an organization, and without `FLAGS` every organization is offered it).
+3. Keep the queue consumer `max_retries` and `dead_letter_queue` aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
+4. Tiers are `NATIVE_TIERS` in `server/lib/platform/rate-limit.ts`; they need no provisioning ([security-model.md](./security-model.md#rate-limiting)).
+5. A custom registry signals a private deployment: `/api/public/v1/package-diff` (including PyPI mode) and `/og/*` return 404.
 
-Create the required D1 database:
+### Secrets
 
-```sh
-pnpm exec wrangler d1 create staged-publish-review
-```
+Set with `pnpm exec wrangler secret put <NAME> --config wrangler.self-host.jsonc`. Never put them in a config file.
 
-The template also enables the optional queue and KV cache, and the required R2
-artifact store.
-Create those resources for the full configuration, or remove their binding
-blocks from your self-host config:
+| Secret | Required? | Effect |
+| --- | --- | --- |
+| `BETTER_AUTH_SECRET` | Yes | Session signing; also the fallback for `GITHUB_APP_STATE_SECRET`. |
+| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Yes for npm connections | Encrypts stored npm tokens; `server/lib/platform/secret-box.ts` throws if absent or under 32 characters. |
+| `ATTESTATION_SIGNING_KEY_JWK` | Optional | Ed25519 private JWK (kty OKP) for report attestations; absent → attestation endpoints `503`, sharing still works. |
+| `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` | For workflow gates | GitHub App. |
+| `GITHUB_APP_STATE_SECRET` | Optional | Defaults to `BETTER_AUTH_SECRET`. |
+| `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | For GitHub sign-in | See [GitHub sign-in](#github-sign-in). |
+| `SLACK_CLIENT_SECRET` | For Slack | [slack-notifications.md](./slack-notifications.md). |
 
-```sh
-pnpm exec wrangler queues create staged-publish-review-scans
-pnpm exec wrangler queues create staged-publish-review-scans-dlq
-pnpm exec wrangler kv namespace create COMPARE_CACHE
-pnpm exec wrangler kv namespace create AUTH_SESSIONS
-pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
-```
+### Vars
 
-`AUTH_SESSIONS` is Better Auth's secondary session store: it keeps the
-per-request session lookup off D1 while D1 stays the durable record. It is
-optional — drop the binding to read and write sessions in D1 only. The
-`ratelimits` bindings in the template need no provisioning; replace each
-`namespace_id` with a positive integer that is unique across your Cloudflare
-account. Dropping them makes every rate limit fall back to the D1 `rate_limits`
-counter. See
-[`security-model.md`](./security-model.md#rate-limiting).
+| Var | Required? | Effect |
+| --- | --- | --- |
+| `BETTER_AUTH_URL` | Yes | Canonical deployed origin; reset links are built from it. |
+| `NPM_REGISTRY` | Yes | Defaults to `https://registry.npmjs.org`; any other value disables the public diff API and `/og/*` (bindings note 5). |
+| `AI_CACHE_AFFINITY` | Yes in template | Stable Workers AI prefix-cache affinity string. |
+| `PNPM_VERSION` | Template | Mirrors `packageManager` for operators; the Worker never reads it. |
+| `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | With `SEND_EMAIL` | Sender. |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID` | For workflow gates | Public GitHub App identifiers. |
+| `SLACK_CLIENT_ID` | For Slack | Public Slack client id. |
+| `WORKFLOW_GATE_CALLBACK_WINDOW_MS` | Optional | Overrides GitHub's 30-day protection-rule callback window used to flag lapsed gates (`server/lib/workflow-gate-job.ts`). |
+| `SCAN_ARTIFACT_READS_DISABLED` | Optional | `true`/`1` is an R2 read kill-switch (`server/lib/scan/artifacts/read.ts`). |
+| `ALLOW_INSECURE_LOCAL_REGISTRY` | Never in production | Loopback HTTP registries for the e2e harness only. |
+| `DISABLE_SECURITY_HEADERS` | Never deployed | `.dev.vars`-only escape hatch; production keeps the full header policy. |
+| `AUTH_REQUIRED` | — | Declared in `server/env.d.ts`; no server code reads it. |
 
-The checked-in `wrangler.jsonc` targets the maintainers' production deployment.
-Do not deploy from it. Copy the public template to the gitignored self-host path
-and fill in your account values:
+## Deploy checklist
 
-```sh
-cp docs/examples/wrangler.self-host.jsonc wrangler.self-host.jsonc
-```
+1. Copy the template to the gitignored path and keep it local (account IDs, domains, client IDs must never replace upstream config in a PR):
 
-Keep `wrangler.self-host.jsonc` local. It is ignored by git so account IDs,
-domains, integration client IDs, and deployment choices cannot accidentally
-replace the upstream production configuration in a pull request.
+   ```sh
+   cp docs/examples/wrangler.self-host.jsonc wrangler.self-host.jsonc
+   ```
 
-`docs/examples/wrangler.self-host.jsonc` keeps the default resource names and marks every
-account-owned value with a `REPLACE_*` placeholder. Replace at least:
+2. Create resources:
 
-- `d1_databases[].database_id`, every `kv_namespaces[].id`, and every
-  `ratelimits[].namespace_id`;
-- custom `routes` with your own custom domain, or remove `routes` and use the
-  generated `workers_dev` subdomain instead;
-- the `flagship` app id to wire the `ai-review` killswitch (with Flagship wired,
-  the AI reviewer is on by default per organization and can be switched off per
-  org or globally), or remove the `flagship` block to keep AI review disabled.
-  The same app's `clef-injection-screen` flag (default off) opts an
-  organization into the Clef prompt-injection screen; it needs no extra secret.
-  Its `dependency-review` flag (default off) offers
-  [dependency review](./dependency-review.md) to an organization; without a
-  `flagship` block every organization is offered it;
-- public integration vars such as `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`,
-  `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
-  `SLACK_CLIENT_ID`.
+   ```sh
+   pnpm exec wrangler d1 create staged-publish-review --config wrangler.self-host.jsonc
+   pnpm exec wrangler r2 bucket create staged-publish-review-artifacts --config wrangler.self-host.jsonc
+   pnpm exec wrangler queues create staged-publish-review-scans --config wrangler.self-host.jsonc
+   pnpm exec wrangler queues create staged-publish-review-scans-dlq --config wrangler.self-host.jsonc
+   pnpm exec wrangler kv namespace create COMPARE_CACHE --config wrangler.self-host.jsonc
+   pnpm exec wrangler kv namespace create AUTH_SESSIONS --config wrangler.self-host.jsonc
+   ```
 
-Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
-with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
+   Optional resources may be skipped by removing their binding blocks instead.
 
-Apply migrations after the D1 database ID is configured, always passing the
-self-host config explicitly:
+3. Replace every `REPLACE_*` placeholder:
 
-```sh
-pnpm exec wrangler d1 migrations apply staged-publish-review --remote \
-  --config wrangler.self-host.jsonc
-```
+   | Field | Value |
+   | --- | --- |
+   | `d1_databases[].database_id`, each `kv_namespaces[].id` | IDs from step 2 |
+   | each `ratelimits[].namespace_id` | A positive integer unique across your Cloudflare account (no provisioning) |
+   | `routes` | Your custom domain, or remove `routes` and use the `workers_dev` subdomain |
+   | `flagship[].app_id` | Your Flagship app (or remove the block: AI review off) |
+   | `vars` | `BETTER_AUTH_URL`, `EMAIL_FROM_ADDRESS`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `SLACK_CLIENT_ID` |
 
-## Secrets and vars
+4. Apply migrations after the D1 ID is set:
 
-Set required secrets with Wrangler:
+   ```sh
+   pnpm exec wrangler d1 migrations apply staged-publish-review --remote --config wrangler.self-host.jsonc
+   ```
 
-```sh
-pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.self-host.jsonc
-pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY \
-  --config wrangler.self-host.jsonc
-```
+5. Set secrets:
 
-Optional secrets:
+   ```sh
+   pnpm exec wrangler secret put BETTER_AUTH_SECRET --config wrangler.self-host.jsonc
+   pnpm exec wrangler secret put NPM_CONNECTIONS_ENCRYPTION_KEY --config wrangler.self-host.jsonc
+   pnpm exec wrangler secret put ATTESTATION_SIGNING_KEY_JWK --config wrangler.self-host.jsonc   # optional
+   ```
 
-```sh
-# Ed25519 private JWK for public report attestations (docs/public-reports.md).
-# Without it, report sharing works but attestation endpoints return 503.
-pnpm exec wrangler secret put ATTESTATION_SIGNING_KEY_JWK
-```
+6. Build and deploy the generated config (deploying `wrangler.self-host.jsonc` directly omits the Vite build output). If you rename the Worker, use the matching normalized directory under `dist/`.
 
-Required non-secret vars:
+   ```sh
+   CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run build
+   pnpm exec wrangler deploy --config dist/staged_publish_review/wrangler.json
+   ```
 
-- `BETTER_AUTH_URL` — canonical deployed origin
-- `NPM_REGISTRY` — defaults to `https://registry.npmjs.org`
-- `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
-- `PNPM_VERSION` — mirrors `packageManager` in `package.json` for operators; the Worker never reads it
+7. Verify: `BETTER_AUTH_URL` matches the deployed origin; migrations are applied; sign in and create an organization; add and validate an npm connection; run a test staged-publish review; check Worker logs and Agent Traces show structured events without raw package contents or secrets.
 
-Optional integrations:
+Keep the `*/15 * * * *` cron trigger: it runs staged-publish discovery, the publication monitor, and retention pruning (audit events, auth rows, rate-limit buckets, expired publisher-setup payloads).
 
-- Email: `SEND_EMAIL` binding plus `EMAIL_FROM_ADDRESS` and `EMAIL_FROM_NAME`.
-  Besides notifications and verification links, it turns on password reset:
-  "Forgot password?" on the login page, and "set a password" for accounts that
-  signed up with GitHub. Reset links are built from `BETTER_AUTH_URL`, so reset
-  stays off when that is unset or a loopback address, as on local dev
-  (`GET /api/auth/config` reports `passwordReset`). Links expire after an hour
-  and work once; using one signs the account out everywhere. See
-  [`security-model.md`](./security-model.md#password-reset).
-- GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
-  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
-  and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
-- GitHub sign-in: `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
-  Register `${BETTER_AUTH_URL}/api/auth/callback/github` as the OAuth app's
-  **Authorization callback URL** before copying its credentials into Drydock.
-  When both are set, the login and register pages offer "Continue with GitHub"
-  (`GET /api/auth/config` reports availability). This is identity-only OAuth —
-  the grant shares the user's profile and verified email, requests no repo
-  scopes, and never installs the GitHub App; workflow-gate installation stays a
-  separate step. **Use a plain OAuth app, not the workflow-gate GitHub App.**
-  GitHub App client IDs (the `Iv` prefix across legacy and current formats) are
-  rejected even when a secret is present: GitHub Apps ignore OAuth scopes, their
-  user-to-server tokens can carry installation permissions, and Better Auth
-  exposes authenticated token retrieval endpoints. A classic OAuth app with
-  `read:user user:email` mints the profile-and-email-only token this integration
-  promises. Drydock does not use that token after the callback, and
-  `account.encryptOAuthTokens` keeps what Better Auth stores encrypted at rest.
-  Request-level OAuth scope overrides are rejected server-side so callers cannot
-  widen the grant beyond `read:user` and `user:email`.
+## Observability
 
-  No sign-in route asks for email verification; a GitHub sign-in arrives
-  verified when GitHub reports the address verified, which satisfies the per-action verified-email checks (npm
-  token, decision, share link, invitation, GitHub install) described in
-  [`security-model.md`](./security-model.md#email-verification). Implicit
-  account linking is disabled, including Better Auth's explicit link endpoint:
-  a GitHub sign-in whose email already belongs to a password account fails back
-  to the login page instead of attaching to that account, because the Drydock
-  TOTP challenge guards only password sign-ins and a linked social method would
-  bypass it. The TOTP step-up on release decisions is unaffected by sign-in
-  method.
+| Template block | Default | Change |
+| --- | --- | --- |
+| `observability.logs` | On, with invocation logs | — |
+| `observability.traces` | Every trace persisted (`head_sampling_rate: 1`); the reviewer wrapper disables message and tool payload storage | Lower `head_sampling_rate` as span volume grows, or remove the block. |
+| `observability.issues` | On: groups exceptions, 5xx responses, error logs, with its own request details | Removing logs or traces does not disable it; set `observability.issues.enabled` to `false`. Any automation destination receives token-bearing URLs; keep it private. |
 
-  A GitHub-only account has no Drydock password, and every two-factor endpoint
-  reauthenticates with one. With email configured, Account settings mails such
-  an account a link to set a password once its address is verified, after
-  which it can enrol. Without email
-  it cannot enrol at all, so do not offer GitHub sign-in on an email-less
-  deployment whose organizations require two-factor for release decisions — see
-  [`two-factor-auth.md`](./two-factor-auth.md#management).
+## Integrations
 
-- Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
+### Email
 
-Do not commit `.dev.vars`, private keys, tokens, or generated credential
-material.
+`SEND_EMAIL` + `EMAIL_FROM_ADDRESS` + `EMAIL_FROM_NAME` enable notifications, verification links, and password reset ("Forgot password?" on login; "set a password" for GitHub-only accounts). Reset stays off when `BETTER_AUTH_URL` is unset or loopback (`GET /api/auth/config` reports `passwordReset`). Links expire after an hour, work once, and sign the account out everywhere ([security-model.md](./security-model.md#password-reset)).
 
-## Run with the self-host config
+### GitHub sign-in
 
-Use the same explicit config for local validation:
+1. Use a **classic OAuth app, not the workflow-gate GitHub App**. Register `${BETTER_AUTH_URL}/api/auth/callback/github` as the Authorization callback URL, then set `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`. With both set, login and register offer "Continue with GitHub" (`GET /api/auth/config` reports availability).
+2. Identity only: profile and verified email via `read:user user:email`, no repo scopes, never installs the GitHub App. Request-level scope overrides are rejected server-side.
+3. GitHub App client IDs (the `Iv` prefix, legacy and current) are rejected even with a secret: Apps ignore OAuth scopes, their user tokens can carry installation permissions, and Better Auth exposes token retrieval endpoints.
+4. Drydock does not use the token after the callback; `account.encryptOAuthTokens` keeps what Better Auth stores encrypted.
+5. A GitHub sign-in is verified when GitHub reports the address verified, which satisfies the per-action verified-email checks (npm token, decision, share link, invitation, GitHub install; [security-model.md](./security-model.md#email-verification)).
+6. Implicit account linking is disabled, including Better Auth's link endpoint: a GitHub sign-in whose email belongs to a password account fails back to login, because the TOTP challenge guards only password sign-ins. The TOTP step-up on release decisions applies to every sign-in method.
+7. A GitHub-only account has no password, and every two-factor endpoint reauthenticates with one. With email, Account settings mails a set-password link once the address is verified. **Without email it cannot enrol, so do not offer GitHub sign-in on an email-less deployment whose organizations require two-factor for decisions** ([two-factor-auth.md](./two-factor-auth.md#management)).
 
-```sh
-CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run dev
-```
+### Workflow gates
 
-## Deploy
+Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
 
-Build with the self-host source config. The Cloudflare Vite plugin writes a
-deployable config containing the compiled Worker modules and static asset
-directory under `dist/staged_publish_review/`. Deploy that generated config;
-deploying `wrangler.self-host.jsonc` directly omits the Vite build output.
+### Dependency review
 
-```sh
-CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.self-host.jsonc pnpm run build
-pnpm exec wrangler deploy --config dist/staged_publish_review/wrangler.json
-```
+Uses the same GitHub App. Add the **Checks: read and write**, **Pull requests: read**, and **Contents: read** repository permissions and subscribe to the **Pull request** and **Check run** events. GitHub asks each installation's owner to accept the new permissions; until they do, reviews in that installation fail to create their check run. With `FLAGS` wired, roll it out per organization with the `dependency-review` flag; each organization then turns it on in Settings → Integrations ([dependency-review.md](./dependency-review.md)).
 
-If you change the Worker `name` in `wrangler.self-host.jsonc`, use the matching
-normalized directory name under `dist/` for the generated config.
+### Publisher setup assistant
 
-After deploying:
+1. Optional ([publisher-setup.md](./publisher-setup.md)): inspects an installed repository and prepares a draft PR with Workers AI (`AI_MODEL` in `server/lib/ai-review/index.ts`). The explicit start action authorizes drafting, validation, independent review, and automatic PR creation.
+2. Uses the organization's `ai-review` flag; preflights the installation's Contents, Pull requests, and Workflows write permissions before calling the model; never expands installed grants. A read-only installation still supports inspection and manual setup.
+3. Requires `PUBLISHER_SETUP_WORKFLOW` with `PublisherSetupWorkflow` exported from the same Worker; deploy it with the Worker and apply migrations before enabling the UI. Without it drafting returns `503`; manual guides and existing gates keep working.
+4. Repository files, transcripts, proposed edits, and judge evidence stay in private R2 (`ARTIFACTS`), not Workflow step history. Every model turn is checkpointed; agents have pinned read/edit proposal tools and no code-execution or GitHub mutation tools. Expired payloads are pruned by the cron.
+5. Before testing a release, enable the environment's Drydock protection rule and map its release target; the status check reports configuration and observed review independently.
 
-1. Confirm `BETTER_AUTH_URL` matches the deployed origin.
-2. Confirm D1 migrations are applied.
-3. Sign in and create an organization.
-4. Add and validate an npm connection.
-5. Run a test staged-publish review.
-6. Check Worker logs and Agent Traces for structured events without raw
-   package contents or secrets. The template persists every trace while the
-   reviewer wrapper disables message and tool payload storage; lower
-   `head_sampling_rate` once your traffic makes span volume matter, or remove
-   the `observability.traces` block if you do not want persisted traces at all.
-   The template also enables Workers Issues, which groups exceptions, 5xx
-   responses, and error logs. It records request details on its own, so
-   removing the logs or traces blocks does not turn it off; set
-   `observability.issues.enabled` to `false` to opt out. Any automation
-   destination you add receives that data, including token-bearing URLs, so
-   keep it private.
+### Slack
 
-## GitHub workflow gates
+Register `https://YOUR_ORIGIN/api/v1/slack/callback` as the redirect URL, then set `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` ([slack-notifications.md](./slack-notifications.md)).
 
-Workflow gates require a GitHub App with deployment-protection webhooks. Configure
-the App, set its secrets and vars, then map repositories and environments from
-Settings. The target publish workflow must build artifacts before the gate and
-publish the reviewed artifact bundle after approval. See
-[`workflow-gates.md`](workflow-gates.md) and
-[`npm-workflow-gate.md`](npm-workflow-gate.md).
+## Operating rules
 
-The optional [publisher setup assistant](publisher-setup.md) can inspect an
-installed repository and prepare a draft PR with Workers AI. The explicit start
-action authorizes drafting, validation, independent review, and automatic PR
-creation. Preparation uses the organization's existing `ai-review` flag and
-GLM-5.3-flash, and preflights the installation's Contents, Pull requests, and
-Workflows write permissions before calling the model. The assistant does not
-expand installed grants.
-Operators can keep a read-only installation for inspection and manual setup.
-Enable the environment's Drydock deployment-protection rule and map its release
-target before testing a release; the assistant's status check reports the
-configuration and observed review independently.
+1. Do not retain raw tarballs by default.
+2. Keep organization npm tokens narrowly scoped (read-only is sufficient) and rotated.
+3. Treat all package contents as sensitive, even after redaction.
+4. Run `pnpm run verify` before deploying; run `pnpm run test:e2e` for registry, staged-publish, credential-forwarding, and scan-workflow changes.
+5. Review [security-model.md](./security-model.md) before changing trust boundaries.
 
-## Dependency review
+## Change checklist
 
-Dependency review uses the same GitHub App. Add the **Checks: read and write**,
-**Pull requests: read**, and **Contents: read** repository permissions and
-subscribe to the **Pull request** and **Check run** events. GitHub then asks
-each installation's owner to accept the new permissions; reviews in an
-installation that hasn't accepted fail to create their check run. Turn the
-feature on per organization in Settings → Integrations. See
-[`dependency-review.md`](dependency-review.md).
-
-## Slack notifications
-
-Slack notifications require a Slack OAuth app. Register the redirect URL:
-
-```text
-https://YOUR_ORIGIN/api/v1/slack/callback
-```
-
-Then set `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`. See
-[`slack-notifications.md`](slack-notifications.md).
-
-## Artifact storage
-
-R2 stores canonical report JSON, redacted file samples, generated diffs, and
-manifests for completed scans. **The `ARTIFACTS` binding is required.** A
-completed scan's body lives only in R2 — D1 keeps the metadata row — so a
-deployment without the bucket fails the scan closed at persist time rather than
-storing a reviewable scan with no diff.
-
-See [`artifact-storage.md`](artifact-storage.md) for object layout and rollback.
-
-## Operational notes
-
-- Do not retain raw tarballs by default.
-- Keep organization-scoped npm tokens narrowly scoped and rotated.
-- Treat all package contents as sensitive, even after redaction.
-- Run `pnpm run verify` before deploying changes.
-- Run `pnpm run test:e2e` for registry, staged-publish, credential-forwarding,
-  and scan-workflow changes.
-- Review [`security-model.md`](security-model.md) before changing trust
-  boundaries.
-
-### Durable publisher setup
-
-Repository-agent PR preparation requires the `PUBLISHER_SETUP_WORKFLOW` binding configured in the self-host template, with class `PublisherSetupWorkflow` exported from the same Worker. Deploy the Workflow with the Worker and apply D1 migrations before enabling the UI. It uses the existing private `ARTIFACTS` bucket, Workers AI, and the `ai-review` Flagship setting. Without the Workflow binding, drafting returns `503`; manual setup guides and existing release gates continue to work. Repository files, agent transcripts, proposed edits and judge evidence stay in private R2 rather than Workflow step history. Every model turn is checkpointed; agents have pinned read/edit proposal tools and no code-execution or GitHub mutation tools. Expired job payloads are pruned by the existing scheduled handler; retain the cron trigger. See [guided publisher setup](./publisher-setup.md).
+| If you change | Also |
+| --- | --- |
+| A binding or var | `server/env.d.ts`, `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, the [bindings table](#bindings); run `pnpm exec vitest run --project node test/env-binding-parity.test.mjs`. |
+| Queue retry policy | `MAX_SCAN_JOB_ATTEMPTS` and the template consumer settings. |
+| A cron task | The cron note in [Deploy checklist](#deploy-checklist). |

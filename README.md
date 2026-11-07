@@ -1,6 +1,6 @@
 # Drydock Package Review
 
-Drydock is pre-publish package security for maintainers. It reviews the exact npm, PyPI, or VS Code artifact before publication, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
+Drydock is pre-publish package security for maintainers. It reviews the exact npm, PyPI, or VS Code artifact before publication, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, sends changed-file evidence to an advisory Cloudflare Workers AI reviewer (on by default, with a per-organization killswitch), and saves a review report.
 
 It has two release modes with different authority. With **Workflow Gate — enforced**, a GitHub deployment-protection rule holds the configured protected publish job until you approve or reject it in Drydock. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject them and can still publish manually. Drydock never publishes and never collects npm approval codes.
 
@@ -13,7 +13,7 @@ Drydock runs as a hosted service at [drydock.org](https://drydock.org); this rep
 - **Add diffs to Dependabot PRs:** copy the [verified comment workflow](https://drydock.org/docs#dependabot-diff-links). It supports grouped updates and never checks out PR code.
 - **Show reviewed releases:** after opting a shared review into the public feed, copy its README badge from the share dialog. The badge points readers back to verifiable review evidence.
 
-The dependency-PR integrations add plain links, so Drydock is contacted only when a reviewer chooses to open a diff. See the [integration contract](docs/dependency-pr-diff-links.md) for version-pair guards and security details.
+The Renovate preset adds plain links, so Drydock is contacted only when a reviewer opens one. The Dependabot/Renovate comment workflow calls Drydock's anonymous diff API from CI to write each bump's headline and findings. See the [integration contract](docs/dependency-pr-diff-links.md) for version-pair guards and security details.
 
 ## Sponsored by
 
@@ -57,29 +57,43 @@ permits an account holder to publish interactively with password, 2FA, and an OT
    to the protected environment:
 
    ```yaml
+   name: release
+   on:
+     release:
+       types: [published]
+
    jobs:
      pack:
        runs-on: ubuntu-latest
+       permissions: { contents: read }
        steps:
          - uses: actions/checkout@v4
+         - uses: actions/setup-node@v4
+           with: { node-version: 22 }
          - run: npm ci
-         - run: npm pack --pack-destination dist
+         - run: mkdir -p dist && npm pack --pack-destination dist # npm does not create the directory
          - run: cd dist && sha256sum *.tgz > SHA256SUMS
          - uses: actions/upload-artifact@v4
            with:
-             name: npm-release-candidates
+             name: npm-release-candidates # the name Drydock's npm gate looks for
              path: dist/
 
      publish:
        needs: pack
+       runs-on: ubuntu-latest
        environment: production # GitHub holds this job for Drydock's decision
-       permissions: { id-token: write, contents: read }
+       permissions: { id-token: write, contents: read } # npm trusted publishing (OIDC), no token
        steps:
+         - uses: actions/setup-node@v4
+           with: { node-version: 22, registry-url: "https://registry.npmjs.org" }
+         - run: npm install -g npm@^11.5.1 # trusted publishing needs npm >= 11.5.1
          - uses: actions/download-artifact@v4
            with: { name: npm-release-candidates, path: dist }
-         - run: cd dist && sha256sum --check --strict SHA256SUMS
+         - run: cd dist && sha256sum --check --strict SHA256SUMS # fail if bytes drifted from the review
          - run: npm publish dist/*.tgz --access public --provenance
    ```
+
+   Canonical copy: [`docs/examples/npm-workflow-gate.yml`](docs/examples/npm-workflow-gate.yml).
 
 6. Push a release. GitHub pauses the publish job, Drydock reviews the uploaded artifacts, and accepting
    the review tells GitHub to let the job continue. Rejecting it tells GitHub to keep that configured
@@ -140,13 +154,12 @@ test/         Vitest, Worker-runtime, security corpus, and fake-registry e2e
 
 Requirements: Node `22.14.0+` and pnpm `11.1.1` (pinned in `package.json`).
 
-```sh
-pnpm install
-cp .dev.vars.example .dev.vars
-pnpm run dev
-```
+| Goal                                  | Commands                                                                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Seeded app, fake registry, no secrets | `pnpm install` then `pnpm run e2e:dev:seed` ([details](docs/e2e-test-environment.md))                                        |
+| App against real services             | `pnpm install`, `cp .dev.vars.example .dev.vars`, fill it per [`docs/self-hosting.md`](docs/self-hosting.md), `pnpm run dev` |
 
-The dev server runs the Worker and UI through Vite at `http://localhost:5173`. Edit `.dev.vars` with local Cloudflare, Better Auth, npm, GitHub App, Slack, and optional Workers AI/Flagship values as described in [`docs/self-hosting.md`](docs/self-hosting.md).
+Both serve the Worker and UI through Vite at `http://localhost:5173` by default.
 
 Useful commands:
 
@@ -168,21 +181,11 @@ The checked-in `wrangler.jsonc` describes the maintainers' deployment. Self-host
 Vite, migrations, and secret commands, then deploy the config generated by the Vite build. See
 [`docs/self-hosting.md`](docs/self-hosting.md) for the complete flow.
 
-Core Cloudflare bindings are D1 (`DB`), the Dynamic Worker loader (`LOADER`), and Workers AI
-(`AI`). Queue (`SCAN_QUEUE`), R2 (`ARTIFACTS`), KV (`COMPARE_CACHE`), Flagship (`FLAGS`),
-Analytics Engine (`PRODUCT_ANALYTICS`), email (`SEND_EMAIL`), and static assets (`ASSETS`) support
-the corresponding optional or deployed features.
-
-Important secrets/vars:
-
-- `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
-- `NPM_CONNECTIONS_ENCRYPTION_KEY`
-- `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
-  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`, and optional
-  `GITHUB_APP_STATE_SECRET`
-- `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
-
-Run `pnpm run cf-typegen` after changing Cloudflare bindings.
+Required bindings are D1 (`DB`), R2 (`ARTIFACTS`), the Dynamic Worker loader (`LOADER`), and Workers
+AI (`AI`); the rest enable optional features. The complete binding and secret table, with what
+each one turns on, is in [`docs/self-hosting.md`](docs/self-hosting.md). Binding types are
+declared by hand in `server/env.d.ts`; `test/env-binding-parity.test.mjs` checks every config
+against it.
 
 ## API surface
 
@@ -193,12 +196,18 @@ The authenticated JSON API lives under `/api/v1`. The main resources are:
 - release targets and workflow gates: map GitHub repositories/environments, review queued gate artifacts, and post accept/reject decisions;
 - auth/org/settings helpers for Better Auth-backed sessions and organization membership.
 
-Scripts and CI read through the same API — directly or with the dependency-free
-[`drydock` CLI](cli/README.md) (not on npm yet; `pnpm run drydock --help` from this checkout) — using an organization API key
-(`Authorization: Bearer ddk_…`, created in `Organization settings → Integrations → API keys`); a key
-reaches only the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) and can never record
-a decision. [`docs/openapi.json`](docs/openapi.json) is the OpenAPI 3.1 description of that surface
-(also served at `GET /api/v1/openapi.json`).
+Scripts and CI use the same API, directly or with the dependency-free [`drydock` CLI](cli/README.md)
+(`npx drydock-cli …`), authenticated by an organization API key (`Authorization: Bearer ddk_…`,
+created in `Organization settings → Integrations → API keys`).
+
+| Key access      | Reaches                                                             |
+| --------------- | ------------------------------------------------------------------- |
+| read            | the read endpoints listed in [`docs/api-keys.md`](docs/api-keys.md) |
+| `scan`          | read, plus starting a review and "Check npm"                        |
+| `decide_staged` | `scan`, plus recording a staged-publish decision (advisory record)  |
+
+No key decides a workflow gate. [`docs/openapi.json`](docs/openapi.json) is the OpenAPI 3.1
+description of that surface (also served at `GET /api/v1/openapi.json`).
 
 Consult route definitions under `server/routes/` for exact request/response shapes; shared types are imported by the UI from `server/`.
 

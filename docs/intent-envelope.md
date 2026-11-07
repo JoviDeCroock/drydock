@@ -1,69 +1,62 @@
 # Intent envelope
 
-Every completed scan carries an **intent envelope**: a deterministic,
-advisory classification of how strongly the reviewed artifact is bound to a
-source repository and a release intent. It is groundwork for a future
-"Release Contract" feature and **never changes risk levels or findings** — it
-only describes what an origin claim could later be verified against.
+Every completed scan carries a deterministic classification of its artifact's source and release-intent binding. **Authority:** advisory. **Owner:** `server/lib/intent-envelope.ts`.
 
-Computed in `server/lib/scan/pipeline.ts` via the pure module
-`server/lib/intent-envelope.ts`. The declared repository it reads is not
-extracted there: `extractDeclaredRepository` needs the raw staged manifest text
-and, on PyPI, the core-metadata body, and both die at the `analyzeRelease`
-boundary — so the extraction runs inside that boundary and arrives as
-`ArtifactFacts.declaredRepository` as a bounded canonical URL, never as the raw
-package-controlled value. The envelope is persisted inside the scan's `summaryJson`
-blob (`summary.intentEnvelope`, no dedicated column), returned on
-`ScanResult`, exported in the `drydock.report.v2` report as the optional
-`intentEnvelope` field, and rendered as the "Source binding" row on the scan
-detail page.
+## At a glance
 
-## Shape
+| Thing | Owner file | Who may call / trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Repository extraction | `server/lib/scan/pipeline-phases.ts` | `analyzeRelease`, before raw manifests leave scope | `test/intent-envelope.test.mjs` |
+| Tier computation | `server/lib/intent-envelope.ts` | `server/lib/scan/pipeline.ts` | `test/intent-envelope.test.mjs` |
+| Persistence and export | `server/lib/scan/pipeline-phases.ts` | Completed scans | `test/workers/scan-intent-envelope.test.ts` |
+
+## Contract
 
 ```ts
 interface IntentEnvelope {
   tier: "attested" | "declared" | "absent";
-  repository: string | null; // normalized https://github.com/owner/repo (or gitlab/…)
-  signals: Array<{ kind: string; detail: string }>; // human-readable evidence
+  repository: string | null;
+  signals: Array<{ kind: string; detail: string }>;
 }
 ```
 
-## Tiers
+| Tier | Evidence | Claim ceiling for a future Release Contract |
+| --- | --- | --- |
+| `attested` | Signed `deployment_protection_rule` webhook binds repository + run + environment; reviewed bytes downloaded from that exact run | Proven: this artifact was built from that repository's run |
+| `declared` | Parseable manifest repository claim: npm `package.json`, PyPI core metadata or VSIX manifest | Consistent: contents may match declared source; package-controlled binding is claimed, never verified |
+| `absent` | No repository binding | Not verifiable: nothing to check origin against |
 
-| Tier       | Meaning                                                                                                                                                                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `attested` | The scan came through a GitHub workflow gate: the signed `deployment_protection_rule` webhook binds repository + workflow run + environment, and the reviewed artifact bytes were downloaded from that run.                       |
-| `declared` | Not attested, but the staged manifest (package.json / PyPI core metadata / VSIX manifest) declares a parseable repository URL (`repository` as string or `{url}`, `git+https://`, `github:owner/repo`, …). Claimed, not verified. |
-| `absent`   | No repository binding at all — the artifact cannot be tied to reviewed source.                                                                                                                                                    |
+| Boundary / shape | Contract |
+| --- | --- |
+| Extraction | `extractDeclaredRepository` needs raw manifest/core-metadata bodies; runs inside `analyzeRelease`, where those bodies remain available |
+| Pipeline input | `ArtifactFacts.declaredRepository` carries a bounded canonical URL, never raw package-controlled value |
+| Accepted declarations | String, `{url}`, `git+https://`, `github:owner/repo` and other supported repository forms |
+| GitHub / Bitbucket | Normalize to `https://host/owner/repo` |
+| GitLab | Keep nested group namespace: `https://gitlab.com/group/subgroup/project` |
+| Unknown host | Keep sanitized full path |
+| Garbage | Never partially parses; reads as `absent` |
+| Storage | `summary.intentEnvelope` in `summaryJson`; no dedicated column |
+| API | Returned on `ScanResult` |
+| Report | Optional `intentEnvelope` in `drydock.report.v2` |
+| UI | Scan detail “Source binding” row |
 
-Repository URLs are normalized to `https://host/owner/repo` for GitHub and
-Bitbucket. GitLab keeps nested group namespaces
-(`https://gitlab.com/group/subgroup/project`), and unknown hosts keep their
-sanitized full path. Garbage never partially parses — it reads as `absent`.
+## Invariants
 
-## Claim ceiling
+1. Intent metadata never changes risk levels or findings (`server/lib/intent-envelope.ts`).
+2. A staged npm publish cannot reach `attested`: `StagedPublishDetails` has identity, actor and shasum, but no provenance attestation (`server/lib/intent-envelope.ts`).
+3. A future staged provenance signal can promote the binding without changing the tier model (`server/lib/intent-envelope.ts`).
+4. Every reader re-validates persisted data through `normalizeIntentEnvelope`, like `normalizeScanRiskBreakdown` (`server/lib/intent-envelope.ts`).
 
-The tier is a ceiling on the strength of origin claims a future Release
-Contract could make about the scan:
+## Failure modes
 
-- `attested` can later support **proven** claims ("this artifact was built
-  from run N of owner/repo") because the binding is machine-verified by the
-  signed webhook plus the artifact download from that exact run.
-- `declared` caps at **consistent** claims ("the artifact's contents are
-  consistent with what the declared repository publishes") — the manifest is
-  package-controlled, so the binding itself is unverifiable evidence.
-- `absent` caps at **not verifiable**: with no binding there is nothing to
-  check a claim against.
+| Condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Missing envelope | Scan predates envelope persistence | Normalizes to `null`; UI hides row; export carries `"intentEnvelope": null` | Preserve compatibility in readers |
+| Malformed envelope | Invalid persisted data | Normalizes to `null`, never a partial claim | Validate through `normalizeIntentEnvelope` |
 
-## v1 constraints
+## Change checklist
 
-- A staged npm publish cannot reach `attested`: the staged registry metadata
-  Drydock receives (`StagedPublishDetails`) exposes package identity, actor,
-  and shasum but no provenance attestation. If npm later surfaces provenance
-  for staged versions, that signal can promote staged scans without changing
-  the tier model.
-- Scans persisted before the feature have no envelope. Every reader
-  re-validates through `normalizeIntentEnvelope` (same pattern as
-  `normalizeScanRiskBreakdown`): missing or malformed data reads as
-  `null` — the UI hides the row and the report export carries
-  `"intentEnvelope": null`.
+| If you change | Also update | Run |
+| --- | --- | --- |
+| Extraction, tiers or normalization | Artifact-facts boundary, persistence, API, UI and report readers | `pnpm exec vitest run --project node test/intent-envelope.test.mjs` |
+| Persistence/export | [Release receipts](./release-receipts.md) and report schema | `pnpm run verify:file docs/intent-envelope.md` |

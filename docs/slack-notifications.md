@@ -1,195 +1,145 @@
 # Slack notifications
 
-Drydock posts release events to Slack through the **"Add to Slack" OAuth v2 bot
-flow**. Each organization connects one Slack workspace and picks exactly one
-**public** channel; a completed/failed staged-publish scan and a workflow-gate
-"review ready" transition post to that channel. Slack delivery runs alongside the
-email recipients, is best-effort, and never blocks scan or gate processing.
+Drydock delivers organization release notifications through an OAuth v2 bot and one selected public channel. **Authority:** advisory. **Owner:** `server/lib/notify/deliver.ts`.
 
-Webhook-URL destinations are gone — Slack steers integrators toward OAuth, and a
-bot token plus an in-app channel picker is a better fit than asking users to mint
-and paste an incoming-webhook URL.
+## At a glance
 
-## OAuth scopes
+| Thing | Owner file | Who may call / trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Connection API | `server/routes/slack.ts` | Members read; admins/owners write | `test/workers/slack-routes.test.ts` |
+| OAuth/state/API/Block Kit | `server/lib/notify/slack.ts` | Routes/notifiers | `test/slack.test.mjs` |
+| Email/Slack fan-out | `server/lib/notify/deliver.ts` | Release notifiers | `test/notify.test.mjs` |
 
-`SLACK_OAUTH_SCOPES` (`server/lib/notify/slack.ts`) requests the minimum for a single
-public channel:
+## Contract
 
-- `chat:write` — post messages.
-- `chat:write.public` — post to any _public_ channel without first inviting the
-  bot. This is why we restrict the picker to public channels: delivery always
-  works without an invite step.
-- `channels:read` — list public channels for the in-app picker.
+### Configuration and scopes
 
-## Data model
+| Setting | Contract |
+| --- | --- |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | Optional (`server/env.d.ts`); both are needed to enable Slack, otherwise `configured: false`, a UI notice, and `503 slack_not_configured` on `POST /connect` |
+| `BETTER_AUTH_URL` | `slackRedirectUri` resolves `/api/v1/slack/callback`; register that exact URL in Slack |
+| `assets.run_worker_first` | Must cover `/api` in `wrangler.jsonc` to keep the callback out of SPA fallback |
+| `SLACK_OAUTH_SCOPES` | `chat:write,chat:write.public` in `server/lib/notify/slack.ts`; public posting needs no bot invite |
+| `SLACK_CHANNEL_LIST_SCOPE` | Optional `channels:read` (`server/lib/notify/slack.ts`); picker needs it, manual ID does not |
+| `NPM_CONNECTIONS_ENCRYPTION_KEY` | Required shared secret, ≥32 chars (`encryptionKey` in `server/lib/platform/secret-box.ts`) |
 
-`organization_slack_connections` (`server/db/schema.ts`, migration
-`drizzle/0018_*`) holds one row per organization:
+| Constant | Value | File |
+| --- | --- | --- |
+| `STATE_TTL_MS` | 15 minutes | `server/lib/notify/slack.ts` |
+| `STATE_VERSION` | `slackv1` | `server/lib/notify/slack.ts` |
+| `SLACK_API_TIMEOUT_MS` | 5 seconds | `server/lib/notify/slack.ts` |
 
-- `team_id` / `team_name` / `bot_user_id` / `scope` — workspace identity returned
-  by the OAuth exchange.
-- `bot_token_ciphertext` / `bot_token_nonce` — the AES-GCM-encrypted bot token
-  (`xoxb-…`) and its per-row nonce. The plaintext token is **never** stored,
-  logged, or returned.
-- `channel_id` / `channel_name` — the chosen public channel; null until the user
-  picks one.
-- `enabled` — a disabled connection keeps its token but is skipped by the
-  delivery fan-out (`Test` still works after re-enable).
-- `created_by_user_id` — the owner/admin who connected the workspace.
+### Routes
 
-Public reads (`getSlackConnection`, `publicConnection`) project only
-`{ teamId, teamName, channelId, channelName, enabled, createdAt }`; the token
-columns never reach a client. `getSlackConnectionSecret` keeps the
-token-bearing read (used by the notifier and the test send) separate from the
-public status read.
+All routes require a session; organization selection follows [the security model](./security-model.md). `roleCanManageIntegrations` permits owner/admin and rejects member writes with `403`.
 
-## Secret handling
+| Method | Path | Auth/role | Request / response | Owner |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/slack` | Any organization member | `{ configured, connection }`; connection is null or public shape below | `server/routes/slack.ts` |
+| POST | `/api/v1/slack/connect` | Owner/admin | `{ authorizeUrl, expiresInSeconds }` with signed state | `server/routes/slack.ts` |
+| GET | `/api/v1/slack/callback` | State user + fresh owner/admin | `oauth.v2.access` → encrypted token upsert → Settings redirect | `server/routes/slack.ts` |
+| GET | `/api/v1/slack/channels` | Owner/admin + `channels:read` | `{ channels: [{ id, name }] }`; sorted, paginated, public | `server/routes/slack.ts` |
+| PUT | `/api/v1/slack/channel` | Owner/admin | `{ channelId, channelName? }` → `{ connection }` | `server/routes/slack.ts` |
+| PATCH | `/api/v1/slack` | Owner/admin | `{ enabled: boolean }` → `{ connection }` | `server/routes/slack.ts` |
+| DELETE | `/api/v1/slack` | Owner/admin | Disconnects workspace → `{ ok: true }` | `server/routes/slack.ts` |
+| POST | `/api/v1/slack/test` | Owner/admin | Sends canned test → `{ ok, rateLimited?, reason? }` | `server/routes/slack.ts` |
 
-`server/lib/platform/secret-box.ts` (`encryptSlackBotToken` / `decryptSlackBotToken`)
-mirrors the npm-token scheme: AES-GCM-256 with an HKDF-derived key off the shared
-`NPM_CONNECTIONS_ENCRYPTION_KEY` (≥32 chars required), but a **domain-separated**
-HKDF salt (`drydock:slack-bot-token:salt:v1`) so the bot-token key can never
-decrypt npm tokens and vice-versa. Ciphertext is versioned (`v1:` prefix) for
-future rotation. The token is decrypted only in-memory for the POST to Slack.
+| Route limit | Value | Key |
+| --- | --- | --- |
+| Connect | 20/hour | `slack:connect:<org>` |
+| Channels | 30/minute | `slack:channels:<org>` |
+| Test | 10/hour | `slack:test:<org>` |
 
-## OAuth state (CSRF)
+Limits are the `guardRateLimit` calls in `server/routes/slack.ts`.
 
-There is no `x-organization-id` header on the top-level browser redirect Slack
-sends back, so the org binding travels in a signed state token.
-`signSlackState` / `verifySlackState` (`server/lib/notify/slack.ts`) HMAC-sign
-`{ organizationId, userId, nonce, expiresAt }` with `BETTER_AUTH_SECRET`
-(version-tagged `slackv1`, 15-minute TTL). The callback verifies the signature,
-that the state's `userId` matches the session, and re-checks the caller's role
-against a fresh `getOrganizationRole` lookup before persisting anything.
+The callback's handled outcomes redirect to `/dashboard/settings?tab=notifications&slack=connected|error&slackError=…`, rather than returning raw JSON.
 
-## Routes
+### Connection data
 
-Under `/api/v1/slack` (`server/routes/slack.ts`):
+Storage: `server/db/schema.ts`, `server/db/slack-connection.ts`; public response: `server/routes/slack.ts`.
 
-- `GET /` — any member reads `{ configured, connection }` (public shape).
-  `configured` reflects whether `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` are set.
-- `POST /connect` — owner/admin. Returns `{ authorizeUrl, expiresInSeconds }`
-  carrying the signed state; `503` if Slack is not configured; rate-limited at
-  20/hour (`slack:connect:<org>`).
-- `GET /callback` — the browser redirect target. Verifies state + session +
-  role, exchanges the code via `oauth.v2.access`, encrypts and upserts the token,
-  then **always redirects** back to
-  `/dashboard/settings?tab=notifications&slack=connected|error&slackError=…` so
-  the user never sees raw JSON.
-- `GET /channels` — owner/admin. Lists public channels via `conversations.list`
-  for the picker; `404` if not connected; rate-limited at 30/min
-  (`slack:channels:<org>`).
-- `PUT /channel` — owner/admin, body `{ channelId, channelName? }`.
-- `PATCH /` — owner/admin, body `{ enabled: boolean }`.
-- `DELETE /` — owner/admin. Disconnects the workspace.
-- `POST /test` — owner/admin, rate-limited at 10/hour (`slack:test:<org>`).
-  Posts a canned message to the chosen channel; `400` if no channel is set,
-  `404` if not connected. Returns `{ ok, rateLimited?, reason? }`.
+| Data | Contract |
+| --- | --- |
+| `organization_slack_connections` | One row per organization |
+| `team_id`, `team_name`, `bot_user_id`, `scope` | OAuth workspace identity/scopes |
+| `bot_token_ciphertext`, `bot_token_nonce` | Encrypted `xoxb-…` token + fresh row nonce |
+| `channel_id`, `channel_name` | Single selected public channel; null until selected |
+| `enabled` | Disabled: token retained; skip fan-out; test can still send |
+| `created_by_user_id` | Owner/admin who created connection |
+| `getSlackConnection` | Token-free; separate `getSlackConnectionSecret` |
 
-Role gating uses `roleCanManageIntegrations` (owner/admin), matching npm
-connections and notification recipients. Members are read-only (`403` on write).
+`publicConnection` in `server/routes/slack.ts` returns `{ teamId, teamName, channelId, channelName, canListChannels, enabled, createdAt }` without token columns.
 
-## Delivery
+### Delivery and UI
 
-Every notifier is a message builder that hands `deliverOrganizationNotification`
-(`server/lib/notify/deliver.ts`) an email body and an optional
-`SlackNotificationPayload`; the helper resolves the organization owner (the
-recorded event actor and the recipient fallback), then runs email and Slack
-concurrently. `notifyScanCompletion`, `notifyWorkflowGateReview`, and
-`notifyStagedReleaseApprovable` (npm finished validating a reviewed stage; see
-`registry-version-status.md`) supply a Slack payload; the helper loads the org's
-`getSlackConnectionSecret`, and — only if the connection exists, is enabled, and
-has a channel — decrypts the token, renders one Block Kit message
-(`renderSlackMessage`), and POSTs it with `chat.postMessage`. It is isolated from email: a missing connection or a failing
-post only records a `notification_failed` event and **never throws**, so it
-cannot block scan completion or gate processing. Slack delivery is decoupled from
-email recipients — it still fires when no email recipients resolve. Completed
-staged-publish notifications report release-delta risk and include release-memory
-context when a prior approved profile exists; the underlying artifact risk and
-deterministic findings remain unchanged.
+Delivery: `server/lib/notify/deliver.ts`, `server/lib/notify/index.ts`, `server/lib/notify/gate-notifications.ts`, `server/lib/notify/publication-alerts.ts`. UI: `src/pages/Dashboard/Settings/SlackConnectionSection.tsx`, `src/models/slack-connection.ts`.
 
-`postSlackMessage` (`server/lib/notify/slack.ts`) is self-contained and best-effort:
-Slack returns HTTP 200 with `{ ok: false, error }` for app errors (keyed off
-`ok`, not the status), a `429` is surfaced as `rateLimited` with the
-`Retry-After` seconds (no automatic retry in v1), the 5s timeout bounds the call,
-and the bot token and channel id are never returned in `reason` or thrown.
+| Trigger / state | Behavior |
+| --- | --- |
+| Completed/failed staged scan | `notifyScanCompletion`: email + Slack |
+| Completed staged scan risk | Release-delta risk + prior-approved memory; artifact risk/findings unchanged |
+| Workflow gate review ready | `notifyWorkflowGateReview`: Slack payload |
+| npm reviewed stage becomes approvable | `notifyStagedReleaseApprovable`: Slack ([status](./registry-version-status.md)) |
+| Publication discrepancy | `publication_discrepancy`: no org approval / rejected / bytes mismatch |
+| Undecided published-byte review | Ask for decision first; title AI concerns explicitly; low risk sends nothing |
+| Coverage gap | `publication_coverage_gap`: >1h unverifiable release/package; once/gap; never discrepancy |
+| Publication copy | Names alerting org; never claims nobody else reviewed; links org dashboard |
+| Unaccepted publication alert | Retry on later watch checks; [details](./publication-monitor.md) |
+| Notification actor / email | Org owner is actor + recipient fallback; email uses configured recipients |
+| Fan-out | Email and Slack run concurrently; Slack still sends with no email recipients |
+| Eligible connection | Decrypt in memory → `renderSlackMessage` Block Kit → `chat.postMessage` |
+| Disconnected UI | Owner/admin sees “Add to Slack” |
+| Channel selection UI | Owner/admin picker preloads with `canListChannels`; otherwise manual ID |
+| Picker / manual selection | Mutually exclusive methods; both require explicit “Save channel” |
+| Test / Disconnect | Notifications header beside email recipients; test uses `pushToast` |
+| Enabled UI | No pause/resume UI or model `setEnabled`; PATCH stays route-tested |
 
-## Audit events
+### Events
 
-Recorded via `recordScanEvent` into `scan_events`, all carrying
-`metadata.channel = "slack"` plus `channelName` (and `statusClass` /
-`rateLimited` / `reason` on failure) — never the token or ciphertext.
-`botToken`, `botTokenCiphertext`, `botTokenNonce`, and `accessToken` are in
-`SENSITIVE_EVENT_METADATA_KEYS` (`server/db/events.ts`) as belt-and-suspenders
-redaction.
+Management: `server/routes/slack.ts`; delivery: `server/lib/notify/deliver.ts`.
 
-- Management: `organization.slack_connected` / `_channel_set` / `_enabled` /
-  `_disabled` / `_disconnected` / `_tested` / `_test_failed`.
-- Delivery: `scan.notification_sent` / `_failed` and
-  `github_workflow_gate.notification_sent` / `_failed` (shared with email,
-  distinguished by `metadata.channel`).
+Events use `recordScanEvent` and `scan_events`. Delivery metadata contains `channel: "slack"` and `channelName`; failures add `statusClass`, `rateLimited`, `retryAfterSeconds`, or `reason` where applicable.
 
-## Configuration
+| Event | Meaning |
+| --- | --- |
+| `organization.slack_connected` | OAuth succeeded; metadata has team identity |
+| `organization.slack_channel_set` | Destination saved |
+| `organization.slack_enabled`, `organization.slack_disabled` | Automatic delivery enabled/disabled |
+| `organization.slack_disconnected` | Connection removed |
+| `organization.slack_tested`, `organization.slack_test_failed` | Canned test accepted/rejected |
+| `scan.notification_sent`, `scan.notification_failed` | Scan/registry notification outcome; email shares event family |
+| `github_workflow_gate.notification_sent`, `github_workflow_gate.notification_failed` | Gate notification outcome; email shares event family |
 
-The operator registers a Slack app and sets `SLACK_CLIENT_ID` /
-`SLACK_CLIENT_SECRET` (`server/env.d.ts`). The OAuth redirect URL resolves from
-`BETTER_AUTH_URL` as `/api/v1/slack/callback` (`slackRedirectUri`) and must match
-a redirect URL registered in the Slack app. Until both client credentials are
-set, `GET /api/v1/slack` reports `configured: false` and the UI explains that
-Slack is not configured on this instance.
+## Invariants
 
-Because the Worker also serves the Preact app with static-asset SPA fallback,
-`wrangler.jsonc` must keep `assets.run_worker_first` covering `/api`.
-Otherwise Slack's top-level browser redirect can be claimed by `index.html` and
-shown as the client 404 instead of reaching `GET /api/v1/slack/callback`.
+1. Tokens are never stored in plaintext, logged, or returned to clients; secret reads stay separate from status reads (`server/db/slack-connection.ts`, `test/workers/slack-routes.test.ts`).
+2. AES-GCM-256 uses an HKDF-derived key with salt `drydock:slack-bot-token:salt:v1`, separate from npm token keys; ciphertext uses `CIPHERTEXT_VERSION_V1` (`v1:`) in `server/lib/platform/secret-box.ts`.
+3. OAuth state HMAC-signs `{ organizationId, userId, nonce, expiresAt }` with `BETTER_AUTH_SECRET`; signature, expiry, session user, and a fresh organization role are checked before persistence (`server/routes/slack.ts`, `test/slack.test.mjs`).
+4. Browser callback organization binding comes from signed state because top-level navigation has no `x-organization-id` header (`server/routes/slack.ts`).
+5. `postSlackMessage` never throws or returns the bot token/channel ID in its reason; delivery is best-effort and never blocks scan or gate processing (`server/lib/notify/slack.ts`, `test/notify.test.mjs`).
+6. `botToken`, `botTokenCiphertext`, `botTokenNonce`, and `accessToken` belong to `SENSITIVE_EVENT_METADATA_KEYS`; events never include token/ciphertext (`server/db/events.ts`, `test/notify.test.mjs`).
 
-## Front end
+## Failure modes
 
-`src/models/slack-connection.ts` (`SlackConnectionModel`) handles
-load/connect/loadChannels/selectChannel/disconnect/test and surfaces the OAuth
-callback notice. `SlackConnectionSection.tsx` renders the connection state — "Add
-to Slack" when disconnected, and when connected (owner/admin only) the
-public-channel picker loads up front. The channel picker and manual channel-ID
-fallback are presented as mutually exclusive selection methods, and both require
-the same explicit **Save channel** action. Test and Disconnect controls sit in the
-connection header under the Settings **notifications** tab next to the email
-recipients section. `test()` returns its result so the section reports it as a
-toast (`pushToast`) rather than an inline banner. The `enabled` flag stays a
-server-side concept (a disabled row is skipped by the delivery fan-out), but the
-UI no longer exposes a pause/resume toggle, so the client model dropped
-`setEnabled`; the `PATCH /` route remains for completeness and is still covered by
-the route tests.
+| Symptom / condition | Cause | What happens | Fix |
+| --- | --- | --- | --- |
+| Connect unavailable | Missing credentials/auth URL | `503`; `slack_not_configured` for credentials | Set credentials/redirect URL |
+| Callback error notice | Consent/state/user/role/exchange failure | Settings: `slack=error`, `slackError` | Check config; reconnect as owner/admin |
+| Client 404 after consent | SPA fallback consumed callback | Route never reached | Keep `/api` in `assets.run_worker_first` |
+| Channel listing forbidden | No `channels:read` | `403`; manual ID available | Save public channel ID manually |
+| Channel listing failed | Slack API error | `502` with safe reason | Check connection/manual ID |
+| No connection | Connection not installed | `404` for all connected-only routes | Connect workspace |
+| No channel | Destination not saved | Test returns `400` | Save channel |
+| Route limit exceeded | Org exhausted connect/channel/test budget | `429` | Wait for window |
+| Ineligible connection | No automatic destination | Silent skip; no Slack event | Connect/enable/select channel |
+| App error | HTTP `200` with `{ ok: false, error }` | Failure keyed on `ok` | Correct Slack error/connection |
+| Slack throttles | HTTP `429` | `rateLimited`, `Retry-After`; no automatic post retry | Wait; see publication retry contract |
+| Transport/decryption failure | Deadline, network, or key | Failure event; safe reason (`delivery_error` on decrypt) | Restore key/network |
 
-## Tests
+## Change checklist
 
-- `test/slack.test.mjs` — OAuth config read, redirect-URI/authorize-URL builders,
-  `signSlackState` / `verifySlackState` (round-trip, wrong secret, tamper,
-  expiry), `exchangeSlackOAuthCode`, `listSlackPublicChannels` (pagination +
-  sort, no token echo), `renderSlackMessage` / `renderSlackTestMessage`, and
-  `postSlackMessage` success / `ok:false` / 429 / network-error, asserting the
-  token never leaks into the result.
-- `test/secret-box.test.mjs` — encrypt/decrypt round-trip, whitespace trim,
-  fresh-nonce non-determinism, empty/short-key/wrong-key failures.
-- `test/notify.test.mjs` — Slack fan-out for scans and gates: redacted events,
-  failure/429 metadata, `delivery_error` on decryption failure, silent skip when
-  disabled or channel-less, and delivery decoupled from email recipients.
-- `test/workers/slack-routes.test.ts` — every route end-to-end with a mocked
-  Slack `fetch`: connect/callback/channels/channel/patch/delete/test, OAuth state
-  CSRF (forged state, user mismatch, forbidden role), encryption-at-rest, event
-  redaction, and the test-send rate limit.
-
-Publication monitoring sends `publication_discrepancy` notifications for newly observed
-releases with no approval in the alerting organization, releases published despite a
-rejection there, or bytes that differ from its approval; the copy names that
-organization and never implies nobody else reviewed the release. When the organization
-has an undecided review of the published bytes, it asks for that decision first, and
-one the AI reviewer flagged is titled as such; an undecided review that graded the
-release low risk sends nothing (see
-[`publication-monitor.md`](./publication-monitor.md#undecided-reviews-are-tiered-by-risk)). It
-also sends `publication_coverage_gap` notices, once per gap, when a release (or every
-release of a package) could not be verified for more than an hour; they say Drydock
-could not verify it and are never worded as a discrepancy.
-Email uses configured organization recipients with owner fallback; Slack is independent
-and links to the organization's dashboard. An alert that no channel accepted is re-sent
-on later checks of its watch; acknowledgment and retry rules are documented in
-[publication monitoring](./publication-monitor.md#alerts-and-acknowledgment).
+1. OAuth/scopes/state/rendering/API → update contracts; run `pnpm exec vitest run --project node test/slack.test.mjs`.
+2. Encryption → update token-leak assertions; run `pnpm exec vitest run --project node test/secret-box.test.mjs`.
+3. Fan-out/copy → update [publication monitoring](./publication-monitor.md), [registry status](./registry-version-status.md), events; run `pnpm exec vitest run --project node test/notify.test.mjs`.
+4. Routes/Settings → update roles, public shape, callback, picker/manual behavior; run `pnpm exec vitest run --project workers test/workers/slack-routes.test.ts`.
+5. Reference → run `pnpm run verify:file docs/slack-notifications.md`.

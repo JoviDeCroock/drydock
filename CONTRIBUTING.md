@@ -19,16 +19,16 @@ tests.
 
 ## Development setup
 
-```sh
-pnpm install
-cp .dev.vars.example .dev.vars
-pnpm run test
-pnpm run dev
-```
+| Step                             | Command                                                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Install                          | `pnpm install`                                                                                             |
+| Run a seeded app, no credentials | `pnpm run e2e:dev:seed` ([details](docs/e2e-test-environment.md))                                          |
+| Run against real services        | `cp .dev.vars.example .dev.vars`, fill it ([`docs/self-hosting.md`](docs/self-hosting.md)), `pnpm run dev` |
+| Check one edited file            | `pnpm run verify:file <path>`                                                                              |
+| Check while iterating            | `pnpm run verify:quick`                                                                                    |
+| Check before a commit            | `pnpm run verify`                                                                                          |
 
-The local app runs at `http://localhost:5173` through Vite and the Cloudflare
-Worker plugin. The fake-registry E2E harness is documented in
-[`docs/e2e-test-environment.md`](docs/e2e-test-environment.md).
+The app serves at `http://localhost:5173`. Every script: [`docs/tooling.md`](docs/tooling.md).
 
 ## Pull request expectations
 
@@ -50,22 +50,14 @@ credentials, Better Auth secrets, session cookies, and package contents must not
 leak into logs, errors, test snapshots, AI prompts beyond bounded redacted
 evidence, or issue comments.
 
-Changes touching these areas need focused tests:
-
-- auth or organization scoping;
-- npm credential storage, validation, and egress;
-- Dynamic Worker sandbox parsing or network access;
-- deterministic detection rules and risk computation;
-- artifact storage, report export, and redaction;
-- GitHub workflow-gate decisions and callbacks;
-- notification delivery.
-
-Use [`docs/security-model.md`](docs/security-model.md) as the contract.
+Changes touching auth or organization scoping, npm credential storage/validation/egress, sandbox
+parsing or network access, detection rules and risk, artifact storage/export/redaction,
+workflow-gate decisions and callbacks, or notification delivery need focused tests. The required
+test layer per change type is in [`docs/release-safety.md`](docs/release-safety.md); the contract
+is [`docs/security-model.md`](docs/security-model.md).
 
 ## Coding conventions
 
-- Use `pnpm run lint`, `pnpm run format:check`, `pnpm run typecheck`, and
-  `pnpm run test`; `pnpm run verify` runs the core checks together.
 - Do not hand-write SQL migrations. Update `server/db/schema.ts`, then run
   `pnpm db:generate`.
 - Do not use `useState` or `useReducer`; the app uses Preact Signals.

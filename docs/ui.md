@@ -1,438 +1,225 @@
-# UI styling and primitives
+# UI implementation map
 
-`docs/design.md` is the source of truth for Drydock UI decisions: fonts, colors, spacing, iconography, chart rules, interaction density, dark/light behavior, and marketing-surface constraints. Read it before visual work.
+Where each Preact surface lives and the behavioral contracts its components keep. **Authority:** internal (UI state is never authority; the server re-checks every role and organization). **Owner:** `src/index.tsx` (routes).
 
-This file is only a compact implementation map.
+Visual rules (type, color, glyphs, states) live in [design.md](./design.md). Lint rules for signals and design tokens: [tooling.md](./tooling.md#lint-rules).
 
-Public page metadata lives in `src/lib/seo-metadata.ts`; static public pages are
-prerendered by `src/index.tsx`. The Worker serves package diff pages from the
-diff shell and rewrites their title, description, canonical, and social metadata
-in `server/lib/public-diff/page.ts` before JavaScript runs. Package-only npm and
-PyPI pages keep the static social card; version pairs use a generated diff card.
+## At a glance
 
-The homepage uses one fixed hero and public-diff action in both prerendered HTML
-and the client render. Its description is shared with `homePageSeo`; there is no
-variant assignment or delayed copy swap during hydration or client navigation.
-Keep the initial HTML canonical aligned with client metadata and
-`public/sitemap.xml`.
+| Route | Page | Main components | Files |
+| --- | --- | --- | --- |
+| `/` | Landing | hero, review preview, incident diffs, integrations | `src/pages/Landing/`, `src/features/incident-diffs/`, `src/features/dependency-pr-integrations/` |
+| `/docs`, `/agents` | Docs, agent guide | `CodeBlock`, learning path | `src/pages/Docs/`, `src/pages/Agents/`, `src/features/agent-quickstart/` |
+| `/npm-staged-publishing`, `/security`, other guides | Discovery guides | `ContentArticle` shell | `src/pages/Guides/`, `src/features/public-content/ContentArticle.tsx` |
+| `/incidents/*`, `/benchmarks/shai-hulud-nx` | Incident analyses, benchmark | `ContentArticle` shell | `src/pages/Incidents/`, `src/pages/Benchmarks/` |
+| `/diff`, `/diff/*` | Public package diff (anonymous) | `ReviewWorkbench`, `TrustEvidence` | `src/pages/Diff/` ([public-diff.md](./public-diff.md)) |
+| `/reports`, `/reports/:token` | Shared public report | `ReviewWorkbench`, `ReportDiffPanel` | `src/pages/PublicReport/` ([public-reports.md](./public-reports.md)) |
+| `/login`, `/register`, `/verify-email`, `/forgot-password`, `/reset-password` | Auth | narrow `PageShell` cards | `src/pages/Auth/` |
+| `/dashboard` | Reviews list | `OverviewStrip`, `PublicationMonitor`, `GettingStarted`, `BatchApprovalDialog` | `src/pages/Dashboard/`, `src/features/overview/`, `src/features/publication-monitor/` |
+| `/dashboard/scans/:id` | Scan detail | verdict strip, `DiffWorkbench`, `ReleaseTimeline` | `src/pages/Dashboard/ScanDetail/` |
+| `/dashboard/packages/:name+` | Package release view | `PublicBadgeSection`, `PackagePublicationSection` | `src/pages/Dashboard/PackageReleases/` |
+| `/dashboard/settings` | Settings | npm, GitHub App, Slack, members, audit sections | `src/pages/Dashboard/Settings/` |
+| `/dashboard/account`, `/dashboard/invite`, `/dashboard/settings/github-app/callback` | Account, invite, GitHub callback | — | `src/pages/Dashboard/Account/`, `src/pages/Dashboard/Invite/`, `src/pages/Dashboard/GithubAppCallback.tsx` |
 
-## Stack
+## Stack and routing invariants
 
-- Preact 11 + `preact-iso` routes under `src/pages/`.
-- Cross-surface feature code lives in `src/features/`; see "Shared review surface" below.
-- Tailwind CSS v4 via `@tailwindcss/vite`.
-- Tokens live in `src/style.css` under `@theme`; dark mode follows `prefers-color-scheme`.
-- State uses `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
-- Async work whose result must be dropped on unmount (a session check, resolver,
-  or accept call) runs through `useCancellableEffect` in
-  `src/lib/use-cancellable-effect.ts`. Preact 11 defers `useEffect` cleanup on
-  unmount past the next paint, so with a `cancelled` flag set there a late
-  response can still write the unmounted page's signals or models, or `route()`
-  from a keyed component that remounted on the same path (`PackageReleasesView`,
-  keyed on `?org=`), which `ScopedRoute`'s path check lets through.
-- Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` (plus
-  `rel="noreferrer"`) or `download`. `preact-iso` intercepts same-origin anchor
-  clicks, and those paths have no `<Route>`, so a plain anchor renders the SPA
-  404 instead of reaching the server. `test/server-route-links.test.ts` guards
-  the literal-href case.
-- `src/features/error-report/AppErrorBoundary.tsx` wraps the router. A render
-  error swaps the page for a recovery card (reload, `mailto:` bug report, copyable
-  details) and clears on the next navigation. Routes load through `lazyRoute`, so a
-  failed chunk load (a tab left open across a deploy) lands there too. The report is built by
-  `bug-report.ts`. It drops the query string and hash, and redacts a
-  `/reports/:token` share token, because the user sends it verbatim. Nothing is
-  sent automatically. Contact addresses live in `src/lib/contact.ts`.
-- Routes are declared with `ScopedRoute` (`src/features/routing/ScopedRoute.tsx`),
-  not preact-iso's `Route`. The Router keeps the page being left mounted until the
-  next route's chunk loads. Inside a `ScopedRoute`, `useLocation()` keeps the URL the
-  page was last current for, and its `route()` (so every `useQuerySignal` write) is
-  dropped once the browser is on another path. Page code that reads the URL after
-  an `await` reads `location.url`, not `window.location`.
+1. Preact 11 + `preact-iso`; Tailwind v4 via `@tailwindcss/vite`; tokens under `@theme` in `src/style.css`; dark follows `prefers-color-scheme`. State is `@preact/signals`; `useState`/`useReducer` are banned by oxlint.
+2. Routes use `ScopedRoute` (`src/features/routing/ScopedRoute.tsx`), not `Route`. The Router keeps the departing page mounted until the next chunk loads; inside a `ScopedRoute`, `useLocation()` keeps the URL the page was last current for and its `route()` (so every `useQuerySignal` write) is dropped once the browser is on another path. Code reading the URL after an `await` reads `location.url`, not `window.location`.
+3. Async work whose result must be dropped on unmount runs through `useCancellableEffect` (`src/lib/use-cancellable-effect.ts`). Preact 11 defers `useEffect` cleanup past the next paint, so a `cancelled` flag set there still lets a late response write the unmounted page's signals or `route()` from a keyed remount on the same path (`PackageReleasesView` keyed on `?org=`).
+4. Links to Worker routes (`/public/*`, `/api/*`) need `target="_blank"` + `rel="noreferrer"`, or `download`: `preact-iso` intercepts same-origin anchors and those paths have no `<Route>`. `test/server-route-links.test.ts` guards literal hrefs.
+5. `src/features/error-report/AppErrorBoundary.tsx` wraps the router: a render error (or a failed `lazyRoute` chunk load after a deploy) shows a recovery card (reload, `mailto:` bug report, copyable details) that clears on the next navigation. `src/features/error-report/bug-report.ts` drops query and hash and redacts a `/reports/:token` token; nothing is sent automatically. Contacts: `src/lib/contact.ts`.
+6. Public page metadata lives in `src/lib/seo-metadata.ts`; static pages are prerendered by `src/index.tsx`. The Worker rewrites diff-page title, description, canonical, and social metadata in `server/lib/public-diff/page.ts` before JavaScript runs. Package-only npm/PyPI pages keep the static social card; version pairs use a generated card.
+7. The homepage has one fixed hero and public-diff action in both prerendered HTML and client render (description shared with `homePageSeo`); no variant assignment or copy swap during hydration. Keep the initial canonical aligned with client metadata and `public/sitemap.xml`.
+8. Pages never import another page's directory; code shared by two surfaces moves to `src/features/` (lint: `boundaries-local/no-cross-page-import`).
 
 ## Primitives
 
-Prefer existing primitives in `src/components/` before adding one-off classes:
+Prefer `src/components/` before one-off classes.
 
-- layout/content: `PageShell`, `Card` (`CollapsibleCard`, `SettingsCard`), `SectionLabel` and the
-  other `Typography` exports, `StatusStrip`;
-- controls: `Button`, `LinkButton`, `LoadMoreButton`, `CopyButton`, `CloseButton`, `Input`,
-  `Field`, `Select`, `VersionPicker`/`VersionPairPicker`, `Menu`, `Dialog`, `ConfirmDialog`;
-- docs/code: `CodeBlock` (highlighting, copying, and folding shared by Docs and the agent guide);
-- feedback/status: `Badge`, `Alert`, `Toast`, `LoadingState`/`LoadingLine`/`IndeterminateBar`,
-  `SeverityBar`;
-- data/review: `FileTree`, `DiffView`, `DiffOverview`, `FindingCard`, `PackageJsonDiffView`.
+| Group | Primitives |
+| --- | --- |
+| Layout / content | `PageShell`, `Card` (`CollapsibleCard`, `SettingsCard`), `SectionLabel` and other `Typography` exports, `StatusStrip` |
+| Buttons | `Button`, `LinkButton`, `LoadMoreButton`, `CopyButton`, `CloseButton` |
+| Inputs and overlays | `Input`, `Field`, `Select`, `VersionPicker`/`VersionPairPicker`, `Menu`, `Dialog`, `ConfirmDialog` |
+| Docs / code | `CodeBlock` (highlighting, copy, folding; shared by Docs and the agent guide) |
+| Feedback | `Badge`, `Alert`, `Toast`, `LoadingState`/`LoadingLine`/`IndeterminateBar`, `SeverityBar` |
+| Review data | `FileTree`, `DiffView`, `DiffOverview`, `FindingCard`, `PackageJsonDiffView` |
 
-A primitive whose `open`/`status`/`error` may change at round-trip rate (`Dialog`,
-`ConfirmDialog`, `LoadMoreButton`, and the scan-detail dialogs) accepts either a plain
-value or a signal; `readSignalProp` in `src/components/signal-props.ts` unwraps it inside
-the primitive, which makes the primitive the subscriber rather than the page.
+A primitive whose `open`/`status`/`error` changes at round-trip rate (`Dialog`, `ConfirmDialog`, `LoadMoreButton`, scan-detail dialogs) accepts a value or a signal; `readSignalProp` (`src/components/signal-props.ts`) unwraps it inside, so the primitive subscribes, not the page.
 
 ## Shared review surface
 
-The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`;
-each watched package name links to its package release view.
-Its signal model in `src/models/publication-watches.ts` refreshes automatic enrollment
-after review discovery, supports manual enrollment and gate suggestions, displays
-watch origins, packages queued for scheduled enrollment together with capacity deferrals
-in a single notice, and unacknowledged alert counts, supports audited
-acknowledgment without changing release evidence, shows up to 100 publication observations with unacknowledged alerts first, and
-fences requests across organization changes. Watches arrive whole (the list is bounded by the
-watch limit) and render 25 at a time behind a **Show more** row; the server orders them so the
-first page never hides one needing attention: unacknowledged alerts, then a "not verified" badge
-or coverage gap, then the rest, newest first within each. The card mirrors the Recent
-reviews anatomy (header row with the enrol form, edge-to-edge rows, a per-row
-`⋯` menu for show releases and, for owners and admins, stop watching) so the dashboard reads as one
-list surface; observations expand inline under their row. The advisory meta
-line states that checks happen after publication; unknown evidence never
-receives an approval badge. The card ends with the **Unapproved publishes** log
-(`UnapprovedPublishLog.tsx` over `src/models/publication-alert-log.ts`), which reloads
-after a check, an acknowledgment, an enrollment or a stop. See [publication monitoring](./publication-monitor.md) for scope and API.
+Scan detail, `/diff`, and the public report render one review from `src/features/review/`.
 
-Three surfaces render the same review: the authenticated scan workbench
-(`src/pages/Dashboard/ScanDetail/`), the anonymous public diff
-(`src/pages/Diff/`), and the shared public report (`src/pages/PublicReport/`).
-What they use lives in `src/features/review/`:
+| File | Contract |
+| --- | --- |
+| `types.ts` | `ReviewFinding` (only rendered fields) and `FindingWithDiffStatus`; narrower than a persisted finding so `/diff`, which persists nothing, invents no `scanId`/`ruleVersion`. |
+| `diff-entries.ts` | `filterDiffEntries`, `findingCountsByPath`; `hasNoLoadableBody` is the one place that decides a binary or content-skipped file has nothing to fetch. |
+| `RiskSignalsSection.tsx` | Changed-file vs package-context findings split. |
+| `risk-index.ts` | `unpinnedFindings`: signals the diff cannot pin to a changed line. |
+| `useSelectedDiffFile.ts` | Entry and findings for the open path. |
+| `ReviewWorkbench.tsx` | Tree + diff pair (rules below). |
+| `initial-path.ts` | `findingFirstPath`: open on the changed file with the most severe finding; fallback is first change (scan detail, report) or the ecosystem manifest then status order (`/diff`). |
 
-- `types.ts` — `ReviewFinding` (only the fields the review UI renders) and
-  `FindingWithDiffStatus`. Deliberately narrower than a persisted scan finding
-  so the public diff, which persists nothing, does not have to invent
-  `scanId`/`ruleVersion` values to satisfy a shared component.
-- `diff-entries.ts` — `filterDiffEntries` and `findingCountsByPath`.
-- `RiskSignalsSection.tsx` — the changed-file/package-context findings split.
-- `useSelectedDiffFile.ts` — the entry and findings for the open path;
-  `hasNoLoadableBody` in `diff-entries.ts` is the one place that decides a
-  binary or content-skipped file has nothing to fetch.
-- `ReviewWorkbench.tsx` — the release tree + file diff pair. Filter state
-  arrives as signals and is read inside the component, so a keystroke in the
-  filter box re-renders the tree and not the page body (which on the scan
-  detail also renders the per-finding risk index). The diff panel itself is the
-  caller's `children`, because what a "previous side" is differs per surface;
-  a surface-wide caveat about that side goes in the optional `diffAside`
-  (the File diff label's trailing slot) rather than above every file. A
-  surface whose entries are not yet the comparison on screen passes a
-  `treeNotice` (loading or unavailable, with the failure reason as `detail`
-  and an optional `retry` the notice offers as "Try again")
-  in place of the tree rather than a stale or empty one. The notice is the
-  only place that state is reported, in one live region: the diff panel only
-  says no file is selected, the comparison status line beside the picker
-  shows only another request's error while the notice is up, and a version's compare
-  failure is reported only while that version is the comparison shown.
-- `initial-path.ts` — `findingFirstPath`: every review surface opens the
-  workbench on the changed file carrying the most severe finding, falling back
-  to its own rule (scan detail and report: first change; `/diff`: the
-  ecosystem manifest, then status order).
+`ReviewWorkbench` rules:
 
-Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
-what is tied to the persisted scan model (`scanFilesToFileRecords`,
-`annotatePersistedFindings`, `selectReleaseTree`, the `DiffWorkbench` state
-machine). Pages must not
-import from another page's directory — if a second surface needs something,
-move it into `src/features/` instead.
+1. Filter state arrives as signals read inside the component, so a keystroke re-renders the tree, not the page body (which on scan detail also renders the risk index).
+2. The diff panel is the caller's `children`, because "previous side" differs per surface; a surface-wide caveat about that side goes in `diffAside` (the File diff label's trailing slot), not above every file.
+3. A surface whose entries are not yet the comparison on screen passes `treeNotice` (loading or unavailable, failure reason as `detail`, optional `retry` shown as "Try again") instead of a stale or empty tree.
+4. That notice is the only report of the state, in one live region: the diff panel only says no file is selected, the status line beside the picker shows only another request's error while the notice is up, and a version's compare failure is reported only while that version is the comparison shown.
 
-## Authenticated dashboard pages
+Surface-specific code stays with its page: `src/pages/Dashboard/ScanDetail/diff-helpers.ts` holds `scanFilesToFileRecords`, `annotatePersistedFindings`, `selectReleaseTree`, and the `DiffWorkbench` state machine.
 
-Every signed-in page uses one header, `AppHeaderActions` in
-`src/features/account/`: the `Reviews`, `Dependencies`, and `Settings` section links (the current
-one marked `aria-current="page"`, rendered as accent text), `Feedback`, the
-organization switcher where the page is organization-scoped, and the user menu.
-Feedback has the same place in the marketing header (`Package diff` · `Docs` ·
-`Feedback` · `Sign in`): after the navigation, before account controls. The
-header actions render `HeaderFeedback` from `PageShell` themselves so DOM and tab
-order match what is drawn; a page without header actions shows Feedback alone.
-Beside header actions it is hidden at phone width, keeping the header to at most
-two rows, and the footer's Contact column carries it there. Pages differ
-only in which section is current and what switching organizations means for
-them; a review belongs to one organization, so switching on scan detail leaves
-for the new organization's reviews. `/dashboard` is called "Reviews" in every
-link to it. Links into a review go through `scanDetailPath` in
-`src/lib/scan-detail-path.ts`, which carries the review's `?org=`; scan detail
-pins it the way the package page does. A link that cannot carry it (the
-workflow gate's GitHub comment is capped at 140 characters) or predates it is
-resolved before the review loads: `GET /api/v1/scans/:id/organization` names
-which of the reader's own organizations holds the review, and the page pins
-that one and writes it into the URL. When none of theirs does, or the lookup
-fails, the page reads the remembered organization as before: a review it holds
-gets its `?org=` from the loaded detail, and anything else is the same
-not-found.
+## Headers and session
 
-Every `/dashboard*` page runs `useAuthedDashboardSession` from
-`src/features/account/` on mount: it loads the session, redirects a signed-out
-visitor to `/login?returnTo=<this page>`, remembers the list surfaces as the
-review's back link, and only then runs the page's own loads. The router keeps
-a route component mounted when only its params change, so a page whose model is
-built from a route param (scan detail, package releases) renders its body under
-`key={param}`: a new param remounts it with a fresh model and guard. The scan detail
-page composes its computeds and handlers in `ScanDetail/hooks/useScanDetailView.ts`
-and renders them through sections that each subscribe to what they show.
-`useNow(intervalMs)` in `src/lib/use-now.ts` is the ticking clock behind
-"checked 2 minutes ago" labels.
-
-`/dashboard/dependency-reviews` lists the organization's dependency reviews
-and `/dashboard/dependency-reviews/:id` shows one, grouped the way the check
-run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads
-`?org=` like scan detail because the check run's details link carries it.
-Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with
-the check run. The settings section is
-`src/pages/Dashboard/Settings/DependencyReviewSection.tsx`. See
-`dependency-review.md`.
+1. Every signed-in page uses `AppHeaderActions` (`src/features/account/AppHeaderActions.tsx`): `Reviews`, `Dependencies` (only for an organization the `dependency-review` rollout flag covers, or on its own pages), and `Settings` (current one `aria-current="page"`, accent text), `Feedback`, the organization switcher where org-scoped, the user menu. `/dashboard` is "Reviews" in every link.
+2. Marketing header: `Package diff` · `Docs` · `Feedback` · `Sign in`. Feedback always sits after navigation and before account controls; header actions render `HeaderFeedback` (`src/components/PageShell.tsx`) themselves so DOM and tab order match. Without header actions Feedback shows alone; at phone width beside header actions it hides (header max two rows) and the footer Contact column carries it.
+3. Every `/dashboard*` page runs `useAuthedDashboardSession` on mount: load session, redirect signed-out visitors to `/login?returnTo=<page>`, remember list surfaces as the back link, then run page loads.
+4. A page whose model is built from a route param (scan detail, package releases) renders under `key={param}` so a new param remounts with a fresh model and guard.
+5. Links into a review use `scanDetailPath` (`src/lib/scan-detail-path.ts`), which carries `?org=`. A link without it (the workflow-gate GitHub comment is capped at 140 characters) is resolved via `GET /api/v1/scans/:id/organization`, which names which of the reader's organizations holds the review; the page pins it and writes it to the URL. If none does or the lookup fails, the remembered organization is used; anything else is the same not-found. Switching organization on scan detail leaves for that organization's reviews.
+6. Scan detail composes computeds and handlers in `src/pages/Dashboard/ScanDetail/hooks/useScanDetailView.ts`; sections subscribe to what they show. `useNow(intervalMs)` (`src/lib/use-now.ts`) drives "checked 2 minutes ago".
 
 ## Review page order
 
-Both review pages lead with the diff:
+| Surface | Order |
+| --- | --- |
+| Scan detail | Identity header → verdict strip → dependency readiness notice (when applicable) → version picker → workbench → review notes (`CollapsibleCard`) → risk index → manifest sections → pending package-management row → `ReleaseTimeline`. |
+| Public report | Identity header → verdict card (risk grade, not the approver recommendation) → workbench → full risk index. |
 
-- **Scan detail** — a one-row verdict strip (the recommendation with its risk
-  grade and any assistant note in one plain mono caption, a `manual review`
-  Badge only when the assistant asks for it, and the recorded decision beside
-  the button that changes it), then — only while approving still lies ahead and
-  a dependency cannot be installed yet — the dependency readiness notice
-  directly under the strip, beside that decision (`DependencyReadinessNotice`,
-  wording in `src/features/dependency-readiness.ts`: one warn Alert listing each
-  blocked dependency with its spec, a mono `optional`/`peer` label instead of a
-  Badge, and a `review →` link to a staged sibling; `info` tone when only
-  optional or peer dependencies are affected; muted lines, one per reason,
-  for dependencies that failed ("Check again"), were not reached yet ("Check
-  the rest"), or cannot be checked (no action); one muted line when the check
-  could not run at all; nothing for a clean check — see
-  [`npm-staged-publishing.md`](./npm-staged-publishing.md#dependency-readiness)),
-  then the version picker directly above the
-  workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
-  verdict reads that way, release memory, release changes, the advisory AI
-  assessment, source binding), then the risk index and the manifest sections.
-  The risk index here holds only the signals the diff cannot pin to a changed
-  line (`unpinnedFindings` in `src/features/review/risk-index.ts`) and is
-  hidden when there are none: a pinned finding is already stated inline and in
-  the notes. The package-management choice, when pending, is a compact row at
-  the end of the page — it gates monitoring and the badge, not this review.
-  A failed staged or published-pair review offers `Review again`, which starts
-  a fresh review of the same release through `POST /api/v1/scans` — except
-  where a restart can only fail: npm already published, blocked, or deleted the
-  candidate, or the npm connection is missing or unvalidated (the alert points
-  at settings instead). A published-pair restart names the baseline the failed
-  review was requested with (a failed published pair keeps it), and the start
-  route confirms it against the registry again. The notes open
-  themselves when any of those has something to say — findings or manifest
-  changes, release memory that diverged, an assistant reading that flags the
-  release — and stay shut when the release is clean (source binding, release
-  memory that matches, and a "nothing unusual" assistant reading are present
-  on nearly every scan and do not open them); the disclosure header does not repeat the nested section
-  names. The page header is identity only: the package, then a plain-text
-  metadata line (staged version, npm's state with its observation time, the
-  package's other releases) with no Badges, and the Share / Export JSON
-  utilities. Risk and the comparison are not repeated there — the strip owns
-  the verdict and the picker owns the comparison. Quiet terminal npm states
-  (published, removed) get no separate notice row. The decision and its button
-  live in the strip on a completed review and in the page header otherwise,
-  since a failed gate review renders no strip.
-- **Public report** — an identity-only header (a `public release review`
-  MonoDetail lead, package, the compared pair, review time, changed-file count,
-  and the decision as plain `DecisionState` text), the verdict card — risk
-  grade, not the approver-facing recommendation, because a public reader is not
-  the one deciding — then the same workbench, then the risk index. Its diff is single-sided: a share token buys the staged artifact's
-  redacted samples (`GET /public/reports/:token/file`) and never a baseline,
-  which would cost the organization's npm credentials. `singleSidedTone` in
-  `DiffView` keeps a `modified` file rendered from one side neutral instead of
-  tinting every row as an insertion.
+Scan detail rules:
 
-Review notes group release findings by rule, severity, and source, keeping every
-occurrence available under its group. File/line actions clear a conflicting tree
-filter and focus the cited annotation in the diff; unavailable lines retain the
-existing unpinned evidence banner. Synthetic release-process paths and AI paths
-are not presented as file actions. Script, dependency, and entrypoint changes sit in a separate summary linking to the manifest details.
+1. Header is identity only: package, a plain-text metadata line (staged version, npm state with observation time, other releases) with no Badges, and Share / Export JSON. Risk and comparison are not repeated there.
+2. Verdict strip: recommendation with risk grade and any assistant note in one mono caption; a `manual review` Badge only when the assistant asks; the recorded decision beside its button. On a completed review the decision lives in the strip; otherwise (e.g. a failed gate review, which has no strip) in the header.
+3. Review notes cover why the verdict reads that way, release memory, release changes, the advisory AI assessment, source binding. They open themselves only when something has something to say (findings, manifest changes, diverged release memory, an assistant reading that flags the release); source binding, matching memory, and "nothing unusual" never open them. The disclosure header does not repeat nested section names.
+4. The risk index holds only `unpinnedFindings` and is hidden when empty.
+5. The package-management choice, when pending, is a compact row at the end; it gates monitoring and the badge, not this review.
+6. Quiet terminal npm states (published, removed) get no separate notice row.
+7. A failed staged or published-pair review offers `Review again` (fresh `POST /api/v1/scans`), except when a restart can only fail: npm already published, blocked, or deleted the candidate, or the npm connection is missing or unvalidated (the alert points to settings). A published-pair restart names the original baseline and the start route re-confirms it with the registry.
+8. Findings in notes are grouped by rule, severity, source; file/line actions clear a conflicting tree filter and focus the annotation; unavailable lines keep the unpinned banner. Synthetic release-process and AI paths are not file actions. Script, dependency, and entrypoint changes are a separate summary linking to manifest details.
+9. AI assessment leads with its structured assessment and risk and reminds that deterministic findings keep their severity. Model prose stays inert under **Read full AI assessment**, labeled advisory and potentially quoting package text. The severity bar renders only for two or more findings. Declared source binding shows one unverified repository link; only an exact duplicate manifest declaration is omitted.
 
-The AI assessment opens with its structured assessment and risk, with an explicit
-reminder that deterministic findings retain their severity. Model-authored prose
-stays inert under **Read full AI assessment**, labeled advisory and potentially
-quoting package text. Release memory stays beside the verdict evidence (the severity bar renders only for two or more findings). Declared
-source binding shows one unverified repository link; only an exact duplicate
-manifest declaration is omitted, preserving additional or conflicting evidence.
+Public report rules: header is a `public release review` MonoDetail lead, package, compared pair, review time, changed-file count, and decision as plain `DecisionState` text. Its diff is single-sided: a share token buys the staged artifact's redacted samples (`GET /public/reports/:token/file`), never a baseline (that would spend the organization's npm credentials). `singleSidedTone` in `DiffView` keeps a one-sided `modified` file neutral.
 
-## Dashboard overview strip
+### Dependency readiness
 
-`src/features/overview/OverviewStrip.tsx` sits above Recent reviews and answers
-"what is waiting on me, and is it approvable yet" for the active organization.
-npm now stages every trusted-publishing release and holds stage approval until
-its own malware scan settles, so every release sits in a window; the strip is
-that window as four tiles, each a link into the matching `?filter=` on the
-list: **Waiting on you** (completed npm reviews with no decision whose npm
-status is unknown, `staged`, or `validating`, with the age of the oldest),
-**npm still scanning** (`validating`, with how many already have a finished
-Drydock review), **Published, no decision · 30d** (the list's
-`published_without_decision` semantics, limited to scans created in the last 30
-days), and **Decided · 30d** (approved vs rejected plus the median
-completion-to-decision time; it opens the `decided` filter, which lists the
-decisions recorded in the same 30-day window). The first three count only npm staged-publish
-sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans
-carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
-`GET /api/v1/scans/overview`, one aggregate D1 statement in
-`server/db/scan-overview.ts`; the dashboard re-reads it whenever the list
-changes and joins an in-flight request rather than repeating it. The strip is
-absent for an organization with no scans, keeps its previous figures while a
-refresh is in flight, and renders a mono loading or error line otherwise. Tiles
-are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`. A
-tile carries a detail line only when it adds a figure (the oldest age, how many
-are ready, the approve/reject split and median); a line that restated the label
-is omitted. Only the Published value takes a tone — `warn` text when above 0.
+`DependencyReadinessNotice` (`src/pages/Dashboard/ScanDetail/DependencyReadinessNotice.tsx`) sits directly under the verdict strip, beside the decision it informs. Eligibility and wording: `src/features/dependency-readiness.ts`; pinned by `test/dependency-readiness-view.test.ts`. Registry contract: [npm-staged-publishing.md](./npm-staged-publishing.md#dependency-readiness).
 
-Review rows lead with one chip: the release risk, or the lifecycle status while
-there is none. A second chip appears only when npm's state asks something of
-the reader (`registryStatusBadge` returns a tone: blocked, awaiting approval
-after an approval here, published with no decision or a rejection recorded here); quieter npm
-states end the mono meta line as plain text. There is no "undecided" chip — the
-row's Decide button says it; a gate or superseded row, which offers no button
-there, says `undecided` / `superseded` in plain text — and a recorded decision renders as plain
-`DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
-the same action repeated down a list is not the region's primary action.
-A row's package name opens the package release view once the review has an
-outcome; while the review is queued or running it opens that review instead
-(`scanRowPackageLink`), since the in-flight review is what the reader is after.
+| Condition | Presentation / action |
+| --- | --- |
+| Completed npm review with approval still ahead | Check only an actionable stage (`manual` / `auto_discovery`) or a `pending` npm workflow gate; other ecosystems and published-pair reviews show nothing. |
+| Required dependency cannot be installed yet | One `warn` Alert lists each blocked dependency with its spec and consequence; a staged sibling gets a `review →` link scoped to the organization. |
+| Only optional or peer dependencies affected | `info` Alert; mono `optional` / `peer` text rather than a Badge. npm may omit unresolved optional dependencies; a missing peer can fail installation. |
+| Registry lookup failed | Muted line with the count; **Check again** retries. |
+| Dependencies not reached within the read budget | Separate muted line with the count; **Check the rest** advances checks (a blocking dependency or failure takes precedence with **Check again**). |
+| Unsupported spec, oversized registry document, or past the limit | Separate muted line with the count; no action when these are the only issues. |
+| Whole check unavailable | One muted explanation; a failed request offers **Check again**. |
+| Clean or inapplicable check | Render nothing. |
 
-When the **Undecided** list holds two or more reviews with low assessed release risk, the
-header offers a secondary `Record N approvals` beside the filter, so a release
-that staged many packages at once is not one dialog per package. Its dialog
-(`src/pages/Dashboard/BatchApprovalDialog.tsx`) lists each candidate as a ticked
-row linking to its review, with its release-finding count in mono, one optional
-reason, and one primary `Record N approvals`. The server decides which reviews
-qualify (`listBatchApprovableScans`: release and artifact risk both low, a
-compared baseline, no findings new since the last approved release, no AI flag,
-still undecided and actionable on npm; a clean diff over a risky package is
-left out) and re-checks that as it writes, so
-the result view says how many were approved and how many changed underneath and
-stayed undecided, then links npm's staged-packages page, because approving here
-publishes nothing. The dialog lists what qualified when it opened, so reviews
-completing meanwhile do not join the batch ticked. `ScanBatchApprovalModel`
-follows the list the way the overview strip does.
+## Dashboard
 
-## Dashboard onboarding funnel
+### Overview strip
 
-`src/pages/Dashboard/GettingStarted.tsx` lists three steps — a first release
-reaching Drydock for review, npm connected, review and decide — but only the
-first is the funnel's exit. `DashboardOnboarding` in `src/pages/Dashboard/index.tsx`
-opens the panel when `ScanListModel.hasAnyScan` resolves `false` and latches
-that against the organization it opened for in `src/models/getting-started.ts`,
-so a visit to the scan detail route does not reset it. The moment `hasAnyScan`
-is `true` the dashboard marks the organization done and closes the panel; the
-remaining steps are optional and explained where they happen. Done (by first
-review or by dismiss) is recorded per organization in localStorage as "do not
-open again". An unresolved (`null`) answer opens nothing — neither onboarding
-surface appears on a guess. Switching organizations immediately resets
-`hasAnyScan` to `null`, so the new organization cannot inherit a panel latch
-from the previous one while its list request is in flight. Deleting an
-organization's only (failed) scan re-probes and can bring the panel back; a
-delete or decision that lands after a switch leaves the new organization's
-list and answer alone.
-Once the panel is closed the dashboard renders the same published-release form
-(`PublishedReviewForm`) in its own "Review a published release" card, so
-starting a review never depends on onboarding still being open. Settings links
-name the section they are for: npm setup goes to
-`?tab=integrations#npm-access`, workflow-gate setup to `#github-app`.
+`src/features/overview/OverviewStrip.tsx` above Recent reviews: "what is waiting on me, and is it approvable yet". Data: `ScanOverviewModel` (`src/models/scan-overview.ts`) → `GET /api/v1/scans/overview` → one aggregate D1 statement in `server/db/scan-overview.ts`.
+
+| Tile | Counts | Opens |
+| --- | --- | --- |
+| Waiting on you | Completed npm reviews, no decision, npm status unknown/`staged`/`validating`; detail: oldest age | its `?filter=` |
+| npm still scanning | `validating`; detail: how many have a finished Drydock review | its `?filter=` |
+| Published, no decision · 30d | `published_without_decision`, scans created in the last 30 days; `warn` when above 0 | its `?filter=` |
+| Decided · 30d | Approved vs rejected, median completion-to-decision time | `decided` (same window) |
+
+1. The first three count only npm staged sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans carry no npm stage.
+2. Re-read whenever the list changes; join an in-flight request instead of repeating it; keep previous figures during refresh.
+3. Only the Published tile takes a tone. Absent for an organization with no scans; otherwise a mono loading or error line. Mono tabular numbers under 11px mono labels; 2x2 below `lg`. A detail line appears only when it adds a figure.
+
+### Review rows
+
+1. One leading chip: release risk, or lifecycle status while there is none. A second chip only when `registryStatusBadge` (`src/features/registry-status.ts`) returns a tone (blocked; awaiting approval after an approval here; published with no decision or a rejection here). Quieter npm states end the mono meta line as text.
+2. No "undecided" chip: the Decide button says it; gate or superseded rows without a button say `undecided` / `superseded` in text. A decision renders as `DecisionState` text beside Update. Row buttons are `secondary`.
+3. The package name opens the package release view once the review has an outcome; while queued or running it opens the review (`scanRowPackageLink`, `src/pages/Dashboard/scan-row-link.ts`).
+
+### Batch approval
+
+1. When **Undecided** holds two or more low-risk reviews, the header offers secondary `Record N approvals`; dialog: `src/pages/Dashboard/BatchApprovalDialog.tsx`, model: `ScanBatchApprovalModel` (`src/models/scan-batch-approval.ts`).
+2. The server decides eligibility (`listBatchApprovableScans` in `server/db/scan-decisions.ts`: release and artifact risk both low, a compared baseline, no findings new since the last approved release, no AI flag, still undecided and actionable on npm) and re-checks as it writes.
+3. The dialog lists what qualified when it opened (late completions are not ticked), one optional reason, one primary button. The result says how many were approved and how many changed and stayed undecided, then links npm's staged-packages page: approving here publishes nothing. Audit semantics: [audit-log.md](./audit-log.md).
+
+### Onboarding
+
+1. `src/pages/Dashboard/GettingStarted.tsx` lists three steps (first release reaches Drydock, npm connected, review and decide); only the first is the funnel's exit.
+2. `DashboardOnboarding` (`src/pages/Dashboard/index.tsx`) opens the panel when `ScanListModel.hasAnyScan` resolves `false`, latched per organization in `src/models/getting-started.ts` (so visiting scan detail does not reset it). `true` marks the organization done and closes it. Done (first review or dismiss) is stored per organization in localStorage.
+3. `null` opens nothing. Switching organization resets `hasAnyScan` to `null` immediately. Deleting an organization's only (failed) scan re-probes and can reopen the panel; a late delete or decision after a switch leaves the new organization alone.
+4. Once closed, `PublishedReviewForm` renders in its own "Review a published release" card. Settings links name their section: npm `?tab=integrations#npm-access`, workflow gate `#github-app`.
+
+### Publication monitor card
+
+`src/features/publication-monitor/PublicationMonitor.tsx` over `src/models/publication-watches.ts`; scope, limits, and API in [publication-monitor.md](./publication-monitor.md).
+
+1. Mirrors Recent reviews anatomy: header with the enrol form, edge-to-edge rows, per-row `⋯` menu (show releases; stop watching for owners and admins); observations expand inline.
+2. Watches arrive whole and render 25 at a time behind **Show more**, server-ordered: unacknowledged alerts, then "not verified" or coverage gap, then the rest, newest first within each. Up to 100 observations show, unacknowledged alerts first.
+3. One notice lists packages queued for scheduled enrollment and capacity deferrals. The advisory meta line says checks happen after publication; unknown evidence never gets an approval badge. Acknowledgment is audited and never changes release evidence. Requests are fenced across organization changes.
+4. The card ends with **Unapproved publishes** (`src/features/publication-monitor/UnapprovedPublishLog.tsx` over `src/models/publication-alert-log.ts`), reloaded after a check, acknowledgment, enrollment, or stop.
+
+## Dependency reviews
+
+`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads `?org=` like scan detail because the check run's details link carries it. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
 
 ## Package release view
 
-`/dashboard/packages/:name` (`src/pages/Dashboard/PackageReleases/`) lists one
-package's reviews for the active organization, grouped by channel (dist-tag)
-and newest first, over `GET /api/v1/packages/:name/releases`. For npm, PyPI,
-and VS Code it also carries the **Public badge** section
-(`PublicBadgeSection.tsx`, over `GET|PUT /api/v1/packages/:name/badge`): what
-the public endpoint returns now, whether this organization's switch or another
-publisher's has it off, what of this organization's would answer, the README
-snippet, and the owner/admin switch for a registry-verified publisher — see
-`docs/public-reports.md`.
-A scoped name
-keeps its slash in both paths (`/dashboard/packages/@scope/name`, as `/diff`
-does — the asset layer redirects an encoded slash to a literal one, so a
-single encoded segment does not survive a hard load); both routes take the
-name as a rest parameter and `src/lib/package-releases-path.ts` builds the
-URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. The
-organization rides in `?org=` and stays in the address: the page pins it
-(`usePinnedOrganization`), so every request the page and any of its sections
-make carries it strictly through `apiFetch`, and a non-member sees an explicit
-error rather than their personal organization's history. A link without
-`?org=` is rewritten to the remembered organization before anything is read.
-The header names the organization and carries the organization switcher,
-which changes `?org=`; every link to the page (dashboard rows, scan header,
-publication monitor, alert emails) includes it. Each row shows the version, what it was compared against
-(`describeBaseline` in `src/features/package-releases.ts` turns the persisted
-baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
-"(highest published)" / "no baseline"), release risk, the decision
-(`DecisionState`, captioned with who decided), npm's state with its observation
-time — a Badge only when `registryStatusBadge` gives it a tone, plain text
-otherwise — and the scan source (`scanSourceLabel`, shared with the dashboard).
-The version is the link to its review, captioned with the review's created
-date; there is no separate review column. `releaseAttention` marks the two
-disagreements the page exists to surface — npm published a version nobody here
-decided on (warn fill), and npm published a version rejected in Drydock (danger
-fill). The header's mono line carries the ecosystem, review and channel counts,
-and the last release; the two disagreement counts appear only when above zero,
-as one Alert (`describeAttentionCounts`) — critical once anything was published
-with a rejection recorded here, warn otherwise. Package names in the dashboard list, the
-publication monitor card and publication alert emails, and the `all releases →`
-link in the scan header open it; the scan header's back link returns to whichever
-list surface the review was opened from (`getDashboardReturnUrl`).
+`/dashboard/packages/:name+` (`src/pages/Dashboard/PackageReleases/`) over `GET /api/v1/packages/:name/releases`.
 
-For npm the page closes with a **publication monitor** section
-(`src/features/publication-monitor/PackagePublicationSection.tsx`, over
-`GET /api/v1/publication-watches/packages/:name`): whether this organization
-watches the package — or why not (never seen public, stopped, a gate
-suggestion, pending, or waiting at the 250-watch limit) — its observed releases
-with the reason behind any unknown verdict or alert, a "not verified" mark and a
-coverage-gap notice for releases it could not verify, acknowledgment, and check,
-start and stop controls. Below the releases it lists ledger alerts the list does not
-show (from earlier watches, and older ones from this watch; the latest 50). The
-observation list, coverage notice and all wording are shared with the dashboard card
-(`ObservationList.tsx`, `CoverageGap.tsx`, `copy.ts`). Stop is disabled with its
-reason for members, mirroring the server's role check.
+1. One package's reviews for the active organization, grouped by channel (dist-tag), newest first.
+2. Scoped names keep a literal slash (`/dashboard/packages/@scope/name`, like `/diff`): the asset layer redirects an encoded slash. Both routes take a rest parameter; `src/lib/package-releases-path.ts` builds URLs. `?ecosystem=` only when not npm.
+3. `?org=` stays in the address and is pinned (`usePinnedOrganization`), so every request carries it strictly through `apiFetch`; a non-member sees an explicit error. A link without `?org=` is rewritten to the remembered organization before any read. Every link to the page includes it (dashboard rows, scan header, publication monitor, alert emails).
+4. Row: version (links to its review, captioned with created date), baseline via `describeBaseline` ("2.0.0-beta.1 (beta)" / "(previous version)" / "(highest published)" / "no baseline"; rules in [diff-baseline.md](./diff-baseline.md)), release risk, `DecisionState` with who decided, npm state + observation time (Badge only when `registryStatusBadge` tones it), `scanSourceLabel`.
+5. `releaseAttention` marks npm-published-undecided (warn fill) and npm-published-but-rejected-here (danger fill). Header mono line: ecosystem, review and channel counts, last release; non-zero disagreements show as one Alert (`describeAttentionCounts`): critical once anything published with a rejection, else warn.
+6. The scan header's `all releases →` opens it; its back link returns to the originating list (`getDashboardReturnUrl`).
+7. npm, PyPI, VS Code: **Public badge** section (`src/pages/Dashboard/PackageReleases/PublicBadgeSection.tsx`, `GET|PUT /api/v1/packages/:name/badge`): current public answer, which switch has it off, this organization's candidate, README snippet, owner/admin switch for a registry-verified publisher ([public-badge.md](./public-badge.md)).
+8. npm: **publication monitor** section (`src/features/publication-monitor/PackagePublicationSection.tsx`, `GET /api/v1/publication-watches/packages/:name`): watch state or why not (never seen public, stopped, gate suggestion, pending, waiting at the 250-watch limit), observed releases with reasons, "not verified" mark, coverage-gap notice, acknowledgment, check/start/stop; then ledger alerts the list omits (latest 50). Shares `ObservationList.tsx`, `CoverageGap.tsx`, `copy.ts` with the card. Stop is disabled with its reason for members, mirroring the server role check.
 
 ## Release timeline
 
-`ScanDetail/ReleaseTimeline.tsx` closes the scan detail page for every scan
-status: a `SectionLabel` (event count in the `aside`) over a left-ruled `<ol>`
-whose rows carry the event label, an optional muted detail, a mono 11px
-timestamp with year and seconds (`formatDateTimeExact`), and a mono `+delta`
-from the previous row. Rows are divided with
-`divide-y`, so nothing draws a second rule under the label. It renders nothing
-when no event has a timestamp. Ordering, phrasing, and the delta format are pure
-functions in `ScanDetail/release-timeline.ts`; see `docs/registry-version-status.md`
-for the npm-status wording and the sit-below-the-report rationale.
-
-## Copy and density
-
-- Lead with maintainer action and release risk, not internal pipeline detail.
-- Keep dense review surfaces scannable: short headings, compact metadata, and findings pinned to evidence.
-- Use severity stacked bars for risk distribution; avoid decorative charts.
-- Icons are text glyphs only; no SVG icon libraries.
+`src/pages/Dashboard/ScanDetail/ReleaseTimeline.tsx` closes scan detail for every status: `SectionLabel` (event count in `aside`) over a left-ruled `<ol>`; rows show label, optional muted detail, mono 11px timestamp with year and seconds (`formatDateTimeExact`), and a mono `+delta`. Rows use `divide-y` (no second rule under the label). Renders nothing when no event has a timestamp. Pure logic: `src/pages/Dashboard/ScanDetail/release-timeline.ts`; wording: [registry-version-status.md](./registry-version-status.md).
 
 ## npm access settings
 
-Keep the token form and a short, generic permissions guide visible. Saved connection
-metadata lives in the collapsed “Connection details” disclosure; validation failures
-stay visible above the form. Link to npm's token instructions for the full setup steps.
-
-Layout references: [desktop](screenshots/npm-access-desktop.png) and
-[mobile](screenshots/npm-access-mobile.png), captured against the local fake registry.
+Token form and a short generic permissions guide stay visible; saved metadata sits in the collapsed "Connection details" disclosure; validation failures stay above the form; link to npm's token instructions.
 
 ## Large diffs
 
-`DiffView` must stay responsive on megabyte-scale bundled artifacts (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`):
+`DiffView` stays responsive on megabyte-scale bundles (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`).
 
-- Syntax highlighting is skipped per side above `HIGHLIGHT_MAX_LINES` (3,000 lines, ~1.7s of main-thread tokenization for bundled JS) or `HIGHLIGHT_MAX_CHARS` (256 KiB, guards minified few-enormous-lines samples) in `src/components/highlight.ts`. The meta row notes "syntax highlighting off (large file)". The cap applies to the text handed to shiki, so a reformatted side is measured after re-flow: shiki's cost is per-line, and a 128 KiB bundle re-flows to ~5,700 lines and ~1.9s per side, so exempting it would blow the budget the cap exists to hold.
-- Two-sided diffs collapse long unchanged runs into expandable gap rows (`src/components/diff-hunks.ts`, 3 context lines); rows carrying pinned findings never collapse.
-- Single-sided views render 1,000 lines initially with a "show more" expander; findings pinned past the rendered window fall back to the banner above the diff.
-- Word-diff pairing bails out for changed blocks beyond 10,000 line-pair combinations to avoid quadratic scoring.
-- Line pairing is bounded by `LINE_DIFF_TIMEOUT_MS` (1.5s). Past it the baseline and staged samples render independently through the single-sided 1,000-line incremental window, with a notice saying pairing was abandoned. This avoids both dishonest line pairing and an unbounded DOM commit for tens of thousands of manufactured changed rows. `buildRows` takes the budget as an option so the give-up path is testable without a genuinely slow diff.
+| Guard | Constant / file | Behavior |
+| --- | --- | --- |
+| Highlight cap | `HIGHLIGHT_MAX_LINES` (3,000), `HIGHLIGHT_MAX_CHARS` (256 KiB) in `src/components/highlight.ts` | Skip highlighting per side above either cap (note 1). |
+| Gap collapse | `GAP_CONTEXT_LINES` (3) in `src/components/diff-hunks.ts` | Two-sided diffs collapse unchanged runs; rows with pinned findings never collapse. |
+| Single-sided window | `SINGLE_SIDED_INITIAL_LINES` (1,000) in `src/components/DiffView.tsx` | Initial window with "show more"; findings past it fall back to the banner. |
+| Word-diff bailout | `WORD_DIFF_MAX_PAIR_CELLS` (10,000 line-pair combinations) in `src/components/diff-rows.ts` | No word pairing beyond the line-pair budget (avoids quadratic scoring). |
+| Line-pair timeout | `LINE_DIFF_TIMEOUT_MS` (1.5s) in `src/components/diff-rows.ts` | Past it both sides render independently via the single-sided window, with a notice (note 2). |
+
+1. 3,000 lines is ~1.7s of main-thread tokenization for bundled JS; the char cap guards minified few-enormous-line samples. The cap applies to the text handed to shiki, after re-flow: shiki cost is per line, and a 128 KiB bundle re-flows to ~5,700 lines (~1.9s per side). The meta row notes "syntax highlighting off (large file)".
+2. This avoids both dishonest line pairing and an unbounded DOM commit for tens of thousands of manufactured changed rows. `buildRows` takes the budget as an option so the give-up path is testable.
 
 ## Minified files
 
-A minified bundle is one line, so `diffLines` reports one removed and one added line for any change at all. `src/components/format-source.ts` re-flows both sides at statement and block boundaries first, which is what makes the line diff, hunk collapse, and finding pinning work on `dist/` artifacts. On preact's `dist/preact.min.js`, a patch release goes from 2 changed lines of 11 KB each to 39 changed lines out of 464.
+`src/components/format-source.ts` re-flows minified sides so line diff, hunk collapse, and finding pinning work on `dist/` artifacts (preact `dist/preact.min.js` patch: 2 changed 11 KB lines → 39 changed of 464).
 
-- It runs client-side as a display transform. Scan artifacts, report exports, and the AI reviewer keep seeing the shipped bytes; nothing persisted is reformatted.
-- It only inserts whitespace between tokens. The token stream round-trips (asserted in `test/format-source.test.ts`, including under fast-check), so the view can never show bytes the artifact does not contain. JavaScript and TypeScript breaks land only after `;`, `{`, `,` and around `}`; JSON additionally expands `[` / `]` and array commas. None are automatic-semicolon-insertion sites, so the reformatted text stays semantically the source it came from. A break is also skipped wherever the source already ends the line, so re-flowing a hand-written file adds no blank rows.
-- JavaScript, TypeScript, and JSON go through the shared lexer in `server/lib/platform/js-lexer.ts` (also used by the deterministic scanner's constant folder); CSS uses a character scanner because `//` is not a comment in CSS and `url(//cdn…)` would swallow the file. `.cjs`/`.cts` samples use the Script lexical goal so top-level `await` and `yield` remain identifier-shaped, while `.mjs`/`.mts` use the Module goal. For ambiguous `.js`/`.ts` samples containing those contextual keywords, Script and Module token streams must agree or reformatting fails closed to the raw bytes; choosing one goal could otherwise turn division into a fake regex token and hide executable evidence inside it. JSX/TSX and SCSS deliberately stay unformatted: JSX text nodes and SCSS `//` comments make inserted whitespace meaningful, and the small scanners do not claim to understand those grammars. Because extensions are only hints, JavaScript and TypeScript samples are checked for unambiguous JSX fragments and closing/self-closing tags before re-flow; JavaScript also uses expression-position opener checks, while TypeScript keeps angle-bracket assertions eligible. The CSS scanner decodes escaped identifier code points when recognizing `url(…)` (including spellings such as `u\72l(…)`) and keeps the whole payload opaque across leading whitespace, newlines, comments, strings, and escapes; it is held to its own invariants in `test/format-source.test.ts` (non-whitespace characters preserved, no blank rows, line map in range) since it shares nothing with the lexer.
-- Whether a `/` opens a regex literal decides where a token ends, so `js-lexer.ts` tracks bracket kinds: a `)` that closed an `if`/`for`/`while`/`with` head and a `}` that closed a statement block are followed by a statement, where `/` starts a regex; a call's `)` and an object literal's `}` are values, where it divides. Keyword-shaped member calls and contextual identifiers remain values outside their grammar roles. Ordinary function, method, and arrow bodies keep `await`/`yield` identifier-shaped through nested syntax, parameter initializers, destructuring, and template interpolation, while nested async and generator bodies restore their keyword roles; computed, generic, and private method heads, TypeScript generic async arrows, and ASI after concise arrow bodies preserve the same scope boundary. Instance field initializers reset an enclosing async/generator mode while computed member names retain it. Catch, for-head, destructured declaration, function/class declaration, and function-scoped `var` bindings retain their owning lexical scope. Typed and ambient variable declarations retain their ASI boundary, semicolonless ambient function signatures terminate before a following regex statement, and typed arrows cannot leak a pending body marker into a later object expression. Class static initialization blocks retain their inner statement context. Class bodies, TypeScript block declarations and typed function/method bodies, type-alias continuation operators, import-equals declarations, bindingless `catch {}` blocks, labels, and braced `case` clauses are tracked explicitly. Function/class expression bodies are values at their closing brace but statement lists inside — minified bundles are IIFE wrappers, so labels and nested declarations sit directly in one. Pending bodies are kept in ordered, depth-keyed stacks so same-depth class heritage expressions pair with the right body and hostile truncated headers remain linear to clean up. Hashbangs and Annex B HTML-like line comments remain opaque, including inside template interpolation; interpolation otherwise uses the same comment/string/template/regex boundaries before counting braces, so literal `}` and backticks cannot terminate `${…}` early. An explicit frame stack handles excessive nesting without risking a call-stack overflow. `test/js-lexer.test.ts` pins the corpus both ways.
-- It is on by default when a side `looksMinified` (any line ≥ 500 chars) and off otherwise, with a "Reformat" toggle in the diff options. The "reformatted for review" note in the meta row appears only when a side actually changed, not merely when the toggle is on.
-- A two-sided diff never mixes a safely rejected raw side with a reformatted opposite side. If JSX, an oversized sample, a source that exhausts the lexer's linear work budget, or the token-stream guard rejects either side, both stay raw; a side that simply has no useful break points can still pair with a reformatted side because its raw text is already in the formatter's target shape.
-- Findings are re-pinned through the formatter's source-line map (`remapFindingLines`). A finding only ever lands on a row that came from the line the rule reported; a line this side does not have is unpinned to the banner rather than left pointing at a raw line number, since reformatting multiplies the row count. The annotation caption keeps naming the artifact's line, never the reformatted row — a reviewer taking a line number back to the package must get the real one.
-- Findings carry no column, so a rule that matched halfway through a bundle still pins to the top of its source line. That is exactly as precise as the unformatted view. Recording match offsets server-side is the follow-up that would make it exact.
+1. Display transform only, client-side. Scan artifacts, report exports, and the AI reviewer see shipped bytes; nothing persisted is reformatted.
+2. Inserts whitespace between tokens only; the token stream round-trips (`test/format-source.test.ts`, including fast-check), so the view never shows bytes the artifact lacks. JS/TS breaks only after `;`, `{`, `,` and around `}`; JSON also `[`/`]` and array commas (no ASI sites). No break where the source already ends a line.
+3. JS, TS, JSON use `server/lib/platform/js-lexer.ts` (shared with the scanner's constant folder); CSS uses a character scanner (`//` is not a CSS comment). `.cjs`/`.cts` use the Script goal, `.mjs`/`.mts` Module; ambiguous `.js`/`.ts` with contextual `await`/`yield` must agree under both goals or the side fails closed to raw bytes.
+4. JSX/TSX and SCSS stay unformatted (whitespace is meaningful). JS/TS samples are checked for JSX fragments and tags before re-flow; JS also uses expression-position opener checks; TS keeps angle-bracket assertions eligible.
+5. The CSS scanner decodes escaped identifiers in `url(…)` (e.g. `u\72l(…)`) and keeps the payload opaque across whitespace, newlines, comments, strings, escapes; its invariants (non-whitespace preserved, no blank rows, line map in range) are in `test/format-source.test.ts`.
+6. `js-lexer.ts` decides regex vs division by bracket kind (statement `)`/`}` vs value), tracks `await`/`yield` scope through functions, arrows, methods, class fields and static blocks, ASI boundaries, TypeScript declarations, labels and `case` clauses; hashbangs and Annex B HTML-like comments stay opaque; template interpolation uses the same boundaries. Pending bodies use depth-keyed stacks (linear on hostile truncated input); an explicit frame stack avoids call-stack overflow. Pinned both ways by `test/js-lexer.test.ts`.
+7. On by default when a side `looksMinified` (any line ≥ `MINIFIED_LINE_CHARS`, 500 chars, in `src/components/format-source.ts`), with a "Reformat" toggle; the "reformatted for review" note appears only when a side actually changed.
+8. A two-sided diff never mixes a rejected raw side with a reformatted side: JSX, an oversized sample, an exhausted lexer budget, or a failed token-stream guard on either side keeps both raw. A side with no break points may pair with a reformatted side.
+9. Findings re-pin through `remapFindingLines`; a finding lands only on a row from its reported line, otherwise it moves to the banner. The caption always names the artifact's line, never the reformatted row.
+10. Findings carry no column, so a match mid-bundle pins to the top of its source line (as precise as the raw view). Recording match offsets server-side would make it exact.
 
-## Signals reminder
+## Change checklist
 
-Render signals directly or derive with `useComputed`; do not eagerly unwrap `.value` in component bodies for conditional JSX. See `docs/tooling.md` and `.claude/skills/preact-signals-*` for the detailed rules.
+| If you change | Also |
+| --- | --- |
+| A route in `src/index.tsx` | Update [At a glance](#at-a-glance); Worker-owned prefixes also need `test/e2e/worker-routes.mjs`. |
+| A shared review component | Check all three surfaces (scan detail, `/diff`, public report). |
+| A browser-visible flow | Verify with the `verify-live` skill against `pnpm run e2e:dev:seed`; add a mock to `test/e2e/smoke.spec.ts` for new scan-detail fetches. |
+| Visual tokens or rules | [design.md](./design.md). |

@@ -1,138 +1,111 @@
-# Organization members & invitations
+# Organization members and invitations
 
-Drydock organizations are multi-user. This document describes the membership
-model, the role-based access guards, and the email-token invitation flow.
+Roles, role-guarded routes, and the email-token invitation flow for multi-user organizations. **Authority:** enforced. **Owner:** `server/lib/auth/roles.ts` (roles), `server/routes/organization-members.ts` (members and invitations).
 
-## Roles
+## At a glance
 
-`server/lib/auth/roles.ts` is the single source of truth:
+| Thing | Owner file | Who may call | Pinned by |
+| --- | --- | --- | --- |
+| Role definitions | `server/lib/auth/roles.ts` | — | `test/workers/organization-members-routes.test.ts` |
+| Active org + role guard | `server/lib/auth/active-organization.ts` | Every org-scoped route | `test/workers/organization-members-routes.test.ts` |
+| Members / invitations | `server/routes/organization-members.ts` | See matrix | `test/workers/organization-members-routes.test.ts` |
+| Invitation token | `server/lib/auth/invitation-token.ts` | — | `test/workers/organization-members-routes.test.ts` |
+| Invite email | `notifyOrganizationInvite` in `server/lib/notify/organization-invite.ts` | Create invitation | `test/workers/organization-members-routes.test.ts` |
+| Org rename/delete/policy | `server/routes/organizations.ts` | Owner | `test/workers/organizations-routes.test.ts` |
 
-- `owner` — the `organizations.ownerUserId`. Exactly one per org. Cannot be
-  removed or demoted through the API. Created implicitly when an org is created
-  (`createOrganization` / `ensurePersonalOrganization` insert the owner's
-  `organization_members` row with role `owner`).
-- `admin` — full management of members, invitations, npm connections, and GitHub
-  release targets.
-- `member` — read access to org-scoped resources; can act on releases (record
-  scan decisions, decide workflow gates). Cannot manage membership or
-  integrations.
+## Contract
 
-Helpers:
+### Roles
 
-- `roleCanManageMembers(role)` — `owner` or `admin`. Gates invite/revoke/remove.
-- `roleCanManageIntegrations(role)` — `owner` or `admin`. Gates npm-connection
-  mutations and GitHub App install / release-target CRUD.
-- `isInvitableRole(value)` — only `admin` or `member` may be invited; you cannot
-  invite a second `owner`.
-- `normalizeRole(value)` — coerces an unknown/stored string to a valid role,
-  defaulting to `member`.
+| Role | Who | Can |
+| --- | --- | --- |
+| `owner` | `organizations.ownerUserId`; exactly one; created with the org (`createOrganization` / `ensurePersonalOrganization` insert its `organization_members` row) | Everything below, plus rename, delete, release two-factor policy. Cannot be removed or demoted through the API |
+| `admin` | Invited or stored role | Manage members, invitations, integrations, public shares, audit log |
+| `member` | Invited or stored role | Read org-scoped resources; record scan decisions; decide workflow gates |
 
-`getOrganizationRole(db, orgId, userId)` returns the effective role: `owner` when
-the user is the org's `ownerUserId`, otherwise the stored membership role, or
-`null` when the user is not a member.
+| Helper | Rule |
+| --- | --- |
+| `roleCanManageMembers` | `owner` or `admin`; members, invitations, audit log |
+| `roleCanManageIntegrations` | `owner` or `admin`; npm connection, GitHub App, release targets, publisher setup, Slack, notification recipients, stopping publication watches |
+| `roleCanManagePublicShares` | `owner` or `admin`; public share links (a governance action, not a review action) |
+| `isInvitableRole` | Only `admin` or `member`; ownership is never granted by invite |
+| `normalizeRole` | Unknown stored value → `member` |
+| `getOrganizationRole` (`server/db/invitations.ts`) | `owner` when the user is `ownerUserId`, else stored role, else `null` for non-members |
 
-## Where roles are enforced
+### Guards
 
-Reads (`GET`) stay open to any member and use `requireActiveOrganization`.
-Sensitive mutations resolve the caller's role with
-`requireActiveOrganizationContext(c, db)` (returns `{ organizationId, role }`)
-and return `403 { error: "forbidden" }` when the guard fails:
+| Guard | Use | On failure |
+| --- | --- | --- |
+| `requireActiveOrganization` | Reads open to any member | Non-member selector falls back to the caller's personal org |
+| `requireActiveOrganizationContext` | Returns `{ organizationId, role }` | With `x-organization-strict: 1`: `403 { error: "forbidden", code: "not_organization_member" }` |
+| `requireOrganizationRole(c, db, roleCan…)` | Sensitive mutations | `403 { error: "forbidden" }` |
+| `isOrganizationOwner` | Rename, delete, release two-factor policy | `404` (`not found`) |
 
-- member management — `server/routes/organization-members.ts`
-- npm connections — `server/routes/npm-connection.ts` (POST, POST `/validate`,
-  DELETE)
-- GitHub App install + release targets — `server/routes/github-app/`
-- notification recipients — `server/routes/organizations.ts` lets any member
-  list recipients for an org path they belong to, while owner/admin are required
-  for add/remove. Each organization can configure up to five recipient emails.
-- Slack connection (OAuth bot token) — `server/routes/slack.ts`: any member
-  reads the connection status, owner/admin run the "Add to Slack" OAuth flow,
-  pick one public channel, pause/resume, disconnect, and test. One workspace and
-  one channel per org. See [`slack-notifications.md`](slack-notifications.md).
+### Route matrix
 
-Org rename and delete stay owner-only (`isOrganizationOwner`). Gate approvals and
-scan decisions stay open to any member by design.
+| Route | Member | Admin | Owner | Notes |
+| --- | --- | --- | --- | --- |
+| `GET /api/v1/organizations/members` | yes | yes | yes |  |
+| `DELETE /api/v1/organizations/members/:userId` | 403 | yes | yes | Removing the owner → `400`; unknown → `404` |
+| `GET /api/v1/organizations/invitations` | 403 | yes | yes | Pending invitations only |
+| `POST /api/v1/organizations/invitations` | 403 | yes | yes | Verified email; 30/hour per org |
+| `DELETE /api/v1/organizations/invitations/:invitationId` | 403 | yes | yes | Unknown → `404` |
+| `POST /api/v1/organizations/invitations/accept` | invitee | invitee | invitee | Not scoped by `x-organization-id`; see below |
+| npm connection `POST /`, `POST /validate`, `DELETE` | 403 | yes | yes | `server/routes/npm-connection.ts` |
+| GitHub App install, release targets, publisher setup | 403 | yes | yes | `server/routes/github-app/` |
+| Slack connect, channel, pause/resume, disconnect, test | 403 | yes | yes | Status `GET` open to members; one workspace and one public channel per org ([Slack](./slack-notifications.md)) |
+| Notification recipients add/remove | 403 | yes | yes | List open to members; at most 5 (`MAX_NOTIFICATION_RECIPIENTS`) |
+| `POST /api/v1/scans/:id/share` | 403 | yes | yes | `roleCanManagePublicShares` |
+| `GET /api/v1/audit-events` | 403 | yes | yes | [Audit log](./audit-log.md) |
+| Scan decisions, workflow gate decisions | yes | yes | yes | Open to any member by design |
+| `PATCH /api/v1/organizations/:id` (rename) | 404 | 404 | yes |  |
+| `PUT /api/v1/organizations/:id/release-two-factor` | 404 | 404 | yes | [Two-factor](./two-factor-auth.md#organization-policy) |
+| `DELETE /api/v1/organizations/:id` | 404 | 404 | yes | See below |
 
-Deleting an org (`DELETE /api/v1/organizations/:id`, owner-only, rate-limited at
-10/hour) rejects the personal workspace (`400`) and otherwise removes every
-org-scoped row explicitly in dependency order — members, invitations,
-notification recipients, the Slack connection, npm and GitHub
-connections/release targets/workflow gates, and the org's scans plus their
-files, findings, and events — via a single `deleteOrganization` batch. The deletes are explicit (not `ON DELETE CASCADE`)
-because D1 does not enforce foreign keys by default, so a silent orphan would
-otherwise leak one org's scans/credentials past its deletion. No audit event is
-recorded: the org's `scan_events` are removed in the same batch.
+### Organization deletion
 
-## Invitation flow
+`DELETE /api/v1/organizations/:id`: owner-only, rate-limited 10/hour per user, personal workspace → `400`. `deleteOrganization` (`server/db/organizations.ts`) removes every org-scoped row explicitly in one batch: publisher setup jobs, scan events, scans, workflow gates, release targets, GitHub installations, npm connection, notification recipients, Slack connection, invitations, members, the org row; then its R2 artifacts. npm package claims become ownerless reservations. No audit event is recorded because the org's `scan_events` go in the same batch.
 
-Schema: `organization_invitations` (`server/db/schema.ts`). One **live** invite
-per `(organization_id, email)`: re-inviting an address rotates the token and
-extends the expiry on the existing pending row (`upsertInvitation`) instead of
-stacking rows. Status is `pending` → `accepted` | `revoked`. Invites expire after
-7 days (`INVITE_TTL_MS`).
+### Invitations
 
-### Token handling
+Schema `organization_invitations` (`server/db/schema.ts`). One live invite per `(organization_id, email)`: re-inviting rotates the token and extends expiry on the pending row (`upsertInvitation`). Status `pending` → `accepted` | `revoked`. Invites expire after 7 days (`INVITE_TTL_MS` in `server/routes/organization-members.ts`).
 
-Invitation links carry a 32-byte high-entropy bearer token. Only its SHA-256
-hash (`token_hash`) is persisted — mirroring the password-reset pattern — so a
-database read never yields a usable link and revocation is a single row update.
-The raw token exists only in the invite email and the accept request; it is
-**never** returned by any API response (`publicInvitation` omits it). See
-`server/lib/auth/invitation-token.ts`.
+1. **Create** (`POST /invitations`, owner/admin): inviter's address must be verified (`403 { code: "email_verification_required" }`, [email verification](./security-model.md#email-verification)) because the invite mails a third party in the org's name; `sanitizeAddress` validates the email, `isInvitableRole` the role (default `member`); 30/hour per org; existing member → `409`; then `upsertInvitation` + `notifyOrganizationInvite`. Returns the public invitation, no token.
+2. **Email**: link to `${BETTER_AUTH_URL}/dashboard/invite?token=…`; records `organization.member_invited` or `organization.member_invite_failed`. Delivery is best-effort and never blocks the invite.
+3. **Accept** (`POST /invitations/accept`, authenticated invitee): org comes only from the token (matched by hash). The account email must equal the invited address and `emailVerified` must be true, so a leaked link cannot be redeemed by registering an unverified account with that address. `markInvitationAccepted` is a compare-and-swap, so only one concurrent accept wins. Success adds the member, records `organization.member_joined`, returns `{ organizationId, role }`.
 
-### Create → email → accept
-
-1. **Create** (`POST /invitations`, owner/admin): requires the inviter's own
-   address to be verified (`403 { code: "email_verification_required" }`, see
-   [`security-model.md`](./security-model.md#email-verification)) — an invite
-   sends mail to a third party in the organization's name — then validates the
-   email (`sanitizeAddress`) and role (`isInvitableRole`, default `member`),
-   rate-limits at 30/hour per org, rejects an address that is already a member
-   (409), then `upsertInvitation` + `notifyOrganizationInvite`. Returns the
-   public invitation (no token).
-2. **Email**: `notifyOrganizationInvite` sends a link to
-   `${BETTER_AUTH_URL}/dashboard/invite?token=…` and records an
-   `organization.member_invited` (or `…_invite_failed`) audit event. Email
-   delivery is best-effort and never blocks the invite.
-3. **Accept** (`POST /invitations/accept`, authenticated invitee): this route is
-   deliberately **not** scoped by the `x-organization-id` header — an invitee is
-   not a member yet, so the org is determined solely by the token (matched by
-   hash). The caller's account email must equal the invited address **and** the
-   account's `emailVerified` flag must be true, so a leaked link cannot be
-   redeemed by registering an unverified account with the invitee's address. The
-   transition out of `pending` is a compare-and-swap (`markInvitationAccepted`),
-   so concurrent accepts race and only one wins. On success it adds the member, records
-   `organization.member_joined`, and returns `{ organizationId, role }`.
-
-Accept failure codes: `404` unknown token, `409` already used/revoked (or lost
-the CAS race), `410` expired, `403` the caller's email does not match the invite
-or has not been verified.
+| Accept failure | Status |
+| --- | --- |
+| Missing token | `400` |
+| Unknown token | `404` |
+| Already used or revoked, or lost the CAS race | `409` |
+| Expired | `410` |
+| Email does not match the invite, or not verified | `403` |
 
 ### Front end
 
-- `src/models/organization-members.ts` (`MembersModel`) — load/invite/revoke/
-  remove, used by the settings page.
-- `src/pages/Dashboard/Settings/OrganizationMembersSection.tsx` — member roster,
-  invite form, and pending-invite list. The invite form and management controls
-  only render for owners/admins.
-- `src/pages/Dashboard/Invite/index.tsx` (`/dashboard/invite`) — reads `?token`,
-  redirects unauthenticated visitors to `/login?returnTo=…` (the login and
-  register pages forward `returnTo` so a brand-new invitee can create an account
-  and land back on the invite), then POSTs the token, sets the joined org active,
-  and routes to the dashboard.
+| File | Role |
+| --- | --- |
+| `src/models/organization-members.ts` (`MembersModel`) | Load, invite, revoke, remove |
+| `src/pages/Dashboard/Settings/OrganizationMembersSection.tsx` | Roster, invite form, pending invites; management controls render only for owner/admin |
+| `src/pages/Dashboard/Invite/index.tsx` (`/dashboard/invite`) | Reads `?token`; unauthenticated → `/login?returnTo=…` (login/register forward `returnTo`); POSTs the token, activates the joined org, routes to the dashboard |
 
-## Audit events
+### Audit events
 
-All recorded via `recordScanEvent` into `scan_events`:
+All via `recordScanEvent` into `scan_events`: `organization.member_invited`, `organization.member_invite_failed`, `organization.member_invitation_revoked`, `organization.member_joined`, `organization.member_removed`.
 
-- `organization.member_invited` / `organization.member_invite_failed`
-- `organization.member_invitation_revoked`
-- `organization.member_joined`
-- `organization.member_removed`
+## Invariants
+
+1. Invitation links carry a 32-byte bearer token (`TOKEN_BYTES`); only its SHA-256 (`token_hash`) is persisted, so a database read never yields a usable link and revocation is one row update.
+2. The raw token exists only in the invite email and the accept request; `publicInvitation` omits it from every API response.
+3. Org deletion and member cleanup delete children explicitly, not via `ON DELETE CASCADE`, because D1 does not enforce foreign keys by default; a silent orphan would leak one org's scans or credentials past deletion.
+4. Membership and role are read from D1 on every request, so removal takes effect immediately even with a cached session cookie.
 
 ## Tests
 
-`test/workers/organization-members-routes.test.ts` covers invite creation,
-token-never-leaked, role enforcement (member 403, admin allowed), accept →
-membership, leaked-link rejection, unverified-email rejection, expiry,
-revoke-then-accept, owner-removal guard, and roster ordering.
+`test/workers/organization-members-routes.test.ts` covers invite creation, token never leaked, role enforcement (member `403`, admin allowed), accept → membership, leaked-link rejection, unverified-email rejection, expiry, revoke-then-accept, owner-removal guard, and roster ordering.
+
+## Change checklist
+
+- New org-scoped mutation → pick a `roleCan…` helper, use `requireOrganizationRole`, add a row to the route matrix, cover member `403` in a Worker test.
+- New org-scoped table → add it to `deleteOrganization` and [account deletion](./account-deletion.md).

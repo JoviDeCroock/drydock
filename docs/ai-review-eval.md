@@ -1,414 +1,170 @@
 # AI reviewer lifecycle
 
-The advisory reviewer has a small, versioned improvement loop: sampled runtime
-traces explain how it executed, aggregate product events show cost and eventual
-maintainer action, and a truth-labeled recorded-output corpus gates known safety
-behaviors before the reviewer contract changes.
+The advisory reviewer combines a versioned evidence contract, private runtime traces, aggregate feedback, and recorded/live evaluations. **Authority:** advisory. **Owner:** `server/lib/ai-review/index.ts`.
 
-## Version contract
+## At a glance
 
-`AI_REVIEWER_VERSION` in `server/lib/ai-review/contract.ts` identifies the
-prompt, evidence tools, model routing, and response contract as one unit. Every
-new review persists that version and includes it in traces and analytics. Bump
-it whenever a change can alter reviewer behavior. Historical recorded outputs
-keep the version and model that actually produced them; regenerate and
-adjudicate the corpus before marking a new contract as recorded. Historical
-rows without a version parse as `null` and analytics labels them `legacy`.
+| Thing | Owner file | Who may trigger | Pinned by (test) |
+| --- | --- | --- | --- |
+| Reviewer loop and routing | `server/lib/ai-review/index.ts` | Scan pipeline | `test/ai-review.test.mjs` |
+| Evidence tools and coverage | `server/lib/ai-review/evidence.ts` | Reviewer loop | `test/ai-review-evidence.test.mjs` |
+| Risk contribution | `server/lib/review/risk.ts` | Scan scoring | `test/risk.test.mjs` |
+| Injection screen | `server/lib/ai-review/injection-screen.ts` | Screen-enabled scan | `test/ai-review-injection-screen.test.mjs` |
+| Recorded-output eval | `test/eval/ai-review-harness.mjs` | Developer/CI | `test/eval/ai-review-eval.test.mjs` |
+| Live model comparison | `test/eval/ai-review-live-harness.mjs` | Credentialed operator | `test/ai-review-model-compare.test.mjs` |
+| Live screen eval | `test/eval/clef-live-harness.mjs` | Credentialed operator | `test/clef-eval.test.mjs` |
 
-`INJECTION_SCREEN_VERSION` in `server/lib/ai-review/injection-screen.ts` is the
-same kind of contract for the advisory Clef injection screen: the candidate-span
-policy, question battery, model, and thresholds are one unit, and any change to
-any of them is a bump. It is separate from `AI_REVIEWER_VERSION` because the
-screen and the reviewer fail, ship, and regress independently.
-`injection_screen.finished` carries it with every screened scan.
+## Contract
 
-## Submission bounds
+### Versions and bounds
 
-`AI_REVIEW_BOUNDS` in the same file is the single source of the per-field length
-limits, shared by the submission schema, the system prompt's stated budget, and
-`clampAiReviewSubmission`. A submission that overshoots is clamped and
-re-validated rather than discarded, because rejecting the whole call would
-collapse a high-risk review into the low-risk `invalid` fallback.
+| Constant | Owner file | Contract |
+| --- | --- | --- |
+| `AI_REVIEWER_VERSION` | `server/lib/ai-review/contract.ts` | Bump for behavioral changes to prompts, tools, evidence, submission policy, or routing; persist on every new review, trace, and analytics event. |
+| `INJECTION_SCREEN_VERSION` | `server/lib/ai-review/injection-screen.ts` | Independently bump for candidate spans, questions, model, or thresholds; emitted by `injection_screen.finished`. |
+| `AI_REVIEW_BOUNDS` | `server/lib/ai-review/contract.ts` | Shared per-field schema, prompt, and repair limits; `assessmentsCount` bounds deterministic assessments. |
+| `AI_FINDING_CATEGORIES` | `server/lib/ai-review/contract.ts` | Finding metadata; missing/unknown categories normalize to `other`. |
+| `MAX_AGENT_STEPS` | `server/lib/ai-review/contract.ts` | 100 steps; final step forces `submit_review`. |
+| `SUBMIT_CONTEXT_TOKENS` | `server/lib/ai-review/contract.ts` | Forces submission with room for another step below the smallest candidate window (Kimi: 262,144 tokens); lower this guard when lowering that window. |
+| `CONTEXT_CHARS_PER_TOKEN` | `server/lib/ai-review/contract.ts` | Estimates prompt tokens when provider input usage is absent. |
+| `MAX_TOTAL_TOOL_RESPONSE_CHARS` | `server/lib/ai-review/contract.ts` | Total package evidence budget, including coverage read. |
+| `COVERAGE_READ_CHARS` | `server/lib/ai-review/contract.ts` | Initial required-first coverage read budget. |
+| `MIN_COVERAGE_READ_SHARE` | `server/lib/ai-review/contract.ts` | Below this share, lowest-priority non-required files leave the initial read. |
+| `MAX_REQUIRED_EVIDENCE_PATHS` | `server/lib/ai-review/contract.ts` | Required-set cap, filled round-robin across priority tiers. |
+| `MAX_COVERAGE_REJECTIONS` | `server/lib/ai-review/contract.ts` | Maximum early-submit coverage rejections. |
+| `MAX_TOOL_RESPONSE_CHARS` | `server/lib/ai-review/contract.ts` | One read call reserved for searching when computing unread required paths. |
+| `MAX_CHANGED_FILE_MANIFEST` | `server/lib/ai-review/contract.ts` | 300-entry evidence-priority manifest cap. |
+| `MAX_SEARCH_MATCHES_PER_FILE` | `server/lib/ai-review/contract.ts` | Prevents one file crowding other files out of search results. |
+| `DIFF_WORK_BUDGET` | `server/lib/ai-review/contract.ts` | Shared line-diff work budget for the whole review. |
+| `MAX_DIFF_EDIT_LENGTH` / `MAX_FILE_DIFF_WORK` | `server/lib/ai-review/contract.ts` | Per-file edit/work caps shrink to remaining shared budget. |
+| `MAX_SPANS` | `server/lib/ai-review/injection-screen.ts` | Six candidate spans per production screen request. |
+| `MAX_REVIEW_OUTPUT_TOKENS` | `server/lib/ai-review/contract.ts` | Reasoning and generated output share this cap. |
 
-Clamping prose is maintainer-visible: the summary is rendered verbatim in the
-scan workbench, so a hard mid-word cut reads as the reviewer crashing. Prose
-fields are cut on the last sentence break inside the budget, else the last word
-break, and always end in a ` …` marker; only `file` keeps a plain cut, since a
-trailing ellipsis on a path reads as part of the filename. The prompt states
-the summary budget so the model finishes its verdict inside it instead of
-relying on the clamp.
+Historical outputs retain the version/model that produced them; regenerate and adjudicate before recording a new contract. Unversioned historical rows parse as `null`; analytics uses `legacy`.
 
-The optional `deterministicAssessments` list (at most
-`AI_REVIEW_BOUNDS.assessmentsCount` entries of rule id, file, `confirmed` or
-`disputed`, and a short note) is where the reviewer agrees or disagrees with a
-deterministic finding. The prompt forbids filing an AI finding to restate,
-explain, or dispute one: before 1.8.0 the only way to discuss a rule finding was
-a high AI finding, which scored as an escalation even when its text called the
-rule a false positive. Assessments are persisted with the review and carried in
-the report export; the scan's AI assessment section renders only those naming a
-rule id and file this scan actually reported. Risk scoring never reads them.
+### Submission and scoring
 
-## Risk contribution
+1. Oversized submission → Clamp and revalidate instead of discarding a potentially high-risk review as `invalid`. (`server/lib/ai-review/contract.ts`).
+2. Clipped prose → Last sentence break, else word break, followed by ` …`; `file` uses a plain cut to preserve path meaning. (`server/lib/ai-review/contract.ts`).
+3. Summary → Prompt states its budget; workbench renders it verbatim. (`server/lib/ai-review/contract.ts`).
+4. `deterministicAssessments` → Optional rule ID, file, `confirmed`/`disputed`, short note; persist/export; UI shows only rule/file pairs reported by this scan. (`server/lib/ai-review/types.ts`).
+5. Deterministic disagreement → Use an assessment; never file an AI finding to restate, explain, confirm, or dispute a deterministic finding. (`server/lib/ai-review/contract.ts`).
+6. Finding `category` and optional 1-based `line` → Display/export/eval metadata; line comes from `search_files`; repair drops malformed lines; scoring reads neither field. (`server/lib/ai-review/contract.ts`).
+7. Older records without category/line/assessments → Continue parsing. (`server/lib/ai-review/types.ts`).
+8. `deterministicRisk` and findings supplied to reviewer → Release-delta roll-up through `releaseRuleFindings`; unchanged-code findings stay out of model input. (`server/lib/scan/pipeline-phases.ts`).
+9. `nothing_unusual` → AI adds no risk. (`aiVerdictRiskCap` in `server/lib/review/risk.ts`).
+10. `review_recommended` / `suspicious` / `blocked` → AI contribution capped at medium / high / critical across artifact, release, and context scores. (`aiVerdictRiskCap` in `server/lib/review/risk.ts`).
+11. `requiresManualReview` → Medium floor survives the verdict cap. (`server/lib/review/risk.ts`).
+12. Attempted but unavailable review → Medium floor. (`server/lib/review/risk.ts`).
+13. All AI findings cite unchanged files → Keep overall AI concern out of `releaseRisk`, except manual-review floor. (`server/lib/review/risk.ts`).
+14. No AI findings → Use normal review-level scoring: overall risk counts only with findings or manual-review request; a manual-review request can escalate without findings. (`server/lib/review/risk.ts`).
+15. AI release attribution → File-level via `withoutFindingLine`; unlike deterministic pattern rematching, AI has no pattern to rescue stale lines; reused calls, clipped baselines, modified binaries, and decoys make located-line attribution unsafe. (`withoutFindingLine` in `server/lib/review/diff-annotation.ts`, applied in `server/lib/scan/pipeline-phases.ts`).
+16. Finding exceeds its verdict cap → UI puts it after counted findings with neutral badge/cap explanation; excludes it from inspection link and severity bar. (cap in `server/lib/review/risk.ts`; UI in `src/pages/Dashboard/ScanDetail/ReleaseRecommendation.tsx`).
 
-`server/lib/review/risk.ts` owns how a completed review moves scores. The
-deterministic score is computed first and the AI's contribution is combined with
-it through a max, so every bound below limits the AI's upgrade and none can
-lower a deterministic grade.
+AI cannot downgrade deterministic findings: deterministic scoring runs first and combines the AI contribution through a max. Assessments never change risk. Release-gate authority belongs to [workflow gates](./workflow-gates.md); stage authority belongs to [npm staged publishing](./npm-staged-publishing.md).
 
-- **Verdict cap.** The review's overall risk and its findings' severities are
-  capped by its own `releaseAssessment`: `nothing_unusual` adds nothing,
-  `review_recommended` at most medium, `suspicious` at most high, `blocked` up
-  to critical. `requiresManualReview` keeps its medium floor, and an attempted
-  but unavailable review still floors at medium. The cap applies to
-  `artifactRisk`, `releaseRisk`, and the AI share of `contextRisk`. The scan
-  page reads the same cap (`aiVerdictRiskCap`): an AI finding above what its
-  verdict allows is listed after the counted findings with a neutral badge and
-  a line saying what the verdict holds it to, and it neither drives the
-  "Inspect … findings" link nor fills the severity bar.
-- **Release attribution.** `releaseRisk` gets the same verdict-bounded
-  contribution, from the review's overall risk and its release-delta findings.
-  A review whose findings all cite unchanged files stays out of `releaseRisk`
-  (manual-review floor aside); a review with no findings is scored wholesale,
-  because a reviewer told not to restate deterministic findings may escalate
-  with none of its own. Attribution is file-level even when a finding records
-  a line (`withoutFindingLine`): a rule finding's stale line is rescued by
-  re-matching its pattern, but an AI finding has none, so a decoy on an
-  unchanged line (the first search match) would otherwise pull a newly added
-  call out of the release. Requiring a located line was tried and dropped: a
-  reused call shape, a clipped baseline, or a modified binary cannot produce
-  one, so it turned real AI-only detections into gate approvals.
+### Evidence sequence
 
-Each finding carries an optional `category` (`AI_FINDING_CATEGORIES`, named
-after the rule families; a missing or unknown value normalizes to `other`) and
-an optional 1-based `line` the prompt tells the model to copy from a
-`search_files` match. Both are display, export, and eval metadata that scoring
-never reads; the repair clamp drops a malformed line rather than failing the
-submission. Reviews recorded before 1.8.0 have neither and parse unchanged.
-The reviewer's `deterministicRisk` input is the release-delta roll-up: the
-pipeline hands it `releaseRuleFindings`, so findings on unchanged code never
-reach the model.
+1. Required set: Changed manifest; added/modified preinstall/install/postinstall targets (even unchanged files); deterministic-finding files; changed native/executable payloads; changed entrypoints (all entrypoints if manifest entrypoints changed).
+2. Tier allocation: Round-robin tiers prevent a hook naming many benign files from evicting an entrypoint or payload. Only npm manifest summaries supply `scripts`; PyPI/VS Code use remaining tiers.
+3. Alias lookup: `evidencePathAliases` maps external finding paths to review-tree paths; PyPI `<artifact filename>/<path>` maps to `sdist/...` or `wheel/<tags>/...`; findings/assessments keep reported paths.
+4. Coverage read: Before first model turn, required paths then other changes are read through the real tool with normal windows/accounting. Assistant `read` call plus tool result keeps package text out of the top-level task.
+5. Water-filling: Small files shown whole raise the shared ceiling for long files; required paths start with half the budget and reclaim unused remainder. Dropped non-required files remain readable/searchable.
+6. Coverage metadata: Task carries `coverageRead` and `requiredEvidencePaths`; manifest marks `shown:full`/`shown:partial`; tool responses carry `unreadRequiredPaths`.
+7. Completion accounting: Only a contiguous prefix from offset 0 extends coverage; binary/unsupported files count once metadata is returned.
+8. Feasible remainder: Require paths in priority order only while unread remainders fit remaining budget minus one read-call reserve; oversized remainder drops from unread list and should be searched.
+9. Submission gate: `submit_review` refuses until required paths finish, subject to rejection cap, exhausted evidence budget, or fewer than two steps before forced submission. Coverage may delay a verdict, never lose one.
+10. Tool ordering: Manifest, `list_files`, and `search_files` use evidence priority; search returns 1-based lines and per-file hit caps.
+11. Read continuation: Omitted/zero `offset` resumes each path; already-complete paths return no text at no budget cost; nonzero offset applies to one path.
+12. Diff fallback: Work grows with lines × edit length; over-cap modified files show removed/added unordered multisets, ignoring line endings, in linear time with no diff-work charge. Removed checks remain visible.
 
-## Evidence coverage
+### Routing and capacity
 
-The loop does not rely on the model volunteering reads. Production runs before
-1.9.0 mostly made one batched read and submitted, so what the model is shown up
-front is what gets checked.
+| Candidate | Constant and owner | Configuration |
+| --- | --- | --- |
+| First | `AI_MODEL` in `server/lib/ai-review/index.ts` | GLM 5.3 Flash; `AI_REASONING_EFFORT`: high. |
+| Fallback | `AI_FALLBACK_MODEL` in `server/lib/ai-review/index.ts` | Kimi K2.7 Code; provider-default reasoning. |
 
-**Coverage read.** Before the model's first turn the app reads the release
-itself: the required set first, then every other changed file in evidence
-priority order, within `COVERAGE_READ_CHARS` of the evidence budget. It runs
-through the real `read` tool, with the same windows and budget accounting, and
-opens the conversation as an assistant `read` call plus its tool result. Package
-text therefore reaches the model as tool output, never inside the top-level
-task. The budget is water-filled: files below a common ceiling are shown whole,
-and what they leave raises the ceiling for the long ones. Required paths start
-with half the budget, so one huge entrypoint cannot crowd out the release, and
-then take back whatever the rest left unused. When the ceiling for the rest
-falls below `MIN_COVERAGE_READ_SHARE`, the lowest-priority files drop out of
-the coverage read but stay reachable through `read` and `search_files`. The task's
-`coverageRead` counts what was shown, and manifest entries carry
-`shown:full` or `shown:partial`.
+1. Selection → Fixed before execution; model output never changes order. (`selectModelCandidates` in `server/lib/ai-review/index.ts`).
+2. Capacity/provider 5xx → One jittered retry. (`AI_REVIEW_MAX_CAPACITY_ATTEMPTS` in `server/lib/ai-review/index.ts`).
+3. 429, timeout, invalid completed run → Move directly to next candidate; do not rerun the same model. (`server/lib/ai-review/index.ts`).
+4. Context guard or last step → Offer only forced `submit_review`; missing usage falls back to prompt-length estimate. (`server/lib/ai-review/index.ts`).
+5. AI Gateway → Pin attempts to one and disable payload collection per request, including live harness; never layer Gateway retries or inference-step dynamic routing over the loop. (`server/lib/ai-review/gateway.ts`).
+6. Scan queue → One scan per batch, concurrency ten. (`wrangler.jsonc`).
+7. Sustained capacity → Keep aggregate text-generation below 80% of documented pool limit and Kimi below 60% of its model limit; lower concurrency or separate AI capacity queue before saturation. (Operator policy).
 
-**Required evidence.** `buildEvidenceIndex` computes a priority-ordered
-required set: a changed manifest, targets of consumer-install lifecycle entries
-(preinstall/install/postinstall) this release added or modified (even when the
-target file itself is unchanged), files with deterministic findings, changed
-native or executable payloads, and changed entrypoints (or all entrypoints when
-the manifest's entrypoints changed). The set is capped at
-`MAX_REQUIRED_EVIDENCE_PATHS`, filled round-robin across those tiers so a
-hostile lifecycle hook naming many benign files cannot evict the changed
-entrypoint or payload. Only npm's manifest summary carries `scripts`; PyPI and
-VS Code releases get the same gate from the remaining tiers. The set ships as
-`requiredEvidencePaths` in the task, and every tool response reports
-`unreadRequiredPaths`.
+### Traces and feedback
 
-A required path counts as read only once its rendered evidence has been shown
-to the end. Coverage is the prefix shown contiguously from offset 0; a window
-that starts past it does not extend it. A binary or unsupported file is
-covered once its metadata is returned. The gate owes required paths in priority
-order only while their unread remainders fit the remaining budget, less one
-read call (`MAX_TOOL_RESPONSE_CHARS`) kept back for searching. A file too long to finish drops off
-`unreadRequiredPaths` and the prompt tells the model to search it, rather than
-the gate draining the budget on a read that cannot complete. `submit_review` refuses a submission
-while any required path is not read to the end. It has three release valves, so
-the gate can only delay a verdict, never lose one: it stops refusing after
-`MAX_COVERAGE_REJECTIONS`, once the shared evidence budget is exhausted, and when
-fewer than two steps remain before a forced submit.
+1. Agent Traces: Production and self-host template use worker-wide head sampling 1 (every invocation); cannot target reviewer alone.
+2. Payload controls: `storeMessages: false`, `storeTools: false`, `recordInputs: false`, `recordOutputs: false` in `server/lib/ai-review/index.ts`.
+3. Identity: `telemetry.functionId` names agent; `runtimeContext` contains `agentId`, `agentVersion`, `conversationId`, `ecosystem`; only `telemetry.includeRuntimeContext` allowlist reaches spans.
+4. Allowed data: Operations/timing, model/token usage, tool names, reviewer version, ecosystem capability, fresh random per-invocation conversation ID.
+5. Forbidden data: Scan, stage, organization, package, file, message, evidence, and tool-result payloads; Gateway logs keep request metadata/token counts, never prompts/completions.
+6. Gateway correlation: Narrow Workers AI facade omits `aiGatewayLogId` so traces cannot index private Gateway review metadata.
+7. Trace authority: Debugging evidence, never canonical scan record; use recorded outputs/harness for payload debugging.
+8. `ai_review.finished`: Final status/model/version, duration, finding count, steps/tokens; review availability/latency, not per-model cost.
+9. `ai_review.attempted`: Every attempt, including recovered retry/fallback: outcome `complete`/`invalid`/`rate_limited`/`capacity`/`timeout`/`error`; action `done`/`retry`/`fallback`/`stop`; model/version; duration, attempt number, steps/tokens.
+10. Attempt coverage: Counts: changed files, changed files fully read, required paths, unread required paths, coverage rejections, evidence characters, coverage-read characters; never paths/text or organization/scan/stage/package/prompt/evidence IDs.
+11. `ai_review.decided`: Later maintainer publish/discard beside persisted status, assessment, model/version; disabled-review placeholders emit nothing.
+12. Feedback interpretation: Maintainer action is behavioral feedback, never correctness truth; accepted risk, unrelated discard, or mistakes require adjudication before promotion.
 
-**Finding paths.** An adapter whose findings cite files outside the reviewed
-tree supplies `evidencePathAliases`. PyPI release findings are pinned to
-`<artifact filename>/<path>`, while the reviewed tree names the same file
-`sdist/...` or `wheel/<tags>/...`; before 1.8.1 those files were neither
-readable nor required. Findings keep their reported path, so deterministic
-assessments still cite it; only evidence lookup goes through the alias.
+See [product analytics](./product-analytics.md) for positional slots and [security model](./security-model.md) for payload boundaries.
 
-**Reading.** The changed-file manifest, `list_files`, and `search_files` all walk
-paths in evidence-priority order rather than alphabetically. The 300-entry
-manifest cap on a large dist rebuild therefore drops chunks rather than the
-lifecycle script, and a docs file with many hits cannot crowd the script out of
-a search result (`MAX_SEARCH_MATCHES_PER_FILE` also caps hits per file). Search
-matches carry a 1-based `line`. A `read` without `offset` (or with `offset: 0`,
-which models often fill in) continues each path where it stopped, so cut
-required files are finished with ordinary batched reads rather than one offset
-call per file. A path already shown in full returns no text at no budget cost.
-A nonzero `offset` applies to a single path. Line diffing costs roughly
-lines times edit length, so one `DIFF_WORK_BUDGET` covers a whole review: each
-file's edit cap (at most `MAX_DIFF_EDIT_LENGTH`) shrinks to what is left, and no
-file may spend more than `MAX_FILE_DIFF_WORK`, so one rewritten bundle cannot
-starve the rest. A modified file past its cap shows the lines it removed and
-added as unordered sets, matched as multisets with line endings ignored. That
-costs linear time and no budget, and unlike the staged text it still shows a
-removed check. Without the budget, a release re-indenting a few hundred files
-spent minutes of CPU diffing before the first turn. Any change to this contract bumps
-`AI_REVIEWER_VERSION`.
+### Evaluation commands
 
-## Agent Traces
+1. `pnpm run eval:ai`: Offline recorded schema/scoring evaluation; reports `.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`; write failure fails command.
+2. `CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm run eval:ai:live`: Paid real Workers AI loop; `AI_REVIEW_LIVE_EVAL` gate; reports `.context/eval/ai-review-model-compare.json` and `.context/eval/ai-review-model-compare.md`; write failure fails command.
+3. `pnpm run eval:clef:live`: Paid production screen questions/thresholds; `CLEF_LIVE_EVAL` gate; same credentials (wrangler OAuth token works); reports `.context/eval/clef-injection-screen.{json,md}`.
 
-The AI SDK is wrapped with Cloudflare's Agent Traces integration. Production
-and the self-host template enable persisted traces at a head sample of 1 (every
-invocation); head sampling is worker-wide and cannot be aimed at the reviewer,
-and at 10% the few daily agent turns rarely reached the Agents dashboard. The
-wrapper explicitly sets `storeMessages: false` and `storeTools: false`, and the
-call sets `recordInputs: false` and `recordOutputs: false`, because prompts and
-tool results can contain private pre-release source, secrets, or hostile
-instructions.
+4. Offline input: `test/fixtures/ai-review-eval/cases.json`; validate persisted-review schema, corpus metadata, nonempty required fields, unique IDs across both sets.
+5. Current `cases`: Current-version gated corpus; stale version fails; reject bodies that merely relabel historical output after removing version field.
+6. `historicalCases`: Original version/model; version-agnostic persisted-shape compatibility only, separate totals, never gated metrics.
+7. Empty current corpus: Report contract not recorded; keep previous results historical and never relabel to make gate green.
+8. Offline metrics: Malicious catch, benign cleanliness, safe uncertainty escalation through production `computeScanRisk`; recorded output does not prove hosted reproducibility.
+9. Live inputs: npm/PyPI/VS Code security corpora through production acquisition/review helpers; one model at a time without failover; atpm explicitly skipped (public-diff-only, no staged AI review).
+10. Live completion: Valid `submit_review` before budget ends; reasoning can consume output cap and leave `invalid`, flooring scan at medium and escalating to human. Read this metric first.
+11. Live detection: Product-policy coverage combines AI with full deterministic artifact floor against explicit fixture minimum; frontier catch measures model-only weak-rule cases; benign FP rate is AI-only.
+12. Live release metric: Each run includes production-merged `releaseRisk`; benign release escalation counts AI-only high-or-above release risk because gate reads release risk.
+13. Live cost: Measured tokens with cached input priced separately; missing usage excluded from cost/token averages and reduces cost coverage, never priced as zero.
+14. Pricing: `MODEL_PRICING` in `test/eval/ai-review-live-harness.mjs` records prices/check date; refresh on routing changes; growing repeated prefixes make cache share significant.
+15. Comparison limits: No asserted winner; assess completion, detection, then cost; unsupported, omitted, selected, bounded, and resumed cases remain explicit.
+16. Screen inputs: `test/fixtures/clef-eval/injection-spans.json`: policy/corpus/probe spans and synthetic paraphrases with matched hard negatives.
+17. Screen metrics: Phrase rules alone, screen alone, screen on rule misses, rules-or-screen; synthetic misses bound possible gain, not real-package prevalence.
+18. Screen routing: Full Clef model; evaluate per-org `injection_screen.finished` fire rate before widening flag; compare `spansScreened` to `findingCount`. Zero findings only means nothing in sent spans.
 
-Trace identity follows the AI SDK v7 shape: `telemetry.functionId` names the
-agent, and `agentId`, `agentVersion`, `conversationId`, and `ecosystem` travel
-in the call's `runtimeContext`, each opted onto the span through
-`telemetry.includeRuntimeContext`. v7 removed `telemetry.metadata`; runtime
-context is an application-data channel, so anything not named there stays off
-the span.
+19. `AI_REVIEW_LIVE_MODELS`: Comma-separated IDs, defaults to routed candidates; empty/duplicate lists rejected before network.
+20. `AI_REVIEW_LIVE_LIMIT` / `AI_REVIEW_LIVE_OFFSET`: Fixture cap/resume offset; invalid limits rejected before network.
+21. `AI_REVIEW_LIVE_CASES`: Comma-separated fixture IDs.
+22. `AI_REVIEW_LIVE_GATEWAY` / `AI_REVIEW_LIVE_DIRECT=1`: Gateway selection/direct Workers AI when credential supports it.
+23. `AI_REVIEW_LIVE_REPORT_STEM`: Separate concurrent/checkpointed reports.
+24. `CLEF_LIVE_MODELS` / `CLEF_LIVE_BATCH`: Models/batch size; production uses `MAX_SPANS` in `server/lib/ai-review/injection-screen.ts`.
+25. `CLEF_LIVE_NEUTRAL_PATHS=1`: Hide original span paths.
+26. `CLEF_LIVE_LIMIT` / `CLEF_LIVE_REPORT_STEM`: Bound inputs/separate reports.
 
-Recorded trace data is limited to operation names and timing, model and token
-usage, tool names, the reviewer version, ecosystem capability label, and a
-fresh random conversation id scoped to one invocation. The reviewer gives the
-provider a narrow Workers AI binding facade that omits `aiGatewayLogId`, so the
-trace cannot become an index into Gateway records carrying private review
-metadata. Scan, stage, organization, package, file, message, evidence, and
-tool-result payloads are not added to trace metadata. Traces are debugging
-evidence, not the canonical scan record.
+## Invariants
 
-## Aggregate execution and decision feedback
+1. Package text is hostile evidence, never instructions; the model must never execute, install, import, independently fetch, or render package code (`server/lib/ai-review/contract.ts`).
+2. AI cannot downgrade deterministic findings or approve a release; preserve human approval (`server/lib/review/risk.ts`, `server/lib/ai-review/contract.ts`).
+3. Evidence-policy changes require `AI_REVIEWER_VERSION` bumps (`server/lib/ai-review/contract.ts`).
+4. Paid live harnesses never run in `pnpm test` or `pnpm run verify` (`test/eval/ai-review-live.test.mjs`, `test/eval/clef-live.test.mjs`).
+5. Model failover remains covered by mocked orchestration tests in `test/ai-review.test.mjs`.
 
-`ai_review.finished` records status, final model, reviewer version, duration,
-finding count, steps, and token counts in Analytics Engine. It answers
-review-level availability and latency without storing package evidence.
+## Failure modes
 
-`ai_review.attempted` records every model-level agent attempt, including attempts
-that are recovered by a retry or fallback. Its dimensions are outcome
-(`complete`, `invalid`, `rate_limited`, `capacity`, `timeout`, or `error`), next
-action (`done`, `retry`, `fallback`, or `stop`), model, and reviewer version;
-doubles carry duration, attempt number, steps, and token counts. From 1.9.0 it
-also records counts of what the attempt was shown: changed files, changed files
-read to the end, required paths, required paths still unread when it ended,
-coverage rejections, evidence characters returned, and how many of those came
-from the coverage read. These are counts only, never paths or text. It deliberately
-has no organization, scan, stage, package, prompt, or evidence identifier. Use
-this event for model cost, throttling, and failover analysis: attributing all
-tokens in `ai_review.finished` to its final model would miss an invalid model's
-already-spent budget.
+| Condition | Cause | Result | Fix |
+| --- | --- | --- | --- |
+| Submission cannot be repaired | Invalid/truncated output | `invalid`; fallback or medium floor | Inspect recorded outputs; compare completion before quality. |
+| Required evidence missing | Early submit | Bounded rejection with unread paths | Continue normal reads or search infeasible remainders. |
+| Hosted fixture invocation throws | Transport/harness error | Explicit `harness_error`; paid comparison continues | Inspect error/completion rates without dropping denominator. |
+| Recorded contract stale | Behavioral change without new adjudicated outputs | Gate fails or reports current contract unrecorded | Regenerate/redact/adjudicate; never relabel history. |
+| Trace payload absent | Deliberate privacy controls | Metadata-only debugging | Use harness/recorded output; preserve controls. |
 
-When a maintainer later publishes or discards a reviewed release,
-`ai_review.decided` records that action beside the persisted review's status,
-assessment, model, and reviewer version. This is behavioral feedback, **not a
-correctness label**: a maintainer may accept known risk, discard for unrelated
-reasons, or make a mistake. Promotion decisions need confirmed incident labels
-or a separately adjudicated corpus, not raw agreement rates.
-Disabled-review placeholders do not emit this event because no reviewer attempt
-occurred.
+## Change checklist
 
-## Model routing and capacity
-
-Routing is fixed before a model runs: every release uses GLM 5.3 Flash first,
-with `reasoning_effort: "high"`. Kimi K2.7 Code remains the fallback when GLM
-is unavailable, times out, or submits an invalid review. Kimi keeps its provider-default reasoning configuration. Model output
-never changes this order.
-
-The agent may take up to `MAX_AGENT_STEPS` (100) steps: the model is cheap
-enough that a deep review should end on evidence, not on a step count. Two
-bounds remain. The evidence budget (`MAX_TOTAL_TOOL_RESPONSE_CHARS`, coverage
-read included) caps the package text a run can see. Once a step's input passes
-`SUBMIT_CONTEXT_TOKENS`, set under the smallest candidate's context window
-(Kimi K2.7, 262,144 tokens), the next step may only call `submit_review`, so a
-long run ends in a review rather than a context-overflow error. When the
-provider reports no input tokens, the guard estimates them from the prompt's
-length at `CONTEXT_CHARS_PER_TOKEN`. The last step
-the budget allows is forced the same way. A capacity/5xx failure gets one
-jittered retry;
-a 429 or timeout moves directly to the next model because a sub-second retry
-cannot escape a minute quota. An invalid completed run also moves to the next
-model without re-running the same model. Do not add AI Gateway retries on top of
-this loop: each request pins Gateway attempts to one so account-level retry
-settings cannot multiply requests invisibly. Dynamic routing at individual
-inference-step granularity can also mix models inside one review. The same
-per-request policy turns off Gateway payload collection, including for live
-harness runs, so Gateway logs show request metadata and token counts but never
-a prompt or a completion; debug from recorded outputs and the harness instead
-(see `docs/security-model.md`).
-
-Cloudflare's queue consumer already limits scan concurrency to ten and processes
-one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation
-pool below 80% of its documented limit and Kimi below 60% of its model-specific
-limit; lower queue concurrency or split AI review into a dedicated capacity
-queue before those budgets become sustained constraints.
-
-## Offline eval
-
-Run:
-
-```sh
-pnpm run eval:ai
-```
-
-The test reads `test/fixtures/ai-review-eval/cases.json` and validates every
-result through the real persisted-review schema and scores malicious catch
-behavior, benign cleanliness, and safe uncertainty escalation through the
-production `computeScanRisk` roll-up. Records under `cases` are the gated
-current-version corpus: a stale `reviewerVersion` fails the gate. Records under
-`historicalCases` retain their original version and are scored only as a
-version-agnostic persisted-shape compatibility set. Corpus metadata, non-empty
-required fields, and unique case ids across both sets are validated before
-metrics are computed. The report keeps the two totals separate so historical
-output cannot be mistaken for current reviewer coverage. The gate also compares
-current and historical review bodies without their version field and rejects a
-current record that merely relabels an old output. The current-version gate may
-be empty immediately after a prompt or routing contract changes. In that state
-the report says the current contract is not recorded, and the previous outputs
-remain historical compatibility evidence; they must not be relabeled to make
-the gate green. Reports are written to `.context/eval/ai-review-eval.json` and
-`.context/eval/ai-review-eval.md`; a write failure fails the command.
-
-Recorded outputs prove the scoring contract and guard outputs from the contract
-that produced them; they do not prove the hosted model will reproduce them.
-Historical records never contribute to the gated result. Before promoting a new
-model or reviewer version, refresh the gated corpus from
-controlled live runs, redact evidence, have a human assign the verdict and
-threat class, then compare the new version by category. Keep model failover's
-runtime behavior covered by the mocked orchestration tests in
-`test/ai-review.test.mjs` as well.
-
-## Live model comparison
-
-The offline eval cannot rank hosted models, so model routing has its own
-harness. Run:
-
-```sh
-CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm run eval:ai:live
-```
-
-It drives the real `analyzeWithAi` agent loop against real Workers AI models
-over the npm, PyPI, and VS Code security corpora, one model at a time (no
-failover, or the comparison would measure the wrong model). Each ecosystem case
-is built through its production acquisition/review helpers. atpm remains an
-explicit skip because it is public-diff-only and does not run staged AI review.
-It is paid and network-bound, so it is gated behind `AI_REVIEW_LIVE_EVAL` and
-never runs in `pnpm test` or `pnpm run verify`. Reports land in
-`.context/eval/ai-review-model-compare.json` and
-`.context/eval/ai-review-model-compare.md`; a write failure fails the command.
-
-Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
-routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating),
-`AI_REVIEW_LIVE_OFFSET` (resume after completed fixtures),
-`AI_REVIEW_LIVE_CASES` (comma-separated fixture ids),
-`AI_REVIEW_LIVE_GATEWAY`, `AI_REVIEW_LIVE_DIRECT=1` (bypass Gateway when a
-credential can call Workers AI directly), and `AI_REVIEW_LIVE_REPORT_STEM`
-(isolate reports from concurrent or checkpointed runs). Reports state bounded,
-selected, and resumed coverage explicitly.
-
-The harness rejects empty/duplicate model lists and invalid limits before any
-network call. A thrown fixture invocation becomes an explicit `harness_error`
-run and the comparison continues, preserving the rest of a paid run while
-keeping completion and error rates honest.
-
-It reports three things, in priority order:
-
-1. **Completion rate.** How often the model lands a valid `submit_review`
-   before the step budget ends. Every candidate on the Workers AI catalog is a
-   reasoning model, and reasoning tokens bill against `MAX_REVIEW_OUTPUT_TOKENS`
-   — a model can spend the whole budget thinking and never submit. That returns
-   `invalid`, which floors the scan at medium and escalates the release to a
-   human. A model that scores well on the cases it finishes but often fails to
-   finish is worse for the product than a duller model that always submits.
-2. **Detection quality.** Product-policy coverage combines the AI result with
-   the fixture's full deterministic artifact-risk floor and compares it with
-   that fixture's explicit minimum risk. Frontier AI catch separately measures
-   model-only detection where deterministic coverage is deliberately weak.
-   Benign false-positive rate remains AI-only, so deterministic package context
-   cannot make a clean model response look noisy.
-   Each run also carries `releaseRisk`, scored through the production merge and
-   roll-up, and the model summary reports a benign release escalation rate
-   (benign fixtures the AI alone pushed to high or above), because the workflow
-   gate reads release risk, not the artifact headline.
-3. **Cost.** Measured tokens priced per model, with cached input billed
-   separately. The loop re-sends a prefix that grows to the evidence cap, up to
-   `MAX_AGENT_STEPS` times, so cached-input share dominates the bill: a model
-   with no published cache tier re-bills the whole prefix every step and can
-   cost more than one with double its list price. `MODEL_PRICING` in
-   `test/eval/ai-review-live-harness.mjs` carries the list prices and the date
-   they were checked — refresh it with any routing change, because a stale table
-   silently reorders the comparison. Runs without provider usage are excluded
-   from token and cost averages and reduce the reported cost coverage instead of
-   being priced as zero-cost calls.
-
-The harness deliberately asserts no winner: picking a model is a judgement call
-across all three axes. Unsupported ecosystems and fixtures omitted by `--limit`
-remain explicit in the report rather than disappearing from its denominator.
-
-Context window is a floor, not a selection criterion. A candidate must hold
-`SUBMIT_CONTEXT_TOKENS` plus one more step; past that the loop forces a
-submission, so a larger window is capacity the reviewer never uses. Lowering
-the smallest candidate's window means lowering `SUBMIT_CONTEXT_TOKENS` with it.
-
-## Clef injection screen eval
-
-`pnpm run eval:clef:live` runs the screen's production questions and thresholds
-over `test/fixtures/clef-eval/injection-spans.json`: labeled spans from the
-policy tests, the corpus, the descriptive-manipulation probe, and synthetic
-paraphrases with matched hard negatives. It reports the phrase rules alone, the
-screen alone, the screen on spans the rules missed, and rules-or-screen. Like the
-live comparison it is paid, gated (`CLEF_LIVE_EVAL`), needs
-`CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` (the wrangler OAuth token works),
-and writes `.context/eval/clef-injection-screen.{json,md}`. Options:
-`CLEF_LIVE_MODELS`, `CLEF_LIVE_BATCH` (production sends up to six spans per
-request), `CLEF_LIVE_NEUTRAL_PATHS=1`, `CLEF_LIVE_LIMIT`, `CLEF_LIVE_REPORT_STEM`.
-
-Run of screen 1.0.0, 2026-10-05 (127 spans: 73 injection, 54 benign, 44 hard
-negatives; repeated runs reproduce every number):
-
-|                                                        | clef          | clef-flash    | phrase rules  |
-| ------------------------------------------------------ | ------------- | ------------- | ------------- |
-| Hazard AUROC                                           | 0.971         | 0.862         | —             |
-| Curated positives caught (policy tests + corpus, 30)   | 27            | 14            | 30            |
-| Phrase-rule misses caught (38 synthetic + 4 probe, 42) | 40            | 22            | 0             |
-| Hard negatives fired on (44)                           | 4             | 2             | 4             |
-| Rules ∪ screen precision / recall                      | 89.9% / 97.3% | 89.8% / 72.6% | 88.6% / 42.5% |
-
-The screen routes to the full model; clef-flash misses half the paraphrases.
-The phrase-rule misses are almost all synthetic paraphrases written for this
-eval by the same author as their hard negatives, so 40/42 bounds what the
-screen can add, not what it will find in real packages. Hiding span paths left
-clef at 39/42; six-span batching moves the totals by one span (39/42, 3/44) but
-flips 10 of 127 individual decisions. Read `injection_screen.finished` fire
-rates per organization before widening the flag, and treat `spansScreened`
-against `findingCount` as the denominator: a zero-finding screen means "nothing
-in what we sent", never "this package is clean".
-
-## Promotion checklist
-
-1. Bump `AI_REVIEWER_VERSION` for behavioral changes. Model routing is part of
-   that contract: changing `AI_MODEL` or `AI_FALLBACK_MODEL` is a version bump,
-   but historical outputs must keep their original version and model until they
-   are regenerated under the new contract.
-2. Run the normal reviewer tests and `pnpm run eval:ai`.
-3. For a routing change, run `pnpm run eval:ai:live` over the candidate set and
-   read completion rate before detection quality before cost. Refresh
-   `MODEL_PRICING` first.
-4. Compare completion rate, latency, steps, tokens, and decision distribution
-   by reviewer version; do not treat maintainer action as ground truth.
-5. Refresh and adjudicate recorded outputs for risky categories, including
-   prompt injection, missing evidence, and model failover.
-6. Bump `INJECTION_SCREEN_VERSION` separately when the screen's spans,
-   questions, model, or thresholds change, and re-run `pnpm run eval:clef:live`.
-7. Preserve deterministic findings as authoritative and keep human release
-   approval mandatory.
+1. If reviewer behavior or `AI_MODEL`/`AI_FALLBACK_MODEL` changes → bump `AI_REVIEWER_VERSION`; retain historical output version/model.
+2. If reviewer contract changes → run reviewer tests and `pnpm run eval:ai`.
+3. If routing changes → refresh `MODEL_PRICING`, run `pnpm run eval:ai:live` on candidates, assess completion before detection before cost.
+4. If promoting a version → compare completion, latency, steps, tokens, and decisions by version; use confirmed incidents or separately adjudicated truth, never maintainer agreement alone.
+5. If recording new outputs → controlled live runs, redact evidence, human verdict/threat-class adjudication; cover prompt injection, missing evidence, and failover.
+6. If screen spans/questions/model/thresholds change → independently bump `INJECTION_SCREEN_VERSION` and run `pnpm run eval:clef:live`.
+7. If capacity or context changes → check queue budgets and smallest candidate window; preserve deterministic authority and mandatory human release approval.

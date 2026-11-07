@@ -1,90 +1,193 @@
-# npm package ownership and migration audit
+# npm package claims and migration audit
 
-An npm package claim identifies one organization by the immutable registry URL, `npm` ecosystem, and registry package name. The first verified staged scan can establish a claim for a new package. Public package reviews, public watches, and workflow-gate checkpoints do not establish claims, and a claim never stops another organization's public-release monitoring (see `publication-monitor.md`). Registry access failures cannot establish claims. The staged adapter validates and normalizes registry coordinates through `stagedClaimIdentity` before shared admission code can reserve them. Names come from npm's stage record, so legacy mixed-case names such as `JSONStream` are accepted and kept case-sensitive. A stage whose npm-reported name Drydock cannot review is refused permanently (422); an unverifiable identity remains a retryable 503. A completed scan whose job row disappeared is discarded rather than recreated, so it cannot leave a registry-less reservation. Ownership persists when scans, watches, or credentials disappear; deletion of an organization leaves a reserved claim without an owner.
+A package claim binds one organization to an npm package by immutable registry URL, `npm` ecosystem, and registry package name; it gates staged admission, monitoring enrollment, and the public badge. **Authority:** enforced (staged admission and discovery refuse packages claimed elsewhere). **Owner:** `server/db/package-claims.ts`.
 
-Historical staged scans prevent another organization's automatic first claim until an operator resolves their ownership. They never block the organization that made them: its next verified staged scan claims the package, because npm verifies that scan exactly like a brand-new package's first scan. A shared organization that holds its own history of the package is likewise not blocked by history in the personal workspace of one of its members, matching the move chooser's preference for a shared organization. A team without its own history gets no say over a member's personal package, and a personal workspace is still blocked by a team's history. Packages whose only history predates stored registry identity therefore need no backfill evidence to be reviewed again. Discovery skips stages whose package is claimed elsewhere, reserved, or held by pre-claim history before making any credentialed stage-access request, and reports them as `claimBlocked` plus a redacted `staged_publishes.claim_blocked` operational event. A manual scan blocked while the caller has its own contested pre-claim history says that support must confirm ownership. A scan whose registry URL was never recorded reserves its observed package name on the public npm registry. Those scans predate stored scan coordinates and are treated as public npm history, where historical review took place. This prevents deployment from giving a second organization a previously reviewed package merely because the old scan predates immutable registry coordinates. Such history does not block other registries: blocking them would let an organization that points its connection at a registry it runs learn which names other organizations had reviewed. Existing scans remain separate historical evidence; the migration does not delete, merge, or reassign them.
+## At a glance
 
-## Personal workspaces and organization choice
+| Thing | Owner file | Who may trigger | Pinned by |
+| --- | --- | --- | --- |
+| Claim, reservation, transfer | `server/db/package-claims.ts` | first verified staged scan; owner/admin transfer | `test/package-claim-model.test.ts`, `test/workers/npm-package-claims.test.ts` |
+| Identity normalization | `stagedClaimIdentity` on the staged adapter (`server/lib/ecosystems/npm/index.ts`) | staged admission | `test/workers/npm-package-claims.test.ts` |
+| Admission errors | `server/routes/scans/lifecycle.ts` | manual scan | `test/workers/npm-package-claims.test.ts` |
+| Management choice API | `server/routes/npm-package-claims.ts` | session; personal owner + destination owner/admin | `test/workers/npm-package-claim-management.test.ts` |
+| Personal automatic-scan consent | `server/routes/npm-connection.ts` | personal workspace owner | — |
+| Migration audit tool | `scripts/package-claims-audit.mjs` | operator, offline | `test/package-claims-audit.test.ts` |
 
-A personal workspace's first verified stage creates a **provisional** claim. It permits manual review immediately, but its monitoring and public badge wait for an explicit management choice. **Keep in personal workspace** sets `management_confirmed_at`; the personal claim remains transferable. Shared-organization claims are durable and can manage the package immediately. Personal classification comes from the organization's actual owner and ID, not a client flag.
+Schema: `drizzle/0035_overrated_human_fly.sql` creates an empty `npm_package_claims`; `drizzle/0036_colorful_morlun.sql` adds `management_confirmed_at` and `personal_organization_confirmed_at`.
 
-While a personal claim is provisional, the scan page and the top of the npm package page show one **Choose where this package is managed** card with Keep and Move. The organization picker prefers a shared organization the caller manages, and a workspace with no shared destination gets Keep alone. Once confirmed, the same pages offer **Move to organization** only when a shared destination exists; otherwise they show nothing. Watching a package in the personal workspace opens the same choice only when the server answers `package_management_required` for a provisional claim. The session must own the actual personal workspace and hold a current owner/admin membership in the destination. `GET /api/v1/npm-package-claims/:name` returns only the selected organization's claim and eligible destinations; it never identifies another package owner. `POST` with `targetOrganizationId` confirms the current personal workspace or moves its claim to a shared organization. Both accept a registry selector; public npm is the default.
+## Contract
 
-The claim update, audit events, and public-npm destination watch enrollment happen in one D1 batch. Authorization is checked again by the mutation. Competing transfers cannot both win. A stale claim returns 409. A transfer to a destination with a full watch budget also returns 409 without moving ownership, because the move would otherwise end monitoring. Keeping management in the personal workspace never waits on a watch slot: the claim is confirmed and the badge restored, and a full budget only defers the watch. Its manual candidate enrolls automatically once a slot frees. Team-to-team, team-to-personal, and ownerless-reservation transfers are refused. Confirming or transferring management is an explicit enrollment action and clears the destination's watch opt-out. Existing personal scans, reports, observations, and credentials stay in the personal workspace. Its old watch becomes inactive through the ownership check (the workspace keeps staged reviews of a package another organization now manages) and stops counting toward its watch limit, while the destination starts with its own monitoring history. The destination watch's start time is the source watch's last check, or its creation if it never checked. Releases published while the source was paused awaiting the choice are therefore examined by the destination; those reviewed only in the personal workspace alert there as unreviewed. The last check is a lease taken when a check starts, so a last check that failed or stopped at its per-run limit can still leave earlier releases unexamined. The move is permanent from the product: shared claims cannot be moved again. Confirming a claim that is already confirmed is a no-op that keeps the original timestamp and audit event. Transfer audit events record the registry, source, and destination organization. Its badge requires its own qualifying review; old personal approvals do not become team approvals.
+### What establishes a claim
 
-Personal automatic scanning has a separate workspace choice when connecting or validating npm. Only an explicit `confirmPersonalOrganization: true` records `personal_organization_confirmed_at` on that connection. Without it, cron reconciles existing releases but creates no new scans in the personal workspace. Shared connections need no personal acknowledgment. This choice never copies an npm token into another organization. Existing personal connections must make the choice after rollout; manual review remains available. The choice can also be recorded through `POST /api/v1/npm-connection/personal-confirmation`, which never contacts npm, so an unreachable registry cannot trap a workspace. Every path keeps the first confirmation timestamp and writes one `npm_connection.personal_confirmed` audit event; rotating or revalidating the token repeats neither. A pending choice never hides token rotation or disconnect. While it is pending, the dashboard shows a callout linking to the choice, and the Settings npm card is marked "automatic scans off" rather than valid.
+| Event | Establishes a claim? |
+| --- | --- |
+| First verified staged scan of an unclaimed package | Yes (personal workspace: **provisional**) |
+| Organization's own next verified staged scan, when only its own pre-claim history exists | Yes |
+| Public package review, public watch, workflow-gate checkpoint | No |
+| Registry access failure | No |
+| Operator backfill (`approved-claims.sql`) | Yes, for explicitly approved packages |
 
-## Build a private inventory
+| Admission outcome | Status |
+| --- | --- |
+| npm-reported name Drydock cannot review | 422, permanent |
+| Identity or stage access cannot be verified | 503, retryable |
+| Package claimed elsewhere, reserved, or held by unrelated pre-claim history (discovery) | skipped before any credentialed stage request; counted as `claimBlocked`; redacted `staged_publishes.claim_blocked` event |
+| Manual scan blocked while the caller has its own contested pre-claim history | message says support must confirm ownership |
 
-The audit command only reads an exported JSON file. It never invokes Wrangler, connects to D1, or applies SQL. Its fixed export query reads selected identity and lifecycle fields from `scans`, organization names, and a derived personal-workspace classification from `organizations`, excluding credentials, report contents, errors, and user details. The classification checks whether the organization's ID equals `personal:` plus its actual owner user ID; the owner's ID is not exported. It includes the npm staged sources `manual` and `auto_discovery`; public-diff and workflow-gate records cannot prove npm stage ownership.
+### Pre-claim history
 
-Production inventories contain organization and package identifiers. Keep raw exports, reports, approvals, and generated SQL outside every repository and PR. Use an access-controlled private directory with `umask 077`. Do not paste their contents into public issues or comments. The command refuses output paths within this checkout, symlink ancestors, existing output directories, and overwrites; newly created directories and files use modes 0700 and 0600. Choose an actual directory path rather than a symlink such as `/tmp` on macOS (`/private/tmp` is the actual path). Avoid a temporary directory for the durable audit record.
+| History holder | Blocks automatic claim by |
+| --- | --- |
+| Organization A | every other organization, until an operator resolves it; never A itself |
+| A member's personal workspace | not a shared organization that holds its own history of the package |
+| A shared organization | a member's personal workspace (a team without its own history has no say over a member's personal package) |
+| A scan with no recorded registry URL | treated as public npm history: blocks public npm only, never other registries |
 
-```sh
-umask 077
-node scripts/package-claims-audit.mjs --query > /private/operator-audit/export.sql
-pnpm exec wrangler d1 execute staged-publish-review --remote --json --file /private/operator-audit/export.sql > /private/operator-audit/staged-inventory.json
-node scripts/package-claims-audit.mjs --input /private/operator-audit/staged-inventory.json --output /private/operator-audit/review-1
-```
+The organization holding the history claims with its next verified scan, because npm verifies that scan exactly like a new package's first scan; packages whose only history predates stored registry identity need no backfill evidence to be reviewed again by it.
 
-Create the private parent directory first; `review-1` must not exist. The Wrangler invocation is a separate operator action, authorized for reads only. Export after installing the code's schema migration when preparing an eventual apply; inventory export itself does not need the claims table.
+### Personal workspaces
 
-`audit.md` summarizes observed registry/package groups, organizations, duplicate ownership candidates, and evidence issues. `inventory.json` includes the inventory SHA-256, each scan's ID, stage ID, immutable coordinates, observed manifest coordinates, organization identity, source/status, and per-organization counts and first/last timestamps (Unix milliseconds). Every group is unapproved, including groups with only one organization. Missing registry coordinates remain explicitly unknown. Canonical registry URLs and their historical trailing-slash variants share one audit group; each evidence row retains its original URL for revalidation. Approvals use the canonical URL without a trailing slash. Other noncanonical or unsupported URLs are flagged and cannot be approved by this tool; they require separate investigation rather than implicit repairs. A display fallback to a manifest package name is an inventory label, never a claim assignment.
+| State | Manual review | Monitoring and badge | UI offers |
+| --- | --- | --- | --- |
+| Provisional personal claim | yes | wait for a choice | **Choose where this package is managed** card: Keep + Move (Keep only if no shared destination) |
+| Confirmed personal claim (`management_confirmed_at` set) | yes | yes | **Move to organization** only when a shared destination exists |
+| Shared-organization claim | yes | yes, immediately | nothing (durable; cannot be moved again from the product) |
 
-## Explicit public npm registry assumption
+- Personal classification comes from the organization's actual owner and id, never a client flag.
+- The card appears on the scan page and at the top of the npm package page. **Watch package** in the personal workspace opens it only when the server answers `package_management_required`. The picker prefers a shared organization the caller manages.
 
-When the operator has independently confirmed that every historical row belongs to public npm, add `--assume-public-npm-registry` to the report command and to any later SQL-generation command. The option assigns only missing registry URLs to `https://registry.npmjs.org` for grouping and approvals. It refuses contradictory recorded registries, retains the raw null URL and an assumption marker on each affected evidence row, and never supplies a missing immutable package name or version. Missing raw URL issues remain visible even when the approved assumption resolves their namespace.
+### Endpoints
 
-```sh
-node scripts/package-claims-audit.mjs --input /private/operator-audit/staged-inventory.json --output /private/operator-audit/public-npm-review --assume-public-npm-registry
-```
+| Method | Path | Auth | Effect |
+| --- | --- | --- | --- |
+| GET | `/api/v1/npm-package-claims/:name` | session | Active organization's claim and eligible destinations; never identifies another owner |
+| POST | `/api/v1/npm-package-claims/:name` `{ targetOrganizationId, registryUrl? }` | session owns the personal workspace + current owner/admin of destination | Confirm in place, or move to a shared organization |
+| POST | `/api/v1/npm-connection/personal-confirmation` | personal workspace owner | Record automatic-scan consent; never contacts npm |
 
-The report and generated SQL state the assumption explicitly. The inventory hash includes it, so approval files from a strict audit cannot be reused under the assumption or vice versa. A row missing only its registry URL can then support an explicitly selected owner; rows missing immutable package names or versions still require independent evidence recovery. SQL continues to revalidate the original null registry field and all competing history before assigning anything. This option changes only the private audit workflow, not runtime support for custom registries.
+- Registry selector: `registryUrl` (query for GET, body for POST); default public npm.
+- POST errors: 400 invalid input, 403 not authorized, 409 stale claim, 409 destination watch budget full (ownership not moved).
+- Refused transfers: team to team, team to personal, ownerless reservation.
 
-## Audit and explicitly select owners
+### Transfer effects
 
-Review competing organizations, historical migrations, and whether the proposed organization is the actual continuing owner. The earliest timestamp is evidence, not an automatic ownership rule. Record the human decision and supporting evidence in a private audit record.
+1. Claim update, audit events (`npm_package.management_confirmed` / `npm_package.management_transferred`, recording registry, source, destination), and public-npm destination watch enrollment commit in one D1 batch; the mutation re-checks authorization; competing transfers cannot both win.
+2. Confirming or transferring is an explicit enrollment action and clears the destination's watch opt-out.
+3. Keep never waits on a watch slot: the claim is confirmed and the badge restored; a full budget only defers the watch, which enrolls once a slot frees.
+4. Confirming an already-confirmed claim is a no-op that keeps the original timestamp and audit event.
+5. Personal scans, reports, observations, and credentials stay in the personal workspace. Its old watch becomes inactive through the ownership check and stops counting toward its limit.
+6. The destination watch starts at the source watch's last check (or its creation if it never checked), so releases published while the source paused are examined there; releases reviewed only in the personal workspace alert there as unreviewed. The last check is a lease taken at check start, so a failed or limit-stopped last check can leave earlier releases unexamined.
+7. The destination badge needs its own qualifying review; personal approvals never become team approvals.
 
-Each organization is labeled `personal_provisional`, `shared_durable`, or `unresolved` in the report. These describe the claim that an explicit approval would create, not a preselected owner or an existing confirmation. The classification is bound to the inventory hash and revalidated against the actual organization owner at application time. Older exports without `organization_is_personal` must be refreshed; do not fill it from the ID prefix alone.
+### Personal automatic scanning
 
-New approved personal claims receive `management_confirmed_at = NULL`, leaving the personal workspace decision to its user. New approved shared-organization claims receive the application timestamp. Reapplying an approval for the same owner preserves the original claim, stage, timestamps, and any personal management confirmation already made. Personal claims remain eligible for the supported move to a shared organization even after confirmation; this backfill tool never performs that transfer or clears a user's decision.
+- Connecting or validating npm in a personal workspace records `personal_organization_confirmed_at` only with explicit `confirmPersonalOrganization: true`. Without it, cron reconciles existing releases but creates no new personal scans. Shared connections need no acknowledgment.
+- Every path keeps the first timestamp and writes one `npm_connection.personal_confirmed` audit event; token rotation or revalidation repeats neither.
+- The choice never copies an npm token to another organization. Existing personal connections must make it; manual review stays available.
+- A pending choice never hides token rotation or disconnect. The dashboard shows a callout; the Settings npm card reads "automatic scans off", not valid.
 
-Approvals require a scan with complete immutable registry URL (or the explicit public npm assumption above), package name, and version, an existing matching organization, and no disagreement between its immutable coordinates and its observed package/version. A scan need not have completed its content analysis to supply registry identity, but failed or unfinished scans warrant particular scrutiny. A collision can be resolved by an explicit approval once reviewed; the generated SQL also checks all competing scans for changes.
+## Operator runbook: historical ownership backfill
 
-For legacy scans lacking immutable coordinates, or identity mismatches, recover and review independent registry-control-plane evidence first. The tool deliberately cannot invent registry identity from the manifest, a current connection, an unscoped package name, or a badge. An unresolved legacy package stays unavailable to unrelated organizations, while the organization holding its history claims it with its next verified scan. Deleting the last staged history of a name preserves a reservation without an owner: known registry identity uses its canonical registry key; unknown registry identity uses an internal `*` registry key that, like the history it replaces, blocks public npm acquisition. While other staged history of the name remains, deletion adds no reservation: that history still blocks unrelated organizations, and an ownerless reservation would deactivate its holders' monitoring and block their own next claim. Complete history disappears only with its organization, so a contest ends when one contender deletes its organization. Neither reservation authorizes an organization. This ordinary backfill tool refuses both kinds of existing ownerless reservation; resolving them requires a separately reviewed operator migration. Use a separately reviewed recovery migration when no complete historical scan can serve as evidence; do not populate scan registry fields by guessing merely to satisfy this tool. The audit tool cannot release or reassign ownership. Shared-organization reassignment requires a separately reviewed operator migration; the supported personal-to-shared move uses the authenticated product workflow.
+Inventories contain organization and package identifiers. Keep exports, reports, approvals, and SQL outside every repository and PR, in an access-controlled private directory; never paste them into issues or comments. The script never invokes Wrangler, connects to D1, or applies SQL.
 
-Create an approval JSON file outside the repository. Nothing is preselected, and there is no approve-all switch:
+1. Drain existing scan jobs, then apply migrations `0035` and `0036` (preparing an apply needs the claims schema; the export itself does not).
+2. Create a real private directory (not a symlink: on macOS use `/private/tmp`, not `/tmp`; avoid temp dirs for the durable record):
 
-```json
-{
-  "inventory_sha256": "copy the exact hash from inventory.json",
-  "approvals": [
-    {
-      "registry_url": "https://registry.npmjs.org",
-      "package_name": "example-package",
-      "organization_id": "reviewed-organization-id",
-      "evidence_scan_id": "reviewed-scan-id"
-    }
-  ]
-}
-```
+   ```sh
+   umask 077
+   mkdir -p /private/operator-audit
+   ```
 
-Generate, inspect, and retain the resulting SQL privately:
+3. Generate the fixed read-only export query and run it (a separate operator action, authorized for reads only):
 
-```sh
-node scripts/package-claims-audit.mjs --input /private/operator-audit/staged-inventory.json --approvals /private/operator-audit/approvals.json --output /private/operator-audit/approved-1
-```
+   ```sh
+   node scripts/package-claims-audit.mjs --query > /private/operator-audit/export.sql
+   pnpm exec wrangler d1 execute staged-publish-review --remote --json --file /private/operator-audit/export.sql > /private/operator-audit/staged-inventory.json
+   ```
 
-`approved-claims.sql` is an artifact for separate operator approval and application. Generation does not authorize or execute a production write. The generator limits each statement to a conservative 90,000 bytes; select fewer packages per artifact if that budget is exceeded. A single package with too much history needs a separately reviewed migration strategy. Migration `0035` creates an empty claims table; additive migration `0036` adds the nullable claim-management and personal-connection confirmation timestamps. Neither migration assigns owners or confirms personal management, and both must precede application of the seven-column approval SQL.
+4. Build the audit (the output directory must not exist):
 
-## Rollout prerequisite
+   ```sh
+   node scripts/package-claims-audit.mjs --input /private/operator-audit/staged-inventory.json --output /private/operator-audit/review-1
+   ```
 
-Audit and resolve the historical inventory before enabling claim enforcement in production. Apply the schema and reviewed ownership assignments before deploying the new Worker; an empty claims table intentionally makes historical npm badges unavailable until the package is assigned by the backfill or, when its history is uncontested, claimed by its next verified scan. Unresolved legacy rows block automatic claims by unrelated organizations; deletion under the new Worker atomically preserves an ownerless reservation. Complete evidence recovery and explicit assignments before activation to avoid interrupting existing scans or badges. Drain existing scan jobs before the final inventory export so their changing status does not invalidate the reviewed snapshot. Assigned claims remain durable after history or organization deletion.
+   Only if every historical row is independently confirmed to be public npm, add `--assume-public-npm-registry` here and to step 7.
 
-## Apply and verify only after approval
+5. Review `audit.md` and `inventory.json`; decide owners by evidence, not earliest timestamp. Record the decision and evidence privately.
+6. Write the approvals file at /private/operator-audit/approvals.json (nothing is preselected; no approve-all switch):
 
-The SQL uses one atomic INSERT statement. Before inserting any selected claims, it revalidates all selected packages' inventory rows, organization names, and personal-workspace classification, including competing organizations, equivalent trailing-slash registry URLs, and legacy rows with unknown registries. Existing noncanonical claim keys also abort application until separately resolved. Added, deleted, or changed evidence aborts the whole statement with a `malformed JSON` guard error. A conflicting claim—including a reservation left by a deleted organization or a personal claim moved to a shared organization since review—also aborts every insertion. The unique key prevents concurrent acquisition; identical-owner reruns preserve the original claim and confirmation timestamps.
+   ```json
+   {
+     "inventory_sha256": "copy the exact hash from inventory.json",
+     "approvals": [
+       {
+         "registry_url": "https://registry.npmjs.org",
+         "package_name": "example-package",
+         "organization_id": "reviewed-organization-id",
+         "evidence_scan_id": "reviewed-scan-id"
+       }
+     ]
+   }
+   ```
 
-Apply only the inspected artifact under separate write authorization. Verify the selected keys and organizations in `npm_package_claims` after application and retain that verification privately. If validation fails, re-export and re-audit the changed state; do not remove guards. Normal scan status changes can invalidate the snapshot, so generate from a fresh export near the approved maintenance window. Never use `INSERT OR REPLACE` or delete another claim to force a backfill through.
+7. Generate the SQL:
 
-The inventory export is read-only. This feature rollout does not itself authorize applying the schema migration, assigning historical owners, or deploying the Worker to production.
+   ```sh
+   node scripts/package-claims-audit.mjs --input /private/operator-audit/staged-inventory.json --approvals /private/operator-audit/approvals.json --output /private/operator-audit/approved-1
+   ```
+
+8. Inspect `approved-claims.sql` in the `approved-1` directory. Apply only that artifact, under separate write authorization, near the maintenance window from a fresh export.
+9. Verify the selected keys and organizations in `npm_package_claims`; retain the verification privately.
+10. Deploy the claim-enforcing Worker only after steps 1–9.
+
+If application aborts, re-export and re-audit (step 3); never remove guards, use `INSERT OR REPLACE`, or delete another claim.
+
+### Audit tool contract
+
+- **Export columns:** identity and lifecycle fields from `scans`, organization names, derived personal classification (id equals `personal:` + owner user id; owner id not exported); no credentials, report contents, errors, or user details.
+- **Sources:** npm staged `manual` and `auto_discovery` only; public-diff and workflow-gate records cannot prove stage ownership.
+- **Output safety:** refuses paths inside the checkout, symlink ancestors, existing directories, overwrites; modes 0700 / 0600.
+- **`audit.md`:** registry/package groups, organizations, duplicate-owner candidates, evidence issues; every group unapproved.
+- **`inventory.json`:** inventory SHA-256; per scan: id, stage id, immutable coordinates, observed manifest coordinates, organization, source/status; per-organization counts and first/last timestamps (Unix ms). Missing registry coordinates stay explicitly unknown; a display fallback to a manifest package name is an inventory label, never a claim assignment.
+- **Organization labels:** `personal_provisional`, `shared_durable`, `unresolved`: the claim an approval would create, bound to the inventory hash, revalidated at apply. Older exports lacking `organization_is_personal` must be refreshed, never filled from the id prefix.
+- **Registry URLs:** canonical URLs and trailing-slash variants share a group; approvals use the canonical URL without a trailing slash; other noncanonical or unsupported URLs are flagged and cannot be approved.
+- **`--assume-public-npm-registry`:** assigns only missing registry URLs to `https://registry.npmjs.org`; refuses contradictory recorded registries; keeps the raw null and an assumption marker; never supplies a missing package name or version; stated in report and SQL; included in the inventory hash so approvals do not cross modes; missing-URL issues stay visible; SQL still revalidates the original null registry field; private workflow only, not runtime custom-registry support.
+- **Approval requires:** complete immutable registry URL (or the assumption), package name, version; an existing matching organization; no disagreement between immutable and observed package/version. Unfinished or failed scans may supply identity but deserve scrutiny. A collision can be resolved by explicit approval once reviewed.
+- **Ownership written:** personal approvals: `management_confirmed_at = NULL`; shared: application timestamp. Reapplying for the same owner preserves claim, stage, timestamps, and any confirmation. The tool never transfers or clears a user's decision.
+- **SQL size:** each statement ≤ 90,000 bytes; select fewer packages per artifact if exceeded; a single package with too much history needs a separately reviewed migration strategy.
+- **SQL shape:** one atomic seven-column `INSERT` that first revalidates every selected package's inventory rows, organization names, classification, competing organizations, trailing-slash variants, and unknown-registry legacy rows.
+- **SQL aborts on:** added/deleted/changed evidence (`malformed JSON` guard error); existing noncanonical claim keys; any conflicting claim, including a deleted organization's reservation or a personal claim moved since review.
+
+## Invariants
+
+1. A claim never stops another organization's public-release monitoring ([publication-monitor.md](./publication-monitor.md)).
+2. Names come from npm's stage record, never the manifest, so legacy mixed-case names such as `JSONStream` are accepted and kept case-sensitive.
+3. A completed scan whose job row disappeared is discarded, never recreated, so it cannot leave a registry-less reservation.
+4. Ownership persists when scans, watches, or credentials disappear. Deleting an organization leaves a reserved claim without an owner.
+5. Deleting the last staged history of a name leaves an ownerless reservation: known registry identity uses its canonical key; unknown identity uses internal registry key `*`, which blocks public npm acquisition. While other staged history remains, deletion adds no reservation (it would deactivate the holders' monitoring and block their own next claim).
+6. A contest over complete history ends only when one contender deletes its organization. No reservation authorizes an organization.
+7. The audit tool cannot invent registry identity from the manifest, a current connection, an unscoped name, or a badge, and refuses existing ownerless reservations; those, shared-organization reassignment, and packages with no usable historical scan need a separately reviewed operator migration. Never populate scan registry fields by guessing.
+8. An empty claims table intentionally makes historical npm badges unavailable until a package is assigned by backfill or, when uncontested, claimed by its next verified scan.
+9. The backfill does not delete, merge, or reassign existing scans. Neither migration assigns owners or confirms personal management. Generating SQL authorizes no production write; this rollout does not itself authorize applying the migration, assigning owners, or deploying.
+
+## Failure modes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Discovery skips a package (`claimBlocked`) | claimed elsewhere, reserved, or unrelated pre-claim history | operator backfill or the claimant's next verified scan |
+| Manual scan says support must confirm ownership | caller's own history is contested | audit and approve via the runbook |
+| 409 on move | stale claim, or destination watch budget full | reload; free a watch slot in the destination |
+| Badge and monitoring paused in personal workspace | provisional claim | Keep or Move |
+| "automatic scans off" on Settings | personal automatic-scan consent pending | confirm via the callout or `POST /api/v1/npm-connection/personal-confirmation` |
+| SQL apply aborts | snapshot changed or conflicting claim | fresh export, re-audit |
+| Approval refused for a legacy row | missing immutable coordinates or mismatch | recover independent registry evidence first |
+
+## Change checklist
+
+- Claim rule change → `server/db/package-claims.ts`, the tables here, `test/package-claim-model.test.ts`, and [security-model.md](./security-model.md) if admission authority changes.
+- Audit tool change → `scripts/package-claims-audit.mjs`, the audit tool table, `test/package-claims-audit.test.ts`.
+- New claim column → migration via `pnpm db:generate`, the approval SQL column list, and the runbook.
+
+## Why
+
+- Treating registry-less legacy scans as public npm history stops a deployment from handing a previously reviewed package to a second organization merely because the old scan predates immutable coordinates.
+- That history does not block other registries: otherwise an organization pointing its connection at a registry it runs could learn which names other organizations reviewed.
