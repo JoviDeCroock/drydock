@@ -22,10 +22,12 @@ import {
 } from "../db/scans";
 import {
   buildBadgePayload,
+  buildBadgeVerdict,
   buildThreatFeedEntry,
   badgeRowTag,
   badgeTagMatches,
   buildUnavailableBadgePayload,
+  DEFAULT_BADGE_TAG,
   isValidBadgeTag,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
@@ -52,6 +54,7 @@ import {
   serializeReportExportDocument,
 } from "../lib/scan/report-export";
 import { scanArtifactReadBucket } from "../lib/scan/artifacts";
+import type { AppDb } from "../db/client";
 import type { Bindings, Variables } from "../types";
 
 // The unguessable share token is the authentication boundary for report routes.
@@ -80,7 +83,7 @@ publicReportsRoutes.use("*", async (c, next) => {
   });
 });
 
-const COLO_CACHED_PATHS = [/^\/badge\//, /^\/threat-feed\.json$/];
+const COLO_CACHED_PATHS = [/^\/badge\//, /^\/badge-verdict\//, /^\/threat-feed\.json$/];
 
 publicReportsRoutes.use("*", async (c, next) => {
   if (c.req.method !== "GET") return next();
@@ -107,7 +110,12 @@ publicReportsRoutes.use("*", async (c, next) => {
   if (!ip) return next();
   const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
   const isBadgeRequest = routePath.startsWith("/badge/");
-  const rate = isBadgeRequest ? PUBLIC_BADGE_READ_RATE : PUBLIC_READ_RATE;
+  // The verdict is the badge's answer in another shape, so it spends the same
+  // budget: two routes must not double what one IP can read about a package.
+  const rate =
+    isBadgeRequest || routePath.startsWith("/badge-verdict/")
+      ? PUBLIC_BADGE_READ_RATE
+      : PUBLIC_READ_RATE;
   try {
     await enforceRateLimit(c.env, {
       key: `${rate.bucket}:${ip}`,
@@ -173,30 +181,53 @@ function badgeOutcome(match: SharedScanRow | null, superseded: BadgeSupersession
   return "reviewed";
 }
 
-publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
+type PublicReportsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * The package named after `/<routePrefix>/<ecosystem>/` in the request path, or
+ * an error response.
+ * Shared by the badge and its verdict so both accept exactly the same names.
+ */
+function badgeRequestTarget(
+  c: PublicReportsContext,
+  routePrefix: string,
+): { ecosystem: PublicEcosystem; packageName: string } | { error: Response } {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
-    return c.json({ error: "unknown ecosystem" }, 404, BADGE_ERROR_HEADERS);
+    return { error: c.json({ error: "unknown ecosystem" }, 404, BADGE_ERROR_HEADERS) };
   }
-  const marker = `/badge/${ecosystem}/`;
+  const marker = `/${routePrefix}/${ecosystem}/`;
   const markerIndex = c.req.path.indexOf(marker);
   const rawName = markerIndex >= 0 ? c.req.path.slice(markerIndex + marker.length) : "";
   let packageName: string;
   try {
     packageName = decodeURIComponent(rawName);
   } catch {
-    return c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS);
+    return { error: c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS) };
   }
   if (!packageName || packageName.length > publicPackageNameMax(ecosystem)) {
-    return c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS);
+    return { error: c.json({ error: "invalid package name" }, 400, BADGE_ERROR_HEADERS) };
   }
-  const rawTag = c.req.query("tag")?.trim();
-  if (rawTag !== undefined && !isValidBadgeTag(rawTag)) {
-    return c.json({ error: "invalid tag" }, 400, BADGE_ERROR_HEADERS);
-  }
-  const tag = resolveBadgeTag(rawTag);
+  return { ecosystem, packageName };
+}
 
-  const db = c.var.db;
+interface ResolvedBadge {
+  match: SharedScanRow | null;
+  supersededBy: BadgeSupersession | null;
+  route: "" | "post_release" | "default" | "listed";
+}
+
+/**
+ * The one read behind every claim the badge makes. The `/diff` verdict goes
+ * through it too, so the page a badge click lands on can never say more than
+ * the badge did.
+ */
+async function resolveBadge(
+  db: AppDb,
+  ecosystem: PublicEcosystem,
+  packageName: string,
+  tag: string,
+): Promise<ResolvedBadge> {
   // Two ways in, unioned: reviews an organization deliberately listed, and
   // approved releases of packages that need no opt-in at all. A review can
   // satisfy both, so dedupe by id, and order the union rather than either
@@ -241,6 +272,27 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   // speak for, or has its publication monitor recorded npm serving something
   // its reviews do not vouch for?
   const supersededBy = match ? await findBadgeSupersession(db, match) : null;
+  const route = match
+    ? match.postRelease
+      ? "post_release"
+      : defaultOn.some((row) => row.scanId === match.scanId)
+        ? "default"
+        : "listed"
+    : "";
+  return { match, supersededBy, route };
+}
+
+publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
+  const target = badgeRequestTarget(c, "badge");
+  if ("error" in target) return target.error;
+  const { ecosystem, packageName } = target;
+  const rawTag = c.req.query("tag")?.trim();
+  if (rawTag !== undefined && !isValidBadgeTag(rawTag)) {
+    return c.json({ error: "invalid tag" }, 400, BADGE_ERROR_HEADERS);
+  }
+  const tag = resolveBadgeTag(rawTag);
+
+  const { match, supersededBy, route } = await resolveBadge(c.var.db, ecosystem, packageName, tag);
   // A serve, not an impression: shields (and Camo, on GitHub) sit in front of
   // this handler, and the colo cache means repeats inside the TTL never reach
   // it at all. What this counts is proxies refreshing their copy.
@@ -253,15 +305,32 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
     packageName: match ? packageName : "",
     tag: match ? tag : "",
     outcome: badgeOutcome(match, supersededBy),
-    route: match
-      ? match.postRelease
-        ? "post_release"
-        : defaultOn.some((row) => row.scanId === match.scanId)
-          ? "default"
-          : "listed"
-      : "",
+    route,
   });
   return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
+    "cache-control": "public, max-age=300",
+    "access-control-allow-origin": "*",
+  });
+});
+
+/**
+ * The default-tag badge's answer as structured data, for the `/diff` page a
+ * README badge links to. Same names, same read, same 300s colo cache and the
+ * same rate-limit bucket as the badge; the disclosure envelope is the badge's
+ * (a version and a decision — no link, no findings, no organization), and
+ * `{ verdict: null }` is byte-identical for every package the badge would call
+ * `not reviewed`. Not a badge serve, so it records no `badge.served`.
+ */
+publicReportsRoutes.get("/badge-verdict/:ecosystem/*", async (c) => {
+  const target = badgeRequestTarget(c, "badge-verdict");
+  if ("error" in target) return target.error;
+  const { match, supersededBy } = await resolveBadge(
+    c.var.db,
+    target.ecosystem,
+    target.packageName,
+    DEFAULT_BADGE_TAG,
+  );
+  return c.json({ verdict: buildBadgeVerdict(match, supersededBy) }, 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
   });

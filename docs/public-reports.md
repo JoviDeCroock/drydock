@@ -709,6 +709,23 @@ latest published pair on load), while PyPI and VS Code — which have no
 package-only diff form — link the share URL the maintainer copied, correct at
 copy time but version-pinned.
 
+### The verdict on the badge's click target
+
+An npm badge links to `/diff/<name>`, which resolves to the latest published
+pair. `GET /public/badge-verdict/:ecosystem/:package` hands that page the
+default-tag badge's answer as data — `{ verdict: null }` or
+`{ verdict: { version, outcome, decidedAfterPublish } }` with `outcome` one of
+`approved`, `rejected`, `published_without_approval` — from the same read the
+badge runs, so it can never say more than the badge. It says less: `not
+reviewed`, an undecided `reviewed · <risk>`, a superseded `not reviewed`, and
+any `unverified` pick are all `null`, because the page words the claim as the
+publisher's own and already shows its own risk grade. The page renders it only
+when `version` equals the diff's `to` version, so an older pair, or a newer
+release the badge has not caught up with, carries no claim. Same rate-limit
+bucket and 300s colo cache as the badge, purged with it. Approval copy states
+no timing beyond `decidedAfterPublish`: a staged review ran before release, but
+its decision may have come after npm published.
+
 ## Threat feed
 
 `GET /public/threat-feed.json` is a discoverable index (schema
