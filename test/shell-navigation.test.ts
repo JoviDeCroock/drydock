@@ -10,7 +10,12 @@ import { MarketingHeaderActions } from "../src/pages/MarketingHeaderActions";
 import NotFoundPage from "../src/pages/NotFound";
 
 function linkLabels(html: string): string[] {
-  return [...html.matchAll(/<a [^>]*>([^<]+)<\/a>/g)].map(([, label]) => label);
+  return [...html.matchAll(/<a [^>]*>([\s\S]*?)<\/a>/g)].map(([, label]) =>
+    label
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 }
 
 async function renderHeader(path: string, authed: boolean) {
@@ -77,7 +82,7 @@ describe("signed-in header", () => {
       h(LocationProvider, null, h(AppHeaderActions, { current: "dependencies" })),
     );
 
-    expect(linkLabels(html).slice(0, 3)).toEqual(["Reviews", "Dependencies", "Settings"]);
+    expect(linkLabels(html).slice(0, 3)).toEqual(["Reviews", "Dependencies Beta", "Settings"]);
   });
 });
 
