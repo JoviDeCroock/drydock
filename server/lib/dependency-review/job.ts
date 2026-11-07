@@ -23,7 +23,7 @@ import { recordScanEvent } from "../../db/events";
 import { recordProductEvent } from "../analytics";
 import { getPublicDiffAdapter } from "../ecosystems";
 import { type InstallationTokenScope, withInstallationToken } from "../github-app/api";
-import { readGithubAppConfig } from "../github-app/config";
+import { GithubAppValidationError, readGithubAppConfig } from "../github-app/config";
 import { getInstallationExternalId } from "../github-app/persistence";
 import { parseRepositoryFullName } from "../github-app/validation";
 import { dependencyReviewUrl, publicDiffUrl } from "../notify/links";
@@ -201,26 +201,44 @@ export async function executeDependencyReviewJob(
     return;
   }
   const appConfig = readGithubAppConfig(env);
-  await withInstallationToken(
-    appConfig,
-    installationId,
-    dependencyReviewTokenScope(review.repositoryId),
-    (token) =>
-      runDependencyReviewWithToken(
-        {
-          env,
-          ctx,
-          db,
-          review,
-          repo,
-          token,
-          appId: appConfig.appId,
-          detailsUrl: dependencyReviewUrl(env, review.id, review.organizationId),
-        },
-        input,
-        options,
-      ),
-  );
+  let minted = false;
+  try {
+    await withInstallationToken(
+      appConfig,
+      installationId,
+      dependencyReviewTokenScope(review.repositoryId),
+      (token) => {
+        minted = true;
+        return runDependencyReviewWithToken(
+          {
+            env,
+            ctx,
+            db,
+            review,
+            repo,
+            token,
+            appId: appConfig.appId,
+            detailsUrl: dependencyReviewUrl(env, review.id, review.organizationId),
+          },
+          input,
+          options,
+        );
+      },
+    );
+  } catch (err) {
+    // The installation lost this repository or has not accepted the review's
+    // permissions. Retrying cannot fix that, and nothing else would move the
+    // review out of `queued`. An Approve click leaves the finished review alone.
+    if (
+      minted ||
+      !(err instanceof GithubAppValidationError) ||
+      err.code !== "repository_not_accessible"
+    )
+      throw err;
+    if (!input.approver) {
+      await failDependencyReview(db, review.id, "installation cannot reach the repository");
+    }
+  }
 }
 
 /** Every GitHub call a review, an approval, or a skip makes, on that one repository. */

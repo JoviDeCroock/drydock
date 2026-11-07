@@ -445,7 +445,9 @@ describe("github-app routes", () => {
   test("GET /installations/:id/repositories/:owner/:repo/environments returns 403 when the install cannot scope a token to the repo", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response("{}", { status: 422 }));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"message":"raw GitHub detail"}', { status: 422 }));
 
     const res = await callGithubAppRoute(
       buildTestApp(mountGithubApp, { userId }),
@@ -454,7 +456,10 @@ describe("github-app routes", () => {
     );
 
     expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: "repository_not_accessible" });
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe("repository_not_accessible");
+    expect(body.error).toMatch(/cannot grant the repository access this request needs$/);
+    expect(body.error).not.toContain("raw GitHub detail");
   });
 
   test("GET /installations/:id/repositories/:owner/:repo/environments returns 403 when repo is unreachable", async () => {

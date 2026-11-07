@@ -96,13 +96,20 @@ async function getInstallationAccessToken(
       retryMethods: ["POST"],
     },
   );
+  if (response.status === 422) {
+    await response.body?.cancel();
+    // The installation lacks a requested repository or permission. Unscoped,
+    // the same gap surfaced later as a 404 from the repository itself, so it
+    // keeps that error code.
+    throw new GithubAppValidationError(
+      "repository_not_accessible",
+      `installation ${installationId} cannot grant the repository access this request needs`,
+    );
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    // GitHub answers 422 when the installation lacks a requested repository or
-    // permission. Unscoped, the same gap surfaced later as a 404 from the
-    // repository itself, so it keeps that error code.
     throw new GithubAppValidationError(
-      response.status === 422 ? "repository_not_accessible" : "installation_inactive",
+      "installation_inactive",
       `installation access token request failed (${response.status}): ${text.slice(0, 200)}`,
     );
   }

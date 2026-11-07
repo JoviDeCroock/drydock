@@ -177,6 +177,19 @@ describe("dependency review job", () => {
     expect(last && new URL(last.url).pathname).toBe("/installation/token");
   });
 
+  test("a review fails, rather than staying queued, when its repository token is refused", async () => {
+    const { pr, api, review, input } = await scenario();
+    pr.tokenStatus = 422;
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({
+      status: "failed",
+      failureReason: "installation cannot reach the repository",
+    });
+    expect(api.checkRunCreates).toEqual([]);
+  });
+
   test("a bump with nothing to hold completes the check as success", async () => {
     const { name, api, review, input } = await scenario();
     await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
