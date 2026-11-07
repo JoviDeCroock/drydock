@@ -4,9 +4,11 @@
 > deterministic supply-chain findings for human review. Package code is never
 > executed. Evidence and risk grades are not a guarantee of safety.
 
-## Package review for coding agents
+## Coding agents
 
-- [Agent quickstart](https://drydock.org/agents): Review exact published npm or PyPI dependency versions with anonymous HTTPS requests and link the evidence for a human reviewer.
+- [Agent quickstart](https://drydock.org/agents): Choose a publisher setup prompt for an existing or new project, or review dependency upgrades.
+- [Existing project setup prompt](https://drydock.org/agents/existing-project.md): Walk a maintainer through adding a Drydock review to the current release workflow, starting from the guided setup's draft PR when the GitHub App is installed.
+- [New project setup prompt](https://drydock.org/agents/new-project.md): Walk a maintainer through a build-once GitHub Actions release whose publish job waits for approval in Drydock.
 - [Project instruction](https://drydock.org/agents/package-review.md): Copyable AGENTS.md instruction, query parameters, response fields, limits, and handling for missing or untrusted evidence.
 - [Package diff](https://drydock.org/diff): Human-readable comparisons of public npm, PyPI, and atpm releases, without an account.
 
@@ -16,7 +18,12 @@
 - [Security model](https://drydock.org/security): Isolation, credential boundaries, and evidence limitations.
 - [Open source](https://drydock.org/open-source): Apache-2.0 source and self-hosting references.
 
-The agent quickstart uses the existing public package-diff API. It needs no
+The dependency-review instruction uses the existing public package-diff API. It needs no
 account or API key and sends no registry credentials. Use it for public packages
 only when the project permits contacting an external service. Authenticated
 organization APIs and unlisted report links have separate access boundaries.
+
+Publisher setup needs the maintainer's own GitHub and registry access; the
+setup prompts grant none. A Workflow Gate, Drydock's GitHub Actions
+integration, holds only the configured protected job. npm Stage Watchtower is
+advisory: it cannot block npm approval or other ways to publish.

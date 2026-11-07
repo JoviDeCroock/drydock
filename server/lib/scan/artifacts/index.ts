@@ -6,6 +6,7 @@ export {
   loadScanArtifactFile,
   loadScanArtifactMetadata,
   loadScanArtifacts,
+  loadScanReportManifest,
   scanArtifactReadBucket,
 } from "./read";
 
