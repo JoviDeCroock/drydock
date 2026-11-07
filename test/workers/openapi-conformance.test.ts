@@ -238,6 +238,7 @@ describe("OpenAPI response schemas match the Worker", () => {
       listPackageReleases: "/api/v1/packages/@acme/documented/releases",
       getWorkflowGateByScan: `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
       getPublicPackageDiff: `/api/public/v1/package-diff?package=${publicPackage}&from=1.0.0&to=1.0.1`,
+      getPublicPackageFile: `/api/public/v1/package-diff/file?package=${publicPackage}&from=1.0.0&to=1.0.1&path=index.js`,
       startScan: { path: "/api/v1/scans", body: { stageId: "stage-documented-000001" } },
       checkNpmForStagedPublishes: { path: "/api/v1/staged-publishes/scan" },
       recordStagedDecision: {

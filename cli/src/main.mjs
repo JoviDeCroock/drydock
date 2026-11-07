@@ -8,6 +8,7 @@ import {
   terminalSafeLine,
   formatDiscovery,
   formatDiff,
+  formatFile,
   formatGate,
   formatReleases,
   formatScan,
@@ -21,9 +22,10 @@ import { waitForReview } from "./wait.mjs";
 
 const USAGE = `Usage: drydock <command> [options]
 
-Read an organization's Drydock reviews from scripts and CI, and start new ones
-with a key that has scan access. "approve" records your own decision on a staged
-publish, with your Drydock authenticator code, then runs your npm.
+Review public dependency upgrades without an account, or read an organization's
+Drydock reviews from scripts and CI, and start new ones with a key that has scan
+access. "approve" records your own decision on a staged publish, with your
+Drydock authenticator code, then runs your npm.
 
 Commands:
   whoami                          The API key's organization, expiry, and access
@@ -50,6 +52,8 @@ Commands:
   gate <review-id>                The GitHub workflow gate a review belongs to
   diff <package> <from> <to>      Diff two published releases (no API key needed)
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
+  file <package> <from> <to> <path>  Inspect bounded before/after file samples (no key)
+      [--ecosystem npm|pypi|atpm]
   approve <stage-id | package@version>
                                   Show the review of a staged npm publish, record
                                   your publish or reject decision in Drydock
@@ -207,6 +211,7 @@ function resolveCommand(positionals) {
     releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
     gate: { run: gate, options: [] },
     diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
+    file: { run: file, options: ["ecosystem"], anonymous: true },
     approve: {
       run: (ctx) => approve(ctx, () => waitSettings(ctx)),
       options: ["timeout", "interval", "otp"],
@@ -568,6 +573,24 @@ async function diff(ctx) {
   });
   print(ctx, body, formatDiff);
   return meetsThreshold(threshold, body?.risk?.releaseRisk) ? 3 : 0;
+}
+
+/** @param {CommandContext} ctx */
+async function file(ctx) {
+  const [name, from, to, path] = args(
+    ctx,
+    4,
+    1,
+    "file <package> <from> <to> <path> [--ecosystem E]",
+  );
+  oneOf(ctx.values.ecosystem, PUBLIC_DIFF_ECOSYSTEMS, "--ecosystem");
+  const params = new URLSearchParams({ package: name, from, to, path });
+  if (typeof ctx.values.ecosystem === "string") params.set("ecosystem", ctx.values.ecosystem);
+  const body = await ctx.client.json(`/api/public/v1/package-diff/file?${params}`, {
+    authenticated: false,
+  });
+  print(ctx, body, formatFile);
+  return 0;
 }
 
 /** @param {string} text */
