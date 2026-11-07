@@ -13,7 +13,10 @@ import {
   type QueueMessage,
 } from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
-import { executeDependencyReviewJob } from "./lib/dependency-review/job";
+import {
+  DependencyReviewLeaseError,
+  executeDependencyReviewJob,
+} from "./lib/dependency-review/job";
 
 /**
  * The SCAN_QUEUE consumer `server/index.ts` exports. Scan, workflow-gate, and
@@ -41,6 +44,20 @@ export async function queue(
           durationMs: durationMsSince(messageStartedAtMs),
         });
       } catch (err) {
+        if (err instanceof DependencyReviewLeaseError) {
+          // A lease conflict is not a failed execution. A fresh delayed
+          // message keeps the recovery alive even on the platform's final
+          // delivery; retry() would spend its last attempt on waiting.
+          if (!env.SCAN_QUEUE) throw err;
+          await env.SCAN_QUEUE.send(reviewMessage, { delaySeconds: err.retryAfterSeconds });
+          message.ack();
+          emitOperationalEvent("info", "dependency_review.queue.waiting_for_lease", {
+            organizationId: reviewMessage.organizationId,
+            reviewId: reviewMessage.reviewId,
+            nextDelaySeconds: err.retryAfterSeconds,
+          });
+          continue;
+        }
         if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
           message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
           emitOperationalEvent("warn", "dependency_review.queue.retry_scheduled", {

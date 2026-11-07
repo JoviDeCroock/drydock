@@ -3,6 +3,7 @@ import { createDb, type AppDb } from "../../db/client";
 import {
   claimDependencyReview,
   completeDependencyReview,
+  DEPENDENCY_REVIEW_LEASE_MS,
   dependencyChangeKey,
   failDependencyReview,
   findApprovedChanges,
@@ -150,6 +151,19 @@ interface ReviewContext {
   detailsUrl: string | null;
 }
 
+export class DependencyReviewLeaseError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(updatedAt: Date) {
+    super("review is running; re-run later");
+    this.name = "DependencyReviewLeaseError";
+    this.retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((updatedAt.getTime() + DEPENDENCY_REVIEW_LEASE_MS - Date.now()) / 1000) + 1,
+    );
+  }
+}
+
 /**
  * Review one dependency-update PR commit, or apply an Approve click to a
  * finished review. Retryable GitHub failures rethrow for the queue to retry;
@@ -202,21 +216,23 @@ export async function executeDependencyReviewJob(
     return;
   }
   if (!(await claimDependencyReview(db, review.id, { rerun: input.rerun }))) {
-    // A re-run asked for while another attempt runs must still happen: that
-    // attempt may already have published under a run that is no longer newest.
-    if (input.rerun && review.status === "running" && !options.finalAttempt) {
-      throw new DependencyReviewGithubError("review is running; re-run later", 409, true);
+    const current = await getDependencyReview(db, review.organizationId, review.id);
+    // A redelivery may be the only survivor of a terminated worker. Do not
+    // acknowledge it while its claim is still leased; retry after it can be
+    // reclaimed, rather than spending all queue attempts inside the lease.
+    if (current?.status === "running") {
+      throw new DependencyReviewLeaseError(current.updatedAt);
     }
     return;
   }
-  // Another attempt may have moved the review to a newer run since it was read.
-  context.review = (await getDependencyReview(db, review.organizationId, review.id)) ?? review;
   try {
+    // Another attempt may have moved the review to a newer run since it was read.
+    context.review = (await getDependencyReview(db, review.organizationId, review.id)) ?? review;
     await runReview(context, review.status);
   } catch (err) {
     const retryable = err instanceof DependencyReviewGithubError ? err.retryable : true;
     if (retryable && !options.finalAttempt) {
-      await releaseDependencyReview(db, review.id);
+      await releaseDependencyReview(db, review.id, context.review.checkRunId);
       throw err;
     }
     await failReview(context, err);
@@ -233,25 +249,7 @@ async function runReview(
 
   const pr = await fetchPullRequest(token, repo, review.pullNumber);
   if (!pr || pr.headSha !== review.headSha || pr.state !== "open") {
-    // Not `neutral`: GitHub counts that as passing, and a PR closed when this
-    // ran and reopened later would carry a passing check nobody earned.
-    // Reopening or Re-run reviews the commit again.
-    await updateCheckRun(
-      token,
-      repo,
-      checkRunId,
-      {
-        status: "completed",
-        conclusion: "cancelled",
-        output: {
-          title: "Not reviewed",
-          summary:
-            "This commit was not the head of an open PR when Drydock ran. Use Re-run if it is.",
-        },
-      },
-      context.detailsUrl,
-    );
-    await supersedeDependencyReview(db, review.id);
+    await cancelSupersededReview(context, checkRunId);
     return;
   }
 
@@ -280,16 +278,25 @@ async function runReview(
   if (partial && settings.policy.holdOnUnreviewed && conclusion !== "held") {
     conclusion = "held";
   }
+  // Diffs can run for minutes. A bot may have rebased or closed its PR after
+  // the first head check; never publish that work as the current review.
+  const currentPr = await fetchPullRequest(token, repo, review.pullNumber);
+  if (!currentPr || currentPr.headSha !== review.headSha || currentPr.state !== "open") {
+    await cancelSupersededReview(context, checkRunId);
+    return;
+  }
   // A later attempt owns the newest run; its result is the one to store.
   if (!(await publishResult(context, checkRunId, reviewed, conclusion, collected, null))) return;
-  await completeDependencyReview(db, review.id, {
+  const completed = await completeDependencyReview(db, review.id, {
     conclusion,
     bumps: storedBumps(reviewed),
     coverage: {
       unreadLockfiles: collected.unreadLockfiles,
       listingComplete: collected.listingComplete,
     },
+    ifRunningOnRun: context.review.checkRunId ?? checkRunId,
   });
+  if (!completed) return;
   recordProductEvent(context.env, {
     name: "dependency_review.completed",
     organizationId: review.organizationId,
@@ -298,6 +305,28 @@ async function runReview(
     heldCount: reviewed.filter((b) => b.verdict.status === "hold" && !b.approved).length,
     durationMs: Date.now() - startedAtMs,
   });
+}
+
+async function cancelSupersededReview(context: ReviewContext, checkRunId: number): Promise<void> {
+  // `cancelled`, not `neutral`: GitHub counts neutral as passing.
+  await updateCheckRun(
+    context.token,
+    context.repo,
+    checkRunId,
+    {
+      status: "completed",
+      conclusion: "cancelled",
+      output: {
+        title: "Not reviewed",
+        summary:
+          "This commit is no longer the head of an open PR. Use Re-run if it becomes the head again.",
+      },
+    },
+    context.detailsUrl,
+  );
+  // An expired attempt may still finish after a replacement has claimed the
+  // same review. Its cancellation must not supersede the replacement's row.
+  await supersedeDependencyReview(context.db, context.review.id, checkRunId);
 }
 
 function isOpenHold(bump: ReviewedBump): boolean {
@@ -326,7 +355,7 @@ async function ensureCheckRun(
   // A run this review already finished (completed, failed, or cancelled as
   // superseded) is left as history: a Re-run gets a new check run, which is
   // also what GitHub's Re-run button shows.
-  if (review.checkRunId && (statusBeforeClaim === "queued" || statusBeforeClaim === "running")) {
+  if (review.checkRunId && statusBeforeClaim === "queued") {
     await updateCheckRun(token, repo, review.checkRunId, inProgress, context.detailsUrl);
     return review.checkRunId;
   }
@@ -343,6 +372,11 @@ async function ensureCheckRun(
   );
   await setDependencyReviewCheckRun(context.db, review.id, checkRunId);
   context.review = { ...review, checkRunId };
+  // Reclaiming an expired lease gets a distinct run: the old worker may
+  // still finish, and must recognize that this attempt owns the result now.
+  if (review.checkRunId && statusBeforeClaim === "running") {
+    await cancelReplacedRun(context, review.checkRunId);
+  }
   return checkRunId;
 }
 
@@ -1039,7 +1073,13 @@ async function failReview(context: ReviewContext, err: unknown): Promise<void> {
     reviewId: context.review.id,
     error: describeOperationalError(err),
   });
-  await failDependencyReview(context.db, context.review.id, reason);
+  const failed = await failDependencyReview(
+    context.db,
+    context.review.id,
+    reason,
+    context.review.checkRunId,
+  );
+  if (!failed) return;
   if (!context.review.checkRunId) return;
   await updateCheckRun(
     context.token,

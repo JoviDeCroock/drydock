@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -289,11 +289,23 @@ export async function claimDependencyReview(
 }
 
 /** Give a claim back before a retry, so the retried message can take it. */
-export async function releaseDependencyReview(db: AppDb, reviewId: string): Promise<void> {
+export async function releaseDependencyReview(
+  db: AppDb,
+  reviewId: string,
+  checkRunId: number | null,
+): Promise<void> {
   await db
     .update(dependencyReviews)
     .set({ status: "queued", updatedAt: new Date() })
-    .where(and(eq(dependencyReviews.id, reviewId), eq(dependencyReviews.status, "running")));
+    .where(
+      and(
+        eq(dependencyReviews.id, reviewId),
+        eq(dependencyReviews.status, "running"),
+        checkRunId === null
+          ? isNull(dependencyReviews.checkRunId)
+          : eq(dependencyReviews.checkRunId, checkRunId),
+      ),
+    );
 }
 
 export async function setDependencyReviewCheckRun(
@@ -318,6 +330,7 @@ export async function completeDependencyReview(
     // Only overwrite a completed result still on this run: an approval must
     // not land on a review a Re-run has claimed since the click.
     ifCompletedOnRun?: number;
+    ifRunningOnRun?: number;
   },
 ): Promise<boolean> {
   const now = new Date();
@@ -338,7 +351,15 @@ export async function completeDependencyReview(
     })
     .where(
       input.ifCompletedOnRun === undefined
-        ? eq(dependencyReviews.id, reviewId)
+        ? and(
+            eq(dependencyReviews.id, reviewId),
+            input.ifRunningOnRun === undefined
+              ? undefined
+              : and(
+                  eq(dependencyReviews.status, "running"),
+                  eq(dependencyReviews.checkRunId, input.ifRunningOnRun),
+                ),
+          )
         : and(
             eq(dependencyReviews.id, reviewId),
             eq(dependencyReviews.status, "completed"),
@@ -353,24 +374,29 @@ export async function failDependencyReview(
   db: AppDb,
   reviewId: string,
   failureReason: string,
-): Promise<void> {
+  checkRunId?: number | null,
+): Promise<boolean> {
   const now = new Date();
-  await db
+  const updated = await db
     .update(dependencyReviews)
     .set({ status: "failed", failureReason, updatedAt: now })
-    .where(eq(dependencyReviews.id, reviewId));
+    .where(
+      and(
+        eq(dependencyReviews.id, reviewId),
+        checkRunId === undefined
+          ? undefined
+          : checkRunId === null
+            ? isNull(dependencyReviews.checkRunId)
+            : eq(dependencyReviews.checkRunId, checkRunId),
+      ),
+    )
+    .returning({ id: dependencyReviews.id });
+  return updated.length > 0;
 }
 
 export interface DependencyReviewCoverage {
   unreadLockfiles: string[];
   listingComplete: boolean;
-}
-
-export async function readDependencyReviewBumps(
-  db: AppDb,
-  reviewId: string,
-): Promise<ReviewedBump[]> {
-  return (await readDependencyReviewResult(db, reviewId)).bumps;
 }
 
 export async function readDependencyReviewResult(
@@ -509,9 +535,13 @@ export async function recordDependencyApprovals(
   }
 }
 
-export async function supersedeDependencyReview(db: AppDb, reviewId: string): Promise<void> {
+export async function supersedeDependencyReview(
+  db: AppDb,
+  reviewId: string,
+  checkRunId: number,
+): Promise<void> {
   await db
     .update(dependencyReviews)
     .set({ status: "superseded", updatedAt: new Date() })
-    .where(eq(dependencyReviews.id, reviewId));
+    .where(and(eq(dependencyReviews.id, reviewId), eq(dependencyReviews.checkRunId, checkRunId)));
 }

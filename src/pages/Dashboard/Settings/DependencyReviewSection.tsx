@@ -44,7 +44,7 @@ export function DependencyReviewSection({
             </Muted>
             <Muted class="text-[12px] m-0">
               The GitHub App needs Checks (write), Pull requests (read), and Contents (read)
-              permissions and the Pull request and Check run events.
+              permissions and the Pull request, Check run, and Check suite events.
             </Muted>
           </div>
           <LinkButton

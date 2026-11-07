@@ -28,7 +28,7 @@ export function ReviewStateMark({
   }
   return (
     <span class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
-      {state === "superseded" ? "not reviewed" : state}
+      {state === "superseded" ? "not reviewed" : state === "clear" ? "no holds" : state}
     </span>
   );
 }

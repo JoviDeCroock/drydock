@@ -30,6 +30,7 @@ import {
 import {
   DependencyReviewDetailModel,
   type DependencyReview,
+  type DependencyReviewCoverage,
   type ReviewedBump,
 } from "../../../models/dependency-review";
 import { OrganizationModel } from "../../../models/organization";
@@ -192,6 +193,8 @@ function ReviewReport({
   const pullUrl = pullRequestUrl(review.repositoryFullName, review.pullNumber);
   const state = reviewState(review);
   const settled = state === "held" || state === "approved" || state === "clear";
+  const coverage = model.coverage.value;
+  const partial = !coverage.listingComplete || coverage.unreadLockfiles.length > 0;
   return (
     <>
       <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
@@ -224,6 +227,11 @@ function ReviewReport({
       <ReviewHeadline
         review={review}
         state={state}
+        allClear={
+          !partial &&
+          bumps.length === review.bumpCount &&
+          bumps.every((bump) => bump.verdict.status === "clear")
+        }
         pollingStalled={model.pollingStalled.value}
         onResume={() => model.resumePolling()}
       />
@@ -234,7 +242,9 @@ function ReviewReport({
         </Muted>
       ) : null}
 
-      {settled && bumps.length === 0 ? (
+      {settled && partial ? <ReviewCoverage coverage={coverage} /> : null}
+
+      {settled && bumps.length === 0 && !partial ? (
         <Card>
           <EmptyLine>This pull request changes no package version Drydock can review.</EmptyLine>
         </Card>
@@ -258,11 +268,13 @@ function ReviewReport({
 function ReviewHeadline({
   review,
   state,
+  allClear,
   pollingStalled,
   onResume,
 }: {
   review: DependencyReview;
   state: ReviewState;
+  allClear: boolean;
   pollingStalled: boolean;
   onResume: () => void;
 }) {
@@ -302,10 +314,11 @@ function ReviewHeadline({
   if (state === "held") {
     return (
       <Alert tone="warn">
-        {review.heldCount} of {review.bumpCount}{" "}
-        {review.bumpCount === 1 ? "update is" : "updates are"} held. Read the diffs, then approve on
-        the pull request's Drydock dependency review check; anyone with write access to the
-        repository can approve.
+        {review.heldCount > 0
+          ? `${review.heldCount} of ${review.bumpCount} ${review.bumpCount === 1 ? "update is" : "updates are"} held.`
+          : "This pull request is held because some dependency updates could not be reviewed."}{" "}
+        See the pull request's Drydock dependency review check for the evidence and available
+        actions.
       </Alert>
     );
   }
@@ -320,8 +333,41 @@ function ReviewHeadline({
   }
   return (
     <Muted class="text-[14px] m-0">
-      {review.bumpCount === 1 ? "The update is" : `All ${review.bumpCount} updates are`} clear.
+      {review.bumpCount === 0
+        ? "No reviewable package updates."
+        : allClear
+          ? `${review.bumpCount === 1 ? "The update is" : `All ${review.bumpCount} updates are`} clear.`
+          : "No updates are held. Some updates were not reviewed."}
     </Muted>
+  );
+}
+
+function ReviewCoverage({ coverage }: { coverage: DependencyReviewCoverage }) {
+  return (
+    <section class="flex flex-col gap-3">
+      <SectionLabel as="h2">Review coverage</SectionLabel>
+      <Card>
+        {!coverage.listingComplete ? (
+          <p class="m-0 text-[13px] text-ink">
+            GitHub did not return every changed file. This review may be missing dependency updates.
+          </p>
+        ) : null}
+        {coverage.unreadLockfiles.length > 0 ? (
+          <>
+            <p class="m-0 text-[13px] text-ink">
+              Drydock could not review dependency updates in these files:
+            </p>
+            <ul class="m-0 pl-5 font-mono text-[12px] text-ink-muted">
+              {coverage.unreadLockfiles.map((path) => (
+                <li key={path} class="break-all">
+                  {path}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </Card>
+    </section>
   );
 }
 
@@ -364,9 +410,10 @@ function BumpGroup({ title, bumps }: { title: string; bumps: ReviewedBump[] }) {
 function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
   const { bump, verdict } = reviewed;
   const evidence = verdictEvidence(verdict);
-  const diffHref = bump.fromVersion
-    ? packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion)
-    : null;
+  const diffHref =
+    bump.fromVersion && !bump.privateSource
+      ? packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion)
+      : null;
   const reason = verdictReason(verdict, evidence);
   return (
     <li class="border-b border-border last:border-b-0 px-5 py-4 flex flex-col gap-2 min-w-0">

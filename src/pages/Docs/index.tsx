@@ -895,7 +895,9 @@ export default function DocsPage() {
                 rebase keeps it. PRs people open get a skipped check, which passes. Packages your
                 repository sends to another registry are never diffed and hold unless you turn off
                 holding unreviewed updates. The App needs the Checks (write), Pull requests (read),
-                and Contents (read) permissions.
+                and Contents (read) permissions, with Pull request, Check run, and Check suite
+                events enabled. Use GitHub's Re-run all checks to review the current head again
+                against the latest policy and recorded approvals.
               </Prose>
             </Subsection>
 

@@ -1,4 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import type { DependencyReviewCoverage } from "../../server/db/dependency-reviews";
+import type { BumpEvidence, ReviewedBump } from "../../server/lib/dependency-review/types";
 
 const ORG = "org-deps";
 const SCREENSHOTS = ".context/e2e-artifacts/dependency-review";
@@ -39,7 +41,7 @@ type ReviewWire = Omit<typeof REVIEW, "conclusion" | "completedAt"> & {
   completedAt: string | null;
 };
 
-const EVIDENCE = {
+const EVIDENCE: BumpEvidence = {
   releaseRisk: "high",
   filesAdded: 2,
   filesRemoved: 0,
@@ -50,6 +52,7 @@ const EVIDENCE = {
   dependenciesAdded: 2,
   binCommandsAdded: 0,
   uninspectedFiles: 0,
+  coverageNotices: 0,
   findings: [
     {
       severity: "high",
@@ -61,7 +64,7 @@ const EVIDENCE = {
   findingCount: 3,
 };
 
-const BUMPS = [
+const BUMPS: ReviewedBump[] = [
   {
     bump: {
       ecosystem: "npm",
@@ -106,6 +109,8 @@ const BUMPS = [
     approved: false,
   },
 ];
+
+const COVERAGE: DependencyReviewCoverage = { unreadLockfiles: [], listingComplete: true };
 
 test("dependency review settings save the hold policy", async ({ page }) => {
   const errors = watchErrors(page);
@@ -176,10 +181,109 @@ test("dependency review list links each review with its organization", async ({ 
   await page.goto("/dashboard/dependency-reviews");
 
   const row = page.getByRole("link", { name: "acme/web #128" });
+  await expect(page.getByRole("link", { name: /^Dependencies(?: Beta)?$/ })).toBeVisible();
   await expect(row).toHaveAttribute("href", `/dashboard/dependency-reviews/dr_1?org=${ORG}`);
   await expect(page.getByText("1 held", { exact: true })).toBeVisible();
   await page.screenshot({ path: `${SCREENSHOTS}/list.png`, fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test("private-source updates never offer a public diff link", async ({ page }) => {
+  const errors = watchErrors(page);
+  const privateBump: ReviewedBump = {
+    bump: { ...BUMPS[0].bump, name: "@corp/private-only", privateSource: true },
+    verdict: {
+      status: "hold",
+      reasons: ["unreviewed"],
+      unreviewed: "private-source",
+      evidence: null,
+    },
+    approved: false,
+  };
+  await installMocks(page, [], { bumps: () => [privateBump, ...BUMPS.slice(1)] });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  const row = page.getByRole("listitem").filter({ hasText: "@corp/private-only" });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("link")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "View diff →" })).toHaveCount(2);
+  await page.screenshot({ path: `${SCREENSHOTS}/private-source.png`, fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test("updates allowed by policy are not described as clear", async ({ page }) => {
+  const errors = watchErrors(page);
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0 }),
+    bumps: () => [
+      BUMPS[1],
+      BUMPS[2],
+      {
+        bump: { ...BUMPS[1].bump, name: "new-package", fromVersion: null },
+        verdict: { status: "new-package" },
+        approved: false,
+      },
+    ],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(
+    page.getByText("No updates are held. Some updates were not reviewed."),
+  ).toBeVisible();
+  await expect(page.getByText("All 3 updates are clear.")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Not reviewed 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New packages 1" })).toBeVisible();
+  await page.goto("/dashboard/dependency-reviews");
+  await expect(page.getByRole("cell", { name: "no holds", exact: true })).toBeVisible();
+  await expect(page.getByText("clear", { exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a fully reviewed update can be described as clear", async ({ page }) => {
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 1 }),
+    bumps: () => [BUMPS[1]],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+  await expect(page.getByText("The update is clear.", { exact: true })).toBeVisible();
+});
+
+test("unread-only holds name the files without claiming zero updates are held", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  const unread = "nested/<img src=x onerror=alert(1)>/package.json";
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, bumpCount: 0, heldCount: 0 }),
+    bumps: () => [],
+    coverage: () => ({ unreadLockfiles: [unread], listingComplete: true }),
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(
+    page.getByText(
+      "This pull request is held because some dependency updates could not be reviewed.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(unread, { exact: true })).toBeVisible();
+  await expect(page.getByText("0 of 0 updates are held.")).toHaveCount(0);
+  await expect(page.locator("main img")).toHaveCount(0);
+  await page.screenshot({ path: `${SCREENSHOTS}/unread-only.png`, fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test("an incomplete file listing stays visible even when the policy allows it", async ({
+  page,
+}) => {
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 1 }),
+    bumps: () => [BUMPS[1]],
+    coverage: () => ({ unreadLockfiles: [], listingComplete: false }),
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(page.getByText("GitHub did not return every changed file.")).toBeVisible();
+  await expect(page.getByText("The update is clear.", { exact: true })).toHaveCount(0);
 });
 
 test("a running dependency review refreshes itself into its result", async ({ page }) => {
@@ -216,7 +320,7 @@ test("an organization outside the rollout flag sees no dependency review", async
   await page.goto("/dashboard/settings?tab=integrations");
 
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Dependencies" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /^Dependencies(?: Beta)?$/ })).toHaveCount(0);
   await expect(page.locator("#dependency-review")).toHaveCount(0);
   expect(requested.filter((path) => path.startsWith("/api/v1/dependency-reviews"))).toEqual([]);
   expect(errors).toEqual([]);
@@ -234,7 +338,13 @@ function watchErrors(page: Page): string[] {
 async function installMocks(
   page: Page,
   writes: unknown[],
-  { dependencyReview = true, requested = [] as string[], review = (): ReviewWire => REVIEW } = {},
+  {
+    dependencyReview = true,
+    requested = [] as string[],
+    review = (): ReviewWire => REVIEW,
+    bumps = (): ReviewedBump[] => BUMPS,
+    coverage = (): DependencyReviewCoverage => COVERAGE,
+  } = {},
 ) {
   let settings = { enabled: false, policy: POLICY, extraBotLogins: [] as string[] };
   await page.route("**/api/**", async (route) => {
@@ -300,7 +410,8 @@ async function installMocks(
       const current = review();
       await fulfillJson(route, {
         review: current,
-        bumps: current.status === "completed" ? BUMPS : [],
+        bumps: current.status === "completed" ? bumps() : [],
+        coverage: coverage(),
       });
       return;
     }

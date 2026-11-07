@@ -415,6 +415,28 @@ describe("renderDependencyReviewCheck", () => {
     expect(approved.summary).toContain("Approved by `octocat`");
   });
 
+  test.each([
+    { unreadLockfiles: ["bun.lock"], listingComplete: true },
+    { unreadLockfiles: [], listingComplete: false },
+  ])("a passing partial review never calls known bumps clear: %j", (coverage) => {
+    const clear: ReviewedBump = {
+      bump: bump(),
+      verdict: { status: "clear", evidence: CLEAN },
+      approved: false,
+    };
+    const render = (bumps: ReviewedBump[]) =>
+      renderDependencyReviewCheck({
+        bumps,
+        conclusion: "clear",
+        diffUrl,
+        approvedBy: null,
+        ...coverage,
+      });
+
+    expect(render([clear]).title).toBe("No updates held");
+    expect(render([]).title).toBe("No updates held");
+  });
+
   test("new packages and transitive bumps are labeled, and new packages get no diff link", () => {
     const { summary } = renderDependencyReviewCheck({
       bumps: [

@@ -554,3 +554,116 @@ describe("check_run deliveries", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("check_suite deliveries", () => {
+  function payload(installationId: string) {
+    return {
+      action: "rerequested",
+      installation: { id: Number(installationId) },
+      repository: { id: 5151, full_name: "octo/example" },
+      check_suite: { id: 888001, app: { id: 12345 }, head_sha: sha("b") },
+    };
+  }
+
+  test("Re-run all checks re-reviews the exact installed repository head, even after rollout is disabled", async () => {
+    const seeded = await seedDependencyReviewOrg({ enabled: false });
+    const review = await seedReviewWithCheckRun(seeded, 777030);
+    const { sent, deliver } = webhookHarness({
+      FLAGS: { getBooleanValue: async () => false } as unknown as Flagship,
+    });
+
+    const { res, json } = await deliver({
+      eventName: "check_suite",
+      body: payload(seeded.installationExternalId),
+    });
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({ result: "dependency_review_rerequested", reviewId: review.id });
+    expect(sent).toEqual([
+      {
+        kind: "dependency_review",
+        organizationId: seeded.organizationId,
+        reviewId: review.id,
+        rerun: true,
+      },
+    ]);
+  });
+
+  test.each(["app", "repository", "head", "installation", "suspended"])(
+    "a suite from another %s cannot re-run the review",
+    async (field) => {
+      const seeded = await seedDependencyReviewOrg({
+        installationStatus: field === "suspended" ? "suspended" : "active",
+      });
+      await seedReviewWithCheckRun(seeded, 777031);
+      const body = payload(seeded.installationExternalId);
+      if (field === "app") body.check_suite.app.id = 99999;
+      if (field === "repository") body.repository.id = 99999;
+      if (field === "head") body.check_suite.head_sha = sha("e");
+      if (field === "installation") {
+        const other = await seedDependencyReviewOrg();
+        body.installation.id = Number(other.installationExternalId);
+      }
+      const { sent, deliver } = webhookHarness();
+
+      const { json } = await deliver({ eventName: "check_suite", body });
+
+      expect(json.result).toBe("ignored");
+      expect(sent).toEqual([]);
+    },
+  );
+
+  test("a human PR's suite never creates a dependency review", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const { sent, deliver } = webhookHarness();
+
+    const { json } = await deliver({
+      eventName: "check_suite",
+      body: payload(seeded.installationExternalId),
+    });
+
+    expect(json.result).toBe("ignored");
+    expect(sent).toEqual([]);
+    expect(await reviewRows(seeded.organizationId)).toEqual([]);
+  });
+
+  test.each(["app", "head"])("a suite with a missing %s is rejected", async (field) => {
+    const seeded = await seedDependencyReviewOrg();
+    const body = payload(seeded.installationExternalId);
+    if (field === "app") body.check_suite.app.id = 0;
+    else body.check_suite.head_sha = "invalid";
+    const { sent, deliver } = webhookHarness();
+
+    const { res } = await deliver({ eventName: "check_suite", body });
+
+    expect(res.status).toBe(400);
+    expect(sent).toEqual([]);
+  });
+
+  test("suite events other than rerequested are ignored", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    await seedReviewWithCheckRun(seeded, 777032);
+    const body = payload(seeded.installationExternalId);
+    body.action = "completed";
+    const { sent, deliver } = webhookHarness();
+
+    const { json } = await deliver({ eventName: "check_suite", body });
+
+    expect(json).toMatchObject({ ignored: "unsupported_action" });
+    expect(sent).toEqual([]);
+  });
+
+  test("suite reruns have their own native rate-limit bucket", async () => {
+    const { overrides, limiter } = exhaustedRateLimitBindings();
+    const seeded = await seedDependencyReviewOrg();
+    const { deliver } = webhookHarness(overrides);
+
+    const { res } = await deliver({
+      eventName: "check_suite",
+      body: payload(seeded.installationExternalId),
+    });
+
+    expect(limiter.keys).toEqual([`github-webhook:check_suite:${seeded.installationExternalId}`]);
+    expect(res.status).toBe(429);
+  });
+});

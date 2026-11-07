@@ -119,7 +119,13 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   }
 
   return {
-    title: renderTitle(input.conclusion, held.length, input.bumps.length, clear.length),
+    title: renderTitle(
+      input.conclusion,
+      held.length,
+      input.bumps.length,
+      clear.length,
+      input.unreadLockfiles.length === 0 && input.listingComplete !== false,
+    ),
     summary: bound(lines),
   };
 }
@@ -135,6 +141,7 @@ function renderTitle(
   heldCount: number,
   total: number,
   clearCount: number,
+  completeCoverage: boolean,
 ): string {
   if (conclusion === "held") {
     // Held with nothing held per bump: a lockfile or the file listing went unread.
@@ -142,6 +149,7 @@ function renderTitle(
     return `${heldCount} of ${total} ${total === 1 ? "update" : "updates"} held for review`;
   }
   if (conclusion === "approved") return "Held updates approved";
+  if (!completeCoverage) return "No updates held";
   if (total === 0) return "No reviewable package updates";
   // "Clear" claims a diff was read; unreviewed and new packages passing by
   // policy were not.
