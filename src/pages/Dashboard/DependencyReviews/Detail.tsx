@@ -227,6 +227,7 @@ function ReviewReport({
       <ReviewHeadline
         review={review}
         state={state}
+        bumps={bumps}
         allClear={
           !partial &&
           bumps.length === review.bumpCount &&
@@ -268,12 +269,14 @@ function ReviewReport({
 function ReviewHeadline({
   review,
   state,
+  bumps,
   allClear,
   pollingStalled,
   onResume,
 }: {
   review: DependencyReview;
   state: ReviewState;
+  bumps: ReviewedBump[];
   allClear: boolean;
   pollingStalled: boolean;
   onResume: () => void;
@@ -312,13 +315,33 @@ function ReviewHeadline({
     );
   }
   if (state === "held") {
+    const knownMalware = bumps.some(
+      ({ verdict }) => verdict.status === "hold" && verdict.reasons.includes("known-malware"),
+    );
+    const indexUnavailable = bumps.some(
+      ({ verdict }) =>
+        verdict.status === "hold" && verdict.reasons.includes("malware-index-unavailable"),
+    );
+    const guidance =
+      knownMalware || indexUnavailable
+        ? [
+            "Malware checks cannot be approved.",
+            knownMalware ? "Remove or replace versions listed as malware." : "",
+            indexUnavailable
+              ? "Re-run the pull request's Drydock dependency review check to retry the malware index."
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : "Read the diffs, then approve on the pull request's Drydock dependency review check; anyone with write access to the repository can approve.";
     return (
       <Alert tone="warn">
         {review.heldCount > 0
           ? `${review.heldCount} of ${review.bumpCount} ${review.bumpCount === 1 ? "update is" : "updates are"} held.`
           : "This pull request is held because some dependency updates could not be reviewed."}{" "}
-        See the pull request's Drydock dependency review check for the evidence and available
-        actions.
+        {knownMalware || indexUnavailable
+          ? guidance
+          : "See the pull request's Drydock dependency review check for the evidence and available actions."}
       </Alert>
     );
   }

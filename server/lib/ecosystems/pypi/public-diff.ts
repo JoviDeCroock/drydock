@@ -25,7 +25,7 @@ import {
   type PyPiReleaseManifest,
   type PyPiRemoteArtifact,
 } from "./types";
-import { compareParsedPyPiVersions, parsePyPiVersion } from "./version";
+import { compareParsedPyPiVersions, parsePyPiVersion, pyPiVersionsEquivalent } from "./version";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
@@ -84,6 +84,7 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // agree — "Django" and "django" must share one entry AND one purge tag.
   normalizePackageName: normalizePyPiProjectName,
   isValidVersion: (version) => SAFE_VERSION_RE.test(version),
+  versionsEquivalent: pyPiVersionsEquivalent,
   cacheTag: (packageName) => `public-diff:pypi:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
