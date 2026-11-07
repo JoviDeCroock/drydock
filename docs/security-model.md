@@ -135,9 +135,10 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 |Public diff npm / pkg.pr.new|Public npm registry; `https://pkg.pr.new`|None|—|[public diff](./public-diff.md)|
 |atpm identity, records, blobs|Hosts named by the publisher's handle, DID, and PDS|None|Manual; ≤3 hops, each re-checked; pinned blob same-origin only|[atpm](./atpm.md)|
 |Publication monitor|Fixed public npm origin (loopback fake registry only with the local override)|None; never reads a connection token|`redirect: "manual"`; a 3xx is unavailable evidence|[publication monitor](./publication-monitor.md)|
+|Dependency review|`malware-list.aikido.dev`|None|Refused|[Malware index](./dependency-review.md)|
 |Workers AI reviewer and Clef|`drydock-gateway` AI Gateway inside the Cloudflare account|Binding|—|`server/lib/ai-review/gateway.ts`|
 
-1. Direct Internet egress from the sandbox is intercepted; registry and artifact fetches go through brokers.
+1. Sandbox egress is intercepted; brokers fetch registry and artifact data.
 2. The atpm path is bounded, not trusted: every URL is rebuilt from validated parts (a record's `meta.dist.tarball` is ignored), checked against one public-host policy, and the Worker sets `global_fetch_strictly_public`.
 3. atpm requires blob SHA-256/CID match, locally recomputed staged-record CID, and Sigstore verification against a pinned root (`server/lib/platform/x509.ts`). Malformed bundles display "does not verify", never fail the page. Displayed handles are resolution-proved, never repository claims; `did:web` domain control is disclosed. Pairs/cards expire after five minutes.
 4. Monitor tarball reads require an org Drydock record or started post-release review, plus published-tarball origin-policy approval. Responses stream into bounded state; unverified evidence becomes an explicit coverage gap.
@@ -147,7 +148,7 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 1. Organizations store their own encrypted npm connection. Recommend read-only, granular, minimally scoped, expiring tokens with no publish/write/org-management permission.
 2. The npm granular form is `Packages and scopes: Read-only` over the staged packages or their scope plus `Organizations: No access`; an org-scoped package such as `@nanostores/i18n` is reached by selecting the `@nanostores` scope. The npm connection card in Organization settings → npm access states this verbatim; keep them in sync.
 3. The npm version-status lookup ([registry version status](./registry-version-status.md)) documents a publish-access requirement and returns authorization failures as `404`. It is advisory and fails closed to "no status"; do not broaden the requested scope to enable it.
-4. Registry URLs cannot embed usernames or passwords, so scan metadata, pasteable commands, and notification email never become a second secret channel.
+4. Registry URLs forbid embedded credentials, keeping them out of metadata, commands, and email.
 5. Deployed instances configure `NPM_CONNECTIONS_ENCRYPTION_KEY`. Tokens are encrypted at rest, never returned by APIs (label/fingerprint/last-used only), validated before use and re-checked immediately before a queued worker decrypts them.
 6. Add/validate/use/rotate/remove produce audit events. Credentials are redacted from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 7. Custom npm registries are supported; token use still flows through `NpmStageGateway` and production abuse controls.

@@ -5,6 +5,7 @@ import type {
   ReviewedBump,
 } from "./types";
 import { HOLD_REASON_TEXT, UNREVIEWED_TEXT } from "./wording";
+import { hasMalwareHold } from "./policy";
 
 export const DEPENDENCY_REVIEW_CHECK_NAME = "Drydock dependency review";
 export const APPROVE_ACTION_IDENTIFIER = "approve-holds";
@@ -42,13 +43,13 @@ function openHolds(bumps: readonly ReviewedBump[]): ReviewedBump[] {
 }
 
 /**
- * Whether the check run shows every open hold in full. Approve accepts all of
- * them, so it is only offered when nobody could approve a hold they weren't
- * shown.
+ * Whether every open hold can be approved and is shown in full. Approve accepts
+ * all of them, so mandatory malware holds and unseen holds withhold the action.
  */
 export function listsEveryHold(input: RenderDependencyReviewInput): boolean {
   const held = openHolds(input.bumps);
   if (
+    held.some((bump) => hasMalwareHold(bump.verdict)) ||
     input.listingComplete === false ||
     held.length > MAX_LISTED_BUMPS ||
     input.unreadLockfiles.length > MAX_LISTED_BUMPS
@@ -83,9 +84,11 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
     lines.push(
       `### Held for review (${held.length})`,
       "",
-      input.approvable === false
-        ? "This check can't show everything held in this PR, so it can't be approved here. Split it into smaller PRs."
-        : "Approve below once you've read the diffs. Anyone with write access to this repository can approve.",
+      held.some((bump) => hasMalwareHold(bump.verdict))
+        ? "Malware checks cannot be approved here. Remove or replace a flagged version; use Re-run if the index was unavailable."
+        : input.approvable === false
+          ? "This check can't show everything held in this PR, so it can't be approved here. Split it into smaller PRs."
+          : "Approve below once you've read the diffs. Anyone with write access to this repository can approve.",
       "",
     );
     for (const bump of held.slice(0, MAX_LISTED_BUMPS)) lines.push(...renderHeld(bump, input));

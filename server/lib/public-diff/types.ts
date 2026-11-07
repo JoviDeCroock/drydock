@@ -113,6 +113,9 @@ export interface PublicDiffAdapter {
   isValidPackageName(name: string): boolean;
   normalizePackageName(name: string): string;
   isValidVersion(version: string): boolean;
+  // Package identity comparisons (for example external malware indexes).
+  // Omitted means exact version-string equality.
+  versionsEquivalent?(a: string, b: string): boolean;
   cacheTag(packageName: string): string;
 
   // Mutable sources must still exist before a computed cache hit is served.

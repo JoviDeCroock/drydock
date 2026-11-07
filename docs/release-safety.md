@@ -50,6 +50,7 @@ Runtime paths emit structured events through `emitOperationalEvent` (`server/lib
 |`scan.dependency_readiness.lookup_failed`|warn|scanId, organizationId, failedLookups (count of failed registry reads)|`server/routes/scans/npm-dependency-readiness.ts`|
 |`scan.dependency_readiness.candidates_failed`|warn|scanId, organizationId, error (sanitized)|`server/routes/scans/npm-dependency-readiness.ts`|
 |`scan.dependency_readiness.credential_unavailable`|warn|scanId, organizationId; no error detail (the broker keeps it)|`server/routes/scans/npm-dependency-readiness.ts`|
+|`dependency_review.malware_index_unavailable`|warn|organizationId, reviewId, ecosystem; no remote error or body|`server/lib/dependency-review/job.ts`; public bumps hold until a successful Re-run|
 |`scan.job.completed`|info|scanId, organizationId, stageId, source, attempt, durationMs, packageName, releaseRisk, artifactRisk|`server/lib/scan/job.ts`|
 |`scan.job.failed`|error|scanId, organizationId, stageId, source, attempt, finalAttempt, durationMs, registryStatus, error|`server/lib/scan/job.ts`|
 |`scan.job.retryable_failed`|warn|scanId, organizationId, stageId, source, attempt, durationMs, error|`server/lib/scan/job.ts`|

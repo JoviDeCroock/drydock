@@ -887,7 +887,10 @@ export default function DocsPage() {
                 changes an install script, adds a native binary, a dependency, or a{" "}
                 <InlineCode>bin</InlineCode> command, reaches the release-risk threshold, or changes
                 files Drydock could not read is held until someone with write access to the
-                repository approves it on the check. Transitive updates count too.
+                repository approves it on the check. Transitive updates count too. Public target
+                versions, including new packages, are also checked against Aikido Intel's malware
+                index. Known malware and an unavailable index block the check and cannot be
+                approved; replace flagged versions or use Re-run to retry.
               </Prose>
               <Prose>
                 Make the check required in your branch rules, with the Drydock App as its source, to

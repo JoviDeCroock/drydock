@@ -207,7 +207,7 @@ function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: Revi
         ) : null}
       </header>
 
-      <ReviewHeadline review={review} state={state} />
+      <ReviewHeadline review={review} state={state} bumps={bumps} />
 
       {bumps.length < review.bumpCount ? (
         <Muted class="text-[13px] m-0">
@@ -236,7 +236,15 @@ function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: Revi
 // The one sentence that says where the pull request stands. Held and the
 // in-between states are Alerts because they ask for (or explain) a wait; the
 // settled ones are a plain line.
-function ReviewHeadline({ review, state }: { review: DependencyReview; state: string }) {
+function ReviewHeadline({
+  review,
+  state,
+  bumps,
+}: {
+  review: DependencyReview;
+  state: string;
+  bumps: ReviewedBump[];
+}) {
   if (state === "reviewing") {
     return (
       <Alert tone="info">Drydock is reviewing this pull request; reload for the result.</Alert>
@@ -250,12 +258,29 @@ function ReviewHeadline({ review, state }: { review: DependencyReview; state: st
     );
   }
   if (state === "held") {
+    const knownMalware = bumps.some(
+      ({ verdict }) => verdict.status === "hold" && verdict.reasons.includes("known-malware"),
+    );
+    const indexUnavailable = bumps.some(
+      ({ verdict }) =>
+        verdict.status === "hold" && verdict.reasons.includes("malware-index-unavailable"),
+    );
+    const guidance =
+      knownMalware || indexUnavailable
+        ? [
+            "Malware checks cannot be approved.",
+            knownMalware ? "Remove or replace versions listed as malware." : "",
+            indexUnavailable
+              ? "Re-run the pull request's Drydock dependency review check to retry the malware index."
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : "Read the diffs, then approve on the pull request's Drydock dependency review check; anyone with write access to the repository can approve.";
     return (
       <Alert tone="warn">
         {review.heldCount} of {review.bumpCount}{" "}
-        {review.bumpCount === 1 ? "update is" : "updates are"} held. Read the diffs, then approve on
-        the pull request's Drydock dependency review check; anyone with write access to the
-        repository can approve.
+        {review.bumpCount === 1 ? "update is" : "updates are"} held. {guidance}
       </Alert>
     );
   }
