@@ -12,7 +12,7 @@ import { OrganizationModel } from "../../../models/organization";
 import { ReviewStateMark } from "../../../features/dependency-review/ReviewStateMark";
 import { dependencyReviewPath } from "../../../features/dependency-review/wording";
 import { Alert } from "../../../components/Alert";
-import { LinkButton } from "../../../components/Button";
+import { Button, LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
@@ -22,7 +22,7 @@ import { SETTINGS_SECTION, settingsTabHref } from "../Settings/settings-links";
 const SETTINGS_HREF = settingsTabHref("integrations", SETTINGS_SECTION.dependencyReview);
 
 export default function DependencyReviewsPage() {
-  const model = useModel(DependencyReviewsModel);
+  const model = useModel(() => new DependencyReviewsModel({ followReviews: true }));
   const organizations = useModel(OrganizationModel);
   const sessionChecked = useAuthedDashboardSession({
     // A scan review's back link leads to the scan lists, not here.
@@ -68,13 +68,26 @@ export default function DependencyReviewsPage() {
       </header>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
+      {model.pollingStalled.value && model.anyInFlight.value ? (
+        <Alert tone="warn">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span>Automatic refresh stopped after 10 minutes without the reviews finishing.</span>
+            <Button variant="secondary" size="sm" onClick={() => model.resumePolling()}>
+              Resume refresh
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
 
       {!ready ? (
         <LoadingState
           title="Loading dependency reviews"
           detail="confirming session · reading reviews"
         />
-      ) : error ? null : reviews.length === 0 ? (
+      ) : reviews.length > 0 ? (
+        // A failed refresh keeps the rows already read; its error shows above.
+        <ReviewTable reviews={reviews} />
+      ) : error ? null : (
         <Card>
           <EmptyLine>
             {enabled
@@ -82,8 +95,6 @@ export default function DependencyReviewsPage() {
               : "Dependency review is off for this organization."}
           </EmptyLine>
         </Card>
-      ) : (
-        <ReviewTable reviews={reviews} />
       )}
     </PageShell>
   );

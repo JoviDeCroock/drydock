@@ -25,6 +25,7 @@ import {
   dependencyReviewPath,
   pullRequestUrl,
   reviewState,
+  type ReviewState,
 } from "../../../features/dependency-review/wording";
 import {
   DependencyReviewDetailModel,
@@ -39,7 +40,7 @@ import type {
 } from "../../../../server/lib/dependency-review/types";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
-import { LinkButton } from "../../../components/Button";
+import { Button, LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
@@ -169,15 +170,28 @@ function ReviewBody({ model }: { model: InstanceType<typeof DependencyReviewDeta
       </Card>
     );
   }
-  if (error) return <Alert tone="critical">{error}</Alert>;
-  if (!review) return null;
-  return <ReviewReport review={review} bumps={model.bumps.value} />;
+  // A failed refresh keeps the review already read; its error shows above.
+  return (
+    <>
+      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {review ? <ReviewReport model={model} review={review} bumps={model.bumps.value} /> : null}
+    </>
+  );
 }
 
-function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: ReviewedBump[] }) {
+function ReviewReport({
+  model,
+  review,
+  bumps,
+}: {
+  model: InstanceType<typeof DependencyReviewDetailModel>;
+  review: DependencyReview;
+  bumps: ReviewedBump[];
+}) {
   const groups = groupBumps(bumps);
   const pullUrl = pullRequestUrl(review.repositoryFullName, review.pullNumber);
   const state = reviewState(review);
+  const settled = state === "held" || state === "approved" || state === "clear";
   return (
     <>
       <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
@@ -207,15 +221,20 @@ function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: Revi
         ) : null}
       </header>
 
-      <ReviewHeadline review={review} state={state} />
+      <ReviewHeadline
+        review={review}
+        state={state}
+        pollingStalled={model.pollingStalled.value}
+        onResume={() => model.resumePolling()}
+      />
 
-      {bumps.length < review.bumpCount ? (
+      {settled && bumps.length < review.bumpCount ? (
         <Muted class="text-[13px] m-0">
           Showing the first {bumps.length} of {review.bumpCount} updates.
         </Muted>
       ) : null}
 
-      {state !== "reviewing" && state !== "failed" && bumps.length === 0 ? (
+      {settled && bumps.length === 0 ? (
         <Card>
           <EmptyLine>This pull request changes no package version Drydock can review.</EmptyLine>
         </Card>
@@ -236,10 +255,41 @@ function ReviewReport({ review, bumps }: { review: DependencyReview; bumps: Revi
 // The one sentence that says where the pull request stands. Held and the
 // in-between states are Alerts because they ask for (or explain) a wait; the
 // settled ones are a plain line.
-function ReviewHeadline({ review, state }: { review: DependencyReview; state: string }) {
+function ReviewHeadline({
+  review,
+  state,
+  pollingStalled,
+  onResume,
+}: {
+  review: DependencyReview;
+  state: ReviewState;
+  pollingStalled: boolean;
+  onResume: () => void;
+}) {
   if (state === "reviewing") {
+    // While stalled a progress bar would falsely promise an auto-refresh.
+    return pollingStalled ? (
+      <Alert tone="warn">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <span>Automatic refresh stopped after 10 minutes without the review finishing.</span>
+          <Button variant="secondary" size="sm" onClick={onResume}>
+            Resume refresh
+          </Button>
+        </div>
+      </Alert>
+    ) : (
+      <LoadingState
+        title={review.status === "queued" ? "Review queued" : "Reviewing pull request"}
+        detail="auto-refreshes when the review is ready"
+      />
+    );
+  }
+  if (state === "superseded") {
     return (
-      <Alert tone="info">Drydock is reviewing this pull request; reload for the result.</Alert>
+      <Muted class="text-[14px] m-0">
+        Not reviewed: this commit was no longer the head of an open pull request when Drydock ran.
+        Re-run the check on the pull request if it is.
+      </Muted>
     );
   }
   if (state === "failed") {

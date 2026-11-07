@@ -140,16 +140,13 @@ describe("extractBumpEvidence", () => {
       diffWith({ notices: ["2 other wheels of 1.0.1 were not inspected."] }),
     );
     expect(evidence.coverageNotices).toBe(1);
-    expect(evaluateBumpEvidence(evidence, DEFAULT_DEPENDENCY_REVIEW_POLICY)).toMatchObject({
-      status: "hold",
-      reasons: ["uninspected-files"],
-    });
     expect(
       evaluateBumpEvidence(evidence, {
         ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
-        holdOnUninspectedFiles: false,
-      }).status,
-    ).toBe("clear");
+        holdOnUninspectedFiles: true,
+      }),
+    ).toMatchObject({ status: "hold", reasons: ["uninspected-files"] });
+    expect(evaluateBumpEvidence(evidence, DEFAULT_DEPENDENCY_REVIEW_POLICY).status).toBe("clear");
   });
 
   test("keeps only release-delta findings, most severe first", () => {
@@ -173,6 +170,19 @@ describe("extractBumpEvidence", () => {
 });
 
 describe("evaluateBumpEvidence", () => {
+  test("by default only install scripts, native binaries, and new dependencies hold", () => {
+    expect(DEFAULT_DEPENDENCY_REVIEW_POLICY).toEqual({
+      holdOnInstallScripts: true,
+      holdOnNativeBinaries: true,
+      holdOnNewDependencies: true,
+      holdOnNewBinCommands: false,
+      holdAtReleaseRisk: "high",
+      holdOnUninspectedFiles: false,
+      holdOnUnreviewed: false,
+      holdOnNewPackages: false,
+    });
+  });
+
   test("a clean bump is clear", () => {
     expect(evaluateBumpEvidence(CLEAN, DEFAULT_DEPENDENCY_REVIEW_POLICY).status).toBe("clear");
   });
@@ -202,7 +212,12 @@ describe("evaluateBumpEvidence", () => {
       binCommandsAdded: 1,
       uninspectedFiles: 1,
     };
-    expect(evaluateBumpEvidence(evidence, DEFAULT_DEPENDENCY_REVIEW_POLICY)).toMatchObject({
+    const allOn = {
+      ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
+      holdOnNewBinCommands: true,
+      holdOnUninspectedFiles: true,
+    };
+    expect(evaluateBumpEvidence(evidence, allOn)).toMatchObject({
       status: "hold",
       reasons: [
         "install-script-added",
@@ -224,17 +239,16 @@ describe("evaluateBumpEvidence", () => {
   });
 
   test("unreviewed and new packages hold only when the policy says so", () => {
-    expect(unreviewedVerdict("over-cap", DEFAULT_DEPENDENCY_REVIEW_POLICY)).toMatchObject({
-      status: "hold",
-      reasons: ["unreviewed"],
-      unreviewed: "over-cap",
-    });
     expect(
-      unreviewedVerdict("not-found", {
+      unreviewedVerdict("over-cap", {
         ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
-        holdOnUnreviewed: false,
+        holdOnUnreviewed: true,
       }),
-    ).toEqual({ status: "unreviewed", unreviewed: "not-found" });
+    ).toMatchObject({ status: "hold", reasons: ["unreviewed"], unreviewed: "over-cap" });
+    expect(unreviewedVerdict("not-found", DEFAULT_DEPENDENCY_REVIEW_POLICY)).toEqual({
+      status: "unreviewed",
+      unreviewed: "not-found",
+    });
     expect(newPackageVerdict(DEFAULT_DEPENDENCY_REVIEW_POLICY)).toEqual({ status: "new-package" });
     expect(
       newPackageVerdict({ ...DEFAULT_DEPENDENCY_REVIEW_POLICY, holdOnNewPackages: true }).status,

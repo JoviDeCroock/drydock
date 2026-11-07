@@ -36,10 +36,12 @@ export const RELEASE_RISK_THRESHOLDS: ReadonlyArray<{ value: RiskLevel | null; l
   { value: "critical", label: "Critical only" },
 ];
 
-export type ReviewState = "reviewing" | "failed" | "held" | "approved" | "clear";
+export type ReviewState = "reviewing" | "failed" | "superseded" | "held" | "approved" | "clear";
 
 export function reviewState(review: Pick<DependencyReview, "status" | "conclusion">): ReviewState {
   if (review.status === "failed") return "failed";
+  // The commit stopped being the pull request's head before Drydock ran.
+  if (review.status === "superseded") return "superseded";
   if (review.status !== "completed") return "reviewing";
   return review.conclusion ?? "clear";
 }
