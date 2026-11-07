@@ -1647,6 +1647,20 @@ async function decide(
   // unless the request names one, the same as the dashboard's org switcher.
   organizationId?: string,
 ) {
+  const db = createDb(env.DB);
+  const [scan] = await db
+    .select({ source: schema.scans.source })
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  if (scan?.source === "workflow_gate") {
+    // A gate package decides through its gate, never this route (409); these
+    // fixtures only need the recorded verdict.
+    await db
+      .update(schema.scans)
+      .set({ decision, decisionReason: "reviewed", decidedAt: new Date() })
+      .where(eq(schema.scans.id, scanId));
+    return null;
+  }
   const res = await request(app, `/api/v1/scans/${scanId}/decision`, {
     method: "POST",
     body: JSON.stringify({ decision, reason: "reviewed" }),
