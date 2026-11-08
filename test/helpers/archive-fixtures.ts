@@ -8,7 +8,7 @@
 // property/fuzz suite, so the round-trip and adversarial tests build archives
 // the exact same way the regression tests do.
 
-import { deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 
 export interface TarEntry {
   name?: string;
@@ -32,6 +32,10 @@ export interface ZipEntry {
   utf8?: boolean;
   /** Bit 11 in the central record only, when it should differ from the local one. */
   centralUtf8?: boolean;
+  /** Extra-field bytes for the central record. */
+  extra?: Uint8Array;
+  /** Extra-field bytes for the local header. */
+  localExtra?: Uint8Array;
 }
 
 type TarHeaderInput = Omit<TarEntry, "body"> & { size?: number };
@@ -224,7 +228,11 @@ function zipEntry(
     u32(descriptorView, 12, body.length);
   }
 
-  const local = new Uint8Array(30 + name.length + compressed.length + descriptor.length);
+  const localExtra = entry.localExtra ?? new Uint8Array(0);
+  const centralExtra = entry.extra ?? new Uint8Array(0);
+  const local = new Uint8Array(
+    30 + name.length + localExtra.length + compressed.length + descriptor.length,
+  );
   const localView = new DataView(local.buffer);
   u32(localView, 0, 0x04034b50);
   u16(localView, 4, 20);
@@ -234,11 +242,13 @@ function zipEntry(
   u32(localView, 18, entry.dataDescriptor ? 0 : compressed.length);
   u32(localView, 22, entry.dataDescriptor ? 0 : body.length);
   u16(localView, 26, name.length);
+  u16(localView, 28, localExtra.length);
   local.set(name, 30);
-  local.set(compressed, 30 + name.length);
-  local.set(descriptor, 30 + name.length + compressed.length);
+  local.set(localExtra, 30 + name.length);
+  local.set(compressed, 30 + name.length + localExtra.length);
+  local.set(descriptor, 30 + name.length + localExtra.length + compressed.length);
 
-  const central = new Uint8Array(46 + name.length);
+  const central = new Uint8Array(46 + name.length + centralExtra.length);
   const centralView = new DataView(central.buffer);
   u32(centralView, 0, 0x02014b50);
   u16(centralView, 4, 20);
@@ -249,10 +259,31 @@ function zipEntry(
   u32(centralView, 20, compressed.length);
   u32(centralView, 24, body.length);
   u16(centralView, 28, name.length);
+  u16(centralView, 30, centralExtra.length);
   u32(centralView, 42, localOffset);
   central.set(name, 46);
+  central.set(centralExtra, 46 + name.length);
 
   return { local, central };
+}
+
+// An Info-ZIP Unicode Path extra field (0x7075): version, CRC-32 of the raw
+// name bytes the field claims to translate, then the UTF-8 name.
+export function unicodePathExtra(
+  rawName: string | Uint8Array,
+  unicodeName: string | Uint8Array,
+  { version = 1, crc }: { version?: number; crc?: number } = {},
+): Uint8Array {
+  const raw = typeof rawName === "string" ? encoder.encode(rawName) : rawName;
+  const name = typeof unicodeName === "string" ? encoder.encode(unicodeName) : unicodeName;
+  const out = new Uint8Array(4 + 5 + name.length);
+  const view = new DataView(out.buffer);
+  u16(view, 0, 0x7075);
+  u16(view, 2, 5 + name.length);
+  out[4] = version;
+  u32(view, 5, crc ?? crc32(raw));
+  out.set(name, 9);
+  return out;
 }
 
 export function buildZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {

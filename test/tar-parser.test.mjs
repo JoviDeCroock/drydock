@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
+import { tarSuspiciousEntryFindings } from "../server/lib/review";
 import * as tarParser from "../server/lib/tar-parser.js";
 import {
   TAR_BLOCK,
@@ -2251,6 +2252,29 @@ describe("readTar limits and malformed archives", () => {
     const { files, suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
     expect(files.map((f) => f.path)).toEqual(["pkg-1.0/setup.py", "pkg-1.0/pkg/mod.py"]);
     expect(suspicious).toEqual([]);
+  });
+
+  test("raises the replaced body when CPython stops at a header node-tar accepts", async () => {
+    // `0000648` is not octal: CPython's tarfile ends the archive at that header
+    // and pip installs the first setup.py, while node-tar reads `000064` and
+    // replaces it with the decoy.
+    const tar = buildTar([
+      { name: "pkg-1.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n" },
+      { name: "pkg-1.0/setup.py", body: "import os\n" },
+      { name: "pkg-1.0/setup.py", body: "pass\n" },
+    ]);
+    const decoyHeader = 4 * TAR_BLOCK;
+    tar.set(encoder.encode("0000648\0"), decoyHeader + 100);
+    sealTarHeader(tar, decoyHeader);
+    const { files, suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+
+    expect(files.find((f) => f.path === "pkg-1.0/setup.py").textSample).toBe("pass\n");
+    const [finding] = tarSuspiciousEntryFindings(suspicious, { dialect: "pypi" });
+    expect(finding).toMatchObject({
+      severity: "high",
+      file: "pkg-1.0/setup.py",
+      evidence: expect.stringContaining("different content"),
+    });
   });
 
   test("a duplicate with identical bytes hides no body", async () => {

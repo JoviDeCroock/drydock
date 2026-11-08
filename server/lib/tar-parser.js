@@ -214,6 +214,64 @@ export function decodeZipName(bytes, flags) {
   return name;
 }
 
+// The Info-ZIP Unicode Path extra field (0x7075) renames an entry for some
+// readers: CPython's zipfile from 3.12.0b1 (gh-86094) and yauzl apply a
+// version-1 field whose CRC-32 matches the raw name bytes, while CPython 3.11
+// and earlier use the raw name. pip therefore installs a different file per
+// interpreter, and neither name is authoritative, so an applicable field
+// that names a different path fails the parse instead of recording one.
+// Python's zip writers never emit the field. Invalid UTF-8 in an applicable
+// field also fails, as CPython rejects it. Malformed extra-field framing
+// fails as it does in CPython and yauzl. The CRC table is cached on the
+// function because this code is stringified into the sandbox worker.
+export function assertZipUnicodePath(nameBytes, rawPath, extra) {
+  let crc = null;
+  let offset = 0;
+  while (extra.length - offset >= 4) {
+    const id = extra[offset] | (extra[offset + 1] << 8);
+    const size = extra[offset + 2] | (extra[offset + 3] << 8);
+    const start = offset + 4;
+    offset = start + size;
+    if (offset > extra.length) throw tarError("invalid zip extra field");
+    if (id !== 0x7075 || size <= 5 || extra[start] !== 1) continue;
+    if (crc === null) {
+      let table = assertZipUnicodePath.crcTable;
+      if (!table) {
+        table = new Uint32Array(256);
+        for (let n = 0; n < 256; n += 1) {
+          let c = n;
+          for (let bit = 0; bit < 8; bit += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+          table[n] = c >>> 0;
+        }
+        assertZipUnicodePath.crcTable = table;
+      }
+      crc = 0xffffffff;
+      for (const byte of nameBytes) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+      crc = (crc ^ 0xffffffff) >>> 0;
+    }
+    const declared =
+      (extra[start + 1] |
+        (extra[start + 2] << 8) |
+        (extra[start + 3] << 16) |
+        (extra[start + 4] << 24)) >>>
+      0;
+    if (declared !== crc) continue;
+    let unicodeName;
+    try {
+      unicodeName = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        extra.subarray(start + 5, offset),
+      );
+    } catch {
+      throw tarError("invalid zip unicode path field");
+    }
+    if (unicodeName === rawPath) continue;
+    const normalized = normalizeZipPath(unicodeName);
+    if (normalized === null || normalized !== normalizeZipPath(rawPath)) {
+      throw tarError("zip unicode path field names a different entry");
+    }
+  }
+}
+
 export function normalizeZipPath(rawPath) {
   const nul = String.fromCharCode(0);
   if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
@@ -1880,8 +1938,15 @@ export async function readZipArchiveBuffered(
     const fileNameStart = offset + 46;
     const fileNameEnd = fileNameStart + fileNameLength;
     if (fileNameEnd > bytes.length) throw tarError("truncated zip filename");
+    if (fileNameEnd + extraLength > bytes.length) throw tarError("invalid zip central directory");
 
-    const rawPath = decodeZipName(bytes.subarray(fileNameStart, fileNameEnd), nameFlags);
+    const nameBytes = bytes.subarray(fileNameStart, fileNameEnd);
+    const rawPath = decodeZipName(nameBytes, nameFlags);
+    assertZipUnicodePath(
+      nameBytes,
+      rawPath,
+      bytes.subarray(fileNameEnd, fileNameEnd + extraLength),
+    );
     const path = normalizeZipPath(rawPath);
     offset = fileNameEnd + extraLength + commentLength;
 
@@ -2162,8 +2227,11 @@ export async function readZipStream(
           throw tarError("zip entry size mismatch");
         }
         if (!(await cursor.fill(fileNameLength))) throw tarError("truncated zip filename");
-        const rawPath = decodeZipName(cursor.take(fileNameLength), flags);
-        if (!(await cursor.discard(extraLength))) throw tarError("truncated zip entry");
+        const nameBytes = cursor.take(fileNameLength);
+        const rawPath = decodeZipName(nameBytes, flags);
+        // Streaming readers (uv's among them) name entries from local headers.
+        if (!(await cursor.fill(extraLength))) throw tarError("truncated zip entry");
+        assertZipUnicodePath(nameBytes, rawPath, cursor.take(extraLength));
         localEntries.set(headerOffset, { rawPath, method, compressedSize, uncompressedSize });
 
         // Bound every local record, including directory markers and unsafe
@@ -2298,8 +2366,11 @@ export async function readZipStream(
         if (!(await cursor.fill(fileNameLength))) throw tarError("truncated zip filename");
         // Decoded by the central record's own flag: zipfile does the same and
         // refuses an archive whose local name decodes differently.
-        const rawPath = decodeZipName(cursor.take(fileNameLength), flags);
-        if (!(await cursor.discard(extraLength + commentLength))) {
+        const nameBytes = cursor.take(fileNameLength);
+        const rawPath = decodeZipName(nameBytes, flags);
+        if (!(await cursor.fill(extraLength))) throw tarError("invalid zip central directory");
+        assertZipUnicodePath(nameBytes, rawPath, cursor.take(extraLength));
+        if (!(await cursor.discard(commentLength))) {
           throw tarError("invalid zip central directory");
         }
         const local = localEntries.get(localHeaderOffset);

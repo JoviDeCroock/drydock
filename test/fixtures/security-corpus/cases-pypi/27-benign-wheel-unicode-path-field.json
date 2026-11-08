@@ -1,0 +1,62 @@
+{
+  "id": "pypi-benign-wheel-unicode-path-field",
+  "title": "benign wheel repeats a non-ASCII member name in an Info-ZIP Unicode Path field",
+  "category": "benign",
+  "intent": "Info-ZIP-style writers repeat a non-ASCII name in the 0x7075 extra field; when the field agrees with the raw name every pip interpreter installs the same path, so the wheel parses normally and raises nothing. A field naming a different path fails the parse instead (test/zip-parser.test.mjs)",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package/__init__.py",
+          "size": 28,
+          "sha256": "29d703c9d3e5b9acd2ccb195a7463904181663462387ef85dc4a82208e6b0828",
+          "flags": [],
+          "textSample": "from .données import VALUE\n"
+        },
+        {
+          "path": "demo_package/données.py",
+          "size": 10,
+          "sha256": "e13df8c44af5dea1e412403910b99cc5a48f2ccbf68a66b3374d6ab9cef9fc65",
+          "flags": [],
+          "textSample": "VALUE = 1\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 59,
+          "sha256": "242557f73f15fa3b36695e6a9904761377e20acf98bb7bcf3bdd5c08198ed493",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 169,
+          "sha256": "119ffd98482078c4e0a40585682349a140facc29b930b8630ff710f9600a6e07",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,,\ndemo_package/données.py,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}
