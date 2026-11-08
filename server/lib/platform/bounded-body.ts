@@ -31,16 +31,45 @@ export async function readBoundedText(
   response: Response,
   options: BoundedBodyOptions,
 ): Promise<string | null> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const outcome = await streamBoundedBody(response, options, (chunk) => {
+    chunks.push(chunk);
+    total += chunk.byteLength;
+  });
+  if (outcome !== "complete") return null;
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+export type BoundedStreamOutcome = "complete" | "too_large" | "timeout" | "unavailable";
+
+/**
+ * Hands each body chunk to `onChunk` under the same byte and time bounds, for
+ * a reader that must not hold the whole body (a streaming parser). The byte
+ * count is of decoded bytes, after fetch's content decoding. Any outcome but
+ * `complete` has cancelled the body. An `onChunk` error cancels the body and
+ * propagates, so a parser's own rejection stays distinguishable.
+ */
+export async function streamBoundedBody(
+  response: Response,
+  options: BoundedBodyOptions,
+  onChunk: (chunk: Uint8Array) => void,
+): Promise<BoundedStreamOutcome> {
   const declared = parseContentLength(response.headers.get("content-length"));
   if (declared !== null && declared > options.maxBytes) {
     await response.body?.cancel().catch(() => undefined);
-    return null;
+    return "too_large";
   }
   const body = response.body;
-  if (!body) return null;
+  if (!body) return "unavailable";
 
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
   let total = 0;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout =
@@ -52,34 +81,34 @@ export async function readBoundedText(
             Math.max(0, (options.deadlineMs as number) - Date.now()),
           );
         });
-  const abandon = () => {
+  const abandon = (outcome: BoundedStreamOutcome) => {
     void reader.cancel().catch(() => undefined);
-    return null;
+    return outcome;
   };
 
   try {
     for (;;) {
-      const read = timeout ? await Promise.race([reader.read(), timeout]) : await reader.read();
-      if (read === null) return abandon();
-      if (read.done) break;
+      let read: ReadableStreamReadResult<Uint8Array> | null;
+      try {
+        read = timeout ? await Promise.race([reader.read(), timeout]) : await reader.read();
+      } catch {
+        return abandon("unavailable");
+      }
+      if (read === null) return abandon("timeout");
+      if (read.done) return "complete";
       total += read.value.byteLength;
-      if (total > options.maxBytes) return abandon();
-      chunks.push(read.value);
+      if (total > options.maxBytes) return abandon("too_large");
+      try {
+        onChunk(read.value);
+      } catch (err) {
+        abandon("unavailable");
+        throw err;
+      }
     }
-  } catch {
-    return abandon();
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
     reader.releaseLock();
   }
-
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(merged);
 }
 
 export async function readBoundedJson<T = unknown>(

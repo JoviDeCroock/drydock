@@ -52,6 +52,12 @@ function reference(text: string) {
             version: ownString(entry, "version"),
             tarball: isObject(dist) ? ownString(dist, "tarball") : null,
             shasum: isObject(dist) ? ownString(dist, "shasum") : null,
+            provenance: isObject(dist)
+              ? (() => {
+                  const attestations = own(dist, "attestations");
+                  return isObject(attestations) && isObject(own(attestations, "provenance"));
+                })()
+              : null,
           },
         ];
       })
@@ -164,10 +170,25 @@ describe("packument extraction equals JSON.parse and the projection", () => {
       version: "1",
       tarball: null,
       shasum: null,
+      provenance: null,
     });
     expect(result.time.get("constructor")).toBe("t");
     expect(result.distTags.get("__proto__")).toBe("1");
     expect(({} as Record<string, unknown>).version).toBeUndefined();
+  });
+
+  test("records whether a version's dist carries a provenance attestation object", () => {
+    const result = extract(
+      `{"versions":{"1":{"dist":{"attestations":{"provenance":{"predicateType":"x"}}}},"2":{"dist":{"attestations":{"provenance":"yes"}}},"3":{"dist":{"tarball":"t"}},"4":{},"5":{"dist":{"attestations":{"provenance":{}},"attestations":{}}},"6":{"dist":"x"}}}`,
+    );
+    expect([...result.versions].map(([version, entry]) => [version, entry?.provenance])).toEqual([
+      ["1", true],
+      ["2", false],
+      ["3", false],
+      ["4", null],
+      ["5", false],
+      ["6", null],
+    ]);
   });
 
   test("the last duplicate wins, replacing objects wholesale and erasing strings", () => {
@@ -176,7 +197,7 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     );
     expect(result.name).toBeNull();
     expect([...result.versions]).toEqual([
-      ["2.0.0", { name: "n", version: null, tarball: null, shasum: null }],
+      ["2.0.0", { name: "n", version: null, tarball: null, shasum: null, provenance: null }],
     ]);
     expect(result.distTags.size).toBe(0);
   });
@@ -323,6 +344,7 @@ describe("invalid and hostile documents", () => {
         version: "1.0.0",
         tarball: "t",
         shasum: "s",
+        provenance: false,
       });
       expect(result.versions.get("2.0.0")?.version).toBe("2.0.0");
       expect(result.time.get("1.0.0")).toBe("t1");
@@ -350,12 +372,14 @@ describe("invalid and hostile documents", () => {
       version: null,
       tarball: null,
       shasum: null,
+      provenance: false,
     });
     expect(result.versions.get("2.0.0")).toEqual({
       name: null,
       version: "2.0.0",
       tarball: "t2",
       shasum: null,
+      provenance: false,
     });
     expect([...result.time]).toEqual([["1.0.0", "t"]]);
     expect([...result.distTags]).toEqual([["latest", "2.0.0"]]);
@@ -526,6 +550,8 @@ const fieldKey = fc.oneof(
     "dist",
     "tarball",
     "shasum",
+    "attestations",
+    "provenance",
     "__proto__",
     "constructor",
     "1.0.0",
@@ -562,10 +588,20 @@ function objectOf(entry: fc.Arbitrary<[string, Json]>, maxLength = 6): fc.Arbitr
 const mostly = (shaped: fc.Arbitrary<Json>) =>
   fc.oneof({ arbitrary: shaped, weight: 4 }, { arbitrary: noise, weight: 1 });
 const stringOrNoise = mostly(stringNode);
+const attestations = mostly(
+  objectOf(
+    fc.oneof(
+      { arbitrary: fc.tuple(fc.constant("provenance"), noise), weight: 3 },
+      { arbitrary: fc.tuple(fieldKey, noise), weight: 1 },
+    ),
+    3,
+  ),
+);
 const dist = mostly(
   objectOf(
     fc.oneof(
       { arbitrary: fc.tuple(fc.constantFrom("tarball", "shasum"), stringOrNoise), weight: 3 },
+      { arbitrary: fc.tuple(fc.constant("attestations"), attestations), weight: 1 },
       { arbitrary: fc.tuple(fieldKey, noise), weight: 1 },
     ),
     4,

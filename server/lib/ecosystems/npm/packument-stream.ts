@@ -1,7 +1,8 @@
 /**
- * Streaming extraction of the few packument fields the publication monitor
- * reads: top-level `name`, `dist-tags` and `time`, and each version's `name`,
- * `version`, `dist.tarball` and `dist.shasum`.
+ * Streaming extraction of the few packument fields Drydock reads: top-level
+ * `name`, `dist-tags` and `time`, and each version's `name`, `version`,
+ * `dist.tarball`, `dist.shasum` and whether `dist.attestations.provenance` is
+ * an object.
  *
  * The packument is a hostile registry document, and only npm's full document
  * carries per-version publish times, so a mature package's packument can be
@@ -28,6 +29,8 @@ export interface PackumentVersion {
   version: string | null;
   tarball: string | null;
   shasum: string | null;
+  /** `dist.attestations.provenance` is an object; null when `dist` is not one. */
+  provenance: boolean | null;
 }
 
 export interface PackumentExtract {
@@ -46,13 +49,15 @@ export interface PackumentExtract {
   versionLimitExceeded: boolean;
 }
 
-// The only containers tracked, at most four deep: root > versions > entry > dist.
+// The only containers tracked, at most five deep:
+// root > versions > entry > dist > attestations.
 const ROOT = 0;
 const VERSIONS = 1;
 const ENTRY = 2;
 const DIST = 3;
 const TIME = 4;
 const TAGS = 5;
+const ATTESTATIONS = 6;
 
 // Value slots: what the next value means.
 const SLOT_SKIP = 0;
@@ -69,6 +74,8 @@ const SLOT_TARBALL = 10;
 const SLOT_SHASUM = 11;
 const SLOT_TIME_VALUE = 12;
 const SLOT_TAG_VALUE = 13;
+const SLOT_ATTESTATIONS = 14;
+const SLOT_PROVENANCE = 15;
 
 // Parser states.
 const S_VALUE = 0;
@@ -112,7 +119,12 @@ const ENTRY_KEYS: Record<string, number> = {
   version: SLOT_ENTRY_VERSION,
   dist: SLOT_ENTRY_DIST,
 };
-const DIST_KEYS: Record<string, number> = { tarball: SLOT_TARBALL, shasum: SLOT_SHASUM };
+const DIST_KEYS: Record<string, number> = {
+  tarball: SLOT_TARBALL,
+  shasum: SLOT_SHASUM,
+  attestations: SLOT_ATTESTATIONS,
+};
+const ATTESTATION_KEYS: Record<string, number> = { provenance: SLOT_PROVENANCE };
 const STRING_SLOTS: ReadonlySet<number> = new Set([
   SLOT_NAME,
   SLOT_ENTRY_NAME,
@@ -265,6 +277,11 @@ export function createPackumentExtractor(
       case SLOT_ENTRY_DIST:
         entry!.tarball = null;
         entry!.shasum = null;
+        entry!.provenance = null;
+        break;
+      case SLOT_ATTESTATIONS:
+      case SLOT_PROVENANCE:
+        entry!.provenance = false;
         break;
       case SLOT_TARBALL:
         entry!.tarball = null;
@@ -338,12 +355,20 @@ export function createPackumentExtractor(
           out.versions.set(pendingKey, null);
           return null;
         }
-        entry = { name: null, version: null, tarball: null, shasum: null };
+        entry = { name: null, version: null, tarball: null, shasum: null, provenance: null };
         out.versions.set(pendingKey, entry);
         return ENTRY;
       case SLOT_ENTRY_DIST:
         applyNonString();
+        entry!.provenance = false;
         return DIST;
+      case SLOT_ATTESTATIONS:
+        applyNonString();
+        return ATTESTATIONS;
+      case SLOT_PROVENANCE:
+        // Only its presence as an object is read; the contents are skipped.
+        entry!.provenance = true;
+        return null;
       default:
         applyNonString();
         return null;
@@ -434,7 +459,14 @@ export function createPackumentExtractor(
       }
     } else {
       // A field name too long to capture cannot be one of these short names.
-      const names = top === ROOT ? ROOT_KEYS : top === ENTRY ? ENTRY_KEYS : DIST_KEYS;
+      const names =
+        top === ROOT
+          ? ROOT_KEYS
+          : top === ENTRY
+            ? ENTRY_KEYS
+            : top === DIST
+              ? DIST_KEYS
+              : ATTESTATION_KEYS;
       slot = text !== null && Object.hasOwn(names, text) ? names[text]! : SLOT_SKIP;
       if (slot === SLOT_VERSIONS) out.versionsPresent = true;
     }

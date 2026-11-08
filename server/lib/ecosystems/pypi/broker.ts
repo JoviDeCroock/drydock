@@ -34,10 +34,10 @@ export interface PyPiBroker extends AdapterBroker {
 }
 
 const PYPI_METADATA_REGISTRY = "https://pypi.org/pypi";
-const PYPI_METADATA_TIMEOUT_MS = 15_000;
+export const PYPI_METADATA_TIMEOUT_MS = 15_000;
 // The JSON API lists every release with every file; large projects (numpy,
 // tensorflow) run to a few MiB, so the cap is generous but still a cap.
-const MAX_PYPI_METADATA_BYTES = 16 * 1024 * 1024;
+export const MAX_PYPI_METADATA_BYTES = 16 * 1024 * 1024;
 
 // PyPI public artifacts carry no credentials, so unlike the npm broker this is a
 // plain object rather than a WorkerEntrypoint. The sandbox download path is

@@ -1,6 +1,8 @@
+import { streamBoundedBody, type BoundedStreamOutcome } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
+import { createPackumentExtractor, type PackumentExtract } from "./packument-stream";
 
 export { compareSemver } from "../semver";
 
@@ -108,8 +110,77 @@ export async function fetchPackageMetadata(
     // deployment, so fall back to the plain document once before giving up.
     res = await fetchWith("application/json");
   }
-  if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  return projectRegistryMetadata(await res.json());
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`metadata fetch failed: ${res.status}`);
+  }
+  return readPackument(res);
+}
+
+// Decoded JSON, after fetch's content decoding. The largest real packuments
+// (a full document with thousands of versions and their readmes) run to tens
+// of megabytes; streaming keeps memory flat, so the ceiling bounds the
+// transfer and parse time a single read can cost, not the heap.
+const MAX_PACKUMENT_BYTES = 128 * 1024 * 1024;
+const MAX_PACKUMENT_VERSIONS = 100_000;
+const PACKUMENT_BODY_DEADLINE_MS = 30_000;
+
+/** The packument is past the byte or version ceiling; it was not parsed whole. */
+export class RegistryMetadataTooLargeError extends Error {
+  constructor() {
+    super("registry metadata too large");
+    this.name = "RegistryMetadataTooLargeError";
+  }
+}
+
+/**
+ * Streams the packument through the extractor rather than `res.json()`: a
+ * parsed full document costs several times its size in heap, which for a
+ * mature package is more than the 128 MiB isolate has.
+ */
+async function readPackument(res: Response): Promise<RegistryMetadata> {
+  const extractor = createPackumentExtractor({ maxVersions: MAX_PACKUMENT_VERSIONS });
+  let outcome: BoundedStreamOutcome;
+  try {
+    // Timed from when headers arrived, so a retried request does not inherit
+    // a deadline the first attempt spent.
+    outcome = await streamBoundedBody(
+      res,
+      { maxBytes: MAX_PACKUMENT_BYTES, deadlineMs: Date.now() + PACKUMENT_BODY_DEADLINE_MS },
+      (chunk) => extractor.write(chunk),
+    );
+  } catch {
+    throw new Error("metadata fetch failed: invalid document");
+  }
+  if (outcome === "too_large") throw new RegistryMetadataTooLargeError();
+  if (outcome !== "complete") throw new Error(`metadata fetch failed: ${outcome}`);
+  let extract: PackumentExtract;
+  try {
+    extract = extractor.end();
+  } catch {
+    throw new Error("metadata fetch failed: invalid document");
+  }
+  if (extract.versionLimitExceeded) throw new RegistryMetadataTooLargeError();
+  return projectPackumentExtract(extract);
+}
+
+/** `projectRegistryMetadata`, from the streamed extract instead of a parsed document. */
+export function projectPackumentExtract(extract: PackumentExtract): RegistryMetadata {
+  const projected: RegistryMetadata = {};
+  if (extract.versionsIsObject) {
+    // fromEntries defines own properties, so a `__proto__` version stays data.
+    projected.versions = Object.fromEntries(
+      [...extract.versions].map(([version, entry]): [string, RegistryVersionMetadata] => {
+        const projectedEntry: RegistryVersionMetadata =
+          entry?.tarball != null ? { dist: { tarball: entry.tarball } } : {};
+        if (entry && entry.provenance !== null) projectedEntry.hasProvenance = entry.provenance;
+        return [version, projectedEntry];
+      }),
+    );
+  }
+  if (extract.distTags.size > 0) projected["dist-tags"] = Object.fromEntries(extract.distTags);
+  if (extract.time.size > 0) projected.time = Object.fromEntries(extract.time);
+  return projected;
 }
 
 // Statuses a registry might answer with when it does not understand
@@ -121,15 +192,12 @@ export function mayRejectVendorMediaType(status: number): boolean {
 }
 
 /**
- * Narrow a registry document to the fields Drydock actually reads. Packuments
- * for popular packages are among the largest JSON documents this Worker parses
- * (tens of megabytes for a package with thousands of versions, most of it
- * readmes and duplicated per-version manifests), and holding the whole thing
- * while a scan also holds two parsed package sides is exactly the memory the
- * 128 MiB isolate does not have. Projecting right at the fetch boundary lets
- * the parsed document be collected immediately, and keeps the cached copy
- * small. `RegistryMetadata` is the whole contract — every consumer is typed
- * against it — so nothing downstream can read a field dropped here.
+ * Narrow an already-parsed registry document to the fields Drydock reads, for
+ * documents that are not fetched here (fixtures, corpus helpers). Registry
+ * reads go through `readPackument`, whose `projectPackumentExtract` must equal
+ * this. `RegistryMetadata` is the whole contract — every consumer is typed
+ * against it — so nothing downstream can read a field dropped here, and the
+ * cached copy stays small.
  */
 export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   if (!raw || typeof raw !== "object") return {};
