@@ -191,8 +191,12 @@ function describeCallbackError(code: GithubAppCallbackErrorCode): string {
       return "GitHub returned an installation id we couldn't resolve. Try installing again from the settings page.";
     case "installation_inactive":
       return "The installation exists but is suspended on GitHub. Re-enable it on GitHub and link it again.";
-    case "installation_not_authorized":
-      return "The signed-in GitHub user does not have access to that installation. Pick an account they own and retry.";
+    case "installation_owner_required":
+      return "Only an owner of this GitHub account can link its installation. Ask an owner to finish the install from Drydock.";
+    case "installation_owner_unverified":
+      return "GitHub did not confirm that you own this account. The Drydock GitHub App may be missing the Members (read) permission; ask the operator or an owner to accept it on GitHub, then retry.";
+    case "installation_conflict":
+      return "This installation changed while it was being linked. Start the install again from settings.";
     case "installation_not_active":
       return "GitHub reported the installation isn't active yet. Approve the install on GitHub, then try again.";
     case "invalid_input":

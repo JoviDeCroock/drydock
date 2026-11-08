@@ -242,7 +242,7 @@ Sign-in never requires a verified address; unverified accounts can use the dashb
 |Record a scan decision|`POST /api/v1/scans/:id/decision`, `POST /api/v1/scans/batch-approval`|
 |Create a public share link|`POST /api/v1/scans/:id/share`|
 |Invite a member|`POST /api/v1/organizations/invitations`|
-|GitHub App install|`POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`|
+|GitHub App install|`POST /api/v1/github-app/install`, `…/install/callback`|
 |Decide a workflow gate|`POST /api/v1/github-app/workflow-gates/:gateId/decision`|
 |Publisher setup|Every `/api/v1/github-app/setup/*` route|
 |Accept an invitation|`POST /api/v1/organizations/invitations/accept`; checks the user row, not the session (`403`)|
@@ -306,7 +306,7 @@ Sessions are Better Auth cookies signed with `BETTER_AUTH_SECRET` (`server/lib/a
 ## Workflow gates and publisher setup
 
 1. Gates never publish: GitHub Environment protection holds the job; Drydock reviews artifacts and posts accept/reject. State binds original installation/repository/run/environment/callback URL/org; identities and digests are recomputed from bytes ([workflow gates](./workflow-gates.md)).
-2. Setup requires verified session and `roleCanManageIntegrations`; reads use org-owned installations. Workflows/proposals/conversations are hostile evidence. Tools expose no shell, package execution, installation, external fetch, or GitHub writes.
+2. Setup requires verified session and `roleCanManageIntegrations`; links need the GitHub owner; reads use org-owned installations. Workflows/proposals/conversations are hostile evidence. Tools expose no shell, package execution, installs, external fetch, or GitHub writes.
 3. Persisted `createPullRequest: true` authorizes draft-PR writes. Each mutation rechecks authorization/membership/installation/killswitch/source revision/proposal digest/independent verdict. Multi-file commits are atomic; recovery never overwrites collaborator edits.
 4. The write token is repository-scoped and needs already-granted Contents, Pull requests, and Workflows permissions. Setup cannot grant permissions, enable environment protection, approve, merge, or publish. Setup status reports observed configuration; it never certifies workflow code.
 5. Private setup state: org-scoped R2; authorization/safe metadata: D1. Logs exclude prompts, tool payloads, raw errors; Gateway retains no workflow payloads. Deletion/expiry removes private data; late writes cannot restore it ([publisher setup](./publisher-setup.md)).

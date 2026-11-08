@@ -43,7 +43,9 @@ export class GithubAppValidationError extends Error {
 export type GithubAppValidationCode =
   | "installation_missing"
   | "installation_inactive"
-  | "installation_not_authorized"
+  | "installation_owner_required"
+  | "installation_owner_unverified"
+  | "installation_conflict"
   | "repository_not_accessible"
   | "environment_unmapped"
   | "environment_already_mapped"

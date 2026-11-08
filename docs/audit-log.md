@@ -42,7 +42,7 @@ The table is append-only in normal operation; the only deletes are org/scan casc
 | `organization.member_*` | yes | yes | [Organization members](./organization-members.md#audit-events) |
 | `organization.*` (created, renamed, release_two_factor_changed, notification recipients, Slack, package badge, API keys above) | yes | yes |  |
 | `npm_connection.{upserted,validated,deleted,token_expired,personal_confirmed}` | yes | yes |  |
-| `github_app_*` (installation linked, release target created/deleted, `github_app_setup.pr_created`) | yes | yes | Setup PR: actor, repository, environment, PR number; detail shows repository and PR number only; workflow contents and proposal tokens are never recorded |
+| `github_app_*` (installation linked, `moved_here`, `moved_away`, release target created/deleted, `github_app_setup.pr_created`) | yes | yes | Moves are written to both organizations in the move's transaction; `moved_away` (security) has no actor and names the GitHub owner who authorized it. Setup PR: actor, repository, environment, PR number; detail shows repository and PR number only; workflow contents and proposal tokens are never recorded |
 | `scan.share_*`, `scan.feed_*` | yes | yes | Security category |
 | `npm_package.management_*` | yes | yes | [Package claims](./package-claims.md) |
 | `publication.*`, `publication_watch.*` | yes | yes | See publication monitoring below |

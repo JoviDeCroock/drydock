@@ -2,6 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { createPublisherSetupJob } from "../../server/db/publisher-setup-jobs";
 import { createScanJob, markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { GithubAppValidationError } from "../../server/lib/github-app/config";
@@ -15,6 +16,7 @@ import {
   resolveDeploymentProtectionTarget,
   upsertInstallation,
 } from "../../server/lib/github-app/persistence";
+import type { PublisherSetupDraftRequest } from "../../server/lib/github-app/setup-types";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -469,41 +471,6 @@ describe("github-app routes", () => {
       `github-app:environments:${organizationId}:${installation.id}:octo/alpha`,
     ]);
     expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  test("POST /install/callback refuses installation ids the GitHub user cannot access", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installRes = await callGithubAppRoute(
-      buildTestApp(mountGithubApp, { userId }),
-      "POST",
-      "/api/v1/github-app/install",
-    );
-    const { state } = (await installRes.json()) as { state: string };
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({ access_token: "user-token" }))
-      .mockResolvedValueOnce(
-        Response.json({
-          installations: [{ id: 456, account: { login: "octo", type: "Organization" } }],
-        }),
-      );
-
-    const res = await callGithubAppRoute(
-      buildTestApp(mountGithubApp, { userId }),
-      "POST",
-      "/api/v1/github-app/install/callback",
-      {
-        state,
-        code: "callback-code",
-        installationId: "123",
-        setupAction: "install",
-      },
-    );
-
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: "installation_not_authorized" });
-    const installations = await listInstallationsForOrganization(createDb(env.DB), organizationId);
-    expect(installations).toHaveLength(0);
   });
 });
 
@@ -1253,5 +1220,267 @@ describe("github-app workflow-gate by-scan route", () => {
       `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("github-app install callback ownership", () => {
+  const ORG_ACCOUNT = { id: 7001, login: "acme", type: "Organization" };
+  const USER_ACCOUNT = { id: 9001, login: "octocat", type: "User" };
+
+  interface GithubDouble {
+    account: { id: number; login: string; type: string };
+    membership?: Response;
+    user?: Response;
+  }
+
+  // Routes by URL so the assertions name the exact GitHub calls the link makes.
+  function mockGithub(installationId: string, double: GithubDouble) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const auth = new Headers(init?.headers).get("authorization");
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Response.json({ access_token: "user-token" });
+      }
+      if (url === `https://api.github.com/app/installations/${installationId}`) {
+        return Response.json({
+          id: Number(installationId),
+          account: double.account,
+          target_type: double.account.type,
+          suspended_at: null,
+        });
+      }
+      if (auth !== "Bearer user-token") throw new Error(`unexpected credential for ${url}`);
+      if (url === `https://api.github.com/user/memberships/orgs/${double.account.login}`) {
+        return double.membership ?? new Response("{}", { status: 404 });
+      }
+      if (url === "https://api.github.com/user") {
+        return double.user ?? new Response("{}", { status: 404 });
+      }
+      throw new Error(`unexpected GitHub request ${url}`);
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    return fetchMock;
+  }
+
+  function membership(overrides: Record<string, unknown> = {}) {
+    return Response.json({
+      state: "active",
+      role: "admin",
+      organization: { id: ORG_ACCOUNT.id, login: ORG_ACCOUNT.login },
+      user: { id: 55, login: "acme-owner" },
+      ...overrides,
+    });
+  }
+
+  async function linkInstallation(userId: string, installationId: string, double: GithubDouble) {
+    const installRes = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "POST",
+      "/api/v1/github-app/install",
+    );
+    const { state } = (await installRes.json()) as { state: string };
+    const fetchMock = mockGithub(installationId, double);
+    const res = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "POST",
+      "/api/v1/github-app/install/callback",
+      { state, code: "callback-code", installationId, setupAction: "install" },
+    );
+    return { res, fetchMock };
+  }
+
+  function newInstallationId() {
+    return String(Math.floor(Math.random() * 1e9) + 1);
+  }
+
+  async function eventsFor(organizationId: string) {
+    return createDb(env.DB)
+      .select()
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.organizationId, organizationId));
+  }
+
+  test("links an organization installation for an active GitHub organization owner", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installationId = newInstallationId();
+
+    const { res, fetchMock } = await linkInstallation(userId, installationId, {
+      account: ORG_ACCOUNT,
+      membership: membership(),
+    });
+
+    expect(res.status).toBe(201);
+    const calls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(calls).toContain(`https://api.github.com/user/memberships/orgs/${ORG_ACCOUNT.login}`);
+    expect(calls).not.toContain("https://api.github.com/user/installations?per_page=100");
+    const [linked] = await listInstallationsForOrganization(createDb(env.DB), organizationId);
+    expect(linked).toMatchObject({ installationId, accountLogin: "acme" });
+    const events = await eventsFor(organizationId);
+    expect(events.map((event) => event.type)).toEqual(["github_app_installation.linked"]);
+  });
+
+  test.each([
+    ["a non-admin organization member", membership({ role: "member" })],
+    ["an outside collaborator", new Response('{"message":"Not Found"}', { status: 404 })],
+  ])("refuses %s", async (_label, response) => {
+    const { userId, organizationId } = await seedUser();
+
+    const { res } = await linkInstallation(userId, newInstallationId(), {
+      account: ORG_ACCOUNT,
+      membership: response,
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      code: "installation_owner_required",
+      error: "you must be an owner of acme on GitHub to link this installation",
+    });
+    expect(await listInstallationsForOrganization(createDb(env.DB), organizationId)).toEqual([]);
+  });
+
+  test("links a user-account installation only for that GitHub user", async () => {
+    const owner = await seedUser();
+    const other = await seedUser();
+
+    const accepted = await linkInstallation(owner.userId, newInstallationId(), {
+      account: USER_ACCOUNT,
+      user: Response.json({ id: USER_ACCOUNT.id, login: "octocat" }),
+    });
+    const refused = await linkInstallation(other.userId, newInstallationId(), {
+      account: USER_ACCOUNT,
+      user: Response.json({ id: USER_ACCOUNT.id + 1, login: "someone-else" }),
+    });
+
+    expect(accepted.res.status).toBe(201);
+    expect(refused.res.status).toBe(403);
+    expect(await refused.res.json()).toMatchObject({ code: "installation_owner_required" });
+    const db = createDb(env.DB);
+    expect(await listInstallationsForOrganization(db, owner.organizationId)).toHaveLength(1);
+    expect(await listInstallationsForOrganization(db, other.organizationId)).toEqual([]);
+  });
+
+  test.each([
+    ["GitHub refuses the membership lookup", ORG_ACCOUNT, new Response("{}", { status: 403 })],
+    ["the account is an enterprise", { id: 1, login: "acme-ent", type: "Enterprise" }, undefined],
+  ])("fails closed when %s", async (_label, account, response) => {
+    const { userId, organizationId } = await seedUser();
+
+    const { res } = await linkInstallation(userId, newInstallationId(), {
+      account,
+      membership: response,
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "installation_owner_unverified" });
+    expect(await listInstallationsForOrganization(createDb(env.DB), organizationId)).toEqual([]);
+  });
+
+  test("re-linking to the same organization keeps the same installation row", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installationId = newInstallationId();
+    const double = () => ({ account: ORG_ACCOUNT, membership: membership() });
+
+    const first = await linkInstallation(userId, installationId, double());
+    const second = await linkInstallation(userId, installationId, double());
+
+    expect([first.res.status, second.res.status]).toEqual([201, 201]);
+    const rows = await listInstallationsForOrganization(createDb(env.DB), organizationId);
+    expect(rows).toHaveLength(1);
+  });
+
+  async function seedPreviousOrganizationState() {
+    const previous = await seedUser();
+    const db = createDb(env.DB);
+    const { gateId, installation, releaseTarget } = await seedGate(previous.organizationId);
+    const now = new Date();
+    await db.insert(schema.dependencyReviews).values({
+      id: crypto.randomUUID(),
+      organizationId: previous.organizationId,
+      installationRowId: installation.id,
+      repositoryId: releaseTarget.repositoryId,
+      repositoryFullName: "octo/example",
+      pullNumber: 1,
+      headSha: "a".repeat(40),
+      authorLogin: "dependabot[bot]",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const setupJob = await createPublisherSetupJob(db, previous.organizationId, previous.userId, {
+      installationRowId: installation.id,
+    } as PublisherSetupDraftRequest);
+    await db
+      .update(schema.publisherSetupJobs)
+      .set({ status: "running" })
+      .where(eq(schema.publisherSetupJobs.id, setupJob.id));
+    return { previous, gateId, installation, releaseTarget, setupJobId: setupJob.id };
+  }
+
+  test("a verified GitHub owner moves an installation linked to another organization", async () => {
+    const { previous, gateId, installation, setupJobId } = await seedPreviousOrganizationState();
+    const next = await seedUser();
+    const db = createDb(env.DB);
+
+    const { res } = await linkInstallation(next.userId, installation.installationId, {
+      account: ORG_ACCOUNT,
+      membership: membership(),
+    });
+
+    expect(res.status).toBe(201);
+    const [moved] = await listInstallationsForOrganization(db, next.organizationId);
+    expect(moved).toMatchObject({
+      id: installation.id,
+      installationId: installation.installationId,
+    });
+    expect(await listInstallationsForOrganization(db, previous.organizationId)).toEqual([]);
+    expect(await listReleaseTargetsForOrganization(db, previous.organizationId)).toEqual([]);
+    expect(await getGateForOrganization(db, previous.organizationId, gateId)).toBeNull();
+    const reviews = await db
+      .select()
+      .from(schema.dependencyReviews)
+      .where(eq(schema.dependencyReviews.installationRowId, installation.id));
+    expect(reviews).toEqual([]);
+    const [setupJob] = await db
+      .select()
+      .from(schema.publisherSetupJobs)
+      .where(eq(schema.publisherSetupJobs.id, setupJobId));
+    expect(setupJob.status).toBe("failed");
+    expect(setupJob.failureJson).toMatchObject({ code: "installation_moved" });
+    expect(setupJob.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+
+    const [movedAway] = await eventsFor(previous.organizationId);
+    expect(movedAway).toMatchObject({
+      type: "github_app_installation.moved_away",
+      actorUserId: null,
+      metadataJson: { accountLogin: "acme", githubLogin: "acme-owner" },
+    });
+    const [movedHere] = await eventsFor(next.organizationId);
+    expect(movedHere).toMatchObject({
+      type: "github_app_installation.moved_here",
+      actorUserId: next.userId,
+    });
+  });
+
+  test("a non-owner cannot move an installation linked to another organization", async () => {
+    const { previous, gateId, installation, setupJobId } = await seedPreviousOrganizationState();
+    const next = await seedUser();
+    const db = createDb(env.DB);
+
+    const { res } = await linkInstallation(next.userId, installation.installationId, {
+      account: ORG_ACCOUNT,
+      membership: membership({ role: "member" }),
+    });
+
+    expect(res.status).toBe(403);
+    const [kept] = await listInstallationsForOrganization(db, previous.organizationId);
+    expect(kept?.id).toBe(installation.id);
+    expect(await listReleaseTargetsForOrganization(db, previous.organizationId)).toHaveLength(1);
+    expect(await getGateForOrganization(db, previous.organizationId, gateId)).not.toBeNull();
+    const [setupJob] = await db
+      .select()
+      .from(schema.publisherSetupJobs)
+      .where(eq(schema.publisherSetupJobs.id, setupJobId));
+    expect(setupJob.status).toBe("running");
+    expect(await eventsFor(previous.organizationId)).toEqual([]);
+    expect(await eventsFor(next.organizationId)).toEqual([]);
   });
 });

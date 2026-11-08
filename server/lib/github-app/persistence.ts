@@ -1,6 +1,13 @@
-import { and, eq } from "drizzle-orm";
+import { type SQL, and, eq, inArray, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
+import {
+  dependencyReviews,
+  githubAppInstallations,
+  githubReleaseTargets,
+  githubWorkflowGates,
+  publisherSetupJobs,
+  scanEvents,
+} from "../../db/schema";
 import {
   ACCOUNT_LOGIN_MAX,
   GithubAppValidationError,
@@ -66,8 +73,9 @@ export async function upsertInstallation(
 
   if (existing) {
     if (existing.organizationId !== input.organizationId) {
+      // Moving it is `transferInstallation`'s job, after the ownership check.
       throw new GithubAppValidationError(
-        "installation_missing",
+        "installation_conflict",
         `installation ${input.installationId} is already linked to a different organization`,
       );
     }
@@ -119,6 +127,139 @@ export async function upsertInstallation(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export interface TransferInstallationInput {
+  installationRowId: string;
+  fromOrganizationId: string;
+  toOrganizationId: string;
+  accountLogin: string;
+  accountType: string;
+  targetType: string;
+  status: InstallationStatus;
+  createdByUserId: string;
+  /** The GitHub owner whose verified authorization moved the installation. */
+  githubLogin: string;
+}
+
+/**
+ * Moves an installation to another organization after its GitHub owner proved
+ * ownership. One D1 batch re-points the row and strips the previous
+ * organization of everything bound to it, so nothing it still holds can gate,
+ * decide, review, or open PRs through the installation:
+ *  - release targets and their workflow gates (pending ones included) go;
+ *    GitHub keeps a pending deployment waiting until the new owner maps the
+ *    environment and re-runs it, or GitHub times it out;
+ *  - dependency reviews go, because they are keyed by installation row and
+ *    the new organization's reviews of the same commits would match them;
+ *  - publisher setup jobs fail and expire, so the cron prunes their private
+ *    payloads; a running job also rechecks installation ownership before any
+ *    GitHub write.
+ * Both organizations get an audit event, written only when the row was still
+ * the previous organization's at commit time.
+ */
+export async function transferInstallation(
+  db: AppDb,
+  input: TransferInstallationInput,
+): Promise<InstallationRecord> {
+  const now = new Date();
+  const accountLogin = input.accountLogin.slice(0, ACCOUNT_LOGIN_MAX);
+  const rowOwnedByPrevious = sql`${githubAppInstallations.id} = ${input.installationRowId}
+    and ${githubAppInstallations.organizationId} = ${input.fromOrganizationId}`;
+  const fromSetupJobs = and(
+    eq(publisherSetupJobs.organizationId, input.fromOrganizationId),
+    eq(publisherSetupJobs.installationRowId, input.installationRowId),
+  );
+  const [, , , , updated] = await db.batch([
+    transferEventStatement(db, now, rowOwnedByPrevious, {
+      organizationId: input.fromOrganizationId,
+      actorUserId: null,
+      type: "github_app_installation.moved_away",
+      metadata: { accountLogin, githubLogin: input.githubLogin },
+    }),
+    transferEventStatement(db, now, rowOwnedByPrevious, {
+      organizationId: input.toOrganizationId,
+      actorUserId: input.createdByUserId,
+      type: "github_app_installation.moved_here",
+      metadata: { accountLogin, githubLogin: input.githubLogin },
+    }),
+    db
+      .delete(githubWorkflowGates)
+      .where(
+        and(
+          eq(githubWorkflowGates.organizationId, input.fromOrganizationId),
+          eq(githubWorkflowGates.installationRowId, input.installationRowId),
+        ),
+      ),
+    db
+      .delete(githubReleaseTargets)
+      .where(
+        and(
+          eq(githubReleaseTargets.organizationId, input.fromOrganizationId),
+          eq(githubReleaseTargets.installationRowId, input.installationRowId),
+        ),
+      ),
+    db
+      .update(githubAppInstallations)
+      .set({
+        organizationId: input.toOrganizationId,
+        accountLogin,
+        accountType: input.accountType,
+        targetType: input.targetType,
+        status: input.status,
+        suspendedAt: input.status === "suspended" ? now : null,
+        uninstalledAt: input.status === "uninstalled" ? now : null,
+        createdByUserId: input.createdByUserId,
+        updatedAt: now,
+      })
+      .where(rowOwnedByPrevious)
+      .returning(),
+    db
+      .delete(dependencyReviews)
+      .where(
+        and(
+          eq(dependencyReviews.organizationId, input.fromOrganizationId),
+          eq(dependencyReviews.installationRowId, input.installationRowId),
+        ),
+      ),
+    db
+      .update(publisherSetupJobs)
+      .set({
+        status: "failed",
+        failureJson: {
+          code: "installation_moved",
+          message: "The GitHub App installation moved to another organization.",
+        },
+      })
+      .where(and(fromSetupJobs, inArray(publisherSetupJobs.status, ["queued", "running"]))),
+    db.update(publisherSetupJobs).set({ expiresAt: now, updatedAt: now }).where(fromSetupJobs),
+  ]);
+  const row = updated[0];
+  if (!row) {
+    throw new GithubAppValidationError(
+      "installation_conflict",
+      "the installation changed organization while it was being linked; try again",
+    );
+  }
+  return readInstallationRow(row);
+}
+
+function transferEventStatement(
+  db: AppDb,
+  now: Date,
+  guard: SQL,
+  event: {
+    organizationId: string;
+    actorUserId: string | null;
+    type: string;
+    metadata: Record<string, unknown>;
+  },
+) {
+  return db.insert(scanEvents).select(
+    sql`select ${crypto.randomUUID()}, ${event.organizationId}, ${event.actorUserId}, null,
+      ${event.type}, ${JSON.stringify(event.metadata)}, ${now.getTime()}
+      from ${githubAppInstallations} where ${guard}`,
+  );
 }
 
 export async function listInstallationsForOrganization(

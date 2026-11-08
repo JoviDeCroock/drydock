@@ -30,13 +30,16 @@ import {
 } from "../../lib/github-app/config";
 import {
   buildInstallUrl,
+  exchangeGithubUserCode,
   signOAuthState,
   verifyOAuthState,
-  verifyUserCanAccessInstallation,
+  verifyUserOwnsInstallationAccount,
 } from "../../lib/github-app/oauth";
 import {
+  getInstallationByExternalId,
   type InstallationRecord,
   listInstallationsForOrganization,
+  transferInstallation,
   upsertInstallation,
 } from "../../lib/github-app/persistence";
 import type { Bindings, Variables } from "../../types";
@@ -130,31 +133,52 @@ installationRoutes.post("/install/callback", async (c) => {
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await verifyUserCanAccessInstallation(config, { code, installationId });
+    const userAccessToken = await exchangeGithubUserCode(config, code);
     const metadata = await fetchInstallationMetadata(config, installationId);
     if (setupAction === "request" || metadata.installationId !== installationId) {
       return c.json({ error: "installation not yet active on GitHub" }, 409);
     }
-    const record = await upsertInstallation(db, {
-      organizationId,
-      installationId: metadata.installationId,
-      accountLogin: metadata.accountLogin,
-      accountType: metadata.accountType,
-      targetType: metadata.targetType,
-      status: metadata.suspended ? "suspended" : "active",
-      createdByUserId: session.userId,
-    });
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "github_app_installation.linked",
-      metadata: {
-        installationId: record.installationId,
-        accountLogin: record.accountLogin,
-        accountType: record.accountType,
-        status: record.status,
-      },
-    });
+    // Only the account's GitHub owner may bind it to an organization, whether
+    // it is unlinked or linked elsewhere: the binding grants gate decisions,
+    // repository reads, and PR writes through the App.
+    const owner = await verifyUserOwnsInstallationAccount(userAccessToken, metadata);
+    const status = metadata.suspended ? "suspended" : "active";
+    const existing = await getInstallationByExternalId(db, metadata.installationId);
+    let record: InstallationRecord;
+    if (existing && existing.organizationId !== organizationId) {
+      record = await transferInstallation(db, {
+        installationRowId: existing.id,
+        fromOrganizationId: existing.organizationId,
+        toOrganizationId: organizationId,
+        accountLogin: metadata.accountLogin,
+        accountType: metadata.accountType,
+        targetType: metadata.targetType,
+        status,
+        createdByUserId: session.userId,
+        githubLogin: owner.githubLogin,
+      });
+    } else {
+      record = await upsertInstallation(db, {
+        organizationId,
+        installationId: metadata.installationId,
+        accountLogin: metadata.accountLogin,
+        accountType: metadata.accountType,
+        targetType: metadata.targetType,
+        status,
+        createdByUserId: session.userId,
+      });
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "github_app_installation.linked",
+        metadata: {
+          installationId: record.installationId,
+          accountLogin: record.accountLogin,
+          accountType: record.accountType,
+          status: record.status,
+        },
+      });
+    }
     recordProductEvent(c.env, {
       name: "integration.connected",
       organizationId,

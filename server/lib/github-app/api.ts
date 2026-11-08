@@ -8,6 +8,8 @@ import { reliableFetch } from "../platform/reliable-fetch";
 export interface GithubInstallationMetadata {
   installationId: string;
   accountLogin: string;
+  /** Rename-proof identity the link-time ownership check compares against. */
+  accountId: number;
   accountType: "User" | "Organization";
   targetType: string;
   suspended: boolean;
@@ -33,7 +35,7 @@ export async function fetchInstallationMetadata(
   }
   const data = (await response.json()) as {
     id?: number | string;
-    account?: { login?: string; type?: string } | null;
+    account?: { id?: number; login?: string; type?: string } | null;
     target_type?: string;
     suspended_at?: string | null;
   };
@@ -42,13 +44,25 @@ export async function fetchInstallationMetadata(
   if (!idValue)
     throw new GithubAppValidationError("installation_missing", "missing installation id");
   const login = typeof data.account?.login === "string" ? data.account.login : "";
-  const accountType =
-    data.account?.type === "Organization" || data.account?.type === "User"
-      ? data.account.type
-      : "Organization";
+  const accountId = data.account?.id;
+  const accountType = data.account?.type;
+  // Linking proves ownership of exactly this account, so an account Drydock
+  // cannot attribute (an enterprise, or a missing id or login) is refused.
+  if (
+    (accountType !== "Organization" && accountType !== "User") ||
+    !login ||
+    typeof accountId !== "number" ||
+    !Number.isSafeInteger(accountId)
+  ) {
+    throw new GithubAppValidationError(
+      "installation_owner_unverified",
+      `GitHub installation ${idValue} is not on an organization or user account Drydock can verify`,
+    );
+  }
   return {
     installationId: idValue,
     accountLogin: login,
+    accountId,
     accountType,
     targetType: typeof data.target_type === "string" ? data.target_type : accountType,
     suspended: Boolean(data.suspended_at),
