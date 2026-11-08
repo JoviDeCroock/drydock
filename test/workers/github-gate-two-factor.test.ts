@@ -13,6 +13,7 @@ import { getGateForOrganization } from "../../server/lib/github-app/webhook-gate
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { callWorker, type Jar, PASSWORD, signUpUserId, totpFor } from "./helpers/auth-http";
+import { githubRunStateResponse, seededReviewBinding } from "../helpers/github-run-stub";
 
 // 2FA gate-decision step-up is the trust boundary in issue #162: a maintainer
 // who enrolled in two-factor auth must prove a *fresh* second factor before a
@@ -131,6 +132,7 @@ async function seedDecidableGate(
     status: "pending",
     decision: null,
     scanId: null,
+    ...seededReviewBinding(),
     requestedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -170,7 +172,10 @@ async function seedDecidableGate(
 
 // Mocks the two GitHub calls the delivery path makes (install token + callback)
 // and records each posted decision state.
-function mockGithubDecisionFetch(decisionCalls: { state: string }[]) {
+function mockGithubDecisionFetch(
+  decisionCalls: { state: string }[],
+  runState: Parameters<typeof githubRunStateResponse>[1] = {},
+) {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.url.includes("/access_tokens")) {
@@ -180,6 +185,8 @@ function mockGithubDecisionFetch(decisionCalls: { state: string }[]) {
       decisionCalls.push((await request.json()) as { state: string });
       return new Response(null, { status: 204 });
     }
+    const run = githubRunStateResponse(request, runState);
+    if (run) return run;
     throw new Error(`unexpected fetch in gate 2FA test: ${request.url}`);
   });
 }
@@ -214,6 +221,37 @@ describe("workflow-gate decision 2FA step-up", () => {
       expect(res.res.status).toBe(409);
       expect(res.json).toMatchObject({
         error: "scanId is not a reviewable package of this gate",
+      });
+      const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+      expect(stored?.status).toBe("pending");
+      expect(decisionCalls).toHaveLength(0);
+    },
+  );
+
+  test(
+    "a re-run since the review refuses approval before asking for a code",
+    { timeout: 30_000 },
+    async () => {
+      const jar: Jar = new Map();
+      const userId = await signUpUserId(jar);
+      await enrollTwoFactor(jar);
+      const organizationId = personalOrganizationId(userId);
+      await ensurePersonalOrganization(createDb(env.DB), { userId });
+      const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
+
+      const decisionCalls: { state: string }[] = [];
+      mockGithubDecisionFetch(decisionCalls, { runAttempt: 2 });
+
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+        body: { decision: "approved", scanId },
+        jar,
+        env: await githubEnv(),
+      });
+
+      expect(res.res.status).toBe(409);
+      expect(res.json).toMatchObject({
+        code: "gate_review_stale",
+        reason: "run_attempt_changed",
       });
       const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
       expect(stored?.status).toBe("pending");

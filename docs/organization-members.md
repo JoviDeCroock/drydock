@@ -10,7 +10,8 @@ Roles, role-guarded routes, and the email-token invitation flow for multi-user o
 | Active org + role guard | `server/lib/auth/active-organization.ts` | Every org-scoped route | `test/workers/organization-members-routes.test.ts` |
 | Members / invitations | `server/routes/organization-members.ts` | See matrix | `test/workers/organization-members-routes.test.ts` |
 | Invitation token | `server/lib/auth/invitation-token.ts` | — | `test/workers/organization-members-routes.test.ts` |
-| Invite email | `notifyOrganizationInvite` in `server/lib/notify/organization-invite.ts` | Create invitation | `test/workers/organization-members-routes.test.ts` |
+| Invite email | `notifyOrganizationInvite` in `server/lib/notify/organization-invite.ts` | Create invitation | `test/workers/organization-members-routes.test.ts`, `test/notify.test.mjs` |
+| Account names | `server/lib/auth/user-name.ts` | Sign-up, `update-user`, GitHub sign-in | `test/workers/user-names.test.ts` |
 | Org rename/delete/policy | `server/routes/organizations.ts` | Owner | `test/workers/organizations-routes.test.ts` |
 
 ## Contract
@@ -54,7 +55,7 @@ Roles, role-guarded routes, and the email-token invitation flow for multi-user o
 | npm connection `POST /`, `POST /validate`, `DELETE` | 403 | yes | yes | `server/routes/npm-connection.ts` |
 | GitHub App install, release targets, publisher setup | 403 | yes | yes | `server/routes/github-app/` |
 | Slack connect, channel, pause/resume, disconnect, test | 403 | yes | yes | Status `GET` open to members; one workspace and one public channel per org ([Slack](./slack-notifications.md)) |
-| Notification recipients add/remove | 403 | yes | yes | List open to members; at most 5 (`MAX_NOTIFICATION_RECIPIENTS`) |
+| Notification recipients add/remove | 403 | yes | yes | List open to members; add needs a verified email; at most 5 (`MAX_NOTIFICATION_RECIPIENTS`); delivery rules in [Slack](./slack-notifications.md) |
 | `POST /api/v1/scans/:id/share` | 403 | yes | yes | `roleCanManagePublicShares` |
 | `GET /api/v1/audit-events` | 403 | yes | yes | [Audit log](./audit-log.md) |
 | Scan decisions, workflow gate decisions | yes | yes | yes | Open to any member by design |
@@ -71,8 +72,10 @@ Roles, role-guarded routes, and the email-token invitation flow for multi-user o
 Schema `organization_invitations` (`server/db/schema.ts`). One live invite per `(organization_id, email)`: re-inviting rotates the token and extends expiry on the pending row (`upsertInvitation`). Status `pending` → `accepted` | `revoked`. Invites expire after 7 days (`INVITE_TTL_MS` in `server/routes/organization-members.ts`).
 
 1. **Create** (`POST /invitations`, owner/admin): inviter's address must be verified (`403 { code: "email_verification_required" }`, [email verification](./security-model.md#email-verification)) because the invite mails a third party in the org's name; `sanitizeAddress` validates the email, `isInvitableRole` the role (default `member`); 30/hour per org; existing member → `409`; then `upsertInvitation` + `notifyOrganizationInvite`. Returns the public invitation, no token.
-2. **Email**: link to `${BETTER_AUTH_URL}/dashboard/invite?token=…`; records `organization.member_invited` or `organization.member_invite_failed`. Delivery is best-effort and never blocks the invite.
+2. **Email**: names the inviter as `<account email> ("<name>")`, the verified address first and the name quoted and flattened again (see account names below); link to `${BETTER_AUTH_URL}/dashboard/invite?token=…`; records `organization.member_invited` or `organization.member_invite_failed`. Delivery is best-effort and never blocks the invite.
 3. **Accept** (`POST /invitations/accept`, authenticated invitee): org comes only from the token (matched by hash). The account email must equal the invited address and `emailVerified` must be true, so a leaked link cannot be redeemed by registering an unverified account with that address. `markInvitationAccepted` is a compare-and-swap, so only one concurrent accept wins. Success adds the member, records `organization.member_joined`, returns `{ organizationId, role }`.
+
+**Account names** (`server/lib/auth/user-name.ts`) reach invitees, so they are one plain line of at most 64 graphemes and 256 UTF-16 code units (subdivision flags kept, other invisible characters dropped): `/sign-up/email` and `/update-user` refuse line breaks, control or bidi characters, and longer names (`400 INVALID_NAME`); `databaseHooks.user` normalize every write, GitHub profiles included. Personal workspace names and `getOrganizationName` (notification copy) are flattened the same way.
 
 | Accept failure | Status |
 | --- | --- |

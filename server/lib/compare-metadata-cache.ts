@@ -36,3 +36,46 @@ export async function writeCompareMetadataCache<T = RegistryMetadata>(
     expirationTtl: METADATA_CACHE_TTL_SECONDS,
   });
 }
+
+/**
+ * Why an anonymous metadata read last failed, cached briefly under the
+ * metadata key so a repeat request for the same package answers from KV
+ * instead of re-reading (and, for `too_large`, re-streaming) the document.
+ */
+export type MetadataUnavailableReason = "too_large" | "unavailable";
+
+// A document over the ceiling stays over it; an upstream failure may clear.
+const UNAVAILABLE_TTL_SECONDS: Record<MetadataUnavailableReason, number> = {
+  too_large: 10 * 60,
+  unavailable: 60,
+};
+
+function unavailableKey(key: string): string {
+  return `${key}:unavailable`;
+}
+
+export async function readMetadataUnavailable(
+  env: Cloudflare.Env,
+  key: string,
+): Promise<MetadataUnavailableReason | null> {
+  const cached = await readKvJson<{ reason?: unknown }>(env.COMPARE_CACHE, unavailableKey(key), {
+    cacheTtl: METADATA_CACHE_READ_COLO_TTL_SECONDS,
+  });
+  const reason = cached?.reason;
+  return reason === "too_large" || reason === "unavailable" ? reason : null;
+}
+
+export function writeMetadataUnavailable(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  key: string,
+  reason: MetadataUnavailableReason,
+): void {
+  writeKvJson(
+    env.COMPARE_CACHE,
+    ctx,
+    unavailableKey(key),
+    { reason },
+    { expirationTtl: UNAVAILABLE_TTL_SECONDS[reason] },
+  );
+}

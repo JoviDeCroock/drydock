@@ -41,6 +41,12 @@ export interface WorkerCallResult {
   text: string;
 }
 
+/** A random address in the shared address space (100.64.0.0/10). */
+export function randomTestIp(): string {
+  const [a, b, c] = crypto.getRandomValues(new Uint8Array(3));
+  return `100.${64 + (a! & 63)}.${b}.${c}`;
+}
+
 export async function callWorker(
   method: string,
   path: string,
@@ -52,7 +58,9 @@ export async function callWorker(
   // Non-GET requests are CSRF-checked against the request origin.
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
   if (opts.jar?.size) headers.set("cookie", cookieHeader(opts.jar));
-  if (opts.ip) headers.set("cf-connecting-ip", opts.ip);
+  // Per-IP auth buckets never skip a request, so a call that names no IP gets
+  // its own rather than sharing one budget with every other test's sign-up.
+  headers.set("cf-connecting-ip", opts.ip ?? randomTestIp());
   for (const [name, value] of Object.entries(opts.headers ?? {})) headers.set(name, value);
   const init: RequestInit = { method, headers };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);

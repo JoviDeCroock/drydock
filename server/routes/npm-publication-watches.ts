@@ -27,6 +27,7 @@ import {
   requireActiveOrganizationContext,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
+import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import {
@@ -132,6 +133,9 @@ npmPublicationWatchRoutes.get("/alerts", async (c) => {
 });
 
 npmPublicationWatchRoutes.post("/", async (c) => {
+  // A watch mails the organization's recipients whenever the package publishes.
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const body = await readJsonObject<{

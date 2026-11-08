@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
+import { tarSuspiciousEntryFindings } from "../server/lib/review";
 import * as tarParser from "../server/lib/tar-parser.js";
 import {
   TAR_BLOCK,
@@ -1078,6 +1079,15 @@ describe("PyPI corpus tar-shape fixtures match the parser", () => {
     "24-sdist-gnu-sparse-map-reorder.json": () => [
       { name: "PaxHeader", type: "x", body: paxBody([["GNU.sparse.map", "13,11,0,13"]]) },
       { name: `${root}/demo_package/_hook.py`, body: "system('x')import os;os." },
+    ],
+    "25-sdist-magicless-ustar-prefix.json": () => [
+      { name: "setup.py", prefix: root, ustar: false, body: "raise SystemExit('demo')\n" },
+      {
+        name: "setup.py",
+        prefix: `${root}/zz`,
+        ustar: false,
+        body: "from setuptools import setup\n\nsetup()\n",
+      },
     ],
   };
 
@@ -2192,6 +2202,94 @@ describe("readTar limits and malformed archives", () => {
     withoutMagic.fill(0, 257, 265);
     sealTarHeader(withoutMagic, 0);
     expect((await parse(withoutMagic)).map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test("discloses a magic-less prefix that pip's CPython tarfile joins and node-tar ignores", async () => {
+    const tar = buildTar([
+      { name: "pkg-1.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n" },
+      { name: "setup.py", prefix: "pkg-1.0", ustar: false, body: "import os\n" },
+      { name: "setup.py", prefix: "pkg-1.0/zz", ustar: false, body: "pass\n" },
+    ]);
+    const { files, suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+
+    // Attribution stays node-tar's; the disclosures name the path pip writes.
+    expect(files.map((f) => [f.path, f.textSample])).toEqual([
+      ["pkg-1.0/PKG-INFO", "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"],
+      ["setup.py", "pass\n"],
+    ]);
+    expect(suspicious).toEqual([
+      {
+        kind: "parser-differential",
+        path: "setup.py",
+        detail: expect.stringContaining("`pkg-1.0/setup.py`"),
+      },
+      {
+        kind: "duplicate",
+        path: "setup.py",
+        detail: expect.stringContaining("different content"),
+      },
+      {
+        kind: "parser-differential",
+        path: "setup.py",
+        detail: expect.stringContaining("`pkg-1.0/zz/setup.py`"),
+      },
+    ]);
+  });
+
+  test("discloses a magic-less prefix on non-regular entries too", async () => {
+    const tar = buildTar([
+      { name: "link", prefix: "pkg-1.0", ustar: false, type: "2", linkname: "x" },
+    ]);
+    const { suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+    expect(suspicious.map((s) => s.kind)).toEqual(["non-regular", "parser-differential"]);
+  });
+
+  test("leaves magic-less headers with an empty prefix and ustar prefixes undisclosed", async () => {
+    const tar = buildTar([
+      { name: "pkg-1.0/setup.py", ustar: false, body: "pass\n" },
+      { name: "mod.py", prefix: "pkg-1.0/pkg", body: "pass\n" },
+    ]);
+    const { files, suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+    expect(files.map((f) => f.path)).toEqual(["pkg-1.0/setup.py", "pkg-1.0/pkg/mod.py"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("raises the replaced body when CPython stops at a header node-tar accepts", async () => {
+    // `0000648` is not octal: CPython's tarfile ends the archive at that header
+    // and pip installs the first setup.py, while node-tar reads `000064` and
+    // replaces it with the decoy.
+    const tar = buildTar([
+      { name: "pkg-1.0/PKG-INFO", body: "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n" },
+      { name: "pkg-1.0/setup.py", body: "import os\n" },
+      { name: "pkg-1.0/setup.py", body: "pass\n" },
+    ]);
+    const decoyHeader = 4 * TAR_BLOCK;
+    tar.set(encoder.encode("0000648\0"), decoyHeader + 100);
+    sealTarHeader(tar, decoyHeader);
+    const { files, suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+
+    expect(files.find((f) => f.path === "pkg-1.0/setup.py").textSample).toBe("pass\n");
+    const [finding] = tarSuspiciousEntryFindings(suspicious, { dialect: "pypi" });
+    expect(finding).toMatchObject({
+      severity: "high",
+      file: "pkg-1.0/setup.py",
+      evidence: expect.stringContaining("different content"),
+    });
+  });
+
+  test("a duplicate with identical bytes hides no body", async () => {
+    const tar = buildTar([
+      { name: "pkg-1.0/setup.py", body: "pass\n" },
+      { name: "pkg-1.0/setup.py", body: "pass\n" },
+    ]);
+    const { suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+    expect(suspicious).toEqual([
+      {
+        kind: "duplicate",
+        path: "pkg-1.0/setup.py",
+        detail: "duplicate path; later entry replaced earlier entry",
+      },
+    ]);
   });
 
   test("reads entries hidden behind a lone all-zero block", async () => {

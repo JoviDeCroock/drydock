@@ -22,6 +22,7 @@ import {
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/notify/email";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
@@ -229,6 +230,10 @@ organizationsRoutes.get("/:id/notification-recipients", async (c) => {
 });
 
 organizationsRoutes.post("/:id/notification-recipients", async (c) => {
+  // Recipients receive Drydock mail they never asked for, so only a proven
+  // address may add one.
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = await readJsonObject<{ email?: unknown }>(c);
   const email = sanitizeAddress(body.email);
   if (!email) return c.json({ error: "a valid email address is required" }, 400);

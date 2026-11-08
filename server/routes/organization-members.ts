@@ -126,6 +126,7 @@ organizationMembersRoutes.post("/invitations", async (c) => {
     token,
     invitedByUserId: session.userId,
     invitedByName: inviter?.name ?? null,
+    invitedByEmail: inviter?.email ?? null,
   });
 
   return c.json({ invitation: publicInvitation(invitation) }, 201);

@@ -27,10 +27,12 @@ function walk(dir) {
   return out;
 }
 
-/** Extract the source of each `readBoundedText|Json(...)` call's arguments. */
+/** Extract the source of each `readBoundedText|Json(...)` / `streamBoundedBody(...)` call's arguments. */
 function boundedReadCalls(source) {
   const calls = [];
-  for (const match of source.matchAll(/\breadBounded(?:Text|Json)\s*(?:<[^(]*>)?\s*\(/g)) {
+  for (const match of source.matchAll(
+    /\b(?:readBounded(?:Text|Json)|streamBoundedBody)\s*(?:<[^(]*>)?\s*\(/g,
+  )) {
     let depth = 0;
     let end = -1;
     for (let i = match.index + match[0].length - 1; i < source.length; i++) {

@@ -18,6 +18,7 @@ import {
 } from "../../server/db/publication-watches";
 import { reconcilePublicationWatches } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPackageClaimRoutes } from "../../server/routes/npm-package-claims";
+import type { Bindings } from "../../server/types";
 import { buildTestApp, call } from "./helpers/app";
 import { seedPublicationWatches, seedUser, type SeededUser } from "./helpers/seed";
 
@@ -328,6 +329,28 @@ describe("personal npm package management", () => {
     expect(((await full.json()) as { error: string }).error).toContain(
       `limit of ${PUBLICATION_WATCH_LIMIT}`,
     );
+    expect(await allowed(owner)).toEqual([{ scan: 1, management: 0 }]);
+  });
+
+  test("an unverified caller cannot choose management where verification is enforced", async () => {
+    const owner = await fixture();
+    const refused = await call(
+      buildTestApp((app) => app.route("/api/v1/npm-package-claims", npmPackageClaimRoutes), {
+        userId: owner.userId,
+        emailVerified: false,
+      }),
+      "POST",
+      `/api/v1/npm-package-claims/${owner.packageName}`,
+      {
+        body: { targetOrganizationId: owner.organizationId },
+        envOverride: {
+          SEND_EMAIL: {} as Bindings["SEND_EMAIL"],
+          BETTER_AUTH_URL: "https://drydock.test",
+        },
+      },
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ code: "email_verification_required" });
     expect(await allowed(owner)).toEqual([{ scan: 1, management: 0 }]);
   });
 

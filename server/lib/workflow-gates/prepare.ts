@@ -21,6 +21,7 @@ import {
   UnsupportedEcosystemError,
 } from "../ecosystems";
 import { resolveBundleArtifact } from "./resolve";
+import type { GateReviewBinding } from "./review-binding";
 import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
 
 export interface PrepareForGateInput {
@@ -41,6 +42,8 @@ export interface PreparedGateRelease {
   gate: WorkflowGateRecord;
   /** One entry per distinct package the bundle publishes (≥ 1). */
   packages: PreparedGatePackage[];
+  /** The run attempt and artifact listing these packages were derived from. */
+  binding: GateReviewBinding;
 }
 
 /**
@@ -152,7 +155,16 @@ export async function prepareReleaseCandidatesForGate(
       },
     );
     const packages = prepareBundlePackages(bundle.artifacts);
-    return { gate, packages };
+    return {
+      gate,
+      packages,
+      binding: {
+        runAttempt: bundle.runAttempt,
+        artifactName: artifactName ?? null,
+        artifactNamePrefix: artifactNamePrefix ?? null,
+        artifacts: bundle.listedArtifacts,
+      },
+    };
   } catch (err) {
     const reason =
       err instanceof WorkflowArtifactError

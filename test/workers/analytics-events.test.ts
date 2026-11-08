@@ -5,6 +5,7 @@ import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
+import { randomTestIp } from "./helpers/auth-http";
 
 const mountOrganizations = (app: TestApp) => {
   app.route("/api/v1/organizations", organizationsRoutes);
@@ -198,7 +199,9 @@ describe("badge serves", () => {
 
     const ctx = createExecutionContext();
     const res = await worker.fetch(
-      new Request(`${ORIGIN}/public/badge/npm/${requested}`),
+      new Request(`${ORIGIN}/public/badge/npm/${requested}`, {
+        headers: { "cf-connecting-ip": randomTestIp() },
+      }),
       env,
       ctx,
     );
@@ -221,7 +224,9 @@ describe("badge serves", () => {
 
     const ctx = createExecutionContext();
     const res = await worker.fetch(
-      new Request(`${ORIGIN}/public/badge/npm/left-pad?tag=${requestedTag}`),
+      new Request(`${ORIGIN}/public/badge/npm/left-pad?tag=${requestedTag}`, {
+        headers: { "cf-connecting-ip": randomTestIp() },
+      }),
       env,
       ctx,
     );

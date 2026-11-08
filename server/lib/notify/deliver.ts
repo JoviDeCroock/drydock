@@ -2,6 +2,7 @@ import { type AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { getOrganizationOwnerUserId, resolveNotificationEmails } from "../../db/organizations";
 import { getSlackConnectionSecret } from "../../db/slack-connection";
+import { emailVerificationAvailable } from "../auth";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { decryptSlackBotToken } from "../platform/secret-box";
 import { sendNotificationEmail } from "./email";
@@ -68,7 +69,9 @@ export async function deliverOrganizationNotification(
 
   const emailDelivery = (async (): Promise<NotificationDeliveryOutcome> => {
     if (!notification.email) return "no_destination";
-    const recipients = await resolveNotificationEmails(db, organizationId, actorUserId);
+    const recipients = await resolveNotificationEmails(db, organizationId, actorUserId, {
+      requireVerifiedOwner: emailVerificationAvailable(env),
+    });
     if (recipients.length === 0) {
       await recordDeliveryEvent(db, {
         ...eventBase,

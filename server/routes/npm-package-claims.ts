@@ -8,6 +8,7 @@ import {
 import { listPackageBadgeTags } from "../db/package-badge";
 import { PUBLICATION_WATCH_LIMIT } from "../db/publication-watches";
 import { requireActiveOrganization } from "../lib/auth/active-organization";
+import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { getStagedAdapter } from "../lib/ecosystems";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
 import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
@@ -56,6 +57,9 @@ npmPackageClaimRoutes.get("/:name{.+}", async (c) => {
 });
 
 npmPackageClaimRoutes.post("/:name{.+}", async (c) => {
+  // Managing a package also starts its publication watch, which mails recipients.
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = await readJsonObject<{ registryUrl?: unknown; targetOrganizationId?: unknown }>(c);
   const monitoringRegistryUrl = npmPublicationRegistry(c.env);
   const identity = coordinates(c.req.param("name"), body.registryUrl, monitoringRegistryUrl);

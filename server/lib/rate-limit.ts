@@ -1,5 +1,6 @@
 import type { Context, Env } from "hono";
 import { enforceD1RateLimit } from "../db/rate-limits";
+import { clientAddressBucket } from "./platform/client-address";
 import { rateLimitResponse } from "./platform/http";
 import { enforceRateLimit as enforceWithFallback } from "./platform/rate-limit";
 import { RateLimitError, type RateLimitInput } from "./platform/rate-limit-contract";
@@ -32,4 +33,17 @@ export async function guardRateLimit<E extends Env & { Bindings: Cloudflare.Env 
     throw err;
   }
   return null;
+}
+
+/**
+ * The per-client part of a limiter key: the caller's address as Cloudflare's
+ * edge reports it, IPv6 grouped by /64. Only `cf-connecting-ip` is read. The
+ * edge sets it on every request it proxies, while `x-forwarded-for` is
+ * client-supplied; an absent or unparseable value shares one bucket rather
+ * than skipping the limit.
+ */
+export function clientRateLimitKey(c: {
+  req: { header(name: "cf-connecting-ip"): string | undefined };
+}): string {
+  return clientAddressBucket(c.req.header("cf-connecting-ip"));
 }

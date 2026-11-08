@@ -92,6 +92,9 @@ export function OrganizationMembersSection({
                 autoComplete="off"
               />
             </Field>
+            <Muted class="m-0 -mt-1.5 text-[12px] leading-[1.5] lg:row-start-2 lg:col-start-1">
+              The invite shows your name and email address.
+            </Muted>
             <Field label="Role" for="inviteRole">
               <Select
                 id="inviteRole"

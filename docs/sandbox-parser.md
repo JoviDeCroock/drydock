@@ -47,6 +47,8 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | Wheels | streamed over local headers; every central-directory record cross-checked; mismatch fails closed |
 | Data-descriptor, encrypted, zip64 entries | fail closed |
 | VSIX (yazl-packed with data descriptors) | buffered central-directory-first parse under the wire cap |
+| Entry names | cp437 unless general-purpose bit 11 marks UTF-8, as pip's `zipfile` and yauzl decode the raw name |
+| Info-ZIP Unicode Path field (0x7075) | CPython 3.12+ and yauzl rename by it, CPython 3.11 does not: an applicable field (version 1, CRC of the raw name) naming a different path, or holding invalid UTF-8, fails closed; malformed extra-field framing fails closed |
 
 ## Native-binary sniffing
 
