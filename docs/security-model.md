@@ -165,7 +165,7 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 |---|---|
 |Body over the per-file inspection limit|`content-skipped` medium finding: path, declared size, streamed sha256, native-format flag sniffed from the first 64 bytes; no text|
 |Retention budget spent or `SANDBOX_MAX_FILES` tier filled|Hash-only bodies; one aggregate `retention-tier` finding per cause: info when every hash-only body is byte-identical to the baseline, medium when any was added or modified|
-|Hash-only body that would carry no sample anyway|No escalation for a sniffed native binary (`file.native-artifact` reports it) or a never-sampled source map / minified bundle, unless a manifest entrypoint names it or shipped code refers to it by file name|
+|Hash-only body that would carry no sample anyway|No escalation for a sniffed native binary (`file.native-artifact` reports it) or a never-sampled source map, unless a manifest entrypoint names it or shipped code refers to it by file name|
 |Baseline stored hash-only, release inspected|Not a gap: the reviewed side's record decides|
 |More than `SANDBOX_MAX_ENTRIES` entries|Parse fails|
 |Oversized baseline (previous-version) archive|Degrades to a no-baseline scan; the staged review does not fail|

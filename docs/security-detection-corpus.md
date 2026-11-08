@@ -143,6 +143,7 @@ Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (
 | `file.large-binary` | deterministic | anchor | no |
 | `file.native-artifact` | deterministic | anchor | no |
 | `file.outside-files-list` | deterministic | anchor | no |
+| `file.unsampled-entrypoint` | deterministic | anchor | no |
 | `file.prompt-injection` | deterministic | anchor | no |
 | `file.review-manipulation` | deterministic | anchor | yes |
 | `file.secret-content` | deterministic | anchor | yes |
@@ -205,7 +206,7 @@ What each family fires on and leaves quiet, with the pinning fixture: [`detectio
 21. A rule-family coverage change bumps its version constant and updates fixtures in the same PR.
 22. Install-hook release attribution (`test/lifecycle-release-attribution.test.ts`): hook identity is recovered from rule evidence, so `install` and `postinstall` stay independent under one rule ID; the final duplicate JSON key controls the effective command; unreadable, malformed, structurally invalid, or redacted comparisons stay conservative; persisted annotations and explicitly skipped comparisons keep precedence.
 23. Dangerous descendants of modified install code stay release-scoped after meaningful code-token changes (comments and spacing excluded, significant line breaks kept): prior graph membership cannot prove a dormant function ran. Literal execution roots and lexer-filtered import edges avoid crediting output arguments or comment/string examples as prior execution; imports that need runtime values are outside static coverage. No package code is executed.
-24. The retention-tier notice escalates only for a changed file whose content the rules could have read; hash-only native binaries, source maps, and minified bundles are not inspection gaps unless they are what runs (an entrypoint or a loaded file).
+24. The retention-tier notice escalates only for a changed file whose content the rules could have read; hash-only native binaries and source maps are not inspection gaps unless they are what runs (an entrypoint or a loaded file).
 25. Dependency diff links (`server/lib/review/dependency-specs.ts`, shared with the UI): modified rows link directly only when both specs are exact registry version keys; ranges render no direct link; added dependencies use the package-only route that resolves a published pair from registry metadata.
 
 ### Tar reader parity with node-tar

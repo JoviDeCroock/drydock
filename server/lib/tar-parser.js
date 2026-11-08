@@ -1024,13 +1024,14 @@ export function shouldSkipTextSample(path) {
     .toLowerCase();
   const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
 
-  // Source maps and minified bundles are generated, large, and hostile to a
-  // human diff, so we keep their metadata/hashes but skip the text sample.
+  // Source maps are generated and their `sourcesContent` is not what runs, so
+  // we keep their metadata/hashes but skip the text sample. Minified bundles
+  // are sampled like any file: Node runs whatever a manifest or `require()`
+  // names, and a skipped sample hid that code from every reviewer.
   // TypeScript declaration files (.d.ts) are deliberately NOT skipped: they are
   // small, human-readable, and describe the package's public API surface, which
   // is exactly what supply-chain review needs to diff.
   if (basename.endsWith(".map")) return true;
-  if (/\.min\.(?:js|mjs|cjs|css)$/.test(basename)) return true;
 
   return false;
 }

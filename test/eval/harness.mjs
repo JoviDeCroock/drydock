@@ -438,12 +438,52 @@ function controlBytePadding(code, file) {
   return text ? { ...file, flags, textSample: text } : { ...file, flags, textSample: undefined };
 }
 
+// Renames each code file the manifest names (main, bin, exports, scripts) to
+// `.min.js`, rewriting those manifest references. The parser once skipped
+// minified samples, so this alone hid the entrypoint from every content rule.
+// Returns null when the manifest names no code file.
+function renameEntryToMin(fx) {
+  const manifest = (fx.stagedFiles ?? []).find((file) => file.path === "package.json");
+  if (!manifest?.textSample) return null;
+  const renames = new Map();
+  for (const file of fx.stagedFiles) {
+    if (!RELEASE_INJECTION_CODE_FILE.test(file.path) || /\.min\.[cm]?js$/.test(file.path)) continue;
+    if (manifestReference(file.path).test(manifest.textSample)) {
+      renames.set(file.path, file.path.replace(/\.([cm]?js)$/, ".min.$1"));
+    }
+  }
+  if (!renames.size) return null;
+  const rewrite = (text) => {
+    let out = text;
+    for (const [from, to] of renames) out = out.replace(manifestReference(from), `$1${to}`);
+    return out;
+  };
+  return {
+    ...fx,
+    ...(fx.stagedPackageJson
+      ? { stagedPackageJson: JSON.parse(rewrite(JSON.stringify(fx.stagedPackageJson))) }
+      : {}),
+    stagedFiles: fx.stagedFiles.map((file) => {
+      if (file === manifest) return { ...file, textSample: rewrite(file.textSample) };
+      const to = renames.get(file.path);
+      return to ? { ...file, path: to } : file;
+    }),
+  };
+}
+renameEntryToMin.wholeFixture = true;
+
+function manifestReference(path) {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`((?:^|[\\s"'])(?:\\./)?)${escaped}(?=$|[\\s"'])`, "g");
+}
+
 const EVASION_TRANSFORMS = {
   splitStringLiterals,
   bracketifyMemberAccess,
   base64Wrap,
   pushPastWindow,
   controlBytePadding,
+  renameEntryToMin,
 };
 
 // The transforms rewrite JavaScript; wrapping a README or a binding.gyp in
@@ -515,7 +555,11 @@ export function runEval() {
     if (!caughtAsMalicious(record, baseline)) continue;
     const baseCodeRules = codeRuleIds(baseline.findings);
     for (const [name, transform] of Object.entries(EVASION_TRANSFORMS)) {
-      const variant = detect(record, applyTransform(record.fx, transform));
+      const variantFx = transform.wholeFixture
+        ? transform(record.fx)
+        : applyTransform(record.fx, transform);
+      if (!variantFx) continue;
+      const variant = detect(record, variantFx);
       const variantCodeRules = codeRuleIds(variant.findings);
       const retained = [...baseCodeRules].filter((id) => variantCodeRules.has(id)).length;
       const bucket = perTransform[name];

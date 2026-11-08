@@ -95,7 +95,7 @@ The first 64 bytes of every skipped body are kept and sniffed (`sniffNativeArtif
 | Otherwise, script source (`isScriptSourcePath`: JS/TS, Python, `.pth`, `.gyp`, shell, PowerShell, batch) or a `#!` file, native magic or not | `control-bytes` | decoded, controls other than tab/LF/VT/FF/CR shown as U+FFFD; raises `file.control-bytes` |
 | Otherwise | `binary` | none |
 
-`decodeBodyText` decides. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict on source would hide code from rules, AI evidence and the injection screen.
+Source maps (`*.map`) alone are hashed but never sampled (`text-sample-skipped`, `shouldSkipTextSample`); minified bundles are sampled like any file, since Node runs whatever a manifest or `require()` names. `decodeBodyText` decides the rest. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict on source would hide code from rules, AI evidence and the injection screen.
 
 ## Archive digests (`digestArchiveStream`)
 

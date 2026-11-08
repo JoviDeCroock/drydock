@@ -1,0 +1,70 @@
+{
+  "id": "unsampled-entrypoint-binary",
+  "title": "A release points a new bin command at a file the review cannot read",
+  "category": "obfuscated-dropper",
+  "intent": "The release adds a bin whose target has a non-script extension and binary-looking content. npm links it onto the consumer's PATH and Node runs it as JavaScript whatever its extension, but the parser keeps no text sample for a binary body, so no content rule can read it. file.unsampled-entrypoint reports the unreadable entrypoint; diff.bin-added reports the new command. The body is represented only by its FileRecord metadata.",
+  "previousPackageJson": {
+    "name": "ops-runner",
+    "version": "0.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "ops-runner",
+    "version": "0.4.1",
+    "main": "index.js",
+    "bin": {
+      "ops-runner": "bin/runner.dat"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"ops-runner\", \"version\": \"0.4.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 37,
+      "sha256": "index-v040",
+      "flags": [],
+      "textSample": "module.exports = { version: '0.4' };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 103,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"ops-runner\", \"version\": \"0.4.1\", \"main\": \"index.js\", \"bin\": {\"ops-runner\": \"bin/runner.dat\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 37,
+      "sha256": "index-v040",
+      "flags": [],
+      "textSample": "module.exports = { version: '0.4' };\n"
+    },
+    {
+      "path": "bin/runner.dat",
+      "size": 2048,
+      "sha256": "runner-dat",
+      "flags": ["binary"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "diff.bin-added",
+      "severity": "medium",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "file.unsampled-entrypoint",
+      "severity": "high",
+      "file": "bin/runner.dat"
+    }
+  ]
+}

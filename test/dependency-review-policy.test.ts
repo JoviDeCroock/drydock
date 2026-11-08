@@ -119,20 +119,20 @@ describe("extractBumpEvidence", () => {
     });
   });
 
-  test("treats minified code, skipped bodies, and unknown binaries as uninspected, not images or maps", () => {
+  test("treats skipped bodies and unknown binaries as uninspected, not minified code, images or maps", () => {
     const evidence = extractBumpEvidence(
       diffWith({
         diff: [
-          { path: "dist/app.min.js", status: "modified", flags: ["text-sample-skipped"] },
+          { path: "dist/app.min.js", status: "modified", flags: [] },
           { path: "dist/app.js.map", status: "modified", flags: ["text-sample-skipped"] },
           { path: "vendor/huge.js", status: "added", flags: ["content-skipped"] },
           { path: "assets/logo.png", status: "added", flags: ["binary"] },
           { path: "payload.bin", status: "added", flags: ["binary"] },
-          { path: "unchanged.min.js", status: "unchanged", flags: ["text-sample-skipped"] },
+          { path: "unchanged.min.js", status: "unchanged", flags: [] },
         ],
       }),
     );
-    expect(evidence.uninspectedFiles).toBe(3);
+    expect(evidence.uninspectedFiles).toBe(2);
   });
 
   test("a coverage notice from the diff holds like an uninspected file", () => {

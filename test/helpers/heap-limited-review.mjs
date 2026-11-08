@@ -55,9 +55,9 @@ export function neverSampledBundleSeverity(text) {
     { kind: "retention-tier", path: "<archive>", detail: "1 file body was hash-only" },
   ];
   return tarSuspiciousEntryFindings(entries, {
-    fileDiff: [{ path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] }],
+    fileDiff: [{ path: "dist/app.js.map", status: "modified", flags: ["content-skipped"] }],
     stagedFiles: [
-      { path: "dist/app.min.js", flags: ["content-skipped"] },
+      { path: "dist/app.js.map", flags: ["content-skipped"] },
       { path: "package.json", flags: [], textSample: '{"main":"index.js"}' },
       { path: "index.js", flags: [], textSample: text },
     ],

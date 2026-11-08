@@ -50,6 +50,14 @@ const LOADABLE_DATA_EXTENSIONS = new Set([
   "xml",
 ]);
 
+// Minified bundles are usually browser/CDN builds of code the package also
+// ships unminified, rebuilt every release; a rebuild renames identifiers
+// throughout, so their capabilities read as new on every release. Like the
+// loadable data formats, they are scanned as code when something loads them.
+export function isMinifiedBundlePath(path: string): boolean {
+  return /\.min\.[cm]?js$/i.test(lowerBasename(path));
+}
+
 export function isLoadableDataPath(path: string): boolean {
   const basename = lowerBasename(path);
   const dot = basename.lastIndexOf(".");

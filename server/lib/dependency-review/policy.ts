@@ -28,7 +28,6 @@ const INSTALL_HOOKS: ReadonlySet<string> = new Set(CONSUMER_INSTALL_LIFECYCLE_SC
 // sniff (`native-*` flags) is primary, but a native file it can't sniff still
 // counts.
 const NATIVE_FILE = /\.(?:node|dll|so|dylib|exe|wasm)$/i;
-const MINIFIED_CODE = /\.min\.(?:js|mjs|cjs)$/i;
 // Binary bodies no rule reads, but that no runtime executes either. Anything
 // else binary (archives, unknown extensions) counts as uninspected.
 const INERT_BINARY =
@@ -79,7 +78,6 @@ function isNative(entry: { path: string; flags: string[] }): boolean {
 
 function isUninspected(entry: { path: string; flags: string[] }): boolean {
   if (entry.flags.includes("content-skipped")) return true;
-  if (entry.flags.includes("text-sample-skipped")) return MINIFIED_CODE.test(entry.path);
   if (entry.flags.includes("binary")) {
     // A native binary is its own hold reason; counting it again here would
     // only repeat it.

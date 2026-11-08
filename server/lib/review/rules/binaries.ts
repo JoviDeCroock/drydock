@@ -1,8 +1,8 @@
 import type { Finding } from "../types";
 import {
-  javascriptSeedPaths,
   lifecycleScriptSeedPaths,
   normalizeReachabilityPath,
+  resolveSeedPaths,
 } from "./reachability";
 import { tag, testScope } from "./helpers";
 import { isUnreachableTestFile, type RuleContext } from "./context";
@@ -61,27 +61,36 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
     }
     const formatLabel = nativeFormatLabel(file.flags);
     const native = Boolean(formatLabel) || NATIVE_ARTIFACT_EXTENSION.test(file.path);
-    // The parser flags an empty body `binary` too; it hides nothing.
-    const hiddenEntrypoint =
-      !native && file.size > 0 && file.flags.includes("binary") && isSeed(file.path);
-    if (file.flags.includes("control-bytes") || hiddenEntrypoint) {
+    const releaseSeverity = changed === "added" || changed === "modified" ? "high" : "medium";
+    if (file.flags.includes("control-bytes")) {
       findings.push(
         testScope(
           isUnreachableTestFile(ctx, file.path),
           false,
           tag("fileControlBytes", {
-            severity: changed === "added" || changed === "modified" ? "high" : "medium",
+            severity: releaseSeverity,
             file: file.path,
-            evidence: withSha256(
-              hiddenEntrypoint
-                ? "manifest entrypoint or install script target reads as binary"
-                : "source file contains raw NUL or control bytes",
-              file.sha256,
-            ),
+            evidence: withSha256("source file contains raw NUL or control bytes", file.sha256),
             reason:
               "raw control bytes make source read as binary to review tools while interpreters still run it; legitimate source writes them as escapes",
           }),
         ),
+      );
+    }
+    const unsampled = unsampledReason(file.flags);
+    // The parser flags an empty body `binary` too; it hides nothing.
+    if (unsampled && !native && file.size > 0 && !file.textSample && isSeed(file.path)) {
+      findings.push(
+        tag("fileUnsampledEntrypoint", {
+          severity: releaseSeverity,
+          file: file.path,
+          evidence: withSha256(
+            `manifest entrypoint or install script target has no text sample (${unsampled})`,
+            file.sha256,
+          ),
+          reason:
+            "Node runs an entrypoint whatever its extension, so code in a file the review cannot read runs unreviewed",
+        }),
       );
     }
     if (native) {
@@ -119,15 +128,27 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
   return findings;
 }
 
-// Node runs a manifest entrypoint or a file an install script names whatever
+function unsampledReason(flags: readonly string[]): string | null {
+  if (flags.includes("binary")) return "reads as binary";
+  if (flags.includes("text-sample-skipped")) return "never-sampled source map";
+  return null;
+}
+
+// Node runs `main`, a `bin` target or a file an install script names whatever
 // its extension, so a body with no text sample there is code nobody reviewed.
-// Imported files are left out: bundler-targeted code imports images and fonts.
-// Python's entrypoints are `.py` modules, which the parser already decodes.
+// `exports`/`browser` targets and imports are left out: packages export and
+// import images, fonts and source maps as assets. Python's entrypoints are
+// `.py` modules, which the parser already decodes.
 function declaredSeedPaths(ctx: RuleContext): Set<string> {
   if (ctx.codePatternSet === "python") return new Set();
-  return javascriptSeedPaths(
-    ctx.files,
-    ctx.packageJson,
-    lifecycleScriptSeedPaths(ctx.files, ctx.scripts, ctx.implicitScripts),
-  );
+  const manifest = ctx.packageJson;
+  const bin = manifest?.bin;
+  const candidates = [
+    ...(typeof manifest?.main === "string" ? [manifest.main] : []),
+    ...(typeof bin === "string" ? [bin] : Object.values(bin ?? {})).filter(
+      (target): target is string => typeof target === "string",
+    ),
+    ...lifecycleScriptSeedPaths(ctx.files, ctx.scripts, ctx.implicitScripts),
+  ];
+  return resolveSeedPaths(ctx.files, candidates);
 }

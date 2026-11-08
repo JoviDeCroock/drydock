@@ -16,10 +16,14 @@ export function firstMatchingLine(
 // Comment-only source lines, in both the JS (`//`, `/* … */`, leading `*` of a
 // block continuation) and Python/shell (`#`) flavors. A line that merely *ends*
 // in a comment still counts as code — only lines whose entire content is a
-// comment are skipped.
+// comment are skipped. Code after a block comment that closes on the same line
+// is code: a minified bundle is one line behind a `/*! license */` banner.
 const LINE_COMMENT_START = /^\s*(?:\/\/|#|\*(?!\/)|\/\*|\*\/)/;
 const BLOCK_COMMENT_OPEN = /\/\*(?![\s\S]*?\*\/)/;
 const BLOCK_COMMENT_CLOSE = /\*\//;
+// Closed block comments (and the tail of one the previous line opened) at the
+// start of a line; the `*/` search is a plain lazy scan, linear per line.
+const LEADING_CLOSED_BLOCK_COMMENTS = /^(?:\s*\/\*[\s\S]*?\*\/)+/;
 
 /**
  * `firstMatchingLine`, but blind to comment-only lines.
@@ -57,20 +61,21 @@ function firstMatchingAllowedCodeLine(
   const lines = text.split("\n");
   let inBlockComment = false;
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+    const raw = lines[index];
     const wasInBlockComment = inBlockComment;
     if (inBlockComment) {
-      if (BLOCK_COMMENT_CLOSE.test(line)) inBlockComment = false;
-    } else if (BLOCK_COMMENT_OPEN.test(line)) {
+      if (BLOCK_COMMENT_CLOSE.test(raw)) inBlockComment = false;
+    } else if (BLOCK_COMMENT_OPEN.test(raw)) {
       inBlockComment = true;
     }
-    if (
-      wasInBlockComment ||
-      LINE_COMMENT_START.test(line) ||
-      (allowedLines && !allowedLines.has(index + 1))
-    ) {
-      continue;
-    }
+    if (allowedLines && !allowedLines.has(index + 1)) continue;
+    const close = wasInBlockComment ? raw.indexOf("*/") : -2;
+    if (close === -1) continue;
+    const line = (close >= 0 ? raw.slice(close + 2) : raw).replace(
+      LEADING_CLOSED_BLOCK_COMMENTS,
+      "",
+    );
+    if (!line.trim() || LINE_COMMENT_START.test(line)) continue;
     for (const pattern of patterns) {
       pattern.lastIndex = 0;
       if (pattern.test(line)) return index + 1;

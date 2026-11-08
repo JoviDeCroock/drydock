@@ -23,6 +23,7 @@ import {
   isJsonDataPath,
   isLoadableDataPath,
   isMarkupPath,
+  isMinifiedBundlePath,
   isPythonMetadataPath,
   isTypeDeclarationPath,
   markupHidesScript,
@@ -136,9 +137,13 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
     // Data and markup formats are text until something can load them as code.
     const loadedAsCode =
-      (isLoadableDataPath(file.path) || isMarkupPath(file.path)) &&
+      (isLoadableDataPath(file.path) ||
+        isMarkupPath(file.path) ||
+        isMinifiedBundlePath(file.path)) &&
       isLoadedAsCode(ctx, file.path, loadCallNames);
-    if (isLoadableDataPath(file.path) && !loadedAsCode) continue;
+    if ((isLoadableDataPath(file.path) || isMinifiedBundlePath(file.path)) && !loadedAsCode) {
+      continue;
+    }
 
     // Character references that spell code in a script-capable attribute are
     // themselves staging: the whole file is scanned and a decode in it counts.
@@ -673,15 +678,15 @@ function codeLoadCallNames(ctx: RuleContext): Set<string> {
 function isLoadedAsCode(ctx: RuleContext, path: string, loadCallNames: Set<string>): boolean {
   if (ctx.consumerReachable.has(normalizeReachabilityPath(path))) return true;
   if (isLifecycleScriptFile(ctx, path)) return true;
-  const [basename, extension] = loadCallLookupNames(path);
-  return loadCallNames.has(basename) || loadCallNames.has(extension);
+  const [basename, extension, stem] = loadCallLookupNames(path);
+  return loadCallNames.has(basename) || loadCallNames.has(extension) || loadCallNames.has(stem);
 }
 
 // Lowercased: `require('./PAYLOAD.TXT')` loads payload.txt on a case-insensitive
-// filesystem.
-function loadCallLookupNames(path: string): [string, string] {
+// filesystem. The stem covers `require('./app.min')`, which resolves app.min.js.
+function loadCallLookupNames(path: string): [string, string, string] {
   const basename = (path.replaceAll("\\", "/").split("/").at(-1) ?? "").toLowerCase();
-  return [basename, basename.slice(basename.lastIndexOf("."))];
+  return [basename, basename.slice(basename.lastIndexOf(".")), basename.replace(/\.[cm]?js$/, "")];
 }
 
 // `code` and `inert` are same-length views (comments blanked; `inert` also
