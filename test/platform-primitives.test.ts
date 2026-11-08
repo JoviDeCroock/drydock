@@ -225,6 +225,32 @@ describe("single-line text", () => {
     expect(toSingleLineText("abc def", 4)).toBe("abc");
   });
 
+  test("drops every invisible format character and blank-drawing filler", () => {
+    const invisible = [
+      "\u00AD",
+      "\u034F",
+      "\u115F",
+      "\u1160",
+      "\u180E",
+      "\u3164",
+      "\uFFA0",
+      "\uFFF9",
+      "\uFFFB",
+      "\u{E0041}",
+      "\u{E007F}",
+    ];
+    for (const char of invisible) {
+      expect(toSingleLineText(`a${char}b`, 80), char.codePointAt(0)!.toString(16)).toBe("ab");
+      expect(hasLineBreakingOrInvisibleCharacters(`a${char}b`)).toBe(true);
+    }
+  });
+
+  test("caps stacked combining marks and never cuts an emoji sequence", () => {
+    expect(toSingleLineText(`e${"\u0301".repeat(30)}x`, 80)).toBe(`e${"\u0301".repeat(4)}x`);
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(toSingleLineText(`ab${family}cd`, 3)).toBe(`ab${family}`);
+  });
+
   test("reports the characters it would remove", () => {
     expect(hasLineBreakingOrInvisibleCharacters("Ada Lovelace")).toBe(false);
     expect(hasLineBreakingOrInvisibleCharacters("Ada\u2028")).toBe(true);

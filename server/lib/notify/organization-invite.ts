@@ -20,16 +20,17 @@ export interface NotifyOrganizationInviteInput {
 }
 
 /**
- * Who sent the invite, as one factual line. The name is the inviter's own free
+ * Who sent the invite, as one factual line. The inviter's address leads: it is
+ * verified (creating an invite requires it), while the name is their own free
  * text, so it is flattened again here (rows written before names were
- * normalized are still read) and paired with the inviter's account address,
- * which the invitee can recognize or not.
+ * normalized are still read) and quoted, never presented as the sender.
  */
 function describeInviter(name?: string | null, email?: string | null): string {
   const displayName = name ? normalizeUserName(name) : "";
   const address = email ? toSingleLineText(email, 254) : "";
-  if (displayName && address) return `${displayName} (${address})`;
-  return displayName || address || "An organization owner";
+  const quoted = displayName ? `"${displayName}"` : "";
+  if (address && quoted) return `${address} (${quoted})`;
+  return address || quoted || "An organization owner";
 }
 
 /**

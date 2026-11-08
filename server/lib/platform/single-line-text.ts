@@ -2,30 +2,44 @@
 // controls (CR, LF, TAB, …) and the Unicode line and paragraph separators.
 const LINE_BREAKING = /[\p{Cc}\p{Zl}\p{Zp}]/u;
 const LINE_BREAKING_ALL = new RegExp(LINE_BREAKING.source, "gu");
-// Bidi embeddings, overrides, isolates, and marks reorder how the surrounding
-// text renders; zero-width spaces, word joiners, and BOMs hide boundaries.
-// ZWJ/ZWNJ stay: emoji sequences and several scripts need them.
-const INVISIBLE_FORMATTING = /[؜​‎‏‪-‮⁠-⁤⁦-⁩﻿]/u;
-const INVISIBLE_FORMATTING_ALL = new RegExp(INVISIBLE_FORMATTING.source, "gu");
+// Text that renders as nothing or reorders its neighbors: every format control
+// (bidi, zero-width, soft hyphen, tags, interlinear annotation, …) except
+// ZWNJ/ZWJ, which emoji sequences and several scripts need, plus the
+// combining grapheme joiner and the Hangul fillers, which draw as blanks.
+const INVISIBLE = /(?![‌‍])\p{Cf}|[͏ᅟᅠㅤﾠ]/u;
+const INVISIBLE_ALL = new RegExp(INVISIBLE.source, "gu");
+// Stacked combining marks draw over the lines around them.
+const MAX_COMBINING_MARKS = 4;
+const EXCESS_COMBINING_MARKS = new RegExp(`(\\p{M}{${MAX_COMBINING_MARKS}})\\p{M}+`, "gu");
 
-/** Whether `value` holds a line break, control character, or bidi/invisible format control. */
+const graphemes =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+/** Whether `value` holds a line break, control character, or invisible format character. */
 export function hasLineBreakingOrInvisibleCharacters(value: string): boolean {
-  return LINE_BREAKING.test(value) || INVISIBLE_FORMATTING.test(value);
+  return LINE_BREAKING.test(value) || INVISIBLE.test(value);
 }
 
 /**
  * Flatten untrusted free text to one plain line for a context that trusts line
- * structure, such as a plain-text email body: format controls are dropped,
- * breaks and runs of whitespace become one space, and the result is trimmed
- * and capped at `maxLength` code points (never splitting a surrogate pair).
+ * structure, such as a plain-text email body: invisible characters are
+ * dropped, combining-mark runs capped, breaks and runs of whitespace become one
+ * space, and the result is trimmed and capped at `maxLength` graphemes, so an
+ * emoji sequence is never cut mid-way (code points where `Intl.Segmenter` is
+ * missing).
  */
 export function toSingleLineText(value: string, maxLength: number): string {
   const flattened = value
-    .replace(INVISIBLE_FORMATTING_ALL, "")
+    .replace(INVISIBLE_ALL, "")
     .replace(LINE_BREAKING_ALL, " ")
+    .replace(EXCESS_COMBINING_MARKS, "$1")
     .replace(/\s+/gu, " ")
     .trim();
-  const codePoints = Array.from(flattened);
-  if (codePoints.length <= maxLength) return flattened;
-  return codePoints.slice(0, maxLength).join("").trimEnd();
+  const units = graphemes
+    ? Array.from(graphemes.segment(flattened), (part) => part.segment)
+    : Array.from(flattened);
+  if (units.length <= maxLength) return flattened;
+  return units.slice(0, maxLength).join("").trimEnd();
 }

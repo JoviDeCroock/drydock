@@ -20,10 +20,11 @@ export function normalizeUserName(value: string): string {
 
 /**
  * Whether a name a person typed should be refused rather than silently
- * rewritten. Extra spaces are only collapsed; line breaks, control or bidi
- * characters, and over-long names are refused so the account holder sees why.
+ * rewritten. Extra spaces are only collapsed; anything else normalization would
+ * change (line breaks, control or invisible characters, stacked marks, extra
+ * length) is refused so the account holder sees why.
  */
 export function isAcceptableTypedUserName(value: string): boolean {
   if (hasLineBreakingOrInvisibleCharacters(value)) return false;
-  return Array.from(value.trim().replace(/\s+/gu, " ")).length <= USER_NAME_MAX_LENGTH;
+  return normalizeUserName(value) === value.trim().replace(/\s+/gu, " ");
 }

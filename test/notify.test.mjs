@@ -426,7 +426,9 @@ describe("notifyScanCompletion", () => {
     await notifyScanCompletion(scanInput({ ownerUserId: "admin_1" }));
 
     expect(dbMock.getOrganizationOwnerUserId).toHaveBeenCalledWith({}, "org_1");
-    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1");
+    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1", {
+      requireVerifiedSenders: false,
+    });
   });
 
   test("emails the resolved recipients on success with package and release risk", async () => {
@@ -724,7 +726,9 @@ describe("notifyPublicationDiscrepancy", () => {
       ]);
       dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
       await notifyPublicationDiscrepancy({ ...input, status });
-      expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1");
+      expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1", {
+        requireVerifiedSenders: false,
+      });
       expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
       for (const [, message] of emailMock.sendNotificationEmail.mock.calls) {
         expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
@@ -1011,12 +1015,12 @@ describe("notifyOrganizationInvite", () => {
     return emailMock.sendNotificationEmail.mock.calls[0][1].text;
   }
 
-  test("names the inviter by display name and account address", async () => {
+  test("leads with the inviter's address and quotes their display name", async () => {
     await notifyOrganizationInvite(
       inviteInput({ invitedByName: "Ada Lovelace", invitedByEmail: "ada@example.com" }),
     );
     expect(sentText()).toContain(
-      "Ada Lovelace (ada@example.com) invited you to join Acme Corp on Drydock as a member.",
+      'ada@example.com ("Ada Lovelace") invited you to join Acme Corp on Drydock as a member.',
     );
   });
 
@@ -1030,7 +1034,7 @@ describe("notifyOrganizationInvite", () => {
     const text = sentText();
     const inviteLine = text.split("\n").find((line) => line.includes("invited you"));
     expect(inviteLine).toBe(
-      `Ada Second paragraph ${"x".repeat(43)} (ada@example.com) invited you to join Acme Corp on Drydock as a member.`,
+      `ada@example.com ("Ada Second paragraph ${"x".repeat(43)}") invited you to join Acme Corp on Drydock as a member.`,
     );
     expect(text).not.toMatch(/[\u2028\u202E]/u);
     // Greeting, invite line, link, account hint, expiry, sign-off: no extra paragraphs.

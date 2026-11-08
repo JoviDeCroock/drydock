@@ -5,15 +5,19 @@ import { createDb } from "../../server/db/client";
 import { addOrganizationMember, getOrganizationRole } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import {
+  addNotificationRecipient,
   listNotificationRecipients,
   resolveNotificationEmails,
 } from "../../server/db/organizations";
+import { notifyScanCompletion } from "../../server/lib/notify";
 import * as schema from "../../server/db/schema";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
-import { seedUser } from "./helpers/seed";
+import { seedCompletedScan, seedUser } from "./helpers/seed";
+
+const ENFORCED = { requireVerifiedSenders: true };
 
 const mountOrganizations = (app: TestApp) => {
   app.route("/api/v1/organizations", organizationsRoutes);
@@ -597,7 +601,7 @@ describe("organization notification recipients", () => {
     const orgId = owner.organizationId;
     const db = createDb(env.DB);
 
-    expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual([
+    expect(await resolveNotificationEmails(db, orgId, owner.userId, ENFORCED)).toEqual([
       `${owner.userId}@example.com`,
     ]);
 
@@ -610,7 +614,78 @@ describe("organization notification recipients", () => {
       },
     );
 
-    expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual(["team@example.com"]);
+    expect(await resolveNotificationEmails(db, orgId, owner.userId, ENFORCED)).toEqual([
+      "team@example.com",
+    ]);
+  });
+});
+
+describe("unverified addresses receive no organization mail", () => {
+  test("the owner fallback needs a verified owner where verification is enforced", async () => {
+    const owner = await seedUser({ emailVerified: false });
+    const db = createDb(env.DB);
+    expect(
+      await resolveNotificationEmails(db, owner.organizationId, owner.userId, ENFORCED),
+    ).toEqual([]);
+    expect(
+      await resolveNotificationEmails(db, owner.organizationId, owner.userId, {
+        requireVerifiedSenders: false,
+      }),
+    ).toEqual([owner.email]);
+  });
+
+  test("a recipient added by a still-unverified account is skipped", async () => {
+    const owner = await seedUser();
+    const unverifiedAdmin = await seedUser({ emailVerified: false });
+    const db = createDb(env.DB);
+    await addNotificationRecipient(db, {
+      organizationId: owner.organizationId,
+      email: "legacy@example.com",
+      createdByUserId: unverifiedAdmin.userId,
+    });
+    expect(
+      await resolveNotificationEmails(db, owner.organizationId, owner.userId, ENFORCED),
+    ).toEqual([owner.email]);
+    await addNotificationRecipient(db, {
+      organizationId: owner.organizationId,
+      email: "team@example.com",
+      createdByUserId: owner.userId,
+    });
+    expect(
+      await resolveNotificationEmails(db, owner.organizationId, owner.userId, ENFORCED),
+    ).toEqual(["team@example.com"]);
+  });
+
+  test("a published scan finished for an unverified owner sends no email", async () => {
+    const owner = await seedUser({ emailVerified: false });
+    const scanId = await seedCompletedScan(owner, { job: { source: "published" } });
+    const send = vi.fn(async () => undefined);
+    const enforcing = {
+      ...env,
+      SEND_EMAIL: { send },
+      BETTER_AUTH_URL: "https://drydock.test",
+    } as unknown as Cloudflare.Env;
+
+    await notifyScanCompletion({
+      env: enforcing,
+      db: createDb(env.DB),
+      scanId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      outcome: "complete",
+    });
+
+    expect(send).not.toHaveBeenCalled();
+    const events = await createDb(env.DB)
+      .select({ type: schema.scanEvents.type, metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.scanId, scanId));
+    expect(events.filter((event) => event.type.startsWith("scan.notification_"))).toEqual([
+      {
+        type: "scan.notification_failed",
+        metadata: expect.objectContaining({ channel: "email", reason: "no_recipients" }),
+      },
+    ]);
   });
 });
 

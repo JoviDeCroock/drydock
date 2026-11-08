@@ -92,5 +92,10 @@ describe("account display names", () => {
 
     await context.internalAdapter.updateUser(user.id, { name: "Octo\nCat" });
     expect(await storedName(email)).toBe("Octo Cat");
+
+    // The cap counts graphemes in workerd, so a trailing emoji sequence stays whole.
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    await context.internalAdapter.updateUser(user.id, { name: `${"x".repeat(63)}${family}!` });
+    expect(await storedName(email)).toBe(`${"x".repeat(63)}${family}`);
   });
 });
