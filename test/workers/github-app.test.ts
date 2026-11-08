@@ -15,13 +15,21 @@ import {
   resolveDeploymentProtectionTarget,
   upsertInstallation,
 } from "../../server/lib/github-app/persistence";
-import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import {
+  getGateForOrganization,
+  resetGateReviewForRetry,
+} from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 import type { Bindings } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { buildTestApp, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
+import {
+  SEEDED_REVIEW_ARTIFACTS,
+  githubRunStateResponse,
+  seededReviewBinding,
+} from "../helpers/github-run-stub";
 
 const mountGithubApp = (app: TestApp) => app.route("/api/v1/github-app", githubAppRoutes);
 
@@ -716,6 +724,7 @@ async function seedGate(
     status: overrides.status ?? "pending",
     decision: overrides.decision ?? null,
     scanId: null,
+    ...seededReviewBinding(),
     requestedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -905,6 +914,8 @@ describe("github-app workflow-gate decision route", () => {
         decisionCalls.push((await request.json()) as { state: string });
         return new Response(null, { status: 204 });
       }
+      const runState = githubRunStateResponse(request);
+      if (runState) return runState;
       throw new Error(`unexpected fetch in decision test: ${request.url}`);
     });
 
@@ -1020,6 +1031,8 @@ describe("github-app workflow-gate decision route", () => {
         decisionCalls.push((await request.json()) as { state: string });
         return new Response(null, { status: 204 });
       }
+      const runState = githubRunStateResponse(request);
+      if (runState) return runState;
       throw new Error(`unexpected fetch in decision test: ${request.url}`);
     });
 
@@ -1080,6 +1093,8 @@ describe("github-app workflow-gate decision route", () => {
         decisionCalls.push((await request.json()) as { state: string });
         return new Response(null, { status: 204 });
       }
+      const runState = githubRunStateResponse(request);
+      if (runState) return runState;
       throw new Error(`unexpected fetch in decision test: ${request.url}`);
     });
 
@@ -1159,6 +1174,8 @@ describe("github-app workflow-gate decision route", () => {
         decisionCalls.push((await request.json()) as { state: string });
         return new Response(null, { status: 204 });
       }
+      const runState = githubRunStateResponse(request);
+      if (runState) return runState;
       throw new Error(`unexpected fetch in decision test: ${request.url}`);
     });
 
@@ -1253,5 +1270,173 @@ describe("github-app workflow-gate by-scan route", () => {
       `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("github-app workflow-gate run binding", () => {
+  async function seedReviewedGate() {
+    const { userId, organizationId } = await seedUser();
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    return { userId, organizationId, gateId, scanId: scanId! };
+  }
+
+  function stubRun(state: Parameters<typeof githubRunStateResponse>[1] | "unavailable") {
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      if (state === "unavailable") return new Response("unavailable", { status: 500 });
+      const runState = githubRunStateResponse(request, state);
+      if (runState) return runState;
+      throw new Error(`unexpected fetch in run binding test: ${request.url}`);
+    });
+    return decisionCalls;
+  }
+
+  async function decide(userId: string, gateId: string, scanId: string, decision: string) {
+    return callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision, scanId },
+    );
+  }
+
+  async function packageDecision(scanId: string) {
+    const [row] = await createDb(env.DB)
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    return row?.decision ?? null;
+  }
+
+  test("refuses approval once the run was re-run after the review", async () => {
+    const { userId, organizationId, gateId, scanId } = await seedReviewedGate();
+    const decisionCalls = stubRun({ runAttempt: 2 });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "gate_review_stale",
+      reason: "run_attempt_changed",
+      gate: { status: "pending", failureReason: "run_attempt_changed" },
+    });
+    expect(await packageDecision(scanId)).toBeNull();
+    expect(decisionCalls).toHaveLength(0);
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.status).toBe("pending");
+  });
+
+  test("refuses approval once the run's artifacts changed after the review", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    const decisionCalls = stubRun({
+      artifacts: [
+        ...SEEDED_REVIEW_ARTIFACTS,
+        { id: 99999, name: "pypi-release-candidate-2", sizeInBytes: 64, digest: "sha256:late" },
+      ],
+    });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "artifacts_changed" });
+    expect(await packageDecision(scanId)).toBeNull();
+    expect(decisionCalls).toHaveLength(0);
+  });
+
+  test("refuses approval when the reviewed digest no longer matches", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    stubRun({ artifacts: [{ ...SEEDED_REVIEW_ARTIFACTS[0], digest: "sha256:other" }] });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "artifacts_changed" });
+  });
+
+  test("fails closed when GitHub cannot confirm the run", async () => {
+    const { userId, organizationId, gateId, scanId } = await seedReviewedGate();
+    const decisionCalls = stubRun("unavailable");
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "gate_binding_unavailable" });
+    expect(await packageDecision(scanId)).toBeNull();
+    expect(decisionCalls).toHaveLength(0);
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored).toMatchObject({ status: "pending", failureReason: null });
+  });
+
+  test("refuses approval of a review that recorded no binding", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({ runAttempt: null, reviewedArtifactsJson: null })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    stubRun({});
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "review_unbound" });
+  });
+
+  test("rejection needs no run re-check", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    const decisionCalls = stubRun("unavailable");
+
+    const res = await decide(userId, gateId, scanId, "rejected");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ gate: { status: "rejected" } });
+    expect(decisionCalls.map((call) => call.state)).toEqual(["rejected"]);
+  });
+
+  test("a stale review can be retried after package decisions were recorded", async () => {
+    const { organizationId, gateId, scanId } = await seedReviewedGate();
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({ failureReason: "artifacts_changed" })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ decision: "publish" })
+      .where(eq(schema.scans.id, scanId));
+
+    expect(await resetGateReviewForRetry(createDb(env.DB), { gateId, organizationId })).toBe(true);
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored).toMatchObject({ status: "pending", scanId: null, reviewBinding: null });
+  });
+
+  test("a superseded gate cannot be decided", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({ status: "superseded" })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    const decisionCalls = stubRun({});
+
+    for (const decision of ["approved", "rejected"]) {
+      const res = await decide(userId, gateId, scanId, decision);
+      expect(res.status).toBe(409);
+    }
+    expect(await packageDecision(scanId)).toBeNull();
+    expect(decisionCalls).toHaveLength(0);
   });
 });

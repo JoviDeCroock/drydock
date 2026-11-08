@@ -17,6 +17,8 @@ export interface GithubFetchStubOptions {
   artifactsResponse?: () => Response;
   // `null` omits content-length on the zip download; a number overrides it.
   contentLength?: number | null;
+  // The attempt `GET /actions/runs/{id}` reports; defaults to 1.
+  runAttempt?: number;
 }
 
 // Replaces global fetch with a GitHub Actions artifacts API double and returns
@@ -42,6 +44,10 @@ export function stubGithubFetch(options: GithubFetchStubOptions) {
       calls.push({ url: request.url, authorization: request.headers.get("authorization") });
       if (options.installationToken && request.url.includes("/access_tokens")) {
         return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      const run = new URL(request.url).pathname.match(/\/actions\/runs\/(\d+)$/);
+      if (run && (options.runId === undefined || Number(run[1]) === options.runId)) {
+        return Response.json({ id: Number(run[1]), run_attempt: options.runAttempt ?? 1 });
       }
       if (request.url.includes(runsPath)) {
         if (options.artifactsResponse) return options.artifactsResponse();

@@ -8,6 +8,7 @@ import {
 } from "../server/lib/github-app/artifacts";
 import { buildZip, concatBytes, type ZipEntry } from "./helpers/archive-fixtures";
 import { stubGithubFetch } from "./helpers/github-fetch-stub";
+import { githubRunResponse } from "./helpers/github-run-stub";
 
 function stubArtifacts(options: StubOptions) {
   const artifacts = options.artifacts ?? [
@@ -533,6 +534,8 @@ describe("fetchReleaseBundleWithToken", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        const run = githubRunResponse(request);
+        if (run) return run;
         if (request.url.includes("/actions/runs/")) {
           return new Response(
             JSON.stringify({
@@ -585,6 +588,8 @@ describe("fetchReleaseBundleWithToken", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        const run = githubRunResponse(request);
+        if (run) return run;
         if (request.url.includes("/actions/runs/")) {
           return new Response(
             JSON.stringify({

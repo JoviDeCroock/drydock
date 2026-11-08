@@ -77,4 +77,16 @@ describe("gate job sentence", () => {
       /cannot continue/,
     );
   });
+
+  test("a superseded gate points at the newer request, not a held job", () => {
+    const sentence = gateJobSentence({ status: "superseded", failureReason: null, packages: one });
+    expect(sentence).toMatch(/newer deployment request/);
+    expect(sentence).not.toMatch(/holding/);
+  });
+
+  test("a stale review leaves the explanation to its alert", () => {
+    expect(
+      gateJobSentence({ status: "pending", failureReason: "artifacts_changed", packages: one }),
+    ).toBeNull();
+  });
 });

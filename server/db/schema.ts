@@ -648,6 +648,14 @@ export const githubWorkflowGates = sqliteTable(
     // only when the batch is incomplete.
     reviewStartedAt: integer("review_started_at", { mode: "timestamp_ms" }),
     failureReason: text("failure_reason"),
+    // What the review batch was bound to: the run attempt and the Actions
+    // artifacts (ids, sizes, digests) it listed. An approval is delivered only
+    // while GitHub still reports the same attempt and artifacts.
+    runAttempt: integer("run_attempt"),
+    reviewedArtifactsJson: text("reviewed_artifacts_json", { mode: "json" }),
+    // Set once GitHub accepted the callback, so a later redelivery never
+    // withdraws an approval GitHub already acted on.
+    decisionDeliveredAt: integer("decision_delivered_at", { mode: "timestamp_ms" }),
     requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -663,6 +671,14 @@ export const githubWorkflowGates = sqliteTable(
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
     scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
+    // Natural key of one deployment request: dedupes replays and finds the
+    // older pending gates a newer request supersedes.
+    runKeyIdx: index("github_workflow_gates_run_key_idx").on(
+      table.installationRowId,
+      table.repositoryId,
+      table.runId,
+      table.environment,
+    ),
   }),
 );
 

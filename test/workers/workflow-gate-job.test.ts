@@ -24,6 +24,7 @@ import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
 import type { GithubAppEnv } from "../../server/lib/github-app/config";
 import { seedPersonalOrganization } from "./helpers/seed";
+import { githubRunResponse, githubRunStateResponse } from "../helpers/github-run-stub";
 
 function buildPypiLoader(opts: LoaderMockOptions = {}) {
   const metadataName = opts.metadataName ?? "demo-package";
@@ -181,6 +182,7 @@ interface ScenarioOpts {
   // HTTP status the mocked GitHub deployment-protection callback returns; a
   // non-2xx makes the decision POST throw so the failure path can be exercised.
   decisionStatus?: number;
+  runAttempt?: number;
 }
 
 async function buildScenario(runId: number, opts: ScenarioOpts) {
@@ -227,6 +229,8 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
         expires_at: "2099-01-01T00:00:00Z",
       });
     }
+    const run = githubRunResponse(request, opts.runAttempt);
+    if (run) return run;
     if (request.url.includes(`/actions/runs/${runId}/artifacts`)) {
       return new Response(
         JSON.stringify({
@@ -787,6 +791,133 @@ describe("executeWorkflowGateJob", () => {
     expect(scenario.decisionCalls[0].state).toBe("approved");
   });
 
+  test("binds the review to the run attempt and the artifacts it listed", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9230",
+      repositoryId: 72030,
+      runId: 23030,
+    });
+    await buildScenario(23030, { digestMatches: true, runAttempt: 3 });
+    const loaderMock = buildPypiLoader();
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      buildEnv(buildConfigBindings(), loaderMock.binding),
+      buildCtxWithGateway(),
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.reviewBinding).toMatchObject({
+      runAttempt: 3,
+      artifacts: [{ id: 88888, name: "pypi-release-candidate" }],
+    });
+  });
+
+  test("withdraws an undelivered approval when the run's artifacts changed", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9231",
+      repositoryId: 72031,
+      runId: 23031,
+    });
+    const scenario = await buildScenario(23031, { digestMatches: true });
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildPypiLoader().binding);
+    const ctx = buildCtxWithGateway();
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    const reviewed = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    await db
+      .update(schema.scans)
+      .set({ decision: "publish" })
+      .where(eq(schema.scans.id, reviewed!.scanId!));
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
+
+    // Another job uploads a matching artifact after the approval was recorded.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const runState = githubRunStateResponse(request, {
+          artifacts: [
+            { id: 88888, name: "pypi-release-candidate", sizeInBytes: null, digest: null },
+            { id: 88889, name: "pypi-release-candidate-late", sizeInBytes: 10, digest: null },
+          ],
+        });
+        return runState ?? scenario.fetchSpy(request);
+      }),
+    );
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+
+    expect(scenario.decisionCalls).toHaveLength(0);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate).toMatchObject({
+      status: "pending",
+      decision: null,
+      failureReason: "artifacts_changed",
+    });
+    const [scan] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, reviewed!.scanId!));
+    expect(scan?.decision).toBeNull();
+    expect(await scanEventTypes(seeded.organizationId, seeded.gateId)).toContain(
+      "github_workflow_gate.approval_withdrawn",
+    );
+  });
+
+  test("never withdraws an approval GitHub already received", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9232",
+      repositoryId: 72032,
+      runId: 23032,
+    });
+    const scenario = await buildScenario(23032, { digestMatches: true });
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildPypiLoader().binding);
+    const ctx = buildCtxWithGateway();
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    expect(scenario.decisionCalls.map((call) => call.state)).toEqual(["approved"]);
+
+    // The released job goes on to change the run; a later redelivery re-posts
+    // the approval instead of reopening the gate.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        return githubRunStateResponse(request, { runAttempt: 2 }) ?? scenario.fetchSpy(request);
+      }),
+    );
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+
+    expect(scenario.decisionCalls.map((call) => call.state)).toEqual(["approved", "approved"]);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("approved");
+    expect(gate?.decisionDeliveredAt).toBeInstanceOf(Date);
+  });
+
   test("retries a failed redelivery for an already-decided gate", async () => {
     const seeded = await seedGateForTest({
       installationExternalId: "9204",
@@ -827,6 +958,8 @@ describe("executeWorkflowGateJob", () => {
       if (request.url.endsWith("/deployment_protection_rule")) {
         return new Response("try again", { status: 503 });
       }
+      // The approval re-check reads the same run state the review bound.
+      if (request.url.includes(`/actions/runs/11111`)) return scenario.fetchSpy(request);
       throw new Error(`unexpected fetch in redelivery test: ${request.url}`);
     });
     vi.stubGlobal("fetch", redeliveryFetch);
@@ -840,7 +973,7 @@ describe("executeWorkflowGateJob", () => {
       return request.url;
     });
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
-    expect(redeliveryFetch).toHaveBeenCalledTimes(4);
+    expect(redeliveryUrls.filter((url) => url.endsWith("/actions/runs/11111"))).toHaveLength(1);
     expect(
       redeliveryUrls.filter((url) => url.endsWith("/deployment_protection_rule")),
     ).toHaveLength(3);
@@ -887,6 +1020,7 @@ describe("executeWorkflowGateJob", () => {
         if (request.url.endsWith("/deployment_protection_rule")) {
           return new Response("still failing", { status: 503 });
         }
+        if (request.url.includes(`/actions/runs/11112`)) return scenario.fetchSpy(request);
         throw new Error(`unexpected fetch in queue final-attempt test: ${request.url}`);
       }),
     );
