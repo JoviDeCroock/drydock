@@ -1,0 +1,86 @@
+{
+  "id": "pypi-sdist-magicless-ustar-prefix",
+  "title": "sdist members carry a ustar prefix without the ustar magic",
+  "category": "archive-structure",
+  "intent": "node-tar ignores the prefix field without the ustar magic and names both members setup.py, so the later benign body replaces the first; pip's CPython tarfile joins the prefix and extracts the first body as the sdist's setup.py. The reader discloses the shape and the replaced body instead of reviewing only the decoy",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 74,
+          "sha256": "1be9b82eff188babac4fc0e2c99d8bf7a48ea1307544bcf032bce3ec57a3e779",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        },
+        {
+          "path": "setup.py",
+          "size": 38,
+          "sha256": "843ac26c38a41abae578250bc0f9419194b320a0f67327d941037a4268f6cfe7",
+          "flags": [],
+          "textSample": "from setuptools import setup\n\nsetup()\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "parser-differential",
+          "path": "setup.py",
+          "detail": "member's header has no ustar magic but a non-empty prefix field; node-tar ignores the prefix, while pip's CPython tarfile joins it and extracts the member as `demo_package-1.2.0/setup.py`"
+        },
+        {
+          "kind": "duplicate",
+          "path": "setup.py",
+          "detail": "duplicate path; later entry replaced earlier entry with different content, so the earlier body was not inspected"
+        },
+        {
+          "kind": "parser-differential",
+          "path": "setup.py",
+          "detail": "member's header has no ustar magic but a non-empty prefix field; node-tar ignores the prefix, while pip's CPython tarfile joins it and extracts the member as `demo_package-1.2.0/zz/setup.py`"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.metadata-missing",
+      "severity": "medium",
+      "file": "dist/demo_package-1.2.0.tar.gz/METADATA"
+    },
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    },
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    },
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    }
+  ]
+}

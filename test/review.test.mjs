@@ -2622,6 +2622,26 @@ describe("review", () => {
     expect(computeRisk(npm)).toBe("high");
   });
 
+  test("raises a PyPI duplicate whose replaced body differed as high", () => {
+    const replaced = {
+      kind: "duplicate",
+      path: "setup.py",
+      detail:
+        "duplicate path; later entry replaced earlier entry with different content, so the earlier body was not inspected",
+    };
+    const identical = {
+      kind: "duplicate",
+      path: "setup.py",
+      detail: "duplicate path; later entry replaced earlier entry",
+    };
+
+    const pypi = tarSuspiciousEntryFindings([replaced, identical], { dialect: "pypi" });
+    expect(pypi.map((finding) => finding.severity)).toEqual(["high", "medium"]);
+    expect(computeRisk(pypi.slice(0, 1))).toBe("high");
+    // node-tar writes the last copy, which is the body npm review inspected.
+    expect(tarSuspiciousEntryFindings([replaced])[0].severity).toBe("medium");
+  });
+
   test("explains zip-reader disclosures in zip terms under either dialect", () => {
     const entries = [
       {
