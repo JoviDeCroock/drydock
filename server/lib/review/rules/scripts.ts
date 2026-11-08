@@ -15,7 +15,8 @@ import {
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
   SHELL_NETWORK_TOOL_PATTERN_SET,
 } from "./patterns";
-import { firstJsonPropertyLine, tag, testScope } from "./helpers";
+import { firstJsonPropertyLine, loadScope, tag, testScope } from "./helpers";
+import { isLifecycleScriptFile, loadedAsCode as loadedAsCodeInPackage } from "./load-calls";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import {
   isBuildInfrastructurePath,
@@ -29,11 +30,6 @@ import {
   markupHidesScript,
   markupScriptText,
 } from "./file-types";
-import {
-  normalizeReachabilityPath,
-  scriptCommandTokens,
-  scriptPathCandidates,
-} from "./reachability";
 import { codeViewsForScanning, normalizeCodeForScanning } from "./normalize";
 
 const GYP_PACKAGE_JAVASCRIPT_COMMAND_PATTERNS = [
@@ -125,7 +121,6 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     );
   }
 
-  const loadCallNames = codeLoadCallNames(ctx);
   for (const file of ctx.files) {
     if (
       isDocumentationPath(file.path) ||
@@ -135,15 +130,15 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       continue;
     }
     if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
-    // Data and markup formats are text until something can load them as code.
+    // Data formats and minified bundles are scanned whole whether or not
+    // anything provably loads them; unproven, their findings grade lower (see
+    // `loadScope`). Markup nothing loads is scanned for what a browser runs.
+    const minified = isMinifiedBundlePath(file.path);
+    const loadable = minified || isLoadableDataPath(file.path);
     const loadedAsCode =
-      (isLoadableDataPath(file.path) ||
-        isMarkupPath(file.path) ||
-        isMinifiedBundlePath(file.path)) &&
-      isLoadedAsCode(ctx, file.path, loadCallNames);
-    if ((isLoadableDataPath(file.path) || isMinifiedBundlePath(file.path)) && !loadedAsCode) {
-      continue;
-    }
+      (loadable || isMarkupPath(file.path)) && loadedAsCodeInPackage(ctx, file.path);
+    const loadUnproven = loadable && !loadedAsCode;
+    const firstFinding = findings.length;
 
     // Character references that spell code in a script-capable attribute are
     // themselves staging: the whole file is scanned and a decode in it counts.
@@ -455,6 +450,11 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
         ),
       );
     }
+    if (loadUnproven) {
+      const steps = minified ? 1 : 2;
+      for (let i = firstFinding; i < findings.length; i++)
+        findings[i] = loadScope(findings[i], steps);
+    }
   }
 
   return findings;
@@ -643,52 +643,6 @@ function matchOffsets(text: string, patterns: RegExp[]): number[] {
   return offsets.sort((x, y) => x - y);
 }
 
-// Path tokens in the arguments of calls that can load a file as code, so a
-// data-looking file named there (`require(__dirname + '/payload.txt')`,
-// `fork('run.css')`) is scanned whole. Basenames and bare extensions
-// (`+ '.txt'`) are collected once so the per-file check is a set lookup.
-const LOAD_CALL_ARGUMENTS =
-  /\b(?:require|import|fork|Worker|spawn(?:Sync)?|execFile(?:Sync)?|exec(?:Sync)?)\s*\(([^\n;]{0,300})/g;
-const LOAD_CALL_PATH_TOKEN = /[^\s'"`\\/()+,;${}[\]]+/g;
-
-function codeLoadCallNames(ctx: RuleContext): Set<string> {
-  // Only names some file here can be looked up by are kept: the text is hostile
-  // and its distinct tokens are bounded only by the retained bytes.
-  const lookups = new Set(ctx.files.flatMap((file) => loadCallLookupNames(file.path)));
-  const names = new Set<string>();
-  for (const file of ctx.files) {
-    const path = file.path;
-    if (!file.textSample || path === ctx.packageJsonFile?.path) continue;
-    if (isJsonDataPath(path) || isLoadableDataPath(path) || isMarkupPath(path)) continue;
-    if (isDocumentationPath(path) || isTypeDeclarationPath(path)) continue;
-    LOAD_CALL_ARGUMENTS.lastIndex = 0;
-    for (const call of file.textSample.matchAll(LOAD_CALL_ARGUMENTS)) {
-      for (const [token] of call[1].matchAll(LOAD_CALL_PATH_TOKEN)) {
-        const name = token.toLowerCase();
-        if (lookups.has(name)) names.add(name);
-      }
-    }
-  }
-  return names;
-}
-
-// Reachable from main/bin/exports or a lifecycle hook through static imports,
-// named by a lifecycle command, or named (or its extension named) in a load
-// call. A path assembled outside the call is not followed.
-function isLoadedAsCode(ctx: RuleContext, path: string, loadCallNames: Set<string>): boolean {
-  if (ctx.consumerReachable.has(normalizeReachabilityPath(path))) return true;
-  if (isLifecycleScriptFile(ctx, path)) return true;
-  const [basename, extension, stem] = loadCallLookupNames(path);
-  return loadCallNames.has(basename) || loadCallNames.has(extension) || loadCallNames.has(stem);
-}
-
-// Lowercased: `require('./PAYLOAD.TXT')` loads payload.txt on a case-insensitive
-// filesystem. The stem covers `require('./app.min')`, which resolves app.min.js.
-function loadCallLookupNames(path: string): [string, string, string] {
-  const basename = (path.replaceAll("\\", "/").split("/").at(-1) ?? "").toLowerCase();
-  return [basename, basename.slice(basename.lastIndexOf(".")), basename.replace(/\.[cm]?js$/, "")];
-}
-
 // `code` and `inert` are same-length views (comments blanked; `inert` also
 // blanks string bodies), so offsets found in one apply to the other.
 function omitValuelessEnvironmentUses(code: string, inert: string): string {
@@ -870,13 +824,4 @@ function networkAccessSeverity(
   adjacentExecutionRisk: boolean,
 ): Finding["severity"] {
   return changed === "added" && (lifecycleScriptFile || adjacentExecutionRisk) ? "high" : "medium";
-}
-
-function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
-  const candidates = scriptPathCandidates(path);
-  return CONSUMER_INSTALL_LIFECYCLE_SCRIPTS.some((script) => {
-    const command = ctx.scripts[script];
-    if (!command || ctx.implicitScripts[script] === command) return false;
-    return scriptCommandTokens(command).some((token) => candidates.has(token));
-  });
 }

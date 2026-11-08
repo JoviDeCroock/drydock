@@ -1,4 +1,5 @@
 import type { PublicPackageDiff } from "../public-diff";
+import { isInertAssetPath } from "../tar-parser.js";
 import { combineRisk } from "../review";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "../review/rules/patterns";
 import type { FindingSeverity, RiskLevel } from "../review/types";
@@ -28,10 +29,6 @@ const INSTALL_HOOKS: ReadonlySet<string> = new Set(CONSUMER_INSTALL_LIFECYCLE_SC
 // sniff (`native-*` flags) is primary, but a native file it can't sniff still
 // counts.
 const NATIVE_FILE = /\.(?:node|dll|so|dylib|exe|wasm)$/i;
-// Binary bodies no rule reads, but that no runtime executes either. Anything
-// else binary (archives, unknown extensions) counts as uninspected.
-const INERT_BINARY =
-  /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|icns|tiff?|woff2?|ttf|otf|eot|mp3|mp4|ogg|wav|webm|pdf)$/i;
 
 /**
  * What a published release changed, reduced to the facts the policy reads.
@@ -78,11 +75,11 @@ function isNative(entry: { path: string; flags: string[] }): boolean {
 
 function isUninspected(entry: { path: string; flags: string[] }): boolean {
   if (entry.flags.includes("content-skipped")) return true;
-  if (entry.flags.includes("binary")) {
-    // A native binary is its own hold reason; counting it again here would
-    // only repeat it.
-    if (isNative(entry)) return false;
-    return !INERT_BINARY.test(entry.path);
+  // A binary body the parser decoded (`control-bytes`) is read by the rules.
+  // An inert asset is read by none but run by no runtime either; anything else
+  // binary counts as uninspected. A native binary is its own hold reason.
+  if (entry.flags.includes("binary") && !entry.flags.includes("control-bytes")) {
+    return !isNative(entry) && !isInertAssetPath(entry.path);
   }
   return false;
 }

@@ -64,12 +64,41 @@ describe("secret redaction", () => {
     );
   });
 
-  test("redacts a JWT after an escape sequence but not inside a longer base64url run", () => {
+  // A JWT header always opens with `eyJ` (base64 of `{"`), so whatever shares
+  // its base64url run before that is an encoding or naming prefix, kept as is.
+  test.each([
+    ["an escape sequence", '"line\\n', '"line\\n'],
+    ["a query separator", "?session=", "?session="],
+    ["a URL-encoded separator", "?token%3D", "?token%3D"],
+    ["an express-session cookie prefix", "connect.sid=s%3A", "connect.sid=s%3A"],
+    ["an escaped quote", '\\"', '\\"'],
+    ["a hex-escaped quote", "\\x22", "\\x22"],
+    ["a unicode-escaped quote", "\\u0022", "\\u0022"],
+    ["an underscore name", "jwt_", "jwt_"],
+    ["a longer base64url run", "AAAA", "AAAA"],
+  ])("redacts a JWT after %s, keeping the prefix", (_name, before, kept) => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signaturepart12345";
-    expect(redactText(`"line\\n${jwt}"`)).toBe('"line\\n[REDACTED_JWT]"');
-    expect(redactText(`?session=${jwt}&x=1`)).toBe("?session=[REDACTED_JWT]&x=1");
-    const run = `AAAA${jwt}`;
-    expect(redactText(run)).toBe(run);
+    expect(redactText(`${before}${jwt}&x=1`)).toBe(`${kept}[REDACTED_JWT]&x=1`);
+    expect(
+      FINDING_SECRET_PATTERNS.some(([pattern]) => {
+        pattern.lastIndex = 0;
+        return pattern.test(`${before}${jwt}`);
+      }),
+    ).toBe(true);
+  });
+
+  test("a dangling private key header does not unprotect the body before the next header", () => {
+    const body = `${"MIIEvQIBADANBgkqhkiG9w0BAQEFAASC".repeat(2)}\n`.repeat(3);
+    const complete = `-----BEGIN PRIVATE KEY-----\n${body}-----END PRIVATE KEY-----`;
+    const out = redactText(`-----BEGIN PRIVATE KEY-----\n${body}${complete}\nafter`);
+    expect(out).not.toContain("MIIEvQ");
+    expect(out).toMatch(/\[REDACTED_PRIVATE_KEY\]\nafter$/);
+    expect(redactText(`-----BEGIN PRIVATE KEY-----\nabc\n${complete}`)).not.toContain("MIIEvQ");
+  });
+
+  test("a private key header with no END and no later header is left alone", () => {
+    const text = "-----BEGIN PRIVATE KEY-----\n<your key here>\n";
+    expect(redactText(text)).toBe(text);
   });
 
   test("an unquoted secret running into a call ends at its last separator", () => {
@@ -91,6 +120,11 @@ describe("secret redaction", () => {
       "",
     ],
     ["JWT prefixes", "eyJ", ""],
+    ["JWT prefixes with one segment", "eyJaaaaaaaaaaaa.", ""],
+    ["URL-encoded JWT prefixes", "%3DeyJaaaaaaaaaaaa", ""],
+    ["underscore JWT prefixes", "_eyJaaaaaaaaaaaa", ""],
+    ["prefixed JWT prefixes", "a.b.c-eyJ", ""],
+    ["dangling private key headers", "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n", "-----END"],
     ["secret assignments", "token=", "("],
   ])("redaction and secret findings stay linear on repeated %s", (_name, unit, tail) => {
     const text = unit.repeat(Math.ceil((1024 * 1024) / unit.length)) + tail;
@@ -101,4 +135,17 @@ describe("secret redaction", () => {
     }
     expect(performance.now() - started).toBeLessThan(2000);
   });
+
+  // The per-file cap admits one 25 MiB base64url run; a `{10,}` loop that has
+  // to backtrack across it overflowed the regex stack instead of failing.
+  test("a JWT prefix in a 25 MiB base64url run fails without a stack overflow", () => {
+    const text = "eyJ".repeat(Math.ceil((25 * 1024 * 1024) / 3));
+    const jwtPatterns = FINDING_SECRET_PATTERNS.filter(([, label]) => label.includes("JWT"));
+    expect(jwtPatterns).toHaveLength(1);
+    for (const [pattern] of jwtPatterns) {
+      expect(text.replace(new RegExp(pattern.source, pattern.flags), "$1[REDACTED_JWT]")).toBe(
+        text,
+      );
+    }
+  }, 30_000);
 });

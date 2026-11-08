@@ -119,7 +119,7 @@ describe("extractBumpEvidence", () => {
     });
   });
 
-  test("treats skipped bodies and unknown binaries as uninspected, not minified code, images or maps", () => {
+  test("treats skipped bodies, archives and undecoded binaries as uninspected, not decoded bodies, minified code, images or maps", () => {
     const evidence = extractBumpEvidence(
       diffWith({
         diff: [
@@ -127,12 +127,15 @@ describe("extractBumpEvidence", () => {
           { path: "dist/app.js.map", status: "modified", flags: ["text-sample-skipped"] },
           { path: "vendor/huge.js", status: "added", flags: ["content-skipped"] },
           { path: "assets/logo.png", status: "added", flags: ["binary"] },
+          { path: "vendor/bundle.tgz", status: "added", flags: ["binary"] },
           { path: "payload.bin", status: "added", flags: ["binary"] },
+          // Decoded for the rules, so read even though display treats it as opaque.
+          { path: "lib/table.dat", status: "added", flags: ["binary", "control-bytes"] },
           { path: "unchanged.min.js", status: "unchanged", flags: [] },
         ],
       }),
     );
-    expect(evidence.uninspectedFiles).toBe(2);
+    expect(evidence.uninspectedFiles).toBe(3);
   });
 
   test("a coverage notice from the diff holds like an uninspected file", () => {

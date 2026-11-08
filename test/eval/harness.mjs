@@ -433,8 +433,9 @@ function pushPastWindow(code) {
 // through the parser's own decoder, so the variant carries the text sample and
 // flags the sandbox would produce for those bytes.
 function controlBytePadding(code, file) {
-  const { text, flag } = decodeBodyText(file.path, new TextEncoder().encode(`/*\0*/${code}`));
-  const flags = flag ? [...file.flags, flag] : file.flags;
+  const decoded = decodeBodyText(file.path, new TextEncoder().encode(`/*\0*/${code}`));
+  const text = decoded.text;
+  const flags = [...file.flags, ...decoded.flags];
   return text ? { ...file, flags, textSample: text } : { ...file, flags, textSample: undefined };
 }
 

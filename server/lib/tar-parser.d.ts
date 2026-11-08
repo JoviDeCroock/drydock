@@ -56,10 +56,13 @@ export interface ReadTarResult {
 export function readString(bytes: Uint8Array, start: number, len: number): string;
 export function decodeText(bytes: Uint8Array): string;
 export function isScriptSourcePath(path: string): boolean;
+export function isInertAssetPath(path: string): boolean;
+export function isPackedArchivePath(path: string): boolean;
+export function mayStartScript(body: Uint8Array): boolean;
 export function decodeBodyText(
   path: string,
   body: Uint8Array,
-): { text: string; flag: "binary" | "control-bytes" | null };
+): { text: string; flags: Array<"binary" | "control-bytes"> };
 export function isPlainObject(value: unknown): value is Record<string, unknown>;
 export function normalizeStringRecord(value: unknown): Record<string, string>;
 export function normalizeStringList(value: unknown): string[];

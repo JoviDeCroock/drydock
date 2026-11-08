@@ -2,7 +2,7 @@
   "id": "benign-generated-docs-site-markup",
   "title": "A shipped docs site shows fetch and curl examples in markup text, JSON and plain text",
   "category": "control",
-  "intent": "Synthetic regression for a mock-server package that ships its generated documentation site. HTML-escaped `fetch(` examples in <pre> blocks, `curl -X GET` usage lines, an llms-full.txt corpus and a search-index.json carry capability text no runtime executes. Only markup script elements and inline handlers are code; the page's own script here is inert DOM code. The site's search.js fetching its same-origin index stays out of this fixture. All samples are inert FileRecord strings.",
+  "intent": "Synthetic regression for a mock-server package that ships its generated documentation site. HTML-escaped `fetch(` examples in <pre> blocks, `curl -X GET` usage lines, an llms-full.txt corpus and a search-index.json carry capability text no runtime executes. Nothing loads llms-full.txt, so its fetch line is scanned but graded two steps lower (low) and kept out of capability co-occurrence; risk stays low. Only markup script elements and inline handlers are code; the page's own script here is inert DOM code. The site's search.js fetching its same-origin index stays out of this fixture. All samples are inert FileRecord strings.",
   "previousPackageJson": {
     "name": "generated-docs-site-markup",
     "version": "1.0.0",
@@ -67,5 +67,11 @@
     }
   ],
   "expectedRisk": "low",
-  "expectedFindings": []
+  "expectedFindings": [
+    {
+      "ruleId": "code.network-access",
+      "severity": "low",
+      "file": "site/dist/llms-full.txt"
+    }
+  ]
 }

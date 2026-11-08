@@ -12,6 +12,7 @@ import {
   REVIEW_MANIPULATION_PATTERN_SET,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
+import { NEWLY_LOADED_EVIDENCE } from "./rules/binaries";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import {
   codeViewsForScanning,
@@ -147,6 +148,7 @@ function annotateFindings<
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
             finding.ruleId === DETERMINISTIC_RULE_IDS.fileNativeArtifact ||
+            UNREADABLE_CODE_RULE_IDS.has(finding.ruleId ?? "") ||
             finding.ruleId?.startsWith("propagation.")) &&
             newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
           isFindingOnReleaseDelta(
@@ -332,15 +334,29 @@ export function withoutFindingLine<T extends { line?: number | null }>(
   return rest;
 }
 
+// Rules about code the review cannot read as written.
+const UNREADABLE_CODE_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.fileControlBytes,
+  DETERMINISTIC_RULE_IDS.fileUnsampledEntrypoint,
+]);
+
 function isReleaseScopedFinding(finding: {
   ruleId?: string | null;
   severity?: string | null;
+  evidence?: string | null;
 }): boolean {
   // Only the regression variant is about this release: a manifest that has
   // always over-claimed an entrypoint (medium) is package context, and scoping
   // it to the release would raise release risk on every rescan of that package.
   if (finding.ruleId === DETERMINISTIC_RULE_IDS.packageJsonEntrypointMissing) {
     return finding.severity === "high";
+  }
+  // The bytes can be unchanged: what this release changed is that it loads them.
+  if (
+    UNREADABLE_CODE_RULE_IDS.has(finding.ruleId ?? "") &&
+    finding.evidence?.startsWith(NEWLY_LOADED_EVIDENCE)
+  ) {
+    return true;
   }
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||

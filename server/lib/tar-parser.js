@@ -53,8 +53,8 @@ export function decodeText(bytes) {
 }
 
 // Interpreters run these despite raw control bytes in a comment or string
-// (Node, CPython, `.pth` line processing, shells), so for them a byte-level
-// "binary" verdict would hide executable code from every reviewer.
+// (Node, CPython, `.pth` line processing, shells), so they stay text for every
+// reviewer, not only the rules.
 export function isScriptSourcePath(path) {
   const normalized = String(path || "")
     .replaceAll("\\", "/")
@@ -63,24 +63,69 @@ export function isScriptSourcePath(path) {
   return /\.(?:[cm]?[jt]sx?|pyw?|pth|gypi?|sh|bash|zsh|ps1|psm1|bat|cmd)$/.test(basename);
 }
 
-// Text sample and classification flag for a retained body. Script source that
+// Media and font formats: no runtime executes them and no rule reads them.
+// Also the dependency-review policy's "inert, not uninspected" list.
+export function isInertAssetPath(path) {
+  return /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|icns|cur|tiff?|psd|woff2?|ttf|otf|eot|mp3|mp4|m4a|aac|flac|ogg|oga|opus|wav|webm|mov|avi|mkv|pdf)$/i.test(
+    String(path || ""),
+  );
+}
+
+// Compressed containers: decoding them shows a regex nothing, but what they
+// pack was never inspected.
+export function isPackedArchivePath(path) {
+  return /\.(?:zip|gz|tgz|bz2|xz|zst|br|7z|rar|tar|jar|wasm)$/i.test(String(path || ""));
+}
+
+// Whether a body's first byte could begin a script Node runs. False only for
+// bytes V8 rejects before any token: C0 controls other than whitespace, DEL,
+// bytes that cannot begin UTF-8 (they decode to U+FFFD), and ASCII that cannot
+// start a statement. A UTF-8 lead byte may begin an identifier, whitespace or
+// a BOM, and `<`/`-` may begin an HTML-like comment, so those count.
+export function mayStartScript(body) {
+  if (!body.length) return false;
+  const b = body[0];
+  if (b >= 0x09 && b <= 0x0d) return true;
+  if (b >= 0x20 && b <= 0x7e) return !"%)]}*&|^=>?:,@".includes(String.fromCharCode(b));
+  return b >= 0xc2 && b <= 0xf4;
+}
+
+// Text sample and classification flags for a retained body. A body
 // decodeText rejects is decoded anyway, with the control bytes (other than
 // whitespace: tab, LF, VT, FF, CR) shown as U+FFFD so offsets and lines stay
-// put, and flagged `control-bytes` instead of `binary`. A native-looking magic
-// prefix does not exempt a source path: `MZ` is also a JS identifier and a
-// shell skips a failing first line.
+// put, and flagged `control-bytes`. Node runs any extension a manifest or
+// `require()` names, so a name never decides that alone: a body stays opaque
+// (`binary`, no sample) only when it is a native artifact (by magic, which the
+// native rule reports, or `.node`, which Node loads with dlopen), or an inert
+// asset, archive or native-named file whose first byte proves Node cannot run
+// it (`mayStartScript`), so a polyglot with a scriptable prefix is still read.
+// Script source (by extension or shebang) is always decoded; a native-looking
+// magic prefix does not exempt it, since `MZ` is also a JS identifier and a
+// shell skips a failing first line. Any other decoded body also keeps
+// `binary`, so display, diffing and AI evidence treat it as opaque while the
+// deterministic rules read the text.
 export function decodeBodyText(path, body) {
   const text = decodeText(body);
-  if (text) return { text, flag: null };
-  const shebang = body[0] === 0x23 && body[1] === 0x21;
-  if (shebang || isScriptSourcePath(path)) {
-    const visible = new TextDecoder("utf-8", { fatal: false })
-      .decode(body)
-      // eslint-disable-next-line no-control-regex -- replacing control bytes is the point
-      .replace(/[\0-\x08\x0e-\x1f]/g, "\uFFFD");
-    if (visible) return { text: visible, flag: "control-bytes" };
+  if (text) return { text, flags: [] };
+  if (!body.length) return { text: "", flags: ["binary"] };
+  const script = (body[0] === 0x23 && body[1] === 0x21) || isScriptSourcePath(path);
+  if (!script) {
+    const name = String(path || "");
+    const opaqueFormat =
+      isInertAssetPath(name) || isPackedArchivePath(name) || /\.(?:dll|so|dylib|exe)$/i.test(name);
+    if (
+      sniffNativeArtifact(body) ||
+      /\.node$/i.test(name) ||
+      (opaqueFormat && !mayStartScript(body))
+    ) {
+      return { text: "", flags: ["binary"] };
+    }
   }
-  return { text: "", flag: "binary" };
+  const visible = new TextDecoder("utf-8", { fatal: false })
+    .decode(body)
+    // eslint-disable-next-line no-control-regex -- replacing control bytes is the point
+    .replace(/[\0-\x08\x0e-\x1f]/g, "\uFFFD");
+  return { text: visible, flags: script ? ["control-bytes"] : ["binary", "control-bytes"] };
 }
 
 export function isPlainObject(value) {
@@ -990,8 +1035,9 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   // meaning. Binary/control-character classification always reads the full body,
   // so the `binary` flag and the hash stay identical to an uncapped parse; only
   // how much of the decoded text is carried changes.
-  const { text, flag } = decodeBodyText(path, body);
-  if (flag) flags.push(flag);
+  const decoded = decodeBodyText(path, body);
+  const text = decoded.text;
+  flags.push(...decoded.flags);
   const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
   const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
   // Deliberately NOT the `truncated` flag the persistence layer adds to a

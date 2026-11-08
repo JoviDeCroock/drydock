@@ -83,12 +83,11 @@ export interface ReachabilityLexing {
 
 // The files these package-relative paths name, resolved like a seed but
 // without following their imports.
-export function resolveSeedPaths(files: FileRecord[], candidates: string[]): Set<string> {
-  const byNormalizedPath = new Map(files.map((file) => [stripPackagePrefix(file.path), file]));
+function resolveSeedPaths(files: FileRecord[], candidates: string[]): Set<string> {
+  const lookup = pathLookup(files, true);
   const seeds = new Set<string>();
   for (const candidate of candidates) {
-    const resolved = resolveModulePath(candidate, byNormalizedPath);
-    if (resolved) seeds.add(resolved);
+    for (const resolved of resolveModulePaths(candidate, lookup)) seeds.add(resolved);
   }
   return seeds;
 }
@@ -99,15 +98,15 @@ export function javascriptReachableFrom(
   executionEvidenceOnly = false,
   lexing?: ReachabilityLexing,
 ): Set<string> {
-  const byNormalizedPath = new Map<string, FileRecord>();
-  for (const file of files) {
-    byNormalizedPath.set(stripPackagePrefix(file.path), file);
-  }
+  // "Might load" matches case-insensitively, as macOS and Windows resolve. The
+  // execution-evidence walk answers "already ran before", where a looser match
+  // would credit more as old, so it stays exact.
+  const lookup = pathLookup(files, !executionEvidenceOnly);
+  const byNormalizedPath = lookup.exact;
 
   const queue: string[] = [];
   for (const candidate of seedCandidates) {
-    const resolved = resolveModulePath(candidate, byNormalizedPath);
-    if (resolved) queue.push(resolved);
+    for (const resolved of resolveModulePaths(candidate, lookup)) queue.push(resolved);
   }
 
   const reachable = new Set<string>();
@@ -128,8 +127,9 @@ export function javascriptReachableFrom(
       ),
     ]);
     for (const specifier of specifiers) {
-      const resolved = resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
-      if (resolved && !reachable.has(resolved)) queue.push(resolved);
+      for (const resolved of resolveModulePaths(joinRelative(path, specifier), lookup)) {
+        if (!reachable.has(resolved)) queue.push(resolved);
+      }
     }
   }
   return reachable;
@@ -257,6 +257,12 @@ function resolvePythonModulePaths(
 }
 
 function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] {
+  return [...runEntrypointCandidates(packageJson), ...assetEntrypointCandidates(packageJson)];
+}
+
+// `main` (or the implicit index.js), `module`, `bin` and the root export: what
+// Node or a shell runs when the package is required or its command invoked.
+function runEntrypointCandidates(packageJson: PackageJsonSummary | null): string[] {
   if (!packageJson) return ["index.js"];
   const candidates: string[] = [];
   if (typeof packageJson.main === "string") candidates.push(packageJson.main);
@@ -268,9 +274,63 @@ function entrypointCandidates(packageJson: PackageJsonSummary | null): string[] 
       if (typeof target === "string") candidates.push(target);
     }
   }
-  for (const target of exportTargets(packageJson.exports)) candidates.push(target);
+  // A loop, not a spread: a hostile manifest can name millions of targets.
+  for (const target of rootExportTargets(packageJson.exports)) candidates.push(target);
+  return candidates;
+}
+
+// The `"."` export, which `require(pkg)` loads in place of `main`: the whole
+// field when it is a target or a conditions object, else its `"."` entry.
+function rootExportTargets(exports: unknown): string[] {
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    return exportTargets(exports);
+  }
+  const entries = exports as Record<string, unknown>;
+  const subpaths = Object.keys(entries).some((key) => key.startsWith("."));
+  return exportTargets(subpaths ? entries["."] : entries);
+}
+
+// `exports` and `browser` targets, which name assets (styles, fonts, source
+// maps, data) as often as code.
+function assetEntrypointCandidates(packageJson: PackageJsonSummary | null): string[] {
+  if (!packageJson) return [];
+  const candidates = exportTargets(packageJson.exports);
   if (typeof packageJson.browser === "string") candidates.push(packageJson.browser);
   return candidates;
+}
+
+// The part of `consumerReachablePaths` some code edge loads: `main`/`module`/
+// `bin`, the extra seeds, and the `exports`/`browser` targets that are
+// themselves readable text, plus everything they statically import. A binary or
+// unsampled `exports` target is reachable but stays out of this set unless an
+// import names it, so rules can grade a bare asset export lower.
+export function codeLoadedPaths(
+  files: FileRecord[],
+  packageJson: PackageJsonSummary | null,
+  extraSeedPaths: string[] = [],
+): Set<string> {
+  const lookup = pathLookup(files, true);
+  const textTargets = assetEntrypointCandidates(packageJson).filter((candidate) =>
+    resolveModulePaths(candidate, lookup).some((path) => {
+      const file = lookup.exact.get(path);
+      return Boolean(file?.textSample) && !file?.flags.includes("binary");
+    }),
+  );
+  return javascriptReachableFrom(files, [
+    ...runEntrypointCandidates(packageJson),
+    ...textTargets,
+    ...extraSeedPaths,
+  ]);
+}
+
+// Files named directly as `main`/`module`/`bin`, the root export or by a
+// lifecycle command, without following imports.
+export function runEntrypointPaths(
+  files: FileRecord[],
+  packageJson: PackageJsonSummary | null,
+  lifecycleSeeds: string[],
+): Set<string> {
+  return resolveSeedPaths(files, [...runEntrypointCandidates(packageJson), ...lifecycleSeeds]);
 }
 
 function exportTargets(exports: unknown): string[] {
@@ -296,14 +356,15 @@ export function lifecycleScriptSeedPaths(
   for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
     const command = scripts[script];
     if (!command || implicitScripts[script] === command) continue;
-    for (const token of scriptCommandTokens(command)) tokens.add(token);
+    // Case-folded: a hook naming `Setup.js` runs setup.js on macOS and Windows.
+    for (const token of scriptCommandTokens(command)) tokens.add(token.toLowerCase());
   }
   if (!tokens.size) return [];
   const seeds: string[] = [];
   for (const file of files) {
     const candidates = scriptPathCandidates(file.path);
     for (const candidate of candidates) {
-      if (tokens.has(candidate)) {
+      if (tokens.has(candidate.toLowerCase())) {
         seeds.push(stripPackagePrefix(file.path));
         break;
       }
@@ -403,17 +464,39 @@ function lifecycleExecutionSeedPaths(
     .map((file) => stripPackagePrefix(file.path));
 }
 
-function resolveModulePath(
-  candidate: string,
-  byNormalizedPath: Map<string, FileRecord>,
-): string | null {
+interface PathLookup {
+  exact: Map<string, FileRecord>;
+  /** Lowercased path to every packaged path it folds from; absent for exact matching. */
+  folded?: Map<string, string[]>;
+}
+
+function pathLookup(files: FileRecord[], caseInsensitive: boolean): PathLookup {
+  const exact = new Map<string, FileRecord>();
+  for (const file of files) exact.set(stripPackagePrefix(file.path), file);
+  if (!caseInsensitive) return { exact };
+  const folded = new Map<string, string[]>();
+  for (const path of exact.keys()) {
+    const key = path.toLowerCase();
+    const paths = folded.get(key);
+    if (paths) paths.push(path);
+    else folded.set(key, [path]);
+  }
+  return { exact, folded };
+}
+
+function resolveModulePaths(candidate: string, lookup: PathLookup): string[] {
   const base = normalizePathSegments(stripPackagePrefix(candidate));
-  if (!base) return null;
+  if (!base) return [];
   for (const suffix of RESOLUTION_SUFFIXES) {
     const resolved = base + suffix;
-    if (byNormalizedPath.has(resolved)) return resolved;
+    if (lookup.exact.has(resolved)) return [resolved];
   }
-  return null;
+  if (!lookup.folded) return [];
+  for (const suffix of RESOLUTION_SUFFIXES) {
+    const folded = lookup.folded.get((base + suffix).toLowerCase());
+    if (folded) return folded;
+  }
+  return [];
 }
 
 function joinRelative(fromPath: string, specifier: string): string {

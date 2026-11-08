@@ -737,10 +737,14 @@ const SLACK_WEBHOOK_FINDING_PATTERN =
 // are capped at 64 per body: an unbounded alternation per dash would overflow
 // the regex backtrack stack on a long run of them. The finding side checks for
 // the END line before trying window offsets, so a failing body is read once.
+// Redaction also takes a body that runs into another BEGIN header: the old
+// lazy pattern redacted from the first header to the END, so a body left
+// without its END line must not come back unredacted.
 const PRIVATE_KEY_LABEL = "(?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?";
-const PRIVATE_KEY_BODY_TO_END = String.raw`[^-]*(?:-(?!----)[^-]*){0,64}-----END ${PRIVATE_KEY_LABEL}-----`;
+const PRIVATE_KEY_BODY = String.raw`[^-]*(?:-(?!----)[^-]*){0,64}`;
+const PRIVATE_KEY_BODY_TO_END = String.raw`${PRIVATE_KEY_BODY}-----END ${PRIVATE_KEY_LABEL}-----`;
 const PRIVATE_KEY_PATTERN = new RegExp(
-  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----${PRIVATE_KEY_BODY_TO_END}`,
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----${PRIVATE_KEY_BODY}(?:-----END ${PRIVATE_KEY_LABEL}-----|(?=-----BEGIN ${PRIVATE_KEY_LABEL}-----))`,
   "g",
 );
 const PRIVATE_KEY_FINDING_PATTERN = new RegExp(
@@ -748,11 +752,17 @@ const PRIVATE_KEY_FINDING_PATTERN = new RegExp(
   "g",
 );
 
-// A JWT starts a base64url run (the letter of a `\n` escape aside, as for AWS
-// keys above); matching from every `eyJ` inside one long run would rescan the
-// rest of the run from each.
+// A JWT header opens with `eyJ` (base64 of `{"`), often after an encoding or
+// naming prefix in the same base64url run (`%3D`, `s%3A`, `\x22`, `jwt_`).
+// Matching starts only at a run start and jumps to the run's first `eyJ`
+// through a lookahead capture, which JS never backtracks into: retrying from
+// every `eyJ` in one long run would rescan the rest of the run from each. A
+// later `eyJ` in the same segment cannot match where the first failed. The
+// prefix is captured and kept by the replacement. Each segment is `{10}`
+// then `*`: irregexp backtracks a `{10,}` loop through stack frames, which
+// overflows on a 25 MiB run, but not a plain `*` loop.
 const JWT_PATTERN =
-  /(?<!(?<!\\)[A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g;
+  /(?<![A-Za-z0-9_-])(?=([A-Za-z0-9_-]*?)eyJ)\1eyJ[A-Za-z0-9_-]{10}[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{10}[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{10}[A-Za-z0-9_-]*/g;
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
@@ -766,7 +776,7 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/rk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/xox[abprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED_SLACK_TOKEN]"],
   [SLACK_WEBHOOK_PATTERN, "[REDACTED_SLACK_WEBHOOK]"],
-  [JWT_PATTERN, "[REDACTED_JWT]"],
+  [JWT_PATTERN, "$1[REDACTED_JWT]"],
   [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
   [PRIVATE_KEY_PATTERN, "[REDACTED_PRIVATE_KEY]"],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],

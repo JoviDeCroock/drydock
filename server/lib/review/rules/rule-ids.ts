@@ -73,6 +73,7 @@ export const DETERMINISTIC_RULES = {
   fileLargeBinary: { id: "file.large-binary", risk: "anchor" },
   fileNativeArtifact: { id: "file.native-artifact", risk: "anchor" },
   fileOutsideFilesList: { id: "file.outside-files-list", risk: "anchor" },
+  filePythonSourceEncoding: { id: "file.python-source-encoding", risk: "anchor" },
   fileUnsampledEntrypoint: { id: "file.unsampled-entrypoint", risk: "anchor" },
   installScriptImplicitNodeGyp: {
     id: "install-script.implicit-node-gyp",

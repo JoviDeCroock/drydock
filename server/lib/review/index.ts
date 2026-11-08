@@ -55,6 +55,7 @@ export function computeRisk(
     ruleId?: string | null;
     obfuscated?: boolean;
     testScoped?: boolean;
+    loadUnproven?: boolean;
     /** Release scoring only: more of a capability the file already had. */
     expandedCapability?: boolean;
   }>,
@@ -66,7 +67,12 @@ export function computeRisk(
   for (const finding of findings) {
     const ruleId = finding.ruleId ?? undefined;
     const risk = severityToRisk(finding.severity);
-    if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.testScoped) {
+    // Test-scoped and load-unproven findings score alone, never by co-occurrence.
+    if (
+      ruleId &&
+      CODE_CAPABILITY_RULE_IDS.has(ruleId) &&
+      (finding.testScoped || finding.loadUnproven)
+    ) {
       testCapabilities.set(ruleId, combineRisk(testCapabilities.get(ruleId), risk));
     } else if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.expandedCapability) {
       expandedCapabilities.set(

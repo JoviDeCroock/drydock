@@ -1,0 +1,47 @@
+{
+  "id": "pypi-sdist-utf7-coding-cookie",
+  "title": "sdist setup.py declares a UTF-7 source encoding",
+  "category": "obfuscated-dropper",
+  "intent": "A PEP 263 coding cookie makes CPython decode setup.py as UTF-7 before pip runs it, so the bytes reviewers and rules read are not the code that runs. file.python-source-encoding reports the declaration.",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 64,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/setup.py",
+          "size": 147,
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "flags": [],
+          "textSample": "# coding: utf-7\n+AGk-mport os\n+AG8-s.system(+ACI-id+ACI-)\nfrom setuptools import setup\nsetup(name=+ACI-demo-package+ACI-, version=+ACI-1.2.0+ACI-)\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.python-source-encoding",
+      "severity": "high",
+      "file": "sdist/setup.py"
+    }
+  ]
+}

@@ -19,6 +19,7 @@ const {
   decodeText,
   hasUnicodeConfusables,
   isRootGypPath,
+  mayStartScript,
   isSafePaxPath,
   normalizeTarPath,
   parsePackageJson,
@@ -231,22 +232,57 @@ describe("control bytes in source files", () => {
     expect(file.textSample).toContain("child_process");
   });
 
-  test("data files stay binary while a source path with native magic is still decoded", async () => {
+  test("binary bodies are decoded for the rules unless native, inert or packed", async () => {
     const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]);
     const peLookalike = `MZ/*${"\0".repeat(62)}*/=1;\n${payload}`;
+    const hidden = `/*\0*/${payload}`;
     const tar = buildTar([
-      { name: "package/data.bin", body: `/*\0*/${payload}` },
+      { name: "package/data.bin", body: hidden },
+      { name: "package/lib/payload", body: hidden },
+      { name: "package/notes.txt", body: hidden },
+      { name: "package/blob.dat", body: elf },
+      { name: "package/addon.node", body: hidden },
+      {
+        name: "package/logo.png",
+        body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0, 0]),
+      },
+      { name: "package/bundle.tgz", body: new Uint8Array([0x1f, 0x8b, 0x08, 0, 0, 0]) },
+      // A scriptable first byte is a possible polyglot, so the name alone
+      // does not keep it opaque.
+      { name: "package/spinner.gif", body: `GIF89a/*\0*/${payload}` },
       { name: "package/addon.js", body: elf },
       { name: "package/loader.js", body: peLookalike },
     ]);
     const files = await parse(tar);
-    expect(files.map((file) => [file.path, file.flags])).toEqual([
-      ["data.bin", ["binary"]],
-      ["addon.js", ["native-elf", "control-bytes"]],
-      ["loader.js", ["native-pe", "control-bytes"]],
+    expect(files.map((file) => [file.path, file.flags, Boolean(file.textSample)])).toEqual([
+      ["data.bin", ["binary", "control-bytes"], true],
+      ["lib/payload", ["binary", "control-bytes"], true],
+      ["notes.txt", ["binary", "control-bytes"], true],
+      ["blob.dat", ["native-elf", "binary"], false],
+      ["addon.node", ["binary"], false],
+      ["logo.png", ["binary"], false],
+      ["bundle.tgz", ["binary"], false],
+      ["spinner.gif", ["binary", "control-bytes"], true],
+      ["addon.js", ["native-elf", "control-bytes"], true],
+      ["loader.js", ["native-pe", "control-bytes"], true],
     ]);
-    expect(files[0].textSample).toBeUndefined();
-    expect(files[2].textSample).toContain("child_process");
+    expect(files[0].textSample).toContain("child_process");
+    expect(files[9].textSample).toContain("child_process");
+  });
+
+  test.each([
+    [[0x00], false],
+    [[0x89], false],
+    [[0xff], false],
+    [[0x25], false],
+    [[0x7f], false],
+    [[0x2f], true],
+    [[0x47], true],
+    [[0x0a], true],
+    [[0xef, 0xbb, 0xbf], true],
+    [[0xc3, 0xa9], true],
+  ])("mayStartScript(%j) is %s", (bytes, expected) => {
+    expect(mayStartScript(new Uint8Array(bytes))).toBe(expected);
   });
 
   test("source with only tab, newline, vertical tab and form feed controls is untouched", async () => {
@@ -436,10 +472,10 @@ describe("readTar baseline text-sample cap", () => {
     const tar = buildTar([{ name: "package/bin/tool", body }]);
 
     const [capped] = await parseCapped(tar);
+    const [uncapped] = await parse(tar);
 
-    expect(capped.flags).toContain("binary");
-    expect(capped.flags).not.toContain("baseline-truncated");
-    expect(capped.textSample).toBeUndefined();
+    expect(uncapped.flags).toEqual(["binary", "control-bytes"]);
+    expect(capped.flags).toEqual(["binary", "control-bytes", "baseline-truncated"]);
   });
 });
 
@@ -3412,6 +3448,9 @@ describe("rendered sandbox parser source", () => {
     "readString",
     "decodeText",
     "isScriptSourcePath",
+    "isInertAssetPath",
+    "isPackedArchivePath",
+    "mayStartScript",
     "decodeBodyText",
     "isPlainObject",
     "normalizeStringRecord",

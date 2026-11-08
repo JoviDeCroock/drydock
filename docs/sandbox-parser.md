@@ -92,10 +92,14 @@ The first 64 bytes of every skipped body are kept and sniffed (`sniffNativeArtif
 | Body | Flag | Text sample |
 | --- | --- | --- |
 | UTF-8 with no NUL and C0 controls ≤ max(5, 2% of length) | none | decoded as is |
-| Otherwise, script source (`isScriptSourcePath`: JS/TS, Python, `.pth`, `.gyp`, shell, PowerShell, batch) or a `#!` file, native magic or not | `control-bytes` | decoded, controls other than tab/LF/VT/FF/CR shown as U+FFFD; raises `file.control-bytes` |
-| Otherwise | `binary` | none |
+| Otherwise, empty | `binary` | none |
+| Otherwise, script source (`isScriptSourcePath`: JS/TS, Python, `.pth`, `.gyp`, shell, PowerShell, batch) or a `#!` file, native magic or not | `control-bytes` | decoded, controls other than tab/LF/VT/FF/CR shown as U+FFFD |
+| Otherwise, native magic or `.node` (Node loads it with dlopen); or an inert asset (`isInertAssetPath`: images, fonts, audio/video, PDF), packed archive (`isPackedArchivePath`: zip/gzip/tar/jar/wasm and similar) or `.dll`/`.so`/`.dylib`/`.exe` whose first byte Node cannot run (`mayStartScript`) | `binary` | none |
+| Otherwise (unknown extension, `.txt`, `.dat`, extensionless) | `binary`, `control-bytes` | decoded as above for the deterministic rules only |
 
-Source maps (`*.map`) alone are hashed but never sampled (`text-sample-skipped`, `shouldSkipTextSample`); minified bundles are sampled like any file, since Node runs whatever a manifest or `require()` names. `decodeBodyText` decides the rest. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict on source would hide code from rules, AI evidence and the injection screen.
+Source maps (`*.map`) alone are hashed but never sampled (`text-sample-skipped`, `shouldSkipTextSample`); minified bundles are sampled like any file. `decodeBodyText` decides the rest. Node runs whatever a manifest or `require()` names, whatever its extension, so an extension alone never decides whether a body is decoded: a media or archive name with a scriptable first byte may be a polyglot and is decoded. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict would hide code from the rules.
+
+A `binary` body's decoded text never leaves memory: `withoutOpaqueSample` drops it from stored scan files, the public diff payload and the compare cache, and display, line diffing, AI evidence and the injection screen treat `binary` as opaque. Where the package loads such a body, `file.control-bytes` reports it; a loaded file with no sample at all (source map, hash-only) raises `file.unsampled-entrypoint` ([rules](./detection-rule-behavior.md)).
 
 ## Archive digests (`digestArchiveStream`)
 

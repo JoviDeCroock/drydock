@@ -38,4 +38,21 @@ describe("scanFileRowsForArtifacts display sample", () => {
     expect(row.textSample).toBeNull();
     expect(row.flagsJson).toEqual(["binary"]);
   });
+
+  test("stores no sample for a binary body the parser decoded for the rules", () => {
+    const file = {
+      path: "lib/table.dat",
+      size: 9,
+      sha256: "a",
+      flags: ["binary", "control-bytes"],
+      textSample: "\uFFFD\uFFFDtable",
+    };
+    const [row] = scanFileRowsForArtifacts(
+      [file],
+      [{ path: "lib/table.dat", status: "added", flags: [] }],
+    );
+    expect(row.textSample).toBeNull();
+    expect(row.flagsJson).toEqual(["binary", "control-bytes"]);
+    expect(file.textSample).toBe("\uFFFD\uFFFDtable");
+  });
 });
