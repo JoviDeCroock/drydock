@@ -610,9 +610,24 @@ export async function withdrawUndeliveredGateApproval(
   reason: GateStaleReviewReason,
 ) {
   const now = new Date();
-  const reopenedAs = (await hasNewerGateRequest(db, gate.id, gateRunKey(gate)))
-    ? "superseded"
-    : "pending";
+  const g = githubWorkflowGates;
+  // Decided in the write itself, so a request recorded just before it is seen
+  // and two gates for one run never end up pending together.
+  const reopenedAs = sql<WorkflowGateStatus>`case when exists (
+      select 1 from ${g} as newer
+      where newer.installation_row_id = ${g.installationRowId}
+        and newer.repository_id = ${g.repositoryId}
+        and newer.run_id = ${g.runId}
+        and newer.environment = ${g.environment}
+        and newer.id <> ${g.id}
+        and case
+          when newer.deployment_id is not null and ${g.deploymentId} is not null
+            and newer.deployment_id <> ${g.deploymentId}
+            then newer.deployment_id > ${g.deploymentId}
+          else newer.created_at > ${g.createdAt}
+            or (newer.created_at = ${g.createdAt} and newer.id > ${g.id})
+        end
+    ) then 'superseded' else 'pending' end`;
   const [, cleared] = await db.batch([
     db
       .update(githubWorkflowGates)
@@ -634,7 +649,7 @@ export async function withdrawUndeliveredGateApproval(
       )
       .returning({ id: githubWorkflowGates.id }),
     // Runs after the gate update in the same batch; it only clears approvals
-    // when that update reopened the gate.
+    // when that update reopened (or superseded) the gate with this reason.
     db
       .update(scans)
       .set({
@@ -652,7 +667,8 @@ export async function withdrawUndeliveredGateApproval(
           sql`exists (
             select 1 from ${githubWorkflowGates}
             where ${githubWorkflowGates.id} = ${gate.id}
-              and ${githubWorkflowGates.status} = ${reopenedAs}
+              and ${githubWorkflowGates.status} in ('pending', 'superseded')
+              and ${githubWorkflowGates.decision} is null
               and ${githubWorkflowGates.failureReason} = ${reason}
           )`,
         ),
@@ -666,14 +682,30 @@ export async function withdrawUndeliveredGateApproval(
   return cleared;
 }
 
-export async function markGateDecisionDelivered(db: AppDb, gateId: string): Promise<void> {
+/**
+ * Stamp the decision GitHub just accepted. Only stamps while the gate still
+ * holds that decision; false means it changed meanwhile (a concurrent delivery
+ * withdrew the approval, or already stamped it).
+ */
+export async function markGateDecisionDelivered(
+  db: AppDb,
+  gateId: string,
+  decision: "approved" | "rejected",
+): Promise<boolean> {
   const now = new Date();
-  await db
+  const updated = await db
     .update(githubWorkflowGates)
     .set({ decisionDeliveredAt: now, updatedAt: now })
     .where(
-      and(eq(githubWorkflowGates.id, gateId), isNull(githubWorkflowGates.decisionDeliveredAt)),
-    );
+      and(
+        eq(githubWorkflowGates.id, gateId),
+        eq(githubWorkflowGates.status, decision),
+        eq(githubWorkflowGates.decision, decision),
+        isNull(githubWorkflowGates.decisionDeliveredAt),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  return updated.length > 0;
 }
 
 export async function markGateErrored(

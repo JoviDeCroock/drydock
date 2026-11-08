@@ -18,6 +18,7 @@ import {
 import {
   getGateForOrganization,
   resetGateReviewForRetry,
+  withdrawUndeliveredGateApproval,
 } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -1422,6 +1423,115 @@ describe("github-app workflow-gate run binding", () => {
     expect(await resetGateReviewForRetry(createDb(env.DB), { gateId, organizationId })).toBe(true);
     const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
     expect(stored).toMatchObject({ status: "pending", scanId: null, reviewBinding: null });
+  });
+
+  async function approveForWithdrawal(gateId: string, scanId: string) {
+    const db = createDb(env.DB);
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "approved", decision: "approved", decidedAt: new Date() })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    await db.update(schema.scans).set({ decision: "publish" }).where(eq(schema.scans.id, scanId));
+  }
+
+  async function insertNewerRequest(organizationId: string, gateId: string) {
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select()
+      .from(schema.githubWorkflowGates)
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    const newerGateId = crypto.randomUUID();
+    await db.insert(schema.githubWorkflowGates).values({
+      id: newerGateId,
+      organizationId,
+      installationRowId: row.installationRowId,
+      releaseTargetId: row.releaseTargetId,
+      deliveryId: crypto.randomUUID(),
+      repositoryId: row.repositoryId,
+      repositoryFullName: row.repositoryFullName,
+      environment: row.environment,
+      runId: row.runId,
+      deploymentId: (row.deploymentId ?? 0) + 1,
+      deploymentCallbackUrl: row.deploymentCallbackUrl,
+      eventAction: "requested",
+      status: "pending",
+      requestedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    return newerGateId;
+  }
+
+  test("a withdrawal reads a newer request recorded after its gate was loaded", async () => {
+    const { organizationId, gateId, scanId } = await seedReviewedGate();
+    await approveForWithdrawal(gateId, scanId);
+    const db = createDb(env.DB);
+    const loaded = await getGateForOrganization(db, organizationId, gateId);
+    const newerGateId = await insertNewerRequest(organizationId, gateId);
+
+    const cleared = await withdrawUndeliveredGateApproval(db, loaded!, "artifacts_changed");
+
+    expect(cleared).toHaveLength(1);
+    expect(await getGateForOrganization(db, organizationId, gateId)).toMatchObject({
+      status: "superseded",
+      decision: null,
+      failureReason: "artifacts_changed",
+    });
+    expect((await getGateForOrganization(db, organizationId, newerGateId))?.status).toBe("pending");
+    expect(await packageDecision(scanId)).toBeNull();
+  });
+
+  test("a withdrawal with no newer request reopens the gate", async () => {
+    const { organizationId, gateId, scanId } = await seedReviewedGate();
+    await approveForWithdrawal(gateId, scanId);
+    const db = createDb(env.DB);
+    const loaded = await getGateForOrganization(db, organizationId, gateId);
+
+    const cleared = await withdrawUndeliveredGateApproval(db, loaded!, "run_attempt_changed");
+
+    expect(cleared).toHaveLength(1);
+    expect(await getGateForOrganization(db, organizationId, gateId)).toMatchObject({
+      status: "pending",
+      failureReason: "run_attempt_changed",
+    });
+    expect(await packageDecision(scanId)).toBeNull();
+  });
+
+  test("delivery never stamps a gate withdrawn while its callback was in flight", async () => {
+    const { userId, organizationId, gateId, scanId } = await seedReviewedGate();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        // A concurrent delivery withdraws the approval before this one records.
+        await createDb(env.DB)
+          .update(schema.githubWorkflowGates)
+          .set({ status: "pending", decision: null, failureReason: "artifacts_changed" })
+          .where(eq(schema.githubWorkflowGates.id, gateId));
+        return new Response(null, { status: 204 });
+      }
+      const runState = githubRunStateResponse(request);
+      if (runState) return runState;
+      throw new Error(`unexpected fetch in run binding test: ${request.url}`);
+    });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(200);
+    expect(decisionCalls.map((call) => call.state)).toEqual(["approved"]);
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored).toMatchObject({ status: "pending", decisionDeliveredAt: null });
+    expect(
+      errorSpy.mock.calls.some(
+        ([event]) => event === "github_workflow_gate.delivery_raced_withdrawal",
+      ),
+    ).toBe(true);
+    errorSpy.mockRestore();
   });
 
   test("a superseded gate cannot be decided", async () => {

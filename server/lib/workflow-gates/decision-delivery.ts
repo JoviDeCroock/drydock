@@ -5,6 +5,7 @@ import { getInstallationExternalId } from "../github-app/persistence";
 import { postDeploymentProtectionDecision } from "../github-app/webhook";
 import {
   type WorkflowGateRecord,
+  getGateForOrganization,
   markGateDecisionDelivered,
   withdrawUndeliveredGateApproval,
 } from "../github-app/webhook-gates";
@@ -63,7 +64,20 @@ export async function deliverGateDecision(
     comment: gate.decisionComment ?? "",
   });
   try {
-    await markGateDecisionDelivered(db, gate.id);
+    const stamped = await markGateDecisionDelivered(db, gate.id, gate.decision);
+    if (!stamped) {
+      const current = await getGateForOrganization(db, gate.organizationId, gate.id);
+      if (!current?.decisionDeliveredAt) {
+        // GitHub acted on the decision but the gate no longer holds it: a
+        // concurrent delivery withdrew the approval. The job may be running.
+        emitOperationalEvent("error", "github_workflow_gate.delivery_raced_withdrawal", {
+          organizationId: gate.organizationId,
+          gateId: gate.id,
+          decision: gate.decision,
+          status: current?.status ?? null,
+        });
+      }
+    }
   } catch (err) {
     // GitHub has the decision; failing here would only re-post it.
     emitOperationalEvent("warn", "github_workflow_gate.delivery_record_failed", {
