@@ -57,6 +57,10 @@ export interface ResolvedReleaseBundle<TArtifact = ResolvedReleaseFile> {
   artifactName: string;
   /** Total downloaded GitHub Actions artifact ZIP bytes. */
   artifactSizeBytes: number;
+  /** The run attempt GitHub reported just before the artifacts were listed. */
+  runAttempt: number;
+  /** Every Actions artifact the listing matched, the set a later approval re-checks. */
+  listedArtifacts: RunArtifactRef[];
 }
 
 export type WorkflowArtifactErrorCode =
@@ -243,6 +247,13 @@ async function processReleaseBundle<TArtifact>(
   const artifactName = typeof source.artifactName === "string" ? source.artifactName.trim() : "";
   const artifactNamePrefix =
     typeof source.artifactNamePrefix === "string" ? source.artifactNamePrefix.trim() : "";
+  // Read before listing: an attempt that changes after this point is caught by
+  // the approval-time re-check, never folded into the reviewed binding.
+  const runAttempt = await fetchWorkflowRunAttempt(
+    installationToken,
+    source.repositoryFullName,
+    source.runId,
+  );
   const runArtifacts = await listRunArtifacts(
     installationToken,
     source.repositoryFullName,
@@ -277,6 +288,17 @@ async function processReleaseBundle<TArtifact>(
         "bundle_too_large",
         `artifact downloads exceed ${limits.maxTotalZipBytes} bytes`,
       );
+    }
+    // The listed digest is what the approval re-check compares, so the bytes
+    // reviewed must be the bytes it names.
+    if (artifact.digest !== null) {
+      const expected = artifact.digest.toLowerCase();
+      if (!expected.startsWith("sha256:") || `sha256:${await sha256Hex(zipBytes)}` !== expected) {
+        throw new WorkflowArtifactError(
+          "artifact_identity_inconsistent",
+          `artifact ${artifact.id} download does not match its listed digest`,
+        );
+      }
     }
 
     const entries = await extractOuterZipEntries(zipBytes);
@@ -326,6 +348,8 @@ async function processReleaseBundle<TArtifact>(
     artifactId: runArtifacts[0]?.id ?? 0,
     artifactName: runArtifacts.length === 1 ? (runArtifacts[0]?.name ?? "") : "all",
     artifactSizeBytes: totalZipBytes,
+    runAttempt,
+    listedArtifacts: runArtifacts,
   };
 }
 
@@ -346,14 +370,81 @@ export async function processReleaseBundleForGate<TArtifact>(
 
 // ── GitHub API: list + download ──────────────────────────────────────────────
 
-interface RunArtifactRef {
+export interface RunArtifactRef {
   id: number;
   name: string;
   sizeInBytes: number | null;
-  expired: boolean;
+  /** GitHub's `sha256:` digest of the uploaded ZIP; null for uploads that predate it. */
+  digest: string | null;
+}
+
+/**
+ * The run's current attempt. GitHub's deployment-protection callback is per run,
+ * so the attempt is what tells a re-run apart from the run that was reviewed.
+ */
+export async function fetchWorkflowRunAttempt(
+  token: string,
+  repositoryFullName: string,
+  runId: number,
+): Promise<number> {
+  const [owner, repo] = repositoryFullName.split("/");
+  const response = await reliableFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
+      `/actions/runs/${runId}`,
+    { headers: githubHeaders(token) },
+  );
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      `workflow run ${runId} lookup failed (${response.status})`,
+    );
+  }
+  const data = (await response.json()) as { id?: unknown; run_attempt?: unknown };
+  const attempt = data.run_attempt;
+  if (
+    data.id !== runId ||
+    typeof attempt !== "number" ||
+    !Number.isInteger(attempt) ||
+    attempt < 1
+  ) {
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      `workflow run ${runId} lookup returned no run attempt`,
+    );
+  }
+  return attempt;
 }
 
 async function listRunArtifacts(
+  token: string,
+  repositoryFullName: string,
+  runId: number,
+  artifactName?: string,
+  artifactNamePrefix?: string,
+): Promise<RunArtifactRef[]> {
+  const found = await collectRunArtifacts(
+    token,
+    repositoryFullName,
+    runId,
+    artifactName,
+    artifactNamePrefix,
+  );
+  if (found.length > 0) return found;
+  const detail = artifactName
+    ? `no non-expired artifact named ${artifactName} on run ${runId}`
+    : artifactNamePrefix
+      ? `no non-expired artifact in the ${artifactNamePrefix} shard family on run ${runId}`
+      : `no non-expired artifacts on run ${runId}`;
+  throw new WorkflowArtifactError("bundle_unavailable", detail);
+}
+
+/**
+ * Every non-expired artifact on the run matching the name filter, sorted. An
+ * empty result is a valid answer here; only an API failure or a truncated
+ * listing throws.
+ */
+export async function collectRunArtifacts(
   token: string,
   repositoryFullName: string,
   runId: number,
@@ -390,6 +481,7 @@ async function listRunArtifacts(
           id?: number;
           name?: string;
           size_in_bytes?: number;
+          digest?: string | null;
           expired?: boolean;
         }>;
       };
@@ -406,7 +498,7 @@ async function listRunArtifacts(
             name: candidate.name,
             sizeInBytes:
               typeof candidate.size_in_bytes === "number" ? candidate.size_in_bytes : null,
-            expired: false,
+            digest: typeof candidate.digest === "string" ? candidate.digest : null,
           });
           if (found.length > MAX_RUN_ARTIFACTS) {
             throw new WorkflowArtifactError(
@@ -428,15 +520,7 @@ async function listRunArtifacts(
       `workflow run ${runId} lists more artifacts than ${MAX_LIST_PAGES} pages can reach`,
     );
   }
-  if (found.length > 0) {
-    return found.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
-  }
-  const detail = artifactName
-    ? `no non-expired artifact named ${artifactName} on run ${runId}`
-    : artifactNamePrefix
-      ? `no non-expired artifact in the ${artifactNamePrefix} shard family on run ${runId}`
-      : `no non-expired artifacts on run ${runId}`;
-  throw new WorkflowArtifactError("bundle_unavailable", detail);
+  return found.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
 }
 
 function matchesArtifactName(

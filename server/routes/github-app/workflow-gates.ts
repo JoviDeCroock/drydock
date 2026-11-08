@@ -31,6 +31,11 @@ import {
 } from "../../lib/workflow-gate-job";
 import { redeliverGateDecision } from "../../lib/workflow-gates/decision-delivery";
 import {
+  type GateStaleReviewReason,
+  checkGateReviewBinding,
+  isGateStaleReviewReason,
+} from "../../lib/workflow-gates/review-binding";
+import {
   type GithubAppConfig,
   GithubAppConfigError,
   readGithubAppConfig,
@@ -38,10 +43,12 @@ import {
 import {
   type GatePackageScan,
   type WorkflowGateRecord,
+  clearGateReviewStale,
   getGateByScanId,
   getGateForOrganization,
   listGatePackageScans,
   markGateDecidedForPackageAggregate,
+  markGateReviewStale,
   resetGateReviewForRetry,
 } from "../../lib/github-app/webhook-gates";
 import type { Bindings, Variables } from "../../types";
@@ -125,6 +132,12 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
   if (!existing) return c.json({ error: "not found" }, 404);
+  if (existing.status === "superseded") {
+    return c.json(
+      { error: "a newer deployment request for this run replaced this gate; decide that one" },
+      409,
+    );
+  }
   if (existing.status !== "pending") {
     return c.json({ error: "gate has already been decided" }, 409);
   }
@@ -155,6 +168,10 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       },
       409,
     );
+  }
+  if (decision === "approved") {
+    const refused = await refuseStaleApproval(c, db, existing, orgRequiresTwoFactor);
+    if (refused) return refused;
   }
 
   // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
@@ -376,12 +393,25 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
     );
   }
 
+  // Gate-level, not attached to a scan: the retry discards the package scans,
+  // and their scan-linked events with them, so this keeps any package decision
+  // a stale review is replacing.
   await recordScanEvent(db, {
     organizationId,
     actorUserId: session.userId,
-    scanId: existing.scanId,
     type: "github_workflow_gate.retry_requested",
-    metadata: { gateId, packageCount: packages.length },
+    metadata: {
+      gateId,
+      packageCount: packages.length,
+      reason: existing.failureReason,
+      discardedDecisions: packages
+        .filter((pkg) => pkg.decision)
+        .map((pkg) => ({
+          packageName: pkg.packageName,
+          version: pkg.stagedVersion,
+          decision: pkg.decision,
+        })),
+    },
   });
 
   const message = { kind: "workflow_gate" as const, organizationId, gateId };
@@ -396,6 +426,73 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
     202,
   );
 });
+
+const STALE_APPROVAL_ERRORS: Record<GateStaleReviewReason, string> = {
+  run_attempt_changed: "the workflow run was re-run since this review; retry the review or reject",
+  artifacts_changed: "the run's artifacts changed since this review; retry the review or reject",
+  review_unbound:
+    "this review did not record the run's artifacts; retry the review before approving, or reject",
+};
+
+/**
+ * Approval releases whatever the run holds when GitHub gets the callback, so
+ * check now that the run attempt and its artifacts are still the reviewed ones.
+ * Delivery checks again before posting; this one answers the maintainer before
+ * any package decision is recorded. Rejection needs no check.
+ */
+async function refuseStaleApproval(
+  c: RouteContext,
+  db: AppDb,
+  gate: WorkflowGateRecord,
+  orgRequiresTwoFactor: boolean,
+): Promise<Response | null> {
+  const unavailable = () =>
+    c.json(
+      {
+        error: "Drydock could not confirm the run's artifacts with GitHub; try again shortly",
+        code: "gate_binding_unavailable",
+      },
+      503,
+    );
+  let config: GithubAppConfig;
+  try {
+    config = readGithubAppConfig(c.env);
+  } catch {
+    return unavailable();
+  }
+  let check: Awaited<ReturnType<typeof checkGateReviewBinding>>;
+  try {
+    check = await checkGateReviewBinding(config, db, gate);
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.binding_check_failed", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      error: describeOperationalError(err),
+    });
+    return unavailable();
+  }
+  if (check.ok) {
+    if (isGateStaleReviewReason(gate.failureReason)) await clearGateReviewStale(db, gate.id);
+    return null;
+  }
+  await markGateReviewStale(db, gate.id, check.reason);
+  await recordScanEvent(db, {
+    organizationId: gate.organizationId,
+    type: "github_workflow_gate.review_stale",
+    metadata: { gateId: gate.id, reason: check.reason },
+  });
+  const current = (await getGateForOrganization(db, gate.organizationId, gate.id)) ?? gate;
+  const packages = await listGatePackageScans(db, gate.organizationId, gate.id);
+  return c.json(
+    {
+      gate: publicWorkflowGate(current, packages, orgRequiresTwoFactor),
+      error: STALE_APPROVAL_ERRORS[check.reason],
+      code: "gate_review_stale",
+      reason: check.reason,
+    },
+    409,
+  );
+}
 
 /**
  * Hand the decision to the queue, which owns the GitHub callback and its
@@ -480,6 +577,7 @@ function publicWorkflowGate(
     repositoryFullName: record.repositoryFullName,
     environment: record.environment,
     runId: record.runId,
+    runAttempt: record.reviewBinding?.runAttempt ?? null,
     status: record.status,
     decision: record.decision,
     decisionComment: record.decisionComment,

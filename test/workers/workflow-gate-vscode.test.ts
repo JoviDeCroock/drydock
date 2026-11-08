@@ -97,6 +97,8 @@ describe("VS Code workflow-gate adapter", () => {
       artifactId: 1,
       artifactName: "vscode-release-candidate",
       artifactSizeBytes: 1,
+      runAttempt: 1,
+      listedArtifacts: [],
       artifacts: [
         {
           path: "dist/remote-text-fetcher-1.0.0.vsix",

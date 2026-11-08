@@ -84,7 +84,7 @@ Approving a gate releases the held Actions job and publishing proceeds over Trus
 |Not enrolled, policy off|Decides without a code|
 
 1. `userHasTwoFactor` checks enrollment and `verifyTotpStepUp` (both `server/lib/auth/index.ts`) delegates to Better Auth's `verifyTOTP` against the request's session user; app code never decrypts the secret.
-2. The step-up runs only after the decision is confirmed actionable, so nobody is prompted for a code on a decision that would `409`.
+2. The step-up runs only after the decision is confirmed actionable (including an approval's run-binding check against GitHub), so nobody is prompted for a code on a decision that would `409`.
 3. A failed or missing step-up never mutates the gate (it stays `pending`) and never posts to GitHub.
 4. Limits: `github-app:gate-decision-2fa:<userId>` 10 per 15 min on top of `github-app:gate-decision:<orgId>` 60/min.
 5. The gate's public shape carries `organizationRequiresTwoFactor`; `GateDecisionDialog` shows the code field (or the "enable 2FA in Settings" blocker) to match what the route enforces.
