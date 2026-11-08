@@ -2,7 +2,9 @@
  * The rate-limit subject for a client address: an IPv4 address whole, an IPv6
  * address by its /64. One IPv6 subscriber is routinely delegated a /64 (often
  * more), so keying on the full address hands a single client 2^64 fresh
- * budgets. An IPv4-mapped IPv6 address is its IPv4 address.
+ * budgets. An IPv4-mapped or 6to4 address is its IPv4 address. A native /48
+ * holder still spans 65,536 buckets; per-colo counters are abuse controls, and
+ * the edge's own limits are the backstop for that.
  *
  * Anything that does not parse, including a missing address, is the shared
  * `UNKNOWN_CLIENT` bucket: a limiter keyed here never skips a request, and a
@@ -19,6 +21,10 @@ export function clientAddressBucket(address: string | null | undefined): string 
   if (!v6) return UNKNOWN_CLIENT;
   if (v6.slice(0, 5).every((group) => group === 0) && v6[5] === 0xffff) {
     return [v6[6]! >> 8, v6[6]! & 0xff, v6[7]! >> 8, v6[7]! & 0xff].join(".");
+  }
+  // 6to4 (2002::/16) hands each IPv4 host a whole /48; key it by that host.
+  if (v6[0] === 0x2002) {
+    return [v6[1]! >> 8, v6[1]! & 0xff, v6[2]! >> 8, v6[2]! & 0xff].join(".");
   }
   return `${v6
     .slice(0, 4)

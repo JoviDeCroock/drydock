@@ -274,6 +274,22 @@ describe("packument size ceiling", () => {
     },
   );
 
+  test("refuses a packument whose retained fields exceed the budget, though small on the wire", async () => {
+    // ~12 Mi characters of tarball URLs in a ~12 MB document: under the byte
+    // ceiling, over what the extract may hold.
+    const tarball = `https://registry.npmjs.org/big/-/${"a".repeat(3_900)}.tgz`;
+    const versions = Object.fromEntries(
+      Array.from({ length: 3_000 }, (_, i) => [`1.0.${i}`, { dist: { tarball } }]),
+    );
+    const body = JSON.stringify({ name: "big", versions });
+    expect(body.length).toBeLessThan(CEILING_BYTES);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 200 }));
+
+    await expect(cachedFetch(fakeKv().binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+      "registry metadata too large",
+    );
+  });
+
   test("the streamed projection equals the parsed-document projection", () => {
     const doc = {
       ...PRIVATE_PACKUMENT,

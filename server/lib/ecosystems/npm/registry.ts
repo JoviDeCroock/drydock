@@ -119,13 +119,19 @@ export async function fetchPackageMetadata(
 
 // Decoded JSON, after fetch's content decoding. The largest real packuments
 // (a full document with thousands of versions and their readmes) run to tens
-// of megabytes; streaming keeps memory flat, so the ceiling bounds the
-// transfer and parse time a single read can cost, not the heap.
+// of megabytes. Streaming holds no document; this ceiling bounds the transfer
+// and parse time one read can cost.
 const MAX_PACKUMENT_BYTES = 128 * 1024 * 1024;
 const MAX_PACKUMENT_VERSIONS = 100_000;
+// What the heap does hold is the extract: version keys, tarball URLs, `time`
+// and dist-tags. This bounds it whatever a crafted document contains; at the
+// budget, extract plus projection plus its cached JSON measured ~33 MiB with
+// two-byte strings, and the JSON stays under KV's 25 MiB value limit.
+// renovate (~5,900 versions, 74.5 MB) retains ~1.9 Mi of it.
+const MAX_PACKUMENT_RETAINED_CHARS = 8 * 1024 * 1024;
 const PACKUMENT_BODY_DEADLINE_MS = 30_000;
 
-/** The packument is past the byte or version ceiling; it was not parsed whole. */
+/** The packument is past the byte, version or retained ceiling; it was not parsed whole. */
 export class RegistryMetadataTooLargeError extends Error {
   constructor() {
     super("registry metadata too large");
@@ -139,7 +145,12 @@ export class RegistryMetadataTooLargeError extends Error {
  * mature package is more than the 128 MiB isolate has.
  */
 async function readPackument(res: Response): Promise<RegistryMetadata> {
-  const extractor = createPackumentExtractor({ maxVersions: MAX_PACKUMENT_VERSIONS });
+  // `RegistryMetadata` reads no per-version name, version or shasum.
+  const extractor = createPackumentExtractor({
+    maxVersions: MAX_PACKUMENT_VERSIONS,
+    maxRetainedChars: MAX_PACKUMENT_RETAINED_CHARS,
+    identityFields: false,
+  });
   let outcome: BoundedStreamOutcome;
   try {
     // Timed from when headers arrived, so a retried request does not inherit
@@ -160,7 +171,9 @@ async function readPackument(res: Response): Promise<RegistryMetadata> {
   } catch {
     throw new Error("metadata fetch failed: invalid document");
   }
-  if (extract.versionLimitExceeded) throw new RegistryMetadataTooLargeError();
+  if (extract.versionLimitExceeded || extract.retainedLimitExceeded) {
+    throw new RegistryMetadataTooLargeError();
+  }
   return projectPackumentExtract(extract);
 }
 

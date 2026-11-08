@@ -35,6 +35,11 @@ describe("clientAddressBucket", () => {
     expect(clientAddressBucket("0:0:0:0:0:ffff:203.0.113.7")).toBe("203.0.113.7");
   });
 
+  test("reads a 6to4 address as the IPv4 host whose /48 it is", () => {
+    expect(clientAddressBucket("2002:cb00:7107::1")).toBe("203.0.113.7");
+    expect(clientAddressBucket("2002:cb00:7107:ffff::9")).toBe("203.0.113.7");
+  });
+
   test("puts a missing or malformed address in the shared bucket", () => {
     for (const value of [
       undefined,

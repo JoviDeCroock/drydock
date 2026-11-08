@@ -191,6 +191,43 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     ]);
   });
 
+  test("identityFields off keeps no per-version name, version or shasum", () => {
+    const result = extract(
+      `{"versions":{"1.0.0":{"name":"p","version":"1.0.0","dist":{"tarball":"t","shasum":"s"}}}}`,
+      [],
+      { identityFields: false },
+    );
+    expect(result.versions.get("1.0.0")).toEqual({
+      name: null,
+      version: null,
+      tarball: "t",
+      shasum: null,
+      provenance: false,
+    });
+  });
+
+  test("stops retaining at maxRetainedChars and says so, whatever the entry kind", () => {
+    const limits = { maxRetainedChars: 1_000, identityFields: false };
+    const tarball = `"${"t".repeat(300)}"`;
+    const versions = Array.from(
+      { length: 5 },
+      (_, i) => `"${i}.0.0":{"dist":{"tarball":${tarball}}}`,
+    ).join(",");
+    const overVersions = extract(`{"versions":{${versions}}}`, [], limits);
+    expect(overVersions.retainedLimitExceeded).toBe(true);
+    expect(overVersions.versions.size).toBeLessThan(5);
+
+    const times = Array.from({ length: 50 }, (_, i) => `"k${i}":"v"`).join(",");
+    const overTime = extract(`{"time":{${times}}}`, [], limits);
+    expect(overTime.retainedLimitExceeded).toBe(true);
+    // Each entry is charged its overhead, so tiny entries cannot multiply.
+    expect(overTime.time.size).toBeLessThanOrEqual(1_000 / 64);
+
+    const under = extract(`{"versions":{"1.0.0":{"dist":{"tarball":"t"}}}}`, [], limits);
+    expect(under.retainedLimitExceeded).toBe(false);
+    expect(under.versions.get("1.0.0")?.tarball).toBe("t");
+  });
+
   test("the last duplicate wins, replacing objects wholesale and erasing strings", () => {
     const result = extract(
       `{"name":"a","name":1,"versions":{"1.0.0":{"dist":{"tarball":"t"}}},"versions":{"2.0.0":{"version":"2.0.0"},"2.0.0":{"name":"n"}},"dist-tags":{"latest":"1","latest":["x"]}}`,
