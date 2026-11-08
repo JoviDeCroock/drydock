@@ -59,6 +59,7 @@ const {
   notifyStagedReleaseAwaitingApproval,
   notifyWorkflowGateReview,
 } = await import("../server/lib/notify");
+const { notifyOrganizationInvite } = await import("../server/lib/notify/organization-invite");
 
 function gateInput(overrides = {}) {
   return {
@@ -988,4 +989,61 @@ describe("notifyPublicationCoverageGap", () => {
       );
     },
   );
+});
+
+describe("notifyOrganizationInvite", () => {
+  function inviteInput(overrides = {}) {
+    return {
+      env: { BETTER_AUTH_URL: "https://drydock.test" },
+      db: {},
+      organizationId: "org_1",
+      organizationName: "Acme Corp",
+      email: "invitee@example.com",
+      role: "member",
+      token: "tok_1",
+      invitedByUserId: "user_1",
+      ...overrides,
+    };
+  }
+
+  function sentText() {
+    expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+    return emailMock.sendNotificationEmail.mock.calls[0][1].text;
+  }
+
+  test("names the inviter by display name and account address", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({ invitedByName: "Ada Lovelace", invitedByEmail: "ada@example.com" }),
+    );
+    expect(sentText()).toContain(
+      "Ada Lovelace (ada@example.com) invited you to join Acme Corp on Drydock as a member.",
+    );
+  });
+
+  test("flattens a stored multi-line name to one capped line", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({
+        invitedByName: `Ada\r\n\r\nSecond paragraph\u2028\u202E${"x".repeat(100)}`,
+        invitedByEmail: "ada@example.com",
+      }),
+    );
+    const text = sentText();
+    const inviteLine = text.split("\n").find((line) => line.includes("invited you"));
+    expect(inviteLine).toBe(
+      `Ada Second paragraph ${"x".repeat(43)} (ada@example.com) invited you to join Acme Corp on Drydock as a member.`,
+    );
+    expect(text).not.toMatch(/[\u2028\u202E]/u);
+    // Greeting, invite line, link, account hint, expiry, sign-off: no extra paragraphs.
+    expect(text.split("\n\n")).toHaveLength(6);
+  });
+
+  test("falls back to the address, then to a generic sender", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({ invitedByName: " \n ", invitedByEmail: "ada@example.com" }),
+    );
+    expect(sentText()).toContain("ada@example.com invited you to join Acme Corp");
+    emailMock.sendNotificationEmail.mockClear();
+    await notifyOrganizationInvite(inviteInput());
+    expect(sentText()).toContain("An organization owner invited you to join Acme Corp");
+  });
 });

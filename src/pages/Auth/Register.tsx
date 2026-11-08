@@ -3,6 +3,7 @@ import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useCancellableEffect } from "../../lib/use-cancellable-effect";
 import { normalizeAuthReturnTo } from "../../lib/auth-return";
+import { USER_NAME_MAX_LENGTH } from "../../lib/user-name";
 import { authPageHref } from "./auth-links";
 import { sessionModel } from "../../models/auth";
 import { errorMessage } from "../../models/api";
@@ -139,6 +140,7 @@ export default function RegisterPage() {
               type="text"
               value={name}
               autocomplete="name"
+              maxlength={USER_NAME_MAX_LENGTH}
               required
               onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
             />

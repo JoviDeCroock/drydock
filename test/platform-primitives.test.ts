@@ -11,6 +11,10 @@ import { isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import { isSafeManifestPath } from "../server/lib/platform/path-safety";
 import {
+  hasLineBreakingOrInvisibleCharacters,
+  toSingleLineText,
+} from "../server/lib/platform/single-line-text";
+import {
   isSafeHttpUrlForShellArgument,
   quotePosixShellArgument,
 } from "../server/lib/platform/shell-command";
@@ -204,6 +208,28 @@ describe("markup escaping", () => {
 
   test("escapeXml uses &apos;, which is defined in XML but not HTML4", () => {
     expect(escapeXml(`<a href="x">&'`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&apos;");
+  });
+});
+
+describe("single-line text", () => {
+  test("flattens every kind of line break and drops bidi and zero-width controls", () => {
+    expect(toSingleLineText("a\r\nb\nc\rd\u2028e\u2029f\u0085g\tz", 80)).toBe("a b c d e f g z");
+    expect(toSingleLineText("\u202Eabc\u2066d\u200Be\uFEFF", 80)).toBe("abcde");
+    expect(toSingleLineText("  spaced \u00A0 out  ", 80)).toBe("spaced out");
+  });
+
+  test("keeps joiners and caps by code point without splitting a pair", () => {
+    const family = "\u{1F468}\u200D\u{1F469}";
+    expect(toSingleLineText(family, 80)).toBe(family);
+    expect(toSingleLineText("\u{1F600}".repeat(5), 3)).toBe("\u{1F600}".repeat(3));
+    expect(toSingleLineText("abc def", 4)).toBe("abc");
+  });
+
+  test("reports the characters it would remove", () => {
+    expect(hasLineBreakingOrInvisibleCharacters("Ada Lovelace")).toBe(false);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\u2028")).toBe(true);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\u202E")).toBe(true);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\n")).toBe(true);
   });
 });
 
