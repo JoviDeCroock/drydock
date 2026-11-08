@@ -1,6 +1,8 @@
 import { type AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import type { OrganizationRole } from "../auth/roles";
+import { normalizeUserName } from "../auth/user-name";
+import { toSingleLineText } from "../platform/single-line-text";
 import { sendNotificationEmail } from "./email";
 import { inviteAcceptUrl } from "./links";
 
@@ -14,6 +16,21 @@ export interface NotifyOrganizationInviteInput {
   token: string;
   invitedByUserId: string;
   invitedByName?: string | null;
+  invitedByEmail?: string | null;
+}
+
+/**
+ * Who sent the invite, as one factual line. The inviter's address leads: it is
+ * verified (creating an invite requires it), while the name is their own free
+ * text, so it is flattened again here (rows written before names were
+ * normalized are still read) and quoted, never presented as the sender.
+ */
+function describeInviter(name?: string | null, email?: string | null): string {
+  const displayName = name ? normalizeUserName(name) : "";
+  const address = email ? toSingleLineText(email, 254) : "";
+  const quoted = displayName ? `"${displayName}"` : "";
+  if (address && quoted) return `${address} (${quoted})`;
+  return address || quoted || "An organization owner";
 }
 
 /**
@@ -40,7 +57,7 @@ export async function notifyOrganizationInvite(
         text: [
           "Hi there,",
           "",
-          `${input.invitedByName ? input.invitedByName : "An organization owner"} invited you to join ${organizationName} on Drydock as a ${role}.`,
+          `${describeInviter(input.invitedByName, input.invitedByEmail)} invited you to join ${organizationName} on Drydock as a ${role}.`,
           "",
           `Accept the invitation: ${inviteUrl}`,
           "",

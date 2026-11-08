@@ -70,7 +70,9 @@ describe("deliverOrganizationNotification", () => {
   test("resolves the organization owner as both recipient fallback and event actor", async () => {
     await deliverOrganizationNotification(env, db, notification());
 
-    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "owner_1");
+    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "owner_1", {
+      requireVerifiedOwner: false,
+    });
     expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message).toEqual({
@@ -101,7 +103,9 @@ describe("deliverOrganizationNotification", () => {
 
     await deliverOrganizationNotification(env, db, notification());
 
-    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "sweep_actor");
+    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "sweep_actor", {
+      requireVerifiedOwner: false,
+    });
     // `every` on an empty array is true, so assert the events exist before
     // asserting what they attribute to.
     const actors = events().map((event) => event.actorUserId);

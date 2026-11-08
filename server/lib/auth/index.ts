@@ -19,6 +19,11 @@ import {
   sendPasswordChangedEmail,
   sendPasswordResetEmail,
 } from "../notify/account-email";
+import {
+  INVALID_USER_NAME_MESSAGE,
+  isAcceptableTypedUserName,
+  normalizeUserName,
+} from "./user-name";
 
 export interface AuthSession {
   userId: string;
@@ -690,6 +695,20 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
             message: "OAuth scope overrides are not allowed",
           });
         }
+        // Typed names are refused, not rewritten, so the person sees why; the
+        // `databaseHooks` below normalize every write, GitHub profiles included.
+        if (
+          (ctx.path === "/sign-up/email" || ctx.path === "/update-user") &&
+          ctx.body &&
+          typeof ctx.body === "object" &&
+          typeof (ctx.body as { name?: unknown }).name === "string" &&
+          !isAcceptableTypedUserName((ctx.body as { name: string }).name)
+        ) {
+          throw APIError.from("BAD_REQUEST", {
+            code: "INVALID_NAME",
+            message: INVALID_USER_NAME_MESSAGE,
+          });
+        }
       }),
       after: createAuthMiddleware(async (ctx) => {
         if (ctx.path !== "/verify-email") return;
@@ -712,6 +731,9 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
     databaseHooks: {
       user: {
         create: {
+          before: async (newUser) => ({
+            data: { ...newUser, name: normalizeUserName(newUser.name ?? "") },
+          }),
           after: async (createdUser) => {
             const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
@@ -720,6 +742,12 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
               outcome: social || !emailVerificationEnabled ? "active" : "verification_pending",
             });
           },
+        },
+        update: {
+          before: async (changes) =>
+            typeof changes.name === "string"
+              ? { data: { ...changes, name: normalizeUserName(changes.name) } }
+              : undefined,
         },
       },
     },

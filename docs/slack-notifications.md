@@ -85,7 +85,7 @@ Delivery: `server/lib/notify/deliver.ts`, `server/lib/notify/index.ts`, `server/
 | Coverage gap | `publication_coverage_gap`: >1h unverifiable release/package; once/gap; never discrepancy |
 | Publication copy | Names alerting org; never claims nobody else reviewed; links org dashboard |
 | Unaccepted publication alert | Retry on later watch checks; [details](./publication-monitor.md) |
-| Notification actor / email | Org owner is actor + recipient fallback; email uses configured recipients |
+| Notification actor / email | Org owner is actor + recipient fallback; email uses configured recipients. Where verification is enforced, the fallback needs a verified owner (`resolveNotificationEmails`); the verification banner says alert mail is paused. Configured recipients are not re-checked |
 | Fan-out | Email and Slack run concurrently; Slack still sends with no email recipients |
 | Eligible connection | Decrypt in memory → `renderSlackMessage` Block Kit → `chat.postMessage` |
 | Disconnected UI | Owner/admin sees “Add to Slack” |

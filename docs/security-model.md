@@ -233,24 +233,25 @@ Full contract: [API keys](./api-keys.md#recording-staged-decisions).
 
 ### Email verification
 
-Sign-in never requires a verified address; unverified accounts can use the dashboard and run published-pair reviews. `requireVerifiedEmail` gates the actions that spend trust in the address or reach a third party, answering `403 { code: "email_verification_required" }`:
+Sign-in never needs a verified address; unverified accounts can use the dashboard and review published pairs. `requireVerifiedEmail` gates actions that spend trust in the address or reach a third party, answering `403 { code: "email_verification_required" }`:
 
 |Action|Route|
 |---|---|
-|Connect / validate npm token|`POST /api/v1/npm-connection`, `POST /api/v1/npm-connection/validate`|
+|Connect / validate npm token|`POST /api/v1/npm-connection` and `/validate`|
 |Personal scanning consent|`POST /api/v1/npm-connection/personal-confirmation`|
 |Record a scan decision|`POST /api/v1/scans/:id/decision`, `POST /api/v1/scans/batch-approval`|
 |Create a public share link|`POST /api/v1/scans/:id/share`|
 |Invite a member|`POST /api/v1/organizations/invitations`|
-|GitHub App install|`POST /api/v1/github-app/install`, `POST /api/v1/github-app/install/callback`|
+|Mail recipient or watch|`POST /api/v1/organizations/:id/notification-recipients`, `POST /api/v1/publication-watches`|
+|GitHub App install|`POST /api/v1/github-app/install` and `/install/callback`|
 |Decide a workflow gate|`POST /api/v1/github-app/workflow-gates/:gateId/decision`|
 |Publisher setup|Every `/api/v1/github-app/setup/*` route|
 |Accept an invitation|`POST /api/v1/organizations/invitations/accept`; checks the user row, not the session (`403`)|
 
-1. The guard reads Better Auth's `emailVerified` session flag; an absent flag counts as verified, so a payload change never removes access.
-2. It is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL`, or a local `BETTER_AUTH_URL`), because no account could ever clear it. `GET /api/auth/config` reports this so the banner shows only where it can work.
+1. The guard reads Better Auth's `emailVerified` session flag; absent counts as verified, so a payload change never removes access.
+2. It is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL`, or a local `BETTER_AUTH_URL`), because no account could clear it. `GET /api/auth/config` reports it for the banner.
 3. Resend (`/send-verification-email`): 5/hour per IP and per address digest, sign-up's send included; over budget looks sent (`auth.verification_address_limited`).
-4. `autoSignInAfterVerification: false`: verification never signs in, because Better Auth 2FA guards only `/sign-in/*` and `/verify-email` sessions would bypass password/TOTP. `hooks.after` on `/verify-email` refreshes the flag for an already-signed-in account.
+4. `autoSignInAfterVerification: false`: verification never signs in, because Better Auth 2FA guards only `/sign-in/*` and `/verify-email` sessions would bypass password/TOTP. `hooks.after` on `/verify-email` refreshes a signed-in account's flag.
 
 ### Password reset
 

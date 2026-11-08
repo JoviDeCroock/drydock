@@ -11,8 +11,9 @@ import { Button } from "../../components/Button";
  *
  * Verification is no longer a sign-in gate, so an unverified account can read
  * the dashboard and review published releases. What it cannot do is connect an
- * npm token, record a decision, publish a share link, invite a member, or
- * install the GitHub App — the server refuses those with
+ * npm token, record a decision, publish a share link, invite a member, add a
+ * notification recipient, start package monitoring, or install the GitHub App —
+ * the server refuses those with
  * `email_verification_required`. This says so before the refusal does, and
  * carries the one action that clears it.
  *
@@ -56,9 +57,10 @@ export function EmailVerificationBanner() {
         <div class="flex flex-col gap-1 min-w-0">
           <strong class="font-medium">Verify {email} to finish setting up</strong>
           <span class="text-ink-muted leading-[1.6]">
-            You can review published releases now. Connecting an npm token, recording a decision,
-            sharing a report, inviting a member, and installing the GitHub App wait for the link in
-            that email.
+            You can review published releases now. Connecting npm or the GitHub App, recording a
+            decision, sharing a report, and anything that emails someone else (invites, notification
+            recipients, package monitoring) wait for the link in that email. Release alert emails to
+            this address are paused until then.
           </span>
           <Show when={error}>{(message) => <span class="text-danger-text">{message}</span>}</Show>
         </div>

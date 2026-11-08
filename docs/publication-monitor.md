@@ -31,7 +31,7 @@ All require a Better Auth session and active-organization membership. Responses 
 | Method | Path under `/api/v1/publication-watches` | Role | Effect |
 | --- | --- | --- | --- |
 | GET | `/` | member | List watches in attention order; never enrolls |
-| POST | `/` `{ "packageName": "@scope/package" }` | member | Enroll (201) |
+| POST | `/` `{ "packageName": "@scope/package" }` | member | Enroll (201); needs a verified email |
 | GET | `/alerts` | member | Log of unapproved publishes (latest 100); read-only |
 | GET | `/:id` | member | Watch and latest observations |
 | GET | `/packages/:name` | member | One package's watch or `null`; read-only, never reconciles |
