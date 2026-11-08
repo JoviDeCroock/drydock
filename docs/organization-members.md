@@ -55,7 +55,7 @@ Roles, role-guarded routes, and the email-token invitation flow for multi-user o
 | npm connection `POST /`, `POST /validate`, `DELETE` | 403 | yes | yes | `server/routes/npm-connection.ts` |
 | GitHub App install, release targets, publisher setup | 403 | yes | yes | `server/routes/github-app/` |
 | Slack connect, channel, pause/resume, disconnect, test | 403 | yes | yes | Status `GET` open to members; one workspace and one public channel per org ([Slack](./slack-notifications.md)) |
-| Notification recipients add/remove | 403 | yes | yes | List open to members; at most 5 (`MAX_NOTIFICATION_RECIPIENTS`) |
+| Notification recipients add/remove | 403 | yes | yes | List open to members; add needs a verified email; at most 5 (`MAX_NOTIFICATION_RECIPIENTS`) |
 | `POST /api/v1/scans/:id/share` | 403 | yes | yes | `roleCanManagePublicShares` |
 | `GET /api/v1/audit-events` | 403 | yes | yes | [Audit log](./audit-log.md) |
 | Scan decisions, workflow gate decisions | yes | yes | yes | Open to any member by design |

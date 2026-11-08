@@ -11,6 +11,7 @@ import {
 import * as schema from "../../server/db/schema";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
+import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 
@@ -452,6 +453,26 @@ describe("organization notification recipients", () => {
 
     const db = createDb(env.DB);
     expect(await listNotificationRecipients(db, orgId)).toHaveLength(1);
+  });
+
+  test("an unverified caller cannot add a recipient where verification is enforced", async () => {
+    const owner = await seedUser();
+    const orgId = owner.organizationId;
+    const res = await call(
+      buildTestApp(mountOrganizations, { userId: owner.userId, emailVerified: false }),
+      "POST",
+      `/api/v1/organizations/${orgId}/notification-recipients`,
+      {
+        body: { email: "someone@example.com" },
+        envOverride: {
+          SEND_EMAIL: {} as Bindings["SEND_EMAIL"],
+          BETTER_AUTH_URL: "https://drydock.test",
+        },
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "email_verification_required" });
+    expect(await listNotificationRecipients(createDb(env.DB), orgId)).toHaveLength(0);
   });
 
   test("admins can manage recipients while members can only read them", async () => {
