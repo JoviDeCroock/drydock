@@ -16,7 +16,29 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
-type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
+type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored" | "superseded";
+
+/**
+ * `failureReason` values on a pending gate whose review no longer matches the
+ * run (mirrors `GATE_STALE_REVIEW_REASONS` on the server). The route refuses
+ * approval and the review can be re-run.
+ */
+export const GATE_STALE_REVIEW_MESSAGES: Record<string, string> = {
+  run_attempt_changed:
+    "The workflow run was re-run after this review, so approving it would release bytes nobody reviewed.",
+  artifacts_changed:
+    "The run's artifacts changed after this review, so approving it would release bytes nobody reviewed.",
+  review_unbound:
+    "This review did not record which run attempt and artifacts it covered, so it cannot be approved.",
+};
+
+export function gateReviewIsStale(gate: Pick<PublicWorkflowGate, "status" | "failureReason">) {
+  return (
+    gate.status === "pending" &&
+    gate.failureReason !== null &&
+    Object.hasOwn(GATE_STALE_REVIEW_MESSAGES, gate.failureReason)
+  );
+}
 export type WorkflowGateDecision = "approved" | "rejected";
 export type GatePackageDecision = "publish" | "no_publish";
 
@@ -38,6 +60,8 @@ export interface PublicWorkflowGate {
   repositoryFullName: string;
   environment: string;
   runId: number;
+  /** The run attempt the review covered; null before a review batch starts. */
+  runAttempt: number | null;
   status: WorkflowGateStatus;
   decision: WorkflowGateDecision | null;
   decisionComment: string | null;

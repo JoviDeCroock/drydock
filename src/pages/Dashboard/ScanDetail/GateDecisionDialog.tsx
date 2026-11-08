@@ -2,11 +2,13 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import type { DecisionStatus } from "../../../models/scan";
 import { scanDetailPath } from "../../../lib/scan-detail-path";
-import type {
-  GatePackageDecision,
-  GatePackageScan,
-  PublicWorkflowGate,
-  WorkflowGateDecision,
+import {
+  GATE_STALE_REVIEW_MESSAGES,
+  type GatePackageDecision,
+  type GatePackageScan,
+  type PublicWorkflowGate,
+  type WorkflowGateDecision,
+  gateReviewIsStale,
 } from "../../../models/github-app";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
@@ -39,6 +41,8 @@ function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
       return "rejected · job blocked";
     case "errored":
       return "review errored";
+    case "superseded":
+      return "superseded · newer request";
     default:
       return "awaiting decision";
   }
@@ -161,12 +165,16 @@ export function gateJobSentence(
       return "Drydock told GitHub Actions to continue the publish job.";
     case "rejected":
       return "Drydock told GitHub Actions not to run the protected publish job.";
+    case "superseded":
+      return "A newer deployment request for this run and Environment replaced this gate; only that one can continue the publish job.";
     case "errored":
       // The failure Alert below names the reason and the consequence.
       return gate.failureReason
         ? null
         : "Drydock could not prepare this gate review, so the publish job cannot continue.";
     default:
+      // The stale-review alert below says what changed and what to do.
+      if (gateReviewIsStale(gate)) return null;
       return count > 1
         ? `GitHub Actions is holding the publish job until all ${count} release packages are approved; rejecting any one blocks it.`
         : "GitHub Actions is holding the publish job until this release is approved or rejected.";
@@ -219,6 +227,7 @@ export function GateContextPanel({
             <span key="repo">{gate.repositoryFullName}</span>,
             <span key="env">env {gate.environment}</span>,
             <span key="run">run #{gate.runId}</span>,
+            ...(gate.runAttempt ? [<span key="attempt">attempt {gate.runAttempt}</span>] : []),
           ]}
         />
       ) : lookupStalled ? (
@@ -233,7 +242,12 @@ export function GateContextPanel({
       ) : (
         <LoadingLine size="inline">Loading gate context</LoadingLine>
       )}
-      {gate?.failureReason ? (
+      {gate && gateReviewIsStale(gate) ? (
+        <Alert tone="warn">
+          {GATE_STALE_REVIEW_MESSAGES[gate.failureReason ?? ""]} Retry the review to check the run's
+          current artifacts, or reject to block the job.
+        </Alert>
+      ) : gate?.failureReason && gate.status !== "superseded" ? (
         <Alert tone="critical">
           Drydock could not prepare the gate review ({gate.failureReason}); the configured protected
           job cannot continue.
@@ -245,7 +259,7 @@ export function GateContextPanel({
             {retrying ? "Retrying…" : "Retry review"}
           </Button>
           <Muted class="m-0 text-[12px]">
-            Re-runs the gate review from the workflow artifacts and replaces the failed batch.
+            Re-runs the gate review from the workflow artifacts and replaces the current batch.
           </Muted>
         </div>
       ) : null}
@@ -303,7 +317,9 @@ export function GateDecisionDialog({
   const saving = readSignalProp(status) === "saving";
   const message = readSignalProp(error);
   const requireTwoFactor = readSignalProp(requireTwoFactorProp);
-  const gateDecided = gate.status === "approved" || gate.status === "rejected";
+  // A superseded gate is closed like a decided one: nothing here can act on it.
+  const gateDecided =
+    gate.status === "approved" || gate.status === "rejected" || gate.status === "superseded";
   const packageAlreadyDecided = packageDecision !== null;
   const packages = gate.packages;
   const multi = packages.length > 1;
@@ -457,7 +473,11 @@ export function GateDecisionDialog({
         </Field>
       ) : null}
 
-      {gateDecided ? (
+      {gate.status === "superseded" ? (
+        <Muted class="m-0 text-[13px]">
+          Decide the newer gate for this run from its own review.
+        </Muted>
+      ) : gateDecided ? (
         <Muted class="m-0 text-[13px]">
           GitHub has been notified of this gate's final decision.
         </Muted>
@@ -504,6 +524,9 @@ export function GateDecisionDialog({
           </Button>
         </div>
       )}
+      {gateReviewIsStale(gate) && !packageAlreadyDecided ? (
+        <Alert tone="warn">{GATE_STALE_REVIEW_MESSAGES[gate.failureReason ?? ""]}</Alert>
+      ) : null}
       {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
           Approval requires a completed review batch. Retry the review or reject to block the held
