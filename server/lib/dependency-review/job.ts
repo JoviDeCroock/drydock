@@ -1,4 +1,3 @@
-import { packageDiffPath } from "../../../src/lib/package-diff-path";
 import { createDb, type AppDb } from "../../db/client";
 import {
   claimDependencyReview,
@@ -26,7 +25,8 @@ import { getInstallationAccessToken } from "../github-app/api";
 import { readGithubAppConfig } from "../github-app/config";
 import { getInstallationExternalId } from "../github-app/persistence";
 import { parseRepositoryFullName } from "../github-app/validation";
-import { dependencyReviewUrl, publicDiffUrl } from "../notify/links";
+import { dependencyReviewUrl } from "../notify/links";
+import { bumpDiffUrl } from "./approvable";
 import { mapWithConcurrency } from "../platform/concurrency";
 import { isRecord } from "../platform/guards";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
@@ -70,6 +70,7 @@ import {
   APPROVE_ACTION_IDENTIFIER,
   DEPENDENCY_REVIEW_CHECK_NAME,
   listsEveryHold,
+  MAX_STORED_BUMPS,
   renderDependencyReviewCheck,
   SKIP_EXTERNAL_ID_PREFIX,
   type CheckRunOutput,
@@ -108,9 +109,8 @@ const PYPI_MANIFEST = /(?:^|\/)(?:pyproject\.toml|setup\.cfg|setup\.py|Pipfile|[
 const OTHER_REQUIREMENTS = /\.txt$/;
 // Under the queue consumer's wall-clock limit with room to post the result.
 const DIFF_BUDGET_MS = 8 * 60 * 1000;
-// Bounds what is persisted per review, holds first. Approve is only offered
-// when the check shows every hold (`listsEveryHold`), far below this.
-const MAX_STORED_BUMPS = 500;
+// `MAX_STORED_BUMPS` bounds what is persisted per review, holds first. Approve
+// is only offered when the check shows every hold (`listsEveryHold`), far below it.
 
 const KIND_ECOSYSTEM: Record<LockfileKind, DependencyEcosystem> = {
   npm: "npm",
@@ -292,6 +292,8 @@ async function runReview(
   const completed = await completeDependencyReview(db, review.id, {
     conclusion,
     bumps: storedBumps(reviewed),
+    bumpCount: reviewed.length,
+    heldCount: reviewed.filter(isOpenHold).length,
     coverage: {
       unreadLockfiles: collected.unreadLockfiles,
       listingComplete: collected.listingComplete,
@@ -888,13 +890,7 @@ function renderInput(
     approvedBy,
     unreadLockfiles: collected.unreadLockfiles,
     listingComplete: collected.listingComplete,
-    diffUrl: (bump) =>
-      bump.fromVersion && !bump.privateSource
-        ? publicDiffUrl(
-            context.env,
-            packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion),
-          )
-        : null,
+    diffUrl: bumpDiffUrl(context.env),
   };
 }
 
@@ -1096,6 +1092,8 @@ async function applyApproval(
   const current = await completeDependencyReview(db, review.id, {
     conclusion,
     bumps: approved,
+    bumpCount: Math.max(review.bumpCount, approved.length),
+    heldCount: 0,
     coverage,
     approvedByLogin: approver.login,
     ifCompletedOnRun: review.checkRunId,

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -325,6 +325,10 @@ export async function completeDependencyReview(
   input: {
     conclusion: DependencyReviewConclusion;
     bumps: readonly ReviewedBump[];
+    // `bumps` may be the stored prefix of a longer review; these keep the
+    // review's real totals so the page can say what was left out.
+    bumpCount?: number;
+    heldCount?: number;
     coverage: DependencyReviewCoverage;
     approvedByLogin?: string | null;
     // Only overwrite a completed result still on this run: an approval must
@@ -339,8 +343,10 @@ export async function completeDependencyReview(
     .set({
       status: "completed",
       conclusion: input.conclusion,
-      bumpCount: input.bumps.length,
-      heldCount: input.bumps.filter((b) => b.verdict.status === "hold" && !b.approved).length,
+      bumpCount: input.bumpCount ?? input.bumps.length,
+      heldCount:
+        input.heldCount ??
+        input.bumps.filter((b) => b.verdict.status === "hold" && !b.approved).length,
       bumpsJson: JSON.stringify(input.bumps),
       unreadLockfilesJson: JSON.stringify(input.coverage.unreadLockfiles),
       listingComplete: input.coverage.listingComplete,
@@ -441,6 +447,36 @@ export async function listDependencyReviews(
     )
     .orderBy(desc(dependencyReviews.createdAt))
     .limit(limit);
+}
+
+/**
+ * The newest later review of the same pull request, if any. Approve on an
+ * older commit's check is refused (the head moved), so the dashboard points
+ * there instead.
+ */
+export async function findNewerDependencyReviewId(
+  db: AppDb,
+  review: Pick<
+    DependencyReviewRecord,
+    "id" | "organizationId" | "repositoryId" | "pullNumber" | "createdAt"
+  >,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: dependencyReviews.id })
+    .from(dependencyReviews)
+    .where(
+      and(
+        eq(dependencyReviews.organizationId, review.organizationId),
+        eq(dependencyReviews.repositoryId, review.repositoryId),
+        eq(dependencyReviews.pullNumber, review.pullNumber),
+        gt(dependencyReviews.createdAt, review.createdAt),
+        ne(dependencyReviews.status, "superseded"),
+        ne(dependencyReviews.id, review.id),
+      ),
+    )
+    .orderBy(desc(dependencyReviews.createdAt))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 export function dependencyChangeKey(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  checkRunUrl,
   dependencyReviewPath,
   pullRequestUrl,
   reviewState,
@@ -19,6 +20,15 @@ describe("dependency review addresses", () => {
     expect(pullRequestUrl("acme/../evil", 1)).toBeNull();
     expect(pullRequestUrl("javascript:alert(1)", 1)).toBeNull();
     expect(pullRequestUrl("acme/we b?x", 1)).toBe("https://github.com/acme/we%20b%3Fx/pull/1");
+  });
+});
+
+describe("dependency review check links", () => {
+  test("the check run link stays on github.com and falls back to the Checks tab", () => {
+    expect(checkRunUrl("acme/web", 12, 7)).toBe("https://github.com/acme/web/runs/7");
+    expect(checkRunUrl("acme/web", 12, null)).toBe("https://github.com/acme/web/pull/12/checks");
+    expect(checkRunUrl("acme/web", 12, -1)).toBe("https://github.com/acme/web/pull/12/checks");
+    expect(checkRunUrl("acme/../evil", 12, 7)).toBeNull();
   });
 });
 

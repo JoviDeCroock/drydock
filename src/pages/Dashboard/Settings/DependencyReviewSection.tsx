@@ -30,24 +30,27 @@ export function DependencyReviewSection({
     <CollapsibleCard
       title="Dependency review"
       defaultOpen={defaultOpen}
-      aside={saved ? <MonoLabel>{saved.enabled ? "on" : "off"}</MonoLabel> : null}
+      aside={
+        saved ? (
+          <MonoLabel>
+            {!saved.enabled ? "off" : model.githubAppInstalled.value ? "on" : "on · app missing"}
+          </MonoLabel>
+        ) : null
+      }
     >
       <SettingsCardBody>
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
           <div class="flex flex-col gap-2 max-w-[600px]">
             <Muted class="text-[13px] m-0">
-              Drydock reviews pull requests from branches in your repositories and posts a{" "}
-              <span class="font-medium text-ink">Drydock dependency review</span> check. Clean
-              version bumps pass. PRs with no dependency additions or updates pass once the
-              supported dependency inputs are read. A bump that adds a capability is held until
-              someone with write access to the repository approves it on the check. An approval
-              covers that exact version change in that repository, including after a rebase. Human
-              authors and event senders need repository write access. Fork PRs are outside the
-              review scope.
+              Drydock posts a <span class="font-medium text-ink">Drydock dependency review</span>{" "}
+              check on pull requests from branches in your repositories (not forks). An npm or PyPI
+              update that matches the hold policy below waits until someone with write access
+              approves it on the check. An approval covers that exact version change, including on
+              later commits.
             </Muted>
-            <Muted class="text-[12px] m-0">
-              The GitHub App needs Checks (write), Pull requests (read), and Contents (read)
-              permissions and the Pull request, Check run, and Check suite events.
+            <Muted class="text-[13px] m-0">
+              To block merging, make the check a required status check in the repository's branch
+              protection or ruleset, with the Drydock App as its source.
             </Muted>
           </div>
           <LinkButton
@@ -72,7 +75,8 @@ export function DependencyReviewSection({
             >
               GitHub App section
             </a>{" "}
-            first.
+            first. It needs Checks (write), Pull requests (read), and Contents (read) permissions
+            and the Pull request, Check run, and Check suite events.
           </Alert>
         ) : null}
       </SettingsCardBody>
@@ -99,17 +103,28 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
   return (
     <form onSubmit={onSubmit}>
       <SettingsCardBody inset="belowHeader" gap="compact">
+        {!canManage ? (
+          <Muted class="text-[13px] m-0">
+            Only organization owners and admins can change dependency review settings.
+          </Muted>
+        ) : null}
         <Checkbox
           checked={enabled}
           disabled={disabled}
           onChange={(value) => model.setEnabled(value)}
         >
           <span class="text-ink">Review dependency update pull requests</span>
+          {model.saved.value && enabled !== model.saved.value.enabled ? (
+            <span class="ml-2 font-mono text-[11px] text-ink-subtle">unsaved</span>
+          ) : null}
         </Checkbox>
       </SettingsCardBody>
 
       <SettingsCardHeader title="Hold an update that" />
       <SettingsCardBody inset="belowHeader" gap="compact">
+        {!enabled ? (
+          <Muted class="text-[12px] m-0">Applies once dependency review is on.</Muted>
+        ) : null}
         <div role="group" aria-label="Hold an update that" class="flex flex-col gap-3">
           {POLICY_SWITCHES.map((entry) => (
             <Checkbox
@@ -143,26 +158,41 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
         </Field>
       </SettingsCardBody>
 
-      <SettingsCardHeader title="Self-hosted Renovate" />
-      <SettingsCardBody inset="belowHeader" gap="compact">
-        <Field label="Extra bot logins" for="dependencyReviewBots">
-          <Input
-            id="dependencyReviewBots"
-            mono
-            value={model.draftBotLogins.value}
-            placeholder="my-renovate[bot]"
-            spellcheck={false}
-            autocomplete="off"
-            disabled={disabled}
-            onInput={(e) => model.setBotLogins((e.target as HTMLInputElement).value)}
-          />
-        </Field>
-        <Muted class="text-[12px] m-0">
-          dependabot[bot] and renovate[bot] are recognized already. List any other GitHub logins
-          used by trusted dependency automation without repository collaborator permission,
-          separated by commas, up to 10. Repository writers need no entry.
-        </Muted>
+      {/* Specialist setting: folded unless it already holds logins. */}
+      <details
+        class="group/bots border-t border-border"
+        open={(model.saved.value?.extraBotLogins.length ?? 0) > 0}
+      >
+        <summary class="cursor-pointer list-none px-5 py-4 text-[13px] font-medium text-ink-muted hover:text-ink">
+          <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
+            <span class="group-open/bots:hidden">▸</span>
+            <span class="hidden group-open/bots:inline">▾</span>
+          </span>
+          Self-hosted Renovate or other dependency bots
+        </summary>
+        <SettingsCardBody inset="belowHeader" gap="compact">
+          <Field label="Extra bot logins" for="dependencyReviewBots">
+            <Input
+              id="dependencyReviewBots"
+              mono
+              value={model.draftBotLogins.value}
+              placeholder="my-renovate[bot]"
+              spellcheck={false}
+              autocomplete="off"
+              disabled={disabled}
+              onInput={(e) => model.setBotLogins((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Muted class="text-[12px] m-0">
+            dependabot[bot] and renovate[bot] are recognized already. Listed logins skip the
+            write-access check on a pull request's author and pusher, so list only automation your
+            organization controls. Separate with commas, up to 10. People with write access need no
+            entry.
+          </Muted>
+        </SettingsCardBody>
+      </details>
 
+      <SettingsCardBody gap="compact">
         {saveError ? <Alert tone="critical">{saveError}</Alert> : null}
 
         {canManage ? (
@@ -179,11 +209,7 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
               <span class="font-mono text-[12px] text-ink-muted">Saved.</span>
             ) : null}
           </div>
-        ) : (
-          <Muted class="text-[13px] m-0">
-            Only organization owners and admins can change dependency review settings.
-          </Muted>
-        )}
+        ) : null}
       </SettingsCardBody>
     </form>
   );

@@ -391,8 +391,8 @@ describe("renderDependencyReviewCheck", () => {
         approvedBy: "octocat",
         unreadLockfiles: [],
       });
-    expect(render([], "clear").title).toBe("No dependency additions or updates");
-    expect(render([], "clear").summary).toContain("adds no dependencies");
+    expect(render([], "clear").title).toBe("No npm or PyPI dependency updates");
+    expect(render([], "clear").summary).toContain("adds no npm or PyPI dependencies");
     expect(render([clear], "clear").title).toBe("Update clear");
     expect(render([clear, clear], "clear").title).toBe("All 2 updates clear");
     // A bump passing without a diff read (policy off, or a new package) is not "clear".
@@ -474,6 +474,44 @@ describe("renderDependencyReviewCheck", () => {
     expect(title).toBe("Held: some updates could not be read");
   });
 
+  test("a coverage-only hold says what Approve accepts, or why it can't be approved", () => {
+    const held = (input: {
+      unreadLockfiles: string[];
+      listingComplete?: boolean;
+      approvable?: boolean;
+    }) =>
+      renderDependencyReviewCheck({
+        bumps: [],
+        conclusion: "held",
+        diffUrl,
+        approvedBy: null,
+        ...input,
+      }).summary;
+    expect(held({ unreadLockfiles: ["pnpm-lock.yaml"] })).toContain(
+      "Approve below to accept these changes unread",
+    );
+    expect(held({ unreadLockfiles: [], listingComplete: false, approvable: false })).toContain(
+      "can't be approved here. Split it into smaller PRs.",
+    );
+  });
+
+  test("approving per-update holds names the unread files it also accepts", () => {
+    const summary = renderDependencyReviewCheck({
+      bumps: [
+        {
+          bump: bump(),
+          verdict: { status: "hold", reasons: ["release-risk"], evidence: CLEAN },
+          approved: false,
+        },
+      ],
+      conclusion: "held",
+      diffUrl,
+      approvedBy: null,
+      unreadLockfiles: ["bun.lock"],
+    }).summary;
+    expect(summary).toContain("Approving also accepts the unread files below.");
+  });
+
   test.each([{ unreadLockfiles: ["bun.lock"] }, { unreadLockfiles: [], listingComplete: false }])(
     "incomplete coverage never claims no dependency changes, even if allowed",
     (coverage) => {
@@ -485,7 +523,7 @@ describe("renderDependencyReviewCheck", () => {
         ...coverage,
       });
       expect(output.title).toBe("No updates held");
-      expect(output.summary).not.toContain("adds no dependencies");
+      expect(output.summary).not.toContain("adds no npm or PyPI dependencies");
     },
   );
 

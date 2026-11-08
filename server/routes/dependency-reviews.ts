@@ -5,6 +5,7 @@ import {
   listDependencyReviews,
   MAX_EXTRA_BOT_LOGINS,
   parseExtraBotLogins,
+  findNewerDependencyReviewId,
   readDependencyReviewResult,
   saveDependencyReviewSettings,
 } from "../db/dependency-reviews";
@@ -20,6 +21,7 @@ import { listInstallationsForOrganization } from "../lib/github-app/persistence"
 import { isRecord } from "../lib/platform/guards";
 import { readJsonObject } from "../lib/platform/http";
 import type { Bindings, Variables } from "../types";
+import { approvableOnCheck } from "../lib/dependency-review/approvable";
 
 export const dependencyReviewRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -100,5 +102,13 @@ dependencyReviewRoutes.get("/:id", async (c) => {
   const { organizationId } = await requireActiveOrganizationContext(c, db);
   const review = await getDependencyReview(db, organizationId, c.req.param("id"));
   if (!review) return c.json({ error: "Dependency review not found." }, 404);
-  return c.json({ review, ...(await readDependencyReviewResult(db, review.id)) });
+  const result = await readDependencyReviewResult(db, review.id);
+  const newerReviewId = await findNewerDependencyReviewId(db, review);
+  return c.json({
+    review,
+    ...result,
+    newerReviewId,
+    // An older commit's Approve is refused once the head moved.
+    approvable: !newerReviewId && approvableOnCheck(c.env, result.bumps, result.coverage),
+  });
 });

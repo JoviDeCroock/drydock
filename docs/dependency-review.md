@@ -6,7 +6,7 @@ and hope someone else notices a bad release first. Dependency review replaces
 the timer with the diff: the Drydock GitHub App posts a **Drydock dependency
 review** check on pull requests from branches in the installed repository,
 including PRs opened by people. A complete review with no npm or PyPI dependency
-additions or version changes passes with **No dependency additions or updates**.
+additions or version changes passes with **No npm or PyPI dependency updates**.
 A version change that adds no capability passes and can auto-merge the same day. A change
 that adds one is held until someone with write access to the repository reads
 the diff and approves it.
@@ -167,9 +167,13 @@ make it required.
    counts, and the top findings, then unreviewed bumps, new packages, and clear
    bumps, each linked to its public `/diff` page (private-source bumps get no
    link). A complete review with no added packages or version changes succeeds
-   with **No dependency additions or updates**. Unread files or an incomplete
+   with **No npm or PyPI dependency updates**. Unread files or an incomplete
    listing never receive that title, even when policy lets them pass. The title
    says "clear" only when every bump's diff was read and held nothing.
+   A coverage-only hold says what Approve accepts (the unread files) or, when
+   the check can't list everything, that the PR must be split. An Approve over
+   per-update holds also names the unread files it accepts. Past the summary
+   limit the output points to the Drydock review for the rest.
    `details_url` opens the review in the dashboard.
 
 ## Approval
@@ -253,6 +257,10 @@ bumps and waits on held ones.
   coverage with every update diffed and clear is described as clear; updates
   allowed by policy remain labeled unreviewed or new packages. Private sources
   have no public diff link.
+- At most 500 bumps are stored per review, open holds first; `bump_count` and
+  `held_count` keep the review's real totals, so the detail page says when it
+  shows only part. The detail response also returns `approvable`, computed by
+  the same `listsEveryHold` the approval handler applies.
 - `dependency_review_settings`: one row per organization. `dependency_reviews`:
   one per (installation, repository, head sha), with a bounded `bumps_json`
   (500 entries, holds first) of names, versions, verdicts, and redacted

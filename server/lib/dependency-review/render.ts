@@ -14,6 +14,8 @@ export const SKIP_EXTERNAL_ID_PREFIX = "skip:";
 // GitHub rejects a check-run output field over 65,535 characters.
 const MAX_SUMMARY_CHARS = 60_000;
 const MAX_LISTED_BUMPS = 100;
+// Bounds what a review stores, holds first; the summary's truncation note names it.
+export const MAX_STORED_BUMPS = 500;
 // The held section renders first; this leaves room for the lines around it.
 const HELD_SECTION_BUDGET = MAX_SUMMARY_CHARS - 1_000;
 const MAX_FINDINGS_PER_BUMP = 3;
@@ -78,7 +80,9 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
 
   const lines: string[] = [];
   if (input.bumps.length === 0 && complete) {
-    lines.push("This PR adds no dependencies and changes no resolved package versions.");
+    lines.push(
+      "This PR adds no npm or PyPI dependencies and changes no resolved npm or PyPI package versions. Other ecosystems are not reviewed.",
+    );
   }
   if (held.length > 0) {
     lines.push(
@@ -86,7 +90,7 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
       "",
       input.approvable === false
         ? "This check can't show everything held in this PR, so it can't be approved here. Split it into smaller PRs."
-        : "Approve below once you've read the diffs. Anyone with write access to this repository can approve.",
+        : `Approve below once you've read the diffs. Anyone with write access to this repository can approve.${input.unreadLockfiles.length > 0 ? " Approving also accepts the unread files below." : ""}`,
       "",
     );
     for (const bump of held.slice(0, MAX_LISTED_BUMPS)) lines.push(...renderHeld(bump, input));
@@ -95,6 +99,15 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   // Next to the holds: an Approve accepts these too, so they must not be cut.
   const unread = renderUnread(input);
   if (unread) lines.push(unread, "");
+  // Held on coverage alone: say what Approve would accept, or why it can't.
+  if (input.conclusion === "held" && held.length === 0) {
+    lines.push(
+      input.approvable === false
+        ? "This check can't show every changed file, so it can't be approved here. Split it into smaller PRs."
+        : "Approve below to accept these changes unread, or change the files so Drydock can read them. Anyone with write access to this repository can approve.",
+      "",
+    );
+  }
   if (approved.length > 0) {
     const by = input.approvedBy ? ` by ${code(input.approvedBy, 39)}` : "";
     lines.push(`### Approved${by} (${approved.length})`, "");
@@ -144,7 +157,7 @@ function renderTitle(
     return `${heldCount} of ${total} ${total === 1 ? "update" : "updates"} held for review`;
   }
   if (conclusion === "approved") return "Held updates approved";
-  if (total === 0 && complete) return "No dependency additions or updates";
+  if (total === 0 && complete) return "No npm or PyPI dependency updates";
   // "Clear" claims a diff was read; unreviewed and new packages passing by
   // policy were not.
   if (!complete || clearCount < total) return "No updates held";
@@ -199,7 +212,7 @@ function bound(lines: string[]): string {
   let out = "";
   for (const line of lines) {
     if (out.length + line.length + 1 > MAX_SUMMARY_CHARS) {
-      return `${out}\n…output truncated; the full list is in Drydock.`;
+      return `${out}\n…output truncated; the Drydock review lists up to ${MAX_STORED_BUMPS} updates, open holds first.`;
     }
     out += `${line}\n`;
   }

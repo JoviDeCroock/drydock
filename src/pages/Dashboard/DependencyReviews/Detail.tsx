@@ -22,6 +22,7 @@ import {
   DEPENDENCY_REVIEWS_PATH,
   HOLD_REASON_TEXT,
   UNREVIEWED_TEXT,
+  checkRunUrl,
   dependencyReviewPath,
   pullRequestUrl,
   reviewState,
@@ -34,6 +35,7 @@ import {
   type ReviewedBump,
 } from "../../../models/dependency-review";
 import { OrganizationModel } from "../../../models/organization";
+import { MAX_STORED_BUMPS } from "../../../../server/lib/dependency-review/render";
 import type {
   BumpEvidence,
   BumpVerdict,
@@ -191,10 +193,26 @@ function ReviewReport({
 }) {
   const groups = groupBumps(bumps);
   const pullUrl = pullRequestUrl(review.repositoryFullName, review.pullNumber);
+  const checkUrl = checkRunUrl(review.repositoryFullName, review.pullNumber, review.checkRunId);
   const state = reviewState(review);
   const settled = state === "held" || state === "approved" || state === "clear";
   const coverage = model.coverage.value;
   const partial = !coverage.listingComplete || coverage.unreadLockfiles.length > 0;
+  const approvable = model.approvable.value;
+  const newerReviewId = model.newerReviewId.value;
+  // The check is where a held review is approved and a failed one re-run, so
+  // it leads in those states; the pull request is the way back otherwise.
+  const checkAction =
+    state === "held" && approvable
+      ? {
+          label: "Approve on GitHub ↗",
+          // Held on unread files alone, Approve accepts what nobody read: it
+          // stays available but doesn't lead.
+          variant: review.heldCount > 0 ? ("primary" as const) : ("secondary" as const),
+        }
+      : state === "failed"
+        ? { label: "Re-run on GitHub ↗", variant: "secondary" as const }
+        : null;
   return (
     <>
       <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
@@ -206,23 +224,50 @@ function ReviewReport({
             parts={[
               `by ${review.authorLogin}`,
               `head ${review.headSha.slice(0, 7)}`,
-              `${review.bumpCount} ${review.bumpCount === 1 ? "update" : "updates"}`,
+              // A count is only a result once the review settled on full coverage.
+              settled && !(partial && review.bumpCount === 0)
+                ? `${review.bumpCount} ${review.bumpCount === 1 ? "update" : "updates"}`
+                : null,
               formatDateTime(review.completedAt ?? review.createdAt),
             ]}
           />
         </div>
-        {pullUrl ? (
-          <LinkButton
-            href={pullUrl}
-            target="_blank"
-            rel="noreferrer"
-            variant="secondary"
-            class="shrink-0 self-start"
-          >
-            Open pull request ↗
-          </LinkButton>
-        ) : null}
+        <div class="flex flex-wrap gap-2 shrink-0 self-start">
+          {checkAction && checkUrl ? (
+            <LinkButton
+              href={checkUrl}
+              target="_blank"
+              rel="noreferrer"
+              variant={checkAction.variant}
+            >
+              {checkAction.label}
+            </LinkButton>
+          ) : null}
+          {pullUrl ? (
+            <LinkButton
+              href={pullUrl}
+              target="_blank"
+              rel="noreferrer"
+              variant={checkAction ? "ghost" : "secondary"}
+            >
+              Open pull request ↗
+            </LinkButton>
+          ) : null}
+        </div>
       </header>
+
+      {newerReviewId ? (
+        <Alert tone="info">
+          A newer commit on this pull request has its own review; approvals count only on the pull
+          request's current head.{" "}
+          <a
+            class="underline text-accent"
+            href={dependencyReviewPath(newerReviewId, review.organizationId)}
+          >
+            Open the latest review
+          </a>
+        </Alert>
+      ) : null}
 
       <ReviewHeadline
         review={review}
@@ -232,31 +277,52 @@ function ReviewReport({
           bumps.length === review.bumpCount &&
           bumps.every((bump) => bump.verdict.status === "clear")
         }
+        partial={partial}
+        approvable={approvable}
+        stale={newerReviewId !== null}
+        // A review cut at the storage limit can't count what it didn't keep.
+        passedWithoutDiff={
+          bumps.length === review.bumpCount ? groups.unreviewed.length + groups.added.length : null
+        }
         pollingStalled={model.pollingStalled.value}
         onResume={() => model.resumePolling()}
       />
 
       {settled && bumps.length < review.bumpCount ? (
         <Muted class="text-[13px] m-0">
-          Showing the first {bumps.length} of {review.bumpCount} updates.
+          Showing {bumps.length} of {review.bumpCount} updates. Drydock keeps up to{" "}
+          {MAX_STORED_BUMPS} per review, open holds first.
         </Muted>
       ) : null}
 
-      {settled && partial ? <ReviewCoverage coverage={coverage} /> : null}
+      {settled && partial ? (
+        <ReviewCoverage
+          coverage={coverage}
+          // With nothing held per update the headline already says this.
+          approvalAcceptsUnread={state === "held" && review.heldCount > 0 && approvable}
+        />
+      ) : null}
 
-      {settled && bumps.length === 0 && !partial ? (
+      {/* The clear headline already says there was nothing to review. */}
+      {settled && state !== "clear" && bumps.length === 0 && !partial ? (
         <Card>
           <EmptyLine>No package version changes were collected for this review.</EmptyLine>
         </Card>
       ) : null}
 
       <BumpGroup title="Held for review" bumps={groups.held} />
+      {/* The headline names who approved; earlier commits' approvals carry too. */}
+      <BumpGroup title="Approved" bumps={groups.approved} />
       <BumpGroup
-        title={review.approvedByLogin ? `Approved by ${review.approvedByLogin}` : "Approved"}
-        bumps={groups.approved}
+        title="Not reviewed"
+        note="Passed under this organization's policy without a diff."
+        bumps={groups.unreviewed}
       />
-      <BumpGroup title="Not reviewed" bumps={groups.unreviewed} />
-      <BumpGroup title="New packages" bumps={groups.added} />
+      <BumpGroup
+        title="New packages"
+        note="Passed: there is no previous version to compare against."
+        bumps={groups.added}
+      />
       <BumpGroup title="Clear" bumps={groups.clear} />
     </>
   );
@@ -269,12 +335,20 @@ function ReviewHeadline({
   review,
   state,
   allClear,
+  partial,
+  approvable,
+  stale,
+  passedWithoutDiff,
   pollingStalled,
   onResume,
 }: {
   review: DependencyReview;
   state: ReviewState;
   allClear: boolean;
+  partial: boolean;
+  approvable: boolean;
+  stale: boolean;
+  passedWithoutDiff: number | null;
   pollingStalled: boolean;
   onResume: () => void;
 }) {
@@ -290,35 +364,46 @@ function ReviewHeadline({
         </div>
       </Alert>
     ) : (
-      <LoadingState
-        title={review.status === "queued" ? "Review queued" : "Reviewing pull request"}
-        detail="auto-refreshes when the review is ready"
-      />
+      <Alert tone="info">
+        {review.status === "queued" ? "Review queued." : "Reviewing this commit."} The page
+        refreshes when the review is ready.
+      </Alert>
     );
   }
   if (state === "superseded") {
     return (
       <Muted class="text-[14px] m-0">
-        Not reviewed: this commit was no longer the head of an open pull request when Drydock ran.
-        Re-run the check on the pull request if it is.
+        Not reviewed: by the time Drydock ran, this commit was no longer the head of an open pull
+        request.
       </Muted>
     );
   }
   if (state === "failed") {
     return (
       <Alert tone="critical">
-        Drydock could not finish this review. Re-run the check on the pull request to try again.
+        Drydock could not finish reviewing this commit. Re-run the check on GitHub to try again. If
+        the GitHub App's permissions changed recently, an owner must accept them on GitHub first.
       </Alert>
     );
   }
   if (state === "held") {
+    const held =
+      review.heldCount > 0
+        ? `${review.heldCount} of ${review.bumpCount} ${review.bumpCount === 1 ? "update" : "updates"} ${review.heldCount === 1 ? "is" : "are"} held.`
+        : "Held: Drydock could not read some dependency changes.";
+    const next = stale
+      ? "This commit is no longer the pull request's head, so its check can't be approved."
+      : !approvable
+        ? "The check can't show everything held, so it can't be approved. Split the pull request into smaller ones."
+        : review.heldCount > 0
+          ? "Read the diffs below, then choose Approve held updates on the GitHub check. Anyone with write access to the repository can approve."
+          : "Approving on the GitHub check accepts the unread changes listed below; changing the files so Drydock can read them gets them reviewed instead.";
     return (
       <Alert tone="warn">
-        {review.heldCount > 0
-          ? `${review.heldCount} of ${review.bumpCount} ${review.bumpCount === 1 ? "update is" : "updates are"} held.`
-          : "This pull request is held because some dependency updates could not be reviewed."}{" "}
-        See the pull request's Drydock dependency review check for the evidence and available
-        actions.
+        {held} {next}{" "}
+        <span class="text-ink-muted">
+          Merging waits for approval only where this check is a required status check.
+        </span>
       </Alert>
     );
   }
@@ -334,22 +419,35 @@ function ReviewHeadline({
   return (
     <Muted class="text-[14px] m-0">
       {review.bumpCount === 0 && allClear
-        ? "No dependency additions or updates."
+        ? "No npm or PyPI dependency additions or updates."
         : allClear
           ? `${review.bumpCount === 1 ? "The update is" : `All ${review.bumpCount} updates are`} clear.`
-          : "No updates are held. Some updates were not reviewed."}
+          : partial
+            ? "No updates are held under this organization's policy, but this review is incomplete (see Review coverage)."
+            : passedWithoutDiff === null
+              ? "No updates are held. Some passed without a diff under this organization's policy."
+              : passedWithoutDiff > 0
+                ? `No updates are held. ${passedWithoutDiff} ${passedWithoutDiff === 1 ? "update" : "updates"} passed without a diff under this organization's policy.`
+                : "No updates are held."}
     </Muted>
   );
 }
 
-function ReviewCoverage({ coverage }: { coverage: DependencyReviewCoverage }) {
+function ReviewCoverage({
+  coverage,
+  approvalAcceptsUnread,
+}: {
+  coverage: DependencyReviewCoverage;
+  approvalAcceptsUnread: boolean;
+}) {
   return (
     <section class="flex flex-col gap-3">
       <SectionLabel as="h2">Review coverage</SectionLabel>
       <Card>
         {!coverage.listingComplete ? (
           <p class="m-0 text-[13px] text-ink">
-            GitHub did not return every changed file. This review may be missing dependency updates.
+            GitHub did not return every changed file, so this review may be missing dependency
+            updates. Smaller pull requests get a complete review.
           </p>
         ) : null}
         {coverage.unreadLockfiles.length > 0 ? (
@@ -357,13 +455,18 @@ function ReviewCoverage({ coverage }: { coverage: DependencyReviewCoverage }) {
             <p class="m-0 text-[13px] text-ink">
               Drydock could not review dependency updates in these files:
             </p>
-            <ul class="m-0 pl-5 font-mono text-[12px] text-ink-muted">
+            <ul class="m-0 p-0 list-none font-mono text-[12px] text-ink-muted">
               {coverage.unreadLockfiles.map((path) => (
-                <li key={path} class="break-all">
+                <li key={path} class="[overflow-wrap:anywhere]">
                   {path}
                 </li>
               ))}
             </ul>
+            {approvalAcceptsUnread ? (
+              <Muted class="text-[13px] m-0">
+                Approving the held updates also accepts the changes in these files unread.
+              </Muted>
+            ) : null}
           </>
         ) : null}
       </Card>
@@ -389,13 +492,22 @@ function groupBumps(bumps: ReviewedBump[]) {
   return groups;
 }
 
-function BumpGroup({ title, bumps }: { title: string; bumps: ReviewedBump[] }) {
+function BumpGroup({
+  title,
+  note,
+  bumps,
+}: {
+  title: string;
+  note?: string;
+  bumps: ReviewedBump[];
+}) {
   if (bumps.length === 0) return null;
   return (
     <section class="flex flex-col gap-3">
       <SectionLabel as="h2" aside={bumps.length}>
         {title}
       </SectionLabel>
+      {note ? <Muted class="text-[13px] m-0">{note}</Muted> : null}
       <Card padding="none">
         <ul class="m-0 p-0 list-none">
           {bumps.map((bump, index) => (
@@ -415,6 +527,8 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
       ? packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion)
       : null;
   const reason = verdictReason(verdict, evidence);
+  // A release-risk hold names the grade in its reason; don't say it twice.
+  const riskInReason = verdict.status === "hold" && verdict.reasons.includes("release-risk");
   return (
     <li class="border-b border-border last:border-b-0 px-5 py-4 flex flex-col gap-2 min-w-0">
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -435,26 +549,26 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
           bump.direct ? "direct" : "transitive",
           bump.ecosystem,
           bump.lockfilePath,
-          evidence ? `release risk ${evidence.releaseRisk}` : null,
-          evidence ? `${evidence.filesAdded} added` : null,
-          evidence ? `${evidence.filesRemoved} removed` : null,
-          evidence ? `${evidence.filesChanged} changed` : null,
+          evidence && !riskInReason ? `release risk ${evidence.releaseRisk}` : null,
+          evidence ? fileCounts(evidence) : null,
         ]}
       />
       {reason ? <p class="m-0 text-[13px] text-ink">{reason}</p> : null}
-      {evidence && evidence.findings.length > 0 ? <FindingList evidence={evidence} /> : null}
+      {evidence && evidence.findings.length > 0 ? (
+        <FindingList evidence={evidence} diffHref={diffHref} />
+      ) : null}
     </li>
   );
 }
 
-function FindingList({ evidence }: { evidence: BumpEvidence }) {
+function FindingList({ evidence, diffHref }: { evidence: BumpEvidence; diffHref: string | null }) {
   const more = evidence.findingCount - evidence.findings.length;
   return (
     <ul class="m-0 p-0 list-none flex flex-col gap-1.5">
       {evidence.findings.map((finding, index) => (
         <li key={index} class="flex flex-wrap items-baseline gap-x-2 gap-y-1 min-w-0 text-[13px]">
           <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
-          <span class="font-mono text-[12px] text-ink-muted break-all">
+          <span class="font-mono text-[12px] text-ink-muted min-w-0 [overflow-wrap:anywhere]">
             {finding.ruleId ?? "unnamed rule"} · {finding.file}
           </span>
           <span class="text-ink break-words min-w-0">{finding.reason}</span>
@@ -462,7 +576,13 @@ function FindingList({ evidence }: { evidence: BumpEvidence }) {
       ))}
       {more > 0 ? (
         <Caption>
-          {more} more release {more === 1 ? "finding" : "findings"} in the diff
+          {diffHref ? (
+            <a href={diffHref}>
+              {more} more release {more === 1 ? "finding" : "findings"} in the diff →
+            </a>
+          ) : (
+            `${more} more release ${more === 1 ? "finding" : "findings"} in the diff`
+          )}
         </Caption>
       ) : null}
     </ul>
@@ -471,6 +591,16 @@ function FindingList({ evidence }: { evidence: BumpEvidence }) {
 
 function Caption({ children }: { children: ComponentChildren }) {
   return <li class="font-mono text-[11px] text-ink-subtle">{children}</li>;
+}
+
+// File counts, skipping the zeros: "2 files added · 5 changed".
+function fileCounts(evidence: BumpEvidence): string | null {
+  const parts = [
+    evidence.filesAdded ? `${evidence.filesAdded} added` : null,
+    evidence.filesRemoved ? `${evidence.filesRemoved} removed` : null,
+    evidence.filesChanged ? `${evidence.filesChanged} changed` : null,
+  ].filter(Boolean);
+  return parts.length ? `files ${parts.join(", ")}` : null;
 }
 
 function verdictEvidence(verdict: BumpVerdict): BumpEvidence | null {
@@ -495,6 +625,9 @@ function verdictReason(verdict: BumpVerdict, evidence: BumpEvidence | null): str
   const reasons = verdict.reasons.map((reason) => {
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
+    }
+    if (reason === "release-risk" && evidence) {
+      return `release risk ${evidence.releaseRisk}, at or above the hold threshold`;
     }
     const count = evidence ? (REASON_COUNT[reason]?.(evidence) ?? 0) : 0;
     return count > 1 ? `${HOLD_REASON_TEXT[reason]} (${count})` : HOLD_REASON_TEXT[reason];

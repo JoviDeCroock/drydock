@@ -66,3 +66,22 @@ export function pullRequestUrl(repositoryFullName: string, pullNumber: number): 
   if (!owner || !repo || rest.length || !Number.isSafeInteger(pullNumber)) return null;
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pull/${pullNumber}`;
 }
+
+/**
+ * The review's check run on GitHub, where Approve and Re-run live. Falls back
+ * to the pull request's Checks tab while the run id is unknown. Same origin
+ * and encoding guard as `pullRequestUrl`.
+ */
+export function checkRunUrl(
+  repositoryFullName: string,
+  pullNumber: number,
+  checkRunId: number | null,
+): string | null {
+  const pull = pullRequestUrl(repositoryFullName, pullNumber);
+  if (!pull) return null;
+  if (checkRunId === null || !Number.isSafeInteger(checkRunId) || checkRunId <= 0) {
+    return `${pull}/checks`;
+  }
+  const [owner, repo] = repositoryFullName.split("/");
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/runs/${checkRunId}`;
+}

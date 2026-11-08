@@ -242,6 +242,10 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
     unreadLockfiles: [],
     listingComplete: true,
   });
+  // Whether the check offers Approve, decided by the server's `listsEveryHold`.
+  const approvable = signal(false);
+  // A later commit of the same pull request has its own review.
+  const newerReviewId = signal<string | null>(null);
   const pollingStalled = signal(false);
   let requestId = 0;
 
@@ -258,11 +262,15 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
         review: DependencyReview;
         bumps: ReviewedBump[];
         coverage: DependencyReviewCoverage;
+        approvable?: boolean;
+        newerReviewId?: string | null;
       }>(`${BASE}/${encodeURIComponent(reviewId)}`);
       if (id !== requestId) return true;
       review.value = data.review;
       bumps.value = data.bumps;
       coverage.value = data.coverage;
+      approvable.value = data.approvable === true;
+      newerReviewId.value = data.newerReviewId ?? null;
       error.value = null;
       notFound.value = false;
       return true;
@@ -293,6 +301,8 @@ export const DependencyReviewDetailModel = createModel((reviewId: string) => {
     review,
     bumps,
     coverage,
+    approvable,
+    newerReviewId,
     inFlight,
     pollingStalled,
 

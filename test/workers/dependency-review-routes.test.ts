@@ -5,6 +5,7 @@ import { createDb } from "../../server/db/client";
 import {
   completeDependencyReview,
   createDependencyReview,
+  getDependencyReview,
   supersedeDependencyReview,
   getDependencyReviewSettings,
 } from "../../server/db/dependency-reviews";
@@ -83,6 +84,59 @@ const VALID_SETTINGS = {
 };
 
 describe("dependency review routes", () => {
+  test("a review stored as a prefix keeps its real totals", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const review = await seedCompletedReview(seeded);
+    const db = createDb(env.DB);
+    const { bumps } = await getStoredBumps(review.id);
+    // A PR past the stored-bump limit: the row keeps the full count, so the
+    // page can say it shows only the first part.
+    await completeDependencyReview(db, review.id, {
+      conclusion: "held",
+      bumps,
+      bumpCount: 900,
+      heldCount: 3,
+      coverage: { unreadLockfiles: [], listingComplete: true },
+    });
+    const stored = await getDependencyReview(db, seeded.organizationId, review.id);
+    expect(stored).toMatchObject({ bumpCount: 900, heldCount: 3 });
+  });
+
+  test("the detail says whether the check offers Approve, as the approval handler decides", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const review = await seedCompletedReview(seeded);
+    const db = createDb(env.DB);
+    const read = async () => {
+      const res = await call(buildTestApp(mount, seeded), "GET", `${BASE}/${review.id}`);
+      return ((await res.json()) as { approvable: boolean }).approvable;
+    };
+    expect(await read()).toBe(true);
+    const { bumps } = await getStoredBumps(review.id);
+    await completeDependencyReview(db, review.id, {
+      conclusion: "held",
+      bumps,
+      coverage: { unreadLockfiles: [], listingComplete: false },
+    });
+    expect(await read()).toBe(false);
+  });
+
+  test("an older commit's review names the newer one and offers no Approve", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const older = await seedCompletedReview(seeded, sha("1"));
+    const newer = await seedCompletedReview(seeded, sha("2"));
+    // Both rows can land in the same millisecond; order them explicitly.
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ createdAt: new Date(Date.now() - 60_000) })
+      .where(eq(schema.dependencyReviews.id, older.id));
+    const read = async (id: string) => {
+      const res = await call(buildTestApp(mount, seeded), "GET", `${BASE}/${id}`);
+      return (await res.json()) as { approvable: boolean; newerReviewId: string | null };
+    };
+    expect(await read(older.id)).toMatchObject({ approvable: false, newerReviewId: newer.id });
+    expect(await read(newer.id)).toMatchObject({ approvable: true, newerReviewId: null });
+  });
+
   test("the API requires a session", async () => {
     const { res } = await callWorker("GET", BASE);
     expect(res.status).toBe(401);
@@ -357,3 +411,11 @@ describe("dependency review rollout flag", () => {
     expect(res.status).toBe(404);
   });
 });
+
+async function getStoredBumps(reviewId: string) {
+  const [row] = await createDb(env.DB)
+    .select({ bumpsJson: schema.dependencyReviews.bumpsJson })
+    .from(schema.dependencyReviews)
+    .where(eq(schema.dependencyReviews.id, reviewId));
+  return { bumps: JSON.parse(row!.bumpsJson ?? "[]") };
+}

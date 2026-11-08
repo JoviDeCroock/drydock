@@ -10,17 +10,17 @@ import { useAuthedDashboardSession } from "../../../features/account/useAuthedDa
 import { DependencyReviewsModel, type DependencyReview } from "../../../models/dependency-review";
 import { OrganizationModel } from "../../../models/organization";
 import { ReviewStateMark } from "../../../features/dependency-review/ReviewStateMark";
-import { dependencyReviewPath } from "../../../features/dependency-review/wording";
+import { dependencyReviewPath, reviewState } from "../../../features/dependency-review/wording";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
-import { EmptyLine, Muted } from "../../../components/Typography";
+import { EmptyLine, MonoDetail, Muted } from "../../../components/Typography";
 import { SETTINGS_SECTION, settingsTabHref } from "../Settings/settings-links";
 
 const SETTINGS_HREF = settingsTabHref("integrations", SETTINGS_SECTION.dependencyReview);
+const GITHUB_APP_HREF = settingsTabHref("integrations", SETTINGS_SECTION.githubApp);
 
 export default function DependencyReviewsPage() {
   const model = useModel(() => new DependencyReviewsModel({ followReviews: true }));
@@ -52,26 +52,40 @@ export default function DependencyReviewsPage() {
   const error = model.error.value;
   const reviews = model.reviews.value;
   const enabled = model.saved.value?.enabled ?? false;
+  // On but without the App nothing can ever be reviewed; that is the next step.
+  const appMissing = ready && enabled && !model.githubAppInstalled.value;
+  const canManage = model.canManage.value;
 
   return (
     <PageShell headerActions={headerActions}>
       <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div class="flex flex-col gap-2 max-w-[640px]">
-          <div class="flex flex-wrap items-center gap-3">
-            <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Dependency reviews</h1>
-            <Badge>Beta</Badge>
-          </div>
+          <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Dependency reviews</h1>
           <Muted class="text-[14px] leading-[1.55] m-0">
-            Pull requests from branches in your repositories that the Drydock GitHub App checked.
-            Held updates wait for an approval on the pull request's Drydock dependency review check.
+            Pull requests from branches in your repositories that the Drydock GitHub App checked. A
+            held update needs approval on the pull request's Drydock dependency review check;
+            merging waits for it only where that check is required.
           </Muted>
         </div>
         <LinkButton href={SETTINGS_HREF} variant="secondary" class="shrink-0 self-start">
-          Review settings
+          {ready && !enabled && canManage ? "Turn on dependency review" : "Review settings"}
         </LinkButton>
       </header>
 
       {error ? <Alert tone="critical">{error}</Alert> : null}
+      {appMissing ? (
+        <Alert tone="warn">
+          Dependency review is on, but the Drydock GitHub App is not installed, so no pull request
+          can be reviewed.{" "}
+          {canManage ? (
+            <a class="underline text-accent" href={GITHUB_APP_HREF}>
+              Install the GitHub App
+            </a>
+          ) : (
+            "An owner or admin can install it in Settings."
+          )}
+        </Alert>
+      ) : null}
       {model.pollingStalled.value && model.anyInFlight.value ? (
         <Alert tone="warn">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -91,12 +105,14 @@ export default function DependencyReviewsPage() {
       ) : reviews.length > 0 ? (
         // A failed refresh keeps the rows already read; its error shows above.
         <ReviewTable reviews={reviews} />
-      ) : error ? null : (
+      ) : error || appMissing ? null : (
         <Card>
           <EmptyLine>
             {enabled
-              ? "No pull requests have been reviewed in this organization yet."
-              : "Dependency review is off for this organization."}
+              ? "No pull requests reviewed yet. Drydock reviews one when a pull request from a branch in an installed repository is opened or updated."
+              : canManage
+                ? "Dependency review is off for this organization."
+                : "Dependency review is off for this organization. An owner or admin can turn it on."}
           </EmptyLine>
         </Card>
       )}
@@ -106,35 +122,45 @@ export default function DependencyReviewsPage() {
 
 function ReviewTable({ reviews }: { reviews: DependencyReview[] }) {
   return (
-    <Card padding="none" class="overflow-x-auto">
-      <table class="w-full border-collapse text-[13px]">
+    <Card padding="none">
+      {/* Below sm the rows stack, so nothing hides behind a sideways scroll. */}
+      <ul class="m-0 p-0 list-none sm:hidden">
+        {reviews.map((review) => (
+          <li
+            key={review.id}
+            class="border-b border-border last:border-b-0 px-4 py-3 flex flex-col gap-1.5"
+          >
+            <div class="flex items-baseline justify-between gap-3 min-w-0">
+              <ReviewLink review={review} />
+              <ReviewStateMark review={review} />
+            </div>
+            <MonoDetail parts={rowDetail(review, true)} />
+          </li>
+        ))}
+      </ul>
+      <table class="hidden sm:table w-full border-collapse text-[13px]">
         <thead>
           <tr class="border-b border-border bg-surface-2">
             <Th>Pull request</Th>
             <Th>State</Th>
             <Th>Updates</Th>
-            <Th>Reviewed</Th>
+            <Th>Updated</Th>
           </tr>
         </thead>
         <tbody>
           {reviews.map((review) => (
             <tr key={review.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
               <Td>
-                <a
-                  href={dependencyReviewPath(review.id, review.organizationId)}
-                  class="font-mono text-[12px] break-all"
-                >
-                  {review.repositoryFullName} #{review.pullNumber}
-                </a>
+                <ReviewLink review={review} />
                 <span class="block font-mono text-[11px] text-ink-subtle">
-                  by {review.authorLogin}
+                  {rowDetail(review, false).join(" · ")}
                 </span>
               </Td>
               <Td>
                 <ReviewStateMark review={review} />
               </Td>
               <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
-                {updatesLabel(review)}
+                {updatesLabel(review) ?? "—"}
               </Td>
               <Td class="font-mono text-[12px] text-ink-muted whitespace-nowrap">
                 {formatDateTime(review.completedAt ?? review.createdAt)}
@@ -147,7 +173,35 @@ function ReviewTable({ reviews }: { reviews: DependencyReview[] }) {
   );
 }
 
-function updatesLabel(review: DependencyReview): string {
+function ReviewLink({ review }: { review: DependencyReview }) {
+  return (
+    <a
+      href={dependencyReviewPath(review.id, review.organizationId)}
+      class="font-mono text-[12px] [overflow-wrap:anywhere]"
+    >
+      {review.repositoryFullName} #{review.pullNumber}
+    </a>
+  );
+}
+
+// Author and commit; one pull request can have several reviewed commits.
+function rowDetail(review: DependencyReview, withCountAndTime: boolean): string[] {
+  const parts = [`by ${review.authorLogin}`, review.headSha.slice(0, 7)];
+  if (!withCountAndTime) return parts;
+  const updates = updatesLabel(review);
+  return [
+    ...parts,
+    ...(updates ? [updates] : []),
+    formatDateTime(review.completedAt ?? review.createdAt),
+  ];
+}
+
+// A count is a result only once the review finished; before that it reads as zero.
+function updatesLabel(review: DependencyReview): string | null {
+  const state = reviewState(review);
+  if (state === "reviewing" || state === "failed" || state === "superseded") return null;
+  // Zero is a result only for a clear review; otherwise a lockfile went unread.
+  if (state !== "clear" && review.bumpCount === 0) return null;
   return `${review.bumpCount} ${review.bumpCount === 1 ? "update" : "updates"}`;
 }
 

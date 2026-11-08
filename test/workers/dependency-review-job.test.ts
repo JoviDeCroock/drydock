@@ -131,8 +131,9 @@ describe("dependency review job", () => {
     expect(api.lastCheckRunState()).toMatchObject({
       conclusion: "success",
       output: {
-        title: "No dependency additions or updates",
-        summary: "This PR adds no dependencies and changes no resolved package versions.",
+        title: "No npm or PyPI dependency updates",
+        summary:
+          "This PR adds no npm or PyPI dependencies and changes no resolved npm or PyPI package versions. Other ecosystems are not reviewed.",
       },
     });
     expect(api.requests.some((r) => r.url.includes("/contents/"))).toBe(false);
@@ -153,7 +154,7 @@ describe("dependency review job", () => {
       expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
       expect(api.lastCheckRunState()).toMatchObject({
         conclusion: "success",
-        output: { title: "No dependency additions or updates" },
+        output: { title: "No npm or PyPI dependency updates" },
       });
       expect(api.requests.every((r) => r.host === "api.github.com")).toBe(true);
       expectTokenStaysOnGithub(api);
@@ -1240,7 +1241,7 @@ describe("lockfiles the review could not read", () => {
       await runDependencyReviewJob(input);
 
       expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
-      expect(checkOutput(api).title).toBe("No dependency additions or updates");
+      expect(checkOutput(api).title).toBe("No npm or PyPI dependency updates");
       expectTokenStaysOnGithub(api);
     },
   );
@@ -1262,7 +1263,7 @@ describe("lockfiles the review could not read", () => {
     await runDependencyReviewJob(input);
 
     expect(await readReview(review.id)).toMatchObject({ conclusion: "clear", bumpCount: 0 });
-    expect(checkOutput(api).title).toBe("No dependency additions or updates");
+    expect(checkOutput(api).title).toBe("No npm or PyPI dependency updates");
   });
 
   test("a moved manifest's unchanged dependencies still need resolution in its new directory", async () => {
@@ -1303,7 +1304,7 @@ describe("lockfiles the review could not read", () => {
 
       expect(await readReview(review.id)).toMatchObject({ conclusion: "held" });
       expect(checkOutput(api).summary).toContain("`package.json`");
-      expect(checkOutput(api).title).not.toBe("No dependency additions or updates");
+      expect(checkOutput(api).title).not.toBe("No npm or PyPI dependency updates");
     },
   );
 
@@ -1363,7 +1364,7 @@ describe("lockfiles the review could not read", () => {
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
     expect(checkOutput(api).summary).toContain("bun.lock");
     expect(checkOutput(api).title).toBe("No updates held");
-    expect(checkOutput(api).summary).not.toContain("adds no dependencies");
+    expect(checkOutput(api).summary).not.toContain("adds no npm or PyPI dependencies");
   });
 
   test("lockfiles past the 20-per-review cap hold the review", async () => {
@@ -1454,6 +1455,24 @@ describe("approving held updates", () => {
       approvedCount: 1,
     });
     expectTokenStaysOnGithub(api);
+  });
+
+  test("approving a review cut at the storage limit keeps its real total", async () => {
+    const { pr, review, input } = await heldScenario();
+    pr.permissions.set("maintainer", "write");
+    // As stored for a PR past the stored-bump limit: the row counts more than it keeps.
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ bumpCount: 900 })
+      .where(eq(schema.dependencyReviews.id, review.id));
+
+    await runDependencyReviewJob({ ...input, approver: { login: "maintainer", githubId: 3141 } });
+
+    expect(await readReview(review.id)).toMatchObject({
+      conclusion: "approved",
+      bumpCount: 900,
+      heldCount: 0,
+    });
   });
 
   test("an approval carries to a later commit that merges the same change", async () => {

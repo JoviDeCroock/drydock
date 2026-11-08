@@ -119,13 +119,16 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   await page.goto("/dashboard/settings?tab=integrations#dependency-review");
 
   const section = page.locator("#dependency-review");
-  await expect(section.getByText("Checks (write), Pull requests (read)")).toBeVisible();
+  await expect(section.getByText(/make the check a required status check/)).toBeVisible();
+  // App permissions are named only where they are the next step (no App).
+  await expect(section.getByText(/Checks \(write\)/)).toHaveCount(0);
   await expect(section.getByRole("checkbox", { name: "adds a native binary" })).toBeChecked();
   await expect(section.getByLabel("Or reaches release risk")).toHaveValue("high");
 
   await section.getByRole("checkbox", { name: "Review dependency update pull requests" }).check();
   await section.getByRole("checkbox", { name: "adds a native binary" }).uncheck();
   await section.getByLabel("Or reaches release risk").selectOption("critical");
+  await section.getByText("Self-hosted Renovate or other dependency bots").click();
   await section.getByLabel("Extra bot logins").fill("my-renovate[bot], deps-bot");
   await section.screenshot({ path: `${SCREENSHOTS}/settings.png` });
   await section.getByRole("button", { name: "Save dependency review" }).click();
@@ -147,12 +150,16 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
 
   await expect(page.getByRole("heading", { name: "acme/web #128" })).toBeVisible();
-  await expect(page.getByText("1 of 3 updates are held.")).toBeVisible();
+  await expect(page.getByText("1 of 3 updates is held.")).toBeVisible();
   await expect(
     page.getByText(
-      "Adds an install script; adds a dependency (2); release risk at or above the hold threshold.",
+      "Adds an install script; adds a dependency (2); release risk high, at or above the hold threshold.",
     ),
   ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Approve on GitHub ↗" })).toHaveAttribute(
+    "href",
+    "https://github.com/acme/web/runs/7",
+  );
   await expect(page.getByText("Over the per-PR review limit.")).toBeVisible();
   // Package text renders as text, never markup.
   await expect(page.getByText("@acme/<img src=x onerror=alert(1)>")).toBeVisible();
@@ -160,7 +167,9 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
     page.getByText("Install script downloads <b>code</b> over the network"),
   ).toBeVisible();
   await expect(page.locator("main img")).toHaveCount(0);
-  await expect(page.getByText("2 more release findings in the diff")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "2 more release findings in the diff →" }),
+  ).toHaveAttribute("href", "/diff/@acme/%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E/1.2.0/1.3.0");
   const diffLinks = page.getByRole("link", { name: "View diff →" });
   await expect(diffLinks.nth(0)).toHaveAttribute(
     "href",
@@ -183,7 +192,7 @@ test("dependency review list links each review with its organization", async ({ 
   const row = page.getByRole("link", { name: "acme/web #128" });
   await expect(page.getByRole("link", { name: /^Dependencies(?: Beta)?$/ })).toBeVisible();
   await expect(row).toHaveAttribute("href", `/dashboard/dependency-reviews/dr_1?org=${ORG}`);
-  await expect(page.getByText("1 held", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table").getByText("1 held", { exact: true })).toBeVisible();
   await page.screenshot({ path: `${SCREENSHOTS}/list.png`, fullPage: true });
   expect(errors).toEqual([]);
 });
@@ -228,7 +237,9 @@ test("updates allowed by policy are not described as clear", async ({ page }) =>
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
 
   await expect(
-    page.getByText("No updates are held. Some updates were not reviewed."),
+    page.getByText(
+      "No updates are held. 2 updates passed without a diff under this organization's policy.",
+    ),
   ).toBeVisible();
   await expect(page.getByText("All 3 updates are clear.")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Not reviewed 1" })).toBeVisible();
@@ -257,7 +268,7 @@ test("complete coverage with no bumps reports no dependency additions or updates
   });
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
   await expect(
-    page.getByText("No dependency additions or updates.", { exact: true }),
+    page.getByText("No npm or PyPI dependency additions or updates.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("All 0 updates are clear.")).toHaveCount(0);
 });
@@ -276,9 +287,15 @@ test("unread-only holds name the files without claiming zero updates are held", 
 
   await expect(
     page.getByText(
-      "This pull request is held because some dependency updates could not be reviewed.",
+      "Held: Drydock could not read some dependency changes. Approving on the GitHub check accepts the unread changes listed below; changing the files so Drydock can read them gets them reviewed instead.",
     ),
   ).toBeVisible();
+  // Approve over unread files stays available but doesn't lead.
+  await expect(page.getByRole("link", { name: "Approve on GitHub ↗" })).not.toHaveClass(
+    /bg-accent/,
+  );
+  // No count: "0 updates" would claim a certainty the coverage note denies.
+  await expect(page.getByText("0 updates")).toHaveCount(0);
   await expect(page.getByText(unread, { exact: true })).toBeVisible();
   await expect(page.getByText("0 of 0 updates are held.")).toHaveCount(0);
   await expect(page.locator("main img")).toHaveCount(0);
@@ -296,7 +313,7 @@ test("an incomplete file listing stays visible even when the policy allows it", 
   });
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
 
-  await expect(page.getByText("GitHub did not return every changed file.")).toBeVisible();
+  await expect(page.getByText(/GitHub did not return every changed file/)).toBeVisible();
   await expect(page.getByText("The update is clear.", { exact: true })).toHaveCount(0);
 });
 
@@ -313,18 +330,80 @@ test("a running dependency review refreshes itself into its result", async ({ pa
   await installMocks(page, [], { review: () => review });
 
   await page.goto("/dashboard/dependency-reviews");
-  await expect(page.getByText("reviewing…")).toBeVisible();
+  await expect(page.getByRole("table").getByText("reviewing…")).toBeVisible();
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
-  await expect(page.getByText("Reviewing pull request")).toBeVisible();
-  await expect(page.getByText("auto-refreshes when the review is ready")).toBeVisible();
-  await expect(page.getByText(/Showing the first/)).toHaveCount(0);
+  await expect(
+    page.getByText("Reviewing this commit. The page refreshes when the review is ready."),
+  ).toBeVisible();
+  await expect(page.getByText(/Showing \d+ of/)).toHaveCount(0);
   await page.screenshot({ path: `${SCREENSHOTS}/detail-running.png`, fullPage: true });
 
   review = REVIEW;
   await page.clock.runFor(10_000);
-  await expect(page.getByText("1 of 3 updates are held.")).toBeVisible();
-  await expect(page.getByText("Reviewing pull request")).toHaveCount(0);
+  await expect(page.getByText("1 of 3 updates is held.")).toBeVisible();
+  await expect(page.getByText(/Reviewing this commit/)).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test("dependency review that is on without the GitHub App says nothing can run", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await installMocks(page, [], { githubAppInstalled: false, enabled: true });
+  await page.goto("/dashboard/dependency-reviews");
+
+  await expect(page.getByText(/the Drydock GitHub App is not installed/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Install the GitHub App" })).toHaveAttribute(
+    "href",
+    "/dashboard/settings?tab=integrations#github-app",
+  );
+  await expect(page.getByText(/No pull requests reviewed yet/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a failed review offers its re-run on GitHub, not an approval", async ({ page }) => {
+  await installMocks(page, [], {
+    review: () => ({
+      ...REVIEW,
+      status: "failed",
+      conclusion: null,
+      heldCount: 0,
+      completedAt: null,
+    }),
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(page.getByText(/could not finish reviewing this commit/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Re-run on GitHub ↗" })).toHaveAttribute(
+    "href",
+    "https://github.com/acme/web/runs/7",
+  );
+  await expect(page.getByRole("link", { name: "Approve on GitHub ↗" })).toHaveCount(0);
+  await expect(page.getByText(/updates$/)).toHaveCount(0);
+});
+
+test("a hold the check cannot list in full says to split the pull request", async ({ page }) => {
+  await installMocks(page, [], {
+    coverage: () => ({ unreadLockfiles: [], listingComplete: false }),
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(page.getByText(/Split the pull request into smaller ones/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Approve on GitHub ↗" })).toHaveCount(0);
+});
+
+test("an older commit's held review points at the latest review instead of Approve", async ({
+  page,
+}) => {
+  await installMocks(page, [], { newerReviewId: "dr_2" });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(page.getByRole("link", { name: "Open the latest review" })).toHaveAttribute(
+    "href",
+    `/dashboard/dependency-reviews/dr_2?org=${ORG}`,
+  );
+  await expect(page.getByText(/no longer the pull request's head/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Approve on GitHub ↗" })).toHaveCount(0);
 });
 
 test("an organization outside the rollout flag sees no dependency review", async ({ page }) => {
@@ -354,13 +433,16 @@ async function installMocks(
   writes: unknown[],
   {
     dependencyReview = true,
+    githubAppInstalled = true,
+    enabled = false,
     requested = [] as string[],
     review = (): ReviewWire => REVIEW,
     bumps = (): ReviewedBump[] => BUMPS,
     coverage = (): DependencyReviewCoverage => COVERAGE,
+    newerReviewId = null as string | null,
   } = {},
 ) {
-  let settings = { enabled: false, policy: POLICY, extraBotLogins: [] as string[] };
+  let settings = { enabled, policy: POLICY, extraBotLogins: [] as string[] };
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     requested.push(path);
@@ -407,8 +489,8 @@ async function installMocks(
     if (path === "/api/v1/dependency-reviews") {
       await fulfillJson(route, {
         settings,
-        githubAppInstalled: true,
-        reviews: [review()],
+        githubAppInstalled,
+        reviews: githubAppInstalled ? [review()] : [],
         viewer: { canManage: true },
       });
       return;
@@ -426,6 +508,8 @@ async function installMocks(
         review: current,
         bumps: current.status === "completed" ? bumps() : [],
         coverage: coverage(),
+        approvable: coverage().listingComplete && !newerReviewId,
+        newerReviewId,
       });
       return;
     }
