@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { guardRateLimit } from "../lib/rate-limit";
+import { clientRateLimitKey, guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
 
 function authIpLimit(path: string): { bucket: string; max: number; windowMs: number } | null {
@@ -23,13 +23,18 @@ function authIpLimit(path: string): { bucket: string; max: number; windowMs: num
   ) {
     return { bucket: "password-reset-request", max: 5, windowMs: 60 * 60 * 1000 };
   }
+  // Better Auth mails a fresh link to any unverified address named in the
+  // body; the per-address budget in the mail hook backs this up.
+  if (path.startsWith("/api/auth/send-verification-email")) {
+    return { bucket: "verification-email", max: 5, windowMs: 60 * 60 * 1000 };
+  }
   if (path.startsWith("/api/auth/reset-password")) {
     return { bucket: "password-reset-redeem", max: 10, windowMs: 60 * 60 * 1000 };
   }
   return null;
 }
 
-/** Per-IP budgets on the credential-bearing Better Auth POSTs. */
+/** Per-IP budgets on the credential-bearing and mail-sending Better Auth POSTs. */
 export const authIpRateLimit: MiddlewareHandler<{
   Bindings: Bindings;
   Variables: Variables;
@@ -37,12 +42,13 @@ export const authIpRateLimit: MiddlewareHandler<{
   if (c.req.method !== "POST") return next();
   const limit = authIpLimit(c.req.path);
   if (!limit) return next();
-  const ip =
-    c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (!ip) return next();
   const limited = await guardRateLimit(
     c,
-    { key: `auth:${limit.bucket}:${ip}`, limit: limit.max, windowMs: limit.windowMs },
+    {
+      key: `auth:${limit.bucket}:${clientRateLimitKey(c)}`,
+      limit: limit.max,
+      windowMs: limit.windowMs,
+    },
     "too many authentication attempts",
   );
   if (limited) return limited;

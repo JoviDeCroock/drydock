@@ -1,7 +1,13 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fetchPackageMetadataCached } from "../../server/lib/ecosystems/npm/registry-cache";
-import { projectRegistryMetadata } from "../../server/lib/ecosystems/npm/registry";
+import { fetchPublicPackageMetadata } from "../../server/lib/ecosystems/npm/public-metadata";
+import { createPackumentExtractor } from "../../server/lib/ecosystems/npm/packument-stream";
+import {
+  projectPackumentExtract,
+  projectRegistryMetadata,
+} from "../../server/lib/ecosystems/npm/registry";
+import { PublicDiffError } from "../../server/lib/public-diff/error";
 
 // In-memory stand-in for the COMPARE_CACHE KV namespace (unbound in tests). The
 // point of these tests is the cache *key*: a packument fetched with one
@@ -217,6 +223,160 @@ describe("cached npm packument reads", () => {
 
     await expect(cachedFetch(kv.binding, { cacheScope: "org:org-a" })).rejects.toThrow();
     expect(kv.store.size).toBe(0);
+  });
+});
+
+const CEILING_BYTES = 128 * 1024 * 1024;
+const CHUNK = new Uint8Array(1024 * 1024).fill(0x61);
+const OPENING = new TextEncoder().encode('{"name":"big","readme":"');
+
+/** A packument whose one string never ends, pulled lazily; `pulled` counts what was read. */
+function endlessPackument(headers: Record<string, string> = {}) {
+  const state = { pulled: 0, cancelled: false };
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = state.pulled === 0 ? OPENING : CHUNK;
+      state.pulled += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  return { state, response: new Response(body, { status: 200, headers }) };
+}
+
+describe("packument size ceiling", () => {
+  test("refuses a declared length over the ceiling without reading the body", async () => {
+    const { state, response } = endlessPackument({ "content-length": String(CEILING_BYTES + 1) });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const kv = fakeKv();
+
+    await expect(cachedFetch(kv.binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+      "registry metadata too large",
+    );
+    expect(state.pulled).toBeLessThanOrEqual(OPENING.byteLength);
+    expect(kv.store.size).toBe(0);
+  });
+
+  test(
+    "stops streaming an undeclared body at the ceiling and cancels it",
+    { timeout: 60_000 },
+    async () => {
+      const { state, response } = endlessPackument();
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+
+      await expect(cachedFetch(fakeKv().binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+        "registry metadata too large",
+      );
+      expect(state.pulled).toBeLessThanOrEqual(CEILING_BYTES + 2 * CHUNK.byteLength);
+      expect(state.cancelled).toBe(true);
+    },
+  );
+
+  test("refuses a packument whose retained fields exceed the budget, though small on the wire", async () => {
+    // ~12 Mi characters of tarball URLs in a ~12 MB document: under the byte
+    // ceiling, over what the extract may hold.
+    const tarball = `https://registry.npmjs.org/big/-/${"a".repeat(3_900)}.tgz`;
+    const versions = Object.fromEntries(
+      Array.from({ length: 3_000 }, (_, i) => [`1.0.${i}`, { dist: { tarball } }]),
+    );
+    const body = JSON.stringify({ name: "big", versions });
+    expect(body.length).toBeLessThan(CEILING_BYTES);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 200 }));
+
+    await expect(cachedFetch(fakeKv().binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+      "registry metadata too large",
+    );
+  });
+
+  test("charges escape-expanded bytes, so the cached JSON cannot outgrow the budget", async () => {
+    // ~2.6 Mi decoded characters but ~14.6 MB once each control character is
+    // written back as \u0001 (each tarball still fits one captured field):
+    // past the budget, so refused rather than left to a KV put that would
+    // fail on size.
+    const tarball = `https://registry.npmjs.org/big/-/${"\u0001".repeat(600)}.tgz`;
+    const versions = Object.fromEntries(
+      Array.from({ length: 4_000 }, (_, i) => [`1.0.${i}`, { dist: { tarball } }]),
+    );
+    const body = JSON.stringify({ name: "big", versions });
+    expect(body.length).toBeGreaterThan(8 * 1024 * 1024);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 200 }));
+
+    await expect(cachedFetch(fakeKv().binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+      "registry metadata too large",
+    );
+  });
+
+  test("the streamed projection equals the parsed-document projection", () => {
+    const doc = {
+      ...PRIVATE_PACKUMENT,
+      versions: {
+        ...PRIVATE_PACKUMENT.versions,
+        "1.2.0": { dist: { tarball: "t", attestations: { provenance: { predicateType: "p" } } } },
+        "1.3.0": { dist: { attestations: { provenance: "no" } } },
+        "1.4.0": null,
+      },
+      "dist-tags": { latest: "1.1.0", broken: 7 },
+    };
+    const extractor = createPackumentExtractor();
+    extractor.write(new TextEncoder().encode(JSON.stringify(doc)));
+    expect(projectPackumentExtract(extractor.end())).toEqual(projectRegistryMetadata(doc));
+  });
+});
+
+describe("public packument reads", () => {
+  async function publicFetch(cache: KVNamespace) {
+    const ctx = createExecutionContext();
+    try {
+      return await fetchPublicPackageMetadata(
+        { ...env, COMPARE_CACHE: cache } as Cloudflare.Env,
+        ctx,
+        "big",
+        "https://registry.npmjs.org",
+      );
+    } finally {
+      await waitOnExecutionContext(ctx);
+    }
+  }
+
+  async function rejection(promise: Promise<unknown>): Promise<PublicDiffError> {
+    const err = await promise.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(err).toBeInstanceOf(PublicDiffError);
+    return err as PublicDiffError;
+  }
+
+  test("answers an oversized packument with 413 and serves the repeat from cache", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async () => endlessPackument({ "content-length": String(CEILING_BYTES + 1) }).response,
+      );
+    const kv = fakeKv();
+
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(413);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(413);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("caches an upstream failure briefly but not a missing package", async () => {
+    const kv = fakeKv();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("not found", { status: 404 }));
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(404);
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(404);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(kv.store.size).toBe(0);
+
+    fetchSpy.mockImplementation(async () => new Response("bad gateway", { status: 400 }));
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(502);
+    expect((await rejection(publicFetch(kv.binding))).status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 });
 

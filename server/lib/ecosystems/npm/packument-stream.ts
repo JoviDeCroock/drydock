@@ -1,7 +1,8 @@
 /**
- * Streaming extraction of the few packument fields the publication monitor
- * reads: top-level `name`, `dist-tags` and `time`, and each version's `name`,
- * `version`, `dist.tarball` and `dist.shasum`.
+ * Streaming extraction of the few packument fields Drydock reads: top-level
+ * `name`, `dist-tags` and `time`, and each version's `name`, `version`,
+ * `dist.tarball`, `dist.shasum` and whether `dist.attestations.provenance` is
+ * an object.
  *
  * The packument is a hostile registry document, and only npm's full document
  * carries per-version publish times, so a mature package's packument can be
@@ -28,6 +29,8 @@ export interface PackumentVersion {
   version: string | null;
   tarball: string | null;
   shasum: string | null;
+  /** `dist.attestations.provenance` is an object; null when `dist` is not one. */
+  provenance: boolean | null;
 }
 
 export interface PackumentExtract {
@@ -44,15 +47,27 @@ export interface PackumentExtract {
   /** Some tag was dropped: beyond the cap, or its key or value too long to capture. */
   distTagsTruncated: boolean;
   versionLimitExceeded: boolean;
+  /**
+   * `maxRetainedBytes` ran out: some version, tarball, `time` entry or tag was
+   * not kept. Sticky, so a reader treating it as "too large" cannot be fooled.
+   */
+  retainedLimitExceeded: boolean;
 }
 
-// The only containers tracked, at most four deep: root > versions > entry > dist.
+// What one retained map entry costs against `maxRetainedBytes` beyond its
+// strings, so many tiny entries cannot outgrow the budget on overhead alone.
+// It also covers the per-entry structure a JSON projection adds.
+const RETAINED_ENTRY_OVERHEAD_BYTES = 64;
+
+// The only containers tracked, at most five deep:
+// root > versions > entry > dist > attestations.
 const ROOT = 0;
 const VERSIONS = 1;
 const ENTRY = 2;
 const DIST = 3;
 const TIME = 4;
 const TAGS = 5;
+const ATTESTATIONS = 6;
 
 // Value slots: what the next value means.
 const SLOT_SKIP = 0;
@@ -69,6 +84,8 @@ const SLOT_TARBALL = 10;
 const SLOT_SHASUM = 11;
 const SLOT_TIME_VALUE = 12;
 const SLOT_TAG_VALUE = 13;
+const SLOT_ATTESTATIONS = 14;
+const SLOT_PROVENANCE = 15;
 
 // Parser states.
 const S_VALUE = 0;
@@ -112,7 +129,12 @@ const ENTRY_KEYS: Record<string, number> = {
   version: SLOT_ENTRY_VERSION,
   dist: SLOT_ENTRY_DIST,
 };
-const DIST_KEYS: Record<string, number> = { tarball: SLOT_TARBALL, shasum: SLOT_SHASUM };
+const DIST_KEYS: Record<string, number> = {
+  tarball: SLOT_TARBALL,
+  shasum: SLOT_SHASUM,
+  attestations: SLOT_ATTESTATIONS,
+};
+const ATTESTATION_KEYS: Record<string, number> = { provenance: SLOT_PROVENANCE };
 const STRING_SLOTS: ReadonlySet<number> = new Set([
   SLOT_NAME,
   SLOT_ENTRY_NAME,
@@ -166,11 +188,29 @@ export function createPackumentExtractor(
      * `versionLimitExceeded`, like one past `maxVersions`.
      */
     maxVersionKeyChars?: number;
+    /**
+     * Keep each version's `name`, `version` and `dist.shasum` (default true).
+     * A reader that needs only tarballs and provenance turns this off so those
+     * publisher-shaped fields cost nothing.
+     */
+    identityFields?: boolean;
+    /**
+     * Budget on what the extract holds: the source bytes (the JSON string
+     * token as it appeared, quotes and escapes included) of every kept version
+     * key, captured version field, `time` and dist-tag key and value, plus
+     * `RETAINED_ENTRY_OVERHEAD_BYTES` per entry. Past it nothing more is kept
+     * and `retainedLimitExceeded` is set. Source bytes bound both the decoded
+     * length and the UTF-8 size of re-serializing the value: `JSON.stringify`
+     * never encodes a string longer than any valid JSON spelling of it.
+     */
+    maxRetainedBytes?: number;
   } = {},
 ): { write(chunk: Uint8Array): void; end(): PackumentExtract } {
   const maxVersions = limits.maxVersions ?? 10_001;
   const versionKeysOnly = limits.versionKeysOnly ?? false;
   const maxVersionKeyChars = limits.maxVersionKeyChars ?? Infinity;
+  const identityFields = limits.identityFields ?? true;
+  const maxRetainedBytes = limits.maxRetainedBytes ?? Infinity;
   const maxDistTags = limits.maxDistTags ?? 1_000;
   const maxCaptured = limits.maxCapturedBytes ?? 4_096;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -185,11 +225,14 @@ export function createPackumentExtractor(
     distTags: new Map(),
     distTagsTruncated: false,
     versionLimitExceeded: false,
+    retainedLimitExceeded: false,
   };
+  let retainedBytes = 0;
   const frames: number[] = [];
   let state = S_VALUE;
   let slot = SLOT_ROOT;
   let pendingKey = "";
+  let pendingKeyBytes = 0;
   let versionKeyChars = 0;
   let entry: PackumentVersion | null = null;
   let failed: PackumentStreamError | null = null;
@@ -214,6 +257,19 @@ export function createPackumentExtractor(
     state = frames.length === 0 ? S_DONE : S_OBJECT_NEXT;
   }
 
+  // Charges `bytes` of source (plus an entry's overhead when `entry`) to the
+  // retained budget; false, with the flag set, once it is spent. Replaced
+  // values are never refunded, so the count only ever overstates what is held.
+  function retain(bytes: number, entry: boolean): boolean {
+    const cost = bytes + (entry ? RETAINED_ENTRY_OVERHEAD_BYTES : 0);
+    if (out.retainedLimitExceeded || retainedBytes + cost > maxRetainedBytes) {
+      out.retainedLimitExceeded = true;
+      return false;
+    }
+    retainedBytes += cost;
+    return true;
+  }
+
   // Every caller records `pendingKey` when this returns true.
   function versionAllowed(): boolean {
     if (out.versions.has(pendingKey)) return true;
@@ -221,6 +277,7 @@ export function createPackumentExtractor(
       out.versions.size < maxVersions &&
       versionKeyChars + pendingKey.length <= maxVersionKeyChars
     ) {
+      if (!retain(pendingKeyBytes, true)) return false;
       versionKeyChars += pendingKey.length;
       return true;
     }
@@ -265,6 +322,11 @@ export function createPackumentExtractor(
       case SLOT_ENTRY_DIST:
         entry!.tarball = null;
         entry!.shasum = null;
+        entry!.provenance = null;
+        break;
+      case SLOT_ATTESTATIONS:
+      case SLOT_PROVENANCE:
+        entry!.provenance = false;
         break;
       case SLOT_TARBALL:
         entry!.tarball = null;
@@ -293,27 +355,39 @@ export function createPackumentExtractor(
         out.name = value;
         break;
       case SLOT_ENTRY_NAME:
-        entry!.name = value;
+        entry!.name = retain(capturedLength, false) ? value : null;
         break;
       case SLOT_ENTRY_VERSION:
-        entry!.version = value;
+        entry!.version = retain(capturedLength, false) ? value : null;
         break;
       case SLOT_TARBALL:
-        entry!.tarball = value;
+        entry!.tarball = retain(capturedLength, false) ? value : null;
         break;
       case SLOT_SHASUM:
-        entry!.shasum = value;
+        entry!.shasum = retain(capturedLength, false) ? value : null;
         break;
-      case SLOT_TIME_VALUE:
-        out.time.set(pendingKey, value);
+      case SLOT_TIME_VALUE: {
+        const fresh = !out.time.has(pendingKey);
+        if (retain(capturedLength + (fresh ? pendingKeyBytes : 0), fresh)) {
+          out.time.set(pendingKey, value);
+        } else {
+          out.time.delete(pendingKey);
+        }
         break;
-      case SLOT_TAG_VALUE:
-        if (out.distTags.has(pendingKey) || out.distTags.size < maxDistTags) {
-          out.distTags.set(pendingKey, value);
+      }
+      case SLOT_TAG_VALUE: {
+        const fresh = !out.distTags.has(pendingKey);
+        if (!fresh || out.distTags.size < maxDistTags) {
+          if (retain(capturedLength + (fresh ? pendingKeyBytes : 0), fresh)) {
+            out.distTags.set(pendingKey, value);
+          } else {
+            out.distTags.delete(pendingKey);
+          }
         } else {
           out.distTagsTruncated = true;
         }
         break;
+      }
     }
   }
 
@@ -338,12 +412,20 @@ export function createPackumentExtractor(
           out.versions.set(pendingKey, null);
           return null;
         }
-        entry = { name: null, version: null, tarball: null, shasum: null };
+        entry = { name: null, version: null, tarball: null, shasum: null, provenance: null };
         out.versions.set(pendingKey, entry);
         return ENTRY;
       case SLOT_ENTRY_DIST:
         applyNonString();
+        entry!.provenance = false;
         return DIST;
+      case SLOT_ATTESTATIONS:
+        applyNonString();
+        return ATTESTATIONS;
+      case SLOT_PROVENANCE:
+        // Only its presence as an object is read; the contents are skipped.
+        entry!.provenance = true;
+        return null;
       default:
         applyNonString();
         return null;
@@ -430,12 +512,26 @@ export function createPackumentExtractor(
         slot = SLOT_SKIP;
       } else {
         pendingKey = text;
+        pendingKeyBytes = capturedLength;
         slot = top === VERSIONS ? SLOT_VERSION : top === TIME ? SLOT_TIME_VALUE : SLOT_TAG_VALUE;
       }
     } else {
       // A field name too long to capture cannot be one of these short names.
-      const names = top === ROOT ? ROOT_KEYS : top === ENTRY ? ENTRY_KEYS : DIST_KEYS;
+      const names =
+        top === ROOT
+          ? ROOT_KEYS
+          : top === ENTRY
+            ? ENTRY_KEYS
+            : top === DIST
+              ? DIST_KEYS
+              : ATTESTATION_KEYS;
       slot = text !== null && Object.hasOwn(names, text) ? names[text]! : SLOT_SKIP;
+      if (
+        !identityFields &&
+        (slot === SLOT_ENTRY_NAME || slot === SLOT_ENTRY_VERSION || slot === SLOT_SHASUM)
+      ) {
+        slot = SLOT_SKIP;
+      }
       if (slot === SLOT_VERSIONS) out.versionsPresent = true;
     }
     state = S_COLON;

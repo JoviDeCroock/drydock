@@ -11,6 +11,10 @@ import { isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import { isSafeManifestPath } from "../server/lib/platform/path-safety";
 import {
+  hasLineBreakingOrInvisibleCharacters,
+  toSingleLineText,
+} from "../server/lib/platform/single-line-text";
+import {
   isSafeHttpUrlForShellArgument,
   quotePosixShellArgument,
 } from "../server/lib/platform/shell-command";
@@ -204,6 +208,80 @@ describe("markup escaping", () => {
 
   test("escapeXml uses &apos;, which is defined in XML but not HTML4", () => {
     expect(escapeXml(`<a href="x">&'`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&apos;");
+  });
+});
+
+describe("single-line text", () => {
+  test("flattens every kind of line break and drops bidi and zero-width controls", () => {
+    expect(toSingleLineText("a\r\nb\nc\rd\u2028e\u2029f\u0085g\tz", 80)).toBe("a b c d e f g z");
+    expect(toSingleLineText("\u202Eabc\u2066d\u200Be\uFEFF", 80)).toBe("abcde");
+    expect(toSingleLineText("  spaced \u00A0 out  ", 80)).toBe("spaced out");
+  });
+
+  test("keeps joiners and caps by code point without splitting a pair", () => {
+    const family = "\u{1F468}\u200D\u{1F469}";
+    expect(toSingleLineText(family, 80)).toBe(family);
+    expect(toSingleLineText("\u{1F600}".repeat(5), 3)).toBe("\u{1F600}".repeat(3));
+    expect(toSingleLineText("abc def", 4)).toBe("abc");
+  });
+
+  test("drops every invisible format character and blank-drawing filler", () => {
+    const invisible = [
+      "\u00AD",
+      "\u034F",
+      "\u115F",
+      "\u1160",
+      "\u180E",
+      "\u3164",
+      "\uFFA0",
+      "\uFFF9",
+      "\uFFFB",
+      "\u{E0041}",
+      "\u{E007F}",
+    ];
+    for (const char of invisible) {
+      expect(toSingleLineText(`a${char}b`, 80), char.codePointAt(0)!.toString(16)).toBe("ab");
+      expect(hasLineBreakingOrInvisibleCharacters(`a${char}b`)).toBe(true);
+    }
+  });
+
+  test("caps stacked combining marks and never cuts an emoji sequence", () => {
+    expect(toSingleLineText(`e${"\u0301".repeat(30)}x`, 80)).toBe(`e${"\u0301".repeat(4)}x`);
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(toSingleLineText(`ab${family}cd`, 3)).toBe(`ab${family}`);
+  });
+
+  test("bounds UTF-16 length even when one grapheme is enormous", () => {
+    const hugeGraphemes = [
+      "\u{1F468}\u200D".repeat(20_000) + "\u{1F468}",
+      "\u1100".repeat(50_000),
+      "\u0915\u094D".repeat(20_000) + "\u0915",
+    ];
+    for (const huge of hugeGraphemes) {
+      const result = toSingleLineText(`Ada ${huge}`, 64);
+      expect(result.length).toBeLessThanOrEqual(256);
+      expect(result.startsWith("Ada")).toBe(true);
+    }
+    const twoSmall = "\u{1F468}\u200D\u{1F469}";
+    expect(toSingleLineText(twoSmall.repeat(40), 64)).toBe(twoSmall.repeat(40));
+    expect(toSingleLineText(twoSmall.repeat(80), 64).length).toBeLessThanOrEqual(256);
+  });
+
+  test("keeps subdivision flags and strips tag characters anywhere else", () => {
+    const england = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+    expect(toSingleLineText(`Ada ${england}`, 80)).toBe(`Ada ${england}`);
+    expect(hasLineBreakingOrInvisibleCharacters(`Ada ${england}`)).toBe(false);
+    const bareTags = "\u{E0067}\u{E0062}\u{E007F}";
+    expect(toSingleLineText(`Ada${bareTags}`, 80)).toBe("Ada");
+    expect(hasLineBreakingOrInvisibleCharacters(`Ada${bareTags}`)).toBe(true);
+    expect(toSingleLineText("\u{1F3F4}\u{E0067}\u{E0062}", 80)).toBe("\u{1F3F4}");
+  });
+
+  test("reports the characters it would remove", () => {
+    expect(hasLineBreakingOrInvisibleCharacters("Ada Lovelace")).toBe(false);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\u2028")).toBe(true);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\u202E")).toBe(true);
+    expect(hasLineBreakingOrInvisibleCharacters("Ada\n")).toBe(true);
   });
 });
 

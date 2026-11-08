@@ -61,7 +61,7 @@ The organization holding the history claims with its next verified scan, because
 | Method | Path | Auth | Effect |
 | --- | --- | --- | --- |
 | GET | `/api/v1/npm-package-claims/:name` | session | Active organization's claim and eligible destinations; never identifies another owner |
-| POST | `/api/v1/npm-package-claims/:name` `{ targetOrganizationId, registryUrl? }` | session owns the personal workspace + current owner/admin of destination | Confirm in place, or move to a shared organization |
+| POST | `/api/v1/npm-package-claims/:name` `{ targetOrganizationId, registryUrl? }` | session owns the personal workspace + current owner/admin of destination; verified email | Confirm in place, or move to a shared organization |
 | POST | `/api/v1/npm-connection/personal-confirmation` | personal workspace owner | Record automatic-scan consent; never contacts npm |
 
 - Registry selector: `registryUrl` (query for GET, body for POST); default public npm.

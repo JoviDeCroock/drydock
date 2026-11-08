@@ -29,8 +29,12 @@ import { compareParsedPyPiVersions, parsePyPiVersion } from "./version";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
+  readMetadataUnavailable,
   writeCompareMetadataCache,
-} from "../../compare-cache";
+  writeMetadataUnavailable,
+} from "../../compare-metadata-cache";
+import { readBoundedJson } from "../../platform/bounded-body";
+import { MAX_PYPI_METADATA_BYTES, PYPI_METADATA_TIMEOUT_MS } from "./broker";
 import { publicDiffDownloadError } from "../../public-diff/download";
 import { PublicDiffError } from "../../public-diff/error";
 import type {
@@ -110,6 +114,14 @@ async function fetchPublicPyPiProjectMetadata(
   });
   const cached = await readCompareMetadataCache<PyPiProjectMetadata>(env, key);
   if (cached) return cached;
+  // A failed read is cached briefly so a repeat cannot re-fetch it every time.
+  if (await readMetadataUnavailable(env, key)) {
+    throw new PublicDiffError("registry metadata fetch failed", 502);
+  }
+  const unavailable = () => {
+    writeMetadataUnavailable(env, ctx, key, "unavailable");
+    return new PublicDiffError("registry metadata fetch failed", 502);
+  };
 
   let response: Response;
   try {
@@ -117,19 +129,33 @@ async function fetchPublicPyPiProjectMetadata(
       `${PYPI_PUBLIC_REGISTRY}/${encodeURIComponent(normalized)}/json`,
       {
         headers: new Headers({ accept: "application/json" }),
+        timeoutMs: PYPI_METADATA_TIMEOUT_MS,
       },
     );
   } catch {
-    throw new PublicDiffError("registry metadata fetch failed", 502);
+    throw unavailable();
   }
-  if (response.status === 404) throw new PublicDiffError("package not found", 404);
-  if (!response.ok) throw new PublicDiffError("registry metadata fetch failed", 502);
+  if (response.status === 404) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new PublicDiffError("package not found", 404);
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw unavailable();
+  }
 
+  // The same ceiling as the scan broker's read; null is over it, cut off by
+  // the deadline, or not JSON.
+  const raw = await readBoundedJson<PyPiProjectMetadata>(response, {
+    maxBytes: MAX_PYPI_METADATA_BYTES,
+    deadlineMs: Date.now() + PYPI_METADATA_TIMEOUT_MS,
+  });
   let metadata: PyPiProjectMetadata;
   try {
-    metadata = prunePyPiProjectMetadata((await response.json()) as PyPiProjectMetadata);
+    if (raw === null) throw new Error("unreadable");
+    metadata = prunePyPiProjectMetadata(raw);
   } catch {
-    throw new PublicDiffError("registry metadata fetch failed", 502);
+    throw unavailable();
   }
   await writeCompareMetadataCache(env, ctx, key, metadata);
   return metadata;

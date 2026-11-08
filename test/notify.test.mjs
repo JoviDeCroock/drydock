@@ -59,6 +59,7 @@ const {
   notifyStagedReleaseAwaitingApproval,
   notifyWorkflowGateReview,
 } = await import("../server/lib/notify");
+const { notifyOrganizationInvite } = await import("../server/lib/notify/organization-invite");
 
 function gateInput(overrides = {}) {
   return {
@@ -425,7 +426,9 @@ describe("notifyScanCompletion", () => {
     await notifyScanCompletion(scanInput({ ownerUserId: "admin_1" }));
 
     expect(dbMock.getOrganizationOwnerUserId).toHaveBeenCalledWith({}, "org_1");
-    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1");
+    expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1", {
+      requireVerifiedOwner: false,
+    });
   });
 
   test("emails the resolved recipients on success with package and release risk", async () => {
@@ -723,7 +726,9 @@ describe("notifyPublicationDiscrepancy", () => {
       ]);
       dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
       await notifyPublicationDiscrepancy({ ...input, status });
-      expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1");
+      expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1", {
+        requireVerifiedOwner: false,
+      });
       expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
       for (const [, message] of emailMock.sendNotificationEmail.mock.calls) {
         expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
@@ -988,4 +993,61 @@ describe("notifyPublicationCoverageGap", () => {
       );
     },
   );
+});
+
+describe("notifyOrganizationInvite", () => {
+  function inviteInput(overrides = {}) {
+    return {
+      env: { BETTER_AUTH_URL: "https://drydock.test" },
+      db: {},
+      organizationId: "org_1",
+      organizationName: "Acme Corp",
+      email: "invitee@example.com",
+      role: "member",
+      token: "tok_1",
+      invitedByUserId: "user_1",
+      ...overrides,
+    };
+  }
+
+  function sentText() {
+    expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+    return emailMock.sendNotificationEmail.mock.calls[0][1].text;
+  }
+
+  test("leads with the inviter's address and quotes their display name", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({ invitedByName: "Ada Lovelace", invitedByEmail: "ada@example.com" }),
+    );
+    expect(sentText()).toContain(
+      'ada@example.com ("Ada Lovelace") invited you to join Acme Corp on Drydock as a member.',
+    );
+  });
+
+  test("flattens a stored multi-line name to one capped line", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({
+        invitedByName: `Ada\r\n\r\nSecond paragraph\u2028\u202E${"x".repeat(100)}`,
+        invitedByEmail: "ada@example.com",
+      }),
+    );
+    const text = sentText();
+    const inviteLine = text.split("\n").find((line) => line.includes("invited you"));
+    expect(inviteLine).toBe(
+      `ada@example.com ("Ada Second paragraph ${"x".repeat(43)}") invited you to join Acme Corp on Drydock as a member.`,
+    );
+    expect(text).not.toMatch(/[\u2028\u202E]/u);
+    // Greeting, invite line, link, account hint, expiry, sign-off: no extra paragraphs.
+    expect(text.split("\n\n")).toHaveLength(6);
+  });
+
+  test("falls back to the address, then to a generic sender", async () => {
+    await notifyOrganizationInvite(
+      inviteInput({ invitedByName: " \n ", invitedByEmail: "ada@example.com" }),
+    );
+    expect(sentText()).toContain("ada@example.com invited you to join Acme Corp");
+    emailMock.sendNotificationEmail.mockClear();
+    await notifyOrganizationInvite(inviteInput());
+    expect(sentText()).toContain("An organization owner invited you to join Acme Corp");
+  });
 });

@@ -1,6 +1,7 @@
 import { deletePublisherSetupJobsForUser } from "./publisher-setup-jobs";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
+import { toSingleLineText } from "../lib/platform/single-line-text";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
 import { reserveDeletedNpmPackages } from "./package-claims";
@@ -22,6 +23,9 @@ import {
   twoFactor,
   user,
 } from "./schema";
+
+// Matches the 80-character limit `parseOrganizationName` enforces on typed names.
+const ORGANIZATION_NAME_MAX_LENGTH = 80;
 
 /**
  * Resolve (and lazily create) the caller's personal organization.
@@ -59,7 +63,10 @@ export async function ensurePersonalOrganization(
   if (!owner) return null;
 
   const now = new Date();
-  const name = session.name || session.email || "Personal workspace";
+  const name =
+    toSingleLineText(session.name ?? "", ORGANIZATION_NAME_MAX_LENGTH) ||
+    session.email ||
+    "Personal workspace";
 
   await db
     .insert(organizations)
@@ -96,13 +103,19 @@ export async function getUserContact(db: AppDb, userId: string) {
   return row ?? null;
 }
 
+/**
+ * The organization's name as notification copy. Personal workspaces created
+ * before names were normalized can still hold their owner's raw multi-line
+ * name, so the result is flattened to one line for mail and Slack.
+ */
 export async function getOrganizationName(db: AppDb, organizationId: string) {
   const [row] = await db
     .select({ name: organizations.name })
     .from(organizations)
     .where(eq(organizations.id, organizationId))
     .limit(1);
-  return row?.name ?? null;
+  if (!row) return null;
+  return toSingleLineText(row.name, ORGANIZATION_NAME_MAX_LENGTH) || null;
 }
 
 export async function getOrganizationOwnerUserId(db: AppDb, organizationId: string) {
@@ -519,18 +532,27 @@ export async function deleteNotificationRecipient(
  * owner's email so an org that never touched the setting keeps today's behavior
  * (and a misconfiguration never silently drops a security alert). Addresses are
  * lowercased and de-duplicated.
+ *
+ * With `requireVerifiedOwner` (any deployment where verification can be
+ * completed), the owner fallback needs the owner's own address verified, so an
+ * unproven sign-up is never mailed on its own say-so. Configured recipients are
+ * not re-checked: adding one requires a verified caller, and older rows were
+ * added by organization members.
  */
 export async function resolveNotificationEmails(
   db: AppDb,
   organizationId: string,
   ownerUserId: string,
+  options: { requireVerifiedOwner: boolean },
 ): Promise<string[]> {
   const configured = await listNotificationRecipients(db, organizationId);
   if (configured.length > 0) {
     return dedupeEmails(configured.map((row) => row.email));
   }
   const owner = await getUserContact(db, ownerUserId);
-  return owner?.email ? dedupeEmails([owner.email]) : [];
+  if (!owner?.email) return [];
+  if (options.requireVerifiedOwner && !owner.emailVerified) return [];
+  return dedupeEmails([owner.email]);
 }
 
 function dedupeEmails(emails: string[]): string[] {

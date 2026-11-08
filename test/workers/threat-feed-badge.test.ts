@@ -28,6 +28,7 @@ import {
   seedWorkflowGate,
 } from "./helpers/seed";
 import backfillBadgeKeysSql from "../../scripts/backfill-badge-package-key.sql?raw";
+import { randomTestIp } from "./helpers/auth-http";
 
 // The digest seeded scans verified their staged bytes against.
 const REVIEWED_SHA1 = "a".repeat(40);
@@ -226,6 +227,8 @@ async function request(app: TestApp, path: string, options: RequestInit = {}) {
   const ctx = createExecutionContext();
   const headers = new Headers(options.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  // Requests without an address share one per-IP bucket, which these tests would exhaust.
+  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", randomTestIp());
   const res = await app.fetch(
     new Request(`http://test.local${path}`, { ...options, headers }),
     env,
