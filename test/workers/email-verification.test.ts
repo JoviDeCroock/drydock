@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
-import { callWorker, type Jar, signUp } from "./helpers/auth-http";
+import { callWorker, captureEmail, type Jar, randomTestIp, signUp } from "./helpers/auth-http";
 
 const ORIGIN = "http://example.com";
 const LOCAL_ORIGIN = "http://localhost:5173";
@@ -21,7 +21,7 @@ async function authPost(path: string, body: unknown, origin = ORIGIN) {
   const res = await worker.fetch(
     new Request(`${origin}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin },
+      headers: { "content-type": "application/json", origin, "cf-connecting-ip": randomTestIp() },
       body: JSON.stringify(body),
     }),
     env,
@@ -270,6 +270,67 @@ describe("email verification link", () => {
 
       expect(res.status).toBe(400);
       expect(json?.code).toBe("CHANGE_EMAIL_DISABLED");
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+});
+
+describe("verification resend limits", () => {
+  const resend = (email: string, mailEnv: typeof env, ip: string) =>
+    callWorker("POST", "/api/auth/send-verification-email", {
+      body: { email, callbackURL: "/verify-email" },
+      env: mailEnv,
+      ip,
+    });
+
+  test(
+    "stops mailing one address after five links an hour, sign-up included, without saying so",
+    async () => {
+      const mail = captureEmail();
+      const email = await signUp(new Map(), { env: mail.env });
+      const other = await signUp(new Map(), { env: mail.env });
+      expect(mail.sent.map((message) => message.to)).toEqual([email, other]);
+
+      const responses = [];
+      for (let i = 0; i < 6; i++) {
+        // A case change must not buy a fresh budget.
+        const address = i % 2 ? email.toUpperCase() : email;
+        responses.push(await resend(address, mail.env, `198.19.${i}.${(i % 200) + 1}`));
+      }
+      const [first] = responses;
+      expect(first?.res.status).toBe(200);
+      for (const { res, json } of responses) {
+        expect(res.status).toBe(first!.res.status);
+        expect(json).toEqual(first!.json);
+      }
+      // One at sign-up plus four resends; the last two were held back.
+      expect(mail.sent.filter((message) => message.to === email)).toHaveLength(5);
+
+      expect((await resend(other, mail.env, "198.19.9.1")).res.status).toBe(200);
+      expect(mail.sent.at(-1)?.to).toBe(other);
+
+      // The budget's row is keyed on a digest; the address itself is never stored.
+      const { results } = await env.DB.prepare(
+        "SELECT key FROM rate_limits WHERE key LIKE 'auth:verification-address:%'",
+      ).all<{ key: string }>();
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.some((row) => row.key.includes(email) || row.key.includes(other))).toBe(false);
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "answers one IP's sixth resend in an hour with 429",
+    async () => {
+      const mail = captureEmail();
+      const ip = `198.19.200.${Math.floor(Math.random() * 250) + 1}`;
+      for (let i = 0; i < 5; i++) {
+        expect((await resend(uniqueEmail(), mail.env, ip)).res.status).toBe(200);
+      }
+      const limited = await resend(uniqueEmail(), mail.env, ip);
+      expect(limited.res.status).toBe(429);
+      expect(limited.res.headers.get("retry-after")).toBeTruthy();
+      expect(mail.sent).toHaveLength(0);
     },
     WORKER_AUTH_TIMEOUT_MS,
   );

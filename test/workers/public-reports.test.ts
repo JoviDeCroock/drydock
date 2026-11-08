@@ -18,6 +18,7 @@ import {
   seedCompletedScan,
   seedWorkflowGate,
 } from "./helpers/seed";
+import { randomTestIp } from "./helpers/auth-http";
 
 // npm's status for the reviewed version. A share serves nothing until the
 // release is public, so the suite defaults to a release npm already published.
@@ -128,6 +129,8 @@ async function request(
   const ctx = createExecutionContext();
   const headers = new Headers(options.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  // Requests without an address share one per-IP bucket, which these tests would exhaust.
+  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", randomTestIp());
   if (options.organizationId) headers.set("x-organization-id", options.organizationId);
   const res = await app.fetch(
     new Request(`http://test.local${path}`, { ...options, headers }),

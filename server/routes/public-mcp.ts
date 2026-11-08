@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { canonicalOrigin } from "../lib/platform/http";
 import { createPublicMcpHandler } from "../lib/public-mcp";
-import { guardRateLimit } from "../lib/rate-limit";
+import { clientRateLimitKey, guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
 import { publicDiffRoutes } from "./public-diff";
 
@@ -19,17 +19,15 @@ publicMcpRoutes.on(["GET", "POST", "DELETE"], "/", async (c) => {
   if (requestOrigin !== undefined && requestOrigin !== origin) {
     return c.json({ error: "request origin not allowed" }, 403);
   }
-  const ip =
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown";
   const limited = await guardRateLimit(
     c,
-    { key: `public-mcp:${ip}`, limit: 120, windowMs: 60_000 },
+    { key: `public-mcp:${clientRateLimitKey(c)}`, limit: 120, windowMs: 60_000 },
     "rate limit exceeded",
   );
   if (limited) return limited;
 
+  // Forwarded as received, so the router derives the same client key.
+  const clientAddress = c.req.header("cf-connecting-ip");
   const handler = createPublicMcpHandler(
     // In-process dispatch preserves the public router's validation, per-IP
     // budgets and cache. No caller cookie, key, origin header, or target URL
@@ -39,7 +37,10 @@ publicMcpRoutes.on(["GET", "POST", "DELETE"], "/", async (c) => {
     async (path) =>
       publicDiffRoutes.fetch(
         new Request(new URL(path, origin), {
-          headers: { "cf-connecting-ip": ip, "x-drydock-client": "mcp" },
+          headers: {
+            ...(clientAddress ? { "cf-connecting-ip": clientAddress } : {}),
+            "x-drydock-client": "mcp",
+          },
         }),
         c.env,
         c.executionCtx,
