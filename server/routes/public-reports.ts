@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { attachDb } from "../middleware/db";
-import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
+import { RateLimitError, clientRateLimitKey, enforceRateLimit } from "../lib/rate-limit";
 import {
   findBadgeSupersession,
   listPostReleaseBadgeCandidates,
@@ -105,9 +105,6 @@ publicReportsRoutes.use("*", async (c, next) => {
 });
 
 publicReportsRoutes.use("*", async (c, next) => {
-  const ip =
-    c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (!ip) return next();
   const routePath = new URL(c.req.url).pathname.replace(/^\/public/, "");
   const isBadgeRequest = routePath.startsWith("/badge/");
   // The verdict is the badge's answer in another shape, so it spends the same
@@ -118,7 +115,7 @@ publicReportsRoutes.use("*", async (c, next) => {
       : PUBLIC_READ_RATE;
   try {
     await enforceRateLimit(c.env, {
-      key: `${rate.bucket}:${ip}`,
+      key: `${rate.bucket}:${clientRateLimitKey(c)}`,
       limit: rate.limit,
       windowMs: rate.windowMs,
     });

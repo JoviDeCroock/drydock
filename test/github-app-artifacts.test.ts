@@ -8,6 +8,7 @@ import {
 } from "../server/lib/github-app/artifacts";
 import { buildZip, concatBytes, type ZipEntry } from "./helpers/archive-fixtures";
 import { stubGithubFetch } from "./helpers/github-fetch-stub";
+import { githubRunResponse } from "./helpers/github-run-stub";
 
 function stubArtifacts(options: StubOptions) {
   const artifacts = options.artifacts ?? [
@@ -161,6 +162,40 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(bundle.artifacts[0]?.bytes).toEqual(fixture.wheel.bytes);
     expect(bundle.artifacts[0]?.sha256).toBe(fixture.wheelSha);
     expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  test("records the run attempt and accepts a ZIP matching its listed digest", async () => {
+    const fixture = await buildFixture();
+    const digest = `sha256:${await sha256Hex(fixture.bundleZip)}`;
+    stubGithubFetch({
+      artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, bundleZip: fixture.bundleZip, digest }],
+      runAttempt: 2,
+    });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
+
+    expect(bundle.runAttempt).toBe(2);
+    expect(bundle.listedArtifacts).toEqual([
+      { id: ARTIFACT_ID, name: ARTIFACT_NAME, sizeInBytes: fixture.bundleZip.length, digest },
+    ]);
+  });
+
+  test("fails closed when the downloaded ZIP does not match its listed digest", async () => {
+    const fixture = await buildFixture();
+    stubGithubFetch({
+      artifacts: [
+        {
+          id: ARTIFACT_ID,
+          name: ARTIFACT_NAME,
+          bundleZip: fixture.bundleZip,
+          digest: `sha256:${"0".repeat(64)}`,
+        },
+      ],
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({ code: "artifact_identity_inconsistent" });
   });
 
   test("collects every wheel and sdist in the bundle as the release set", async () => {
@@ -533,6 +568,8 @@ describe("fetchReleaseBundleWithToken", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        const run = githubRunResponse(request);
+        if (run) return run;
         if (request.url.includes("/actions/runs/")) {
           return new Response(
             JSON.stringify({
@@ -585,6 +622,8 @@ describe("fetchReleaseBundleWithToken", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         calls.push({ url: request.url, authorization: request.headers.get("authorization") });
+        const run = githubRunResponse(request);
+        if (run) return run;
         if (request.url.includes("/actions/runs/")) {
           return new Response(
             JSON.stringify({

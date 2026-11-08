@@ -38,7 +38,9 @@ export type NpmConnectionValidationStatus = "valid" | "invalid" | "unvalidated";
 
 export type GithubAppInstallationStatus = "active" | "suspended" | "uninstalled";
 
-export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
+// `superseded`: a newer deployment request for the same run and Environment
+// replaced this gate before it was decided, so it can no longer be approved.
+export type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored" | "superseded";
 
 export type DependencyReviewStatus = "queued" | "running" | "completed" | "failed" | "superseded";
 

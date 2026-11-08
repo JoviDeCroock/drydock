@@ -12,6 +12,7 @@ import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
 import { seedPersonalOrganization } from "./helpers/seed";
+import { githubRunResponse } from "../helpers/github-run-stub";
 
 // One sandbox result per file set; the last set repeats once exhausted.
 const buildFileSetLoader = (fileSets: SandboxFile[][]) =>
@@ -162,6 +163,8 @@ async function buildScenario(
         expires_at: "2099-01-01T00:00:00Z",
       });
     }
+    const run = githubRunResponse(request);
+    if (run) return run;
     if (request.url.includes(`/actions/runs/${runId}/artifacts`)) {
       return new Response(
         JSON.stringify({

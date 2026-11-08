@@ -447,6 +447,31 @@ async function takePasswordResetMailBudget(env: Cloudflare.Env, email: string): 
   }
 }
 
+// Verification mails one address may receive per hour, whichever IPs ask:
+// sign-up's own send and every resend draw on the same budget.
+const VERIFICATION_MAILS_PER_ADDRESS = 5;
+const VERIFICATION_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * `takePasswordResetMailBudget` for verification links. The resend endpoint
+ * takes an address from an anonymous body, so without it anyone could aim
+ * every IP they have at one unverified account's inbox.
+ */
+async function takeVerificationMailBudget(env: Cloudflare.Env, email: string): Promise<boolean> {
+  const digest = await sha256Hex(email.trim().toLowerCase());
+  try {
+    await enforceRateLimit(env, {
+      key: `auth:verification-address:${digest}`,
+      limit: VERIFICATION_MAILS_PER_ADDRESS,
+      windowMs: VERIFICATION_ADDRESS_WINDOW_MS,
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof RateLimitError) return false;
+    throw err;
+  }
+}
+
 // Never rejects: Better Auth revokes the account's sessions only after this
 // hook returns, and a failed flag write must not leave them alive.
 async function markEmailVerified(db: AppDb, userId: string): Promise<void> {
@@ -554,6 +579,11 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
       sendOnSignUp: emailVerificationEnabled,
       expiresIn: VERIFICATION_TOKEN_TTL_SECONDS,
       sendVerificationEmail: async ({ user, url }) => {
+        // Over budget answers exactly like a sent link, as the reset path does.
+        if (!(await takeVerificationMailBudget(env, user.email))) {
+          emitOperationalEvent("warn", "auth.verification_address_limited", {});
+          return;
+        }
         const result = await sendAccountVerificationEmail(env, { email: user.email, url });
         if (!result.ok) {
           throw new Error(`verification email failed: ${result.reason ?? "unknown error"}`);

@@ -80,7 +80,8 @@ async function seedGateRow(
     repositoryFullName: "octo/pkg",
     environment: "production",
     runId: 4242,
-    deploymentId: 1,
+    // Each seeded gate is its own deployment request; the key is unique.
+    deploymentId: Math.floor(Math.random() * 1e9) + 1,
     deploymentCallbackUrl:
       "https://api.github.com/repos/octo/pkg/actions/runs/4242/deployment_protection_rule",
     eventAction: "requested",

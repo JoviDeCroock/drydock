@@ -60,7 +60,7 @@ Hono registration order makes mounts above the session guard anonymous (`server/
 1. Serves only public release data: the public npm registry and public `pkg.pr.new` preview tarballs (`ecosystem=npm`), the `pypi.org` JSON API with bytes only from `files.pythonhosted.org` (`ecosystem=pypi`), the publisher's own AT Protocol identity and PDS (`ecosystem=atpm`, see [atpm](./atpm.md)). Never organization resources.
 2. Attaches no credentials, persists no review data to D1, never runs AI review. npm/PyPI provenance reads use the fixed-origin contract below.
 3. Returns `404` when `NPM_REGISTRY` is a custom origin, PyPI mode included; the card route shares this killswitch.
-4. With the Rate Limiting bindings configured, reaches D1 on no request path; `test/workers/public-diff-routes.test.ts` hands the routes a D1 binding that throws on use.
+4. With Rate Limiting bindings, no request path reaches D1 (`test/workers/public-diff-routes.test.ts` binds a D1 that throws on use).
 5. Abuse controls: per-IP limits before validation or fetch, a shared computation budget for cold diff and file requests, anonymous colo caching of published tarball bytes, versioned colo/KV caching of results, and sandbox archive caps.
 6. A share card never triggers analysis: on a cache miss it renders name and version with no numbers. Names and versions are XML-escaped, stripped of control characters and bidi overrides, and width-fitted.
 7. `pkg.pr.new` egress goes through the strict parser in `src/lib/pkg-pr-new.ts`: only `https://pkg.pr.new` (exact host, no port, credentials, query, or fragment) with a canonical `owner/repo/name@ref` path. `fetchPkgPrNewTarballStream` accepts no token option. Preview bytes never enter the shared colo tarball cache; results with a preview side are cached at most 15 minutes.
@@ -250,7 +250,8 @@ Sign-in never needs a verified address; unverified accounts can use the dashboar
 
 1. The guard reads Better Auth's `emailVerified` session flag; absent counts as verified, so a payload change never removes access.
 2. It is inert when `emailVerificationAvailable(env)` is false (no `SEND_EMAIL`, or a local `BETTER_AUTH_URL`), because no account could clear it. `GET /api/auth/config` reports it for the banner.
-3. `autoSignInAfterVerification: false`: verification never signs in, because Better Auth 2FA guards only `/sign-in/*` and `/verify-email` sessions would bypass password/TOTP. `hooks.after` on `/verify-email` refreshes a signed-in account's flag.
+3. Resend (`/send-verification-email`): 5/hour per IP and per address digest, sign-up's send included; over budget looks sent (`auth.verification_address_limited`).
+4. `autoSignInAfterVerification: false`: verification never signs in, because Better Auth 2FA guards only `/sign-in/*` and `/verify-email` sessions would bypass password/TOTP. `hooks.after` on `/verify-email` refreshes a signed-in account's flag.
 
 ### Password reset
 
@@ -290,23 +291,23 @@ Sessions are Better Auth cookies signed with `BETTER_AUTH_SECRET` (`server/lib/a
 
 ## Rate limiting
 
-`enforceRateLimit` (`server/lib/rate-limit.ts`, composing `server/lib/platform/rate-limit.ts` with its D1 fallback) is the single entry point. Its backend is Cloudflare's native Rate Limiting binding (per-colo fixed window, no D1 write).
+`enforceRateLimit` (`server/lib/rate-limit.ts`) is the single entry point: Cloudflare's native Rate Limiting binding (per-colo fixed window, no D1 write), with a D1 fallback.
 
 |Budget|Mechanism|Examples|
 |---|---|---|
 |Per-minute|One `ratelimits` binding per limit (`NATIVE_TIERS`: 10, 20, 30, 60, 120, 240); `period` may be only 10 or 60 s|Anonymous `/diff`, `compare`/`compare-file`/`versions`, GitHub proxy lookups, gate decisions, Slack channel listing, GitHub webhooks, API-key requests per IP and per key|
 |15-minute and hourly|D1 `rate_limits` counter behind a native per-minute burst guard at or above the long limit|Sign-in (10/15 min), sign-up (5/hour), two-factor (10/15 min), password reset, org creation, invitations, npm or Slack connect|
 
-1. Counters are per colo, not global: abuse controls, not quotas. Authorization is what protects data.
-2. `Retry-After` is derived from the wall-clock window, because the binding reports only allowed/blocked.
-3. Expired D1 buckets are swept by the scheduled handler (`pruneExpiredRateLimitBuckets`).
-4. Without `ratelimits` bindings every limit still holds via D1 and logs `rate_limit.tier_missing`. A new per-minute limit needs a matching tier and binding or it silently degrades to D1.
-5. GitHub does not retry rejected webhooks. Budgets are runaway-loop backstops; gate, installation, `pull_request`, `check_run`, and `check_suite` have separate buckets. A rejection logs `github_webhook.rate_limited` at error.
-6. Better Auth's own limiter runs only when `NODE_ENV` is `production`, per isolate, and is not relied on. IPv6 addresses are not grouped by prefix.
+1. Counters are per colo: abuse controls, not quotas.
+2. `Retry-After` is from the wall-clock window; `pruneExpiredRateLimitBuckets` sweeps expired D1 buckets.
+3. Without `ratelimits` bindings every limit holds via D1 (logging `rate_limit.tier_missing`); a new per-minute limit needs a tier and binding.
+4. GitHub never retries a rejected webhook, so per-event budgets are runaway-loop backstops; rejections log `github_webhook.rate_limited` at error.
+5. Better Auth's own limiter (production `NODE_ENV` only, per isolate) is not relied on.
+6. `clientRateLimitKey` keys by `cf-connecting-ip` only (not `x-forwarded-for`): IPv4 whole, IPv6 by /64, mapped and 6to4 as IPv4. A missing address shares one bucket, never skipped. A /48 still spans many buckets; edge/WAF limits back that up.
 
 ## Workflow gates and publisher setup
 
-1. Gates never publish: GitHub Environment protection holds the job; Drydock reviews artifacts and posts accept/reject. State binds original installation/repository/run/environment/callback URL/org; identities and digests are recomputed from bytes ([workflow gates](./workflow-gates.md)).
+1. Gates never publish: GitHub Environment protection holds the job; Drydock posts accept/reject. State binds installation/repository/run/environment/callback URL/org; approval needs the reviewed run attempt and artifacts; digests are rehashed from bytes ([workflow gates](./workflow-gates.md)).
 2. Setup requires verified session and `roleCanManageIntegrations`; reads use org-owned installations. Workflows/proposals/conversations are hostile evidence. Tools expose no shell, package execution, installation, external fetch, or GitHub writes.
 3. Persisted `createPullRequest: true` authorizes draft-PR writes. Each mutation rechecks authorization/membership/installation/killswitch/source revision/proposal digest/independent verdict. Multi-file commits are atomic; recovery never overwrites collaborator edits.
 4. The write token is repository-scoped and needs already-granted Contents, Pull requests, and Workflows permissions. Setup cannot grant permissions, enable environment protection, approve, merge, or publish. Setup status reports observed configuration; it never certifies workflow code.
