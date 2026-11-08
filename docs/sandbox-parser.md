@@ -87,6 +87,16 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 
 The first 64 bytes of every skipped body are kept and sniffed (`sniffNativeArtifact`) into `native-elf`, `native-macho`, `native-pe`, `native-wasm`, so extensionless platform binaries still raise `file.native-artifact`.
 
+## Text classification
+
+| Body | Flag | Text sample |
+| --- | --- | --- |
+| UTF-8 with no NUL and C0 controls ≤ max(5, 2% of length) | none | decoded as is |
+| Otherwise, script source (`isScriptSourcePath`: JS/TS, Python, `.pth`, `.gyp`, shell, PowerShell, batch) or a `#!` file, native magic or not | `control-bytes` | decoded, controls other than tab/LF/VT/FF/CR shown as U+FFFD; raises `file.control-bytes` |
+| Otherwise | `binary` | none |
+
+`decodeBodyText` decides. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict on source would hide code from rules, AI evidence and the injection screen.
+
 ## Archive digests (`digestArchiveStream`)
 
 | Ecosystem | Algorithms requested | Checked against |

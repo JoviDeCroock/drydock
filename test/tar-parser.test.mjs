@@ -205,6 +205,58 @@ describe("decodeText", () => {
   });
 });
 
+describe("control bytes in source files", () => {
+  const payload = "require('child_process').exec('true');\n";
+
+  test("a source file a NUL would mark binary keeps a text sample with the bytes replaced", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: `/*\0*/${payload}` },
+      { name: "package/hook.py", body: `#${"\x01".repeat(64)}\nimport os\n` },
+      { name: "package/site.pth", body: "#\0\nimport os\n" },
+    ]);
+    const files = await parse(tar);
+    expect(files.map((file) => [file.path, file.flags, file.textSample])).toEqual([
+      ["index.js", ["control-bytes"], `/*�*/${payload}`],
+      ["hook.py", ["control-bytes"], `#${"�".repeat(64)}\nimport os\n`],
+      ["site.pth", ["control-bytes"], "#�\nimport os\n"],
+    ]);
+  });
+
+  test("an extensionless script is recognized by its shebang", async () => {
+    const tar = buildTar([
+      { name: "package/bin/cli", body: `#!/usr/bin/env node\n/*\0*/${payload}` },
+    ]);
+    const [file] = await parse(tar);
+    expect(file.flags).toEqual(["control-bytes"]);
+    expect(file.textSample).toContain("child_process");
+  });
+
+  test("data files stay binary while a source path with native magic is still decoded", async () => {
+    const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]);
+    const peLookalike = `MZ/*${"\0".repeat(62)}*/=1;\n${payload}`;
+    const tar = buildTar([
+      { name: "package/data.bin", body: `/*\0*/${payload}` },
+      { name: "package/addon.js", body: elf },
+      { name: "package/loader.js", body: peLookalike },
+    ]);
+    const files = await parse(tar);
+    expect(files.map((file) => [file.path, file.flags])).toEqual([
+      ["data.bin", ["binary"]],
+      ["addon.js", ["native-elf", "control-bytes"]],
+      ["loader.js", ["native-pe", "control-bytes"]],
+    ]);
+    expect(files[0].textSample).toBeUndefined();
+    expect(files[2].textSample).toContain("child_process");
+  });
+
+  test("source with only tab, newline, vertical tab and form feed controls is untouched", async () => {
+    const body = "a\tb\nc\x0bd\x0ce\r\n";
+    const [file] = await parse(buildTar([{ name: "package/index.js", body }]));
+    expect(file.flags).toEqual([]);
+    expect(file.textSample).toBe(body);
+  });
+});
+
 describe("readTar regular files", () => {
   test("decodes a regular file with text body", async () => {
     const tar = buildTar([{ name: "package/index.js", body: "export const x = 1;\n" }]);
@@ -3356,6 +3408,8 @@ describe("rendered sandbox parser source", () => {
   const SANDBOX_EXPORT_NAMES = [
     "readString",
     "decodeText",
+    "isScriptSourcePath",
+    "decodeBodyText",
     "isPlainObject",
     "normalizeStringRecord",
     "normalizePeerDependenciesMeta",

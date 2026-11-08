@@ -171,7 +171,7 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 |Oversized baseline (previous-version) archive|Degrades to a no-baseline scan; the staged review does not fail|
 |PyPI artifact over a cap on the anonymous public diff|Dropped from both sides of the pair, never one, and disclosed as a notice; transient download failures stay fatal|
 
-Streamed hashes prove skipped bodies equal baseline bytes; verify changed uninspected bytes out of band. An extensionless Linux/macOS binary raises the same `file.native-artifact` finding as a Windows `.exe`.
+Streamed hashes prove skipped bodies equal baseline bytes; verify changed uninspected bytes out of band. Control bytes never make script source `binary` ([parser](./sandbox-parser.md#text-classification)).
 
 **npm install hooks.** Consumer install lifecycle hooks for npm tarballs are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time and are not consumer-install evidence unless other evidence shows they changed the shipped artifact.
 

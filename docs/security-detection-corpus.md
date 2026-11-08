@@ -139,6 +139,7 @@ Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (
 | `diff.bin-added` | deterministic | anchor | no |
 | `diff.credential-file-added` | deterministic | anchor | no |
 | `diff.large-new-file` | deterministic | anchor | no |
+| `file.control-bytes` | deterministic | anchor | no |
 | `file.large-binary` | deterministic | anchor | no |
 | `file.native-artifact` | deterministic | anchor | no |
 | `file.outside-files-list` | deterministic | anchor | no |

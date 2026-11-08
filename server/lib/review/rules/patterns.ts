@@ -621,8 +621,13 @@ const URL_CREDENTIALS_FINDING_PATTERN = new RegExp(
 // unquoted value free of code punctuation and operators (`=` only as trailing
 // base64 padding) that runs to whitespace or end of text: `.env`/YAML
 // `KEY=value`, including `P@ssw0rd!` style values, but not `x=n.token!==void 0`.
+//
+// The value may also end before a `:` or `=`. Without that, a run of
+// `token=token=…` that ends at a `(` failed from every key in it after reading
+// to the end of the run (quadratic); now the first key matches up to the last
+// separator, and any key inside a failing value sits in its first 12 chars.
 const GENERIC_SECRET_REDACTION_PATTERN =
-  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]])/gi;
+  /(?<![A-Za-z0-9])((?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|client[_-]?secret)\s*[:=]\s*)['"]?[^'"\s()]{12,}(?=$|[\s'",;}\]:=])/gi;
 //
 // Code names its secrets far more often than it holds them. A real sweep of
 // popular packages found the generic key/value shape matching, never a leak:
@@ -725,15 +730,29 @@ const SLACK_WEBHOOK_FINDING_PATTERN =
 // so the finding side needs a 40-char base64 run within the first 400
 // characters after the header (room for `Proc-Type`/`Version:` headers). The
 // window is bounded and stops at the next `-----`, keeping the scan linear.
+//
+// The body likewise stops at the next `-----`, which no key body contains, so
+// a run of headers without END lines costs one pass instead of a rescan to the
+// end of the text from every header. Single dashes (`Proc-Type`, `DEK-Info`)
+// are capped at 64 per body: an unbounded alternation per dash would overflow
+// the regex backtrack stack on a long run of them. The finding side checks for
+// the END line before trying window offsets, so a failing body is read once.
 const PRIVATE_KEY_LABEL = "(?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?";
+const PRIVATE_KEY_BODY_TO_END = String.raw`[^-]*(?:-(?!----)[^-]*){0,64}-----END ${PRIVATE_KEY_LABEL}-----`;
 const PRIVATE_KEY_PATTERN = new RegExp(
-  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----${PRIVATE_KEY_BODY_TO_END}`,
   "g",
 );
 const PRIVATE_KEY_FINDING_PATTERN = new RegExp(
-  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----(?:[^-]|-(?!----)){0,400}?[A-Za-z0-9+/]{40}[\s\S]*?-----END ${PRIVATE_KEY_LABEL}-----`,
+  String.raw`-----BEGIN ${PRIVATE_KEY_LABEL}-----(?=${PRIVATE_KEY_BODY_TO_END})(?:[^-]|-(?!----)){0,400}?[A-Za-z0-9+/]{40}${PRIVATE_KEY_BODY_TO_END}`,
   "g",
 );
+
+// A JWT starts a base64url run (the letter of a `\n` escape aside, as for AWS
+// keys above); matching from every `eyJ` inside one long run would rescan the
+// rest of the run from each.
+const JWT_PATTERN =
+  /(?<!(?<!\\)[A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g;
 
 export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/npm_[A-Za-z0-9]{20,}/g, "[REDACTED_NPM_TOKEN]"],
@@ -747,7 +766,7 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/rk_(?:live|test)_[0-9a-zA-Z]{16,}/g, "[REDACTED_STRIPE_KEY]"],
   [/xox[abprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED_SLACK_TOKEN]"],
   [SLACK_WEBHOOK_PATTERN, "[REDACTED_SLACK_WEBHOOK]"],
-  [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]"],
+  [JWT_PATTERN, "[REDACTED_JWT]"],
   [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
   [PRIVATE_KEY_PATTERN, "[REDACTED_PRIVATE_KEY]"],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],

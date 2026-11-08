@@ -1,6 +1,11 @@
 import type { Finding } from "../types";
-import { tag } from "./helpers";
-import type { RuleContext } from "./context";
+import {
+  javascriptSeedPaths,
+  lifecycleScriptSeedPaths,
+  normalizeReachabilityPath,
+} from "./reachability";
+import { tag, testScope } from "./helpers";
+import { isUnreachableTestFile, type RuleContext } from "./context";
 
 const NATIVE_ARTIFACT_EXTENSION = /\.(node|dll|so|dylib|exe|wasm)$/i;
 
@@ -35,6 +40,11 @@ function withSha256(evidence: string, sha256: string | undefined): string {
 // execute or ship outside JavaScript policy checks and resist manual audit.
 export function binaryFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
+  let seeds: Set<string> | undefined;
+  const isSeed = (path: string) => {
+    seeds ??= declaredSeedPaths(ctx);
+    return seeds.has(normalizeReachabilityPath(path));
+  };
 
   for (const file of ctx.files) {
     const changed = ctx.diffByPath.get(file.path)?.status;
@@ -50,7 +60,31 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
       );
     }
     const formatLabel = nativeFormatLabel(file.flags);
-    if (formatLabel || NATIVE_ARTIFACT_EXTENSION.test(file.path)) {
+    const native = Boolean(formatLabel) || NATIVE_ARTIFACT_EXTENSION.test(file.path);
+    // The parser flags an empty body `binary` too; it hides nothing.
+    const hiddenEntrypoint =
+      !native && file.size > 0 && file.flags.includes("binary") && isSeed(file.path);
+    if (file.flags.includes("control-bytes") || hiddenEntrypoint) {
+      findings.push(
+        testScope(
+          isUnreachableTestFile(ctx, file.path),
+          false,
+          tag("fileControlBytes", {
+            severity: changed === "added" || changed === "modified" ? "high" : "medium",
+            file: file.path,
+            evidence: withSha256(
+              hiddenEntrypoint
+                ? "manifest entrypoint or install script target reads as binary"
+                : "source file contains raw NUL or control bytes",
+              file.sha256,
+            ),
+            reason:
+              "raw control bytes make source read as binary to review tools while interpreters still run it; legitimate source writes them as escapes",
+          }),
+        ),
+      );
+    }
+    if (native) {
       findings.push(
         tag("fileNativeArtifact", {
           severity: "high",
@@ -83,4 +117,17 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
+}
+
+// Node runs a manifest entrypoint or a file an install script names whatever
+// its extension, so a body with no text sample there is code nobody reviewed.
+// Imported files are left out: bundler-targeted code imports images and fonts.
+// Python's entrypoints are `.py` modules, which the parser already decodes.
+function declaredSeedPaths(ctx: RuleContext): Set<string> {
+  if (ctx.codePatternSet === "python") return new Set();
+  return javascriptSeedPaths(
+    ctx.files,
+    ctx.packageJson,
+    lifecycleScriptSeedPaths(ctx.files, ctx.scripts, ctx.implicitScripts),
+  );
 }

@@ -52,6 +52,37 @@ export function decodeText(bytes) {
   return text;
 }
 
+// Interpreters run these despite raw control bytes in a comment or string
+// (Node, CPython, `.pth` line processing, shells), so for them a byte-level
+// "binary" verdict would hide executable code from every reviewer.
+export function isScriptSourcePath(path) {
+  const normalized = String(path || "")
+    .replaceAll("\\", "/")
+    .toLowerCase();
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return /\.(?:[cm]?[jt]sx?|pyw?|pth|gypi?|sh|bash|zsh|ps1|psm1|bat|cmd)$/.test(basename);
+}
+
+// Text sample and classification flag for a retained body. Script source that
+// decodeText rejects is decoded anyway, with the control bytes (other than
+// whitespace: tab, LF, VT, FF, CR) shown as U+FFFD so offsets and lines stay
+// put, and flagged `control-bytes` instead of `binary`. A native-looking magic
+// prefix does not exempt a source path: `MZ` is also a JS identifier and a
+// shell skips a failing first line.
+export function decodeBodyText(path, body) {
+  const text = decodeText(body);
+  if (text) return { text, flag: null };
+  const shebang = body[0] === 0x23 && body[1] === 0x21;
+  if (shebang || isScriptSourcePath(path)) {
+    const visible = new TextDecoder("utf-8", { fatal: false })
+      .decode(body)
+      // eslint-disable-next-line no-control-regex -- replacing control bytes is the point
+      .replace(/[\0-\x08\x0e-\x1f]/g, "\uFFFD");
+    if (visible) return { text: visible, flag: "control-bytes" };
+  }
+  return { text: "", flag: "binary" };
+}
+
 export function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -959,8 +990,8 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   // meaning. Binary/control-character classification always reads the full body,
   // so the `binary` flag and the hash stay identical to an uncapped parse; only
   // how much of the decoded text is carried changes.
-  const text = decodeText(body);
-  if (!text) flags.push("binary");
+  const { text, flag } = decodeBodyText(path, body);
+  if (flag) flags.push(flag);
   const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
   const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
   // Deliberately NOT the `truncated` flag the persistence layer adds to a

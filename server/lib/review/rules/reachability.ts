@@ -81,6 +81,22 @@ export interface ReachabilityLexing {
   gaveUp: boolean;
 }
 
+// The files a manifest entrypoint or seed path names, without following their
+// imports.
+export function javascriptSeedPaths(
+  files: FileRecord[],
+  packageJson: PackageJsonSummary | null,
+  extraSeedPaths: string[] = [],
+): Set<string> {
+  const byNormalizedPath = new Map(files.map((file) => [stripPackagePrefix(file.path), file]));
+  const seeds = new Set<string>();
+  for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
+    const resolved = resolveModulePath(candidate, byNormalizedPath);
+    if (resolved) seeds.add(resolved);
+  }
+  return seeds;
+}
+
 export function javascriptReachableFrom(
   files: FileRecord[],
   seedCandidates: string[],

@@ -36,6 +36,7 @@ import {
   createVscodeExtensionReview,
 } from "../../server/lib/ecosystems/vscode";
 import { computeScanRiskBreakdown } from "../../server/lib/review/risk";
+import { decodeBodyText } from "../../server/lib/tar-parser.js";
 import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
 import { createProvenanceCorpusReview } from "../helpers/provenance-security-corpus.mjs";
 
@@ -428,11 +429,21 @@ function pushPastWindow(code) {
   return padding + code;
 }
 
+// A raw NUL in a leading comment, which the interpreter ignores. Re-classified
+// through the parser's own decoder, so the variant carries the text sample and
+// flags the sandbox would produce for those bytes.
+function controlBytePadding(code, file) {
+  const { text, flag } = decodeBodyText(file.path, new TextEncoder().encode(`/*\0*/${code}`));
+  const flags = flag ? [...file.flags, flag] : file.flags;
+  return text ? { ...file, flags, textSample: text } : { ...file, flags, textSample: undefined };
+}
+
 const EVASION_TRANSFORMS = {
   splitStringLiterals,
   bracketifyMemberAccess,
   base64Wrap,
   pushPastWindow,
+  controlBytePadding,
 };
 
 // The transforms rewrite JavaScript; wrapping a README or a binding.gyp in
@@ -442,7 +453,8 @@ function applyTransform(fx, transform) {
     if (!RELEASE_INJECTION_CODE_FILE.test(file.path) || typeof file.textSample !== "string") {
       return file;
     }
-    return { ...file, textSample: transform(file.textSample) };
+    const out = transform(file.textSample, file);
+    return typeof out === "string" ? { ...file, textSample: out } : out;
   });
   return { ...fx, stagedFiles };
 }

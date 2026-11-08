@@ -94,6 +94,7 @@ Release injection:
 | `splitStringLiterals` | `'child_process'` → `'chi'+'ld_process'` | Constant folding (`server/lib/review/rules/normalize.ts`). |
 | `bracketifyMemberAccess` | `process.env` → `process['e'+'nv']` | Folding: concat → `process['env']` → `process.env`. |
 | `base64Wrap` | Payload wrapped in `eval(atob("…"))` | Literal decodes folded as data; a decode consumed by a code-running call is scanned as code (marked obfuscated). |
+| `controlBytePadding` | Raw NUL in a leading comment, re-classified by the parser's `decodeBodyText` | Script source keeps a sample (`control-bytes`); `file.control-bytes` reports the bytes. |
 | `pushPastWindow` | > 64 KB filler before the payload | The sandbox returns whole files (`summarizeFile` does not clip); truncation applies only to the persisted display sample (`scanFileRowsForArtifacts`). Kept as a guard against reintroducing a scan-time window. |
 
 ### Real-sanitized frontier cases
