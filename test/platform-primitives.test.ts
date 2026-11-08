@@ -251,6 +251,32 @@ describe("single-line text", () => {
     expect(toSingleLineText(`ab${family}cd`, 3)).toBe(`ab${family}`);
   });
 
+  test("bounds UTF-16 length even when one grapheme is enormous", () => {
+    const hugeGraphemes = [
+      "\u{1F468}\u200D".repeat(20_000) + "\u{1F468}",
+      "\u1100".repeat(50_000),
+      "\u0915\u094D".repeat(20_000) + "\u0915",
+    ];
+    for (const huge of hugeGraphemes) {
+      const result = toSingleLineText(`Ada ${huge}`, 64);
+      expect(result.length).toBeLessThanOrEqual(256);
+      expect(result.startsWith("Ada")).toBe(true);
+    }
+    const twoSmall = "\u{1F468}\u200D\u{1F469}";
+    expect(toSingleLineText(twoSmall.repeat(40), 64)).toBe(twoSmall.repeat(40));
+    expect(toSingleLineText(twoSmall.repeat(80), 64).length).toBeLessThanOrEqual(256);
+  });
+
+  test("keeps subdivision flags and strips tag characters anywhere else", () => {
+    const england = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+    expect(toSingleLineText(`Ada ${england}`, 80)).toBe(`Ada ${england}`);
+    expect(hasLineBreakingOrInvisibleCharacters(`Ada ${england}`)).toBe(false);
+    const bareTags = "\u{E0067}\u{E0062}\u{E007F}";
+    expect(toSingleLineText(`Ada${bareTags}`, 80)).toBe("Ada");
+    expect(hasLineBreakingOrInvisibleCharacters(`Ada${bareTags}`)).toBe(true);
+    expect(toSingleLineText("\u{1F3F4}\u{E0067}\u{E0062}", 80)).toBe("\u{1F3F4}");
+  });
+
   test("reports the characters it would remove", () => {
     expect(hasLineBreakingOrInvisibleCharacters("Ada Lovelace")).toBe(false);
     expect(hasLineBreakingOrInvisibleCharacters("Ada\u2028")).toBe(true);

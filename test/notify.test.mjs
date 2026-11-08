@@ -427,7 +427,7 @@ describe("notifyScanCompletion", () => {
 
     expect(dbMock.getOrganizationOwnerUserId).toHaveBeenCalledWith({}, "org_1");
     expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith({}, "org_1", "user_1", {
-      requireVerifiedSenders: false,
+      requireVerifiedOwner: false,
     });
   });
 
@@ -727,7 +727,7 @@ describe("notifyPublicationDiscrepancy", () => {
       dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
       await notifyPublicationDiscrepancy({ ...input, status });
       expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(input.db, "org_1", "user_1", {
-        requireVerifiedSenders: false,
+        requireVerifiedOwner: false,
       });
       expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
       for (const [, message] of emailMock.sendNotificationEmail.mock.calls) {

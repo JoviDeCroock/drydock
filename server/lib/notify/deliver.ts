@@ -70,7 +70,7 @@ export async function deliverOrganizationNotification(
   const emailDelivery = (async (): Promise<NotificationDeliveryOutcome> => {
     if (!notification.email) return "no_destination";
     const recipients = await resolveNotificationEmails(db, organizationId, actorUserId, {
-      requireVerifiedSenders: emailVerificationAvailable(env),
+      requireVerifiedOwner: emailVerificationAvailable(env),
     });
     if (recipients.length === 0) {
       await recordDeliveryEvent(db, {

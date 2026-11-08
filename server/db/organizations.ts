@@ -533,36 +533,25 @@ export async function deleteNotificationRecipient(
  * (and a misconfiguration never silently drops a security alert). Addresses are
  * lowercased and de-duplicated.
  *
- * With `requireVerifiedSenders` (any deployment where verification can be
- * completed), an address is only mailed on the word of a proven one: the owner
- * fallback needs the owner's own address verified, and a configured recipient
- * whose adder is still unverified is skipped (rows that predate the verified-add
- * rule). A recipient whose adder was deleted stays; an admin added it.
+ * With `requireVerifiedOwner` (any deployment where verification can be
+ * completed), the owner fallback needs the owner's own address verified, so an
+ * unproven sign-up is never mailed on its own say-so. Configured recipients are
+ * not re-checked: adding one requires a verified caller, and older rows were
+ * added by organization members.
  */
 export async function resolveNotificationEmails(
   db: AppDb,
   organizationId: string,
   ownerUserId: string,
-  options: { requireVerifiedSenders: boolean },
+  options: { requireVerifiedOwner: boolean },
 ): Promise<string[]> {
-  const configured = await db
-    .select({
-      email: organizationNotificationRecipients.email,
-      adderVerified: user.emailVerified,
-    })
-    .from(organizationNotificationRecipients)
-    .leftJoin(user, eq(user.id, organizationNotificationRecipients.createdByUserId))
-    .where(eq(organizationNotificationRecipients.organizationId, organizationId))
-    .orderBy(asc(organizationNotificationRecipients.createdAt));
-  const trusted = options.requireVerifiedSenders
-    ? configured.filter((row) => row.adderVerified !== false)
-    : configured;
-  if (trusted.length > 0) {
-    return dedupeEmails(trusted.map((row) => row.email));
+  const configured = await listNotificationRecipients(db, organizationId);
+  if (configured.length > 0) {
+    return dedupeEmails(configured.map((row) => row.email));
   }
   const owner = await getUserContact(db, ownerUserId);
   if (!owner?.email) return [];
-  if (options.requireVerifiedSenders && !owner.emailVerified) return [];
+  if (options.requireVerifiedOwner && !owner.emailVerified) return [];
   return dedupeEmails([owner.email]);
 }
 

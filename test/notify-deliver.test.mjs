@@ -71,7 +71,7 @@ describe("deliverOrganizationNotification", () => {
     await deliverOrganizationNotification(env, db, notification());
 
     expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "owner_1", {
-      requireVerifiedSenders: false,
+      requireVerifiedOwner: false,
     });
     expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(2);
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
@@ -104,7 +104,7 @@ describe("deliverOrganizationNotification", () => {
     await deliverOrganizationNotification(env, db, notification());
 
     expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "sweep_actor", {
-      requireVerifiedSenders: false,
+      requireVerifiedOwner: false,
     });
     // `every` on an empty array is true, so assert the events exist before
     // asserting what they attribute to.

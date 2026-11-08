@@ -59,7 +59,8 @@ export function EmailVerificationBanner() {
           <span class="text-ink-muted leading-[1.6]">
             You can review published releases now. Connecting npm or the GitHub App, recording a
             decision, sharing a report, and anything that emails someone else (invites, notification
-            recipients, package monitoring) wait for the link in that email.
+            recipients, package monitoring) wait for the link in that email. Release alert emails to
+            this address are paused until then.
           </span>
           <Show when={error}>{(message) => <span class="text-danger-text">{message}</span>}</Show>
         </div>

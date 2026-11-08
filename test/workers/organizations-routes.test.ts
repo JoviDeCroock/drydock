@@ -5,7 +5,6 @@ import { createDb } from "../../server/db/client";
 import { addOrganizationMember, getOrganizationRole } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import {
-  addNotificationRecipient,
   listNotificationRecipients,
   resolveNotificationEmails,
 } from "../../server/db/organizations";
@@ -17,7 +16,7 @@ import type { Bindings } from "../../server/types";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedCompletedScan, seedUser } from "./helpers/seed";
 
-const ENFORCED = { requireVerifiedSenders: true };
+const ENFORCED = { requireVerifiedOwner: true };
 
 const mountOrganizations = (app: TestApp) => {
   app.route("/api/v1/organizations", organizationsRoutes);
@@ -620,7 +619,7 @@ describe("organization notification recipients", () => {
   });
 });
 
-describe("unverified addresses receive no organization mail", () => {
+describe("an unverified owner receives no fallback mail", () => {
   test("the owner fallback needs a verified owner where verification is enforced", async () => {
     const owner = await seedUser({ emailVerified: false });
     const db = createDb(env.DB);
@@ -629,31 +628,9 @@ describe("unverified addresses receive no organization mail", () => {
     ).toEqual([]);
     expect(
       await resolveNotificationEmails(db, owner.organizationId, owner.userId, {
-        requireVerifiedSenders: false,
+        requireVerifiedOwner: false,
       }),
     ).toEqual([owner.email]);
-  });
-
-  test("a recipient added by a still-unverified account is skipped", async () => {
-    const owner = await seedUser();
-    const unverifiedAdmin = await seedUser({ emailVerified: false });
-    const db = createDb(env.DB);
-    await addNotificationRecipient(db, {
-      organizationId: owner.organizationId,
-      email: "legacy@example.com",
-      createdByUserId: unverifiedAdmin.userId,
-    });
-    expect(
-      await resolveNotificationEmails(db, owner.organizationId, owner.userId, ENFORCED),
-    ).toEqual([owner.email]);
-    await addNotificationRecipient(db, {
-      organizationId: owner.organizationId,
-      email: "team@example.com",
-      createdByUserId: owner.userId,
-    });
-    expect(
-      await resolveNotificationEmails(db, owner.organizationId, owner.userId, ENFORCED),
-    ).toEqual(["team@example.com"]);
   });
 
   test("a published scan finished for an unverified owner sends no email", async () => {

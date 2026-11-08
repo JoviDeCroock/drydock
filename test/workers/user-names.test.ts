@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
 import { createAuth } from "../../server/lib/auth";
+import { isAcceptableTypedUserName, normalizeUserName } from "../../server/lib/auth/user-name";
 import { callWorker, type Jar, PASSWORD, signUp } from "./helpers/auth-http";
 
 const WORKER_AUTH_TIMEOUT_MS = 15_000;
@@ -68,6 +69,24 @@ describe("account display names", () => {
       });
       expect(accepted.res.status).toBe(200);
       expect(await storedName(email)).toBe("Ada King");
+    },
+    WORKER_AUTH_TIMEOUT_MS,
+  );
+
+  test(
+    "a name whose single grapheme is enormous is refused when typed and bounded when stored",
+    async () => {
+      const zwjChain = "\u{1F468}\u200D".repeat(20_000) + "\u{1F468}";
+      for (const huge of [zwjChain, "\u1100".repeat(50_000), "\u0915\u094D".repeat(20_000)]) {
+        expect(isAcceptableTypedUserName(`Ada ${huge}`)).toBe(false);
+        expect(normalizeUserName(`Ada ${huge}`).length).toBeLessThanOrEqual(256);
+      }
+      const email = uniqueEmail();
+      const { res, json } = await callWorker("POST", "/api/auth/sign-up/email", {
+        body: { name: `Ada ${zwjChain}`, email, password: PASSWORD },
+      });
+      expect(res.status).toBe(400);
+      expect(json).toMatchObject({ code: "INVALID_NAME" });
     },
     WORKER_AUTH_TIMEOUT_MS,
   );
