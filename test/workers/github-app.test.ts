@@ -350,10 +350,16 @@ describe("github-app routes", () => {
     });
 
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
+    // The listing spans every repository, so only the permission is narrowed.
+    expect(JSON.parse(String(calls[0][1].body))).toEqual({ permissions: { metadata: "read" } });
     expect(String(calls[2][0])).toBe(
       "https://api.github.com/installation/repositories?per_page=100&page=2",
     );
+    expect([String(calls[3][0]), calls[3][1].method]).toEqual([
+      "https://api.github.com/installation/token",
+      "DELETE",
+    ]);
   });
 
   test("GET /installations/:id/repositories rejects installs the org does not own", async () => {
@@ -422,10 +428,38 @@ describe("github-app routes", () => {
     });
 
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+    expect(JSON.parse(String(calls[0][1].body))).toEqual({
+      repositories: ["alpha"],
+      permissions: { actions: "read" },
+    });
     expect(String(calls[1][0])).toBe(
       "https://api.github.com/repos/octo/alpha/environments?per_page=100",
     );
+    expect([String(calls[2][0]), calls[2][1].method]).toEqual([
+      "https://api.github.com/installation/token",
+      "DELETE",
+    ]);
+  });
+
+  test("GET /installations/:id/repositories/:owner/:repo/environments returns 403 when the install cannot scope a token to the repo", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"message":"raw GitHub detail"}', { status: 422 }));
+
+    const res = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId }),
+      "GET",
+      `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
+    );
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe("repository_not_accessible");
+    expect(body.error).toMatch(/cannot grant the repository access this request needs$/);
+    expect(body.error).not.toContain("raw GitHub detail");
   });
 
   test("GET /installations/:id/repositories/:owner/:repo/environments returns 403 when repo is unreachable", async () => {

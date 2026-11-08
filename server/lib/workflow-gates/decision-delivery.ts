@@ -30,6 +30,7 @@ export async function deliverGateDecision(
     config,
     installationExternalId,
     callbackUrl: gate.deploymentCallbackUrl,
+    repositoryId: gate.repositoryId,
     environment: gate.environment,
     state: gate.decision,
     comment: gate.decisionComment ?? "",

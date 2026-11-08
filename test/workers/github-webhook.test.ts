@@ -549,9 +549,13 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
     const callbackFetch = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }),
     );
+    const revokeFetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }),
+    );
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/access_tokens")) return tokenFetch(input, init);
+      if (url.endsWith("/installation/token")) return revokeFetch(input, init);
       return callbackFetch(input, init);
     }) as unknown as typeof fetch;
 
@@ -576,11 +580,19 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
       installationExternalId: "1010",
       callbackUrl:
         "https://api.github.com/repos/octo/example/actions/runs/77/deployment_protection_rule",
+      repositoryId: 4242,
       environment: "pypi",
       state: "approved",
       comment: "Drydock review passed",
     });
 
+    // The decision token can answer this repository's deployment gate and nothing else.
+    expect(JSON.parse(tokenFetch.mock.calls[0][1]?.body as string)).toEqual({
+      repository_ids: [4242],
+      permissions: { deployments: "write" },
+    });
+    expect(revokeFetch).toHaveBeenCalledOnce();
+    expect(revokeFetch.mock.calls[0][1]?.method).toBe("DELETE");
     expect(callbackFetch).toHaveBeenCalledOnce();
     const [callbackUrl, callbackInit] = callbackFetch.mock.calls[0];
     expect(callbackUrl).toBe(

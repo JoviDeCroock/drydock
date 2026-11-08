@@ -161,6 +161,36 @@ describe("dependency review job", () => {
     },
   );
 
+  test("a review's installation token reaches only its repository and is revoked after", async () => {
+    const { name, api, input } = await scenario();
+    await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+
+    await runDependencyReviewJob(input);
+
+    const mints = api.requests.filter((r) => r.url.endsWith("/access_tokens"));
+    expect(mints.map((r) => r.body)).toEqual([
+      {
+        repository_ids: [5151],
+        permissions: { checks: "write", contents: "read", pull_requests: "read", metadata: "read" },
+      },
+    ]);
+    const last = api.requests.at(-1);
+    expect(last && new URL(last.url).pathname).toBe("/installation/token");
+  });
+
+  test("a review fails, rather than staying queued, when its repository token is refused", async () => {
+    const { pr, api, review, input } = await scenario();
+    pr.tokenStatus = 422;
+
+    await runDependencyReviewJob(input);
+
+    expect(await readReview(review.id)).toMatchObject({
+      status: "failed",
+      failureReason: "installation cannot reach the repository",
+    });
+    expect(api.checkRunCreates).toEqual([]);
+  });
+
   test("a bump with nothing to hold completes the check as success", async () => {
     const { name, api, review, input } = await scenario();
     await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
@@ -1664,9 +1694,10 @@ describe("approving held updates", () => {
 
     expect(await approvals(seeded.organizationId)).toEqual([]);
     expect((await readReview(review.id)).conclusion).toBe("clear");
-    // Only the installation token exchange happens before the state check.
+    // Only the installation token exchange (and its revocation) happens around the state check.
     expect(api.requests.slice(requestsBefore).map((r) => new URL(r.url).pathname)).toEqual([
       expect.stringMatching(/\/access_tokens$/),
+      "/installation/token",
     ]);
   });
 });

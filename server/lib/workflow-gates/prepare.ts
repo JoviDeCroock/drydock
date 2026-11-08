@@ -137,6 +137,7 @@ export async function prepareReleaseCandidatesForGate(
       {
         installationExternalId: installation.installationId,
         repositoryFullName: gate.repositoryFullName,
+        repositoryId: gate.repositoryId,
         runId: gate.runId,
         ...(artifactName ? { artifactName } : {}),
         ...(artifactNamePrefix ? { artifactNamePrefix } : {}),

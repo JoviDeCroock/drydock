@@ -204,6 +204,8 @@ export interface FakePullRequest {
   permissions: Map<string, string>;
   // Status the files listing answers with instead of the listing.
   filesStatus?: number;
+  /** Status for the installation-token mint; GitHub answers 422 for an unreachable scope. */
+  tokenStatus?: number;
   // The PR's `changed_files`; defaults to the listing's length.
   changedFiles?: number;
   // The PR lookup answers 301 to this URL, as for a renamed repository.
@@ -282,7 +284,11 @@ export function stubGithubApi(pr: FakePullRequest) {
     }
     const path = url.pathname;
     if (/^\/app\/installations\/\d+\/access_tokens$/.test(path) && request.method === "POST") {
+      if (pr.tokenStatus) return new Response("{}", { status: pr.tokenStatus });
       return Response.json({ token: INSTALLATION_TOKEN, expires_at: "2099-01-01T00:00:00Z" });
+    }
+    if (path === "/installation/token" && request.method === "DELETE") {
+      return new Response(null, { status: 204 });
     }
     if (path === `${repoPrefix}/pulls/${pr.number}`) {
       if (pr.redirectTo) {

@@ -215,13 +215,20 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
   ]);
 
   const decisionCalls: DecisionCall[] = [];
+  const tokenScopes: unknown[] = [];
+  const revocations: string[] = [];
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (request.url.endsWith("/deployment_protection_rule")) {
       decisionCalls.push((await request.json()) as DecisionCall);
       return new Response(null, { status: opts.decisionStatus ?? 204 });
     }
+    if (request.url.endsWith("/installation/token") && request.method === "DELETE") {
+      revocations.push(request.headers.get("authorization") ?? "");
+      return new Response(null, { status: 204 });
+    }
     if (request.url.includes("/access_tokens")) {
+      tokenScopes.push(await request.json());
       return Response.json({
         token: "ghs_install_token",
         expires_at: "2099-01-01T00:00:00Z",
@@ -254,7 +261,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
   vi.stubGlobal("fetch", fetchSpy);
   // `declaredSha` is the SHA-256 of the wheel bytes for a digestMatches run, so
   // it is exactly what the gate recomputes from the immutable bundle.
-  return { fetchSpy, decisionCalls, wheelPath, declaredSha };
+  return { fetchSpy, decisionCalls, tokenScopes, revocations, wheelPath, declaredSha };
 }
 
 function buildEnv(bindings: GithubAppEnv, loaderBinding: unknown): Cloudflare.Env {
@@ -785,6 +792,12 @@ describe("executeWorkflowGateJob", () => {
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
     expect(scenario.decisionCalls).toHaveLength(1);
     expect(scenario.decisionCalls[0].state).toBe("approved");
+    // Reading artifacts and answering the gate each get a token for this repository only.
+    expect(scenario.tokenScopes).toEqual([
+      { repository_ids: [72004], permissions: { actions: "read" } },
+      { repository_ids: [72004], permissions: { deployments: "write" } },
+    ]);
+    expect(scenario.revocations).toEqual(["Bearer ghs_install_token", "Bearer ghs_install_token"]);
   });
 
   test("retries a failed redelivery for an already-decided gate", async () => {
@@ -827,6 +840,9 @@ describe("executeWorkflowGateJob", () => {
       if (request.url.endsWith("/deployment_protection_rule")) {
         return new Response("try again", { status: 503 });
       }
+      if (request.url.endsWith("/installation/token") && request.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
       throw new Error(`unexpected fetch in redelivery test: ${request.url}`);
     });
     vi.stubGlobal("fetch", redeliveryFetch);
@@ -840,10 +856,12 @@ describe("executeWorkflowGateJob", () => {
       return request.url;
     });
     expect(loaderMock.calls.length).toBe(loaderCallsAfterFirst);
-    expect(redeliveryFetch).toHaveBeenCalledTimes(4);
+    expect(redeliveryFetch).toHaveBeenCalledTimes(5);
     expect(
       redeliveryUrls.filter((url) => url.endsWith("/deployment_protection_rule")),
     ).toHaveLength(3);
+    // A failed callback still revokes its token.
+    expect(redeliveryUrls.at(-1)).toBe("https://api.github.com/installation/token");
   });
 
   test("throws final workflow-gate queue callback failure so the message can reach the DLQ", async () => {
