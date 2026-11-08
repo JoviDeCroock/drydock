@@ -39,6 +39,11 @@ function cachedPayload(packageName: string): PublicPackageDiff {
       unknownFindingCount: 0,
       priorApprovedContextFindingCount: 0,
     },
+    artifactDigests: {
+      from: { sha1: null, sha256: "a".repeat(64) },
+      to: { sha1: null, sha256: "b".repeat(64) },
+    },
+    analysisVersion: "npm:v6:rules=test:risk=1",
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
 }
@@ -103,6 +108,27 @@ async function exhaustRateLimit(
 describe("public package-diff routes", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test("returns the archive digests and analysis identity from reviewed cached bytes", async () => {
+    const payload = cachedPayload("admission-evidence");
+    const input = {
+      ecosystem: "npm",
+      registryUrl: PUBLIC_NPM_REGISTRY,
+      packageName: payload.packageName,
+      fromVersion: payload.fromVersion,
+      toVersion: payload.toVersion,
+    };
+    await writePublicDiffCache(env, await computePublicDiffCacheKey(input), payload);
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff?package=${payload.packageName}&from=1.0.0&to=1.0.1`,
+      "10.91.8.1",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      artifactDigests: payload.artifactDigests,
+      analysisVersion: payload.analysisVersion,
+    });
   });
 
   test("is disabled when the deployment uses a custom registry", async () => {

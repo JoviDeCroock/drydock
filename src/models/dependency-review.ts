@@ -15,6 +15,11 @@ import {
   type DependencyReviewPolicy,
   type ReviewedBump,
 } from "../../server/lib/dependency-review/types";
+import {
+  dependencyReviewPolicyForProfile,
+  dependencyReviewPolicyProfile,
+  type DependencyReviewPolicyProfile,
+} from "../../server/lib/dependency-review/policy-profiles";
 import { activeOrganizationId } from "./active-organization";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 import { startBackgroundPoll } from "./background-poll";
@@ -42,6 +47,8 @@ interface OverviewResponse {
 }
 
 const BASE = "/api/v1/dependency-reviews";
+
+export const dependencyReviewSettingsRevision = signal(0);
 
 /** Whether the review is still waiting for a result. */
 function isReviewInFlight(review: Pick<DependencyReview, "status">): boolean {
@@ -129,6 +136,7 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     const next = draft.value;
     return current !== null && !sameSettings(current, next);
   });
+  const draftProfile = computed(() => dependencyReviewPolicyProfile(draftPolicy.value));
 
   function resetDraft(settings: DependencyReviewSettings) {
     draftEnabled.value = settings.enabled;
@@ -145,6 +153,7 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     canManage,
     draftEnabled,
     draftPolicy,
+    draftProfile,
     draftBotLogins,
     saving,
     saveError,
@@ -190,6 +199,11 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
       justSaved.value = false;
     },
 
+    setProfile(profile: DependencyReviewPolicyProfile) {
+      draftPolicy.value = dependencyReviewPolicyForProfile(profile);
+      justSaved.value = false;
+    },
+
     setEnabled(value: boolean) {
       draftEnabled.value = value;
       justSaved.value = false;
@@ -221,6 +235,7 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
         saved.value = data.settings;
         resetDraft(data.settings);
         justSaved.value = true;
+        dependencyReviewSettingsRevision.value++;
         return true;
       } catch (err) {
         if (id === requestId) saveError.value = errorMessage(err);

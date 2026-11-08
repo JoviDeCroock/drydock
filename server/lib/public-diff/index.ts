@@ -1,3 +1,4 @@
+import { normalizeArchiveDigests, type ArchiveDigests } from "../ecosystems/artifact-integrity";
 import { sha256Hex } from "../platform/crypto-utils";
 import type { AiReview } from "../ai-review/types";
 import { getPublicDiffAdapter } from "../ecosystems";
@@ -85,6 +86,8 @@ export interface PublicPackageDiff {
   // Stable spelling of `packageName` for links, set only when the request used
   // another one (an atpm handle). See PublicDiffAcquiredSources.
   canonicalPackageName?: string;
+  artifactDigests?: { from: ArchiveDigests | null; to: ArchiveDigests | null };
+  analysisVersion?: string;
   cachedAt: string;
   // Absolute freshness bound for mutable acquisition metadata. Cache rewarms
   // use the remaining lifetime rather than restarting the adapter's TTL.
@@ -194,6 +197,11 @@ export async function loadPublicPackageDiff(
     ...(sources.canonicalPackageName && sources.canonicalPackageName !== input.packageName
       ? { canonicalPackageName: sources.canonicalPackageName }
       : {}),
+    artifactDigests: {
+      from: normalizeArchiveDigests(sources.fromDigests),
+      to: normalizeArchiveDigests(sources.toDigests),
+    },
+    analysisVersion: `${adapter.ecosystem}:${adapter.payloadVersion}:rules=${adapter.rulesVersionSegment}:risk=${PUBLIC_DIFF_RISK_VERSION}`,
     cachedAt,
     ...(cacheExpiresAt ? { cacheExpiresAt } : {}),
   };

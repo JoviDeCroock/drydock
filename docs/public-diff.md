@@ -25,6 +25,8 @@ Anonymous diff of two published releases of an npm package, PyPI project, or atp
 | `GET /versions?package` | Published version list (5 min cache, 10 min stale) |
 | `GET /atpm-stage?publisher&rkey` | atpm staged-candidate link: browsers get a redirect to the ordinary diff URL, API clients the resolved review as JSON (30/min/IP); see [`atpm.md`](./atpm.md) |
 
+Version-pair responses additionally return `artifactDigests` (`from`/`to`, SHA-1/SHA-256 or null) and `analysisVersion` (ecosystem, payload, rules and risk versions). npm registry pairs bind both digests to archive bytes the parser actually consumed; unavailable or preview-side digests remain null. Other ecosystems may have no digest evidence. These fields support [npm admission](./npm-admission.md); a digest proves byte identity, not safety. Old cache records without evidence cannot satisfy admission.
+
 All take `ecosystem=npm` (default) `| pypi | atpm`.
 
 | Ecosystem | Metadata source | Artifact bytes from | Page URL |

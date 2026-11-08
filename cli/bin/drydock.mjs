@@ -2,7 +2,7 @@
 // @ts-check
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { main } from "../src/main.mjs";
@@ -102,6 +102,23 @@ process.exitCode = await main(process.argv.slice(2), {
   fetch: globalThis.fetch,
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
+  readFile: async (path) => {
+    const handle = await open(path, "r");
+    try {
+      const buffer = Buffer.alloc(8 * 1024 * 1024 + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size === buffer.length) throw new Error("local admission input exceeds 8 MiB");
+      return buffer.subarray(0, size).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  },
+  writeNewFile: (path, data) => writeFile(path, data, { mode: 0o644, flag: "wx" }),
   writeFile: (path, data) => writeFile(path, data, { mode: 0o644 }),
   sleep: (ms) => sleep(ms),
   now: () => Date.now(),

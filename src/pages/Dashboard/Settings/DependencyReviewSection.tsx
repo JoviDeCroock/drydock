@@ -3,6 +3,8 @@ import { DependencyReviewsModel } from "../../../models/dependency-review";
 import {
   DEPENDENCY_REVIEWS_PATH,
   POLICY_SWITCHES,
+  POLICY_PROFILES,
+  POLICY_PROFILE_DETAIL,
   RELEASE_RISK_THRESHOLDS,
 } from "../../../features/dependency-review/wording";
 import type { RiskLevel } from "../../../../server/lib/review/types";
@@ -94,6 +96,7 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
   const policy = model.draftPolicy.value;
   const dirty = model.dirty.value;
   const saveError = model.saveError.value;
+  const profile = model.draftProfile.value;
 
   const onSubmit = (event: Event) => {
     event.preventDefault();
@@ -120,11 +123,41 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
         </Checkbox>
       </SettingsCardBody>
 
-      <SettingsCardHeader title="Hold an update that" />
+      <SettingsCardHeader title="Review policy" />
       <SettingsCardBody inset="belowHeader" gap="compact">
         {!enabled ? (
           <Muted class="text-[12px] m-0">Applies once dependency review is on.</Muted>
         ) : null}
+        <Field label="Policy profile" for="dependencyReviewProfile" class="max-w-[260px]">
+          <Select
+            id="dependencyReviewProfile"
+            value={profile}
+            disabled={disabled}
+            aria-describedby="dependencyReviewProfileDetail"
+            onChange={(value) => {
+              if (value === "capability" || value === "prevention") model.setProfile(value);
+            }}
+          >
+            {POLICY_PROFILES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+            <option value="custom" disabled>
+              Custom
+            </option>
+          </Select>
+        </Field>
+        <div id="dependencyReviewProfileDetail">
+          <Muted class="text-[13px] m-0 max-w-[600px]">
+            {POLICY_PROFILE_DETAIL[profile]} Selecting a profile changes this draft; save to apply
+            it.
+          </Muted>
+        </div>
+        <Muted class="text-[12px] m-0">
+          These rules apply to supported npm and PyPI inputs on same-repository pull requests. They
+          do not stop an install on a developer machine or in CI before the check finishes.
+        </Muted>
         <div role="group" aria-label="Hold an update that" class="flex flex-col gap-3">
           {POLICY_SWITCHES.map((entry) => (
             <Checkbox

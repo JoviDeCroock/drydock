@@ -6,6 +6,11 @@ It has two release modes with different authority. With **Workflow Gate — enfo
 
 Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
 
+For the complete sequence from dependency installation to publishing your own package, see the
+[prevention flow](docs/prevention-flow.md). Installation admission, required dependency checks, and
+protected publish jobs apply at separate boundaries. [Protection health](docs/protection-health.md)
+rechecks mapped GitHub controls and shows gaps or stale evidence.
+
 ## Use Drydock without an account
 
 - **Read a package diff:** compare any two public npm, PyPI, or atpm releases at [drydock.org/diff](https://drydock.org/diff). Drydock parses the archives without installing or executing package code.

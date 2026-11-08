@@ -3176,6 +3176,87 @@
               "type": "string"
             }
           },
+          "artifactDigests": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sha1": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sha256": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "sha1",
+                          "sha256"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "to": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sha1": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sha256": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "sha1",
+                          "sha256"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "analysisVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "cachedAt": {
             "type": "string",
             "description": "ISO 8601 timestamp"

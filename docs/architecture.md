@@ -118,6 +118,11 @@ Full contract: [`workflow-gates.md`](./workflow-gates.md), [`pypi-workflow-gate.
 
 ## Scheduled discovery
 
+The same scheduled entry point runs a separate bounded protection-health sweep over mapped GitHub
+release targets. Observations retain their scope and age; unavailable reads and stale results do
+not establish current protection. Manual owner/admin refreshes use the same collector and leases.
+See [protection health](./protection-health.md).
+
 Cron (every 15 minutes, `server/scheduled.ts`) sweeps organizations with validated npm connections and starts scans for new staged publishes through the same pipeline.
 
 | Case | Handling |

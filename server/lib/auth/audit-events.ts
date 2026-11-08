@@ -57,6 +57,24 @@ function summarizeApiKeyDiscovery(m: Record<string, unknown>): string | null {
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
+  "github_app.protection_health.changed": {
+    category: "security",
+    label: "Protection configuration changed",
+    severity: "notice",
+    summarize: (m) => {
+      const status =
+        m.status === "protected"
+          ? "configured controls verified"
+          : m.status === "at_risk"
+            ? "at risk"
+            : "not verified";
+      const repository = str(m.repositoryFullName);
+      const environment = str(m.environment);
+      return repository
+        ? `${repository}${environment ? ` / ${environment}` : ""}: ${status}`
+        : status;
+    },
+  },
   "npm_package.management_confirmed": {
     category: "organization",
     label: "Package management confirmed",

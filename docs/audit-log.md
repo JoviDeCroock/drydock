@@ -119,3 +119,7 @@ Scheduled tick order (`server/scheduled.ts`): discovery sweep, publication monit
 
 - New auditable action → `recordScanEvent` with a redaction-safe metadata shape, add an entry to `server/lib/auth/audit-events.ts`, extend `test/workers/audit-events-route.test.ts`.
 - New high-volume operational signal → `emitOperationalEvent` and `recordProductEvent`, not `scan_events`.
+
+### Protection health
+
+`github_app.protection_health.changed` is a visible security event when a mapped target's observed health changes. Its summary names the repository, Environment and resulting state. It records configuration evidence, not a release decision or proof that every publish/install path is protected. Automated transitions have no user actor; refresh details and freshness remain on the protection-health view.

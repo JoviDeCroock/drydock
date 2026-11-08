@@ -906,13 +906,20 @@ export default function DocsPage() {
               <Prose>
                 With the GitHub App installed, Drydock can decide instead of comment. Turn on
                 dependency review in Settings and each PR from a branch in the installed repository
-                gets a <InlineCode>Drydock dependency review</InlineCode> check. Updates that add no
-                capability pass, so auto-merge can take them the same day. PRs with no dependency
-                additions or version changes pass once the supported dependency inputs are read. An
-                update that adds or changes an install script, adds a native binary, a dependency,
-                or a <InlineCode>bin</InlineCode> command, reaches the release-risk threshold, or
-                changes files Drydock could not read is held until someone with write access to the
-                repository approves it on the check. Transitive updates count too.
+                gets a <InlineCode>Drydock dependency review</InlineCode> check. Direct and
+                transitive npm and PyPI updates count. The hold policy decides which changes wait
+                for someone with repository write access to approve them on the check. Other updates
+                can auto-merge once the required check passes.
+              </Prose>
+              <Prose>
+                Choose a policy profile in Settings. <strong>Capability changes</strong>, the
+                existing default, holds install-script changes, new native binaries, added
+                dependencies and high release risk. <strong>Prevention</strong> also holds new
+                packages, updates with no verdict and files or platform artifacts Drydock could not
+                inspect. Private registries and large pull requests can then need approval or a
+                smaller update. Individual changes show <strong>Custom</strong>. Selecting a profile
+                edits a draft; save to apply it. Existing saved settings stay unchanged until you
+                save.
               </Prose>
               <Prose>
                 Make the check required in your branch rules, with the Drydock App as its source, to
@@ -920,11 +927,18 @@ export default function DocsPage() {
                 rebase keeps it. Human authors and event senders need repository write access;
                 Dependabot, Renovate, and trusted automation logins configured in Settings are
                 recognized separately. Fork PRs are outside the review scope. Packages your
-                repository sends to another registry are never diffed and hold unless you turn off
-                holding unreviewed updates. The App needs the Checks (write), Pull requests (read),
-                and Contents (read) permissions, with Pull request, Check run, and Check suite
-                events enabled. Use GitHub's Re-run all checks to review the current head again
-                against the latest policy and recorded approvals.
+                repository sends to another registry are never diffed; Prevention holds them, while
+                Capability changes allows them without a verdict. The App needs the Checks (write),
+                Pull requests (read), and Contents (read) permissions, with Pull request, Check run,
+                and Check suite events enabled. Use GitHub's Re-run all checks to review the current
+                head again against the latest policy and recorded approvals.
+              </Prose>
+              <Prose>
+                Protection health under Settings → GitHub App checks each mapped publishing
+                environment and its repository's default-branch dependency check. It names missing,
+                unknown and stale evidence; it does not verify every branch or registry publishing
+                path. A pull-request check also cannot stop an install that already ran on a
+                developer machine or in CI. Use install-time protection for that boundary.
               </Prose>
             </Subsection>
 

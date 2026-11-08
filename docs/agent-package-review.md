@@ -41,6 +41,10 @@ Each prompt is a walkthrough with five checkpoints where the agent stops for the
 | Maintainer-only steps | Drydock has no setup CLI, and its MCP endpoint only reads public package evidence, so App installation, Environment rule, release-target mapping, and setup checks stay in the UI |
 | Verification | GitHub's side is read back with the maintainer's own `gh` login (Environment admin bypass, branch policy, Drydock custom protection rule); npm's with `npm trust list`; Drydock's checks reach the agent when the maintainer pastes **Copy for your agent** |
 
+## Before installation
+
+For a supported npm lockfile graph, the local CLI's [pre-install admission](./npm-admission.md) supplies a blocking exit code, binds the actual sibling manifest to the complete lock graph, and binds both reviewed archives to locked integrity before the caller invokes an installer. Use a pinned CLI provisioned outside candidate dependencies and an independently trusted baseline. Run admission before dependency installation, including an agent's initial setup; a later PR check cannot protect a machine that already executed package code. The public MCP tools alone remain advisory and cannot enforce installation ordering or authorize it.
+
 ## Contract
 
 ### HTTPS
@@ -94,7 +98,7 @@ Streamable HTTP at `https://drydock.org/api/public/v1/mcp` (change the origin fo
 
 | Tool | Inputs | Output |
 | --- | --- | --- |
-| `compare_package_versions` | `ecosystem` (enum from `supportedPublicDiffEcosystems()`, default `npm`), `package`, `from`, `to`, `changedFilesOffset` | `risk`, `findings`, `notices`, `textSamplesOmitted`, `reviewUrl` first; then a page of changed files with counts, changed manifest fields, provenance |
+| `compare_package_versions` | `ecosystem` (enum from `supportedPublicDiffEcosystems()`, default `npm`), `package`, `from`, `to`, `changedFilesOffset` | `risk`, `findings`, `notices`, `textSamplesOmitted`, `reviewUrl` first; npm `artifactDigests` and `analysisVersion`;  then a page of changed files with counts, changed manifest fields, provenance |
 | `get_changed_file` | Same pair plus an exact `path` from `changedFiles` | Complete bounded file response, including null sides and coverage flags |
 
 Both tools carry `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: true`.
