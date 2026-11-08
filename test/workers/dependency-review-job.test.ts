@@ -14,6 +14,7 @@ import {
 } from "../../server/lib/dependency-review/types";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { queue } from "../../server/queue";
+import { seedUser } from "./helpers/seed";
 import {
   dependencyReviewJobEnv,
   fakePullRequest,
@@ -997,6 +998,45 @@ describe("dependency review job", () => {
     expect(send).toHaveBeenCalledWith({
       kind: "dependency_review",
       organizationId: seeded.organizationId,
+      reviewId: raced?.id,
+      rerun: true,
+    });
+  });
+
+  test("a skip queued before an installation moved never passes over the new owner's review", async () => {
+    const seeded = await seedDependencyReviewOrg();
+    const next = await seedUser();
+    const pr = fakePullRequest();
+    const api = stubGithubApi(pr);
+    let raced = null as { id: string } | null;
+    // The installation moves after the skip fetched its token, and the new
+    // owner records a review of the same commit.
+    pr.onCheckRunCreate = async () => {
+      await createDb(env.DB)
+        .update(schema.githubAppInstallations)
+        .set({ organizationId: next.organizationId })
+        .where(eq(schema.githubAppInstallations.id, seeded.installation.id));
+      raced = await seedReview({ ...seeded, organizationId: next.organizationId }, pr);
+    };
+    const send = vi.fn(async () => undefined);
+
+    await runDependencyReviewJob(
+      {
+        organizationId: seeded.organizationId,
+        skip: {
+          installationRowId: seeded.installation.id,
+          repositoryId: 5151,
+          repositoryFullName: "octo/example",
+          headSha: pr.headSha,
+        },
+      },
+      { SCAN_QUEUE: { send } as unknown as Queue },
+    );
+
+    expect(api.lastCheckRunState()).toMatchObject({ status: "completed", conclusion: "cancelled" });
+    expect(send).toHaveBeenCalledWith({
+      kind: "dependency_review",
+      organizationId: next.organizationId,
       reviewId: raced?.id,
       rerun: true,
     });

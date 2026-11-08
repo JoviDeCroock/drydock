@@ -276,6 +276,32 @@ export async function getDependencyReviewForHead(
   return row ?? null;
 }
 
+/**
+ * Any organization's review of one commit. Only for deciding whether a passing
+ * skip may land on the commit: check runs belong to the commit, so a review
+ * recorded by whichever organization owns the installation by then must block
+ * the skip even when the skip was queued for the previous owner.
+ */
+export async function findReviewOfCommit(
+  db: AppDb,
+  installationRowId: string,
+  repositoryId: number,
+  headSha: string,
+): Promise<DependencyReviewRecord | null> {
+  const [row] = await db
+    .select(RECORD_COLUMNS)
+    .from(dependencyReviews)
+    .where(
+      and(
+        eq(dependencyReviews.installationRowId, installationRowId),
+        eq(dependencyReviews.repositoryId, repositoryId),
+        eq(dependencyReviews.headSha, headSha),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 // Longer than the job's diff budget plus posting, so a live run is never
 // claimed twice; a run whose worker died is claimable again after it.
 export const DEPENDENCY_REVIEW_LEASE_MS = 15 * 60 * 1000;
