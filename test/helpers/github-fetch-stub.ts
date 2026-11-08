@@ -5,6 +5,8 @@ interface GithubArtifactStub {
   name: string;
   bundleZip?: Uint8Array<ArrayBuffer>;
   expired?: boolean;
+  // GitHub's `sha256:` digest of the ZIP, as the listing reports it.
+  digest?: string;
 }
 
 export interface GithubFetchStubOptions {
@@ -34,6 +36,7 @@ export function stubGithubFetch(options: GithubFetchStubOptions) {
       id: artifact.id,
       name: artifact.name,
       size_in_bytes: artifact.bundleZip?.length ?? 0,
+      ...(artifact.digest ? { digest: artifact.digest } : {}),
       expired: artifact.expired === true,
     })),
   });

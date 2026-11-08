@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "88934553-82c9-487e-85d3-ca36905c79f7",
+  "id": "ecafa99d-ad99-4042-89ee-5a6250f6a226",
   "prevId": "056001b2-9cbd-4894-b2b3-447734dd7323",
   "tables": {
     "account": {
@@ -1090,6 +1090,18 @@
             "environment"
           ],
           "isUnique": false
+        },
+        "github_workflow_gates_deployment_unique_idx": {
+          "name": "github_workflow_gates_deployment_unique_idx",
+          "columns": [
+            "installation_row_id",
+            "repository_id",
+            "run_id",
+            "environment",
+            "deployment_id"
+          ],
+          "isUnique": true,
+          "where": "\"github_workflow_gates\".\"deployment_id\" is not null"
         }
       },
       "foreignKeys": {

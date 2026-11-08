@@ -901,8 +901,9 @@ describe("executeWorkflowGateJob", () => {
     await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
     expect(scenario.decisionCalls.map((call) => call.state)).toEqual(["approved"]);
 
-    // The released job goes on to change the run; a later redelivery re-posts
-    // the approval instead of reopening the gate.
+    // The run is re-run and a replayed request re-enqueues this gate. The
+    // per-run callback would now release the new attempt, so nothing is posted
+    // and the delivered approval stands as the record.
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -912,10 +913,91 @@ describe("executeWorkflowGateJob", () => {
     );
     await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
 
-    expect(scenario.decisionCalls.map((call) => call.state)).toEqual(["approved", "approved"]);
+    expect(scenario.decisionCalls.map((call) => call.state)).toEqual(["approved"]);
     const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
     expect(gate?.status).toBe("approved");
     expect(gate?.decisionDeliveredAt).toBeInstanceOf(Date);
+  });
+
+  test("never posts an approval that carries no review binding", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9233",
+      repositoryId: 72033,
+      runId: 23033,
+    });
+    const scenario = await buildScenario(23033, { digestMatches: true });
+    const db = createDb(env.DB);
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
+
+    await executeWorkflowGateJob(
+      buildEnv(buildConfigBindings(), buildPypiLoader().binding),
+      buildCtxWithGateway(),
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    expect(scenario.decisionCalls).toHaveLength(0);
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate).toMatchObject({ status: "pending", failureReason: "review_unbound" });
+  });
+
+  test("a withdrawn approval is superseded when a newer request owns the run", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9234",
+      repositoryId: 72034,
+      runId: 23034,
+    });
+    const scenario = await buildScenario(23034, { digestMatches: true });
+    const sandboxEnv = buildEnv(buildConfigBindings(), buildPypiLoader().binding);
+    const ctx = buildCtxWithGateway();
+    const db = createDb(env.DB);
+    const message = {
+      kind: "workflow_gate" as const,
+      organizationId: seeded.organizationId,
+      gateId: seeded.gateId,
+    };
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+    await markGateDecided(db, {
+      gateId: seeded.gateId,
+      decision: "approved",
+      comment: "ship it",
+      reportUrl: null,
+    });
+    const original = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    const newerGateId = crypto.randomUUID();
+    await db.insert(schema.githubWorkflowGates).values({
+      ...original!,
+      id: newerGateId,
+      deliveryId: crypto.randomUUID(),
+      deploymentId: (original!.deploymentId ?? 0) + 1,
+      status: "pending",
+      decision: null,
+      decidedAt: null,
+      scanId: null,
+      reviewStartedAt: null,
+      runAttempt: null,
+      reviewedArtifactsJson: null,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        return githubRunStateResponse(request, { runAttempt: 2 }) ?? scenario.fetchSpy(request);
+      }),
+    );
+    await executeWorkflowGateJob(sandboxEnv, ctx, message, db);
+
+    expect(scenario.decisionCalls).toHaveLength(0);
+    const withdrawn = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(withdrawn).toMatchObject({ status: "superseded", failureReason: "run_attempt_changed" });
+    const newer = await getGateForOrganization(db, seeded.organizationId, newerGateId);
+    expect(newer?.status).toBe("pending");
   });
 
   test("retries a failed redelivery for an already-decided gate", async () => {

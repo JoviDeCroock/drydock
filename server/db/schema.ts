@@ -679,6 +679,17 @@ export const githubWorkflowGates = sqliteTable(
       table.runId,
       table.environment,
     ),
+    // One gate per deployment, so concurrent deliveries of one request cannot
+    // both insert (and then supersede each other).
+    deploymentUniqueIdx: uniqueIndex("github_workflow_gates_deployment_unique_idx")
+      .on(
+        table.installationRowId,
+        table.repositoryId,
+        table.runId,
+        table.environment,
+        table.deploymentId,
+      )
+      .where(sql`${table.deploymentId} is not null`),
   }),
 );
 

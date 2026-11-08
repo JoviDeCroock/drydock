@@ -289,6 +289,17 @@ async function processReleaseBundle<TArtifact>(
         `artifact downloads exceed ${limits.maxTotalZipBytes} bytes`,
       );
     }
+    // The listed digest is what the approval re-check compares, so the bytes
+    // reviewed must be the bytes it names.
+    if (artifact.digest !== null) {
+      const expected = artifact.digest.toLowerCase();
+      if (!expected.startsWith("sha256:") || `sha256:${await sha256Hex(zipBytes)}` !== expected) {
+        throw new WorkflowArtifactError(
+          "artifact_identity_inconsistent",
+          `artifact ${artifact.id} download does not match its listed digest`,
+        );
+      }
+    }
 
     const entries = await extractOuterZipEntries(zipBytes);
     for (const entry of entries) {

@@ -57,7 +57,7 @@ All gate API paths below have prefix `/api/v1/github-app`; their owner is `serve
 | --- | --- | --- |
 | Identity/version | Read artifact metadata, never names or GitHub paths alone | Ecosystem `workflow-gate.ts` adapters |
 | Grouping | Separate package names produce separate reviews; same identity must share version | `server/lib/workflow-gates/group-candidates.ts` |
-| Digest | Recompute from downloaded immutable artifact bytes | `server/lib/github-app/artifacts.ts` |
+| Digest | Recompute from downloaded immutable artifact bytes; a downloaded Actions ZIP must match GitHub's listed `sha256:` digest when one is listed | `server/lib/github-app/artifacts.ts` |
 | Adapter input | Supply ecosystem/kind, normalized file list/hashes, candidate bytes, baseline when available, deterministic findings, display metadata | `server/lib/workflow-gates/types.ts` |
 | Manifest | Synthesized server-side; maintainer declaration is never authority over bytes | Ecosystem manifest builders |
 | Byte continuity | Upload once; publish exact reviewed bytes without rebuilding | Checksum workflows |
@@ -157,8 +157,8 @@ jobs:
 3. Drydock never publishes; it only posts GitHub's deployment-protection decision (`server/lib/workflow-gates/decision-delivery.ts`).
 4. Gate state and decisions remain organization-scoped (`server/routes/github-app/workflow-gates.ts`).
 5. Callback resolves to original installation, repository, run, Environment, and callback URL (`server/lib/github-app/webhook.ts`, `server/lib/workflow-gates/resolve.ts`).
-6. GitHub's callback is per run and Environment, not per attempt. An approval is posted only while GitHub reports the reviewed run attempt and the same artifact ids, sizes, and digests; otherwise an undelivered approval is withdrawn (gate back to pending, package approvals cleared), never posted. An approval GitHub already accepted (`decision_delivered_at`) is never withdrawn (`server/lib/workflow-gates/review-binding.ts`).
-7. One deployment request opens one gate: replays dedupe on delivery id and on (installation, repository, run, Environment, deployment id); only the newest pending request for a run and Environment stays approvable (`server/lib/github-app/webhook-gates.ts`).
+6. GitHub's callback is per run and Environment, not per attempt, so it acts on whatever the run holds when it lands. A decision GitHub accepted (`decision_delivered_at`) is never posted again, so a replayed request after a re-run cannot release the new attempt. An approval is posted only with a review binding GitHub still reports (same attempt; same artifact ids, sizes, digests); a changed or missing binding withdraws it unposted: the gate returns to pending, or is superseded when a newer request owns the run, and package approvals are cleared (`server/lib/workflow-gates/decision-delivery.ts`, `server/lib/workflow-gates/review-binding.ts`).
+7. One deployment request opens one gate: replays dedupe on delivery id and on a unique (installation, repository, run, Environment, deployment id) key; only the newest pending request for a run and Environment stays approvable (`server/lib/github-app/webhook-gates.ts`).
 8. Accepting one package never approves another (`server/routes/github-app/workflow-gates.ts`).
 9. Missing/invalid candidate evidence fails closed (`test/workers/workflow-gate-prepare.test.ts`).
 10. Rebuilding/repacking after approval breaks the review boundary; GitHub artifact immutability plus trusted publish job carry continuity (`server/lib/github-app/artifacts.ts`).
@@ -182,6 +182,7 @@ jobs:
 | PyPI acquisition throws | Unhandled download/parse failure | Review fails; no automatic approval | Inspect error, retry |
 | Approval refused as stale | Run re-run, artifact uploaded/deleted/expired, or digest changed after review | Gate pending with the stale `failureReason`; `github_workflow_gate.review_stale` | Retry the review, or reject |
 | Approval withdrawn before delivery | Run changed between decision and callback | No callback; gate pending, package approvals cleared; `github_workflow_gate.approval_withdrawn` | Retry the review, or reject |
+| Callback succeeded, delivery not recorded | D1 write failed after GitHub accepted the decision; `github_workflow_gate.delivery_record_failed` | A later redelivery re-checks and may withdraw the approval in Drydock, but cannot un-release a job GitHub already continued | Inspect the run in GitHub |
 | Callback fails | GitHub delivery error | Durable decision retained; `github_workflow_gate.redelivery_failed`; queue retries when bound; otherwise next human/cron touch; job held until delivery | Restore callback access; redeliver |
 | PR exists, gate inactive | Missing rule or matching target | Setup checker reports separate unmet conditions | Complete setup; verify first real review |
 

@@ -164,6 +164,40 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
   });
 
+  test("records the run attempt and accepts a ZIP matching its listed digest", async () => {
+    const fixture = await buildFixture();
+    const digest = `sha256:${await sha256Hex(fixture.bundleZip)}`;
+    stubGithubFetch({
+      artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, bundleZip: fixture.bundleZip, digest }],
+      runAttempt: 2,
+    });
+
+    const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
+
+    expect(bundle.runAttempt).toBe(2);
+    expect(bundle.listedArtifacts).toEqual([
+      { id: ARTIFACT_ID, name: ARTIFACT_NAME, sizeInBytes: fixture.bundleZip.length, digest },
+    ]);
+  });
+
+  test("fails closed when the downloaded ZIP does not match its listed digest", async () => {
+    const fixture = await buildFixture();
+    stubGithubFetch({
+      artifacts: [
+        {
+          id: ARTIFACT_ID,
+          name: ARTIFACT_NAME,
+          bundleZip: fixture.bundleZip,
+          digest: `sha256:${"0".repeat(64)}`,
+        },
+      ],
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({ code: "artifact_identity_inconsistent" });
+  });
+
   test("collects every wheel and sdist in the bundle as the release set", async () => {
     const sdistPath = "dist/demo_package-1.2.0.tar.gz";
     const sdistBytes = new TextEncoder().encode("opaque sdist bytes");

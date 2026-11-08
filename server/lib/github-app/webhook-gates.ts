@@ -69,57 +69,87 @@ export async function recordGateRequest(
   const existing = await getGateByDeliveryId(db, input.deliveryId);
   if (existing) return { gate: existing, created: false };
   const environment = input.event.environment.toLowerCase();
-  const runKey = and(
-    eq(githubWorkflowGates.installationRowId, input.installation.id),
-    eq(githubWorkflowGates.repositoryId, input.event.repositoryId),
-    eq(githubWorkflowGates.runId, input.event.runId),
-    eq(githubWorkflowGates.environment, environment),
-  );
-  if (input.event.deploymentId !== null) {
-    const [sameDeployment] = await db
+  const runKey = gateRunKey({
+    installationRowId: input.installation.id,
+    repositoryId: input.event.repositoryId,
+    runId: input.event.runId,
+    environment,
+  });
+  const sameDeployment = async () => {
+    if (input.event.deploymentId === null) return null;
+    const [row] = await db
       .select()
       .from(githubWorkflowGates)
       .where(and(runKey, eq(githubWorkflowGates.deploymentId, input.event.deploymentId)))
       .limit(1);
-    if (sameDeployment) return { gate: readGateRow(sameDeployment), created: false };
-  }
+    return row ? readGateRow(row) : null;
+  };
+  const known = await sameDeployment();
+  if (known) return { gate: known, created: false };
 
   const now = new Date();
   const id = crypto.randomUUID();
-  await db.insert(githubWorkflowGates).values({
-    id,
-    organizationId: input.installation.organizationId,
-    installationRowId: input.installation.id,
-    releaseTargetId: input.releaseTarget.id,
-    deliveryId: input.deliveryId,
-    repositoryId: input.event.repositoryId,
-    repositoryFullName: input.event.repositoryFullName,
-    environment,
-    runId: input.event.runId,
-    deploymentId: input.event.deploymentId,
-    deploymentCallbackUrl: input.event.deploymentCallbackUrl,
-    eventAction: input.event.action,
-    status: "pending",
-    requestedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  });
+  // The delivery and deployment unique indexes make a concurrent duplicate a
+  // no-op insert; it then resolves to the row that won.
+  const inserted = await db
+    .insert(githubWorkflowGates)
+    .values({
+      id,
+      organizationId: input.installation.organizationId,
+      installationRowId: input.installation.id,
+      releaseTargetId: input.releaseTarget.id,
+      deliveryId: input.deliveryId,
+      repositoryId: input.event.repositoryId,
+      repositoryFullName: input.event.repositoryFullName,
+      environment,
+      runId: input.event.runId,
+      deploymentId: input.event.deploymentId,
+      deploymentCallbackUrl: input.event.deploymentCallbackUrl,
+      eventAction: input.event.action,
+      status: "pending",
+      requestedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing()
+    .returning({ id: githubWorkflowGates.id });
+  if (inserted.length === 0) {
+    const winner = (await getGateByDeliveryId(db, input.deliveryId)) ?? (await sameDeployment());
+    if (!winner) throw new Error("workflow gate insert conflicted with no matching row");
+    return { gate: winner, created: false };
+  }
   await supersedeOlderGateRequests(db, id, runKey);
   const fresh = await getGateByDeliveryId(db, input.deliveryId);
   if (!fresh) throw new Error("workflow gate row vanished immediately after insert");
   return { gate: fresh, created: true };
 }
 
+function gateRunKey(key: {
+  installationRowId: string;
+  repositoryId: number;
+  runId: number;
+  environment: string;
+}) {
+  return and(
+    eq(githubWorkflowGates.installationRowId, key.installationRowId),
+    eq(githubWorkflowGates.repositoryId, key.repositoryId),
+    eq(githubWorkflowGates.runId, key.runId),
+    eq(githubWorkflowGates.environment, key.environment),
+  );
+}
+
 /**
  * Order two requests for one run and Environment: by deployment id when both
- * carry one (GitHub allocates them increasingly), else by arrival. Concurrent
- * deliveries agree on the order, so exactly the newest stays pending.
+ * carry distinct ones (GitHub allocates them increasingly), else by arrival,
+ * then id. The order is total, so concurrent deliveries agree and exactly the
+ * newest stays pending.
  */
 function requestIsOlderThan(gateId: string) {
   const other = githubWorkflowGates;
   return sql`(
     select case
       when ${other.deploymentId} is not null and mine.deployment_id is not null
+        and ${other.deploymentId} <> mine.deployment_id
         then ${other.deploymentId} < mine.deployment_id
       else ${other.createdAt} < mine.created_at
         or (${other.createdAt} = mine.created_at and ${other.id} < mine.id)
@@ -148,16 +178,24 @@ async function supersedeOlderGateRequests(
     );
   // A delayed delivery of an older attempt arrives after the newer one: it is
   // recorded (so a replay dedupes) but never reviewable.
+  if (!(await hasNewerGateRequest(db, gateId, runKey))) return;
+  await db
+    .update(githubWorkflowGates)
+    .set({ status: "superseded", updatedAt: now })
+    .where(and(eq(githubWorkflowGates.id, gateId), eq(githubWorkflowGates.status, "pending")));
+}
+
+async function hasNewerGateRequest(
+  db: AppDb,
+  gateId: string,
+  runKey: ReturnType<typeof and>,
+): Promise<boolean> {
   const newer = await db
     .select({ id: githubWorkflowGates.id })
     .from(githubWorkflowGates)
     .where(and(runKey, ne(githubWorkflowGates.id, gateId), sql`not ${requestIsOlderThan(gateId)}`))
     .limit(1);
-  if (newer.length === 0) return;
-  await db
-    .update(githubWorkflowGates)
-    .set({ status: "superseded", updatedAt: now })
-    .where(and(eq(githubWorkflowGates.id, gateId), eq(githubWorkflowGates.status, "pending")));
+  return newer.length > 0;
 }
 
 export async function getGateByDeliveryId(
@@ -562,8 +600,9 @@ export async function clearGateReviewStale(db: AppDb, gateId: string): Promise<v
  * Undo an approval GitHub has not yet received because the run changed after
  * the decision. The gate returns to pending with the stale reason and its
  * package approvals are cleared, so a maintainer can reject or re-review; the
- * held job is never told to continue. Returns the cleared approvals for the
- * audit record.
+ * held job is never told to continue. A newer request for the same run already
+ * owns the callback, so then the gate is superseded instead of reopened.
+ * Returns the cleared approvals for the audit record.
  */
 export async function withdrawUndeliveredGateApproval(
   db: AppDb,
@@ -571,11 +610,14 @@ export async function withdrawUndeliveredGateApproval(
   reason: GateStaleReviewReason,
 ) {
   const now = new Date();
+  const reopenedAs = (await hasNewerGateRequest(db, gate.id, gateRunKey(gate)))
+    ? "superseded"
+    : "pending";
   const [, cleared] = await db.batch([
     db
       .update(githubWorkflowGates)
       .set({
-        status: "pending",
+        status: reopenedAs,
         decision: null,
         decisionComment: null,
         reportUrl: null,
@@ -610,7 +652,7 @@ export async function withdrawUndeliveredGateApproval(
           sql`exists (
             select 1 from ${githubWorkflowGates}
             where ${githubWorkflowGates.id} = ${gate.id}
-              and ${githubWorkflowGates.status} = 'pending'
+              and ${githubWorkflowGates.status} = ${reopenedAs}
               and ${githubWorkflowGates.failureReason} = ${reason}
           )`,
         ),

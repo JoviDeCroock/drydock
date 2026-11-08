@@ -12,7 +12,7 @@ import { describeOperationalError, emitOperationalEvent } from "../platform/obse
 import { type GateStaleReviewReason, checkGateReviewBinding } from "./review-binding";
 
 export type GateDeliveryOutcome =
-  | { delivered: true }
+  | { delivered: true; alreadyDelivered: boolean }
   | {
       delivered: false;
       withdrawn: GateStaleReviewReason;
@@ -24,10 +24,11 @@ export type GateDeliveryOutcome =
  * The decision is already durable on the gate row; this only tells GitHub.
  * Callback errors propagate so the caller (queue job or route) can retry.
  *
- * An approval GitHub has not yet accepted is re-checked against the run first:
- * the callback releases whatever the run holds now, so a changed attempt or
- * artifact set withdraws the approval instead of posting it. A rejection needs
- * no check.
+ * The callback is per run, so it acts on whatever the run holds when it lands.
+ * A decision GitHub already accepted is therefore never posted again: a
+ * replayed request after a re-run would otherwise release the new attempt. An
+ * approval is posted only with a review binding that GitHub still reports; a
+ * changed or missing binding withdraws it instead. A rejection needs no check.
  */
 export async function deliverGateDecision(
   config: GithubAppConfig,
@@ -37,9 +38,8 @@ export async function deliverGateDecision(
   if (gate.decision !== "approved" && gate.decision !== "rejected") {
     throw new Error(`gate ${gate.id} has no decision to deliver`);
   }
-  // Unbound approvals predate review bindings; new approvals require one
-  // (`markGateDecidedForPackageAggregate`).
-  if (gate.decision === "approved" && !gate.decisionDeliveredAt && gate.reviewBinding) {
+  if (gate.decisionDeliveredAt) return { delivered: true, alreadyDelivered: true };
+  if (gate.decision === "approved") {
     const check = await checkGateReviewBinding(config, db, gate);
     if (!check.ok) {
       const clearedApprovals = await withdrawUndeliveredGateApproval(db, gate, check.reason);
@@ -72,7 +72,7 @@ export async function deliverGateDecision(
       error: describeOperationalError(err),
     });
   }
-  return { delivered: true };
+  return { delivered: true, alreadyDelivered: false };
 }
 
 /**
@@ -118,5 +118,6 @@ export async function redeliverGateDecision(
     organizationId: gate.organizationId,
     gateId: gate.id,
     decision: gate.decision,
+    alreadyDelivered: outcome.alreadyDelivered,
   });
 }

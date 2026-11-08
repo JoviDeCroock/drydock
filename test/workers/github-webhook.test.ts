@@ -10,6 +10,7 @@ import {
   markGateDecided,
   markGateErrored,
 } from "../../server/lib/github-app/webhook-gates";
+import { executeWorkflowGateJob } from "../../server/lib/workflow-gate-job";
 import { githubWebhookRoutes } from "../../server/routes/github-webhooks";
 import { exhaustedRateLimitBindings, rateLimiterDouble } from "./rate-limit-doubles";
 import type { Bindings } from "../../server/types";
@@ -73,6 +74,17 @@ async function hmacHex(secret: string, body: string): Promise<string> {
   return [...sig].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+const githubAppTestBindings = {
+  GITHUB_APP_ID: "12345",
+  GITHUB_APP_SLUG: "drydock-test",
+  GITHUB_APP_CLIENT_ID: "client-id",
+  GITHUB_APP_CLIENT_SECRET: "client-secret",
+  GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
+  GITHUB_APP_WEBHOOK_SECRET: WEBHOOK_SECRET,
+  GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
+  BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+};
+
 interface SendArgs {
   eventName: string;
   body: unknown;
@@ -99,18 +111,7 @@ async function sendWebhook(args: SendArgs) {
   if (signature) headers["x-hub-signature-256"] = signature;
 
   const ctx = createExecutionContext();
-  const routeEnv: Bindings = {
-    ...env,
-    GITHUB_APP_ID: "12345",
-    GITHUB_APP_SLUG: "drydock-test",
-    GITHUB_APP_CLIENT_ID: "client-id",
-    GITHUB_APP_CLIENT_SECRET: "client-secret",
-    GITHUB_APP_PRIVATE_KEY: "----- placeholder -----",
-    GITHUB_APP_WEBHOOK_SECRET: WEBHOOK_SECRET,
-    GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
-    BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
-    ...args.envOverrides,
-  };
+  const routeEnv: Bindings = { ...env, ...githubAppTestBindings, ...args.envOverrides };
   const app = buildApp();
   const res = await app.fetch(
     new Request("http://test.local/webhooks/github", {
@@ -294,6 +295,24 @@ describe("POST /webhooks/github", () => {
     expect(gates.map((gate) => gate.status)).toEqual(["pending"]);
   });
 
+  test("concurrent deliveries of one deployment leave exactly one pending gate", async () => {
+    const { installation } = await seedMappedRepository({
+      installationExternalId: "2026",
+      repositoryId: 5157,
+    });
+    const payload = buildRequestedPayload({ installationId: "2026", repositoryId: 5157 });
+    const results = await Promise.all(
+      [0, 1, 2].map(() => sendWebhook({ eventName: "deployment_protection_rule", body: payload })),
+    );
+
+    const gateIds = await Promise.all(
+      results.map(async ({ res }) => ((await res.json()) as { gateId: string }).gateId),
+    );
+    expect(new Set(gateIds).size).toBe(1);
+    const gates = await gatesForInstallation(installation.id);
+    expect(gates.map((gate) => gate.status)).toEqual(["pending"]);
+  });
+
   test("a newer deployment request for the same run and Environment supersedes the pending gate", async () => {
     const { installation } = await seedMappedRepository({
       installationExternalId: "2022",
@@ -386,6 +405,67 @@ describe("POST /webhooks/github", () => {
 
     const statuses = (await gatesForInstallation(installation.id)).map((gate) => gate.status);
     expect(statuses.sort()).toEqual(["pending", "rejected"]);
+  });
+
+  test("a replayed request after a re-run never re-posts the delivered approval", async () => {
+    const { installation } = await seedMappedRepository({
+      installationExternalId: "2025",
+      repositoryId: 5156,
+    });
+    const queued: { gateId: string; organizationId: string }[] = [];
+    const SCAN_QUEUE = {
+      send: async (message: { kind: string; gateId: string; organizationId: string }) => {
+        if (message.kind === "workflow_gate") queued.push(message);
+      },
+    } as unknown as Queue;
+    const attemptOne = buildRequestedPayload({
+      installationId: "2025",
+      repositoryId: 5156,
+      deploymentId: 909,
+    });
+    const first = await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: attemptOne,
+      envOverrides: { SCAN_QUEUE },
+    });
+    const approvedGateId = ((await first.res.json()) as { gateId: string }).gateId;
+    const db = createDb(env.DB);
+    await markGateDecided(db, { gateId: approvedGateId, decision: "approved", comment: "ok" });
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ decisionDeliveredAt: new Date() })
+      .where(eq(schema.githubWorkflowGates.id, approvedGateId));
+
+    await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({
+        installationId: "2025",
+        repositoryId: 5156,
+        deploymentId: 910,
+      }),
+      envOverrides: { SCAN_QUEUE },
+    });
+    queued.length = 0;
+    const replay = await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: attemptOne,
+      envOverrides: { SCAN_QUEUE },
+    });
+    expect(await replay.res.json()).toMatchObject({ gateId: approvedGateId, created: false });
+    expect(queued.map((message) => message.gateId)).toEqual([approvedGateId]);
+
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    await executeWorkflowGateJob(
+      { ...env, ...githubAppTestBindings } as Cloudflare.Env,
+      createExecutionContext(),
+      { kind: "workflow_gate", ...queued[0] },
+      db,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const statuses = (await gatesForInstallation(installation.id)).map((gate) => gate.status);
+    expect(statuses.sort()).toEqual(["approved", "pending"]);
   });
 
   test("returns 401 when the signature does not match the body", async () => {
