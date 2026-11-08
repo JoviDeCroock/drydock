@@ -28,7 +28,7 @@ import {
 } from "./primitives";
 import { scrollToDocsHash } from "./hash-navigation";
 import { TOC_IDS } from "./toc";
-import { DEPENDENCY_PR_WORKFLOW, REUSABLE_WORKFLOW } from "./dependency-pr-workflow";
+import { DEPENDENCY_PR_WORKFLOW } from "./dependency-pr-workflow";
 
 // The rail track and the article track. Shared by the hero and the body so
 // every heading on the page starts on the same column.
@@ -95,15 +95,21 @@ export default function DocsPage() {
       <header class={cn("border-t border-border", DOCS_GRID)}>
         <div class="lg:col-start-2 py-8 md:py-14 flex flex-col gap-5">
           <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-            Set up package review before publication.
+            Review releases and dependency upgrades.
           </h1>
           <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-            Compare your built release with its published baseline and inspect the changes before
-            users install them. Choose a GitHub workflow gate or npm staging, then follow the setup
-            steps below.
+            Compare package contents before publishing a release or merging a dependency update.
+            Choose a workflow gate, npm staging, or a public package diff.
           </p>
           <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
             npm, PyPI, and VS Code · Setup steps and workflow examples
+          </p>
+          <p class="m-0 text-[13px] text-ink-muted">
+            <a href="#dependency-updates">Dependency PR setup</a>
+            {" · "}
+            <a href="#agent-package-review">Coding agents</a>
+            {" · "}
+            <a href="/diff">Compare public packages</a>
           </p>
           <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
             <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -288,8 +294,9 @@ export default function DocsPage() {
                   credential in GitHub Actions. Drydock never needs it.
                 </SafetyItem>
                 <SafetyItem title="Deterministic checks stay authoritative">
-                  AI review is advisory and enabled by default. Your organization can turn it off.
-                  AI findings can raise risk, but they cannot downgrade a deterministic finding.
+                  Organization reviews include advisory AI review by default; you can turn it off.
+                  AI can raise risk but cannot downgrade a deterministic finding. Public diffs run
+                  deterministic checks only.
                 </SafetyItem>
                 <SafetyItem title="Review failures stay visible">
                   A failed package review needs a retry or explicit human approval; incomplete
@@ -544,14 +551,9 @@ export default function DocsPage() {
                     protected job. Start from the gated staging workflow below.
                   </>,
                   <>
-                    Approve on npm with 2FA as before. The staged review now carries a Gate
-                    continuity section: <InlineCode>matched</InlineCode> means npm holds the tarball
-                    the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> means
-                    the gate saw these bytes and did not approve them, and{" "}
-                    <InlineCode>ungated</InlineCode> means a release target you still have
-                    configured has gated this package and this version never went through it —
-                    reject either on npm. <InlineCode>unverified</InlineCode> and{" "}
-                    <InlineCode>unknown</InlineCode> bind nothing; the section says why.
+                    Before approving on npm with 2FA, confirm Gate continuity is{" "}
+                    <InlineCode>matched</InlineCode>: npm holds the tarball the gate reviewed and
+                    approved. Investigate any other status before publishing.
                   </>,
                 ]}
               />
@@ -647,9 +649,14 @@ export default function DocsPage() {
 
             <Subsection id="gate-workflow" title="Workflow examples">
               <Prose>
-                Each workflow has the same contract: build once, record checksums, upload, pause at
-                the environment, verify the download, and publish without rebuilding.
+                Replace the jobs in your release workflow; keep its existing trigger. Build once,
+                record checksums, upload, and publish the verified download without rebuilding.
               </Prose>
+              <Callout label="Configure publish authentication first">
+                Configure PyPI or npm trusted publishing for the protected environment, or add your
+                registry token to the protected publish job. Drydock does not receive those
+                credentials. The VS Code example uses a <InlineCode>VSCE_PAT</InlineCode> secret.
+              </Callout>
               <WorkflowExample title="PyPI with Trusted Publishing" defaultOpen>
                 {`jobs:
   build:
@@ -669,6 +676,7 @@ export default function DocsPage() {
 
   publish:
     needs: build
+    runs-on: ubuntu-latest
     environment: production
     permissions:
       id-token: write
@@ -687,6 +695,9 @@ export default function DocsPage() {
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: npm ci
       - run: npm run pack:all # write dist/*.tgz
       - run: cd dist && sha256sum *.tgz > SHA256SUMS
@@ -697,11 +708,17 @@ export default function DocsPage() {
 
   publish:
     needs: pack
+    runs-on: ubuntu-latest
     environment: production
     permissions:
       id-token: write
       contents: read
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.15.0
       - uses: actions/download-artifact@v4
         with:
           name: npm-release-candidates
@@ -757,6 +774,9 @@ export default function DocsPage() {
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: npm ci
       - run: npx @vscode/vsce package --out dist/extension.vsix
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
@@ -767,20 +787,21 @@ export default function DocsPage() {
 
   publish:
     needs: package
+    runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: actions/download-artifact@v4
         with:
           name: vscode-release-candidate
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
+      - run: npx @vscode/vsce publish --packagePath dist/extension.vsix
+        env:
+          VSCE_PAT: \${{ secrets.VSCE_PAT }}`}
               </WorkflowExample>
-              <Callout label="Authentication stays in the publish job">
-                Add the registry authentication your release already uses, such as PyPI Trusted
-                Publishing, npm trusted publishing or a scoped token, or a VS Code Marketplace
-                token, to the protected publish job. Drydock does not receive those credentials.
-              </Callout>
             </Subsection>
 
             <Subsection id="gate-decision" title="Approve or reject the gate">
@@ -816,22 +837,20 @@ export default function DocsPage() {
 
           <section id="dependency-updates" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Diffs in dependency PRs</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                Add package diffs to dependency update PRs.
+                Review dependency updates.
               </h2>
               <Prose>
-                A Renovate or Dependabot PR names the versions you are upgrading between. For npm
-                and PyPI updates with two published versions, these integrations add a link to their
-                package diff, and the PR comment adds what Drydock found in it. Reviewers can open
-                the diff without a Drydock account.
+                Compare the published packages in a public npm or PyPI upgrade. Add diff links with
+                the Renovate preset, or post findings with the PR comment workflow. No Drydock
+                account required. Public diffs run deterministic checks only.
               </Prose>
             </div>
 
             <Subsection id="renovate-diff-links" title="Renovate">
               <Prose>
-                Extend the shared preset and each npm or PyPI update row gains a Drydock column
-                linking the exact published pair being merged:
+                Add the preset after your base presets in <InlineCode>renovate.json</InlineCode>.
+                npm and PyPI update rows gain a Drydock column linking the published version pair.
               </Prose>
               <CodeBlock name="renovate.json" lang="json">
                 {`{
@@ -842,39 +861,45 @@ export default function DocsPage() {
 }`}
               </CodeBlock>
               <Prose>
-                List the preset after your base presets so its column layout wins. Updates without
-                two distinct published versions of one package (pins, digests, replacements, and
-                some lockfile-only changes) omit the link, and columns that end up empty are dropped
-                from the table.
+                Links require two distinct published versions of the same package. Pins, digests,
+                replacements, and updates without a version pair are skipped.
               </Prose>
             </Subsection>
 
-            <Subsection id="dependabot-diff-links" title="Pull request comment">
+            <Subsection id="dependabot-diff-links" title="Dependabot and Renovate comments">
               <Prose>
-                One workflow comments the diff on Dependabot and Renovate PRs. Each npm or PyPI bump
-                gets a link to its diff and Drydock's headline for it: release risk, files added,
-                removed, and changed, new install scripts, dependencies, and native binaries, and
-                the top release findings with their rule ids. The comment is rewritten in place each
-                time the PR is updated. The workflow never checks out or executes the updated code.
+                The workflow updates one comment with diff links, release risk, file counts, and
+                findings. It reads metadata and lockfiles without checking out or executing PR code.
               </Prose>
               <Prose>
-                For Dependabot, it reads the bumps from the signed Dependabot commit. For Renovate,
-                it compares the lockfiles the PR changes (<InlineCode>package-lock.json</InlineCode>
-                , <InlineCode>pnpm-lock.yaml</InlineCode>, <InlineCode>yarn.lock</InlineCode>,{" "}
-                <InlineCode>uv.lock</InlineCode>, and <InlineCode>requirements*.txt</InlineCode>{" "}
-                pins). It ignores the PR text, which can include upstream release notes. Renovate
-                PRs that change no supported lockfile get no comment, but the preset column above
-                still links them.
+                Save the workflow below and merge it into the branch your dependency PRs target. It
+                runs when a new PR opens or an existing PR receives commits.
               </Prose>
               <CodeBlock name=".github/workflows/drydock-diff-link.yml" lang="yaml">
                 {DEPENDENCY_PR_WORKFLOW}
               </CodeBlock>
-              <Prose>
-                The job calls the reusable workflow at <InlineCode>{REUSABLE_WORKFLOW}</InlineCode>,
-                pinned to the commit that last changed it, so nothing changes in your repository
-                until you change the hash. To pick up later fixes, copy the hash from this page
-                again.
-              </Prose>
+              <ul class="m-0 pl-5 text-[13px] leading-[1.6] text-ink-muted max-w-[680px] space-y-2">
+                <li>
+                  Runs for <InlineCode>dependabot[bot]</InlineCode> and{" "}
+                  <InlineCode>renovate[bot]</InlineCode>. Self-hosted Renovate accounts are skipped.
+                </li>
+                <li>
+                  Renovate comments cover direct dependencies in existing lockfiles:{" "}
+                  <InlineCode>package-lock.json</InlineCode> /{" "}
+                  <InlineCode>npm-shrinkwrap.json</InlineCode> (v2 or v3),{" "}
+                  <InlineCode>pnpm-lock.yaml</InlineCode>, <InlineCode>yarn.lock</InlineCode>,{" "}
+                  <InlineCode>uv.lock</InlineCode>, and <InlineCode>requirements*.txt</InlineCode>{" "}
+                  pins. The preset works without these lockfiles.
+                </li>
+                <li>
+                  Up to 10 summaries and 50 links per run. API failures leave the links available
+                  without failing the job.
+                </li>
+                <li>
+                  The reusable workflow is pinned to a commit. Replace the pinned hash with the
+                  current one on this page to receive fixes.
+                </li>
+              </ul>
             </Subsection>
 
             <Subsection id="dependency-review-check" title="Required check">
@@ -903,17 +928,23 @@ export default function DocsPage() {
               </Prose>
             </Subsection>
 
-            <Callout label="What reaches Drydock">
-              The Renovate column is a plain link: rendering the PR sends nothing to Drydock. The
-              workflow sends each bumped package's name and version pair to the public diff API when
-              the PR opens or changes, at most 10 per run. npm packages that your committed{" "}
-              <InlineCode>.npmrc</InlineCode> or <InlineCode>.yarnrc.yml</InlineCode> sends to
-              another registry are left out, as are Renovate's pins from requirements files with
-              their own index. Dependabot's pip and uv bumps are sent as they are. Pass{" "}
-              <InlineCode>summaries: false</InlineCode> to post links only. If the API is slow, rate
-              limited, or down, the comment keeps the link and says the summary is unavailable. The
-              job does not fail.
-            </Callout>
+            <Subsection title="Requests and private registries">
+              <Prose>
+                Preset links contact Drydock when opened. The comment workflow sends package names
+                and version pairs automatically. Registry filtering checks committed settings only;
+                CI, user-level, and Dependabot registry settings are invisible to it. Dependabot pip
+                and uv pairs are sent without registry filtering.
+              </Prose>
+              <Prose>
+                For private dependency names or registries configured elsewhere, post links only:
+                uncomment these lines under the <InlineCode>diff-link</InlineCode> job. This
+                disables automatic requests to Drydock.
+              </Prose>
+              <CodeBlock name="diff-link job options" lang="yaml">
+                {`with:
+  summaries: false`}
+              </CodeBlock>
+            </Subsection>
           </section>
 
           <section id="agent-package-review" class="flex flex-col gap-8 scroll-mt-6">

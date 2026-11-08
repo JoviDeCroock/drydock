@@ -49,10 +49,10 @@ export const TOC: Array<{
   },
   {
     id: "dependency-updates",
-    label: "Diffs in dependency PRs",
+    label: "Review dependency updates",
     children: [
       { id: "renovate-diff-links", label: "Renovate" },
-      { id: "dependabot-diff-links", label: "Pull request comment" },
+      { id: "dependabot-diff-links", label: "PR comments" },
       { id: "dependency-review-check", label: "Required check" },
     ],
   },

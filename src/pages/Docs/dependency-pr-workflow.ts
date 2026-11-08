@@ -3,7 +3,7 @@ import repositoryCaller from "../../../.github/workflows/dependency-pr-diff.yml?
 // Set at build time from scripts/lib/workflow-ref.mjs.
 declare const __DIFF_LINK_WORKFLOW_REF__: string;
 
-export const REUSABLE_WORKFLOW = "JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml";
+const REUSABLE_WORKFLOW = "JoviDeCroock/drydock/.github/workflows/drydock-diff-link.yml";
 
 // The documented snippet is the caller this repository runs on its own
 // dependency PRs, so the published copy cannot drift from the exercised one.
