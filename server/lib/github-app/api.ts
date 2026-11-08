@@ -55,7 +55,7 @@ export async function fetchInstallationMetadata(
     !Number.isSafeInteger(accountId)
   ) {
     throw new GithubAppValidationError(
-      "installation_owner_unverified",
+      "installation_account_unsupported",
       `GitHub installation ${idValue} is not on an organization or user account Drydock can verify`,
     );
   }

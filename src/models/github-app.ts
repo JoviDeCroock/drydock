@@ -139,6 +139,7 @@ export type GithubAppCallbackErrorCode =
   | "installation_inactive"
   | "installation_owner_required"
   | "installation_owner_unverified"
+  | "installation_account_unsupported"
   | "installation_conflict"
   | "invalid_input"
   | "state_invalid"

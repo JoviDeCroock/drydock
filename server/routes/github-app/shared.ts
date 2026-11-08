@@ -71,6 +71,7 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
       return 403;
     case "environment_already_mapped":
       return 409;
+    case "installation_account_unsupported":
     case "environment_unmapped":
     case "unsupported_ecosystem":
     case "invalid_input":

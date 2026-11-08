@@ -162,7 +162,8 @@ jobs:
 12. [Publication monitoring](./publication-monitor.md) supplies post-publication evidence only for explicitly enrolled public npm packages; it expands neither gate authority nor PyPI/VS Code outcome coverage.
 
 13. Validation errors remain actionable without exposing credentials or private package bytes (`server/lib/workflow-gates/prepare.ts`, `server/lib/platform/observability.ts`).
-14. Linking an installation requires the authorizing GitHub user to own its account: an active organization owner (`GET /user/memberships/orgs/{org}`, `role: admin`) or the user account itself (`GET /user`, by id). Repository access is not enough, and any other GitHub answer fails closed (`server/lib/github-app/oauth.ts`). A verified owner may move an installation linked to another organization; one batch drops that organization's targets, gates, dependency reviews, and setup jobs for it and audits both organizations (`transferInstallation`). Links made before this check were not re-verified.
+14. Linking an installation requires the authorizing GitHub user to own its account: an active organization owner (`GET /user/memberships/orgs/{org}`, `role: admin`) or the user account itself (`GET /user`, by id). Repository access is not enough, and any other GitHub answer fails closed (`server/lib/github-app/oauth.ts`).
+15. A verified owner may move an installation linked to another organization. One batch removes that organization's release targets, workflow gates, dependency reviews, and setup jobs for the installation and audits both organizations (`transferInstallation`). Its past workflow-gate scans and reports stay, with `gate_id` cleared. Links made before this check were not re-verified.
 
 ## Failure modes
 
@@ -177,7 +178,7 @@ jobs:
 | PyPI acquisition throws | Unhandled download/parse failure | Review fails; no automatic approval | Inspect error, retry |
 | Callback fails | GitHub delivery error | Durable decision retained; `github_workflow_gate.redelivery_failed`; queue retries when bound; otherwise next human/cron touch; job held until delivery | Restore callback access; redeliver |
 | PR exists, gate inactive | Missing rule or matching target | Setup checker reports separate unmet conditions | Complete setup; verify first real review |
-| Installation moved to another organization | A GitHub owner of the account linked it elsewhere | Previous organization's targets and gates for it are removed; pending deployments wait for the new owner or GitHub's timeout | New owner maps targets and re-runs the workflow |
+| Installation moved to another organization | A GitHub owner of the account linked it elsewhere | Previous organization loses its targets, gates, reviews, and setup jobs for it; its past gate scans stay, unlinked; pending deployments wait for the new owner or GitHub's timeout | New owner maps targets and re-runs the workflow |
 
 ## Change checklist
 

@@ -194,7 +194,9 @@ function describeCallbackError(code: GithubAppCallbackErrorCode): string {
     case "installation_owner_required":
       return "Only an owner of this GitHub account can link its installation. Ask an owner to finish the install from Drydock.";
     case "installation_owner_unverified":
-      return "GitHub did not confirm that you own this account. The Drydock GitHub App may be missing the Members (read) permission; ask the operator or an owner to accept it on GitHub, then retry.";
+      return "GitHub did not confirm that you own this account. For an organization, the Drydock GitHub App needs the Members (read) permission; ask the operator or an owner to accept it on GitHub, then retry.";
+    case "installation_account_unsupported":
+      return "Drydock can link installations on GitHub organizations and personal accounts only. Install the app on one of those instead.";
     case "installation_conflict":
       return "This installation changed while it was being linked. Start the install again from settings.";
     case "installation_not_active":

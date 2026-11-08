@@ -36,7 +36,7 @@ afterEach(() => {
 type Seeded = Awaited<ReturnType<typeof seedDependencyReviewOrg>>;
 
 async function seedReview(seeded: Seeded, pr: FakePullRequest) {
-  const { review } = await createDependencyReview(createDb(env.DB), {
+  const { review } = (await createDependencyReview(createDb(env.DB), {
     organizationId: seeded.organizationId,
     installationRowId: seeded.installation.id,
     repositoryId: 5151,
@@ -44,7 +44,7 @@ async function seedReview(seeded: Seeded, pr: FakePullRequest) {
     pullNumber: pr.number,
     headSha: pr.headSha,
     authorLogin: "dependabot[bot]",
-  });
+  }))!;
   return review;
 }
 

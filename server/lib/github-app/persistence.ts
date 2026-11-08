@@ -65,68 +65,65 @@ export async function upsertInstallation(
 ): Promise<InstallationRecord> {
   const now = new Date();
   const accountLogin = input.accountLogin.slice(0, ACCOUNT_LOGIN_MAX);
-  const [existing] = await db
-    .select()
-    .from(githubAppInstallations)
-    .where(eq(githubAppInstallations.installationId, input.installationId))
-    .limit(1);
-
-  if (existing) {
-    if (existing.organizationId !== input.organizationId) {
-      // Moving it is `transferInstallation`'s job, after the ownership check.
-      throw new GithubAppValidationError(
-        "installation_conflict",
-        `installation ${input.installationId} is already linked to a different organization`,
-      );
-    }
-    await db
-      .update(githubAppInstallations)
-      .set({
+  const findExisting = async () => {
+    const [row] = await db
+      .select()
+      .from(githubAppInstallations)
+      .where(eq(githubAppInstallations.installationId, input.installationId))
+      .limit(1);
+    return row;
+  };
+  let existing = await findExisting();
+  if (!existing) {
+    const [inserted] = await db
+      .insert(githubAppInstallations)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        installationId: input.installationId,
         accountLogin,
         accountType: input.accountType,
         targetType: input.targetType,
         status: input.status,
-        suspendedAt: input.status === "suspended" ? now : null,
-        uninstalledAt: input.status === "uninstalled" ? now : null,
+        createdByUserId: input.createdByUserId,
+        installedAt: now,
+        createdAt: now,
         updatedAt: now,
       })
-      .where(eq(githubAppInstallations.id, existing.id));
-    return readInstallationRow({
-      ...existing,
+      // Another link of the same installation won the insert; handle it below
+      // like a row that was already there.
+      .onConflictDoNothing()
+      .returning();
+    if (inserted) return readInstallationRow(inserted);
+    existing = await findExisting();
+  }
+
+  const conflict = new GithubAppValidationError(
+    "installation_conflict",
+    `installation ${input.installationId} is already linked to a different organization`,
+  );
+  // Moving it is `transferInstallation`'s job, after the ownership check.
+  if (!existing || existing.organizationId !== input.organizationId) throw conflict;
+  const [updated] = await db
+    .update(githubAppInstallations)
+    .set({
       accountLogin,
       accountType: input.accountType,
       targetType: input.targetType,
       status: input.status,
+      suspendedAt: input.status === "suspended" ? now : null,
+      uninstalledAt: input.status === "uninstalled" ? now : null,
       updatedAt: now,
-    });
-  }
-
-  const id = crypto.randomUUID();
-  await db.insert(githubAppInstallations).values({
-    id,
-    organizationId: input.organizationId,
-    installationId: input.installationId,
-    accountLogin,
-    accountType: input.accountType,
-    targetType: input.targetType,
-    status: input.status,
-    createdByUserId: input.createdByUserId,
-    installedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  });
-  return {
-    id,
-    organizationId: input.organizationId,
-    installationId: input.installationId,
-    accountLogin,
-    accountType: input.accountType,
-    targetType: input.targetType,
-    status: input.status,
-    installedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  };
+    })
+    .where(
+      and(
+        eq(githubAppInstallations.id, existing.id),
+        eq(githubAppInstallations.organizationId, input.organizationId),
+      ),
+    )
+    .returning();
+  if (!updated) throw conflict;
+  return readInstallationRow(updated);
 }
 
 export interface TransferInstallationInput {
@@ -148,7 +145,8 @@ export interface TransferInstallationInput {
  * organization of everything bound to it, so nothing it still holds can gate,
  * decide, review, or open PRs through the installation:
  *  - release targets and their workflow gates (pending ones included) go;
- *    GitHub keeps a pending deployment waiting until the new owner maps the
+ *    the gates' past scans and reports stay with `gate_id` cleared. GitHub
+ *    keeps a pending deployment waiting until the new owner maps the
  *    environment and re-runs it, or GitHub times it out;
  *  - dependency reviews go, because they are keyed by installation row and
  *    the new organization's reviews of the same commits would match them;

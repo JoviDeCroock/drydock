@@ -911,7 +911,13 @@ async function postSkippedCheck(
   skip: NonNullable<DependencyReviewJobInput["skip"]>,
 ): Promise<void> {
   const reviewOfHead = () =>
-    getDependencyReviewForHead(db, skip.installationRowId, skip.repositoryId, skip.headSha);
+    getDependencyReviewForHead(
+      db,
+      organizationId,
+      skip.installationRowId,
+      skip.repositoryId,
+      skip.headSha,
+    );
   if (await reviewOfHead()) return;
   const repo = parseRepositoryFullName(skip.repositoryFullName);
   if (!repo) return;

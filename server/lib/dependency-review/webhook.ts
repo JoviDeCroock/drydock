@@ -166,6 +166,7 @@ export async function applyCheckSuiteEvent(
   }
   const review = await getDependencyReviewForHead(
     db,
+    installation.organizationId,
     installation.id,
     event.repositoryId,
     event.headSha,
@@ -254,7 +255,7 @@ export async function applyPullRequestEvent(
   if (event.headRepositoryId !== event.repositoryId) {
     return { kind: "ignored", reason: "head branch is in another repository" };
   }
-  const { review, created } = await createDependencyReview(db, {
+  const recorded = await createDependencyReview(db, {
     organizationId: installation.organizationId,
     installationRowId: installation.id,
     repositoryId: event.repositoryId,
@@ -263,7 +264,8 @@ export async function applyPullRequestEvent(
     headSha: event.headSha,
     authorLogin: event.authorLogin,
   });
-  return { kind: "dependency_review_queued", review, created };
+  if (!recorded) return { kind: "ignored", reason: "installation moved to another organization" };
+  return { kind: "dependency_review_queued", ...recorded };
 }
 
 /**
@@ -287,10 +289,17 @@ export async function applyCheckRunEvent(
   // review, the only way back for a PR whose newest run is the skip.
   const review = event.externalId?.startsWith(SKIP_EXTERNAL_ID_PREFIX)
     ? event.action === "rerequested"
-      ? await getDependencyReviewForHead(db, installation.id, event.repositoryId, event.headSha)
+      ? await getDependencyReviewForHead(
+          db,
+          installation.organizationId,
+          installation.id,
+          event.repositoryId,
+          event.headSha,
+        )
       : null
     : await getDependencyReviewByCheckRun(
         db,
+        installation.organizationId,
         installation.id,
         event.repositoryId,
         event.checkRunId,

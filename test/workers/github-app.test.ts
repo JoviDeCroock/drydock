@@ -14,8 +14,10 @@ import {
   listReleaseTargetsForOrganization,
   markInstallationStatus,
   resolveDeploymentProtectionTarget,
+  transferInstallation,
   upsertInstallation,
 } from "../../server/lib/github-app/persistence";
+import { runPublisherSetupDraftJob } from "../../server/lib/github-app/setup-jobs";
 import type { PublisherSetupDraftRequest } from "../../server/lib/github-app/setup-types";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
@@ -1360,9 +1362,21 @@ describe("github-app install callback ownership", () => {
   });
 
   test.each([
-    ["GitHub refuses the membership lookup", ORG_ACCOUNT, new Response("{}", { status: 403 })],
-    ["the account is an enterprise", { id: 1, login: "acme-ent", type: "Enterprise" }, undefined],
-  ])("fails closed when %s", async (_label, account, response) => {
+    [
+      "GitHub refuses the membership lookup",
+      ORG_ACCOUNT,
+      new Response("{}", { status: 403 }),
+      403,
+      "installation_owner_unverified",
+    ],
+    [
+      "the account is an enterprise",
+      { id: 1, login: "acme-ent", type: "Enterprise" },
+      undefined,
+      400,
+      "installation_account_unsupported",
+    ],
+  ])("fails closed when %s", async (_label, account, response, status, code) => {
     const { userId, organizationId } = await seedUser();
 
     const { res } = await linkInstallation(userId, newInstallationId(), {
@@ -1370,8 +1384,8 @@ describe("github-app install callback ownership", () => {
       membership: response,
     });
 
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: "installation_owner_unverified" });
+    expect(res.status).toBe(status);
+    expect(await res.json()).toMatchObject({ code });
     expect(await listInstallationsForOrganization(createDb(env.DB), organizationId)).toEqual([]);
   });
 
@@ -1391,7 +1405,10 @@ describe("github-app install callback ownership", () => {
   async function seedPreviousOrganizationState() {
     const previous = await seedUser();
     const db = createDb(env.DB);
-    const { gateId, installation, releaseTarget } = await seedGate(previous.organizationId);
+    const { gateId, scanId, installation, releaseTarget } = await seedGate(
+      previous.organizationId,
+      { attachScan: { ownerUserId: previous.userId } },
+    );
     const now = new Date();
     await db.insert(schema.dependencyReviews).values({
       id: crypto.randomUUID(),
@@ -1410,9 +1427,9 @@ describe("github-app install callback ownership", () => {
     } as PublisherSetupDraftRequest);
     await db
       .update(schema.publisherSetupJobs)
-      .set({ status: "running" })
+      .set({ status: "running", stage: "create_pr" })
       .where(eq(schema.publisherSetupJobs.id, setupJob.id));
-    return { previous, gateId, installation, releaseTarget, setupJobId: setupJob.id };
+    return { previous, gateId, scanId, installation, releaseTarget, setupJobId: setupJob.id };
   }
 
   test("a verified GitHub owner moves an installation linked to another organization", async () => {
@@ -1482,5 +1499,109 @@ describe("github-app install callback ownership", () => {
     expect(setupJob.status).toBe("running");
     expect(await eventsFor(previous.organizationId)).toEqual([]);
     expect(await eventsFor(next.organizationId)).toEqual([]);
+  });
+
+  test("after a move the previous organization's gate keeps its scan but cannot be decided", async () => {
+    const { previous, gateId, scanId, installation } = await seedPreviousOrganizationState();
+    const next = await seedUser();
+    await linkInstallation(next.userId, installation.installationId, {
+      account: ORG_ACCOUNT,
+      membership: membership(),
+    });
+    const fetchMock = vi.fn(async () => Response.json({}));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const res = await callGithubAppRoute(
+      buildTestApp(mountGithubApp, { userId: previous.userId }),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId },
+    );
+
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const [scan] = await createDb(env.DB)
+      .select({ organizationId: schema.scans.organizationId, gateId: schema.scans.gateId })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(scan).toEqual({ organizationId: previous.organizationId, gateId: null });
+  });
+
+  test("after a move the previous organization's setup job stops before any PR write", async () => {
+    const { installation, setupJobId } = await seedPreviousOrganizationState();
+    const next = await seedUser();
+    await linkInstallation(next.userId, installation.installationId, {
+      account: ORG_ACCOUNT,
+      membership: membership(),
+    });
+    const fetchMock = vi.fn(async () => Response.json({}));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const runStep = vi.fn(async (_stage: string, operation: () => Promise<boolean>) => operation());
+
+    await runPublisherSetupDraftJob(env, setupJobId, runStep);
+
+    expect(runStep).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a move whose source organization no longer owns the row changes nothing", async () => {
+    const { previous, installation } = await seedPreviousOrganizationState();
+    const stale = await seedUser();
+    const next = await seedUser();
+    const db = createDb(env.DB);
+
+    await expect(
+      transferInstallation(db, {
+        installationRowId: installation.id,
+        fromOrganizationId: stale.organizationId,
+        toOrganizationId: next.organizationId,
+        accountLogin: "acme",
+        accountType: "Organization",
+        targetType: "Organization",
+        status: "active",
+        createdByUserId: next.userId,
+        githubLogin: "acme-owner",
+      }),
+    ).rejects.toMatchObject({ code: "installation_conflict" });
+
+    const [kept] = await listInstallationsForOrganization(db, previous.organizationId);
+    expect(kept).toMatchObject({ id: installation.id, updatedAt: installation.updatedAt });
+    expect(await listReleaseTargetsForOrganization(db, previous.organizationId)).toHaveLength(1);
+    expect(await listInstallationsForOrganization(db, next.organizationId)).toEqual([]);
+    for (const organizationId of [
+      previous.organizationId,
+      stale.organizationId,
+      next.organizationId,
+    ]) {
+      expect(await eventsFor(organizationId)).toEqual([]);
+    }
+  });
+
+  test("concurrent links of a new installation from two organizations never 500", async () => {
+    const a = await seedUser();
+    const b = await seedUser();
+    const installationId = newInstallationId();
+    const input = (organizationId: string) => ({
+      organizationId,
+      installationId,
+      accountLogin: "acme",
+      accountType: "Organization",
+      targetType: "Organization",
+      status: "active" as const,
+      createdByUserId: null,
+    });
+    const db = createDb(env.DB);
+
+    const results = await Promise.allSettled([
+      upsertInstallation(db, input(a.organizationId)),
+      upsertInstallation(db, input(b.organizationId)),
+    ]);
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected.map((result) => (result as PromiseRejectedResult).reason)).toEqual([
+      expect.objectContaining({ code: "installation_conflict" }),
+    ]);
   });
 });

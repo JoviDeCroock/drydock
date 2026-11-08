@@ -45,6 +45,7 @@ export type GithubAppValidationCode =
   | "installation_inactive"
   | "installation_owner_required"
   | "installation_owner_unverified"
+  | "installation_account_unsupported"
   | "installation_conflict"
   | "repository_not_accessible"
   | "environment_unmapped"

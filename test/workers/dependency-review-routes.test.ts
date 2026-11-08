@@ -35,7 +35,7 @@ async function seedTeammate(seeded: Seeded, role: "admin" | "member") {
 
 async function seedCompletedReview(seeded: Seeded, headSha = sha("b")) {
   const db = createDb(env.DB);
-  const { review } = await createDependencyReview(db, {
+  const { review } = (await createDependencyReview(db, {
     organizationId: seeded.organizationId,
     installationRowId: seeded.installation.id,
     repositoryId: 5151,
@@ -43,7 +43,7 @@ async function seedCompletedReview(seeded: Seeded, headSha = sha("b")) {
     pullNumber: 42,
     headSha,
     authorLogin: "dependabot[bot]",
-  });
+  }))!;
   await completeDependencyReview(db, review.id, {
     conclusion: "clear",
     bumps: [
@@ -168,7 +168,7 @@ describe("dependency review routes", () => {
   test("superseded reviews are left out of the list", async () => {
     const seeded = await seedDependencyReviewOrg();
     await seedCompletedReview(seeded, sha("1"));
-    const { review: queued } = await createDependencyReview(createDb(env.DB), {
+    const { review: queued } = (await createDependencyReview(createDb(env.DB), {
       organizationId: seeded.organizationId,
       installationRowId: seeded.installation.id,
       repositoryId: 5151,
@@ -176,7 +176,7 @@ describe("dependency review routes", () => {
       pullNumber: 43,
       headSha: sha("2"),
       authorLogin: "dependabot[bot]",
-    });
+    }))!;
     await createDependencyReview(createDb(env.DB), {
       organizationId: seeded.organizationId,
       installationRowId: seeded.installation.id,
