@@ -206,8 +206,8 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     });
   });
 
-  test("stops retaining at maxRetainedChars and says so, whatever the entry kind", () => {
-    const limits = { maxRetainedChars: 1_000, identityFields: false };
+  test("stops retaining at maxRetainedBytes and says so, whatever the entry kind", () => {
+    const limits = { maxRetainedBytes: 1_000, identityFields: false };
     const tarball = `"${"t".repeat(300)}"`;
     const versions = Array.from(
       { length: 5 },
@@ -226,6 +226,20 @@ describe("packument extraction equals JSON.parse and the projection", () => {
     const under = extract(`{"versions":{"1.0.0":{"dist":{"tarball":"t"}}}}`, [], limits);
     expect(under.retainedLimitExceeded).toBe(false);
     expect(under.versions.get("1.0.0")?.tarball).toBe("t");
+  });
+
+  test("a retained budget bounds the re-serialized size, escapes included", () => {
+    // Each control character is one decoded char but six bytes once
+    // `JSON.stringify` writes it back: the budget must charge the six.
+    const tarball = JSON.stringify("\u0001".repeat(100));
+    const entries = Array.from({ length: 20 }, (_, i) => `"${i}":{"dist":{"tarball":${tarball}}}`);
+    const text = `{"versions":{${entries.join(",")}}}`;
+    expect(extract(text, [], { maxRetainedBytes: 20 * (100 + 64) }).retainedLimitExceeded).toBe(
+      true,
+    );
+    expect(extract(text, [], { maxRetainedBytes: 20 * (600 + 64 + 8) }).retainedLimitExceeded).toBe(
+      false,
+    );
   });
 
   test("the last duplicate wins, replacing objects wholesale and erasing strings", () => {
@@ -296,6 +310,25 @@ describe("packument extraction equals JSON.parse and the projection", () => {
         const bytes = encoder.encode(text);
         const cuts = rawCuts.map((cut) => cut % (bytes.length + 1)).sort((a, b) => a - b);
         expect(normalize(extract(bytes, cuts))).toEqual(reference(text));
+      }),
+      { numRuns: 400 },
+    );
+  });
+
+  test("property: what a budget lets through re-serializes within it", () => {
+    const size = (value: string) => encoder.encode(JSON.stringify(value)).length;
+    fc.assert(
+      fc.property(documentText, fc.nat({ max: 4_000 }), (text, budget) => {
+        const result = extract(text, [], { maxRetainedBytes: budget, identityFields: false });
+        if (result.retainedLimitExceeded) return;
+        let serialized = 0;
+        for (const [key, entry] of result.versions) {
+          serialized += size(key) + (entry?.tarball == null ? 0 : size(entry.tarball));
+        }
+        for (const map of [result.time, result.distTags]) {
+          for (const [key, value] of map) serialized += size(key) + size(value);
+        }
+        expect(serialized).toBeLessThanOrEqual(budget);
       }),
       { numRuns: 400 },
     );

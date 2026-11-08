@@ -290,6 +290,24 @@ describe("packument size ceiling", () => {
     );
   });
 
+  test("charges escape-expanded bytes, so the cached JSON cannot outgrow the budget", async () => {
+    // ~2.6 Mi decoded characters but ~14.6 MB once each control character is
+    // written back as \u0001 (each tarball still fits one captured field):
+    // past the budget, so refused rather than left to a KV put that would
+    // fail on size.
+    const tarball = `https://registry.npmjs.org/big/-/${"\u0001".repeat(600)}.tgz`;
+    const versions = Object.fromEntries(
+      Array.from({ length: 4_000 }, (_, i) => [`1.0.${i}`, { dist: { tarball } }]),
+    );
+    const body = JSON.stringify({ name: "big", versions });
+    expect(body.length).toBeGreaterThan(8 * 1024 * 1024);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status: 200 }));
+
+    await expect(cachedFetch(fakeKv().binding, { cacheScope: "org:org-a" })).rejects.toThrow(
+      "registry metadata too large",
+    );
+  });
+
   test("the streamed projection equals the parsed-document projection", () => {
     const doc = {
       ...PRIVATE_PACKUMENT,
