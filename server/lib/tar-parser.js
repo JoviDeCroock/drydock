@@ -199,6 +199,21 @@ export function unrepresentableZipEntry(rawPath) {
   };
 }
 
+// Python's zipfile (pip), yauzl and Info-ZIP decode an entry name as cp437
+// unless general-purpose bit 11 marks it UTF-8. Decoding every name as lossy
+// UTF-8 collapses distinct cp437 names (`hook\x80.pth`, `hook\x81.pth`) onto
+// one replacement-character path, so only one of the bodies pip installs
+// would be read. The table is inline because this function is stringified
+// into the sandbox worker.
+export function decodeZipName(bytes, flags) {
+  if (flags & 0x0800) return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const high =
+    "\u00c7\u00fc\u00e9\u00e2\u00e4\u00e0\u00e5\u00e7\u00ea\u00eb\u00e8\u00ef\u00ee\u00ec\u00c4\u00c5\u00c9\u00e6\u00c6\u00f4\u00f6\u00f2\u00fb\u00f9\u00ff\u00d6\u00dc\u00a2\u00a3\u00a5\u20a7\u0192\u00e1\u00ed\u00f3\u00fa\u00f1\u00d1\u00aa\u00ba\u00bf\u2310\u00ac\u00bd\u00bc\u00a1\u00ab\u00bb\u2591\u2592\u2593\u2502\u2524\u2561\u2562\u2556\u2555\u2563\u2551\u2557\u255d\u255c\u255b\u2510\u2514\u2534\u252c\u251c\u2500\u253c\u255e\u255f\u255a\u2554\u2569\u2566\u2560\u2550\u256c\u2567\u2568\u2564\u2565\u2559\u2558\u2552\u2553\u256b\u256a\u2518\u250c\u2588\u2584\u258c\u2590\u2580\u03b1\u00df\u0393\u03c0\u03a3\u03c3\u00b5\u03c4\u03a6\u0398\u03a9\u03b4\u221e\u03c6\u03b5\u2229\u2261\u00b1\u2265\u2264\u2320\u2321\u00f7\u2248\u00b0\u2219\u00b7\u221a\u207f\u00b2\u25a0\u00a0";
+  let name = "";
+  for (const byte of bytes) name += byte < 0x80 ? String.fromCharCode(byte) : high[byte - 0x80];
+  return name;
+}
+
 export function normalizeZipPath(rawPath) {
   const nul = String.fromCharCode(0);
   if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
@@ -1131,6 +1146,7 @@ export async function readTarStream(
         paxBody: new Set(),
         oldGnu: false,
         sizedMeta: false,
+        cpythonPath: null,
       };
     }
     return metaShape;
@@ -1208,6 +1224,11 @@ export async function readTarStream(
     for (const type of shape.emptyGnu) {
       details.push(
         `member is preceded by a zero-length GNU \`${type}\` record; node-tar ignores it, while CPython tarfile applies the empty ${type === "L" ? "name" : "link target"}`,
+      );
+    }
+    if (shape.cpythonPath !== null) {
+      details.push(
+        `member's header has no ustar magic but a non-empty prefix field; node-tar ignores the prefix, while pip's CPython tarfile joins it and extracts the member as \`${shape.cpythonPath}\``,
       );
     }
     if (shape.paxBody.size) {
@@ -1404,6 +1425,18 @@ export async function readTarStream(
       if (isLink ? !linkname : linkname && type !== "x" && type !== "g") {
         rejectHeader();
         continue;
+      }
+
+      // CPython's `TarInfo.frombuf` (pip's sdist reader) joins any non-empty
+      // prefix field to the name whatever the magic says, unless an extended
+      // header names the member or the type is GNU. node-tar reads bytes 345+
+      // only under the ustar magic, so the two name the same member differently.
+      if (!isMeta && !ustar && header[345] !== 0 && paxPath === null && type !== "S") {
+        const prefixEnd = header.subarray(345, 500).indexOf(0);
+        const cpythonPrefix = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+          header.subarray(345, prefixEnd < 0 ? 500 : 345 + prefixEnd),
+        );
+        currentMetaShape().cpythonPath = clipTextSample(cpythonPrefix + "/" + rawName, 256);
       }
 
       // PAX and long-name blocks describe the entry after them rather than an
@@ -1660,7 +1693,10 @@ export async function readTarStream(
             addSuspicious({
               kind: "duplicate",
               path,
-              detail: "duplicate path; later entry replaced earlier entry",
+              detail:
+                files[seenPaths.get(path)].sha256 === summarized.sha256
+                  ? "duplicate path; later entry replaced earlier entry"
+                  : "duplicate path; later entry replaced earlier entry with different content, so the earlier body was not inspected",
             });
             retainedBytes -= retainedByPath.get(path) || 0;
             files[seenPaths.get(path)] = summarized;
@@ -1829,11 +1865,11 @@ export async function readZipArchiveBuffered(
   let demotedByTier = 0;
   let tierNotice = null;
   let offset = centralDirectoryOffset;
-  const pathDecoder = new TextDecoder("utf-8", { fatal: false });
   for (let index = 0; index < entryCount; index += 1) {
     if (offset + 46 > bytes.length || readUint32Le(bytes, offset) !== 0x02014b50) {
       throw tarError("invalid zip central directory");
     }
+    const nameFlags = readUint16Le(bytes, offset + 8);
     const compressionMethod = readUint16Le(bytes, offset + 10);
     const compressedSize = readUint32Le(bytes, offset + 20);
     const uncompressedSize = readUint32Le(bytes, offset + 24);
@@ -1845,7 +1881,7 @@ export async function readZipArchiveBuffered(
     const fileNameEnd = fileNameStart + fileNameLength;
     if (fileNameEnd > bytes.length) throw tarError("truncated zip filename");
 
-    const rawPath = pathDecoder.decode(bytes.subarray(fileNameStart, fileNameEnd));
+    const rawPath = decodeZipName(bytes.subarray(fileNameStart, fileNameEnd), nameFlags);
     const path = normalizeZipPath(rawPath);
     offset = fileNameEnd + extraLength + commentLength;
 
@@ -2047,7 +2083,6 @@ export async function readZipStream(
   if (!body) throw tarError("archive download failed");
   const cursor = createStreamCursor(body, maxStreamBytes);
   const expansionLimit = Number.isFinite(maxStreamBytes) ? maxStreamBytes : Infinity;
-  const pathDecoder = new TextDecoder("utf-8", { fatal: false });
   // Two-tier caps, mirroring readTarStream: `maxFiles` bounds full text-sample
   // retention, `maxEntries` (never below maxFiles) is the hard walk cap.
   const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
@@ -2127,7 +2162,7 @@ export async function readZipStream(
           throw tarError("zip entry size mismatch");
         }
         if (!(await cursor.fill(fileNameLength))) throw tarError("truncated zip filename");
-        const rawPath = pathDecoder.decode(cursor.take(fileNameLength));
+        const rawPath = decodeZipName(cursor.take(fileNameLength), flags);
         if (!(await cursor.discard(extraLength))) throw tarError("truncated zip entry");
         localEntries.set(headerOffset, { rawPath, method, compressedSize, uncompressedSize });
 
@@ -2231,7 +2266,10 @@ export async function readZipStream(
           addSuspicious({
             kind: "duplicate",
             path,
-            detail: "duplicate path; later entry replaced earlier entry",
+            detail:
+              files[seenPaths.get(path)].sha256 === summarized.sha256
+                ? "duplicate path; later entry replaced earlier entry"
+                : "duplicate path; later entry replaced earlier entry with different content, so the earlier body was not inspected",
           });
           retainedBytes -= retainedByPath.get(path) || 0;
           files[seenPaths.get(path)] = summarized;
@@ -2244,11 +2282,12 @@ export async function readZipStream(
         retainedBytes += contributed;
       } else if (signature === 0x02014b50) {
         // Central directory record. Fixed fields after the signature:
-        // method@6, compressed size@16, uncompressed size@20, name length@24,
+        // flags@4, method@6, compressed size@16, uncompressed size@20, name length@24,
         // extra length@26, comment length@28, local header offset@38 (42 bytes).
         sawCentralDirectory = true;
         if (!(await cursor.fill(42))) throw tarError("invalid zip central directory");
         const header = cursor.take(42);
+        const flags = readUint16Le(header, 4);
         const method = readUint16Le(header, 6);
         const compressedSize = readUint32Le(header, 16);
         const uncompressedSize = readUint32Le(header, 20);
@@ -2257,7 +2296,9 @@ export async function readZipStream(
         const commentLength = readUint16Le(header, 28);
         const localHeaderOffset = readUint32Le(header, 38);
         if (!(await cursor.fill(fileNameLength))) throw tarError("truncated zip filename");
-        const rawPath = pathDecoder.decode(cursor.take(fileNameLength));
+        // Decoded by the central record's own flag: zipfile does the same and
+        // refuses an archive whose local name decodes differently.
+        const rawPath = decodeZipName(cursor.take(fileNameLength), flags);
         if (!(await cursor.discard(extraLength + commentLength))) {
           throw tarError("invalid zip central directory");
         }

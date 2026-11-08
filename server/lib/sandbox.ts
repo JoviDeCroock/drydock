@@ -40,6 +40,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.hasImplicitNodeGypInstall,
   tarParser.isSafePaxPath,
   tarParser.normalizeTarPath,
+  tarParser.decodeZipName,
   tarParser.normalizeZipPath,
   tarParser.unrepresentableZipEntry,
   tarParser.parsePax,

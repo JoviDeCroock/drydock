@@ -72,6 +72,7 @@ export function normalizeTarPath(
   rawPath: string | null | undefined,
   rootStrip?: TarRootStrip,
 ): string | null;
+export function decodeZipName(bytes: Uint8Array, flags: number): string;
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function unrepresentableZipEntry(rawPath: string | null | undefined): TarSuspiciousEntry | null;
 export function parsePax(body: Uint8Array): Record<string, string>;

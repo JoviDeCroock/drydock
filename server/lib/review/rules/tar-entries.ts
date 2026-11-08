@@ -11,11 +11,12 @@ export function tarEntryFindings(
 ): Finding[] {
   if (!entries || !entries.length) return [];
   const hasChangedSkippedContent = hasChangedUninspectedContent(options);
+  const dialect = options.dialect ?? "npm";
   return entries.map((entry) => ({
-    severity: tarSuspiciousSeverity(entry, hasChangedSkippedContent),
+    severity: tarSuspiciousSeverity(entry, hasChangedSkippedContent, dialect),
     file: entry.path || "<unknown>",
     evidence: `${entry.kind}: ${entry.detail}`,
-    reason: tarSuspiciousReason(entry, options.dialect ?? "npm"),
+    reason: tarSuspiciousReason(entry, dialect),
     ruleId: DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   }));
 }
@@ -135,6 +136,7 @@ function manifestEntrypoints(
 function tarSuspiciousSeverity(
   entry: TarSuspiciousEntry,
   hasChangedSkippedContent: boolean,
+  dialect: "npm" | "pypi",
 ): FindingSeverity {
   if (entry.kind === "non-regular") {
     return entry.detail.includes("(directory)") ? "info" : "high";
@@ -145,6 +147,17 @@ function tarSuspiciousSeverity(
   // A structure that makes tar readers disagree is review evasion by
   // construction: no publisher toolchain emits one.
   if (entry.kind === "parser-differential") return "high";
+  // node-tar writes the last copy, which is the body npm review inspected. pip's
+  // readers name members differently from this reader in ways not all modeled
+  // (see the zip and tar prefix differentials), so a replaced PyPI body that
+  // differed may be one pip installs.
+  if (
+    entry.kind === "duplicate" &&
+    dialect === "pypi" &&
+    entry.detail.includes("different content")
+  ) {
+    return "high";
+  }
   return "medium";
 }
 
@@ -160,7 +173,9 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi")
         ? "Python build backends only emit regular file and directory records; symlinks, hardlinks, devices, FIFOs, or reserved entries in an sdist indicate a hand-crafted archive that may target the consumer's filesystem on extract"
         : "npm publish only emits regular files; symlinks, hardlinks, devices, FIFOs, directories, or reserved entries in a tarball indicate a hand-crafted archive that may target the consumer's filesystem on extract";
     case "duplicate":
-      return "two entries share the same normalized path; last-write-wins extraction means a benign first entry can mask a malicious second";
+      return dialect === "pypi" && entry.detail.includes("different content")
+        ? "two entries share the same normalized path with different bodies and only the later one was inspected; pip's tar and zip readers can name members differently from this reader, so the replaced body may be a file pip installs"
+        : "two entries share the same normalized path; last-write-wins extraction means a benign first entry can mask a malicious second";
     case "unicode-confusable":
       return "path contains zero-width or visually-confusable characters; the consumer's tar implementation may canonicalize this differently than the reviewer and let it bypass deterministic file checks";
     case "content-skipped":

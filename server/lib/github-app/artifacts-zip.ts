@@ -1,4 +1,5 @@
 import {
+  decodeZipName,
   findZipEndOfCentralDirectory,
   inflateRawBounded,
   normalizeZipPath,
@@ -61,8 +62,9 @@ export async function extractOuterZipEntries(zip: Uint8Array): Promise<Extracted
     if (fileNameEnd > zip.byteLength) {
       throw new WorkflowArtifactError("bundle_unavailable", "truncated zip filename");
     }
-    const rawPath = new TextDecoder("utf-8", { fatal: false }).decode(
+    const rawPath = decodeZipName(
       zip.subarray(fileNameStart, fileNameEnd),
+      readUint16Le(zip, offset + 8),
     );
     offset = fileNameEnd + extraLength + commentLength;
 

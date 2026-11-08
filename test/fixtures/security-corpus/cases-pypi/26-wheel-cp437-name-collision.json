@@ -1,0 +1,87 @@
+{
+  "id": "pypi-wheel-cp437-name-collision",
+  "title": "wheel member names are cp437 bytes without the UTF-8 flag",
+  "category": "startup-hook",
+  "intent": "two .pth names differ only in a byte above 0x7f with general-purpose bit 11 clear; pip's zipfile decodes them as distinct cp437 names and installs both, so the reader must too rather than collapse them onto one lossy UTF-8 path and inspect only the benign body",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package/__init__.py",
+          "size": 10,
+          "sha256": "e13df8c44af5dea1e412403910b99cc5a48f2ccbf68a66b3374d6ab9cef9fc65",
+          "flags": [],
+          "textSample": "VALUE = 1\n"
+        },
+        {
+          "path": "demo_package/_boot.py",
+          "size": 10,
+          "sha256": "3da6c4b355804b265ecef19dfe5945fe2790a8cc38dc9d0547fb1634c94cbbe7",
+          "flags": [],
+          "textSample": "VALUE = 2\n"
+        },
+        {
+          "path": "demo_hookÇ.pth",
+          "size": 26,
+          "sha256": "84066f335edb1c51ad149719c7a21efd76e929d21507f18d39de9e9209005a51",
+          "flags": [],
+          "textSample": "import demo_package._boot\n"
+        },
+        {
+          "path": "demo_hookü.pth",
+          "size": 20,
+          "sha256": "e154316879a1a0b4b343ec8bc5f64a095ce3b5881325cc6c3d1ca4f6f8682953",
+          "flags": [],
+          "textSample": "demo_package/vendor\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 59,
+          "sha256": "242557f73f15fa3b36695e6a9904761377e20acf98bb7bcf3bdd5c08198ed493",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 202,
+          "sha256": "2aff97e82e6ca5e93f803d7ea3664af7a16570017f0ee7ffa5bbda13dde54d0a",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,,\ndemo_package/_boot.py,,\ndemo_hookÇ.pth,,\ndemo_hookü.pth,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.pth-execution",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_hookÇ.pth"
+    },
+    {
+      "ruleId": "pypi.pth-execution",
+      "severity": "medium",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_hookü.pth"
+    }
+  ]
+}

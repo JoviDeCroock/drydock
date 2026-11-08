@@ -15,6 +15,8 @@ export interface TarEntry {
   type?: string;
   prefix?: string;
   linkname?: string;
+  /** `false` omits the ustar magic and version (a pre-POSIX header). */
+  ustar?: boolean;
   body?: string | Uint8Array;
 }
 
@@ -24,6 +26,12 @@ export interface ZipEntry {
   deflate?: boolean;
   rawDeflate?: Uint8Array;
   dataDescriptor?: boolean;
+  /** Raw name bytes, for names that are not valid UTF-8; overrides `path`. */
+  nameBytes?: Uint8Array;
+  /** General-purpose bit 11 (names are UTF-8); defaults to set. */
+  utf8?: boolean;
+  /** Bit 11 in the central record only, when it should differ from the local one. */
+  centralUtf8?: boolean;
 }
 
 type TarHeaderInput = Omit<TarEntry, "body"> & { size?: number };
@@ -54,6 +62,7 @@ function tarHeader({
   type = "0",
   prefix = "",
   linkname = "",
+  ustar = true,
 }: TarHeaderInput): Uint8Array {
   const buf = new Uint8Array(TAR_BLOCK);
   buf.set(pad(encoder.encode(name), 100), 0);
@@ -70,8 +79,10 @@ function tarHeader({
     pad(encoder.encode(linkname || (type === "1" || type === "2" ? "target" : "")), 100),
     157,
   );
-  buf.set(pad(encoder.encode("ustar"), 6), 257);
-  buf.set(pad(encoder.encode("00"), 2), 263);
+  if (ustar) {
+    buf.set(pad(encoder.encode("ustar"), 6), 257);
+    buf.set(pad(encoder.encode("00"), 2), 263);
+  }
   buf.set(pad(encoder.encode(prefix), 155), 345);
   sealTarHeader(buf, 0);
   return buf;
@@ -186,7 +197,9 @@ function zipEntry(
   entry: ZipEntry,
   localOffset: number,
 ): { local: Uint8Array; central: Uint8Array } {
-  const name = encoder.encode(entry.path);
+  const name = entry.nameBytes ?? encoder.encode(entry.path);
+  const localFlag = entry.utf8 === false ? 0 : 0x0800;
+  const centralFlag = (entry.centralUtf8 ?? entry.utf8) === false ? 0 : 0x0800;
   const body = entry.body instanceof Uint8Array ? entry.body : encoder.encode(entry.body ?? "");
   // `rawDeflate` supplies a hand-crafted deflate payload for `body` (e.g. one
   // padded with empty stored blocks) so adversarial compressed-vs-declared-size
@@ -215,7 +228,7 @@ function zipEntry(
   const localView = new DataView(local.buffer);
   u32(localView, 0, 0x04034b50);
   u16(localView, 4, 20);
-  u16(localView, 6, entry.dataDescriptor ? 0x0808 : 0x0800);
+  u16(localView, 6, localFlag | (entry.dataDescriptor ? 0x0008 : 0));
   u16(localView, 8, method);
   u32(localView, 14, 0);
   u32(localView, 18, entry.dataDescriptor ? 0 : compressed.length);
@@ -230,7 +243,7 @@ function zipEntry(
   u32(centralView, 0, 0x02014b50);
   u16(centralView, 4, 20);
   u16(centralView, 6, 20);
-  u16(centralView, 8, 0x0800);
+  u16(centralView, 8, centralFlag);
   u16(centralView, 10, method);
   u32(centralView, 16, 0);
   u32(centralView, 20, compressed.length);

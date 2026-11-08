@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { readFileSync } from "node:fs";
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
 import {
@@ -558,6 +559,97 @@ describe("readZipStream", () => {
       },
     ]);
     await expect(parseStream(zip)).rejects.toThrow(/data-descriptor/);
+  });
+});
+
+describe("zip entry name encoding", () => {
+  // `hook\x80.pth` and `hook\x81.pth`: distinct cp437 names, both invalid UTF-8.
+  const name = (byte) =>
+    new Uint8Array([...encoder.encode("hook"), byte, ...encoder.encode(".pth")]);
+  const streamed = (zip) => readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20);
+
+  test("decodes names as cp437 when bit 11 is clear, like pip's zipfile", async () => {
+    const zip = buildZip([
+      { path: "", nameBytes: name(0x80), utf8: false, body: "import os\n" },
+      { path: "", nameBytes: name(0x81), utf8: false, body: "# benign\n" },
+    ]);
+    for (const parsed of [await streamed(zip), await readZipArchiveBuffered(zip, 100, 1 << 20)]) {
+      expect(parsed.files.map((file) => [file.path, file.textSample])).toEqual([
+        ["hook\u00c7.pth", "import os\n"],
+        ["hook\u00fc.pth", "# benign\n"],
+      ]);
+      expect(parsed.suspicious).toEqual([]);
+    }
+  });
+
+  test("leaves plain ASCII names without the UTF-8 flag unchanged", async () => {
+    const zip = buildZip([
+      { path: "demo/__init__.py", utf8: false, body: "x = 1\n" },
+      { path: "demo-1.0.dist-info/METADATA", utf8: false, body: "Name: demo\n" },
+    ]);
+    const parsed = await streamed(zip);
+    expect(parsed.files.map((file) => file.path)).toEqual([
+      "demo/__init__.py",
+      "demo-1.0.dist-info/METADATA",
+    ]);
+    expect(parsed.suspicious).toEqual([]);
+  });
+
+  test("marks a duplicate whose replaced body differed, so the review can raise it", async () => {
+    // With bit 11 set both names decode to `hook\ufffd.pth` here, while
+    // CPython refuses the archive; either way one body went unread.
+    const zip = buildZip([
+      { path: "", nameBytes: name(0x80), body: "import os\n" },
+      { path: "", nameBytes: name(0x81), body: "# benign\n" },
+    ]);
+    const parsed = await streamed(zip);
+    expect(parsed.files.map((file) => file.textSample)).toEqual(["# benign\n"]);
+    expect(parsed.suspicious).toEqual([
+      {
+        kind: "duplicate",
+        path: "hook\ufffd.pth",
+        detail: expect.stringContaining("different content"),
+      },
+    ]);
+  });
+
+  test("rebuilds the cp437 wheel corpus fixture exactly", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "./fixtures/security-corpus/cases-pypi/26-wheel-cp437-name-collision.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const pthNames = { "demo_hook\u00c7.pth": 0x80, "demo_hook\u00fc.pth": 0x81 };
+    const zip = buildZip(
+      fixture.artifacts[0].files.map((file) =>
+        file.path in pthNames
+          ? {
+              path: "",
+              nameBytes: new Uint8Array([
+                ...encoder.encode("demo_hook"),
+                pthNames[file.path],
+                ...encoder.encode(".pth"),
+              ]),
+              utf8: false,
+              body: file.textSample,
+            }
+          : { path: file.path, utf8: false, body: file.textSample },
+      ),
+    );
+    const parsed = await readZipStream(chunkedStream(zip), 2_500, 1 << 20, 1 << 20);
+    expect(parsed.files).toEqual(fixture.artifacts[0].files);
+    expect(parsed.suspicious).toEqual([]);
+  });
+
+  test("fails closed when the local and central records disagree on the name encoding", async () => {
+    const zip = buildZip([
+      { path: "", nameBytes: name(0x80), utf8: false, centralUtf8: true, body: "x\n" },
+    ]);
+    await expect(streamed(zip)).rejects.toThrow(/central directory does not match local entries/);
   });
 });
 

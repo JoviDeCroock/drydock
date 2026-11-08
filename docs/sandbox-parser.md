@@ -47,6 +47,7 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | Wheels | streamed over local headers; every central-directory record cross-checked; mismatch fails closed |
 | Data-descriptor, encrypted, zip64 entries | fail closed |
 | VSIX (yazl-packed with data descriptors) | buffered central-directory-first parse under the wire cap |
+| Entry names | cp437 unless general-purpose bit 11 marks UTF-8, as pip's `zipfile` and yauzl decode them |
 
 ## Native-binary sniffing
 

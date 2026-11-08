@@ -219,7 +219,7 @@ What each family fires on and leaves quiet, with the pinning fixture: [`detectio
 | Extended headers | `X` = `x`, `N` = `L`, `K` is metadata; a global header does not clear a pending local one (only its `path`/`linkpath` are ignored); a zero-length `L` changes nothing; GNU `L`/`N` digits stay strings. |
 | Strings | Cut with `/\0.*/` (no `s` flag); a leading UTF-8 BOM is kept. |
 | Types | Typeflag `7` is a regular file; a `0`/NUL entry ending in `/` is a directory. |
-| Paths | `.` segments collapsed; ustar prefix read only with ustar magic (130/155 split), not prepended to an extended-header path, and prepended unconditionally when byte 475 is set (empty name → `/`); unrepresentable regular-entry paths (traversal, drive letter, backslash, over-long) reported instead of dropped. |
+| Paths | `.` segments collapsed; ustar prefix read only with ustar magic (130/155 split; a magic-less non-empty prefix, which CPython joins, is disclosed), not prepended to an extended-header path, and prepended unconditionally when byte 475 is set (empty name → `/`); unrepresentable regular-entry paths (traversal, drive letter, backslash, over-long) reported instead of dropped. |
 
 ## Known coverage gaps
 
